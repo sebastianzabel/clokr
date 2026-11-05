@@ -2034,6 +2034,80 @@ weiter, und die überschriebene Personalnummer ließ spätere Lohnkorrekturen al
 409), dazu `leave-correction-core-614.test.ts`, `dashboard-upcoming-leave-anonymized-614.test.ts` und
 `scripts/__tests__/audit-614-anonymized-employment.test.ts`.
 
+### Nachtrag 2026-11-05 (Issue #615) — Deaktivieren mit letztem Arbeitstag, Saldo und Resturlaub
+
+**Entscheidung.** Ticket-Text vom 05.11.2026 (Ready). Das Deaktivieren (`PATCH /api/v1/employees/:id/deactivate`) nimmt den
+letzten Arbeitstag entgegen, beendet damit die Beschäftigung wie die Anonymisierung (#614) und zeigt vor dem Bestätigen,
+was das bedeutet. Das ist **keine** Unterbau-Semantikänderung: Es ändert sich kein Feld, keine Relation, kein Enum-Wert und
+kein Export von `contexts/platform/index.ts`. Das Deaktivieren schreibt jetzt die Konvention, die #614 für
+`Employee.exitDate` festhält: UTC-Mitternacht eines Kalendertags in der Zeitzone des Mandanten (vorher: der Zeitpunkt des
+Klicks).
+
+**Was sich geändert hat.**
+
+- **Kalendertag.** `exitDate` ist ein Kalendertag `YYYY-MM-DD`, ohne Angabe der heutige Tag des Mandanten. Ein Tag nach heute
+  antwortet **400** `EXIT_DATE_IN_FUTURE` (wer noch arbeitet, muss weiter erfassen, § 16 Abs. 2 ArbZG; ein künftiger Austritt
+  gehört in die Stammdaten). Ein Tag vor dem Eintrittsdatum (Kalendertag des Mandanten) antwortet **400**
+  `EXIT_DATE_BEFORE_HIRE` (D-22). Ein Tag in oder vor einem abgeschlossenen Monat antwortet **409** `MONTH_LOCKED`, nach der
+  Regel für geschlossene Monate (#595) über die Arbeitszeitkonto-Fassade. In jedem Fall wird nichts geschrieben.
+- **Austrittsregel als zweiter Aufrufer.** Das Deaktivieren plant die Austrittsregel vor der Transaktion und wendet sie in ihr
+  an, über dieselbe Dekoration `app.absenceExit` wie die Anonymisierung, mit dem Marker `trigger: "DEACTIVATION"` /
+  `auditReason` „Deaktivierung“. Dieselben Fälle werden übersprungen und gelistet (`CLOSED_MONTH`,
+  `PARENTAL_REDUCTION_ACTIVE`, `CORRECTION_REFUSED`, `SPANNING_ABSENCE`); ändert sich ein geplanter Antrag zwischen Plan und
+  Anwendung, antwortet die Route **409** `EMPLOYMENT_EXIT_CONFLICT` und schreibt nichts. Danach läuft der Abgleich des
+  Austrittsjahres aus #447.
+- **Audit alt/neu.** Der `UPDATE Employee`-Eintrag trägt `oldValue { isActive: true, exitDate }` (das bisherige Datum oder
+  `null`) und `newValue { isActive: false, exitDate, absencesEnded, exitSkipped }`; Zeilen-IDs und Codes, kein Freitext. Jede
+  geänderte Zeile bekommt ihren eigenen Audit-Eintrag mit dem Marker.
+- **Vorschau.** `POST /api/v1/employees/:id/deactivate/preview` (`employee:manage-access:ZUGEWIESEN`, dieselbe
+  Personen-Reichweite und derselbe 404 wie das Deaktivieren, T-100-09-Register) zeigt den Tag, die Ablehnung (dieselben Codes und
+  Texte), die Abwesenheiten, die die Regel beendet, das Live-Saldo (nur mit `overtime:read` über die Person) und den
+  Resturlaub des Austrittsjahres (nur mit `leave-entitlement:read`). Ein nicht sichtbarer Wert ist `null` mit Grund
+  (`NO_PERMISSION`, `NOT_TRACKED`, `UNAVAILABLE`, `NO_ENTITLEMENT`, `EXIT_DATE_REFUSED`), nie berechnet und verworfen.
+- **D-17: Fragen schreibt nichts.** Die Vorschau legt keine Zeile an und schreibt keinen Audit-Eintrag; der Nachweis vergleicht
+  Mitarbeiter, Benutzer, Anträge, Abwesenheiten, Ansprüche, Überstundenkonto, Snapshots, Refresh-Tokens und die Zahl der
+  Audit-Zeilen vor und nach dem Aufruf.
+- **D-18: Resturlaub über denselben § 5-Planer.** `exitVacationBalance` (`contexts/absence/facade/vacation-balance.ts`) fragt
+  den Planer des Abgleichs aus #447 (`planExitYearVacationEntitlement`) mit einem hypothetischen Austrittstag; es gibt keine
+  zweite § 5-Berechnung, und das Ergebnis ist der Wert, den das Deaktivieren danach speichert.
+- **Dialog.** Das Web fragt „Letzter Arbeitstag“ (Vorgabe: das gespeicherte Austrittsdatum, wenn es heute oder früher ist, sonst
+  heute; Obergrenze: das `today` des Servers), lädt die Vorschau beim Öffnen und bei jeder Änderung, verwirft veraltete
+  Antworten und sperrt „Deaktivieren“ bei einem abgelehnten Tag. Das Reaktivieren behält seinen Dialog; es stellt nichts
+  wieder her, was die Regel beendet hat, und der Dialog sagt das.
+
+**Auswirkung auf die Kontexte.**
+
+| Kontext             | Wirkung                                                                                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unterbau            | Die Route nimmt den Tag und ruft die Regel über `app.absenceExit` auf; schreibt `Employee.exitDate` als Kalendertag; kein neues Feld, keine neue Relation, kein neuer Export |
+| Zeiterfassung       | keine                                                                                                                                                                        |
+| Abwesenheiten       | `preview` an `app.absenceExit` und `exitVacationBalance` samt Planer `planExitYearVacationEntitlement`; die Regel selbst bleibt in `employment-exit.ts`                      |
+| Schichtplanung      | keine                                                                                                                                                                        |
+| Arbeitszeitkonto    | nur lesend: abgeschlossener Monat und Live-Saldo, über die Kompositions-Naht; keine Änderung am Saldo oder an Snapshots                                                      |
+| Kompositionsschicht | neue Naht `composition/employee-exit-ports.ts` (`closedMonthInRange`, `liveSaldo`), ohne Geschäftsregel                                                                      |
+
+**Grenzen.**
+
+- _Frühere Deaktivierungen._ Ihr Austrittsdatum ist ein Zeitpunkt, kein Kalendertag. Es wird nicht umgeschrieben; Leser nehmen
+  den UTC-Tag des gespeicherten Werts, wie schon für #614.
+- _`PATCH /employees/:id` mit `exitDate`._ Die Stammdaten-Route prüft weiterhin keinen abgeschlossenen Monat; die
+  Monatsprüfung gilt nur für das Deaktivieren.
+- _Zeiteinträge nach dem gewählten Tag._ Sie werden weder abgelehnt noch gemeldet; das Deaktivieren beendet Abwesenheiten, es
+  prüft die Zeiterfassung nicht.
+- _Übertrag in der Vorschau._ Der Resturlaub liest den gespeicherten Übertrag. Ein Rest aus dem Vorjahr, der noch nicht
+  übertragen wurde (das passiert lazy beim ersten Lesen der Ansprüche oder per Cron), fehlt in der Vorschau, während die
+  Kontoseite ihn danach zeigt.
+- _Ablehnungs-Audits._ Der gemeinsame 404 für unbekannte, fremde und nicht erreichbare Personen schreibt weiter seine
+  Ablehnungs-Audits wie bisher; die Vorschau schreibt keine.
+
+**Nachweis.** `deactivate-exit-day-615.test.ts` (Kalendertag, 400/409, Regel, Audit, Reihenfolge),
+`employment-exit-preview-615.test.ts` (Zeilen der Vorschau, keine Schreibung, Parität mit dem Deaktivieren),
+`exit-vacation-balance-615.test.ts` (Resturlaub gegen das Konto danach, kein zweites § 5),
+`deactivate-preview-615.test.ts` (Antwort, Ablehnungsparität, Tageswechsel um Mitternacht, nichts geschrieben),
+`deactivate-preview-rights-615.test.ts` (Zahl nur mit eigenem Recht, derselbe 404 in drei Fällen) und
+`t100-09-oracle-probe.test.ts`; im Web `deactivate-format.test.ts` und `DeactivateEmployeeDialog.test.ts`
+(gemountet, veraltete Antworten, gesperrter Button).
+
 ### Nachtrag 2026-10-17 (Issue #617) — Der D-12-Leser entfällt
 
 Der firmenweite Monatsbericht (`GET /reports/monthly/pdf/all`) ist mit #617 entfernt, und mit ihm der Rollenfilter, der als
