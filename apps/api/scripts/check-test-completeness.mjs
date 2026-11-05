@@ -1029,7 +1029,10 @@ import { readFileSync } from "node:fs";
 // Phase 657 Plan 03 (Issue #657): one new test file (retro-two-approvals-657.test.ts): MIN_FILES 804 -> 805, the measured
 // total of the full API run (805 files).
 // Merge of #657 onto main after #647: 806 + 4 new files.
-const MIN_FILES = 810;
+// Phase 660 (Issue #660, 2026-11-05): full API run on `feat/660-gap-as-travel` @ cb44ef17 measured 813 files / 11941 tests
+// (incl. 3 skipped); new files day-break-travel-offer-660 (6), day-break-travel-offer-rules-660 (17),
+// travel-offer-one-rule-660 (6); nothing removed, skipped or loosened; MIN_FILES 810 -> 813
+const MIN_FILES = 813;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1171,7 +1174,10 @@ const MIN_FILES = 810;
 // Review fixes of #657 (CR-01..WR-03, IN-01): full API run on the final tree measured 805 files / 11853 tests
 // (incl. 3 skipped). The coordinator's 11838 carried a +5 for #531 that is +4; the figure is the measured total.
 // Merge of #657 onto main after #647: 11851 + 60 (CI measured 11867 on the base 11807).
-const MIN_TESTS = 11911;
+// Phase 660 (Issue #660, 2026-11-05): full API run on `feat/660-gap-as-travel` @ cb44ef17 measured 813 files / 11941 tests
+// (incl. 3 skipped); the three new files carry 29 cases, the measured total is 30 above the previous floor (the previous
+// floor was a lower bound); nothing removed, skipped or loosened; MIN_TESTS 11911 -> 11941
+const MIN_TESTS = 11941;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
