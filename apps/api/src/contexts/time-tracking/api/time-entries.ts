@@ -87,6 +87,13 @@ import {
 } from "../entry-invariants";
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
 import {
+  findOverlappingRetroRequest,
+  RetroRequestOverlapError,
+  RETRO_REQUEST_OVERLAP_CODE,
+  RETRO_REQUEST_OVERLAP_MESSAGE,
+  wholeTenantDay,
+} from "../retro-request-overlap"; // Issue #657 (D-01/D-03/D-13)
+import {
   checkTravelNeighbours,
   classifyTravelWrite,
   classifyTravelUpdate,
@@ -1575,9 +1582,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
           const retroReason = body.reason?.trim();
           if (retroReason && !resolvedGrantId) {
-            // Issue #92: one Zeitnachtrag per day (70b D-13) and a day with travel already holds
-            // two entries, so travel is never filed as a request — a manager books it as a
-            // correction, which the retro window exempts.
+            // Issue #92: travel is never filed as a request. A trip filed here would be created
+            // as an ordinary pending entry, and a pending row never anchors a trip, so the
+            // neighbour rule could not hold. Issue #657 keeps the refusal (D-15) — a manager books
+            // a trip as a correction, which the retro window exempts.
             if (travelToSalonId !== undefined) {
               return reply.code(409).send({
                 error: TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE,
@@ -1876,6 +1884,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               callerEmployeeId: user.employeeId ?? null,
               access: accessContextFromRequest(req),
             });
+            // Issue #657 (D-01/D-13): the entry re-check above runs FIRST, so an overlap with a
+            // recorded or pending entry keeps its wording by the caller's reach; only a live
+            // request that no entry stands for (an uncoupled proposal or grant) answers the
+            // request code here.
+            const requestClash = await findOverlappingRetroRequest(tx, {
+              tenantId: user.tenantId,
+              employeeId,
+              targetDate: new Date(body.date),
+              interval: { start: newStart, end: newEnd ?? wholeTenantDay(body.date, tz).end },
+              tz,
+            });
+            if (requestClash) throw new RetroRequestOverlapError();
             await assertTravelEntry(tx, "RETRO_APPROVAL_PENDING");
             const request = await tx.retroEntryRequest.create({
               data: {
@@ -1964,6 +1984,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // Issue #92: the travel write rule refused inside the transaction (404/400 salon, 409 anchors).
         if (err instanceof TravelRefusalError) {
           return reply.code(err.refusal.status).send(err.refusal.body);
+        }
+        // Issue #657: the Nachtrag overlaps a live Zeitnachtrag request of the same day (neutral
+        // text: no date, time or person, so no reach decision is needed).
+        if (err instanceof RetroRequestOverlapError) {
+          return reply
+            .code(409)
+            .send({ error: RETRO_REQUEST_OVERLAP_MESSAGE, code: RETRO_REQUEST_OVERLAP_CODE });
         }
         // Overlap re-checked inside the transaction (grant branch after the flip, Nachtrag and
         // plain branch under the Employee row lock), worded by the caller's reach → 409.
