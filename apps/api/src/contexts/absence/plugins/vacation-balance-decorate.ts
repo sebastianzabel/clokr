@@ -1,5 +1,9 @@
 import fp from "fastify-plugin";
-import { getVacationBalance, vacationBalanceForRow } from "../facade/vacation-balance";
+import {
+  exitVacationBalance,
+  getVacationBalance,
+  vacationBalanceForRow,
+} from "../facade/vacation-balance";
 
 /**
  * Issue #451 (D-07, 451-08) — hands the Resturlaub facade to the composition layer WITHOUT an
@@ -19,7 +23,10 @@ import { getVacationBalance, vacationBalanceForRow } from "../facade/vacation-ba
  * directly (the documented composition-root exception), so registering it adds no new
  * cross-context import edge: this file is never reachable from `contexts/absence/index.ts`.
  *
- * Both decorated functions are thin, `app.prisma`-bound wrappers — the facade functions
+ * Issue #615 (D-18): `app.exitVacationBalance(employeeId, tenantId, exitDay)` is the third member, the
+ * read-only Resturlaub of a HYPOTHETICAL last working day that the deactivate preview shows.
+ *
+ * All decorated functions are thin, `app.prisma`-bound wrappers — the facade functions
  * themselves keep their pinned `db: Prisma.TransactionClient`-first signature
  * (`lint:facade-signatures`), unaware that Fastify exists.
  */
@@ -37,6 +44,11 @@ declare module "fastify" {
       now: Date,
       opts?: Parameters<typeof vacationBalanceForRow>[4],
     ) => ReturnType<typeof vacationBalanceForRow>;
+    exitVacationBalance: (
+      employeeId: string,
+      tenantId: string,
+      exitDay: string,
+    ) => ReturnType<typeof exitVacationBalance>;
   }
 }
 
@@ -46,5 +58,8 @@ export const vacationBalanceDecoratePlugin = fp(async (app) => {
   );
   app.decorate("vacationBalanceForRow", (row, tenantId, now, opts) =>
     vacationBalanceForRow(app.prisma, row, tenantId, now, opts),
+  );
+  app.decorate("exitVacationBalance", (employeeId, tenantId, exitDay) =>
+    exitVacationBalance(app.prisma, employeeId, tenantId, exitDay),
   );
 });
