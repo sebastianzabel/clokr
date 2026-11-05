@@ -19,6 +19,7 @@ import { operatorSupportAccessRoutes } from "./contexts/platform/api/operator/su
 import { operatorSupportRoutes } from "./contexts/platform/api/operator/support"; // Issue #93
 import { seedDefaultsForNewTenant } from "./composition/tenant-onboarding"; // Phase 88 (#88)
 import { operatorSalonPorts } from "./composition/operator-salon-ports"; // Phase 89 (#89)
+import { employeeExitPorts } from "./composition/employee-exit-ports"; // Issue #615 (D-15)
 import { operatorSupportPorts } from "./composition/operator-support-ports"; // Issue #93
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
@@ -384,7 +385,8 @@ export async function buildApp() {
       ports: operatorSupportPorts,
     });
   }
-  await app.register(employeeRoutes, { prefix: "/api/v1/employees" });
+  // Issue #615 (D-15): the closed-month answer of Arbeitszeitkonto reaches the Unterbau route as a port.
+  await app.register(employeeRoutes, { prefix: "/api/v1/employees", exitPorts: employeeExitPorts });
   await app.register(timeEntryRoutes, { prefix: "/api/v1/time-entries" });
   await app.register(dayBreakRoutes, { prefix: "/api/v1/day-breaks" }); // Issue #80 (D-02..D-06, D-21)
   await app.register(leaveRoutes, { prefix: "/api/v1/leave" });

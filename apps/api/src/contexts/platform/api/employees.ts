@@ -436,7 +436,111 @@ const employeeListQuerySchema = z.object({ salonId: z.string().uuid().optional()
  */
 const SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
 
-export async function employeeRoutes(app: FastifyInstance) {
+// ── Issue #615 — last working day of a deactivation ─────────────────────────────────────────
+
+/**
+ * Structural shape of the composition port (`composition/employee-exit-ports.ts`); declared here
+ * so the Unterbau imports no business context (D-15).
+ */
+export interface EmployeeExitPorts {
+  /** Is any month from the month of `fromDay` to the month of `toDay` closed for the person? */
+  closedMonthInRange(
+    db: Prisma.TransactionClient,
+    employeeId: string,
+    tenantId: string,
+    fromDay: string,
+    toDay: string,
+    tz: string,
+  ): Promise<boolean>;
+}
+
+export interface EmployeeRoutesOptions {
+  exitPorts: EmployeeExitPorts;
+}
+
+// Refusal bodies of the exit day (D-20/D-22). Module constants: the preview returns the same objects.
+const EXIT_DATE_IN_FUTURE_RESPONSE = {
+  error:
+    "Der letzte Arbeitstag darf nicht in der Zukunft liegen. Einen künftigen Austritt trägst du in den Stammdaten ein.",
+  code: "EXIT_DATE_IN_FUTURE",
+} as const;
+const EXIT_DATE_BEFORE_HIRE_RESPONSE = {
+  error: "Der letzte Arbeitstag darf nicht vor dem Eintrittsdatum liegen.",
+  code: "EXIT_DATE_BEFORE_HIRE",
+} as const;
+const EXIT_MONTH_LOCKED_RESPONSE = {
+  error:
+    "Der letzte Arbeitstag liegt in oder vor einem bereits abgeschlossenen Monat. Abgeschlossene Monate lassen sich nicht mehr ändern.",
+  code: "MONTH_LOCKED",
+} as const;
+// A planned absence changed between the exit plan and its apply (Issue #614); nothing was written.
+const EMPLOYMENT_EXIT_CONFLICT_RESPONSE = {
+  error: "Abwesenheiten wurden gleichzeitig geändert – bitte erneut versuchen.",
+  code: "EMPLOYMENT_EXIT_CONFLICT",
+} as const;
+
+/** A real calendar day `YYYY-MM-DD` (2026-02-30 is not one). */
+const CALENDAR_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const calendarDaySchema = z
+  .string()
+  // The refine checks run even when the pattern failed (zod 4), so it guards the pattern itself.
+  .refine(
+    (day) => CALENDAR_DAY_PATTERN.test(day) && dayToDate(day).toISOString().slice(0, 10) === day,
+    "Kein gültiges Datum",
+  );
+
+/**
+ * D-19: the last working day is a calendar day, or - for older callers - an ISO 8601 datetime with
+ * offset that is reduced to its tenant-local calendar day. Absent (or null) means "today".
+ */
+const deactivateBodySchema = z.object({
+  exitDate: z.union([calendarDaySchema, z.string().datetime({ offset: true })]).nullish(),
+});
+
+type ExitDayResolution =
+  | { ok: true; day: string; date: Date; today: string; tz: string }
+  | { ok: false; status: 400 | 409; body: { error: string; code: string } };
+
+/**
+ * Issue #615 (D-01/D-02/D-03/D-16/D-22) - the ONE resolution of a deactivation's last working day,
+ * shared by the deactivation and its preview. Returns the tenant-local calendar day and its UTC
+ * midnight (the stored `Employee.exitDate` convention), or the refusal to send. Reads only.
+ */
+async function resolveExitDay(
+  app: FastifyInstance,
+  opts: EmployeeRoutesOptions,
+  input: { tenantId: string; employeeId: string; hireDate: Date; raw: string | null | undefined },
+): Promise<ExitDayResolution> {
+  const tz = await readTenantTimezone(app.prisma, input.tenantId);
+  const today = tenantLocalDay(new Date(), tz);
+  const day =
+    input.raw == null
+      ? today
+      : CALENDAR_DAY_PATTERN.test(input.raw)
+        ? input.raw
+        : tenantLocalDay(new Date(input.raw), tz);
+  if (day > today) return { ok: false, status: 400, body: EXIT_DATE_IN_FUTURE_RESPONSE };
+  if (day < tenantLocalDay(input.hireDate, tz)) {
+    return { ok: false, status: 400, body: EXIT_DATE_BEFORE_HIRE_RESPONSE };
+  }
+  // D-16: the exit month or any later month up to the current one is closed - moving the end of the
+  // employment before a closed month would change that month's DATEV population (§ 147 AO).
+  if (
+    await opts.exitPorts.closedMonthInRange(
+      app.prisma,
+      input.employeeId,
+      input.tenantId,
+      day,
+      today,
+      tz,
+    )
+  ) {
+    return { ok: false, status: 409, body: EXIT_MONTH_LOCKED_RESPONSE };
+  }
+  return { ok: true, day, date: dayToDate(day), today, tz };
+}
+
+export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesOptions) {
   // GET /api/v1/employees
   //
   // Issue #547 (Phase 85b Plan 01, D-01/D-02): the list is narrowed like the single view. A scoped
@@ -1268,12 +1372,19 @@ export async function employeeRoutes(app: FastifyInstance) {
   });
 
   // PATCH /api/v1/employees/:id/deactivate
+  //
+  // Issue #615: the body names the LAST WORKING DAY as a tenant-local calendar day (absent = the
+  // tenant-local today, stored as UTC midnight). A day after today, before the hire day or in/before
+  // a closed month is refused before anything is written (resolveExitDay). The #614 employment-exit
+  // rule runs as its second caller with the marker DEACTIVATION: absences after the day end, the
+  // exit-year entitlement is recomputed afterwards (#447), and the audit carries the previous and
+  // the new exit day.
   app.patch("/:id/deactivate", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
-      const { exitDate } = z.object({ exitDate: z.string().optional() }).parse(req.body ?? {});
+      const { exitDate } = deactivateBodySchema.parse(req.body ?? {});
 
       const employee = await app.prisma.employee.findUnique({
         where: { id },
@@ -1290,7 +1401,7 @@ export async function employeeRoutes(app: FastifyInstance) {
         });
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
-      // Phase 91b Plan 10 (Issue #91), D-10/D-14: account-lifecycle action, Stammsalon-only —
+      // Phase 91b Plan 10 (Issue #91), D-10/D-14: account-lifecycle action, Stammsalon-only -
       // runs BEFORE the isActive branch below, so an out-of-scope employee's current state never
       // leaks through a distinguishable 409 (T-100-09).
       if (
@@ -1308,11 +1419,32 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (!employee.user.isActive)
         return reply.code(409).send({ error: "Mitarbeiter ist bereits deaktiviert" });
 
-      const effectiveExitDate = exitDate ? new Date(exitDate) : new Date();
+      // Issue #615: resolved only for an in-scope, active person, so no refusal reveals the state
+      // of a person the caller may not administer.
+      const resolved = await resolveExitDay(app, opts, {
+        tenantId: req.user.tenantId,
+        employeeId: id,
+        hireDate: employee.hireDate,
+        raw: exitDate,
+      });
+      if (!resolved.ok) return reply.code(resolved.status).send(resolved.body);
+      const { day: exitDay, date: effectiveExitDate } = resolved;
+
+      // Issue #615 (D-04): the Abwesenheiten rule decides what the exit ends. Pure reads, BEFORE the
+      // transaction opens; reached through the app.absenceExit decoration (the Unterbau imports no
+      // business context). The deactivation is a caller: it decides nothing about which absence ends.
+      const exitPlan = await app.absenceExit.plan({
+        tenantId: req.user.tenantId,
+        employeeId: id,
+        exitDay: effectiveExitDate,
+        actorUserId: requestAuditFields(req).userId ?? null,
+        marker: { auditReason: "Deaktivierung", trigger: "DEACTIVATION" },
+      });
+      let exitResult: Awaited<ReturnType<FastifyInstance["absenceExit"]["apply"]>> | undefined;
 
       // Phase 74b (D-19/D-20): deactivating the tenant's last active tenant-wide holder of
       // role:manage / role-assignment:manage would lock every admin out of role management. The
-      // four writes AND the audit run in one interactive transaction under the lockout guard, so a
+      // writes AND the audit run in one interactive transaction under the lockout guard, so a
       // RoleLockoutError rolls all of them back. The user's role assignments stay (D-22): an
       // inactive user holds no effective right, and reactivation restores it.
       try {
@@ -1326,11 +1458,23 @@ export async function employeeRoutes(app: FastifyInstance) {
               where: { id },
               data: { exitDate: effectiveExitDate },
             });
-            // Issue #447 (D-07) — same invariant-carrying recompute as PATCH /:id: both the
-            // old and the new exit year's VACATION row are brought to their § 5 BUrlG value
-            // inside this guarded transaction.
+            // Issue #615 (D-05): every absence change and its audit row, one per changed row.
+            const ended = await app.absenceExit.apply(tx, exitPlan, (entry) =>
+              app.audit({
+                tx,
+                action: entry.action,
+                entity: entry.entity,
+                entityId: entry.entityId,
+                oldValue: entry.oldValue,
+                ...requestAuditFields(req, entry.newValue),
+              }),
+            );
+            exitResult = ended;
+            // Issue #447 (D-07) - same invariant-carrying recompute as PATCH /:id: both the old and
+            // the new exit year's VACATION row are brought to their § 5 BUrlG value inside this
+            // guarded transaction, AFTER the exit rule (Issue #615, D-05).
             {
-              const exitYears = new Set<number>([effectiveExitDate.getUTCFullYear()]);
+              const exitYears = new Set<number>([Number(exitDay.slice(0, 4))]);
               if (employee.exitDate) exitYears.add(employee.exitDate.getUTCFullYear());
               for (const exitYear of exitYears) {
                 await syncExitYearVacationEntitlement(
@@ -1361,11 +1505,25 @@ export async function employeeRoutes(app: FastifyInstance) {
             // 74b review WR-06: inside the guarded transaction a failing audit rolls the
             // deactivation back, so the actor must never be an API key's `apikey:<id>` subject
             // (AuditLog.userId FK); requestAuditFields also adds the request IP/user agent.
+            // Issue #615 (D-06): previous and new exit day; counts and skipped rows are ids and codes.
             await app.audit({
               action: "UPDATE",
               entity: "Employee",
               entityId: id,
-              ...requestAuditFields(req, { isActive: false, exitDate: effectiveExitDate }),
+              oldValue: {
+                isActive: true,
+                exitDate: employee.exitDate ? employee.exitDate.toISOString().slice(0, 10) : null,
+              },
+              ...requestAuditFields(req, {
+                isActive: false,
+                exitDate: exitDay,
+                absencesEnded: {
+                  cancelled: ended.cancelled.length,
+                  shortened: ended.shortened.length,
+                  deleted: ended.deleted.length,
+                },
+                exitSkipped: ended.skipped,
+              }),
               tx,
             });
           });
@@ -1374,8 +1532,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
         }
+        // Issue #614: a planned absence changed between plan and apply; nothing was written.
+        if ((err as { code?: unknown }).code === "EMPLOYMENT_EXIT_CONFLICT") {
+          return reply.code(409).send(EMPLOYMENT_EXIT_CONFLICT_RESPONSE);
+        }
         throw err;
       }
+
+      // Issue #614: reactive follow-up after the commit (snapshots, overtime balance, notices).
+      // Logs its own failures and never throws.
+      if (exitResult) await app.absenceExit.afterCommit(exitResult);
 
       return { success: true };
     },
@@ -1724,10 +1890,7 @@ export async function employeeRoutes(app: FastifyInstance) {
         }
         // Issue #614: a planned absence changed between plan and apply; nothing was written.
         if ((err as { code?: unknown }).code === "EMPLOYMENT_EXIT_CONFLICT") {
-          return reply.code(409).send({
-            error: "Abwesenheiten wurden gleichzeitig geändert – bitte erneut versuchen.",
-            code: "EMPLOYMENT_EXIT_CONFLICT",
-          });
+          return reply.code(409).send(EMPLOYMENT_EXIT_CONFLICT_RESPONSE);
         }
         throw err;
       }
