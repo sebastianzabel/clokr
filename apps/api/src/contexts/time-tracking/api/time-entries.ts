@@ -2349,6 +2349,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         existing.retroRequest?.status === "PENDING" &&
         existing.employeeId === user.employeeId;
 
+      // Issue #657 (WR-02): the request's date is the contract of a pending Nachtrag. Its entry may
+      // be re-timed within the day, never moved to another day — the request overlap rule (and the
+      // approval) judge the request's own `targetDate`, so a moved row would leave the request on
+      // one day and the entry on another. Refused before any other guard (409, nothing written).
+      if (isOwnPendingNachtragEdit && overlapDate.getTime() !== existing.date.getTime()) {
+        return reply.code(409).send({
+          error:
+            "Der Zeitnachtrag gilt für den beantragten Tag. Das Datum kann nicht verschoben werden.",
+          code: "RETRO_REQUEST_DATE_FIXED",
+        });
+      }
+
       // Phase 76.29.1 Plan 02 — PUT grant pre-validation (mirrors POST ~:1001–1017).
       // If the caller supplies a grantId, verify an APPROVED RetroEntryRequest exists for
       // (existing.employeeId, effective targetDate) — keyed to the ENTRY's employee, not the
@@ -2606,6 +2618,26 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             }
           }
 
+          // Issue #657 (WR-02): re-timing the entry of the employee's own pending Nachtrag re-times
+          // the request (an entry-coupled request is judged by its entry), so the other pending
+          // requests of the day are checked against the new interval, under the lock just taken.
+          if (isOwnPendingNachtragEdit && existing.retroRequestId) {
+            const requestClash = await findOverlappingRetroRequest(tx, {
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              targetDate: existing.date,
+              interval: {
+                start: updatedStart,
+                end:
+                  updatedEnd ??
+                  wholeTenantDay(existing.date.toISOString().split("T")[0], overlapTz).end,
+              },
+              tz: overlapTz,
+              excludeRequestId: existing.retroRequestId,
+            });
+            if (requestClash) throw new RetroRequestOverlapError();
+          }
+
           await recheckOverlapInTx(tx, {
             tenantId: user.tenantId,
             employeeId: existing.employeeId,
@@ -2724,6 +2756,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // Issue #92: the travel write rule or the neighbour check refused inside the transaction.
         if (err instanceof TravelRefusalError) {
           return reply.code(err.refusal.status).send(err.refusal.body);
+        }
+        if (err instanceof RetroRequestOverlapError) {
+          return reply
+            .code(409)
+            .send({ error: RETRO_REQUEST_OVERLAP_MESSAGE, code: RETRO_REQUEST_OVERLAP_CODE });
         }
         if (err instanceof EntryConflictError) {
           return reply.code(409).send({ error: err.userMessage });

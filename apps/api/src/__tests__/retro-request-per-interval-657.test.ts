@@ -529,6 +529,65 @@ describe("Issue #657 — Zeitnachtrag per interval", () => {
     });
   });
 
+  describe("a PUT of the own pending Nachtrag entry stays inside the request rule (WR-02)", () => {
+    function putOwn(entryId: string, day: string, from: string, to: string, extra = {}) {
+      return app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${entryId}`,
+        headers: { authorization: `Bearer ${seed.empToken}` },
+        payload: {
+          startTime: at(day, from).toISOString(),
+          endTime: at(day, to).toISOString(),
+          ...extra,
+        },
+      });
+    }
+
+    async function pendingEntryOf(day: string) {
+      return app.prisma.timeEntry.findFirstOrThrow({
+        where: { employeeId, date: new Date(`${day}T00:00:00Z`), deletedAt: null },
+      });
+    }
+
+    it("refuses re-timing onto another pending request and accepts a touching or free interval", async () => {
+      const day = nextDay();
+      expect((await entryFirst(day, "08:00", "10:00")).statusCode).toBe(201);
+      expect((await propose(day, "12:00", "14:00")).statusCode).toBe(201);
+      const entry = await pendingEntryOf(day);
+
+      const clash = await putOwn(entry.id, day, "11:00", "13:00");
+      expect(clash.statusCode).toBe(409);
+      expect(JSON.parse(clash.body)).toEqual(OVERLAP_BODY);
+      const unchanged = await pendingEntryOf(day);
+      expect(unchanged.startTime.toISOString()).toBe(at(day, "08:00").toISOString());
+      expect(unchanged.endTime?.toISOString()).toBe(at(day, "10:00").toISOString());
+
+      expect((await putOwn(entry.id, day, "09:00", "12:00")).statusCode).toBe(200);
+      const moved = await pendingEntryOf(day);
+      expect(moved.endTime?.toISOString()).toBe(at(day, "12:00").toISOString());
+    });
+
+    it("does not compare the request with itself", async () => {
+      const day = nextDay();
+      expect((await entryFirst(day, "08:00", "10:00")).statusCode).toBe(201);
+      const entry = await pendingEntryOf(day);
+      expect((await putOwn(entry.id, day, "08:30", "10:30")).statusCode).toBe(200);
+    });
+
+    it("refuses moving the entry to another date and leaves it untouched", async () => {
+      const day = nextDay();
+      const other = nextDay();
+      expect((await entryFirst(day, "08:00", "10:00")).statusCode).toBe(201);
+      const entry = await pendingEntryOf(day);
+      const res = await putOwn(entry.id, other, "08:00", "10:00", { date: other });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).code).toBe("RETRO_REQUEST_DATE_FIXED");
+      const after = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      expect(after.date.toISOString()).toBe(new Date(`${day}T00:00:00Z`).toISOString());
+      expect(after.startTime.toISOString()).toBe(at(day, "08:00").toISOString());
+    });
+  });
+
   describe("check and write run under the employee row lock (D-04)", () => {
     const holderRequest =
       (day: string) =>

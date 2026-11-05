@@ -98,6 +98,8 @@ export async function findOverlappingRetroRequest(
     targetDate: Date;
     interval: RequestInterval;
     tz: string;
+    /** A request to leave out of the comparison (the request being edited, Issue #657 WR-02). */
+    excludeRequestId?: string;
   },
 ): Promise<{ id: string } | null> {
   const targetDateStr = params.targetDate.toISOString().split("T")[0];
@@ -107,6 +109,7 @@ export async function findOverlappingRetroRequest(
       targetDate: params.targetDate,
       deletedAt: null,
       status: "PENDING",
+      ...(params.excludeRequestId ? { id: { not: params.excludeRequestId } } : {}),
       employee: { tenantId: params.tenantId },
     },
     select: {
