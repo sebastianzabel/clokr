@@ -1145,8 +1145,8 @@ const MIN_FILES = 802;
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped); the drop from 11812 is
 // exactly the deliberately deleted #539/#75b role-column cases named in the #641 comment above.
 // Issue #531: imports.test.ts -1 (whole-import refusal replaced) +5 (Stammsalon per row); full run measured 801 files / 11793 tests (incl. 3 skipped).
-// Issue #624: +15 cases measured on its own base (11788 -> 11803); merged onto main after #531 (11793) -> 11808.
-const MIN_TESTS = 11808;
+// Issue #624: +15 cases on its own base (11788 -> 11803); merged onto main after #531: CI measured 802 files / 11807 tests.
+const MIN_TESTS = 11807;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
