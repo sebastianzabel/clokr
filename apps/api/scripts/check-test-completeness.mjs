@@ -1153,7 +1153,9 @@ const MIN_FILES = 805;
 // Phase 657 Plan 02 (Issue #657): +20 cases (one new file, measured with its own vitest output): 11809 -> 11829.
 // Phase 657 Plan 03 (Issue #657): +3 cases (retro-two-approvals-657.test.ts); MIN_TESTS 11829 -> 11833, the measured total of
 // the full API run (11830 passed + 3 skipped = 11833 collected). Never lowered.
-const MIN_TESTS = 11833;
+// Issue #531: imports.test.ts -1 (whole-import refusal replaced) +5 (Stammsalon per row); full run measured 801 files / 11793 tests (incl. 3 skipped).
+// Merge of #657 onto main after #531: 11833 measured on its base 11788 (+45) plus #531 (+5) -> 11838.
+const MIN_TESTS = 11838;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
