@@ -29,10 +29,13 @@ const EMPLOYEE = { id: "emp-fixture-1", firstName: "Exit615", lastName: "Fixture
 function preview(over: Partial<DeactivatePreview> = {}): DeactivatePreview {
   return {
     exitDate: TODAY,
+    loginOnlyReason: null,
     today: TODAY,
     storedExitDate: null,
     refusal: null,
     absences: [],
+    absenceCounts: { CANCEL: 0, SHORTEN: 0, DELETE: 0, SKIP: 0 },
+    absencesUnavailableReason: null,
     saldo: { balanceMinutes: -12000, asOf: "2026-11-04" },
     saldoUnavailableReason: null,
     vacation: {
@@ -183,6 +186,22 @@ describe("DeactivateEmployeeDialog", () => {
     expect(screen.queryByText("Keine Abwesenheiten nach dem letzten Arbeitstag.")).toBeNull();
   });
 
+  it("shows only the counts when the caller may not read the absences (review WR-03)", async () => {
+    post.mockResolvedValue(
+      preview({
+        absences: null,
+        absenceCounts: { CANCEL: 2, SHORTEN: 1, DELETE: 0, SKIP: 1 },
+        absencesUnavailableReason: "NO_PERMISSION",
+      }),
+    );
+    mount();
+    await screen.findByText(
+      "3 Abwesenheiten enden oder werden gekürzt, 1 Abwesenheit bleibt unverändert. Einzelheiten siehst du mit deinen Rechten nicht.",
+    );
+    expect(screen.queryByText(/Krankmeldung|Urlaub$/)).toBeNull();
+    expect(screen.queryByText(/\d{2}\.\d{2}\.\d{4} –/)).toBeNull();
+  });
+
   it("shows one calm line and no number for a withheld figure", async () => {
     post.mockResolvedValue(
       preview({
@@ -210,6 +229,8 @@ describe("DeactivateEmployeeDialog", () => {
           error: "Der Monat ist bereits abgeschlossen.",
         },
         absences: null,
+        absenceCounts: null,
+        absencesUnavailableReason: "EXIT_DATE_REFUSED",
         vacation: null,
         vacationUnavailableReason: "EXIT_DATE_REFUSED",
       }),

@@ -26,7 +26,11 @@ export interface PreviewAbsence {
 }
 
 export type SaldoUnavailableReason = "NO_PERMISSION" | "NOT_TRACKED" | "UNAVAILABLE";
-export type VacationUnavailableReason = "NO_PERMISSION" | "NO_ENTITLEMENT" | "EXIT_DATE_REFUSED";
+export type VacationUnavailableReason =
+  "NO_PERMISSION" | "NO_ENTITLEMENT" | "EXIT_DATE_REFUSED" | "HIRE_IN_FUTURE" | "UNAVAILABLE";
+export type AbsencesUnavailableReason = "NO_PERMISSION" | "EXIT_DATE_REFUSED";
+/** Rows per action of the exit plan; the only absence information a caller without leave rights gets. */
+export type AbsenceCounts = Record<PreviewAction, number>;
 
 export interface PreviewRefusal {
   status: number;
@@ -54,12 +58,18 @@ export interface PreviewVacation {
 }
 
 export interface DeactivatePreview {
-  exitDate: string;
+  /** The evaluated day; null for a person who has not started yet (login-only deactivation). */
+  exitDate: string | null;
+  /** HIRE_IN_FUTURE: the deactivation only switches the login off, there is no last working day. */
+  loginOnlyReason: "HIRE_IN_FUTURE" | null;
   /** The tenant-local today of the server; upper bound of the date field. */
   today: string;
   storedExitDate: string | null;
   refusal: PreviewRefusal | null;
+  /** Rows with type and dates; null when withheld (see absencesUnavailableReason) or when the day is refused. */
   absences: PreviewAbsence[] | null;
+  absenceCounts: AbsenceCounts | null;
+  absencesUnavailableReason: AbsencesUnavailableReason | null;
   saldo: PreviewSaldo | null;
   saldoUnavailableReason: SaldoUnavailableReason | null;
   vacation: PreviewVacation | null;

@@ -18,6 +18,7 @@
   } from "$lib/api/deactivate-preview";
   import {
     absenceActionText,
+    absenceCountsLine,
     absencePeriodText,
     absenceTypeLabel,
     initialExitDay,
@@ -219,6 +220,14 @@
               {/each}
             </ul>
           {/if}
+        </section>
+      {:else if view.absencesUnavailableReason === "NO_PERMISSION"}
+        <section class="dx-absences" aria-labelledby="dx-absences-title">
+          <h4 id="dx-absences-title">Abwesenheiten</h4>
+          <p class="form-hint">
+            {absenceCountsLine(view.absenceCounts) ??
+              "Keine Abwesenheiten nach dem letzten Arbeitstag."}
+          </p>
         </section>
       {/if}
     {/if}

@@ -4,7 +4,12 @@
  * preview; this module only words it. Control values (action, reason, type code) are mapped by
  * code, never by a display string.
  */
-import type { DeactivatePreview, PreviewAbsence, PreviewAction } from "$lib/api/deactivate-preview";
+import type {
+  AbsenceCounts,
+  DeactivatePreview,
+  PreviewAbsence,
+  PreviewAction,
+} from "$lib/api/deactivate-preview";
 import { LEAVE_TYPES } from "$lib/leave/team-calendar-visibility";
 import { fmtBalance } from "$lib/utils/format-minutes";
 import { fmtDateDe, fmtDaysDe } from "$lib/reports/period-format";
@@ -109,4 +114,30 @@ export function vacationLines(
     );
   }
   return lines;
+}
+
+/**
+ * Review WR-03: a caller without the leave right gets only the counts per action. One calm line,
+ * or `null` when the plan touches nothing.
+ */
+export function absenceCountsLine(counts: AbsenceCounts | null): string | null {
+  if (counts === null) return null;
+  const ends = counts.CANCEL + counts.SHORTEN + counts.DELETE;
+  const parts: string[] = [];
+  if (ends > 0) {
+    parts.push(
+      ends === 1
+        ? "1 Abwesenheit endet oder wird gekürzt"
+        : `${ends} Abwesenheiten enden oder werden gekürzt`,
+    );
+  }
+  if (counts.SKIP > 0) {
+    parts.push(
+      counts.SKIP === 1
+        ? "1 Abwesenheit bleibt unverändert"
+        : `${counts.SKIP} Abwesenheiten bleiben unverändert`,
+    );
+  }
+  if (parts.length === 0) return null;
+  return `${parts.join(", ")}. Einzelheiten siehst du mit deinen Rechten nicht.`;
 }

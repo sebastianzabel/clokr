@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { PreviewAbsence, PreviewVacation } from "$lib/api/deactivate-preview";
 import {
   absenceActionText,
+  absenceCountsLine,
   absencePeriodText,
   absenceTypeLabel,
   initialExitDay,
@@ -151,5 +152,20 @@ describe("vacationLines", () => {
     expect(
       vacationLines({ vacation: null, vacationUnavailableReason: "EXIT_DATE_REFUSED" }),
     ).toEqual([]);
+  });
+});
+
+describe("absenceCountsLine", () => {
+  it("words the counts per action without any type or date", () => {
+    expect(absenceCountsLine({ CANCEL: 1, SHORTEN: 0, DELETE: 0, SKIP: 0 })).toBe(
+      "1 Abwesenheit endet oder wird gekürzt. Einzelheiten siehst du mit deinen Rechten nicht.",
+    );
+    expect(absenceCountsLine({ CANCEL: 2, SHORTEN: 1, DELETE: 1, SKIP: 2 })).toBe(
+      "4 Abwesenheiten enden oder werden gekürzt, 2 Abwesenheiten bleiben unverändert. Einzelheiten siehst du mit deinen Rechten nicht.",
+    );
+  });
+  it("is null for nothing to say", () => {
+    expect(absenceCountsLine({ CANCEL: 0, SHORTEN: 0, DELETE: 0, SKIP: 0 })).toBeNull();
+    expect(absenceCountsLine(null)).toBeNull();
   });
 });
