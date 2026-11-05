@@ -1022,7 +1022,7 @@ import { readFileSync } from "node:fs";
 // Phase 657 Plan 02 (Issue #657): one new test file (retro-pending-clock-657.test.ts): MIN_FILES 803 -> 804 (lower bound).
 // Phase 657 Plan 03 (Issue #657): one new test file (retro-two-approvals-657.test.ts): MIN_FILES 804 -> 805, the measured
 // total of the full API run (805 files).
-// Merge of #657 onto main after #624: 802 + 4 new files.
+// Merge of #657 onto main after #624: CI measured 806 files / 11867 tests.
 const MIN_FILES = 806;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
@@ -1160,8 +1160,8 @@ const MIN_FILES = 806;
 // Merge of #657 onto main after #531: 11833 measured on its base 11788 (+45) plus #531 (+5) -> 11838.
 // Review fixes of #657 (CR-01..WR-03, IN-01): full API run on the final tree measured 805 files / 11853 tests
 // (incl. 3 skipped). The coordinator's 11838 carried a +5 for #531 that is +4; the figure is the measured total.
-// Merge of #657 onto main after #624: 11807 + 61 (#657 cases incl. review fixes, measured 11853 on the base 11792).
-const MIN_TESTS = 11868;
+// Merge of #657 onto main after #624: CI measured 806 files / 11867 tests.
+const MIN_TESTS = 11867;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
