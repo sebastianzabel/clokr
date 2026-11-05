@@ -152,3 +152,13 @@ export function salonAdminRights(user: Caller): SalonAdminRights {
     canManage: hasPermission(user, "salon:manage:ZUGEWIESEN"),
   };
 }
+
+/** `/admin/salons/:id`, section „Feiertage“: what `POST`/`DELETE /holidays` would accept (Issue #579). */
+export interface SalonHolidayRights {
+  /** `POST /holidays`, `DELETE /holidays/:id` - holiday:manage. Reading the list needs no permission. */
+  canManage: boolean;
+}
+
+export function salonHolidayRights(user: Caller): SalonHolidayRights {
+  return { canManage: hasPermission(user, "holiday:manage:ZUGEWIESEN") };
+}

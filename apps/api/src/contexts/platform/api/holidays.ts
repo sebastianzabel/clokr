@@ -220,16 +220,29 @@ export async function holidayRoutes(app: FastifyInstance) {
       if (!resolution.ok) return sendUnresolved(reply, resolution);
       const { salon } = resolution;
 
-      const holiday = await app.prisma.publicHoliday.create({
-        data: {
-          tenantId,
-          salonId: salon.id,
-          date: new Date(body.date),
-          name: body.name,
-          year: parseInt(body.date.slice(0, 4), 10),
-          federalState: salon.federalState,
-        },
-      });
+      // Issue #579: a second manual holiday on the same salon and day hits the unique index
+      // `[salonId, date]`; answer it as a German 409 instead of a bare 500.
+      let holiday;
+      try {
+        holiday = await app.prisma.publicHoliday.create({
+          data: {
+            tenantId,
+            salonId: salon.id,
+            date: new Date(body.date),
+            name: body.name,
+            year: parseInt(body.date.slice(0, 4), 10),
+            federalState: salon.federalState,
+          },
+        });
+      } catch (err) {
+        if ((err as { code?: string }).code === "P2002") {
+          return reply.code(409).send({
+            error: "Für diesen Salon ist an diesem Tag bereits ein Feiertag eingetragen.",
+            code: "HOLIDAY_EXISTS",
+          });
+        }
+        throw err;
+      }
 
       await app.audit({
         userId: req.user.sub,
