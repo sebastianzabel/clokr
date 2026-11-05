@@ -2048,8 +2048,16 @@ Klicks).
 - **Kalendertag.** `exitDate` ist ein Kalendertag `YYYY-MM-DD`, ohne Angabe der heutige Tag des Mandanten. Ein Tag nach heute
   antwortet **400** `EXIT_DATE_IN_FUTURE` (wer noch arbeitet, muss weiter erfassen, § 16 Abs. 2 ArbZG; ein künftiger Austritt
   gehört in die Stammdaten). Ein Tag vor dem Eintrittsdatum (Kalendertag des Mandanten) antwortet **400**
-  `EXIT_DATE_BEFORE_HIRE` (D-22). Ein Tag in oder vor einem abgeschlossenen Monat antwortet **409** `MONTH_LOCKED`, nach der
-  Regel für geschlossene Monate (#595) über die Arbeitszeitkonto-Fassade. In jedem Fall wird nichts geschrieben.
+  `EXIT_DATE_BEFORE_HIRE` (D-22). Die Monatsprüfung beurteilt die **Verschiebung** des Beschäftigungsendes: Sie deckt alle
+  Monate vom früheren des gespeicherten Austrittstags und des gewählten Tags bis zum laufenden Monat ab und antwortet
+  **409** `MONTH_LOCKED`, nach der Regel für geschlossene Monate (#595) über die Arbeitszeitkonto-Fassade. Wer den
+  gespeicherten Tag selbst wählt, verschiebt nichts und wird nicht abgelehnt; einen gespeicherten Tag aus einem
+  abgeschlossenen Monat heraus zu verschieben, ist abgelehnt. In jedem Fall wird nichts geschrieben. Die Prüfungen laufen
+  zusätzlich in der Transaktion unter einer Zeilensperre auf dem Mitarbeiter (`FOR NO KEY UPDATE`): zwei gleichzeitige
+  Deaktivierungen ergeben genau eine 200 und eine 409, und der Audit-`oldValue` ist der gesperrt gelesene Stand.
+- **Person ohne Eintritt.** Liegt der Eintrittstag des Mandanten nach heute, gibt es keinen zulässigen letzten Arbeitstag.
+  Das Deaktivieren sperrt dann nur den Zugang und widerruft die Tokens; Austrittsdatum und Austrittsregel bleiben
+  unberührt, der Audit trägt `exitDateUnchanged: "HIRE_IN_FUTURE"`, die Vorschau meldet `loginOnlyReason: "HIRE_IN_FUTURE"`.
 - **Austrittsregel als zweiter Aufrufer.** Das Deaktivieren plant die Austrittsregel vor der Transaktion und wendet sie in ihr
   an, über dieselbe Dekoration `app.absenceExit` wie die Anonymisierung, mit dem Marker `trigger: "DEACTIVATION"` /
   `auditReason` „Deaktivierung“. Dieselben Fälle werden übersprungen und gelistet (`CLOSED_MONTH`,
@@ -2061,10 +2069,17 @@ Klicks).
   geänderte Zeile bekommt ihren eigenen Audit-Eintrag mit dem Marker.
 - **Vorschau.** `POST /api/v1/employees/:id/deactivate/preview` (`employee:manage-access:ZUGEWIESEN`, dieselbe
   Personen-Reichweite und derselbe 404 wie das Deaktivieren, T-100-09-Register) zeigt den Tag, die Ablehnung (dieselben Codes und
-  Texte), die Abwesenheiten, die die Regel beendet, das Live-Saldo (nur mit `overtime:read` über die Person) und den
-  Resturlaub des Austrittsjahres (nur mit `leave-entitlement:read`). Ein nicht sichtbarer Wert ist `null` mit Grund
-  (`NO_PERMISSION`, `NOT_TRACKED`, `UNAVAILABLE`, `NO_ENTITLEMENT`, `EXIT_DATE_REFUSED`), nie berechnet und verworfen.
-- **D-17: Fragen schreibt nichts.** Die Vorschau legt keine Zeile an und schreibt keinen Audit-Eintrag; der Nachweis vergleicht
+  Texte), die Abwesenheiten, die die Regel beendet (Art, Status und Zeitraum nur mit `leave-request:read` über die
+  Person, sonst nur Zähler je Aktion und `absencesUnavailableReason: "NO_PERMISSION"`; Krankmeldungen sind
+  Gesundheitsdaten), das aktuelle Live-Saldo bis gestern (nur mit `overtime:read` über die Person; es ist nicht der
+  Endsaldo, den erst der Monatsabschluss des Austrittsmonats festlegt) und den Resturlaub des Austrittsjahres (nur mit
+  `leave-entitlement:read`). Ein nicht sichtbarer Wert ist `null` mit Grund (`NO_PERMISSION`, `NOT_TRACKED`, `UNAVAILABLE`,
+  `NO_ENTITLEMENT`, `EXIT_DATE_REFUSED`, `HIRE_IN_FUTURE`), nie berechnet und verworfen. Ein Fehler der Resturlaub-Projektion
+  wird wie beim Saldo zu `UNAVAILABLE`, die Vorschau bleibt benutzbar. Nach jedem Deaktivieren wird das gespeicherte
+  Überstundenkonto neu geschrieben, auch wenn keine Abwesenheit geändert wurde.
+- **D-17: Fragen schreibt nichts.** Eine erfolgreiche Vorschau legt keine Zeile an und schreibt keinen Audit-Eintrag; der
+  gemeinsame 404 schreibt seine Ablehnungs-Audits (`CROSS_TENANT_ACCESS_DENIED`, `SCOPE_ACCESS_DENIED`) auch bei der Vorschau.
+  Der Nachweis vergleicht
   Mitarbeiter, Benutzer, Anträge, Abwesenheiten, Ansprüche, Überstundenkonto, Snapshots, Refresh-Tokens und die Zahl der
   Audit-Zeilen vor und nach dem Aufruf.
 - **D-18: Resturlaub über denselben § 5-Planer.** `exitVacationBalance` (`contexts/absence/facade/vacation-balance.ts`) fragt
@@ -2098,7 +2113,7 @@ Klicks).
   übertragen wurde (das passiert lazy beim ersten Lesen der Ansprüche oder per Cron), fehlt in der Vorschau, während die
   Kontoseite ihn danach zeigt.
 - _Ablehnungs-Audits._ Der gemeinsame 404 für unbekannte, fremde und nicht erreichbare Personen schreibt weiter seine
-  Ablehnungs-Audits wie bisher; die Vorschau schreibt keine.
+  Ablehnungs-Audits wie bisher, auch bei der Vorschau; nur eine erfolgreiche Vorschau schreibt keine Zeile.
 
 **Nachweis.** `deactivate-exit-day-615.test.ts` (Kalendertag, 400/409, Regel, Audit, Reihenfolge),
 `employment-exit-preview-615.test.ts` (Zeilen der Vorschau, keine Schreibung, Parität mit dem Deaktivieren),
