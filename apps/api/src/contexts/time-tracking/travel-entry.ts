@@ -445,6 +445,35 @@ export type ValidateTravelEntryInput = {
 };
 
 /**
+ * The ONE reach rule of a travel write (Issue #660, D-04): the person themself may always tie
+ * their own day together; anyone else needs a reach for `permission` that covers EVERY non-deleted
+ * entry of the day (`dayCoverage` = "all"). The write ({@link validateTravelEntry}) and the day
+ * check's travel offer (`travel-offer.ts`) both ask this function, so who sees an offer and who may
+ * write the trip can never drift apart.
+ */
+export async function travelWriteCoversDay(
+  db: Prisma.TransactionClient,
+  input: {
+    tenantId: string;
+    employeeId: string;
+    access: AccessContext;
+    callerEmployeeId: string | null;
+    permission: TravelWritePermission;
+    dayRows: readonly Pick<TimeEntry, "salonId" | "employeeId" | "date">[];
+  },
+): Promise<boolean> {
+  if (input.employeeId === input.callerEmployeeId) return true;
+  const reach = await resolveAccessReach(db, input.access, input.permission);
+  const coverage = await dayCoverage(
+    db,
+    input.tenantId,
+    reach,
+    input.dayRows.map((r) => ({ salonId: r.salonId, employeeId: r.employeeId, date: r.date })),
+  );
+  return coverage === "all";
+}
+
+/**
  * The write rule of a travel entry, run inside the writer transaction after the Employee row lock
  * and the overlap re-check. In this order, so an out-of-reach caller never learns anything about
  * the day:
@@ -484,17 +513,17 @@ export async function validateTravelEntry(
     date: input.date,
   });
 
-  if (input.employeeId !== input.callerEmployeeId) {
-    const reach = await resolveAccessReach(db, input.access, input.permission);
-    const coverage = await dayCoverage(
-      db,
-      input.tenantId,
-      reach,
-      dayRows.map((r) => ({ salonId: r.salonId, employeeId: r.employeeId, date: r.date })),
-    );
-    if (coverage !== "all") {
-      return { ok: false, status: 404, body: { error: input.outOfReachMessage } };
-    }
+  if (
+    !(await travelWriteCoversDay(db, {
+      tenantId: input.tenantId,
+      employeeId: input.employeeId,
+      access: input.access,
+      callerEmployeeId: input.callerEmployeeId,
+      permission: input.permission,
+      dayRows,
+    }))
+  ) {
+    return { ok: false, status: 404, body: { error: input.outOfReachMessage } };
   }
 
   const anchored = validateTravelAnchors(dayRows, {
