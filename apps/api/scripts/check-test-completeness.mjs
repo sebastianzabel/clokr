@@ -1015,7 +1015,7 @@ import { readFileSync } from "node:fs";
 // (incl. 3 skipped). Files: +1 drop-user-role-641.test.ts, -1 backfill-539-role-assignments.test.ts (script retired); the
 // base was already 755 files, so 750 had become a loose lower bound. The deleted cases are named at MIN_TESTS.
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped).
-// Issue #624: +1 file (role-chain-package-624.test.ts), full run measured 802 files / 11800 tests (incl. 3 skipped).
+// Issue #624: +1 file (role-chain-package-624.test.ts), full run measured 802 files / 11803 tests (PATCH gate adds 2 cases + 1 site) (incl. 3 skipped).
 const MIN_FILES = 802;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
@@ -1144,7 +1144,7 @@ const MIN_FILES = 802;
 // employee-role-bridge) kept every case.
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped); the drop from 11812 is
 // exactly the deliberately deleted #539/#75b role-column cases named in the #641 comment above.
-const MIN_TESTS = 11800;
+const MIN_TESTS = 11803;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

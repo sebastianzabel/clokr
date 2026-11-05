@@ -6157,8 +6157,7 @@ Löschen bestehender Rollen und Zuweisungen. Die Auflösung (`resolveAccessReach
 Bausteine) liest nie ein Paket: Bestehendes wirkt unverändert weiter, auch nach gekündigtem Paket. Reihenfolge: die
 Paketsperre läuft zuerst, vor Namenskonflikt und vor der Vier-Augen-Bestätigung (#78), weil sie nur vom Mandanten
 abhängt und keine Hinweise auf Namen oder Rechte preisgeben soll; bei der Kopie nach der 404-Prüfung der Quelle
-(T-100-09 unverändert). Offene Grenze: ein späteres `PATCH` einer bestehenden Zuweisung auf Salons oder Personen ist
-nicht gesperrt (Akzeptanzkriterium: nur Neuanlage). Die Neutralitätsmatrix bleibt unverändert, weil die gemeinsamen
+(T-100-09 unverändert). Ein `PATCH`, das eine Zuweisung auf eine Reichweite Salons oder Personen umstellt, die sie vorher nicht hatte (Mandant -> Salons, Salons -> Personen), nimmt dieselbe Sperre; bleibt die Reichweitenart gleich (neue Salonliste, andere Rolle), bleibt es frei. Die Neutralitätsmatrix bleibt unverändert, weil die gemeinsamen
 Testmandanten alle Pakete buchen. Nachweis: `role-chain-package-624`, `packages-legal-core-isolation-566` (drei neue
 Sperrstellen, Auflösungsdateien sauber, nur zwei Dateien erzeugen Rollen/Zuweisungen), Web `module-teaser-placement-566`
 (sechster Hinweis) und `RolesTab`.

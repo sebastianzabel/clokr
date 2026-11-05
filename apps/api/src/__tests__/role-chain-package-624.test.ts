@@ -10,7 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { TenantModule } from "@clokr/db";
-import { getTestApp, seedGrundversionTenant, cleanupTestData } from "./setup";
+import { getTestApp, seedGrundversionTenant, cleanupTestData, createTestSalon } from "./setup";
 import { moduleNotBookedMessage } from "../contexts/platform/tenant-packages";
 import { normalizeRolePermissions, roleNameKey } from "../contexts/platform";
 
@@ -192,5 +192,77 @@ describe("Issue #624 — with the Ketten-Paket", () => {
       JSON.parse(list.body) as { scopeType?: string; scope?: { type?: string } }[]
     ).map((r) => r.scopeType ?? r.scope?.type);
     expect(scopes).toContain("SALONS");
+  });
+});
+
+describe("Issue #624 — PATCH of an assignment", () => {
+  let roleId: string;
+  let salonId: string;
+  let otherSalonId: string;
+
+  beforeAll(async () => {
+    const name = `Patch ${randomBytes(3).toString("hex")}`;
+    const role = await app.prisma.accessRole.create({
+      data: {
+        tenantId: t.tenant.id,
+        name,
+        nameKey: roleNameKey(name),
+        permissions: normalizeRolePermissions(["shift:read:ZUGEWIESEN"]),
+      },
+    });
+    roleId = role.id;
+    salonId = (await app.prisma.salon.findFirstOrThrow({ where: { tenantId: t.tenant.id } })).id;
+    otherSalonId = (await createTestSalon(app.prisma, t.tenant.id)).id;
+  });
+
+  async function assign(scope: Record<string, unknown>) {
+    const res = await inject("POST", "/api/v1/role-assignments", {
+      userId: t.empUser.id,
+      accessRoleId: roleId,
+      scope,
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    return (JSON.parse(res.body) as { id: string }).id;
+  }
+
+  it("without the package TENANT -> SALONS is refused and writes nothing; SALONS -> SALONS stays free", async () => {
+    await setModules([TenantModule.CHAIN]);
+    const salonsAssignment = await assign({ type: "SALONS", salonIds: [salonId] });
+    await setModules([]);
+
+    const edit = await inject("PATCH", `/api/v1/role-assignments/${salonsAssignment}`, {
+      scope: { type: "SALONS", salonIds: [salonId, otherSalonId] },
+    });
+    expect(edit.statusCode, edit.body).toBe(200);
+
+    const toPersons = await inject("PATCH", `/api/v1/role-assignments/${salonsAssignment}`, {
+      scope: { type: "PERSONS", employeeIds: [t.employee.id] },
+    });
+    expectRefusal(toPersons);
+
+    await app.prisma.roleAssignment.delete({ where: { id: salonsAssignment } });
+    const tenantWide = await assign({ type: "TENANT" });
+    expectRefusal(
+      await inject("PATCH", `/api/v1/role-assignments/${tenantWide}`, {
+        scope: { type: "SALONS", salonIds: [salonId] },
+      }),
+    );
+    const row = await app.prisma.roleAssignment.findUniqueOrThrow({ where: { id: tenantWide } });
+    expect(row.scopeType).toBe("TENANT");
+    await app.prisma.roleAssignment.delete({ where: { id: tenantWide } });
+  });
+
+  it("with the package both TENANT -> SALONS and SALONS -> SALONS work", async () => {
+    await setModules([TenantModule.CHAIN]);
+    const id = await assign({ type: "TENANT" });
+    const toSalons = await inject("PATCH", `/api/v1/role-assignments/${id}`, {
+      scope: { type: "SALONS", salonIds: [salonId] },
+    });
+    expect(toSalons.statusCode, toSalons.body).toBe(200);
+    const edit = await inject("PATCH", `/api/v1/role-assignments/${id}`, {
+      scope: { type: "SALONS", salonIds: [salonId, otherSalonId] },
+    });
+    expect(edit.statusCode, edit.body).toBe(200);
+    await app.prisma.roleAssignment.delete({ where: { id } });
   });
 });

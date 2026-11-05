@@ -447,6 +447,13 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
               return { kind: "UNCHANGED", row: current };
             }
 
+            // Issue #624: moving an assignment onto a salon or person reach it did not have is
+            // setting up a new Ketten-Paket use, so it takes the same gate as POST. Keeping the
+            // reach type (a new salon list, another role) stays free: never retroactive.
+            if (nextScope.scopeType !== "TENANT" && nextScope.scopeType !== current.scopeType) {
+              await assertModuleBooked(tx, tenantId, "CHAIN");
+            }
+
             // Resolve only the changed scope references — the same 404s as POST (D-08). The role
             // is always resolved because its name feeds the audit value; an unchanged role is the
             // stored one, which the AccessRole foreign key keeps resolvable.

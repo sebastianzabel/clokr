@@ -1448,7 +1448,7 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   `*_tenant_packages`, Bestandsschutz); run the read-only dry run `scripts/audit-566-package-backfill.ts`
   on int and prod BEFORE the deploy (`docs/migrations.md`, „Phase 566“). Since Issue #624 extended roles belong
   to `CHAIN`, for NEW creations only: `POST /roles`, `POST /roles/:id/copy` and `POST /role-assignments` with
-  scope SALONS or PERSONS answer 409 `MODULE_NOT_BOOKED` (the gate runs first, before the name check and the
+  scope SALONS or PERSONS, and a `PATCH /role-assignments/:id` that switches an assignment to a reach type it did not have, answer 409 `MODULE_NOT_BOOKED` (the gate runs first, before the name check and the
   #78 four-eyes check; TENANT-scope assignments, PATCH and DELETE stay free; `resolveAccessReach` and
   `request-permissions.ts` never read packages, pinned by `packages-legal-core-isolation-566.test.ts`;
   behaviour in `role-chain-package-624.test.ts`). ADR: `docs/adr/0001-abweichungen.md` Eintrag Z.

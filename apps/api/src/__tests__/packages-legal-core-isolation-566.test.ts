@@ -454,6 +454,14 @@ const SITES: Site[] = [
     create: "roleAssignment.create",
   }),
   simpleSite({
+    id: "PATCH /role-assignments/:id",
+    file: `${SRC}/contexts/platform/api/role-assignments.ts`,
+    scope: (sf) => routeCall(sf, "patch", "/:id"),
+    gate: "assertModuleBooked",
+    module: "CHAIN",
+    create: "roleAssignment.update",
+  }),
+  simpleSite({
     id: "POST /terminals",
     file: `${TT_ROOT}/api/terminals.ts`,
     scope: (sf) => routeCall(sf, "post", "/"),
@@ -903,11 +911,12 @@ describe("Issue #566 (AC-5, D-11) — no legally required path is bound to a pac
 });
 
 describe("Issue #566 (D-03, D-05, D-11) — every set-up site calls its gate before its create call", () => {
-  it("the sites table covers all twelve set-up sites", () => {
+  it("the sites table covers all thirteen set-up sites", () => {
     expect(SITES.map((s) => s.id).sort((a, b) => a.localeCompare(b))).toEqual(
       [
         "GET /time-entries/summary",
         "POST /admin/presence-sources",
+        "PATCH /role-assignments/:id",
         "POST /api-keys",
         "POST /role-assignments",
         "POST /roles",
