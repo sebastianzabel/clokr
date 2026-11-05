@@ -15,6 +15,7 @@
   import Pagination from "$components/ui/Pagination.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import DeactivateEmployeeDialog from "$lib/components/admin/DeactivateEmployeeDialog.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
@@ -498,41 +499,33 @@
     }
   }
 
-  // Activation confirm dialog (deactivate + reactivate share one dialog)
-  let activationConfirm = $state<{
-    open: boolean;
-    emp: Employee | null;
-    action: "deactivate" | "reactivate" | null;
-  }>({ open: false, emp: null, action: null });
+  // Deactivation has its own dialog (last working day, preview; Issue #615); reactivation keeps
+  // the plain confirm dialog.
+  let deactivateDialog = $state<{ open: boolean; emp: Employee | null }>({
+    open: false,
+    emp: null,
+  });
+  let reactivateConfirm = $state<{ open: boolean; emp: Employee | null }>({
+    open: false,
+    emp: null,
+  });
 
   function askDeactivate(emp: Employee) {
-    activationConfirm = { open: true, emp, action: "deactivate" };
+    deactivateDialog = { open: true, emp };
   }
 
   function askReactivate(emp: Employee) {
-    activationConfirm = { open: true, emp, action: "reactivate" };
+    reactivateConfirm = { open: true, emp };
   }
 
-  async function confirmActivationChange() {
-    const { emp, action } = activationConfirm;
-    if (!emp || !action) return;
+  async function confirmReactivate() {
+    const { emp } = reactivateConfirm;
+    if (!emp) return;
     try {
-      await api.patch(`/employees/${emp.id}/${action}`, {});
-      if (action === "deactivate") {
-        employees = employees.map((e) =>
-          e.id === emp.id ? { ...e, user: { ...e.user, isActive: false } } : e,
-        );
-      } else {
-        await loadEmployees();
-      }
+      await api.patch(`/employees/${emp.id}/reactivate`, {});
+      await loadEmployees();
     } catch (e: unknown) {
-      alert(
-        e instanceof Error
-          ? e.message
-          : action === "deactivate"
-            ? "Fehler beim Deaktivieren"
-            : "Fehler beim Reaktivieren",
-      );
+      alert(e instanceof Error ? e.message : "Fehler beim Reaktivieren");
     }
   }
 
@@ -1150,19 +1143,23 @@
   {/snippet}
 </Modal>
 
-<!-- ── Bestätigung: Aktivierungsstatus ändern ─────────────────────────────── -->
-{#if activationConfirm.emp}
+<!-- ── Deaktivieren mit letztem Arbeitstag (Issue #615) ───────────────────── -->
+{#if deactivateDialog.emp}
+  <DeactivateEmployeeDialog
+    bind:open={deactivateDialog.open}
+    employee={deactivateDialog.emp}
+    onDeactivated={loadEmployees}
+  />
+{/if}
+
+<!-- ── Reaktivieren bestätigen ────────────────────────────────────────────── -->
+{#if reactivateConfirm.emp}
   <ConfirmDialog
-    bind:open={activationConfirm.open}
-    title={activationConfirm.action === "deactivate"
-      ? "Mitarbeiter deaktivieren?"
-      : "Mitarbeiter reaktivieren?"}
-    description={activationConfirm.action === "deactivate"
-      ? `${activationConfirm.emp.firstName} ${activationConfirm.emp.lastName} kann sich nach der Deaktivierung nicht mehr anmelden. Die Zeitdaten bleiben erhalten.`
-      : `${activationConfirm.emp.firstName} ${activationConfirm.emp.lastName} kann sich nach der Reaktivierung wieder anmelden.`}
-    confirmLabel={activationConfirm.action === "deactivate" ? "Deaktivieren" : "Reaktivieren"}
-    danger={activationConfirm.action === "deactivate"}
-    onConfirm={confirmActivationChange}
+    bind:open={reactivateConfirm.open}
+    title="Mitarbeiter reaktivieren?"
+    description={`${reactivateConfirm.emp.firstName} ${reactivateConfirm.emp.lastName} kann sich nach der Reaktivierung wieder anmelden.`}
+    confirmLabel="Reaktivieren"
+    onConfirm={confirmReactivate}
   />
 {/if}
 
