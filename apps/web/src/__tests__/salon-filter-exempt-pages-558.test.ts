@@ -91,7 +91,7 @@ const EXEMPT_PAGES: ReadonlyArray<{
     file: "(app)/admin/shifts/+page.svelte",
     loads: "/shifts/coverage-rules",
     reason:
-      "configuration of templates and coverage rules: the rules are tenant-wide (no salon column), so the page must not look filtered (D-15)",
+      "configuration of templates and coverage rules: a rule names its own salon in the form since #647, so the page lists every rule and never follows the header salon (D-15)",
   },
 ];
 

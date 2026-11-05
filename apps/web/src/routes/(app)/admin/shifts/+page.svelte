@@ -3,6 +3,14 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
+  import { salonContext, showSalonOptions } from "$stores/salon-context";
+  import {
+    COVERAGE_RULE_SALON_INACTIVE_BADGE,
+    coverageRuleSalonCell,
+    coverageRuleSalonChoices,
+    coverageRuleSalonPayload,
+    showCoverageSalonColumn,
+  } from "$lib/shifts/coverage-rule-salon";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
@@ -23,6 +31,10 @@
     dayOfWeek: number; // -1 = all days, 0..6 = Mo..So
     minStaff: number | string; // Decimal arrives as string from Prisma
     requiresNonSupervised: boolean;
+    // Issue #647: display fields served by the list; null = a rule for all salons.
+    salonId: string | null;
+    salonName: string | null;
+    salonActive: boolean | null;
   }
 
   // Phase 48 — Pattern editor types
@@ -93,6 +105,17 @@
   let ruleMinStaff = $state<number>(2);
   let ruleRequiresNonSupervised = $state(false);
   let ruleError = $state("");
+  // Issue #647: "" = all salons (tenant-wide). Sent only while the select is shown.
+  let ruleSalonId = $state("");
+  // The #64 rule, in its one place: the salon choice and the list column appear only with salon options.
+  const salonOptionsShown = $derived(showSalonOptions($salonContext));
+  const salonColumnShown = $derived(showCoverageSalonColumn(salonOptionsShown, coverageRules));
+  const ruleSalonChoices = $derived(
+    coverageRuleSalonChoices(
+      $salonContext.salons,
+      coverageRules.find((r) => r.id === ruleEditingId) ?? null,
+    ),
+  );
 
   // Delete confirmations
   let tplDeleteConfirm = $state<{ open: boolean; id: string | null; name: string }>({
@@ -318,6 +341,7 @@
     ruleDayOfWeek = -1;
     ruleMinStaff = 2;
     ruleRequiresNonSupervised = false;
+    ruleSalonId = "";
     ruleError = "";
     ruleModalOpen = true;
   }
@@ -328,6 +352,7 @@
     ruleDayOfWeek = rule.dayOfWeek;
     ruleMinStaff = Number(rule.minStaff);
     ruleRequiresNonSupervised = rule.requiresNonSupervised;
+    ruleSalonId = rule.salonId ?? "";
     ruleError = "";
     ruleModalOpen = true;
   }
@@ -345,6 +370,7 @@
         dayOfWeek: ruleDayOfWeek,
         minStaff: ruleMinStaff,
         requiresNonSupervised: ruleRequiresNonSupervised,
+        ...coverageRuleSalonPayload(salonOptionsShown, ruleSalonId),
       };
       if (ruleEditingId) {
         await api.put(`/shifts/coverage-rules/${ruleEditingId}`, payload);
@@ -466,7 +492,13 @@
           </p>
         {:else}
           <div class="cfg-table">
-            <div class="cfg-row cfg-row--head cfg-row--rules">
+            <div
+              class="cfg-row cfg-row--head cfg-row--rules"
+              class:cfg-row--rules-salon={salonColumnShown}
+            >
+              {#if salonColumnShown}
+                <div>Salon</div>
+              {/if}
               <div>Vorlage</div>
               <div>Wochentag</div>
               <div>Min. Schicht-Gewicht</div>
@@ -474,7 +506,16 @@
               <div class="cfg-row__actions">Aktionen</div>
             </div>
             {#each coverageRules as rule (rule.id)}
-              <div class="cfg-row cfg-row--rules">
+              <div class="cfg-row cfg-row--rules" class:cfg-row--rules-salon={salonColumnShown}>
+                {#if salonColumnShown}
+                  {@const salonCell = coverageRuleSalonCell(rule)}
+                  <div>
+                    {salonCell.label}
+                    {#if salonCell.inactive}
+                      <span class="badge badge-yellow">{COVERAGE_RULE_SALON_INACTIVE_BADGE}</span>
+                    {/if}
+                  </div>
+                {/if}
                 <div class="cfg-cell-name">{ruleTemplateName(rule)}</div>
                 <div>{ruleDayLabel(rule)}</div>
                 <div class="cfg-cell-num">{Number(rule.minStaff).toFixed(2)}</div>
@@ -647,6 +688,21 @@
     Die spezifischste Regel gewinnt: (Vorlage + Wochentag) &gt; (Alle Vorlagen + Wochentag) &gt;
     (Vorlage + Alle Tage) &gt; (Alle Vorlagen + Alle Tage). Default ist 2.0 Schicht-Gewicht.
   </p>
+  {#if salonOptionsShown}
+    <div class="form-group">
+      <label class="form-label" for="rule-salon">Salon</label>
+      <select id="rule-salon" class="form-input" bind:value={ruleSalonId}>
+        {#each ruleSalonChoices as choice (choice.value)}
+          <option value={choice.value}>{choice.label}</option>
+        {/each}
+      </select>
+    </div>
+    <p class="cfg-help">
+      Eine Regel für einen Salon geht in diesem Salon auf derselben Stufe der Regel für alle Salons
+      vor. Ohne gewählten Salon in der Kopfleiste rechnet die Wochenansicht nur mit den Regeln für
+      alle Salons.
+    </p>
+  {/if}
   <div class="form-group">
     <label class="form-label" for="rule-tpl">Vorlage</label>
     <select id="rule-tpl" class="form-input" bind:value={ruleTemplateId}>
@@ -740,6 +796,10 @@
   }
   .cfg-row--rules {
     grid-template-columns: 1.5fr 1.2fr 1.2fr 1.5fr 180px;
+  }
+  /* Issue #647: the same row with the salon column in front. */
+  .cfg-row--rules-salon {
+    grid-template-columns: 1.2fr 1.5fr 1.2fr 1.2fr 1.5fr 180px;
   }
   /* .cfg-row--hours / .cfg-hours-table moved to /admin/system#allgemein (Phase 58). */
   .cfg-row--head {
@@ -837,7 +897,8 @@
 
   @media (max-width: 720px) {
     .cfg-row,
-    .cfg-row--rules {
+    .cfg-row--rules,
+    .cfg-row--rules-salon {
       grid-template-columns: 1fr;
       gap: 4px;
     }
