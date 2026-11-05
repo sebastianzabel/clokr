@@ -6280,6 +6280,8 @@ des heutigen Tages blockiert weiterhin das Stempeln (`RETRO_PENDING`). Die Freig
 Mitarbeiterzeile und prüft die Überschneidung in derselben Transaktion; bei einem Treffer bleibt der Antrag `PENDING`
 und nichts wird geschrieben. Folge-Issue: #657 (Antrag je Eintrag).
 
+_(Nachtrag Phase 657: umgesetzt - der Zeitnachtrag gilt je Zeitraum, ein offener Antrag blockiert das Stempeln nicht mehr; siehe Eintrag AA, Nachtrag Phase 657.)_
+
 ### Oberfläche
 
 Nur wo `showSalonOptions()` gilt (mehr als ein aktiver Salon im Mandanten UND mehr als einer erreichbar): Dashboard-
@@ -6350,6 +6352,7 @@ INDEX`. Das `DROP INDEX` des alten Index steht daher von Hand als erste Anweisun
   erfasste Tagespause (`DayBreak`) oder Quittung.
 - **Kein Zeitnachtrag je Eintrag** (siehe oben), **keine Fahrzeit** (#92), **keine Salonbindung von NFC und WLAN** (#541).
   _(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
+  _(Nachtrag Phase 657: der Zeitnachtrag je Eintrag ist umgesetzt, siehe Eintrag AA, Nachtrag Phase 657; die Fahrzeit bleibt nicht beantragbar.)_
 - **Keine Neuberechnung und kein Backfill:** geschlossene Monate werden nie neu bewertet.
 - **Entfallen sind** `checkOneEntryPerDay`, `SALON_DIFFERS_FROM_DAY_ENTRY`, das Bereinigungsskript
   `cleanup-time-entry-duplicates.ts` (es hätte rechtmäßige zweite Einträge weich gelöscht) und alle
@@ -6414,6 +6417,7 @@ den Stand vor #92 und gelten nicht mehr (Eintrag AB). Für die Regeln dieses Ein
   eines Tages.
 - Der Zeitnachtrag bleibt ein Antrag je Tag; eine Fahrt ist als Zeitnachtrag nicht beantragbar (409
   `TRAVEL_NOT_AS_RETRO_REQUEST`, Hinweis am Folge-Issue #657).
+  _(Nachtrag Phase 657: der Zeitnachtrag gilt seitdem je Zeitraum, siehe Eintrag AA, Nachtrag Phase 657; die Fahrt bleibt als Zeitnachtrag abgewiesen.)_
 
 ### Nachtrag 2026-11-02 (Phase 541, Issue #541) — NFC-Terminal an einen Salon gebunden
 
@@ -6492,6 +6496,37 @@ Fünf neue API-Testdateien: `nfc-punch-salon-binding-541` (13 Fälle, Abdeckung 
 `admin-system-terminal-salon-541` (5). Die Neutralitätsmatrix (1680 Fälle) ist unverändert, `git diff origin/main` über
 `neutrality/recorded` und `presence.ts` ist leer, der CI-Driftcheck (`migrate diff --exit-code`) meldet keinen Unterschied.
 Laufbuch: `docs/migrations.md`, „Phase 541“.
+
+### Nachtrag 2026-11-05 (Phase 657, Issue #657) — Zeitnachtrag je Zeitraum
+
+Die Aussagen „ein Antrag je Mitarbeiter und Tag“ und „ein ausstehender Antrag blockiert das Stempeln (`RETRO_PENDING`)“
+gelten nicht mehr. **Schwere:** keine Änderung am Unterbau, kein Schema, keine Migration; nur Zeiterfassung.
+
+- **Die Regel (eine Stelle):** `findOverlappingRetroRequest()` (`contexts/time-tracking/retro-request-overlap.ts`)
+  entscheidet, ob ein neuer Antrag einen lebenden Antrag desselben Tages überlappt. Es zählen offene (`PENDING`) Anträge
+  (mit gekoppelter Zeile über deren Intervall, sonst über die beantragten Zeiten) und freigegebene Anträge ohne gekoppelte
+  Zeile; ein freigegebener Antrag mit gekoppelter Zeile ist ein gewöhnlicher Eintrag und fällt unter die
+  Überschneidungsprüfung des Eintrags. Abgelehnte, verbrauchte und zurückgezogene Anträge zählen nicht. Halboffene Intervalle; ein Antrag ohne Zeiten deckt den ganzen Tag ab. Antwort
+  bei einem Treffer: 409 `RETRO_REQUEST_OVERLAP`, es wird nichts geschrieben.
+- **Beide Anlagewege** (`POST /retro-entry-requests` und der Zeitnachtrag „Eintrag zuerst“ in `POST /time-entries`)
+  prüfen und schreiben unter `lockEmployeeForEntryWrite()` als erster Anweisung. Der Korrekturvorschlag hat keine
+  Eintragsprüfung (D-12), weil er den Eintrag überlappt, den er korrigiert.
+- **Die Stempeluhr (D-14):** eine Zeile, die an einen ausstehenden Antrag gekoppelt ist (`retroRequestId`, `isInvalid`,
+  Code `RETRO_APPROVAL_PENDING`), ist kein Kandidat von `openEntryOf()` / `latestEndingClosed()` und verdeckt jede Zeile,
+  die vor ihr endet. Die Uhr beginnt einen neuen Eintrag, in jedem Salon; ein Zeitpunkt innerhalb oder vor dem beantragten
+  Zeitraum wird von der Überschneidungsregel mit `ENTRY_OVERLAP` abgelehnt. Ein Ausstempeln neben einer offenen
+  Antragszeile antwortet `RETRO_PENDING`; die Datenbankprüfung desselben Codes bleibt als Rückfallprüfung für Zeilen ohne
+  Markierung (z. B. nach `PATCH /time-entries/:id/revalidate`). Die Zusammenführung (`consolidate.ts`) kennt die Sperre
+  `retro_row`. Die Salonauswahl der Uhr (`clockSalonChoice()`) und der Tageszustand im Dashboard
+  (`resolveDayState()`, `isPendingNachtragRow()`) folgen denselben Selektoren.
+- **Die Freigabe bleibt unverändert (D-06):** Sperre zuerst, Statuswechsel, Überschneidungsprüfung in derselben
+  Transaktion. Nachweis: `retro-two-approvals-657.test.ts` (nacheinander, gleichzeitig, Sperrenrennen).
+- **Fahrzeit bleibt als Zeitnachtrag abgewiesen (D-15).** Folge-Issue (nicht angelegt): Fahrzeit als Zeitnachtrag über
+  `validateTravelEntry()`.
+- **Gemessen:** neue API-Testdateien `retro-request-overlap` (4), `retro-request-per-interval-657` (17),
+  `retro-pending-clock-657` (20), `retro-two-approvals-657` (3); Web: 7 neue Fälle in `day-state.test.ts`. Die
+  Neutralitätsmatrix (1680 Fälle), die Empfänger- und Aktivitätsaufzeichnungen sind unverändert (`git diff origin/main`
+  über `neutrality/recorded` ist leer), das Fixture der Tagespausen-Äquivalenz (#80) ist unberührt.
 
 ## AB — Fahrzeit zwischen Salons als eigener Zeiteintrag (Phase 92b, Issue #92)
 
@@ -6671,6 +6706,8 @@ gestellt (die Seite zeigt einen Text statt des Zeitnachtrag-Formulars). Mandante
 - **Kein Lücken-Angebot:** „Als Fahrzeit erfassen“ für eine nicht aufgelöste Lücke (D-08, nur Folge-Issue #660).
 - **Keine Fahrzeit als Zeitnachtrag** (409 `TRAVEL_NOT_AS_RETRO_REQUEST`; solange ein Zeitnachtrag je Tag gilt, Folge-Issue
   #657). **Keine Fahrzeit per CSV-Import oder Stempelereignis.**
+  _(Nachtrag Phase 657: die Bedingung „solange ein Zeitnachtrag je Tag gilt“ besteht nicht mehr; die Abweisung bleibt
+  bewusst (D-15), eine Fahrzeit als Zeitnachtrag wäre ein eigenes Folge-Issue über `validateTravelEntry()`.)_
 - **Berichte, PDFs, DATEV und Dashboard** zeigen die Fahrzeit als gewöhnliche Arbeitszeitzeile; es gibt weder eine eigene
   Spalte noch einen eigenen Bericht.
 - **Keine Neuberechnung und kein Backfill:** die Migration schreibt keine Zeile, geschlossene Monate werden nie neu
