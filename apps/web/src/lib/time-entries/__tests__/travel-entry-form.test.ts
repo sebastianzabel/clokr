@@ -279,6 +279,30 @@ describe("travelOfferErrorText (#660)", () => {
     ).toBe("Fahrzeit kann nur zwischen zwei Einträgen liegen.");
   });
 
+  it("maps the bare RETRO_WINDOW_EXCEEDED code to the German window text (WR-02)", () => {
+    const err = Object.assign(new Error("RETRO_WINDOW_EXCEEDED"), {
+      status: 403,
+      data: { error: "RETRO_WINDOW_EXCEEDED", windowDays: 7, entryAgeInDays: 8 },
+    });
+    expect(travelOfferErrorText(err)).toBe(TRAVEL_TEXTS.outsideWindow);
+    expect(travelOfferErrorText(err)).not.toMatch(/RETRO_WINDOW_EXCEEDED/);
+  });
+
+  it("shows the German sentence of JARBSCHG_MINOR_LIMIT, never the code prefix (WR-02)", () => {
+    const err = Object.assign(
+      new Error("JARBSCHG_MINOR_LIMIT: Die Höchstarbeitszeit ist erreicht."),
+      {
+        status: 400,
+        data: { error: "JARBSCHG_MINOR_LIMIT", message: "Die Höchstarbeitszeit ist erreicht." },
+      },
+    );
+    expect(travelOfferErrorText(err)).toBe("Die Höchstarbeitszeit ist erreicht.");
+    const bare = Object.assign(new Error("JARBSCHG_MINOR_LIMIT"), {
+      data: { error: "JARBSCHG_MINOR_LIMIT" },
+    });
+    expect(travelOfferErrorText(bare)).toBe(TRAVEL_TEXTS.offerFailed);
+  });
+
   it("falls back to the generic text for an empty message or a non-error", () => {
     expect(travelOfferErrorText(new Error(""))).toBe(TRAVEL_TEXTS.offerFailed);
     expect(travelOfferErrorText("boom")).toBe(TRAVEL_TEXTS.offerFailed);

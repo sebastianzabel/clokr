@@ -187,7 +187,20 @@ export function travelOfferPayload(date: string, offer: DayCheckTravelOffer) {
   });
 }
 
-/** The server's own German refusal text (`ApiError.message`), else the generic fallback. */
+/**
+ * The text a refused offer shows: the server's own German refusal (`ApiError.message`), else the
+ * generic fallback. Two refusals of the POST answer a bare control code in `error` instead of
+ * German text, so they are mapped here and never shown raw: `RETRO_WINDOW_EXCEEDED` (the day left
+ * the editing window while the offer stood) and `JARBSCHG_MINOR_LIMIT` (its German sentence is in
+ * `message`, the code only prefixes it in `ApiError.message`). The code is the control value.
+ */
 export function travelOfferErrorText(err: unknown): string {
+  const data = (err as { data?: { error?: unknown; message?: unknown } } | null)?.data;
+  if (data?.error === "RETRO_WINDOW_EXCEEDED") return TRAVEL_TEXTS.outsideWindow;
+  if (data?.error === "JARBSCHG_MINOR_LIMIT") {
+    return typeof data.message === "string" && data.message.trim()
+      ? data.message.trim()
+      : TRAVEL_TEXTS.offerFailed;
+  }
   return err instanceof Error && err.message ? err.message : TRAVEL_TEXTS.offerFailed;
 }
