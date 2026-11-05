@@ -15,6 +15,12 @@
  * Pure module: no Svelte, no API call, so it is unit-testable without a mounted page.
  */
 
+import type {
+  DayCheck,
+  DayCheckTravelOffer,
+  DayChecksResponse,
+} from "$lib/breaks/day-break-violation";
+
 /**
  * The fields of a `GET /time-entries` row a trip adds. The pages' own row types extend this, so a
  * page never has to name the kind field itself — every kind read goes through `isTravelRow`.
@@ -42,6 +48,10 @@ export const TRAVEL_TEXTS = {
   salonsRequired: "Bitte wählen Sie „Von Salon“ und „Nach Salon“.",
   outsideWindow:
     "Eine Fahrzeit außerhalb des Bearbeitungsfensters kann nicht nachträglich beantragt werden.",
+  offerHint:
+    "War die Lücke eine Fahrt zwischen den Salons, lässt sie sich hier als Fahrzeit übernehmen.",
+  offerFailed: "Die Fahrzeit konnte nicht erfasst werden.",
+  offerStale: "Das Angebot ist nicht mehr aktuell \u2013 die Tagesprüfung wurde neu geladen.",
 } as const;
 
 /** The name shown for a side of the route whose name the server did not serve. */
@@ -145,4 +155,107 @@ export function travelFormMode(
   if (!multiEntryUi) return "none";
   if (!editingRow) return "offer";
   return isTravelRow(editingRow) ? "travel" : "none";
+}
+
+/**
+ * Issue #660 (AC-660-6): the ONE place the #64 presentation gate of the day-check travel offer
+ * lives. The offers are the server's (`travelOffers` of a full day); this only hides them where
+ * the page shows no salon options (a single-salon tenant looks as before) and on a withheld day.
+ * It derives no gap, no salon pair and no permission.
+ */
+export function travelOffersShown(check: DayCheck, multiEntryUi: boolean): DayCheckTravelOffer[] {
+  if (!multiEntryUi || check.detail !== "full") return [];
+  return check.travelOffers ?? [];
+}
+
+/** „Fahrzeit HH:MM–HH:MM von {Abfahrtssalon} nach {Zielsalon} erfassen“ from the served offer. */
+export function travelOfferLabel(offer: DayCheckTravelOffer): string {
+  const time = (iso: string) =>
+    new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  return (
+    `Fahrzeit ${time(offer.startTime)}\u2013${time(offer.endTime)} ` +
+    `von ${offer.departureSalonName} nach ${offer.arrivalSalonName} erfassen`
+  );
+}
+
+/**
+ * The body of the POST that takes an offer over: the served interval and salon ids through the
+ * one trip body builder (`travelPayload`) — exactly the five trip keys, no note, no kind.
+ */
+export function travelOfferPayload(date: string, offer: DayCheckTravelOffer) {
+  return travelPayload({
+    date,
+    start: offer.startTime,
+    end: offer.endTime,
+    fromSalonId: offer.departureSalonId,
+    toSalonId: offer.arrivalSalonId,
+  });
+}
+
+/**
+ * The text a refused offer shows: the server's own German refusal (`ApiError.message`), else the
+ * generic fallback. Two refusals of the POST answer a bare control code in `error` instead of
+ * German text, so they are mapped here and never shown raw: `RETRO_WINDOW_EXCEEDED` (the day left
+ * the editing window while the offer stood) and `JARBSCHG_MINOR_LIMIT` (its German sentence is in
+ * `message`, the code only prefixes it in `ApiError.message`). The code is the control value.
+ */
+export function travelOfferErrorText(err: unknown): string {
+  const data = (err as { data?: { error?: unknown; message?: unknown } } | null)?.data;
+  if (data?.error === "RETRO_WINDOW_EXCEEDED") return TRAVEL_TEXTS.outsideWindow;
+  if (data?.error === "JARBSCHG_MINOR_LIMIT") {
+    return typeof data.message === "string" && data.message.trim()
+      ? data.message.trim()
+      : TRAVEL_TEXTS.offerFailed;
+  }
+  return err instanceof Error && err.message ? err.message : TRAVEL_TEXTS.offerFailed;
+}
+
+/** Two offers are the same one when interval and salon pair are identical. */
+function sameOffer(a: DayCheckTravelOffer, b: DayCheckTravelOffer): boolean {
+  return (
+    Date.parse(a.startTime) === Date.parse(b.startTime) &&
+    Date.parse(a.endTime) === Date.parse(b.endTime) &&
+    a.departureSalonId === b.departureSalonId &&
+    a.arrivalSalonId === b.arrivalSalonId
+  );
+}
+
+/**
+ * Whether a freshly loaded day check still serves exactly this offer (identical interval and
+ * salon pair), through the same #64 gate the panel uses. A missing response, a missing day or a
+ * changed gap is "no longer served".
+ */
+export function travelOfferStillServed(
+  fresh: DayChecksResponse | null | undefined,
+  date: string,
+  multiEntryUi: boolean,
+  offer: DayCheckTravelOffer,
+): boolean {
+  const check = fresh?.days.find((day) => day.date === date);
+  if (!check) return false;
+  return travelOffersShown(check, multiEntryUi).some((served) => sameOffer(served, offer));
+}
+
+export type TravelOfferOutcome<T> = { posted: false } | { posted: true; result: T };
+
+/**
+ * Issue #660 (WR-01): an offer is bound to the day state it was computed from only by this
+ * re-check - the day check of that person and day is loaded again right before writing, and the
+ * trip is posted only if an offer with the identical interval and salon pair is still served.
+ * Otherwise nothing is written (`posted: false`) and the page shows `TRAVEL_TEXTS.offerStale` and
+ * reloads. The check does not close the window between it and the write: what changes inside
+ * that window, and every other refusal, is the write rule's answer (`validateTravelEntry`).
+ */
+export async function postOfferIfStillServed<T>(args: {
+  date: string;
+  offer: DayCheckTravelOffer;
+  multiEntryUi: boolean;
+  loadChecks: () => Promise<DayChecksResponse | null>;
+  post: () => Promise<T>;
+}): Promise<TravelOfferOutcome<T>> {
+  const fresh = await args.loadChecks();
+  if (!travelOfferStillServed(fresh, args.date, args.multiEntryUi, args.offer)) {
+    return { posted: false };
+  }
+  return { posted: true, result: await args.post() };
 }

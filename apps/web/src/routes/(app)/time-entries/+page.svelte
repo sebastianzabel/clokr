@@ -15,6 +15,7 @@
   // cross-salon finding itself.
   import {
     type DayCheck,
+    type DayCheckTravelOffer,
     type DayCheckWarning,
     type DayChecksResponse,
     type DayWarning,
@@ -46,10 +47,14 @@
     isTravelRow,
     travelArrivalOptions,
     travelFormMode,
+    travelOfferErrorText,
+    postOfferIfStillServed,
+    travelOfferPayload,
+    travelOffersShown,
     travelPayload,
     travelRouteLabel,
     type TravelRowFields,
-  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08
+  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08; offer: Issue #660
   import { mayFileRetroRequest } from "$lib/page-rights";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
@@ -1237,6 +1242,41 @@
     await loadAll();
   }
 
+  // Issue #660: an offer of the day check goes through the trip body of the form. Right before
+  // writing, the day check is loaded again and the trip is posted only if the identical offer is
+  // still served (WR-01); the server then re-decides the write. A refusal is the server's own text
+  // (a toast survives the reload, the panel may not), and the reload shows the new day state
+  // either way.
+  async function recordTravelOffer(date: string, offer: DayCheckTravelOffer) {
+    if (!ownEmployeeId) return;
+    const employeeId = ownEmployeeId;
+    try {
+      const outcome = await postOfferIfStillServed({
+        date,
+        offer,
+        multiEntryUi,
+        loadChecks: () =>
+          api
+            .get<DayChecksResponse>(
+              `/day-breaks/checks?employeeId=${employeeId}&from=${date}&to=${date}`,
+            )
+            .catch(() => null),
+        post: () =>
+          api.post<{ warnings?: unknown }>("/time-entries", travelOfferPayload(date, offer)),
+      });
+      if (!outcome.posted) {
+        toasts.warning(TRAVEL_TEXTS.offerStale);
+      } else {
+        const notice = breakFindingSaveNotice(outcome.result?.warnings);
+        if (notice) toasts.warning(notice);
+      }
+    } catch (e: unknown) {
+      toasts.error(travelOfferErrorText(e));
+    } finally {
+      await loadAll();
+    }
+  }
+
   async function deleteDayBreak(id: string, reason: string) {
     await api.delete(`/day-breaks/${id}`, { reason });
     await loadAll();
@@ -1983,6 +2023,8 @@
       onDeleteBreak={deleteDayBreak}
       onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
       onRevoke={revokeDayAck}
+      travelOffers={travelOffersShown(dayCheck, multiEntryUi)}
+      onRecordTravel={(offer) => recordTravelOffer(dayCheck.date, offer)}
     />
   {/each}
 

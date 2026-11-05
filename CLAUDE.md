@@ -518,8 +518,18 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   `travel-saldo-isolation-92.test.ts` (AST, sibling of the #81 guard: no saldo, kernel, composition or holiday file may
   name a travel field or `travel-entry`; the T1/T2 facade `facade/time-entries.ts` has exactly ONE allowed import,
   `checkTravelNeighbours` + `TravelRefusalError`, for the CSV import writer) and `travel-saldo-equality-92.test.ts`
-  (a trip equals an ordinary entry of the same times on every figure surface). UI only for tenants with salon choice
-  (#64 gate). Never add a second travel validator, a travel field to a figure file or a travel share.
+  (a trip equals an ordinary entry of the same times on every figure surface). Since #660 `GET /day-breaks/checks`
+  offers each cross-salon gap of a day with an UNCLEAR finding as a trip (`travelOffers`: the exact gap, departure =
+  salon of the entry before, arrival = salon of the entry after), built only in
+  `contexts/time-tracking/travel-offer.ts` from the kernel's own gaps and the write rule's own anchor check, never on a
+  redacted or locked day, never on a gap touching a trip or a pending Zeitnachtrag row, on the person's own day only
+  inside the retro window; who sees it is decided by `travelWriteCoversDay()`, the ONE reach rule
+  `validateTravelEntry()` also calls, and the action is the unchanged `POST /time-entries`. The web re-loads the day
+  check of that person and day right before writing and posts only if an offer with the identical interval and salon
+  pair is still served (`postOfferIfStillServed()`, else a toast and a reload); the remaining race and any other
+  refusal are the write rule's answer, which checks anchors, overlap and day breaks but does not bind the interval to
+  the offered gap. UI only for tenants with salon choice (#64 gate). Never add a second travel validator, a second reach
+  rule for the offer, a travel field to a figure file or a travel share.
 - **Breaks are checked per day, across salons (Issue #80).** `evaluateDayBreaks()`
   (`apps/api/src/contexts/time-tracking/day-break-rule.ts`) is the ONLY place the day-level § 4
   rule and the § 3 day sum over several entries live — `checkArbZG`, the day-break routes

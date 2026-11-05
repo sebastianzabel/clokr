@@ -58,6 +58,7 @@ import {
 } from "../arbzg";
 import { dayCoverage } from "../day-scope";
 import { resolveEntrySalon } from "../entry-salon";
+import { createTravelOfferContext, travelOffersOfDay, type TravelOffer } from "../travel-offer"; // Issue #660 — the travel offer of an unclear gap
 import { planAutoBreak, autoBreakAppliesOnCreate } from "../auto-break-plan"; // Issue #511 (AK-4) — the save's own automatic-break decision
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -374,6 +375,7 @@ function fullDayCheck(params: {
   dayBreaksOfDay: ReadonlyArray<DayBreak>;
   tz: string;
   birthDateMissing: boolean;
+  travelOffers: ReadonlyArray<TravelOffer>;
 }) {
   const { evaluation, currentAck } = params;
   return {
@@ -410,6 +412,9 @@ function fullDayCheck(params: {
       startTime: b.startTime,
       endTime: b.endTime,
     })),
+    // Issue #660, D-01: present only when there is an offer, so every answer without one stays
+    // byte-identical. Never part of the redacted whitelist above.
+    ...(params.travelOffers.length > 0 ? { travelOffers: params.travelOffers } : {}),
   };
 }
 
@@ -782,7 +787,13 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         "time, salon or id of any entry; every other figure of the day is null; a day none of whose " +
         "entries is in scope is omitted. The gaps " +
         "are the day-break kernel's own gap list. maxDailyExceeded compares the day's net working " +
-        "time of these entries only (no Berufsschule credit) against the § 3 ArbZG cap of 10 h.",
+        "time of these entries only (no Berufsschule credit) against the § 3 ArbZG cap of 10 h. " +
+        "A full-detail day may carry `travelOffers` (Issue #660): for each cross-salon gap of a day " +
+        "with an UNCLEAR placement finding that the caller may record as a trip through " +
+        "POST /time-entries (the travel write rule's reach over every entry of the day, day not " +
+        "locked, the person's own day only inside the retro window) the exact gap interval, " +
+        "departure and arrival salon ids (control values) and names (display). Absent otherwise " +
+        "and never on a redacted day.",
       security: [{ bearerAuth: [] }],
     },
     preHandler: requireAuth,
@@ -943,6 +954,18 @@ export async function dayBreakRoutes(app: FastifyInstance) {
       // permission and the same day-wide coverage those routes enforce. The routes decide
       // independently; these flags only stop the UI from offering an action that would be refused.
       const updateReach = await permissionReach(req, "time-entry:update");
+      // Issue #660: the travel offer. The create right is the route gate POST /time-entries applies
+      // to a trip; the reach over every entry of the day is asked later, of the write rule itself.
+      const createReach = await permissionReach(req, "time-entry:create");
+      const travelOfferCtx = createTravelOfferContext({
+        db: app.prisma,
+        tenantId,
+        employeeId,
+        access,
+        callerEmployeeId: req.user.employeeId ?? null,
+        createReach,
+        tz,
+      });
       // The read reach decides how much of someone else's day the caller sees (D-11); the update
       // reach decides whether they may write to it (D-13).
       const readScope = isOwnDay
@@ -1014,6 +1037,15 @@ export async function dayBreakRoutes(app: FastifyInstance) {
         const currentAck = evaluation.acknowledged
           ? acksOfDay.filter((a) => isAckSnapshotCurrent(a.snapshot, evaluation.snapshot)).at(-1)
           : undefined;
+        // Issue #660 (D-06): no offer on a locked day or in a closed month - the write would refuse.
+        const travelOffers = locked
+          ? []
+          : await travelOffersOfDay(travelOfferCtx, {
+              dateKey,
+              date: dayDate,
+              evaluation,
+              dayBreaks: dayBreaksOfDay,
+            });
         days.push(
           fullDayCheck({
             dateKey,
@@ -1026,6 +1058,7 @@ export async function dayBreakRoutes(app: FastifyInstance) {
             dayBreaksOfDay,
             tz,
             birthDateMissing,
+            travelOffers,
           }),
         );
       }

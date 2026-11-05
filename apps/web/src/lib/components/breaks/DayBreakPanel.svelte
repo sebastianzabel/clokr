@@ -17,7 +17,9 @@
    * hint and a note only — no totals, no § paragraph, no finding list, no badge, no action and
    * never a time, salon or id (Issue #85 D-07, DSGVO Art. 5 Abs. 1 lit. c). Permission decisions
    * come from the server flags `mayAcknowledge` / `mayRecordDayBreak`; the routes enforce them
-   * independently.
+   * independently. Issue #660: the server's travel offers for an unclear cross-salon gap are shown
+   * as one-click actions; the page passes them (already filtered by the #64 gate) and sends the
+   * request, the panel decides nothing.
    */
   import ReasonDialog from "$components/ui/ReasonDialog.svelte";
   import {
@@ -25,7 +27,9 @@
     hasPlacementFinding,
     hoursDe,
     type DayCheck,
+    type DayCheckTravelOffer,
   } from "$lib/breaks/day-break-violation";
+  import { TRAVEL_TEXTS, travelOfferLabel } from "$lib/time-entries/travel-entry-form";
 
   interface Props {
     check: DayCheck;
@@ -34,9 +38,21 @@
     onDeleteBreak?: (id: string, reason: string) => Promise<void>;
     onAcknowledge?: (reason: string) => Promise<void>;
     onRevoke?: (ackId: string, reason: string) => Promise<void>;
+    /** Issue #660: the server's offers for this day, already filtered by the page's #64 gate. */
+    travelOffers?: DayCheckTravelOffer[];
+    /** Takes one offer over as a trip. The page sends the request and reports a refusal. */
+    onRecordTravel?: (offer: DayCheckTravelOffer) => Promise<void>;
   }
 
-  let { check, onAddBreak, onDeleteBreak, onAcknowledge, onRevoke }: Props = $props();
+  let {
+    check,
+    onAddBreak,
+    onDeleteBreak,
+    onAcknowledge,
+    onRevoke,
+    travelOffers = [],
+    onRecordTravel,
+  }: Props = $props();
 
   type ReasonAction =
     { kind: "delete"; id: string } | { kind: "acknowledge" } | { kind: "revoke"; ackId: string };
@@ -77,6 +93,19 @@
       full.acknowledgement !== null &&
       onRevoke !== undefined,
   );
+
+  const shownOffers = $derived(full !== null && onRecordTravel ? travelOffers : []);
+  let recordingTravel = $state(false);
+
+  async function recordTravel(offer: DayCheckTravelOffer) {
+    if (recordingTravel || !onRecordTravel) return;
+    recordingTravel = true;
+    try {
+      await onRecordTravel(offer);
+    } finally {
+      recordingTravel = false;
+    }
+  }
 
   function timeLabel(iso: string): string {
     return new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
@@ -205,6 +234,22 @@
             </li>
           {/each}
         </ul>
+        {#if shownOffers.length > 0}
+          <p class="text-muted">{TRAVEL_TEXTS.offerHint}</p>
+          <div class="dbp-actions">
+            {#each shownOffers as offer (offer.startTime)}
+              <button
+                type="button"
+                class="btn btn-sm btn-secondary dbp-offer"
+                data-testid="day-break-travel-offer"
+                disabled={recordingTravel}
+                onclick={() => recordTravel(offer)}
+              >
+                {travelOfferLabel(offer)}
+              </button>
+            {/each}
+          </div>
+        {/if}
       {:else}
         <p class="dbp-note">
           Einträge außerhalb des eigenen Zuständigkeitsbereichs werden nicht angezeigt.
@@ -341,6 +386,15 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
+  }
+  /* Issue #660: the label names two salons and runs long; .btn is nowrap, so without this the
+     button overflows the callout at 384 px. */
+  .dbp-offer {
+    white-space: normal;
+    text-align: left;
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .dbp-error {
     color: var(--bad);

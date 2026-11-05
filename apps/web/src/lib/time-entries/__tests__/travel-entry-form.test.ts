@@ -4,16 +4,28 @@
 // lock); this module only shapes the request and the labels. In particular the payload NEVER
 // carries an entry kind, a break or an activity share (T-92b-24): the kind is derived server-side
 // from `travelToSalonId` and is immutable.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   TRAVEL_TEXTS,
   isTravelRow,
   travelArrivalOptions,
   travelFormMode,
+  travelOfferErrorText,
+  travelOfferLabel,
+  postOfferIfStillServed,
+  travelOfferPayload,
+  travelOfferStillServed,
+  travelOffersShown,
   travelPayload,
   travelRouteLabel,
 } from "../travel-entry-form";
+import type {
+  DayCheck,
+  DayCheckTravelOffer,
+  DayChecksResponse,
+  FullDayCheck,
+} from "$lib/breaks/day-break-violation";
 
 const TRAVEL = { activityKind: "TRAVEL" };
 const ORDINARY = { activityKind: "UNSPECIFIED" };
@@ -151,6 +163,281 @@ describe("TRAVEL_TEXTS", () => {
     expect(TRAVEL_TEXTS.badge).toBe("Fahrzeit");
     expect(TRAVEL_TEXTS.hint).toBe(
       "Erfassen Sie die Fahrt ab dem Verlassen des ersten Salons. Der Weg von oder nach Hause ist keine Arbeitszeit.",
+    );
+  });
+});
+
+// Issue #660 (D-05, D-07, AC-660-6) - the presentation of the day-check travel offer. The offer
+// is the server's; these helpers only gate it (#64), label it and shape the request.
+const OFFER: DayCheckTravelOffer = {
+  startTime: "2026-03-10T12:00:00",
+  endTime: "2026-03-10T12:30:00",
+  departureSalonId: "s1",
+  arrivalSalonId: "s2",
+  departureSalonName: "Salon A",
+  arrivalSalonName: "Salon B",
+};
+const OFFER_2: DayCheckTravelOffer = {
+  ...OFFER,
+  startTime: "2026-03-10T14:00:00",
+  endTime: "2026-03-10T14:20:00",
+  departureSalonId: "s2",
+  arrivalSalonId: "s1",
+  departureSalonName: "Salon B",
+  arrivalSalonName: "Salon A",
+};
+
+function fullCheck(over: Partial<FullDayCheck> = {}): FullDayCheck {
+  return {
+    date: "2026-03-10",
+    detail: "full",
+    crossSalon: true,
+    warnings: [],
+    locked: false,
+    mayAcknowledge: false,
+    mayRecordDayBreak: false,
+    netWorkedMinutes: 480,
+    totalBreakMinutes: 10,
+    requiredBreakMinutes: 30,
+    breakShortfall: true,
+    maxDailyExceeded: false,
+    breakFinding: true,
+    positionUnknown: false,
+    acknowledged: false,
+    acknowledgement: null,
+    entries: [],
+    gaps: [],
+    dayBreaks: [],
+    ...over,
+  };
+}
+
+describe("travelOffersShown (#660, the #64 gate of the offer)", () => {
+  it("returns the served offers in served order on a full day with salon options", () => {
+    expect(travelOffersShown(fullCheck({ travelOffers: [OFFER, OFFER_2] }), true)).toEqual([
+      OFFER,
+      OFFER_2,
+    ]);
+  });
+
+  it("returns nothing without salon options (a single-salon tenant looks as before)", () => {
+    expect(travelOffersShown(fullCheck({ travelOffers: [OFFER] }), false)).toEqual([]);
+  });
+
+  it("returns nothing for a redacted day, even if offers were attached", () => {
+    const redacted = {
+      date: "2026-03-10",
+      detail: "redacted",
+      crossSalon: true,
+      warnings: [],
+      locked: false,
+      mayAcknowledge: false,
+      mayRecordDayBreak: false,
+      netWorkedMinutes: null,
+      totalBreakMinutes: null,
+      requiredBreakMinutes: null,
+      breakShortfall: null,
+      maxDailyExceeded: null,
+      breakFinding: null,
+      positionUnknown: null,
+      acknowledged: null,
+      acknowledgement: null,
+      entries: null,
+      gaps: null,
+      dayBreaks: null,
+      travelOffers: [OFFER],
+    } as unknown as DayCheck;
+    expect(travelOffersShown(redacted, true)).toEqual([]);
+  });
+
+  it("returns nothing when the full day carries no key", () => {
+    expect(travelOffersShown(fullCheck(), true)).toEqual([]);
+  });
+});
+
+describe("travelOfferLabel (#660)", () => {
+  it("names the interval and both salons, with an en dash between the times", () => {
+    const label = travelOfferLabel(OFFER);
+    expect(label).toBe("Fahrzeit 12:00\u201312:30 von Salon A nach Salon B erfassen");
+    expect(label).toContain("\u2013");
+  });
+});
+
+describe("travelOfferPayload (#660)", () => {
+  it("is exactly the five trip keys from the served values", () => {
+    const body = travelOfferPayload("2026-03-10", OFFER);
+    expect(body).toEqual({
+      date: "2026-03-10",
+      startTime: OFFER.startTime,
+      endTime: OFFER.endTime,
+      salonId: OFFER.departureSalonId,
+      travelToSalonId: OFFER.arrivalSalonId,
+    });
+    expect(Object.keys(body).sort()).toEqual(
+      ["date", "endTime", "salonId", "startTime", "travelToSalonId"].sort(),
+    );
+  });
+});
+
+describe("travelOfferErrorText (#660)", () => {
+  it("returns the server's own text", () => {
+    expect(
+      travelOfferErrorText(new Error("Fahrzeit kann nur zwischen zwei Einträgen liegen.")),
+    ).toBe("Fahrzeit kann nur zwischen zwei Einträgen liegen.");
+  });
+
+  it("maps the bare RETRO_WINDOW_EXCEEDED code to the German window text (WR-02)", () => {
+    const err = Object.assign(new Error("RETRO_WINDOW_EXCEEDED"), {
+      status: 403,
+      data: { error: "RETRO_WINDOW_EXCEEDED", windowDays: 7, entryAgeInDays: 8 },
+    });
+    expect(travelOfferErrorText(err)).toBe(TRAVEL_TEXTS.outsideWindow);
+    expect(travelOfferErrorText(err)).not.toMatch(/RETRO_WINDOW_EXCEEDED/);
+  });
+
+  it("shows the German sentence of JARBSCHG_MINOR_LIMIT, never the code prefix (WR-02)", () => {
+    const err = Object.assign(
+      new Error("JARBSCHG_MINOR_LIMIT: Die Höchstarbeitszeit ist erreicht."),
+      {
+        status: 400,
+        data: { error: "JARBSCHG_MINOR_LIMIT", message: "Die Höchstarbeitszeit ist erreicht." },
+      },
+    );
+    expect(travelOfferErrorText(err)).toBe("Die Höchstarbeitszeit ist erreicht.");
+    const bare = Object.assign(new Error("JARBSCHG_MINOR_LIMIT"), {
+      data: { error: "JARBSCHG_MINOR_LIMIT" },
+    });
+    expect(travelOfferErrorText(bare)).toBe(TRAVEL_TEXTS.offerFailed);
+  });
+
+  it("falls back to the generic text for an empty message or a non-error", () => {
+    expect(travelOfferErrorText(new Error(""))).toBe(TRAVEL_TEXTS.offerFailed);
+    expect(travelOfferErrorText("boom")).toBe(TRAVEL_TEXTS.offerFailed);
+    expect(travelOfferErrorText(null)).toBe(TRAVEL_TEXTS.offerFailed);
+  });
+});
+
+// Issue #660 (WR-01) - the re-check right before the write.
+function checksOf(...days: DayCheck[]): DayChecksResponse {
+  return { employeeId: "e1", from: "2026-03-10", to: "2026-03-10", days };
+}
+
+describe("travelOfferStillServed (#660, WR-01)", () => {
+  it("is true when the identical interval and salon pair is still served", () => {
+    const fresh = checksOf(fullCheck({ travelOffers: [{ ...OFFER_2 }, { ...OFFER }] }));
+    expect(travelOfferStillServed(fresh, "2026-03-10", true, OFFER)).toBe(true);
+  });
+
+  it("is false when the gap widened (the other manager moved the target entry)", () => {
+    const wider = { ...OFFER, endTime: "2026-03-10T13:00:00" };
+    expect(
+      travelOfferStillServed(
+        checksOf(fullCheck({ travelOffers: [wider] })),
+        "2026-03-10",
+        true,
+        OFFER,
+      ),
+    ).toBe(false);
+  });
+
+  it("is false when the start moved, the salon pair changed or the offer is gone", () => {
+    const later = { ...OFFER, startTime: "2026-03-10T11:45:00" };
+    const swapped = { ...OFFER, departureSalonId: "s2", arrivalSalonId: "s1" };
+    for (const served of [[later], [swapped], []] as DayCheckTravelOffer[][]) {
+      expect(
+        travelOfferStillServed(
+          checksOf(fullCheck({ travelOffers: served })),
+          "2026-03-10",
+          true,
+          OFFER,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("is false for a missing response, a missing day and without salon options", () => {
+    expect(travelOfferStillServed(null, "2026-03-10", true, OFFER)).toBe(false);
+    expect(travelOfferStillServed(checksOf(), "2026-03-10", true, OFFER)).toBe(false);
+    expect(
+      travelOfferStillServed(
+        checksOf(fullCheck({ date: "2026-03-11", travelOffers: [OFFER] })),
+        "2026-03-10",
+        true,
+        OFFER,
+      ),
+    ).toBe(false);
+    expect(
+      travelOfferStillServed(
+        checksOf(fullCheck({ travelOffers: [OFFER] })),
+        "2026-03-10",
+        false,
+        OFFER,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("postOfferIfStillServed (#660, WR-01)", () => {
+  it("posts the offer when the re-loaded check still serves it", async () => {
+    const post = vi.fn(async () => ({ id: "t1" }));
+    const outcome = await postOfferIfStillServed({
+      date: "2026-03-10",
+      offer: OFFER,
+      multiEntryUi: true,
+      loadChecks: async () => checksOf(fullCheck({ travelOffers: [OFFER] })),
+      post,
+    });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ posted: true, result: { id: "t1" } });
+  });
+
+  it("writes nothing from a stale panel: the gap widened between render and click", async () => {
+    // The panel still shows 12:00-12:30; the day now serves 12:00-13:00.
+    const post = vi.fn(async () => ({ id: "t1" }));
+    const outcome = await postOfferIfStillServed({
+      date: "2026-03-10",
+      offer: OFFER,
+      multiEntryUi: true,
+      loadChecks: async () =>
+        checksOf(fullCheck({ travelOffers: [{ ...OFFER, endTime: "2026-03-10T13:00:00" }] })),
+      post,
+    });
+    expect(post).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ posted: false });
+  });
+
+  it("writes nothing when the re-check itself failed", async () => {
+    const post = vi.fn(async () => ({ id: "t1" }));
+    const outcome = await postOfferIfStillServed({
+      date: "2026-03-10",
+      offer: OFFER,
+      multiEntryUi: true,
+      loadChecks: async () => null,
+      post,
+    });
+    expect(post).not.toHaveBeenCalled();
+    expect(outcome.posted).toBe(false);
+  });
+
+  it("lets the write rule's refusal propagate unchanged", async () => {
+    await expect(
+      postOfferIfStillServed({
+        date: "2026-03-10",
+        offer: OFFER,
+        multiEntryUi: true,
+        loadChecks: async () => checksOf(fullCheck({ travelOffers: [OFFER] })),
+        post: async () => {
+          throw new Error("Fahrzeit kann nur zwischen zwei Einträgen liegen.");
+        },
+      }),
+    ).rejects.toThrow("Fahrzeit kann nur zwischen zwei Einträgen liegen.");
+  });
+});
+
+describe("TRAVEL_TEXTS.offerStale (#660)", () => {
+  it("is the German stale-offer sentence", () => {
+    expect(TRAVEL_TEXTS.offerStale).toBe(
+      "Das Angebot ist nicht mehr aktuell – die Tagesprüfung wurde neu geladen.",
     );
   });
 });

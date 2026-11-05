@@ -29,10 +29,14 @@
     isTravelRow,
     travelArrivalOptions,
     travelFormMode,
+    travelOfferErrorText,
+    postOfferIfStillServed,
+    travelOfferPayload,
+    travelOffersShown,
     travelPayload,
     travelRouteLabel,
     type TravelRowFields,
-  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08
+  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08; offer: Issue #660
   // Issue #85 D-09/D-14/D-15 — the Salonansicht. The salon decision lives in team-view.ts (never
   // the raw selection getter); the server decides which entries are visible.
   import { isTeamSalonRejected, teamSalonViewSalon } from "$lib/dashboard/team-view";
@@ -55,6 +59,7 @@
     salonViewRequestPath,
   } from "$lib/team/salon-time-entries";
   import DayBreakPanel from "$lib/components/breaks/DayBreakPanel.svelte"; // Issue #80
+  import { createLatestRequestGuard } from "$lib/time-entries/latest-request"; // Issue #660
   // Issue #80 (D-09c/D-10/D-20) — the notification deep link and the server-computed day checks;
   // the browser never derives a cross-salon finding itself.
   import {
@@ -64,6 +69,7 @@
   } from "$lib/breaks/deep-link";
   import {
     type DayCheck,
+    type DayCheckTravelOffer,
     type DayCheckWarning,
     type DayChecksResponse,
     type DayWarning,
@@ -356,6 +362,11 @@
   // source of the calendar markers and of the day panels. For a partially scoped manager a day
   // arrives redacted; the page renders it as received and computes no finding itself.
   let dayChecks = $state<DayCheck[]>([]);
+  // Issue #660 (WR-03): the person the rendered `dayChecks` were loaded for. An offer is posted
+  // for THIS person, never for whoever is selected at click time.
+  let dayChecksEmployeeId = $state<string | null>(null);
+  // Issue #660 (WR-03): only the response of the latest person load may be applied.
+  const loadGuard = createLatestRequestGuard();
 
   // ── Employee selector state ────────────────────────────────────────────────
   let employees: Employee[] = $state([]);
@@ -544,6 +555,11 @@
   async function loadAll() {
     // The salon view loads its own month (see the effect above); nothing to do for the person view.
     if (teamMode === "salon") return;
+    const loadToken = loadGuard.begin();
+    // Issue #660 (WR-03): the checks of the previous person must not stay clickable while the
+    // next ones load.
+    dayChecks = [];
+    dayChecksEmployeeId = null;
     if (!selectedEmployeeId) {
       entries = [];
       schedule = null;
@@ -630,8 +646,12 @@
               .catch(() => null)
           : Promise.resolve(null),
       ]);
+      // Issue #660 (WR-03): a newer load started meanwhile; this response belongs to a person or
+      // month that is no longer shown.
+      if (!loadGuard.isCurrent(loadToken)) return;
       entries = rawEntries;
       dayChecks = rawDayChecks?.days ?? [];
+      dayChecksEmployeeId = rawDayChecks ? rawDayChecks.employeeId : null;
       schedule = valueOr(rawSchedule, null);
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
@@ -675,6 +695,7 @@
             `/overtime/month-saldo/${empId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
           ),
         );
+        if (!loadGuard.isCurrent(loadToken)) return;
         monthSaldo = valueOr(rawMonthSaldo, null);
         if (anyFailed(rawMonthSaldo)) saldoFetchFailed = true;
         if (isDenied(rawMonthSaldo)) saldoDenied = true;
@@ -695,6 +716,7 @@
           .catch(
             () => [] as Array<{ date: string; durationMin: number; durationMinNetto: number }>,
           );
+        if (!loadGuard.isCurrent(loadToken)) return;
         const m = new Map<string, number>();
         for (const s of rawShifts) {
           // v1.8.9 — Soll = netto (brutto − getEffectiveBreakDuration on the server).
@@ -717,9 +739,12 @@
         bsAbsences,
       );
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Laden";
+      if (loadGuard.isCurrent(loadToken)) {
+        error = e instanceof Error ? e.message : "Fehler beim Laden";
+      }
     } finally {
-      loading = false;
+      // A superseded run leaves `loading` to the run that replaced it.
+      if (loadGuard.isCurrent(loadToken)) loading = false;
     }
   }
 
@@ -1225,6 +1250,47 @@
       endTime: new Date(`${date}T${slot.endLocal}:00`).toISOString(),
     });
     await loadAll();
+  }
+
+  // Issue #660: an offer of the day check is recorded for the person the check was loaded for
+  // (`dayChecksEmployeeId`, WR-03 - not the current selection) exactly like the form's trip create
+  // (body of the form, `source: "CORRECTION"`). Right before writing, that person's day check is
+  // loaded again and the trip is posted only if the identical offer is still served (WR-01); the
+  // server then re-decides the write.
+  // A refusal is the server's own text (a toast survives the reload, the panel may not), and the
+  // reload shows the new day state either way.
+  async function recordTravelOffer(date: string, offer: DayCheckTravelOffer) {
+    const checkedEmployeeId = dayChecksEmployeeId;
+    if (!checkedEmployeeId) return;
+    try {
+      const outcome = await postOfferIfStillServed({
+        date,
+        offer,
+        multiEntryUi,
+        loadChecks: () =>
+          api
+            .get<DayChecksResponse>(
+              `/day-breaks/checks?employeeId=${checkedEmployeeId}&from=${date}&to=${date}`,
+            )
+            .catch(() => null),
+        post: () =>
+          api.post<{ warnings?: unknown }>("/time-entries", {
+            ...travelOfferPayload(date, offer),
+            employeeId: checkedEmployeeId,
+            source: "CORRECTION",
+          }),
+      });
+      if (!outcome.posted) {
+        toasts.warning(TRAVEL_TEXTS.offerStale);
+      } else {
+        const notice = breakFindingSaveNotice(outcome.result?.warnings);
+        if (notice) toasts.warning(notice);
+      }
+    } catch (e: unknown) {
+      toasts.error(travelOfferErrorText(e));
+    } finally {
+      await loadAll();
+    }
   }
 
   async function deleteDayBreak(id: string, reason: string) {
@@ -1886,6 +1952,8 @@
       onDeleteBreak={deleteDayBreak}
       onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
       onRevoke={revokeDayAck}
+      travelOffers={travelOffersShown(dayCheck, multiEntryUi)}
+      onRecordTravel={(offer) => recordTravelOffer(dayCheck.date, offer)}
     />
   {/each}
 
