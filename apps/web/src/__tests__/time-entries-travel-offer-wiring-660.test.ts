@@ -79,12 +79,43 @@ describe.each(PAGES)("travel offer wiring (#660) - $name", ({ source }) => {
   });
 });
 
-describe("travel offer wiring (#660) - the team page acts for the selected person", () => {
+describe("travel offer wiring (#660) - the team page acts for the person the check belongs to", () => {
   const team = PAGES[1].source;
 
-  it("sends employeeId and source CORRECTION after the offer body, like the form's trip create", () => {
+  /** The source of `recordTravelOffer` up to the next top-level function. */
+  function recordFunction(source: string): string {
+    const start = source.indexOf("async function recordTravelOffer(");
+    expect(start).toBeGreaterThan(-1);
+    const end = source.indexOf("\n  async function ", start + 10);
+    return source.slice(start, end === -1 ? undefined : end);
+  }
+
+  it("sends the checked person's id and source CORRECTION after the offer body (WR-03)", () => {
     expect(team).toMatch(
-      /\.\.\.travelOfferPayload\([^)]*\),\s*employeeId: selectedEmployeeId,\s*source: "CORRECTION",?/,
+      /\.\.\.travelOfferPayload\([^)]*\),\s*employeeId: checkedEmployeeId,\s*source: "CORRECTION",?/,
     );
+    expect(team).toMatch(/const checkedEmployeeId = dayChecksEmployeeId;/);
+  });
+
+  it("never reads the current selection inside the offer action (WR-03)", () => {
+    expect(recordFunction(team)).not.toContain("selectedEmployeeId");
+  });
+
+  it("carries the person with the loaded checks, clears them when a load starts and drops stale responses (WR-03)", () => {
+    expect(team).toContain("dayChecksEmployeeId = rawDayChecks ? rawDayChecks.employeeId : null;");
+    expect(team).toContain(
+      'import { createLatestRequestGuard } from "$lib/time-entries/latest-request"',
+    );
+    const load = team.slice(team.indexOf("async function loadAll()"));
+    const begin = load.indexOf("loadGuard.begin()");
+    const clear = load.indexOf("dayChecks = [];");
+    const apply = load.indexOf("dayChecks = rawDayChecks?.days");
+    const stale = load.indexOf("if (!loadGuard.isCurrent(loadToken)) return;");
+    expect(begin).toBeGreaterThan(-1);
+    // Cleared right after the run starts, before any await; the stale check precedes applying.
+    expect(clear).toBeGreaterThan(begin);
+    expect(clear).toBeLessThan(load.indexOf("await Promise.all"));
+    expect(stale).toBeGreaterThan(-1);
+    expect(stale).toBeLessThan(apply);
   });
 });
