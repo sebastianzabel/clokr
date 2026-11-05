@@ -56,20 +56,30 @@ interface DayRowShape {
   invalidReasonCode?: string | null;
 }
 
+/** The reason code the entry-first writer sets on a Zeitnachtrag row while its request is PENDING. */
+const RETRO_PENDING_MARKER = "RETRO_APPROVAL_PENDING";
+
+/**
+ * Issue #657 (IN-01): the ONE spelling of the pending-Zeitnachtrag marker — the reason code alone.
+ * It exists separately from {@link isPendingRetroRow} for a row that is only being PLANNED (the
+ * travel neighbour check's `with` row has a reason code but no request id yet). Every reader of the
+ * marker, `travel-entry.ts` included, goes through this function or `isPendingRetroRow`.
+ */
+export function hasPendingRetroMarker(row: { invalidReasonCode?: string | null }): boolean {
+  return row.invalidReasonCode === RETRO_PENDING_MARKER;
+}
+
 /**
  * Issue #657 (D-07/D-14): true for a row that is a pending Zeitnachtrag REQUEST rather than a
  * recorded punch — it is coupled to a request (`retroRequestId`) AND carries the marker the
- * entry-first writer sets atomically with the request (`isInvalid` with the reason code
- * `RETRO_APPROVAL_PENDING`). The approval clears the marker, a rejection or withdrawal soft-deletes
- * the row. It is the same marker `travel-entry.ts` (anchors) and the web page read. An approved
+ * entry-first writer sets atomically with the request (`isInvalid` with the reason code, see
+ * {@link hasPendingRetroMarker}). The approval clears the marker, a rejection or withdrawal
+ * soft-deletes the row. `travel-entry.ts` (anchors) and the web page read the same marker (the
+ * former through `hasPendingRetroMarker`, because it also judges rows not stored yet). An approved
  * Nachtrag row is an ordinary closed entry and is NOT pending.
  */
 export function isPendingRetroRow(row: DayRowShape): boolean {
-  return (
-    Boolean(row.retroRequestId) &&
-    row.isInvalid === true &&
-    row.invalidReasonCode === "RETRO_APPROVAL_PENDING"
-  );
+  return Boolean(row.retroRequestId) && row.isInvalid === true && hasPendingRetroMarker(row);
 }
 
 /**

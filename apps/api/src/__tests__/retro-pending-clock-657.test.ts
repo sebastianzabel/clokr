@@ -24,6 +24,7 @@ import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./se
 import { addDaysStr, mondayOfWeekStr, TEST_TZ } from "./test-dates";
 import {
   isPendingRetroRow,
+  hasPendingRetroMarker,
   latestEndingClosed,
   openEntryOf,
 } from "../contexts/time-tracking/day-entries";
@@ -65,6 +66,13 @@ describe("Issue #657 — pure selectors", () => {
     to: string | null,
     extra: Record<string, unknown> = {},
   ) => ({ id, startTime: at(from), endTime: to === null ? null : at(to), ...extra });
+
+  it("hasPendingRetroMarker reads the reason code alone (the travel neighbour check's planned rows)", () => {
+    expect(hasPendingRetroMarker({ invalidReasonCode: "RETRO_APPROVAL_PENDING" })).toBe(true);
+    expect(hasPendingRetroMarker({ invalidReasonCode: "OTHER" })).toBe(false);
+    expect(hasPendingRetroMarker({ invalidReasonCode: null })).toBe(false);
+    expect(hasPendingRetroMarker({})).toBe(false);
+  });
 
   it("isPendingRetroRow needs the request id, isInvalid and the exact reason code", () => {
     expect(isPendingRetroRow(row("p", "09:00", "10:00", PENDING))).toBe(true);
