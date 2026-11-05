@@ -30,9 +30,9 @@
   let preview: Record<string, string>[] = $state([]);
   let showPreview = $state(false);
 
-  const exampleEmployees = `email;firstName;lastName;employeeNumber;hireDate;role;weeklyHours;password
-max@firma.de;Max;Mustermann;1001;01.01.2024;EMPLOYEE;40;Passwort1!
-anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
+  const exampleEmployees = `email;firstName;lastName;employeeNumber;hireDate;role;weeklyHours;password;salonId
+max@firma.de;Max;Mustermann;1001;01.01.2024;EMPLOYEE;40;Passwort1!;<Salon-ID>
+anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
 
   const exampleTimeEntries = `employeeNumber;date;startTime;endTime;breakMinutes;note
 1001;01.03.2024;08:00;16:30;30;Normaler Arbeitstag
@@ -187,6 +187,12 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
       <details class="example-hint">
         <summary class="example-summary"> Beispielformat anzeigen </summary>
         <pre class="example-pre">{exampleText}</pre>
+        {#if mode === "employees"}
+          <p class="example-note">
+            Die Spalte „salonId“ (Stammsalon) enthält die ID des Salons. Bei mehreren aktiven Salons
+            ist sie in jeder Zeile nötig; bei genau einem aktiven Salon darf sie leer bleiben.
+          </p>
+        {/if}
       </details>
 
       {#snippet footer()}
@@ -340,6 +346,11 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
     color: var(--text-muted);
     font-size: 0.8125rem;
     cursor: pointer;
+  }
+
+  .example-note {
+    margin: 0.5rem 0 0;
+    font-size: 0.85rem;
   }
 
   .example-pre {

@@ -71,51 +71,154 @@ import2-${uid}@test.de;Import;Zwei;IM2-${uid};15.03.2026;EMPLOYEE;38.5;test1234`
       }
     });
 
-    it("D-23: tenant with two active salons refuses the whole import up front — 400, 0 employees created, no IMPORT audit row", async () => {
-      const multi = await seedTestData(app, "im-multi");
-      try {
-        await app.prisma.salon.create({
-          data: {
-            tenantId: multi.tenant.id,
-            name: "Zweiter Salon",
-            federalState: "NIEDERSACHSEN",
-            openingHours: DEFAULT_SALON_OPENING_HOURS,
-            isActive: true,
-          },
-        });
-
-        const uid = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-        const csv = `email;vorname;nachname;nr;eintrittsdatum
-multi-${uid}@test.de;Multi;Salon;MULTI-${uid};01.01.2026`;
-
-        const auditsBefore = await app.prisma.auditLog.count({
-          where: { entity: "Employee", action: "IMPORT", userId: multi.adminUser.id },
-        });
-
-        const res = await app.inject({
+    describe("Issue #531: Stammsalon per row (salonId column)", () => {
+      const post = (token: string, csv: string) =>
+        app.inject({
           method: "POST",
           url: "/api/v1/imports/employees",
-          headers: { authorization: `Bearer ${multi.adminToken}` },
+          headers: { authorization: `Bearer ${token}` },
           payload: { csv },
         });
+      const homeRows = async (nr: string) => {
+        const emp = await app.prisma.employee.findFirst({ where: { employeeNumber: nr } });
+        if (!emp) return null;
+        return app.prisma.employeeSalonAssignment.findMany({ where: { employeeId: emp.id } });
+      };
 
-        expect(res.statusCode, res.body.slice(0, 400)).toBe(400);
-        expect(JSON.parse(res.body)).toEqual({
-          error:
-            "Bei mehreren aktiven Salons ist kein Import möglich. Bitte legen Sie die Mitarbeiter einzeln an und geben Sie den Stammsalon an.",
-        });
+      it("AC1/AC2: rows of a multi-salon tenant get the Stammsalon named in their salonId cell, each audited", async () => {
+        const multi = await seedTestData(app, "im-531-multi");
+        try {
+          const second = await app.prisma.salon.create({
+            data: {
+              tenantId: multi.tenant.id,
+              name: "Zweiter Salon",
+              federalState: "NIEDERSACHSEN",
+              openingHours: DEFAULT_SALON_OPENING_HOURS,
+              isActive: true,
+            },
+          });
+          const u = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          const csv = `email;vorname;nachname;nr;eintrittsdatum;salonId
+a-${u}@test.de;A;Eins;S1-${u};01.01.2026;${multi.salonId}
+b-${u}@test.de;B;Zwei;S2-${u};01.01.2026;${second.id}`;
+          const res = await post(multi.adminToken, csv);
+          expect(res.statusCode, res.body.slice(0, 400)).toBe(200);
+          expect(JSON.parse(res.body).imported).toBe(2);
+          for (const [nr, salon] of [
+            [`S1-${u}`, multi.salonId],
+            [`S2-${u}`, second.id],
+          ]) {
+            const rows = await homeRows(nr);
+            expect(rows).toHaveLength(1);
+            expect(rows![0].kind).toBe("HOME");
+            expect(rows![0].salonId).toBe(salon);
+            const audit = await soleAuditRowOrNull(app.prisma, {
+              where: {
+                entity: "EmployeeSalonAssignment",
+                action: "CREATE",
+                entityId: rows![0].id,
+              },
+            });
+            expect(audit).not.toBeNull();
+          }
+        } finally {
+          await cleanupTestData(app, multi.tenant.id);
+        }
+      });
 
-        const created = await app.prisma.employee.count({
-          where: { employeeNumber: `MULTI-${uid}` },
-        });
-        expect(created).toBe(0);
-        const auditsAfter = await app.prisma.auditLog.count({
-          where: { entity: "Employee", action: "IMPORT", userId: multi.adminUser.id },
-        });
-        expect(auditsAfter).toBe(auditsBefore);
-      } finally {
-        await cleanupTestData(app, multi.tenant.id);
-      }
+      it("AC3: a multi-salon tenant row without salonId is refused on its own; other rows and the IMPORT audit stay", async () => {
+        const multi = await seedTestData(app, "im-531-missing");
+        try {
+          await app.prisma.salon.create({
+            data: {
+              tenantId: multi.tenant.id,
+              name: "Zweiter Salon",
+              federalState: "NIEDERSACHSEN",
+              openingHours: DEFAULT_SALON_OPENING_HOURS,
+              isActive: true,
+            },
+          });
+          const u = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          const csv = `email;vorname;nachname;nr;eintrittsdatum;salonId
+ok-${u}@test.de;Ok;Zeile;OK-${u};01.01.2026;${multi.salonId}
+no-${u}@test.de;No;Salon;NO-${u};01.01.2026;`;
+          const res = await post(multi.adminToken, csv);
+          expect(res.statusCode).toBe(200);
+          const body = JSON.parse(res.body);
+          expect(body.imported).toBe(1);
+          expect(body.errors).toBe(1);
+          expect(body.details[1].status).toBe("error");
+          expect(body.details[1].error).toContain("salonId");
+          expect(await homeRows(`NO-${u}`)).toBeNull();
+          expect(await homeRows(`OK-${u}`)).toHaveLength(1);
+          const imports = await app.prisma.auditLog.count({
+            where: { entity: "Employee", action: "IMPORT", userId: multi.adminUser.id },
+          });
+          expect(imports).toBe(1);
+        } finally {
+          await cleanupTestData(app, multi.tenant.id);
+        }
+      });
+
+      it("AC4: a foreign and an unknown salonId give the identical row error and create nothing", async () => {
+        const foreign = await seedTestData(app, "im-531-foreign");
+        try {
+          const u = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          const unknownId = "00000000-0000-4000-8000-000000000531";
+          const csv = `email;vorname;nachname;nr;eintrittsdatum;salonId
+f-${u}@test.de;F;Remd;FO-${u};01.01.2026;${foreign.salonId}
+g-${u}@test.de;G;Eist;GH-${u};01.01.2026;${unknownId}`;
+          const res = await post(data.adminToken, csv);
+          const body = JSON.parse(res.body);
+          expect(body.imported).toBe(0);
+          expect(body.details[0].status).toBe("error");
+          expect(body.details[0].error).toBe(body.details[1].error);
+          expect(await homeRows(`FO-${u}`)).toBeNull();
+          expect(await homeRows(`GH-${u}`)).toBeNull();
+        } finally {
+          await cleanupTestData(app, foreign.tenant.id);
+        }
+      });
+
+      it("AC5: an inactive salon is refused for that row; a non-UUID cell is a row error too", async () => {
+        const t = await seedTestData(app, "im-531-inactive");
+        try {
+          const other = await app.prisma.salon.create({
+            data: {
+              tenantId: t.tenant.id,
+              name: "Stillgelegt",
+              federalState: "NIEDERSACHSEN",
+              openingHours: DEFAULT_SALON_OPENING_HOURS,
+              isActive: false,
+              deactivatedAt: new Date(),
+            },
+          });
+          const u = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          const csv = `email;vorname;nachname;nr;eintrittsdatum;salonId
+i-${u}@test.de;I;Naktiv;IN-${u};01.01.2026;${other.id}
+n-${u}@test.de;N;Keine;NU-${u};01.01.2026;Hauptsalon`;
+          const res = await post(t.adminToken, csv);
+          const body = JSON.parse(res.body);
+          expect(body.imported).toBe(0);
+          expect(body.details[0].error).toContain("deaktivierten Salon");
+          expect(body.details[1].status).toBe("error");
+          expect(await homeRows(`IN-${u}`)).toBeNull();
+          expect(await homeRows(`NU-${u}`)).toBeNull();
+        } finally {
+          await cleanupTestData(app, t.tenant.id);
+        }
+      });
+
+      it("AC6: without the column a single-salon tenant still imports into its salon, and the header is not reported unknown", async () => {
+        const u = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const csv = `email;vorname;nachname;nr;eintrittsdatum;Stammsalon-ID
+x-${u}@test.de;X;Einzel;SX-${u};01.01.2026;`;
+        const res = await post(data.adminToken, csv);
+        const body = JSON.parse(res.body);
+        expect(body.imported).toBe(1);
+        expect(body.warnings).toEqual([]);
+        expect((await homeRows(`SX-${u}`))![0].salonId).toBe(data.salonId);
+      });
     });
 
     it("D-23: tenant with no active salon: 400 'Der Mandant hat keinen aktiven Salon.'", async () => {
