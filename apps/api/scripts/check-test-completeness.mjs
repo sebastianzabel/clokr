@@ -1016,13 +1016,20 @@ import { readFileSync } from "node:fs";
 // base was already 755 files, so 750 had become a loose lower bound. The deleted cases are named at MIN_TESTS.
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped).
 // Issue #624: +1 file (role-chain-package-624.test.ts), full run measured 802 files / 11803 tests (PATCH gate adds 2 cases + 1 site) (incl. 3 skipped).
+// Phase 647 (2026-11-05): measured with a full API run on `feat/647-coverage-per-salon` @ eeee287a (after merging #829) -
+// 805 test files, 11834 tests (11831 passed, 3 skipped, 0 failed); new files `coverage-rule` (12 cases),
+// `coverage-rule-salon-647` (13), `coverage-rule-write-salon-647` (12), `coverage-rule-salon-migration-647` (4); nothing
+// removed, skipped or loosened; never lowered. The open PRs of the same release (#531, #624, #657, ...) raise the same
+// floors - whoever merges later re-measures with a full run (lower-bound convention, never a sum).
+// Merge of #647 onto main after #624: CI measured 806 files / 11851 tests.
 // Phase 657 Plan 01 (Issue #657): two new test files (retro-request-overlap.test.ts, retro-request-per-interval-657.test.ts),
 // verified with `pnpm exec vitest run <file>`: 4 + 17 = 21 cases. MIN_FILES 801 -> 803; the file count is a lower bound on
 // the merge base, whoever merges later re-measures with a full run.
 // Phase 657 Plan 02 (Issue #657): one new test file (retro-pending-clock-657.test.ts): MIN_FILES 803 -> 804 (lower bound).
 // Phase 657 Plan 03 (Issue #657): one new test file (retro-two-approvals-657.test.ts): MIN_FILES 804 -> 805, the measured
 // total of the full API run (805 files).
-// Merge of #657 onto main after #624: CI measured 806 files / 11867 tests.
+// Merge of #657 onto main after #647: 806 + 4 new files.
+const MIN_FILES = 810;
 const MIN_FILES = 806;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
@@ -1157,11 +1164,15 @@ const MIN_FILES = 806;
 // the full API run (11830 passed + 3 skipped = 11833 collected). Never lowered.
 // Issue #531: imports.test.ts -1 (whole-import refusal replaced) +5 (Stammsalon per row); full run measured 801 files / 11793 tests (incl. 3 skipped).
 // Issue #624: +15 cases on its own base (11788 -> 11803); merged onto main after #531: CI measured 802 files / 11807 tests.
+// Phase 647 (2026-11-05): 11793 -> 11834, measured by the full run named at MIN_FILES (the four new files add 41 cases).
+// Phase 647 review fix WR-01: 11834 -> 11835 (+1 case in coverage-rule-write-salon-647.test.ts).
+// Phase 647 review fix IN-02: 11835 -> 11837 (+2 cases in coverage-rule-salon-647.test.ts).
+// Merge of #647 onto main after #624: CI measured 806 files / 11851 tests.
 // Merge of #657 onto main after #531: 11833 measured on its base 11788 (+45) plus #531 (+5) -> 11838.
 // Review fixes of #657 (CR-01..WR-03, IN-01): full API run on the final tree measured 805 files / 11853 tests
 // (incl. 3 skipped). The coordinator's 11838 carried a +5 for #531 that is +4; the figure is the measured total.
-// Merge of #657 onto main after #624: CI measured 806 files / 11867 tests.
-const MIN_TESTS = 11867;
+// Merge of #657 onto main after #647: 11851 + 60 (CI measured 11867 on the base 11807).
+const MIN_TESTS = 11911;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
