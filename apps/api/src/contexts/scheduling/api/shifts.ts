@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
+import { pickCoverageRule } from "../coverage-rule"; // Issue #647 (D-04/D-05) — the one place a day's coverage rule is chosen
 import { getEffectiveBreakDuration, getWorkedEntriesInRange } from "../../time-tracking"; // Phase 101B (Issue #101, wave 8); getWorkedEntriesInRange (T2) added Phase 71b (issue #71, D-07)
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import {
@@ -211,6 +212,9 @@ const coverageRuleSchema = z.object({
   dayOfWeek: z.number().int().min(-1).max(6),
   minStaff: z.number().min(0).max(99),
   requiresNonSupervised: z.boolean().default(false),
+  // Issue #647 (D-06): null or absent = tenant-wide. A salon is validated by resolveSalonInReach,
+  // never trusted.
+  salonId: z.string().uuid().nullable().optional(),
 });
 
 // Per-day coverage status
@@ -232,51 +236,6 @@ interface CoverageInfo {
 // `AvailabilityBucket` moved to `utils/shift-availability.ts`, the two classifiers' new
 // home; this type just adds the two roster-state members no classifier ever produces.
 type Availability = "available" | AvailabilityBucket | "unavailable" | "preferred";
-
-/**
- * Find the most specific CoverageRule for a (template, dayOfWeek) combination.
- * Match order:
- *   1. templateId match AND dayOfWeek match
- *   2. templateId null AND dayOfWeek match
- *   3. templateId match AND dayOfWeek = -1
- *   4. templateId null AND dayOfWeek = -1
- * If no rule matches, returns default { minStaff: 2, requiresNonSupervised: false }.
- */
-function pickRule(
-  rules: Array<{
-    templateId: string | null;
-    dayOfWeek: number;
-    minStaff: number;
-    requiresNonSupervised: boolean;
-  }>,
-  templateId: string | null,
-  dayOfWeek: number,
-): { minStaff: number; requiresNonSupervised: boolean } {
-  if (templateId) {
-    const exact = rules.find((r) => r.templateId === templateId && r.dayOfWeek === dayOfWeek);
-    if (exact)
-      return { minStaff: exact.minStaff, requiresNonSupervised: exact.requiresNonSupervised };
-  }
-  const tplNullDow = rules.find((r) => r.templateId === null && r.dayOfWeek === dayOfWeek);
-  if (tplNullDow)
-    return {
-      minStaff: tplNullDow.minStaff,
-      requiresNonSupervised: tplNullDow.requiresNonSupervised,
-    };
-  if (templateId) {
-    const tplAllDays = rules.find((r) => r.templateId === templateId && r.dayOfWeek === -1);
-    if (tplAllDays)
-      return {
-        minStaff: tplAllDays.minStaff,
-        requiresNonSupervised: tplAllDays.requiresNonSupervised,
-      };
-  }
-  const fallback = rules.find((r) => r.templateId === null && r.dayOfWeek === -1);
-  if (fallback)
-    return { minStaff: fallback.minStaff, requiresNonSupervised: fallback.requiresNonSupervised };
-  // Default — matches legacy hardcoded MIN_COVERAGE = 2
-  return { minStaff: 2, requiresNonSupervised: false };
-}
 
 // Phase 43 — Conflict-check result shape used by write-path validation & generate-week
 type ConflictKind = "leave" | "absence";
@@ -1138,10 +1097,30 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
         if (!tpl) return reply.code(404).send({ error: "Vorlage nicht gefunden" });
       }
+      // Issue #647 D-06/D-07 — one validator, one 404 for a foreign, unknown or inactive salon;
+      // tenant-wide rules keep today's permission behaviour. `shift-config:manage` is a MANDANT key,
+      // so a caller who reaches this line holds a tenant-wide reach today and the check reduces to
+      // "an active salon of the tenant".
+      let ruleSalonId: string | null = null;
+      if (typeof body.salonId === "string") {
+        const salon = await resolveSalonInReach(
+          app.prisma,
+          req.user.tenantId,
+          await resolveAccessReach(
+            app.prisma,
+            accessContextFromRequest(req),
+            "shift-config:manage:ZUGEWIESEN",
+          ),
+          body.salonId,
+        );
+        if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
+        ruleSalonId = salon.salonId;
+      }
       const rule = await app.prisma.coverageRule.create({
         data: {
           tenantId: req.user.tenantId,
           templateId: body.templateId ?? null,
+          salonId: ruleSalonId,
           dayOfWeek: body.dayOfWeek,
           minStaff: body.minStaff,
           requiresNonSupervised: body.requiresNonSupervised,
@@ -1469,6 +1448,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         app.prisma.coverageRule.findMany({
           where: { tenantId },
           select: {
+            salonId: true,
             templateId: true,
             dayOfWeek: true,
             minStaff: true,
@@ -1581,6 +1561,7 @@ export async function shiftRoutes(app: FastifyInstance) {
 
       // Normalize rules to plain numbers (Decimal → number)
       const rules = rulesRaw.map((r) => ({
+        salonId: r.salonId,
         templateId: r.templateId,
         dayOfWeek: r.dayOfWeek,
         minStaff: Number(r.minStaff),
@@ -1713,8 +1694,9 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Issue #558 (D-02): under a salon filter the coverage is computed from the filtered shifts and
-      // people. `CoverageRule` has no salon, so its tenant-wide minima are applied per salon view;
-      // per-salon rules are a follow-up (schema change, not part of this phase).
+      // people. Issue #647 (D-04/D-05): the candidate rules are the tenant-wide ones plus those of the
+      // salon in view, chosen in coverage-rule.ts; the coverage algorithm is otherwise unchanged
+      // (tracer: the salon in view is the validated filter; 647-02 adds D-03).
       // Compute coverage per day
       // weekday lookup: iso → 0..6 (Mo=0..So=6) — note JS getUTCDay returns 0=Sun..6=Sat
       function isoToDow(iso: string): number {
@@ -1739,7 +1721,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           new Set(dayShifts.map((s) => s.templateId).filter((t): t is string => !!t)),
         );
         const ruleScopeTemplateId = templateIds.length === 1 ? templateIds[0] : null;
-        const rule = pickRule(rules, ruleScopeTemplateId, dow);
+        const rule = pickCoverageRule(rules, chosenSalonId, ruleScopeTemplateId, dow);
 
         let effectiveStaff = 0;
         let hasSupervisor = false;
