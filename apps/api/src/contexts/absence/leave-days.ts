@@ -1137,6 +1137,16 @@ export async function resolveVacationBaseDays(
 }
 
 /**
+ * Issue #615 (D-18) — an optional exit date that REPLACES the stored `Employee.exitDate` in the § 5
+ * BUrlG entitlement inputs, so a preview can price a hypothetical last working day through the one
+ * existing rule without writing. Absent = today's behaviour (the stored exit date); present with
+ * `exitDate: null` = "as if the employee had not exited".
+ */
+export interface ExitDateOverride {
+  exitDate: Date | null;
+}
+
+/**
  * Issue #445 — internal: the shared inputs {@link resolveRegularVacationDays} and
  * {@link ensureRegularVacationEntitlement} both need to compute a regular entitlement for
  * `employeeId`/`year` (D-02, D-03). Not exported — every external caller goes through one of
@@ -1147,6 +1157,7 @@ async function loadRegularVacationInputs(
   employeeId: string,
   tenantId: string,
   year: number,
+  opts?: ExitDateOverride,
 ): Promise<{
   hireDate: Date;
   birthDate: Date | null;
@@ -1169,9 +1180,11 @@ async function loadRegularVacationInputs(
   // D-03/P-02: employed in `year` means hired on or before its start AND, if the employee has
   // since exited, that the exit happened in `year` or later — both compared on UTC calendar
   // years so the check is independent of server timezone.
+  // Issue #615 (D-18): a caller may price a HYPOTHETICAL exit date; absent = the stored one.
+  const exitDate = opts ? opts.exitDate : employee.exitDate;
   const employedInYear =
     employee.hireDate.getUTCFullYear() <= year &&
-    (employee.exitDate === null || employee.exitDate.getUTCFullYear() >= year);
+    (exitDate === null || exitDate.getUTCFullYear() >= year);
 
   const segments = await loadVacationContractSegments(db, employeeId, tenantId);
   const baseDays = employedInYear ? await resolveVacationBaseDays(db, employeeId, tenantId) : 0;
@@ -1181,7 +1194,7 @@ async function loadRegularVacationInputs(
     birthDate: employee.birthDate,
     // Issue #447 (D-05): threaded into the regular formula so it follows § 5 BUrlG's exit-year
     // Teilurlaub rule, not just the hire-year rule.
-    exitDate: employee.exitDate,
+    exitDate,
     segments,
     baseDays,
   };
@@ -1198,12 +1211,14 @@ export async function resolveRegularVacationDays(
   employeeId: string,
   tenantId: string,
   year: number,
+  opts?: ExitDateOverride,
 ): Promise<number> {
   const { hireDate, birthDate, exitDate, segments, baseDays } = await loadRegularVacationInputs(
     db,
     employeeId,
     tenantId,
     year,
+    opts,
   );
   return computeRegularVacationDaysBySegments({
     year,
@@ -1261,6 +1276,34 @@ export async function isZeroVacationPlaceholder(
 }
 
 /**
+ * Issue #615 (D-18) — the read-only half of {@link syncExitYearVacationEntitlement}: the three gates
+ * (no row, past year, human write) and the `daysDiffer` comparison, with the § 5 target from
+ * {@link resolveRegularVacationDays}. `targetDays` is the value the sync would store, or `null`
+ * when the sync leaves the row alone. `opts.exitDate` prices a HYPOTHETICAL exit date, so a preview
+ * (the deactivate dialog) reads the Resturlaub the deactivation will leave through the SAME rule
+ * that then writes it — never a second computation. Writes nothing.
+ */
+export async function planExitYearVacationEntitlement(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+  opts?: ExitDateOverride,
+): Promise<{ existing: LeaveEntitlement | null; targetDays: number | null }> {
+  const lookup = await getVacationEntitlement(db, employeeId, tenantId, year);
+  const existing = lookup?.entitlement ?? null;
+  if (!existing) return { existing: null, targetDays: null };
+  // D-07: never changes a past year's persisted value.
+  if (year < new Date().getUTCFullYear()) return { existing, targetDays: null };
+  // D-14: a human write (even behind a stale isAutoCalculated=true column) is never overwritten.
+  if (await hasHumanVacationWrite(db, existing.id)) return { existing, targetDays: null };
+
+  const target = await resolveRegularVacationDays(db, employeeId, tenantId, year, opts);
+  if (!daysDiffer(Number(existing.totalDays), target)) return { existing, targetDays: null };
+  return { existing, targetDays: target };
+}
+
+/**
  * Issue #447 (D-07/D-14) — recomputes the exit-year VACATION `LeaveEntitlement` row for
  * `employeeId`/`year` to its § 5 BUrlG value, unless a human ever wrote `totalDays` on it
  * ({@link hasHumanVacationWrite}) or `year` is before the current calendar year (persisted
@@ -1280,18 +1323,15 @@ export async function syncExitYearVacationEntitlement(
   audit: (entry: EntitlementAuditEntry) => Promise<void> = (entry) =>
     writeEntitlementAudit(db, entry),
 ): Promise<{ changed: boolean; entitlement: LeaveEntitlement | null }> {
-  const lookup = await getVacationEntitlement(db, employeeId, tenantId, year);
-  const existing = lookup?.entitlement ?? null;
+  // Issue #615 (D-18): the gates and the target live in the read-only planner; this is plan + write.
+  const { existing, targetDays: target } = await planExitYearVacationEntitlement(
+    db,
+    employeeId,
+    tenantId,
+    year,
+  );
   if (!existing) return { changed: false, entitlement: null };
-  // D-07: never changes a past year's persisted value.
-  if (year < new Date().getUTCFullYear()) return { changed: false, entitlement: existing };
-  // D-14: a human write (even behind a stale isAutoCalculated=true column) is never overwritten.
-  if (await hasHumanVacationWrite(db, existing.id))
-    return { changed: false, entitlement: existing };
-
-  const target = await resolveRegularVacationDays(db, employeeId, tenantId, year);
-  if (!daysDiffer(Number(existing.totalDays), target))
-    return { changed: false, entitlement: existing };
+  if (target === null) return { changed: false, entitlement: existing };
 
   const oldTotalDays = Number(existing.totalDays);
   const { count } = await db.leaveEntitlement.updateMany({
@@ -2156,14 +2196,17 @@ export async function exitYearReductionDays(
   employeeId: string,
   tenantId: string,
   year: number,
+  opts?: ExitDateOverride,
 ): Promise<number> {
   const employee = await db.employee.findFirst({
     where: { id: employeeId, tenantId },
     select: { exitDate: true },
   });
-  if (!employee?.exitDate || employee.exitDate.getUTCFullYear() !== year) return 0;
+  // Issue #615 (D-18): a hypothetical exit date replaces the stored one (absent = unchanged).
+  const exitDate = opts ? opts.exitDate : (employee?.exitDate ?? null);
+  if (!exitDate || exitDate.getUTCFullYear() !== year) return 0;
 
-  const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
+  const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year, opts);
   const withoutExit = computeRegularVacationDaysBySegments({
     year,
     hireDate: inputs.hireDate,
@@ -2176,7 +2219,7 @@ export async function exitYearReductionDays(
     year,
     hireDate: inputs.hireDate,
     birthDate: inputs.birthDate,
-    exitDate: employee.exitDate,
+    exitDate,
     segments: inputs.segments,
     baseDays: inputs.baseDays,
   });

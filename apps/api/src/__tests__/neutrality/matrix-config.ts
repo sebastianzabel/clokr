@@ -359,6 +359,17 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "stay byte-identical, because a PUT without the apply flag behaves exactly as before.",
   },
   {
+    route: "POST /api/v1/employees/:id/deactivate/preview",
+    reason:
+      "New route added in Issue #615 (the read-only preview of a deactivation on a chosen last " +
+      "working day), long after the role guard (`requireRole`) was deleted from middleware/auth.ts " +
+      "(#75b/#83) — built permission-gated (`employee:manage-access:ZUGEWIESEN`) from its very " +
+      "first commit and never had role-based access behavior to compare. Same vacuous-satisfaction " +
+      "reasoning as the Phase 430, Phase 468 and Phase 481 entries above: RECORD/MERGE mode refuses " +
+      "to run once the role guard is gone. `PATCH /api/v1/employees/:id/deactivate` stays a " +
+      "recorded cell and its responses for the recorded actors are unchanged.",
+  },
+  {
     route: "GET /api/v1/support-accesses",
     reason:
       "New route added in Issue #93 (Phase 93b-06, D-08), long after the role guard (`requireRole`) " +
