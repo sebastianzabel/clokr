@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.18.0](https://github.com/sebastianzabel/clokr/compare/v1.17.0...v1.18.0) (2026-11-05)
+
+
+### Features
+
+* **531:** Mitarbeiter-CSV-Import mit Stammsalon je Zeile ([#829](https://github.com/sebastianzabel/clokr/issues/829)) ([d0b0283](https://github.com/sebastianzabel/clokr/commit/d0b02839b379636aaa3b2f369e0b6bb05c9aa26f))
+* **541:** NFC-Terminal an einen Salon binden ([#812](https://github.com/sebastianzabel/clokr/issues/812)) ([3334069](https://github.com/sebastianzabel/clokr/commit/3334069742db102af35c789c84fa14d50b2cd10d))
+* **579:** Feiertage je Salon auf der Salon-Detailseite pflegen ([#830](https://github.com/sebastianzabel/clokr/issues/830)) ([84b184d](https://github.com/sebastianzabel/clokr/commit/84b184d61ff496b53dc7f5ccbed94ff84493e0dd))
+* **608:** Push-Benachrichtigungen aufs Handy (Web-Push, als App installierbar) ([#813](https://github.com/sebastianzabel/clokr/issues/813)) ([becacb8](https://github.com/sebastianzabel/clokr/commit/becacb89f48118e85a98fd256b26e9f4bfc993c9))
+* **609:** Erinnerungen bei Schichtbeginn, Schichtende und Tagesabschluss ([#817](https://github.com/sebastianzabel/clokr/issues/817)) ([1ff76d2](https://github.com/sebastianzabel/clokr/commit/1ff76d20a496831e5a7bd34162f1b97fb75171f4))
+* **610:** WLAN-Stempeln – Handy per QR-Code im Salon koppeln ([#816](https://github.com/sebastianzabel/clokr/issues/816)) ([a58cbf1](https://github.com/sebastianzabel/clokr/commit/a58cbf1d8019058510396a8c456dca9270a01b3e))
+* **615:** Deaktivieren mit letztem Arbeitstag, Saldo und Resturlaub ([#833](https://github.com/sebastianzabel/clokr/issues/833)) ([157eb4e](https://github.com/sebastianzabel/clokr/commit/157eb4e2d152c28a403b3ce872c4fc934175ac29))
+* **624:** Erweiterte Rollen an das Ketten-Paket binden (nur Neuanlage) ([#828](https://github.com/sebastianzabel/clokr/issues/828)) ([7b5d642](https://github.com/sebastianzabel/clokr/commit/7b5d642686ead6d36f546f615f53ce04fb9c564d))
+* **641:** Release B – Spalte User.role und Enum Role entfernen ([#814](https://github.com/sebastianzabel/clokr/issues/814)) ([4f893f2](https://github.com/sebastianzabel/clokr/commit/4f893f2c5bd2c8ce8baddd48515eabb5984002e3))
+* **647:** Mindestbesetzung je Salon ([#832](https://github.com/sebastianzabel/clokr/issues/832)) ([1e2e8dc](https://github.com/sebastianzabel/clokr/commit/1e2e8dcefe66c2c481df03764025d06300dddc1f))
+* **657:** Zeitnachtrag je Zeitraum statt je Tag ([#831](https://github.com/sebastianzabel/clokr/issues/831)) ([71b6289](https://github.com/sebastianzabel/clokr/commit/71b628904d2e652da94792e334323d2ccf612e33))
+* **660:** Lücke zwischen zwei Salons als Fahrzeit übernehmen ([#834](https://github.com/sebastianzabel/clokr/issues/834)) ([df84314](https://github.com/sebastianzabel/clokr/commit/df8431443f3b45d0fc141dad3994f09f62ec7605))
+
+
+### Bug Fixes
+
+* **390:** clarify tenant Bundesland hint as default for new salons ([#806](https://github.com/sebastianzabel/clokr/issues/806)) ([96b9a83](https://github.com/sebastianzabel/clokr/commit/96b9a836ff1dd6da13506d8ad47c4a7c1d21050f))
+* **804:** gate unknown Prisma keys that tsc lets through; fix diagnose-saldo select ([#808](https://github.com/sebastianzabel/clokr/issues/808)) ([6605f0d](https://github.com/sebastianzabel/clokr/commit/6605f0d4df45e9720691c4bc3b433a49dbdefac6))
+* **805:** pseudonymizer leaves DSGVO-anonymized persons unchanged ([#807](https://github.com/sebastianzabel/clokr/issues/807)) ([c122825](https://github.com/sebastianzabel/clokr/commit/c122825896575190fddd0faeae339240b1719a29))
+* **818:** NFC-Ausstempeln nach Handy-Einstempeln antwortet nicht mehr mit 500 ([#823](https://github.com/sebastianzabel/clokr/issues/823)) ([9f071b6](https://github.com/sebastianzabel/clokr/commit/9f071b6c4b9b9b3ff7711033547b7eb0aa27943a))
+* **819:** DELETE /terminals/:id atomar und mandantengebunden widerrufen ([#825](https://github.com/sebastianzabel/clokr/issues/825)) ([e86bcfe](https://github.com/sebastianzabel/clokr/commit/e86bcfe12f891be2ee90fb72926a7dfc3dc1eada))
+* **820:** MAC-Adressen in Audit-Zeilen bei Anonymisierung schwärzen ([#824](https://github.com/sebastianzabel/clokr/issues/824)) ([1f49c9c](https://github.com/sebastianzabel/clokr/commit/1f49c9cea21c75ebd6b075667e4c1d4a5d853ab1))
+* **deps:** decode-uri-component unter query-string@7 auf 0.5.1 heben (GHSA-qr28-fpjm-wq7f) ([#809](https://github.com/sebastianzabel/clokr/issues/809)) ([ce0ece0](https://github.com/sebastianzabel/clokr/commit/ce0ece06c2ebfd96c3a990b0b987f938e3158096))
+
 ## [1.17.0](https://github.com/sebastianzabel/clokr/compare/v1.16.1...v1.17.0) (2026-10-29)
 
 
