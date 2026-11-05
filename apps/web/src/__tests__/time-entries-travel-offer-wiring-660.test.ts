@@ -46,7 +46,12 @@ describe.each(PAGES)("travel offer wiring (#660) - $name", ({ source }) => {
   });
 
   it("imports the offer helpers from the shared travel module", () => {
-    for (const fn of ["travelOffersShown", "travelOfferPayload", "travelOfferErrorText"]) {
+    for (const fn of [
+      "travelOffersShown",
+      "travelOfferPayload",
+      "travelOfferErrorText",
+      "postOfferIfStillServed",
+    ]) {
       expect(source, fn).toMatch(
         new RegExp(
           `import \\{[^}]*\\b${fn}\\b[^}]*\\} from "\\$lib/time-entries/travel-entry-form"`,
@@ -65,6 +70,23 @@ describe.each(PAGES)("travel offer wiring (#660) - $name", ({ source }) => {
   it("posts the offer only with the one trip body builder and reports a refusal verbatim", () => {
     expect(source).toContain("travelOfferPayload(");
     expect(source).toContain("travelOfferErrorText(");
+  });
+
+  it("re-checks the day check right before writing and never posts from a stale panel (WR-01)", () => {
+    const start = source.indexOf("async function recordTravelOffer(");
+    expect(start).toBeGreaterThan(-1);
+    const end = source.indexOf("\n  async function ", start + 10);
+    const fn = source.slice(start, end === -1 ? undefined : end);
+    // The only write of the offer sits in the `post` callback of the re-checking helper, and the
+    // re-check reads the day check of the same single day.
+    expect(fn).toContain("postOfferIfStillServed(");
+    expect(fn).toMatch(
+      /\/day-breaks\/checks\?employeeId=\$\{[A-Za-z]+\}&from=\$\{date\}&to=\$\{date\}/,
+    );
+    expect(fn.indexOf("postOfferIfStillServed(")).toBeLessThan(fn.indexOf("api.post<"));
+    expect(fn.match(/api\.post</g)).toHaveLength(1);
+    expect(fn).toContain("toasts.warning(TRAVEL_TEXTS.offerStale)");
+    expect(fn).toMatch(/finally \{\s*await loadAll\(\);/);
   });
 
   it("reads none of the offer's salon fields itself (body and label come from the helpers)", () => {

@@ -523,8 +523,11 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   `contexts/time-tracking/travel-offer.ts` from the kernel's own gaps and the write rule's own anchor check, never on a
   redacted or locked day, never on a gap touching a trip or a pending Zeitnachtrag row, on the person's own day only
   inside the retro window; who sees it is decided by `travelWriteCoversDay()`, the ONE reach rule
-  `validateTravelEntry()` also calls, and the action is the unchanged `POST /time-entries` (a stale offer is the write
-  rule's 409). UI only for tenants with salon choice (#64 gate). Never add a second travel validator, a second reach
+  `validateTravelEntry()` also calls, and the action is the unchanged `POST /time-entries`. The web re-loads the day
+  check of that person and day right before writing and posts only if an offer with the identical interval and salon
+  pair is still served (`postOfferIfStillServed()`, else a toast and a reload); the remaining race and any other
+  refusal are the write rule's answer, which checks anchors, overlap and day breaks but does not bind the interval to
+  the offered gap. UI only for tenants with salon choice (#64 gate). Never add a second travel validator, a second reach
   rule for the offer, a travel field to a figure file or a travel share.
 - **Breaks are checked per day, across salons (Issue #80).** `evaluateDayBreaks()`
   (`apps/api/src/contexts/time-tracking/day-break-rule.ts`) is the ONLY place the day-level § 4

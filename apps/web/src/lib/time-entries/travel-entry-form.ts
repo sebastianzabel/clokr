@@ -15,7 +15,11 @@
  * Pure module: no Svelte, no API call, so it is unit-testable without a mounted page.
  */
 
-import type { DayCheck, DayCheckTravelOffer } from "$lib/breaks/day-break-violation";
+import type {
+  DayCheck,
+  DayCheckTravelOffer,
+  DayChecksResponse,
+} from "$lib/breaks/day-break-violation";
 
 /**
  * The fields of a `GET /time-entries` row a trip adds. The pages' own row types extend this, so a
@@ -47,6 +51,7 @@ export const TRAVEL_TEXTS = {
   offerHint:
     "War die Lücke eine Fahrt zwischen den Salons, lässt sie sich hier als Fahrzeit übernehmen.",
   offerFailed: "Die Fahrzeit konnte nicht erfasst werden.",
+  offerStale: "Das Angebot ist nicht mehr aktuell \u2013 die Tagesprüfung wurde neu geladen.",
 } as const;
 
 /** The name shown for a side of the route whose name the server did not serve. */
@@ -203,4 +208,54 @@ export function travelOfferErrorText(err: unknown): string {
       : TRAVEL_TEXTS.offerFailed;
   }
   return err instanceof Error && err.message ? err.message : TRAVEL_TEXTS.offerFailed;
+}
+
+/** Two offers are the same one when interval and salon pair are identical. */
+function sameOffer(a: DayCheckTravelOffer, b: DayCheckTravelOffer): boolean {
+  return (
+    Date.parse(a.startTime) === Date.parse(b.startTime) &&
+    Date.parse(a.endTime) === Date.parse(b.endTime) &&
+    a.departureSalonId === b.departureSalonId &&
+    a.arrivalSalonId === b.arrivalSalonId
+  );
+}
+
+/**
+ * Whether a freshly loaded day check still serves exactly this offer (identical interval and
+ * salon pair), through the same #64 gate the panel uses. A missing response, a missing day or a
+ * changed gap is "no longer served".
+ */
+export function travelOfferStillServed(
+  fresh: DayChecksResponse | null | undefined,
+  date: string,
+  multiEntryUi: boolean,
+  offer: DayCheckTravelOffer,
+): boolean {
+  const check = fresh?.days.find((day) => day.date === date);
+  if (!check) return false;
+  return travelOffersShown(check, multiEntryUi).some((served) => sameOffer(served, offer));
+}
+
+export type TravelOfferOutcome<T> = { posted: false } | { posted: true; result: T };
+
+/**
+ * Issue #660 (WR-01): an offer is bound to the day state it was computed from only by this
+ * re-check - the day check of that person and day is loaded again right before writing, and the
+ * trip is posted only if an offer with the identical interval and salon pair is still served.
+ * Otherwise nothing is written (`posted: false`) and the page shows `TRAVEL_TEXTS.offerStale` and
+ * reloads. The check does not close the window between it and the write: what changes inside
+ * that window, and every other refusal, is the write rule's answer (`validateTravelEntry`).
+ */
+export async function postOfferIfStillServed<T>(args: {
+  date: string;
+  offer: DayCheckTravelOffer;
+  multiEntryUi: boolean;
+  loadChecks: () => Promise<DayChecksResponse | null>;
+  post: () => Promise<T>;
+}): Promise<TravelOfferOutcome<T>> {
+  const fresh = await args.loadChecks();
+  if (!travelOfferStillServed(fresh, args.date, args.multiEntryUi, args.offer)) {
+    return { posted: false };
+  }
+  return { posted: true, result: await args.post() };
 }

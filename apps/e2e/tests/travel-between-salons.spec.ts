@@ -16,10 +16,11 @@
  *      salons as one button "Fahrzeit 12:00–12:30 von {first} nach {second} erfassen" (the offer is READ
  *      from the real GET /day-breaks/checks answer, never mocked); one click records the trip (HTTP
  *      201), the button is gone and the list holds a row with the badge "Fahrzeit" and the route;
- *   e. (Issue #660) an offer made stale behind the page's back (the second-salon entry is deleted
- *      through the API) is refused with HTTP 409; the toast shows the server's own text (compared with
- *      the `error` read from that response), the button is gone after the reload and no trip exists;
- *      the single-salon test (c.) additionally asserts that no offer button is rendered.
+ *   e. (Issue #660) an offer made stale behind the page's back (the second-salon entry is moved to
+ *      13:00, so the gap widens) is NOT posted: the page re-loads the day check first, shows the
+ *      toast "Das Angebot ist nicht mehr aktuell ...", sends no POST /time-entries, reloads (the
+ *      button now names 12:00-13:00) and no trip exists; the single-salon test (c.) additionally
+ *      asserts that no offer button is rendered.
  *
  * Auth: same model as multi-entry-day.spec.ts (throwaway tenant, API login, localStorage hydrated
  * with addInitScript). The day is computed from the current day (a weekday inside the 10-day retro
@@ -313,7 +314,7 @@ test.describe("a trip between two salons (Issue #92)", () => {
     );
   });
 
-  test("a stale offer shows the server's text and writes nothing (Issue #660)", async ({
+  test("a stale offer is not written; the page says so and reloads (Issue #660)", async ({
     page,
     request,
     tenant,
@@ -332,24 +333,43 @@ test.describe("a trip between two salons (Issue #92)", () => {
     expect(await offersOfDay(await checks, day)).toHaveLength(1);
     const button = page.getByTestId("day-break-travel-offer");
     await expect(button).toBeVisible();
+    await expect(button).toHaveText(
+      `Fahrzeit 12:00\u201312:30 von ${first.name} nach ${second.name} erfassen`,
+    );
 
-    // Make the offer stale behind the page's back: the arrival entry is deleted through the API.
-    const del = await request.delete(`${API_BASE}/api/v1/time-entries/${arrivalId}`, {
+    // Widen the gap behind the page's back: the arrival entry is moved to start at 13:00. The panel
+    // still shows 12:00-12:30; the write rule alone would accept that interval (its anchors still
+    // hold), which is why the page re-checks the day before writing.
+    const moved = await request.put(`${API_BASE}/api/v1/time-entries/${arrivalId}`, {
       headers: authHeaders(tenant),
-      data: { reason: "Veraltetes Angebot im Browsertest" },
+      data: {
+        startTime: zonedInstant(day, "13:00", TENANT_TZ).toISOString(),
+        endTime: zonedInstant(day, "16:00", TENANT_TZ).toISOString(),
+        reason: "Veraltetes Angebot im Browsertest",
+      },
     });
-    expect(del.status(), `delete the arrival entry (${await del.text()})`).toBeLessThan(300);
+    expect(moved.status(), `move the arrival entry (${await moved.text()})`).toBeLessThan(300);
 
-    const posted = entryPost(page);
-    const reloaded = checksGet(page);
+    // Every POST /time-entries the page sends from here on is recorded; none must be sent.
+    const posts: string[] = [];
+    page.on("request", (req) => {
+      if (
+        req.method() === "POST" &&
+        req.url().includes("/api/v1/time-entries") &&
+        !req.url().includes("/clock")
+      ) {
+        posts.push(req.url());
+      }
+    });
     await button.click();
-    const refused = await posted;
-    expect(refused.status()).toBe(409);
-    const serverText = ((await refused.json()) as { error: string }).error;
-    expect(serverText.length).toBeGreaterThan(0);
-    await expect(page.locator(".toast-container")).toContainText(serverText);
-    await reloaded;
-    await expect(page.getByTestId("day-break-travel-offer")).toHaveCount(0);
+    await expect(page.locator(".toast-container")).toContainText(
+      "Das Angebot ist nicht mehr aktuell",
+    );
+    // The reload serves the widened gap as the new offer (positive control: the page did reload).
+    await expect(page.getByTestId("day-break-travel-offer")).toHaveText(
+      `Fahrzeit 12:00\u201313:00 von ${first.name} nach ${second.name} erfassen`,
+    );
+    expect(posts, "no trip was posted from the stale panel").toHaveLength(0);
 
     // Nothing was written: no trip exists for the day.
     const list = await request.get(`${API_BASE}/api/v1/time-entries?from=${day}&to=${day}`, {

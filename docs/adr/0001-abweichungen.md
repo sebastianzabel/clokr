@@ -6906,8 +6906,15 @@ legt die Fahrzeit an.
     oder geschlossenem Monat, an einer Lücke, die eine Fahrzeit oder eine ausstehende Zeitnachtragszeile berührt oder von
     einer erfassten Tagespause überdeckt wird.
   - **Die Aktion** ist das unveränderte `POST /api/v1/time-entries` (Fahrzeit-Körper wie im Formular; in der
-    Team-Zeiterfassung zusätzlich `employeeId` und `source: CORRECTION`). Ein veraltetes Angebot (Zieleintrag gelöscht oder
-    verschoben, Tagespause erfasst, Angebot ein zweites Mal gesendet) ist die 409 der Schreibregel; es wird nichts geschrieben.
+    Team-Zeiterfassung zusätzlich `employeeId` und `source: CORRECTION`). Die Oberfläche lädt unmittelbar vor dem Schreiben
+    die Tagesprüfung dieser Person und dieses Tages neu und sendet nur, wenn ein Angebot mit identischem Intervall und
+    identischem Salonpaar noch geliefert wird; sonst erscheint der Hinweis „Das Angebot ist nicht mehr aktuell – die
+    Tagesprüfung wurde neu geladen.“ und es wird nichts gesendet (ein weiter gewordenes Fenster wird so nicht aus einem
+    veralteten Panel geschrieben). Die Schreibregel prüft Anker, Überschneidung und Tagespausen, nicht, dass das Intervall
+    der angebotenen Lücke entspricht: das verbleibende Zeitfenster zwischen erneuter Prüfung und Schreiben und jede andere
+    Abweisung (Zieleintrag gelöscht oder verschoben, Tagespause erfasst, Angebot ein zweites Mal gesendet) sind die Antwort
+    der Schreibregel (409). In der Team-Zeiterfassung geht die Aktion an die Person, zu der die geladene Tagesprüfung gehört
+    (nicht an die aktuelle Auswahl); Antworten eines früheren Personenwechsels werden verworfen.
   - **Oberfläche:** eine Schaltfläche je Angebot in der Tagesprüfung beider Zeiterfassungsseiten (`/time-entries`,
     `/team/time-entries`), nur für Mandanten mit Salonauswahl (#64, `multiEntryUi`); ein Mandant mit einem Salon sieht keine Änderung.
 - **Was bewusst NICHT geschah:** kein zweiter Schreibweg und keine zweite Regel; keine Änderung am Tageskern (deshalb kein
@@ -6925,11 +6932,11 @@ legt die Fahrzeit an.
 - **Nachweis:** API `day-break-travel-offer-660` (6 Fälle: Angebot mit genauer Lücke, Weg durch `POST /time-entries` mit
   einer Fahrzeit, einem `CREATE`-Audit, ohne `UNCLEAR` und mit +30 Minuten Saldo), `day-break-travel-offer-rules-660`
   (17 Fälle: jeder Nicht-Angebotsfall mit Kontrolle aus derselben Antwort, Reichweite je Akteur, keine verdeckte Zahl,
-  veraltete Angebote mit 409), `travel-offer-one-rule-660` (6 Fälle: eine Reichweitenregel, kein Kern-, Saldo- oder
-  Kompositionsmodul nennt das Angebot); Web `DayBreakPanel` (4 neue Fälle), `travel-entry-form` (8 neue Fälle),
-  `time-entries-travel-offer-wiring-660` (Quellprüfung beider Seiten); Playwright `travel-between-salons.spec.ts` (Klick
-  legt die Fahrzeit an, veraltetes Angebot zeigt den Text der 409 und schreibt nichts, Mandant mit einem Salon ohne
-  Schaltfläche). Mutationsbeweise: zehn Mutanten (alle Personen berechtigt, Angebot auch am geschwärzten Tag, Tagespause
+  veraltete Angebote mit 409 der Schreibregel), `travel-offer-one-rule-660` (6 Fälle: eine Reichweitenregel, kein Kern-, Saldo- oder
+  Kompositionsmodul nennt das Angebot); Web `DayBreakPanel` (5 neue Fälle), `travel-entry-form` (19 neue Fälle),
+  `latest-request` (3 Fälle), `time-entries-travel-offer-wiring-660` (Quellprüfung beider Seiten); Playwright `travel-between-salons.spec.ts` (Klick
+  legt die Fahrzeit an, ein veraltetes Angebot – das Fenster wurde weiter – wird nicht gesendet und die Seite meldet es,
+  Mandant mit einem Salon ohne Schaltfläche). Mutationsbeweise: zehn Mutanten (alle Personen berechtigt, Angebot auch am geschwärzten Tag, Tagespause
   nicht ausgenommen, Nachbarschaftsregel entfernt, Nachtragsfenster entfernt, gesperrter Tag nicht ausgenommen, Import des
   Angebots im Tageskern, Seite am Salonauswahl-Schalter vorbei, Hilfsfunktion ohne Salonauswahl, Team-Seite ohne `source`) –
   jeder macht mindestens einen Fall rot. Die

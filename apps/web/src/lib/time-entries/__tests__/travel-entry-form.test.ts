@@ -4,7 +4,7 @@
 // lock); this module only shapes the request and the labels. In particular the payload NEVER
 // carries an entry kind, a break or an activity share (T-92b-24): the kind is derived server-side
 // from `travelToSalonId` and is immutable.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   TRAVEL_TEXTS,
@@ -13,12 +13,19 @@ import {
   travelFormMode,
   travelOfferErrorText,
   travelOfferLabel,
+  postOfferIfStillServed,
   travelOfferPayload,
+  travelOfferStillServed,
   travelOffersShown,
   travelPayload,
   travelRouteLabel,
 } from "../travel-entry-form";
-import type { DayCheck, DayCheckTravelOffer, FullDayCheck } from "$lib/breaks/day-break-violation";
+import type {
+  DayCheck,
+  DayCheckTravelOffer,
+  DayChecksResponse,
+  FullDayCheck,
+} from "$lib/breaks/day-break-violation";
 
 const TRAVEL = { activityKind: "TRAVEL" };
 const ORDINARY = { activityKind: "UNSPECIFIED" };
@@ -307,5 +314,130 @@ describe("travelOfferErrorText (#660)", () => {
     expect(travelOfferErrorText(new Error(""))).toBe(TRAVEL_TEXTS.offerFailed);
     expect(travelOfferErrorText("boom")).toBe(TRAVEL_TEXTS.offerFailed);
     expect(travelOfferErrorText(null)).toBe(TRAVEL_TEXTS.offerFailed);
+  });
+});
+
+// Issue #660 (WR-01) - the re-check right before the write.
+function checksOf(...days: DayCheck[]): DayChecksResponse {
+  return { employeeId: "e1", from: "2026-03-10", to: "2026-03-10", days };
+}
+
+describe("travelOfferStillServed (#660, WR-01)", () => {
+  it("is true when the identical interval and salon pair is still served", () => {
+    const fresh = checksOf(fullCheck({ travelOffers: [{ ...OFFER_2 }, { ...OFFER }] }));
+    expect(travelOfferStillServed(fresh, "2026-03-10", true, OFFER)).toBe(true);
+  });
+
+  it("is false when the gap widened (the other manager moved the target entry)", () => {
+    const wider = { ...OFFER, endTime: "2026-03-10T13:00:00" };
+    expect(
+      travelOfferStillServed(
+        checksOf(fullCheck({ travelOffers: [wider] })),
+        "2026-03-10",
+        true,
+        OFFER,
+      ),
+    ).toBe(false);
+  });
+
+  it("is false when the start moved, the salon pair changed or the offer is gone", () => {
+    const later = { ...OFFER, startTime: "2026-03-10T11:45:00" };
+    const swapped = { ...OFFER, departureSalonId: "s2", arrivalSalonId: "s1" };
+    for (const served of [[later], [swapped], []] as DayCheckTravelOffer[][]) {
+      expect(
+        travelOfferStillServed(
+          checksOf(fullCheck({ travelOffers: served })),
+          "2026-03-10",
+          true,
+          OFFER,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("is false for a missing response, a missing day and without salon options", () => {
+    expect(travelOfferStillServed(null, "2026-03-10", true, OFFER)).toBe(false);
+    expect(travelOfferStillServed(checksOf(), "2026-03-10", true, OFFER)).toBe(false);
+    expect(
+      travelOfferStillServed(
+        checksOf(fullCheck({ date: "2026-03-11", travelOffers: [OFFER] })),
+        "2026-03-10",
+        true,
+        OFFER,
+      ),
+    ).toBe(false);
+    expect(
+      travelOfferStillServed(
+        checksOf(fullCheck({ travelOffers: [OFFER] })),
+        "2026-03-10",
+        false,
+        OFFER,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("postOfferIfStillServed (#660, WR-01)", () => {
+  it("posts the offer when the re-loaded check still serves it", async () => {
+    const post = vi.fn(async () => ({ id: "t1" }));
+    const outcome = await postOfferIfStillServed({
+      date: "2026-03-10",
+      offer: OFFER,
+      multiEntryUi: true,
+      loadChecks: async () => checksOf(fullCheck({ travelOffers: [OFFER] })),
+      post,
+    });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ posted: true, result: { id: "t1" } });
+  });
+
+  it("writes nothing from a stale panel: the gap widened between render and click", async () => {
+    // The panel still shows 12:00-12:30; the day now serves 12:00-13:00.
+    const post = vi.fn(async () => ({ id: "t1" }));
+    const outcome = await postOfferIfStillServed({
+      date: "2026-03-10",
+      offer: OFFER,
+      multiEntryUi: true,
+      loadChecks: async () =>
+        checksOf(fullCheck({ travelOffers: [{ ...OFFER, endTime: "2026-03-10T13:00:00" }] })),
+      post,
+    });
+    expect(post).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ posted: false });
+  });
+
+  it("writes nothing when the re-check itself failed", async () => {
+    const post = vi.fn(async () => ({ id: "t1" }));
+    const outcome = await postOfferIfStillServed({
+      date: "2026-03-10",
+      offer: OFFER,
+      multiEntryUi: true,
+      loadChecks: async () => null,
+      post,
+    });
+    expect(post).not.toHaveBeenCalled();
+    expect(outcome.posted).toBe(false);
+  });
+
+  it("lets the write rule's refusal propagate unchanged", async () => {
+    await expect(
+      postOfferIfStillServed({
+        date: "2026-03-10",
+        offer: OFFER,
+        multiEntryUi: true,
+        loadChecks: async () => checksOf(fullCheck({ travelOffers: [OFFER] })),
+        post: async () => {
+          throw new Error("Fahrzeit kann nur zwischen zwei Einträgen liegen.");
+        },
+      }),
+    ).rejects.toThrow("Fahrzeit kann nur zwischen zwei Einträgen liegen.");
+  });
+});
+
+describe("TRAVEL_TEXTS.offerStale (#660)", () => {
+  it("is the German stale-offer sentence", () => {
+    expect(TRAVEL_TEXTS.offerStale).toBe(
+      "Das Angebot ist nicht mehr aktuell – die Tagesprüfung wurde neu geladen.",
+    );
   });
 });

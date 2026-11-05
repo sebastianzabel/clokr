@@ -48,6 +48,7 @@
     travelArrivalOptions,
     travelFormMode,
     travelOfferErrorText,
+    postOfferIfStillServed,
     travelOfferPayload,
     travelOffersShown,
     travelPayload,
@@ -1241,17 +1242,34 @@
     await loadAll();
   }
 
-  // Issue #660: an offer of the day check goes through the trip body of the form; the server
-  // re-decides the write. A refusal is the server's own text (a toast survives the reload, the
-  // panel may not), and the reload shows the new day state either way.
+  // Issue #660: an offer of the day check goes through the trip body of the form. Right before
+  // writing, the day check is loaded again and the trip is posted only if the identical offer is
+  // still served (WR-01); the server then re-decides the write. A refusal is the server's own text
+  // (a toast survives the reload, the panel may not), and the reload shows the new day state
+  // either way.
   async function recordTravelOffer(date: string, offer: DayCheckTravelOffer) {
+    if (!ownEmployeeId) return;
+    const employeeId = ownEmployeeId;
     try {
-      const saved = await api.post<{ warnings?: unknown }>(
-        "/time-entries",
-        travelOfferPayload(date, offer),
-      );
-      const notice = breakFindingSaveNotice(saved?.warnings);
-      if (notice) toasts.warning(notice);
+      const outcome = await postOfferIfStillServed({
+        date,
+        offer,
+        multiEntryUi,
+        loadChecks: () =>
+          api
+            .get<DayChecksResponse>(
+              `/day-breaks/checks?employeeId=${employeeId}&from=${date}&to=${date}`,
+            )
+            .catch(() => null),
+        post: () =>
+          api.post<{ warnings?: unknown }>("/time-entries", travelOfferPayload(date, offer)),
+      });
+      if (!outcome.posted) {
+        toasts.warning(TRAVEL_TEXTS.offerStale);
+      } else {
+        const notice = breakFindingSaveNotice(outcome.result?.warnings);
+        if (notice) toasts.warning(notice);
+      }
     } catch (e: unknown) {
       toasts.error(travelOfferErrorText(e));
     } finally {

@@ -19,8 +19,11 @@
  *    person's own day, the day lies inside the retro window (a trip is never a Zeitnachtrag),
  *  - both salons are active salons of the tenant.
  *
- * A client that sends an offer back is still judged by the write rule, so a stale offer is refused
- * there with a 409 and nothing is written. This module issues no Prisma call of its own and never
+ * A client that sends an offer back is still judged by the write rule, which checks the anchors,
+ * the overlap and the day breaks - not that the interval equals the gap it was computed from. The
+ * web therefore re-loads the day check right before writing and posts only an offer that is still
+ * served (identical interval and salon pair); the rest of the race and every other refusal are the
+ * write rule's answer. This module issues no Prisma call of its own and never
  * reads a figure file: the day kernels, the saldo and the reports do not know it exists.
  */
 import type { FastifyInstance } from "fastify";

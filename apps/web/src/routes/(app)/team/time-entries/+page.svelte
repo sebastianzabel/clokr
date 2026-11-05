@@ -30,6 +30,7 @@
     travelArrivalOptions,
     travelFormMode,
     travelOfferErrorText,
+    postOfferIfStillServed,
     travelOfferPayload,
     travelOffersShown,
     travelPayload,
@@ -1253,20 +1254,38 @@
 
   // Issue #660: an offer of the day check is recorded for the person the check was loaded for
   // (`dayChecksEmployeeId`, WR-03 - not the current selection) exactly like the form's trip create
-  // (body of the form, `source: "CORRECTION"`); the server re-decides the write.
+  // (body of the form, `source: "CORRECTION"`). Right before writing, that person's day check is
+  // loaded again and the trip is posted only if the identical offer is still served (WR-01); the
+  // server then re-decides the write.
   // A refusal is the server's own text (a toast survives the reload, the panel may not), and the
   // reload shows the new day state either way.
   async function recordTravelOffer(date: string, offer: DayCheckTravelOffer) {
     const checkedEmployeeId = dayChecksEmployeeId;
     if (!checkedEmployeeId) return;
     try {
-      const saved = await api.post<{ warnings?: unknown }>("/time-entries", {
-        ...travelOfferPayload(date, offer),
-        employeeId: checkedEmployeeId,
-        source: "CORRECTION",
+      const outcome = await postOfferIfStillServed({
+        date,
+        offer,
+        multiEntryUi,
+        loadChecks: () =>
+          api
+            .get<DayChecksResponse>(
+              `/day-breaks/checks?employeeId=${checkedEmployeeId}&from=${date}&to=${date}`,
+            )
+            .catch(() => null),
+        post: () =>
+          api.post<{ warnings?: unknown }>("/time-entries", {
+            ...travelOfferPayload(date, offer),
+            employeeId: checkedEmployeeId,
+            source: "CORRECTION",
+          }),
       });
-      const notice = breakFindingSaveNotice(saved?.warnings);
-      if (notice) toasts.warning(notice);
+      if (!outcome.posted) {
+        toasts.warning(TRAVEL_TEXTS.offerStale);
+      } else {
+        const notice = breakFindingSaveNotice(outcome.result?.warnings);
+        if (notice) toasts.warning(notice);
+      }
     } catch (e: unknown) {
       toasts.error(travelOfferErrorText(e));
     } finally {
