@@ -148,7 +148,7 @@ Der Monatsabschluss friert den Überstunden-Saldo eines Monats ein:
 
 **Admin → CSV Import** — Massendaten importieren per CSV:
 
-- **Mitarbeiter-Import**: Name, E-Mail, Rolle, Eintrittsdatum, Arbeitsstunden
+- **Mitarbeiter-Import**: Name, E-Mail, Rolle, Eintrittsdatum, Arbeitsstunden, Stammsalon (Spalte `salonId`, Salon-ID; bei mehreren aktiven Salons in jeder Zeile nötig, bei genau einem darf sie leer bleiben)
 - **Zeiteintrags-Import**: Mitarbeiternummer, Datum, Beginn, Ende, Pausen
 
 CSV-Vorlagen stehen zum Download bereit.
