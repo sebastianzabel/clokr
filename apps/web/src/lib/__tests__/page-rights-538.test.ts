@@ -12,6 +12,7 @@ import {
   mayFileRetroRequest,
   reportRights,
   salonAdminRights,
+  salonHolidayRights,
 } from "$lib/page-rights";
 import personas from "$lib/nav/__tests__/fixtures/system-role-permissions.json";
 
@@ -501,5 +502,21 @@ describe("mayReadTeamSaldo (Issue #588)", () => {
     for (const key of ["SALON_MANAGER", "EMPLOYEE", "TRAINER"]) {
       expect(mayReadTeamSaldo({ permissions: p[key] }), key).toBe(false);
     }
+  });
+});
+
+describe("salonHolidayRights (/admin/salons/:id, section Feiertage, Issue #579)", () => {
+  it("follows the holiday:manage keys of the persona fixture", () => {
+    for (const [key, permissions] of Object.entries(p)) {
+      expect(salonHolidayRights({ permissions }).canManage, key).toBe(
+        permissions.includes("holiday:manage:ZUGEWIESEN"),
+      );
+    }
+    expect(salonHolidayRights({ permissions: p.ADMIN }).canManage).toBe(true);
+  });
+
+  it("holds nothing without a permission list, whatever the compat role says", () => {
+    expect(salonHolidayRights(adminRoleNoPermissions).canManage).toBe(false);
+    expect(salonHolidayRights(noList).canManage).toBe(false);
   });
 });

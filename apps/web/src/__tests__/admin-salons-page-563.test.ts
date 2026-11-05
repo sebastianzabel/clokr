@@ -343,3 +343,18 @@ describe("admin/system keeps only the shift check mode (D-12)", () => {
     expect(body).not.toContain("_gOtherFields");
   });
 });
+
+describe("salon detail page - section Feiertage (Issue #579)", () => {
+  it("mounts the holiday section for an existing salon and decides canManage by salonHolidayRights()", () => {
+    expect(importSpecifiers(DETAIL)).toContain("$lib/components/admin/SalonHolidays.svelte");
+    expect(DETAIL).toContain("salonHolidayRights(");
+    expect(DETAIL).toMatch(
+      /<SalonHolidays salonId=\{salon\.id\} canManage=\{holidayRights\.canManage\} \/>/,
+    );
+    expect(DETAIL).toMatch(/\{#if !isCreate && salon\}\s*<SalonHolidays/);
+  });
+
+  it("keeps the holiday writes out of the page: only the lifecycle and create posts remain", () => {
+    expect(DETAIL).not.toContain("/holidays");
+  });
+});
