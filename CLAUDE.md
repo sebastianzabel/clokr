@@ -426,7 +426,7 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   mapped to an overlap. `openEntryOf()` / `latestEndingClosed()` (`contexts/time-tracking/day-entries.ts`) are the ONE
   choice of "the entry of the day" a clock acts on (both skip a TRAVEL row, Issue #92, and a row coupled to a pending Zeitnachtrag, Issue #657 — such a row also
   shadows every row ending before it, so the clock starts a new entry); consolidation never merges across
-  salons and never across a travel entry. Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
+  salons, never across a travel entry and never across a row coupled to a Zeitnachtrag (guard `retro_row`, Issue #657). Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
   (`docs/migrations.md`, "Phase 70b"). Never re-create a one-entry-per-day rule — not as an index, a check or a
   comment. A Zeitnachtrag is per interval (Issue #657): `findOverlappingRetroRequest()`
   (`contexts/time-tracking/retro-request-overlap.ts`) is the ONE place that decides whether a new request overlaps a pending
