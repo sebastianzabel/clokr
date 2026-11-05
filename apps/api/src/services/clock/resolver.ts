@@ -20,6 +20,7 @@ import {
   findEntriesOfDay,
   openEntryOf,
   latestEndingClosed,
+  isPendingRetroRow,
 } from "../../contexts/time-tracking/day-entries"; // Phase 69b, Issue #70 (selectors)
 import { lockEmployeeForEntryWrite } from "../../contexts/time-tracking/entry-write-lock"; // Issue #70
 import { checkOverlap } from "../../contexts/time-tracking/entry-invariants"; // Issue #70
@@ -165,6 +166,29 @@ export async function resolveClockEvent(
       // (retro-entry-requests.ts) sets `isInvalid` to `false` but leaves `retroRequestId` set — an
       // approved Nachtrag row is a perfectly ordinary closed entry and must remain usable via
       // REOPEN. The reject branch soft-deletes the row; it already falls out via `deletedAt: null`.
+      // Issue #657 (D-14): an OUT cannot stop an open row that is a pending Zeitnachtrag request —
+      // `openEntryOf` does not hand it out, so the day would read as "not clocked in" and answer a
+      // misleading "already clocked out". Nothing closes a request; the honest answer stays
+      // RETRO_PENDING. IN and AUTO need no rule of their own: with no candidate they START, and the
+      // overlap check below refuses an instant inside or before the requested interval.
+      if (!openEntry && event.intent === "OUT") {
+        const openPending = dayEntries.find((e) => e.endTime === null && isPendingRetroRow(e));
+        if (openPending) {
+          app.log.warn(
+            {
+              employeeId: event.employeeId,
+              source: event.source,
+              intent: event.intent,
+              entryId: openPending.id,
+              retroRequestId: openPending.retroRequestId,
+              reason: "RETRO_PENDING",
+            },
+            "clock_event_conflict",
+          );
+          return { kind: "CONFLICT", reason: "RETRO_PENDING" } as const;
+        }
+      }
+
       const retroCandidate = openEntry ?? closedEntry;
       if (retroCandidate?.retroRequestId) {
         const pendingRetro = await tx.retroEntryRequest.findFirst({

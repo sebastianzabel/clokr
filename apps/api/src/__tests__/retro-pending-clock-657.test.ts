@@ -18,6 +18,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { randomUUID } from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
 import { getTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
 import { addDaysStr, mondayOfWeekStr, TEST_TZ } from "./test-dates";
@@ -28,6 +29,7 @@ import {
 } from "../contexts/time-tracking/day-entries";
 import { invalidReasonFields } from "../contexts/time-tracking/invalid-reason";
 import { resolveClockEvent } from "../services/clock/resolver";
+import { consolidateSameDayEntries } from "../services/clock/consolidate";
 import type { ClockEvent, ClockIntent } from "../services/clock/types";
 
 /** Tenant-local instant for `HH:MM` on `dayStr`. */
@@ -48,12 +50,12 @@ type ChoiceBody = { fixedSalon: SalonItem | null; offerChoice: boolean };
 describe("Issue #657 — pure selectors", () => {
   const at = (hhmm: string) => new Date(`2026-03-10T${hhmm}:00Z`);
   const PENDING = {
-    retroRequestId: "00000000-0000-4000-8000-000000000001",
+    retroRequestId: randomUUID(),
     isInvalid: true,
     invalidReasonCode: "RETRO_APPROVAL_PENDING",
   };
   const APPROVED = {
-    retroRequestId: "00000000-0000-4000-8000-000000000002",
+    retroRequestId: randomUUID(),
     isInvalid: false,
     invalidReasonCode: null,
   };
@@ -107,7 +109,7 @@ describe("Issue #657 — pure selectors", () => {
     const x = row("x", "07:00", "08:00");
     const approved = row("a", "09:00", "10:00", APPROVED);
     const markerless = row("m", "09:00", "10:00", {
-      retroRequestId: "00000000-0000-4000-8000-000000000003",
+      retroRequestId: randomUUID(),
       isInvalid: true,
       invalidReasonCode: null,
     });
@@ -139,6 +141,11 @@ describe("Issue #657 — the clock next to a pending Zeitnachtrag", () => {
   // One distinct past Thursday per case so no case shares a day with another.
   const baseMonday = addDaysStr(mondayOfWeekStr(), -20 * 7);
   const thursdayOf = (weekOffset: number): string => addDaysStr(baseMonday, weekOffset * 7 + 3);
+  // Days are handed out in execution order and only ever ascend: a clock START must lie after every
+  // closed entry of the employee (T-70b-11, also on LATER days), so a case on an earlier day than a
+  // previous case would be refused with ENTRY_OVERLAP by that case's rows.
+  let nextWeek = 0;
+  const freshDay = (): string => thursdayOf(nextWeek++);
   const dateOf = (dayStr: string) => new Date(`${dayStr}T00:00:00Z`);
 
   async function withClock<T>(dayStr: string, hhmm: string, fn: () => Promise<T>): Promise<T> {
@@ -267,7 +274,7 @@ describe("Issue #657 — the clock next to a pending Zeitnachtrag", () => {
   // ── AC-657-2 ─────────────────────────────────────────────────────────────────────────────
   describe("AC-657-2 — a pending Zeitnachtrag no longer blocks the clock", () => {
     it("a clock-in in ANOTHER salon starts a new entry there; the pending row and its request stay untouched", async () => {
-      const day = thursdayOf(0);
+      const day = freshDay();
       const { request, entry } = await pendingRow(day, "08:00", "10:00", salonA.id);
       const before = await snapshot(day);
 
@@ -292,7 +299,7 @@ describe("Issue #657 — the clock next to a pending Zeitnachtrag", () => {
     });
 
     it("a clock-in WITHOUT a salon starts a NEW entry and never re-opens the pending row", async () => {
-      const day = thursdayOf(1);
+      const day = freshDay();
       const { entry } = await pendingRow(day, "08:00", "10:00", salonA.id);
       const before = await snapshot(day);
 
@@ -302,6 +309,212 @@ describe("Issue #657 — the clock next to a pending Zeitnachtrag", () => {
       expect(result.entry.id).not.toBe(entry.id);
       expect(result.entry.endTime).toBeNull();
       expect((await snapshot(day)).slice(0, 1)).toEqual(before);
+    });
+  });
+  // ── D-14: the rest of the clock contract ────────────────────────────────────────────────
+  describe("D-14 — a pending row shadows what it covers", () => {
+    it("shadowing: X 07-08 + pending 09-10, IN at 10:30 starts a NEW entry; X keeps its end and gets no gap break", async () => {
+      const day = freshDay();
+      const x = await plainRow(day, "07:00", "08:00", salonA.id);
+      await pendingRow(day, "09:00", "10:00", salonA.id);
+
+      const result = await resolveAt(day, "10:30", "IN");
+      expect(result.kind).toBe("CLOCKED_IN");
+      if (result.kind !== "CLOCKED_IN") throw new Error("unreachable");
+      expect(result.entry.id).not.toBe(x.id);
+      const xAfter = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: x.id } });
+      expect(xAfter.endTime?.toISOString()).toBe(instant(day, "08:00").toISOString());
+      expect(await app.prisma.break.count({ where: { timeEntryId: x.id } })).toBe(0);
+    });
+
+    it("not shadowed: pending 06-07 EARLIER than X 08-10, IN at 10:30 re-opens X", async () => {
+      const day = freshDay();
+      await pendingRow(day, "06:00", "07:00", salonA.id);
+      const x = await plainRow(day, "08:00", "10:00", salonA.id);
+
+      const result = await resolveAt(day, "10:30", "IN");
+      expect(result.kind).toBe("CLOCKED_IN");
+      if (result.kind !== "CLOCKED_IN") throw new Error("unreachable");
+      expect(result.entry.id).toBe(x.id);
+      expect(result.entry.endTime).toBeNull();
+    });
+
+    it("an instant INSIDE or BEFORE the pending interval is refused with ENTRY_OVERLAP and writes nothing", async () => {
+      const day = freshDay();
+      await pendingRow(day, "08:00", "10:00", salonA.id);
+      const before = await snapshot(day);
+
+      for (const hhmm of ["09:00", "07:00"]) {
+        const result = await resolveAt(day, hhmm, "IN");
+        expect(result, hhmm).toEqual({ kind: "CONFLICT", reason: "ENTRY_OVERLAP" });
+      }
+      expect(await snapshot(day)).toEqual(before);
+    });
+  });
+
+  describe("D-14 — an open pending row", () => {
+    it("refuses IN with ENTRY_OVERLAP; OUT answers RETRO_PENDING with the unchanged message; the row stays open and pending", async () => {
+      const day = freshDay();
+      const { request, entry } = await pendingRow(day, "08:00", null, salonA.id);
+      const before = await snapshot(day);
+
+      expect(await resolveAt(day, "11:00", "IN")).toEqual({
+        kind: "CONFLICT",
+        reason: "ENTRY_OVERLAP",
+      });
+      expect(await resolveAt(day, "11:00", "OUT")).toEqual({
+        kind: "CONFLICT",
+        reason: "RETRO_PENDING",
+      });
+
+      const out = await withClock(day, "11:00", () =>
+        app.inject({
+          method: "POST",
+          url: `/api/v1/time-entries/${entry.id}/clock-out`,
+          headers: { authorization: `Bearer ${seed.empToken}` },
+          payload: {},
+        }),
+      );
+      expect(out.statusCode, out.body).toBe(409);
+      const body = JSON.parse(out.body) as ClockBody;
+      expect(body.error).toBe("Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.");
+      expect(body.resolution.reason).toBe("RETRO_PENDING");
+
+      expect(await snapshot(day)).toEqual(before);
+      const req = await app.prisma.retroEntryRequest.findUniqueOrThrow({
+        where: { id: request.id },
+      });
+      expect(req.status).toBe("PENDING");
+    });
+
+    it("an earlier closed row is not re-opened across an open pending row: IN answers ENTRY_OVERLAP, X untouched", async () => {
+      const day = freshDay();
+      await plainRow(day, "07:00", "08:00", salonA.id);
+      await pendingRow(day, "09:00", null, salonA.id);
+      const before = await snapshot(day);
+
+      expect(await resolveAt(day, "11:00", "IN")).toEqual({
+        kind: "CONFLICT",
+        reason: "ENTRY_OVERLAP",
+      });
+      expect(await snapshot(day)).toEqual(before);
+    });
+
+    it("a pending open row of the PREVIOUS day no longer captures today's clock-in", async () => {
+      const day = freshDay();
+      const yesterday = addDaysStr(day, -1);
+      await pendingRow(yesterday, "22:00", null, salonA.id);
+      const before = await snapshot(yesterday);
+
+      const result = await resolveAt(day, "07:00", "IN");
+      expect(result.kind).toBe("CLOCKED_IN");
+      if (result.kind !== "CLOCKED_IN") throw new Error("unreachable");
+      expect(result.entry.date.toISOString().slice(0, 10)).toBe(day);
+      expect(await snapshot(yesterday)).toEqual(before);
+    });
+  });
+
+  describe("D-14 — consolidation never merges across a Zeitnachtrag row", () => {
+    it("clock-out of the row after the pending one succeeds (CLOCKED_OUT); X, pending and the new row keep their times", async () => {
+      const day = freshDay();
+      const x = await plainRow(day, "07:00", "08:00", seed.salonId);
+      const { entry: p } = await pendingRow(day, "09:00", "10:00", seed.salonId);
+      const inResult = await resolveAt(day, "10:30", "IN");
+      expect(inResult.kind).toBe("CLOCKED_IN");
+      if (inResult.kind !== "CLOCKED_IN") throw new Error("unreachable");
+      const n = inResult.entry;
+
+      const out = await resolveAt(day, "11:00", "OUT");
+      expect(out.kind).toBe("CLOCKED_OUT");
+
+      const rows = await liveRows(day);
+      expect(rows.map((r) => r.id)).toEqual([x.id, p.id, n.id]);
+      expect(rows.map((r) => [r.startTime.toISOString(), r.endTime?.toISOString()])).toEqual([
+        [instant(day, "07:00").toISOString(), instant(day, "08:00").toISOString()],
+        [instant(day, "09:00").toISOString(), instant(day, "10:00").toISOString()],
+        [instant(day, "10:30").toISOString(), instant(day, "11:00").toISOString()],
+      ]);
+    });
+
+    it("the guard reports merge_skipped with reason retro_row", async () => {
+      const day = freshDay();
+      const x = await plainRow(day, "07:00", "08:00", seed.salonId);
+      const { entry: p } = await pendingRow(day, "09:00", "10:00", seed.salonId);
+      const n = await plainRow(day, "10:30", "11:00", seed.salonId);
+      const infos: Array<[Record<string, unknown>, string]> = [];
+      const log = {
+        info: (obj: Record<string, unknown>, msg: string) => infos.push([obj, msg]),
+        warn: () => undefined,
+        error: () => undefined,
+      };
+      const result = await app.prisma.$transaction((tx) =>
+        consolidateSameDayEntries(tx, seed.tenant.id, n, 4, log as never),
+      );
+      expect(result).toEqual({ merged: false });
+      expect(infos.filter(([, msg]) => msg === "merge_skipped").map(([obj]) => obj.reason)).toEqual(
+        ["retro_row"],
+      );
+      expect((await liveRows(day)).map((r) => r.id)).toEqual([x.id, p.id, n.id]);
+    });
+  });
+
+  describe("D-14 — the RETRO_PENDING backstop (marker cleared by revalidate)", () => {
+    it("a coupled row whose request is PENDING but whose marker PATCH /revalidate cleared is still refused with RETRO_PENDING", async () => {
+      const day = freshDay();
+      const { request, entry } = await pendingRow(day, "08:00", "10:00", salonA.id);
+
+      const revalidate = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/time-entries/${entry.id}/revalidate`,
+        headers: { authorization: `Bearer ${seed.adminToken}` },
+        payload: {},
+      });
+      expect(revalidate.statusCode, revalidate.body).toBe(200);
+      const cleared = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      expect(cleared.isInvalid).toBe(false);
+      expect(cleared.invalidReasonCode).toBeNull();
+      expect(
+        (await app.prisma.retroEntryRequest.findUniqueOrThrow({ where: { id: request.id } }))
+          .status,
+      ).toBe("PENDING");
+
+      const res = await clockIn(day, "11:00", { source: "MOBILE" });
+      expect(res.statusCode, res.body).toBe(409);
+      const body = JSON.parse(res.body) as ClockBody;
+      expect(body.error).toBe("Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.");
+      expect(body.resolution.reason).toBe("RETRO_PENDING");
+    });
+  });
+
+  describe("D-14 — GET /time-entries/clock-salon follows the selectors", () => {
+    const clockSalon = (dayStr: string, hhmm: string) =>
+      withClock(dayStr, hhmm, () =>
+        app.inject({
+          method: "GET",
+          url: "/api/v1/time-entries/clock-salon",
+          headers: { authorization: `Bearer ${seed.empToken}` },
+        }),
+      );
+
+    it("a day whose latest row is pending names no fixed salon", async () => {
+      const day = freshDay();
+      await plainRow(day, "07:00", "08:00", salonA.id);
+      await pendingRow(day, "09:00", "10:00", salonB.id);
+      const res = await clockSalon(day, "11:00");
+      expect(res.statusCode, res.body).toBe(200);
+      expect((JSON.parse(res.body) as ChoiceBody).fixedSalon).toBeNull();
+    });
+
+    it("with the pending row EARLIER, the later ordinary row still fixes the salon", async () => {
+      const day = freshDay();
+      await pendingRow(day, "06:00", "07:00", salonB.id);
+      await plainRow(day, "08:00", "10:00", salonA.id);
+      const res = await clockSalon(day, "11:00");
+      expect(res.statusCode, res.body).toBe(200);
+      expect((JSON.parse(res.body) as ChoiceBody).fixedSalon).toEqual({
+        id: salonA.id,
+        name: salonA.name,
+      });
     });
   });
 });

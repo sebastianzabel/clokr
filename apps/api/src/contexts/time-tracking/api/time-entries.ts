@@ -860,7 +860,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // `manualEntrySchema.endTime` is nullable, so the entry-first Nachtrag
         // path (Phase 96) can leave a pending row open. This branch is therefore
         // genuinely reachable, and it keeps the honest message from being
-        // swallowed by the generic "Konflikt" fallback below.
+        // swallowed by the generic "Konflikt" fallback below. Issue #657 (D-14): it is reached by
+        // the resolver's OUT rule for an open row that is a pending Zeitnachtrag (the selectors no
+        // longer hand such a row out) and by its database backstop for a coupled row whose request
+        // is still PENDING after `PATCH /:id/revalidate` cleared the marker.
         if (resolution.reason === "RETRO_PENDING") {
           return reply.code(409).send({
             error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
