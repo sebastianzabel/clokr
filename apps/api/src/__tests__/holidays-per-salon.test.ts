@@ -184,6 +184,23 @@ describe("Two-salon tenant: SALON_REQUIRED, per-salon manual holidays, byte-iden
     });
     expect(postB.statusCode, postB.body.slice(0, 400)).toBe(201);
     expect(JSON.parse(postB.body).salonId).toBe(salonB.id);
+
+    // Issue #579: the same date on the same salon again is a German 409, not a 500, and writes
+    // no second row.
+    const postADuplicate = await postHoliday(app, data.adminToken, {
+      date: "2026-06-10",
+      name: "Stadtfest A doppelt",
+      salonId: salonA.id,
+    });
+    expect(postADuplicate.statusCode, postADuplicate.body.slice(0, 400)).toBe(409);
+    expect(JSON.parse(postADuplicate.body)).toEqual({
+      error: "Für diesen Salon ist an diesem Tag bereits ein Feiertag eingetragen.",
+      code: "HOLIDAY_EXISTS",
+    });
+    const rowsA = await app.prisma.publicHoliday.count({
+      where: { salonId: salonA.id, date: new Date("2026-06-10") },
+    });
+    expect(rowsA).toBe(1);
   });
 
   it("T-100-09: a foreign tenant's real salon and a nonexistent salon answer byte-identical status+body on GET and POST, and POST writes nothing", async () => {
