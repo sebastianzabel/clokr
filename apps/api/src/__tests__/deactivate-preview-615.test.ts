@@ -47,6 +47,8 @@ interface PreviewBody {
   storedExitDate: string | null;
   refusal: { status: number; code: string; error: string } | null;
   absences: Array<Record<string, unknown>> | null;
+  absenceCounts: Record<string, number> | null;
+  absencesUnavailableReason: string | null;
   saldo: { balanceMinutes: number; asOf: string } | null;
   saldoUnavailableReason: string | null;
   vacation: Record<string, unknown> | null;
@@ -246,7 +248,9 @@ describe("Issue #615 — deactivation preview", () => {
 
       expect(Object.keys(body).sort((a, b) => a.localeCompare(b))).toEqual(
         [
+          "absenceCounts",
           "absences",
+          "absencesUnavailableReason",
           "exitDate",
           "loginOnlyReason",
           "refusal",

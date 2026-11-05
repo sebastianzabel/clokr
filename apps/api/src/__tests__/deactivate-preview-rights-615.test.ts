@@ -3,9 +3,10 @@
  * `POST /api/v1/employees/:id/deactivate/preview`.
  *
  * - Each figure follows its own right: the saldo needs `overtime:read` over the person, the
- *   Resturlaub `leave-entitlement:read` over the person at the last working day, the absences only
- *   the deactivation right (`employee:manage-access`). A figure the caller may not see is `null`
- *   with a reason code and is never computed.
+ *   Resturlaub `leave-entitlement:read` over the person at the last working day, the absences'
+ *   type, status and dates `leave-request:read` over the person (review WR-03: sick leave is health
+ *   data). A figure the caller may not see is `null` with a reason code and is never computed; the
+ *   absences then reduce to counts per action.
  * - A nonexistent id, an employee of another tenant and an in-tenant employee outside the caller's
  *   Stammsalon scope all get the byte-identical 404 body of `PATCH /:id/deactivate`.
  *
@@ -33,6 +34,8 @@ const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 interface PreviewBody {
   exitDate: string;
   absences: Array<Record<string, unknown>> | null;
+  absenceCounts: Record<"CANCEL" | "SHORTEN" | "DELETE" | "SKIP", number> | null;
+  absencesUnavailableReason: string | null;
   saldo: { balanceMinutes: number; asOf: string } | null;
   saldoUnavailableReason: string | null;
   vacation: Record<string, unknown> | null;
@@ -173,6 +176,7 @@ describe("Issue #615 — deactivation preview: rights and the shared 404", () =>
   const MANAGE = "employee:manage-access:ZUGEWIESEN";
   const OVERTIME = "overtime:read:ZUGEWIESEN";
   const ENTITLEMENT = "leave-entitlement:read:ZUGEWIESEN";
+  const LEAVE_REQUEST = "leave-request:read:ZUGEWIESEN";
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -196,7 +200,7 @@ describe("Issue #615 — deactivation preview: rights and the shared 404", () =>
   });
 
   describe("each figure follows its own right", () => {
-    it("manage-access alone: absences yes, saldo and Resturlaub NO_PERMISSION; each added right adds exactly its figure; the admin sees all", async () => {
+    it("manage-access alone: saldo, Resturlaub and the absence rows NO_PERMISSION; each added right adds exactly its figure; the admin sees all", async () => {
       const person = await createPerson("figures", { homeSalonId: salonS.id });
       const r0 = await createActor("r0", [MANAGE], { scopeType: "TENANT" });
       const r1 = await createActor("r1", [MANAGE, OVERTIME], { scopeType: "TENANT" });
@@ -209,7 +213,9 @@ describe("Issue #615 — deactivation preview: rights and the shared 404", () =>
       };
 
       const b0 = await read(r0.token);
-      expect(b0.absences).toEqual([]);
+      expect(b0.absences).toBeNull();
+      expect(b0.absencesUnavailableReason).toBe("NO_PERMISSION");
+      expect(b0.absenceCounts).toEqual({ CANCEL: 0, SHORTEN: 0, DELETE: 0, SKIP: 0 });
       expect(b0.saldo).toBeNull();
       expect(b0.saldoUnavailableReason).toBe("NO_PERMISSION");
       expect(b0.vacation).toBeNull();
@@ -232,6 +238,47 @@ describe("Issue #615 — deactivation preview: rights and the shared 404", () =>
       expect(admin.vacation).not.toBeNull();
       expect(admin.saldo).toEqual(b1.saldo);
       expect(admin.vacation).toEqual(b2.vacation);
+    });
+
+    it("the absence rows (type, status, dates) need leave-request:read over the person; without it only counts per action (review WR-03)", async () => {
+      const person = await createPerson("absence-rows", { homeSalonId: salonS.id });
+      const start = new Date(today.getTime() + 8 * 86_400_000);
+      const sick = await app.prisma.leaveType.create({
+        data: { tenantId: data.tenant.id, code: "SICK", name: "Krankenstand", isPaid: true },
+      });
+      const request = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: person.employee.id,
+          leaveTypeId: sick.id,
+          startDate: start,
+          endDate: start,
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+      const noLeave = await createActor("al0", [MANAGE], { scopeType: "TENANT" });
+      const withLeave = await createActor("al1", [MANAGE, LEAVE_REQUEST], { scopeType: "TENANT" });
+
+      const withheld = await preview(person.employee.id, noLeave.token);
+      expect(withheld.statusCode, withheld.body).toBe(200);
+      const w = JSON.parse(withheld.body) as PreviewBody;
+      expect(w.absences).toBeNull();
+      expect(w.absencesUnavailableReason).toBe("NO_PERMISSION");
+      expect(w.absenceCounts).toEqual({ CANCEL: 1, SHORTEN: 0, DELETE: 0, SKIP: 0 });
+      // Nothing that identifies the sick leave leaves the server.
+      for (const secret of ["SICK", isoDay(start), request.id]) {
+        expect(withheld.body).not.toContain(secret);
+      }
+
+      const shown = await preview(person.employee.id, withLeave.token);
+      const s = JSON.parse(shown.body) as PreviewBody;
+      expect(s.absencesUnavailableReason).toBeNull();
+      expect(s.absences).toHaveLength(1);
+      expect(s.absences![0]).toMatchObject({ id: request.id, typeCode: "SICK", action: "CANCEL" });
+      expect(s.absenceCounts).toEqual(w.absenceCounts);
+
+      const admin = await preview(person.employee.id, data.adminToken);
+      expect((JSON.parse(admin.body) as PreviewBody).absences).toEqual(s.absences);
     });
 
     it("a figure the caller may not see is never computed", async () => {

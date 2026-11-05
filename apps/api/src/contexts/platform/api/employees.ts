@@ -607,6 +607,40 @@ async function canReadEntitlementOf(
   return isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, employeeId, day);
 }
 
+/**
+ * Review WR-03 - may this caller read the person's leave requests and absences (type, status, dates;
+ * sick leave is health data, Art. 9 DSGVO)? The permission of `GET /leave/requests`, decided exactly
+ * like {@link canReadEntitlementOf}: EIGENE covers only the caller's own person, ZUGEWIESEN the caller
+ * plus a Stammsalon scope match at `day`.
+ */
+async function canReadLeaveRequestsOf(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  employeeId: string,
+  day: Date,
+): Promise<boolean> {
+  const reach = await permissionReach(req, "leave-request:read");
+  if (reach === null) return false;
+  const own = req.user.employeeId === employeeId;
+  if (reach !== "ZUGEWIESEN") return own;
+  if (own) return true;
+  const scopeReach = await resolveAccessReach(
+    app.prisma,
+    accessContextFromRequest(req),
+    "leave-request:read:ZUGEWIESEN",
+  );
+  return isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, employeeId, day);
+}
+
+/** Per-action row counts of the exit plan; the only absence information a caller without a leave right gets. */
+function countExitActions(
+  rows: ReadonlyArray<{ action: "CANCEL" | "SHORTEN" | "DELETE" | "SKIP" }>,
+): Record<"CANCEL" | "SHORTEN" | "DELETE" | "SKIP", number> {
+  const counts = { CANCEL: 0, SHORTEN: 0, DELETE: 0, SKIP: 0 };
+  for (const row of rows) counts[row.action] += 1;
+  return counts;
+}
+
 export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesOptions) {
   // GET /api/v1/employees
   //
@@ -1778,6 +1812,8 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
           loginOnlyReason: "HIRE_IN_FUTURE" as const,
           refusal: null,
           absences: [],
+          absenceCounts: countExitActions([]),
+          absencesUnavailableReason: null,
           vacation: null,
           vacationUnavailableReason: "HIRE_IN_FUTURE" as const,
         };
@@ -1799,18 +1835,27 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
           ...base,
           refusal: { status: resolved.status, ...resolved.body },
           absences: null,
+          absenceCounts: null,
+          absencesUnavailableReason: "EXIT_DATE_REFUSED" as const,
           vacation: null,
           vacationUnavailableReason: "EXIT_DATE_REFUSED" as const,
         };
       }
 
-      // D-09: the exit plan as read-only rows, with the marker the deactivation itself uses.
-      const absences = await app.absenceExit.preview({
+      // D-09: the exit plan as read-only rows, with the marker the deactivation itself uses. Review
+      // WR-03: type, status and dates of a request or absence (sick leave is health data, Art. 9 DSGVO)
+      // are shown only to a caller whose `leave-request:read` reach covers the person; everyone else
+      // gets the counts per action and a reason code.
+      const plannedRows = await app.absenceExit.preview({
         tenantId,
         employeeId: id,
         exitDay: exitInstant,
         marker: { auditReason: "Deaktivierung", trigger: "DEACTIVATION" },
       });
+      const absenceCounts = countExitActions(plannedRows);
+      const mayReadAbsences = await canReadLeaveRequestsOf(app, req, id, exitInstant);
+      const absences = mayReadAbsences ? plannedRows : null;
+      const absencesUnavailableReason = mayReadAbsences ? null : ("NO_PERMISSION" as const);
 
       // D-11/D-18/D-21: the exit-year Resturlaub, only with the right to read the entitlement.
       let vacation: Awaited<ReturnType<FastifyInstance["exitVacationBalance"]>> = null;
@@ -1822,7 +1867,15 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
         if (vacation === null) vacationUnavailableReason = "NO_ENTITLEMENT";
       }
 
-      return { ...base, refusal: null, absences, vacation, vacationUnavailableReason };
+      return {
+        ...base,
+        refusal: null,
+        absences,
+        absenceCounts,
+        absencesUnavailableReason,
+        vacation,
+        vacationUnavailableReason,
+      };
     },
   });
 
