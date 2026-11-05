@@ -1442,15 +1442,19 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   `packages-legal-core-isolation-566.test.ts` (AST) proves the legally required paths read no package and
   pins every gate before its create. `isMultiSalonTenant()` / `showSalonOptions()` never read packages. The
   web only displays: `GET /me/context` `packages` (`bookedModules`, `salonLimit`), `moduleBooked()` in
-  `$stores/salon-context` (unknown state hides nothing) and `ModuleHint` at exactly five set-up spots under
+  `$stores/salon-context` (unknown state hides nothing) and `ModuleHint` at exactly six set-up spots under
   `/admin` (the fifth, Issue #563: the salon create action on `/admin/salons` when `CHAIN` is not booked and
-  the active salons reach the salon limit; never in clock, calendar or dashboard; existing items stay
-  manageable). Test fixtures book
+  the active salons reach the salon limit; the sixth, Issue #624: the „Neue Rolle“ action of `/admin/roles`
+  when `CHAIN` is not booked; never in clock, calendar or dashboard; existing items stay manageable). Test fixtures book
   everything (`FIXTURE_PACKAGES`, so recorded neutrality cells stay unchanged); package tests build their
   tenant with `seedGrundversionTenant`. Existing tenants keep what they use (migration
   `*_tenant_packages`, Bestandsschutz); run the read-only dry run `scripts/audit-566-package-backfill.ts`
-  on int and prod BEFORE the deploy (`docs/migrations.md`, „Phase 566“). Extended roles are not gated yet
-  (#624). ADR: `docs/adr/0001-abweichungen.md` Eintrag Z.
+  on int and prod BEFORE the deploy (`docs/migrations.md`, „Phase 566“). Since Issue #624 extended roles belong
+  to `CHAIN`, for NEW creations only: `POST /roles`, `POST /roles/:id/copy` and `POST /role-assignments` with
+  scope SALONS or PERSONS, and a `PATCH /role-assignments/:id` that switches an assignment to a reach type it did not have, answer 409 `MODULE_NOT_BOOKED` (the gate runs first, before the name check and the
+  #78 four-eyes check; TENANT-scope assignments, PATCH and DELETE stay free; `resolveAccessReach` and
+  `request-permissions.ts` never read packages, pinned by `packages-legal-core-isolation-566.test.ts`;
+  behaviour in `role-chain-package-624.test.ts`). ADR: `docs/adr/0001-abweichungen.md` Eintrag Z.
 - **Jobs: writing jobs skip, retention never skips.** Cron jobs that write (month close, attendance
   checks, Phorest sync, reminders) skip a deactivated tenant; the data-retention purge deliberately
   runs for it, because retention is a legal duty that does not end with the contract. The source-scan

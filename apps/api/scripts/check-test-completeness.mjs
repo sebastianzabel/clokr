@@ -1015,11 +1015,13 @@ import { readFileSync } from "node:fs";
 // (incl. 3 skipped). Files: +1 drop-user-role-641.test.ts, -1 backfill-539-role-assignments.test.ts (script retired); the
 // base was already 755 files, so 750 had become a loose lower bound. The deleted cases are named at MIN_TESTS.
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped).
+// Issue #624: +1 file (role-chain-package-624.test.ts), full run measured 802 files / 11803 tests (PATCH gate adds 2 cases + 1 site) (incl. 3 skipped).
 // Issue #615 (2026-11-05, deactivate with last working day; +5 API files: deactivate-exit-day-615,
 // employment-exit-preview-615, exit-vacation-balance-615, deactivate-preview-615,
 // deactivate-preview-rights-615): full run on the tree merged with origin/main (84b184d6) measured
 // 806 files / 11836 tests (incl. 3 skipped).
-const MIN_FILES = 806;
+// Merge of #615 onto main after #624: 802 + 5 new files.
+const MIN_FILES = 807;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1148,9 +1150,11 @@ const MIN_FILES = 806;
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped); the drop from 11812 is
 // exactly the deliberately deleted #539/#75b role-column cases named in the #641 comment above.
 // Issue #531: imports.test.ts -1 (whole-import refusal replaced) +5 (Stammsalon per row); full run measured 801 files / 11793 tests (incl. 3 skipped).
+// Issue #624: +15 cases on its own base (11788 -> 11803); merged onto main after #531: CI measured 802 files / 11807 tests.
 // Issue #615 (2026-11-05): MIN_TESTS 11793 -> 11836, the measured total of the full run named at MIN_FILES
 // (the five new API files above plus the cases other merged PRs added since the previous entry). Never lowered.
-const MIN_TESTS = 11836;
+// Merge of #615 onto main after #624: 11807 + 44 (measured 11836 on the base 11792).
+const MIN_TESTS = 11851;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

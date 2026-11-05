@@ -9,7 +9,8 @@
 // (d)-(g) (Plan 566-10): the other three spots — API-Keys (/admin/system), Presence-Quellen
 // (/admin/integrations) and the Branch-ID field (/admin/phorest) — plus the total.
 // (i) (Issue #563, D-18): the fifth spot — the salon create action on /admin/salons.
-// Total: exactly five hint usages in the web source, all under routes/(app)/admin/.
+// (j) (Issue #624): the sixth spot — the create action of /admin/roles.
+// Total: exactly six hint usages in the web source, all under routes/(app)/admin/.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +33,7 @@ const ADMIN_SYSTEM = join(ROUTES_APP, "admin", "system", "+page.svelte");
 const ADMIN_INTEGRATIONS = join(ROUTES_APP, "admin", "integrations", "+page.svelte");
 const ADMIN_PHOREST = join(ROUTES_APP, "admin", "phorest", "+page.svelte");
 const ADMIN_SALONS = join(ROUTES_APP, "admin", "salons", "+page.svelte");
+const ADMIN_ROLES = join(ROUTES_APP, "admin", "roles", "+page.svelte");
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -213,11 +215,17 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     expect(code).not.toMatch(/get\(\s*salonContext\s*\)/);
   });
 
-  it("(g) exactly five hint usages in the web source, one per spot, all under routes/(app)/admin/", () => {
+  it("(g) exactly six hint usages in the web source, one per spot, all under routes/(app)/admin/", () => {
     const files = walk(WEB_SRC);
     // Anti-vacuity: the walk saw the five pages and a floor of source files.
     expect(files).toEqual(
-      expect.arrayContaining([ADMIN_SYSTEM, ADMIN_INTEGRATIONS, ADMIN_PHOREST, ADMIN_SALONS]),
+      expect.arrayContaining([
+        ADMIN_SYSTEM,
+        ADMIN_INTEGRATIONS,
+        ADMIN_PHOREST,
+        ADMIN_SALONS,
+        ADMIN_ROLES,
+      ]),
     );
     expect(files.length).toBeGreaterThanOrEqual(WEB_SRC_FLOOR);
 
@@ -227,7 +235,7 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
         tag,
       })),
     );
-    expect(usages).toHaveLength(5);
+    expect(usages).toHaveLength(6);
     for (const { file } of usages) {
       expect(file.startsWith(join("routes", "(app)", "admin") + "/"), file).toBe(true);
     }
@@ -236,6 +244,7 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
       [
         join("routes", "(app)", "admin", "integrations", "+page.svelte") + "|HARDWARE_CLOCK",
         join("routes", "(app)", "admin", "phorest", "+page.svelte") + "|INTEGRATIONS",
+        join("routes", "(app)", "admin", "roles", "+page.svelte") + "|CHAIN",
         join("routes", "(app)", "admin", "salons", "+page.svelte") + "|CHAIN",
         join("routes", "(app)", "admin", "system", "+page.svelte") + "|HARDWARE_CLOCK",
         join("routes", "(app)", "admin", "system", "+page.svelte") + "|INTEGRATIONS",
@@ -259,6 +268,22 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     expect(createBranch).toContain("Salon anlegen");
     // The link exists nowhere else on the page.
     expect(code.match(/href="\/admin\/salons\/neu"/g)).toHaveLength(1);
+  });
+
+  it("(j) the roles page holds one CHAIN hint, reads the booked state without treating unknown as missing, and hands it to the tab as the replacement of 'Neue Rolle'", () => {
+    const code = stripComments(readFileSync(ADMIN_ROLES, "utf8"));
+    expect(code.match(/<ModuleHint\s+module="CHAIN"/g)).toHaveLength(1);
+    expect(code).toMatch(/moduleBooked\(\$salonContext,\s*"CHAIN"\)\s*===\s*false/);
+    expect(code).toContain("createHint={chainHint ? chainHintSnippet : undefined}");
+    const tab = stripComments(
+      readFileSync(join(WEB_SRC, "lib", "components", "admin", "roles", "RolesTab.svelte"), "utf8"),
+    );
+    const open = tab.indexOf("{#if createHint}");
+    expect(open).toBeGreaterThan(-1);
+    const [hintBranch, createBranch] = tab.slice(open, tab.indexOf("{/if}", open)).split("{:else}");
+    expect(hintBranch).toContain("@render createHint()");
+    expect(hintBranch).not.toContain("Neue Rolle");
+    expect(createBranch).toContain("Neue Rolle");
   });
 
   it("(h) no file outside routes/(app)/admin/ renders the hint (operator console and shared layout included)", () => {

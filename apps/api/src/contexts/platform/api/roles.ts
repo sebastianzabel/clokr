@@ -13,6 +13,7 @@ import {
 import { ROLE_LOCKOUT_MESSAGE, RoleLockoutError } from "../role-assignment";
 import { withRoleLockoutGuard } from "../facade/role-assignments";
 import { foreignKeyConstraintOf } from "../prisma-foreign-key";
+import { assertModuleBooked } from "../tenant-packages";
 import { requestAuditFields } from "../request-audit-fields";
 import {
   createsFourEyesCombination,
@@ -195,6 +196,11 @@ export async function roleRoutes(app: FastifyInstance) {
 
       try {
         const created = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          // Issue #624: a NEW customer role is a Ketten-Paket feature. Decided FIRST, before the
+          // name check and the four-eyes check: whether the action exists for this tenant does not
+          // depend on the input, and a refusal must not leak name conflicts or permission hints.
+          // Editing and deleting existing roles stay free (never retroactive, #566 D-06).
+          await assertModuleBooked(tx, tenantId, "CHAIN");
           if (await nameTaken(tx, tenantId, nameKey, null)) {
             return null;
           }
@@ -523,6 +529,9 @@ export async function roleRoutes(app: FastifyInstance) {
 
       try {
         const created = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          // Issue #624: a copy is a new customer role — same gate and order as the create route
+          // (after the 404 source lookup above, so the T-100-09 body is unchanged).
+          await assertModuleBooked(tx, tenantId, "CHAIN");
           let name: string;
           let nameKey: string;
 
