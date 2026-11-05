@@ -453,4 +453,61 @@ describe("Issue #657 — Zeitnachtrag per interval", () => {
       expect(await liveRequests(day)).toHaveLength(1);
     });
   });
+
+  describe("a day with a single request behaves as before (AC-657-4, AC-657-5)", () => {
+    it("POST /retro-entry-requests answers with the same body keys and writes one audit row with the same keys", async () => {
+      const day = nextDay();
+      const res = await propose(day, "08:00", "12:00");
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body) as Record<string, unknown> & { id: string };
+      expect(Object.keys(body).sort()).toEqual(
+        [
+          "id",
+          "employeeId",
+          "targetDate",
+          "reason",
+          "startTime",
+          "endTime",
+          "breakMinutes",
+          "status",
+          "reviewedBy",
+          "reviewedAt",
+          "reviewNote",
+          "deletedAt",
+          "createdAt",
+          "updatedAt",
+          "requesterId",
+        ].sort(),
+      );
+      expect(body.targetDate).toBe(day);
+      expect(body.status).toBe("PENDING");
+
+      const audit = await soleAuditRow(app.prisma, {
+        where: { entity: "RetroEntryRequest", entityId: body.id, action: "RETRO_ENTRY_REQUESTED" },
+      });
+      expect(Object.keys(audit.newValue as Record<string, unknown>).sort()).toEqual(
+        [
+          "employeeId",
+          "targetDate",
+          "ageInDays",
+          "reason",
+          "startTime",
+          "endTime",
+          "breakMinutes",
+          "requesterId",
+        ].sort(),
+      );
+    });
+
+    it("an entry-first Nachtrag on an empty day creates one pending row and one PENDING request", async () => {
+      const day = nextDay();
+      const res = await entryFirst(day, "08:00", "12:00");
+      expect(res.statusCode).toBe(201);
+      expect(JSON.stringify(JSON.parse(res.body))).not.toContain("RETRO_REQUEST_OVERLAP");
+      const requests = await liveRequests(day);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].status).toBe("PENDING");
+      expect(await pendingRows(day)).toBe(1);
+    });
+  });
 });

@@ -1015,7 +1015,10 @@ import { readFileSync } from "node:fs";
 // (incl. 3 skipped). Files: +1 drop-user-role-641.test.ts, -1 backfill-539-role-assignments.test.ts (script retired); the
 // base was already 755 files, so 750 had become a loose lower bound. The deleted cases are named at MIN_TESTS.
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped).
-const MIN_FILES = 801;
+// Phase 657 Plan 01 (Issue #657): two new test files (retro-request-overlap.test.ts, retro-request-per-interval-657.test.ts),
+// verified with `pnpm exec vitest run <file>`: 4 + 17 = 21 cases. MIN_FILES 801 -> 803; the file count is a lower bound on
+// the merge base, whoever merges later re-measures with a full run.
+const MIN_FILES = 803;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1143,7 +1146,8 @@ const MIN_FILES = 801;
 // employee-role-bridge) kept every case.
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped); the drop from 11812 is
 // exactly the deliberately deleted #539/#75b role-column cases named in the #641 comment above.
-const MIN_TESTS = 11788;
+// Phase 657 Plan 01 (Issue #657): +21 cases (two new files, 4 + 17, measured with their own vitest output): 11788 -> 11809.
+const MIN_TESTS = 11809;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
