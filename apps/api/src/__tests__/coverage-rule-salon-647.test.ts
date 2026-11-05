@@ -8,6 +8,30 @@
  * Mon 06-15 … Sun 06-21): tenant T (default salon, plus salons A and B), person pA (HOME A) with one
  * shift pA@A on Tue 2026-06-16 (09:00-15:00, created directly) and a tenant-wide rule (all
  * templates, all days, minStaff 3) created directly. Synthetic names only.
+ *
+ * Further describes: D-03 (a single-salon tenant, own tenants) and AC 1–3 (a multi-salon tenant with
+ * salon rules A all-days 1, B Thursday 4, an inactive salon I all-days 9 and tenant-wide all-days 3 /
+ * Friday 5; every precedence edge as one seven-value list).
+ *
+ * Mutation proof (Phase 647, 2026-11-05) — recorded here, not re-run by CI; each change was made on
+ * `contexts/scheduling/coverage-rule.ts` after a `cp` backup and restored by `cp` (`git diff --quiet`
+ * clean afterwards); this file and `coverage-rule.test.ts` were run together:
+ * M1 the candidate filter removed (every rule of the tenant is a candidate) → red (13 cases), among
+ *    them "AC 2: unfiltered, only the tenant-wide rules decide (no salon rule acts)" and
+ *    "AC 1/3: salon B — B's Thursday rule applies and the shortfall is measured against it".
+ * M2 within-rung preference inverted (tenant-wide before salon) → red (10 cases), among them
+ *    "AC 1/3: salon A — A beats tenant-wide within the all-days rung, the Friday tenant-wide rung
+ *    beats A, B's rule never acts".
+ * M3 a salon rule searched over the whole ladder before any tenant-wide rule → red (3 cases):
+ *    the same "AC 1/3: salon A …" case (Friday becomes 1), "a salon manager's filtered view is the
+ *    admin's view …" and the pure "a tenant-wide rule on a more specific rung beats a salon rule …".
+ * M4 `coverageSalonInView` returns the filter only (no single-salon fallback) → red (2 cases):
+ *    "the unfiltered week uses the only active salon's rule; a rule of an inactive salon never acts"
+ *    and the pure "without a filter the tenant's only active salon is in view …".
+ * M5 the D-03a reach branch disabled → red (3 cases): "D-03a: a salon manager who reaches only
+ *    salon A has A in view without any filter", "a salon manager's filtered view is the admin's view
+ *    …" (its unfiltered manager line) and the pure "D-03a: a person-free reach of exactly one active
+ *    salon puts that salon in view".
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -362,5 +386,170 @@ describe("Issue #647 D-03 — a single-salon tenant", () => {
 
   it("a single-salon tenant without a salon rule keeps its tenant-wide minimum", async () => {
     expect(minStaffByDay(await weekAs(app, s2.adminToken))).toEqual(ALL(3));
+  });
+});
+
+describe("Issue #647 AC 1–3 — the week view of a multi-salon tenant", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  let salonA: { id: string };
+  let salonB: { id: string };
+  let salonI: { id: string };
+  let managerToken: string;
+  let ruleA: { id: string };
+
+  const UNFILTERED_KEYS = [
+    "absenceMinutesByEmp",
+    "availability",
+    "contractSollMinutesByEmp",
+    "coverage",
+    "employees",
+    "leaveMinutesByEmp",
+    "salonOpeningHours",
+    "schoolHoliday",
+    "shiftBreakMinutesByEmp",
+    "shifts",
+    "vocationalSchoolMinutesByEmp",
+    "weekDays",
+  ];
+  const COVERAGE_KEYS = [
+    "coverageStatus",
+    "date",
+    "effectiveStaff",
+    "hasSupervisor",
+    "minStaff",
+    "unsupervisedAzubis",
+  ];
+
+  function statuses(body: WeekBody): string[] {
+    return [...body.coverage]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((c) => c.coverageStatus);
+  }
+
+  beforeAll(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-15T10:00:00.000Z"));
+    app = await getTestApp();
+    data = await seedTestData(app, "cov647m");
+    salonA = await createTestSalon(app.prisma, data.tenant.id, { name: "Salon Nord" });
+    salonB = await createTestSalon(app.prisma, data.tenant.id, { name: "Salon Ost" });
+    salonI = await createTestSalon(app.prisma, data.tenant.id, {
+      name: "Salon Alt",
+      isActive: false,
+    });
+
+    const pA = await makePerson(app, data.tenant.id, "pA", salonA.id);
+    const pB = await makePerson(app, data.tenant.id, "pB", salonB.id);
+    await shiftOn(app, pA.employee.id, salonA.id, TUESDAY);
+    await shiftOn(app, pB.employee.id, salonB.id, "2026-06-18");
+
+    const m = await makePerson(app, data.tenant.id, "manager", salonA.id);
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: m.user.id,
+        accessRoleId: SYSTEM_ROLE_IDS.SALON_MANAGER,
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+        employeeIds: [],
+      },
+    });
+    managerToken = await loginAs(app, m.user.email);
+
+    await ruleRow(app, data.tenant.id, 3); // RT: tenant-wide, all days
+    await ruleRow(app, data.tenant.id, 5, { dayOfWeek: 4 }); // RTF: tenant-wide, Friday
+    ruleA = await ruleRow(app, data.tenant.id, 1, { salonId: salonA.id }); // RA
+    await ruleRow(app, data.tenant.id, 4, { salonId: salonB.id, dayOfWeek: 3 }); // RB: Thursday
+    await ruleRow(app, data.tenant.id, 9, { salonId: salonI.id }); // RI: inactive salon
+  });
+
+  afterAll(async () => {
+    vi.useRealTimers();
+    try {
+      await app.prisma.roleAssignment.deleteMany({ where: { tenantId: data.tenant.id } });
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("coverage-rule-salon-647 (AC 1-3) cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("AC 2: unfiltered, only the tenant-wide rules decide (no salon rule acts)", async () => {
+    const body = await weekAs(app, data.adminToken);
+    expect(minStaffByDay(body)).toEqual([3, 3, 3, 3, 5, 3, 3]);
+    expect(statusOn(body, TUESDAY)).toBe("under");
+  });
+
+  it("AC 1/3: salon A — A beats tenant-wide within the all-days rung, the Friday tenant-wide rung beats A, B's rule never acts", async () => {
+    const body = await weekAs(app, data.adminToken, salonA.id);
+    expect(minStaffByDay(body)).toEqual([1, 1, 1, 1, 5, 1, 1]);
+    expect(statusOn(body, TUESDAY)).toBe("ok");
+  });
+
+  it("AC 1/3: salon B — B's Thursday rule applies and the shortfall is measured against it", async () => {
+    const body = await weekAs(app, data.adminToken, salonB.id);
+    expect(minStaffByDay(body)).toEqual([3, 3, 3, 4, 5, 3, 3]);
+    expect(statusOn(body, "2026-06-18")).toBe("under");
+  });
+
+  it("a salon manager's filtered view is the admin's view of that salon, values and statuses", async () => {
+    const admin = await weekAs(app, data.adminToken, salonA.id);
+    const manager = await weekAs(app, managerToken, salonA.id);
+    expect(minStaffByDay(manager)).toEqual(minStaffByDay(admin));
+    expect(statuses(manager)).toEqual(statuses(admin));
+    // D-03a: without a filter the manager's only reach salon is in view
+    expect(minStaffByDay(await weekAs(app, managerToken))).toEqual([1, 1, 1, 1, 5, 1, 1]);
+  });
+
+  it("an inactive salon is the identical 404 and its rule never acts anywhere", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/shifts/week?${WEEK}&salonId=${salonI.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toBe(NOT_FOUND);
+    for (const view of [
+      await weekAs(app, data.adminToken),
+      await weekAs(app, data.adminToken, salonA.id),
+      await weekAs(app, data.adminToken, salonB.id),
+    ]) {
+      expect(minStaffByDay(view)).not.toContain(9);
+    }
+  });
+
+  it("the response keeps its shape: 12 keys unfiltered, 13 with a filter, six keys per coverage entry", async () => {
+    const raw = async (salonId?: string) => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/week?${WEEK}${salonId !== undefined ? `&salonId=${salonId}` : ""}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return JSON.parse(res.body) as { coverage: Record<string, unknown>[] } & Record<
+        string,
+        unknown
+      >;
+    };
+    const unfiltered = await raw();
+    expect(Object.keys(unfiltered).sort()).toEqual(UNFILTERED_KEYS);
+    const filtered = await raw(salonA.id);
+    expect(Object.keys(filtered).sort()).toEqual(
+      [...UNFILTERED_KEYS, "sollUnavailableReason"].sort(),
+    );
+    for (const body of [unfiltered, filtered]) {
+      expect(body.coverage).toHaveLength(7);
+      for (const entry of body.coverage) {
+        expect(Object.keys(entry).sort()).toEqual(COVERAGE_KEYS);
+      }
+    }
+  });
+
+  // Last case of the describe: it changes the fixture (the salon-A rule is removed).
+  it("AC 2 'for every salon': without a salon rule the tenant-wide rules are the fallback", async () => {
+    await app.prisma.coverageRule.delete({ where: { id: ruleA.id } });
+    const body = await weekAs(app, data.adminToken, salonA.id);
+    expect(minStaffByDay(body)).toEqual([3, 3, 3, 3, 5, 3, 3]);
   });
 });
