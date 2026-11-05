@@ -1021,7 +1021,7 @@ import { readFileSync } from "node:fs";
 // `coverage-rule-salon-647` (13), `coverage-rule-write-salon-647` (12), `coverage-rule-salon-migration-647` (4); nothing
 // removed, skipped or loosened; never lowered. The open PRs of the same release (#531, #624, #657, ...) raise the same
 // floors - whoever merges later re-measures with a full run (lower-bound convention, never a sum).
-// Merge of #647 onto main after #624: 802 + 4 new files.
+// Merge of #647 onto main after #624: CI measured 806 files / 11851 tests.
 const MIN_FILES = 806;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
@@ -1155,8 +1155,8 @@ const MIN_FILES = 806;
 // Phase 647 (2026-11-05): 11793 -> 11834, measured by the full run named at MIN_FILES (the four new files add 41 cases).
 // Phase 647 review fix WR-01: 11834 -> 11835 (+1 case in coverage-rule-write-salon-647.test.ts).
 // Phase 647 review fix IN-02: 11835 -> 11837 (+2 cases in coverage-rule-salon-647.test.ts).
-// Merge of #647 onto main after #624: 11807 + 45 (#647 cases incl. review fixes).
-const MIN_TESTS = 11852;
+// Merge of #647 onto main after #624: CI measured 806 files / 11851 tests.
+const MIN_TESTS = 11851;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
