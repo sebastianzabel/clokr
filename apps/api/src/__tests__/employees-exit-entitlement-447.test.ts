@@ -6,16 +6,16 @@
  * Relative years only (current UTC year + 1 / − 1) — no assertion depends on a fixed calendar
  * year expiring. Initials-only fixtures — no PII per CLAUDE.md.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   getTestApp,
   closeTestApp,
   seedTestData,
   cleanupTestData,
   soleAuditRowOrNull,
+  reissueTokenNow,
 } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { getTenantTimezone, todayInTz } from "../contexts/working-time-account";
 
 const CURRENT_YEAR = new Date().getUTCFullYear();
 const Y = CURRENT_YEAR + 1;
@@ -202,36 +202,40 @@ describe("Employee exit-date writes recompute the exit-year VACATION row (Issue 
 
   // Issue #615 (D-02) — deliberate behaviour change: this case used to deactivate with a FUTURE exit
   // date (31 March of next year). A future last working day is now refused with 400; a future exit
-  // belongs in the master data (PATCH /:id). The case deactivates on the last working day min(today,
-  // 30 June) of the current year, which still lies in the first half-year, so § 5 BUrlG gives a
-  // Teilurlaub; the twin parity with PATCH /:id { exitDate } lives in deactivate-exit-day-615.test.ts.
+  // belongs in the master data (PATCH /:id). The case pins the clock to 15 August of the current year
+  // and deactivates on 30 June, a fixed past day of the first half-year: six full months, so § 5 BUrlG
+  // gives exactly 30 x 6 / 12 = 15 days of Teilurlaub on any day the suite runs. The twin parity with
+  // PATCH /:id { exitDate } lives in deactivate-exit-day-615.test.ts.
   it("deactivate recomputes the exit-year row to Teilurlaub; reactivate recomputes it back to the full value", async () => {
     const empId = await mkEmployee("deact-react");
-    const todayLocal = todayInTz(await getTenantTimezone(app.prisma, data.tenant.id));
-    const firstHalfEnd = new Date(Date.UTC(todayLocal.getUTCFullYear(), 5, 30));
-    const exitDay = (todayLocal.getTime() < firstHalfEnd.getTime() ? todayLocal : firstHalfEnd)
-      .toISOString()
-      .slice(0, 10);
-    const row = await machineOwnedRow(empId, Number(exitDay.slice(0, 4)), 30);
+    const exitYear = new Date().getUTCFullYear();
+    const row = await machineOwnedRow(empId, exitYear, 30);
 
-    const deactivateRes = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/employees/${empId}/deactivate`,
-      headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { exitDate: exitDay },
-    });
-    expect(deactivateRes.statusCode).toBe(200);
-    const afterDeactivate = await app.prisma.leaveEntitlement.findUniqueOrThrow({
-      where: { id: row.id },
-    });
-    expect(Number(afterDeactivate.totalDays)).toBeLessThan(30);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(`${exitYear}-08-15T10:00:00Z`));
+    try {
+      const headers = { authorization: `Bearer ${reissueTokenNow(app, data.adminToken)}` };
+      const deactivateRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${empId}/deactivate`,
+        headers,
+        payload: { exitDate: `${exitYear}-06-30` },
+      });
+      expect(deactivateRes.statusCode, deactivateRes.body).toBe(200);
+      const afterDeactivate = await app.prisma.leaveEntitlement.findUniqueOrThrow({
+        where: { id: row.id },
+      });
+      expect(Number(afterDeactivate.totalDays)).toBe(15);
 
-    const reactivateRes = await app.inject({
-      method: "PATCH",
-      url: `/api/v1/employees/${empId}/reactivate`,
-      headers: { authorization: `Bearer ${data.adminToken}` },
-    });
-    expect(reactivateRes.statusCode).toBe(200);
+      const reactivateRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${empId}/reactivate`,
+        headers,
+      });
+      expect(reactivateRes.statusCode, reactivateRes.body).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
     const afterReactivate = await app.prisma.leaveEntitlement.findUniqueOrThrow({
       where: { id: row.id },
     });
