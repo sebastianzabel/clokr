@@ -114,6 +114,33 @@ export async function consolidateSameDayEntries(
     return { merged: false };
   }
 
+  // Issue #657 (D-14): never merge across a row coupled to a Zeitnachtrag. Such rows are off-limits
+  // as predecessor (Phase 118 D-08, filtered above), so when one lies between the chosen predecessor
+  // and the row just closed, extending the predecessor over the successor would cover it — the
+  // database refuses that overlap and the clock-out would fail. Reachable since #657, because a
+  // pending row no longer blocks the clock. The rows stay as they are, the clock-out itself is kept.
+  const retroBetween = dayEntries.some(
+    (e) =>
+      e.id !== openEntry.id &&
+      e.retroRequestId !== null &&
+      e.endTime !== null &&
+      e.endTime > previousEntry.endTime! &&
+      e.endTime <= openEntry.startTime,
+  );
+  if (retroBetween) {
+    log.info(
+      {
+        employeeId: openEntry.employeeId,
+        date: openEntry.date,
+        previousEntryId: previousEntry.id,
+        openEntryId: openEntry.id,
+        reason: "retro_row",
+      },
+      "merge_skipped",
+    );
+    return { merged: false };
+  }
+
   // Issue #70 (D-03): a merge extends the predecessor over the successor's time and soft-deletes the
   // successor, so the merged time would be booked to the PREDECESSOR's salon. When the two rows
   // belong to different salons that would book salon-B time to salon A (holiday basis § 2 EFZG,

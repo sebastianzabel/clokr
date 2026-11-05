@@ -87,6 +87,9 @@ describe("services/clock/resolver — D-11 invalid-entry generator paths + retro
     };
   }
 
+  // Issue #657: this fixture seeds the coupled row WITHOUT the pending marker (`invalidReasonCode`
+  // null, a pre-code row shape), which is exactly what the resolver's RETRO_PENDING backstop covers.
+  // A row carrying the marker is no clock candidate (see retro-pending-clock-657.test.ts).
   async function seedPendingRetro() {
     const request = await app.prisma.retroEntryRequest.create({
       data: {

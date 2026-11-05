@@ -425,10 +425,15 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   text for everyone else (a database refusal is always neutral). Database refusals are recognised structurally
   (`P2039` + `23P01`, `P2002` + index name), never by message; an inverted row (SQLSTATE `22000`) is deliberately not
   mapped to an overlap. `openEntryOf()` / `latestEndingClosed()` (`contexts/time-tracking/day-entries.ts`) are the ONE
-  choice of "the entry of the day" a clock acts on (both skip a TRAVEL row, Issue #92); consolidation never merges across
-  salons and never across a travel entry. Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
+  choice of "the entry of the day" a clock acts on (both skip a TRAVEL row, Issue #92, and a row coupled to a pending Zeitnachtrag, Issue #657 — such a row also
+  shadows every row ending before it, so the clock starts a new entry); consolidation never merges across
+  salons, never across a travel entry and never across a row coupled to a Zeitnachtrag (guard `retro_row`, Issue #657). Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
   (`docs/migrations.md`, "Phase 70b"). Never re-create a one-entry-per-day rule — not as an index, a check or a
-  comment. Zeitnachtrag stays one request per employee and day for now.
+  comment. A Zeitnachtrag is per interval (Issue #657): `findOverlappingRetroRequest()`
+  (`contexts/time-tracking/retro-request-overlap.ts`) is the ONE place that decides whether a new request overlaps a pending
+  request of the same day (only PENDING ones count: a decided request is no open question, and a real collision with a recorded time is the entry overlap rule's job; half-open; a request without times covers the whole day; 409 `RETRO_REQUEST_OVERLAP`), run
+  under `lockEmployeeForEntryWrite()` on both creation paths; the entry-first path keeps its entry re-check, the
+  correction proposal (`POST /retro-entry-requests`) has none because it overlaps the entry it corrects.
 - **Presence and working time come from one function (Issue #79).** `entryDurations()` and its
   fold step `addWorkingMinutes()` (`apps/api/src/contexts/time-tracking/entry-durations.ts`,
   exported via `contexts/time-tracking/index.ts`) are the ONLY place presence time (end − start)
@@ -503,7 +508,8 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   entries (409 `TRAVEL_NEEDS_NEIGHBOUR`). The CHECK `TimeEntry_travel_shape_check` (hand-written; Prisma models none)
   is the database backstop of the shape. `latestEndingClosed()` skips TRAVEL (defence in depth: the write rules make a
   trip the latest-ending row impossible), consolidation never merges into or across a trip, `resolveDayState()` in the
-  web mirrors the skip. A trip is never recordable as a Zeitnachtrag (409 `TRAVEL_NOT_AS_RETRO_REQUEST`, #657), by CSV
+  web mirrors the skip. A trip is never recordable as a Zeitnachtrag (409 `TRAVEL_NOT_AS_RETRO_REQUEST`; #657 made the
+  Zeitnachtrag per interval and kept this refusal), by CSV
   or by a clock event. Evaluation is separate and only through `activityMinutes.TRAVEL` of `GET /time-entries/summary`
   (module `ANALYTICS`, departure-salon attribution; recording is NEVER gated by a package and is exempt from the #529
   tenant switch); reports, PDFs and DATEV show a trip as ordinary working time. Recording a trip changes the day's
@@ -1269,8 +1275,20 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   `/shifts/conflicts` (#645 — the filter is not its fix), month close, audit log, configuration pages
   and their pickers, `/admin/salons`, personal pages; on `/reports` the DATEV card, the per-person documents,
   the Urlaubsübersicht and the Verfall-Warnungen (block table in the same test). `GET /leave/section9` has been
-  reach-scoped since #644 (PR #646) and the salon filter intersects with that reach; per-salon
-  minimum staffing is #647.
+  reach-scoped since #644 (PR #646) and the salon filter intersects with that reach; coverage rules per
+  salon: next bullet (#647).
+- **Coverage rules can name a salon (Issue #647).** `CoverageRule.salonId` is a nullable FK onto `Salon`
+  (`onDelete: Restrict`, a Shared-Kernel dependency named on #647); NULL = tenant-wide, which every pre-#647
+  rule is (no backfill). `contexts/scheduling/coverage-rule.ts` is the ONE place of the evaluation:
+  `coverageSalonInView()` picks the salon whose rules act on `GET /shifts/week` (the validated `salonId` filter,
+  else the caller's single person-free `shift:read` reach salon (D-03a), else the tenant's only active salon,
+  else none) and `pickCoverageRule()` chooses the day's rule (candidates = that salon's rules plus the
+  tenant-wide ones; the specificity ladder is unchanged; within a rung a salon rule beats a tenant-wide one).
+  `POST`/`PUT /shifts/coverage-rules` validate a named salon only through `resolveSalonInReach` (one 404), a
+  rule of a later deactivated salon stays and is marked (`PUT` re-checks only a changed salon), and `PUT`
+  checks a changed `templateId` against the tenant. The `/week` response gains no key; `/admin/shifts` offers
+  the salon only under `showSalonOptions()` and stays exempt from the header filter. Details: ADR
+  `docs/adr/0001-abweichungen.md`, section P, Nachtrag Phase 647.
 - **The reports follow the salon context (Issue #542).** `GET /reports/monthly`,
   `GET /dashboard/today-attendance`, `GET /dashboard/overtime-overview` and
   `GET /reports/monthly-export/pdf` take an optional `salonId`, validated by `resolveSalonInReach()` against the reach of

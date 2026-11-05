@@ -314,6 +314,9 @@ describe("Issue #541 — NFC punch at a terminal bound to a salon (D-05)", () =>
   });
 
   it("AC-1 / D-06 (4d): RETRO_PENDING under a bound salon is refused, the Nachtrag stays PENDING", async () => {
+    // Issue #657: the coupled row below is seeded WITHOUT the pending marker (`invalidReasonCode`
+    // null, a pre-code row shape), which is exactly what the resolver's RETRO_PENDING backstop
+    // covers; a row carrying the marker is no clock candidate (retro-pending-clock-657.test.ts).
     const day = dayOf(10);
     const request = await app.prisma.retroEntryRequest.create({
       data: {

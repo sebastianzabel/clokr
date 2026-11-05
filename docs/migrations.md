@@ -1627,3 +1627,36 @@ zurückzunehmen heißt `ALTER TABLE "TerminalApiKey" DROP CONSTRAINT "TerminalAp
 `DROP INDEX "TerminalApiKey_salonId_idx"` und `ALTER TABLE "TerminalApiKey" DROP COLUMN "salonId"` — das verliert jede
 gespeicherte Bindung (die Terminals stempeln danach nach dem Wochenmuster). Solange eine Bindung besteht, lässt sich der
 gebundene Salon nicht löschen (`RESTRICT`); Salons werden ohnehin nie gelöscht.
+
+## Phase 647 — Mindestbesetzung je Salon (Issue #647)
+
+**Hinweis für die Release Notes.** In Mandanten mit mehreren Salons lässt sich eine Besetzungsregel einem Salon zuordnen
+(Admin → Schichtplan → „Vorlagen & Bedarf“). Zeigt die Wochenansicht der Schichtplanung genau einen Salon (Wahl in der Kopfleiste,
+die einzige Salon-Reichweite einer Person oder der einzige aktive Salon des Mandanten), misst sie die Besetzung an den
+Regeln dieses Salons und den Regeln für alle Salons; auf derselben Stufe gewinnt die Salonregel. In der Ansicht „Alle
+Salons“ gelten nur die Regeln für alle Salons.
+Bestehende Regeln gelten weiter für alle Salons. Mandanten mit einem Salon sehen nichts Neues.
+
+**Was die Migration tut.** Ein Verzeichnis in `packages/db/prisma/migrations/`, rein additiv, keine Zeile wird geschrieben
+oder geändert (vom Generator erzeugt, drei Anweisungen):
+
+- `20261105075545_coverage_rule_salon` — die Spalte `CoverageRule.salonId` (`TEXT`, nullable, ohne Vorgabe), der Index
+  `CoverageRule_salonId_idx` und der Fremdschlüssel `CoverageRule_salonId_fkey` auf `Salon` mit `ON DELETE RESTRICT` (neue
+  Abhängigkeit auf den Unterbau, genehmigt mit Issue #647 in `Ready`; ADR `docs/adr/0001-abweichungen.md`, Abschnitt P,
+  Nachtrag Phase 647). Bestehende Regeln lesen `NULL` und gelten mandantenweit; es gibt keinen Backfill und keine geratene
+  Zuordnung. Ein Test spielt die Anweisungen nach und prüft Katalog, `NULL`-Bestand und die Sperre
+  (`coverage-rule-salon-migration-647.test.ts`).
+
+**1. Vor dem Deploy.** Keine Datenprüfung nötig: jede vorhandene Zeile erfüllt die neue Spalte (nullable). Die CI-Driftprüfung
+(`prisma migrate diff --from-migrations … --to-schema … --exit-code`) bleibt leer, gemessen.
+
+**2. Deploy.** Der Einstiegspunkt des API-Containers führt `prisma migrate deploy` aus; ein zusätzlicher Schritt in der
+`.steps`-Datei des Release ist nicht nötig.
+
+**3. Rollback.** Ein Image-Rollback ist ohne Zurücksetzen der Migration möglich: der Prisma-Client des vorherigen Images
+kennt `salonId` an `CoverageRule` nicht und wählt die Spalte nicht. Gespeicherte Salonregeln wirken dann wie Regeln für alle
+Salons; die in der Wochenansicht gezeigte Mindestbesetzung kann dadurch höher oder niedriger ausfallen, bis das neue Image
+wieder läuft. Die Migration selbst zurückzunehmen heißt `ALTER TABLE "CoverageRule" DROP CONSTRAINT
+"CoverageRule_salonId_fkey"`, `DROP INDEX "CoverageRule_salonId_idx"` und `ALTER TABLE "CoverageRule" DROP COLUMN "salonId"`
+— das verliert jede Salonzuordnung einer Regel. Solange eine Regel einen Salon nennt, lässt sich dieser Salon nicht löschen
+(`RESTRICT`); Salons werden ohnehin nie gelöscht.

@@ -87,6 +87,13 @@ import {
 } from "../entry-invariants";
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
 import {
+  findOverlappingRetroRequest,
+  RetroRequestOverlapError,
+  RETRO_REQUEST_OVERLAP_CODE,
+  RETRO_REQUEST_OVERLAP_MESSAGE,
+  wholeTenantDay,
+} from "../retro-request-overlap"; // Issue #657 (D-01/D-03/D-13)
+import {
   checkTravelNeighbours,
   classifyTravelWrite,
   classifyTravelUpdate,
@@ -853,7 +860,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // `manualEntrySchema.endTime` is nullable, so the entry-first Nachtrag
         // path (Phase 96) can leave a pending row open. This branch is therefore
         // genuinely reachable, and it keeps the honest message from being
-        // swallowed by the generic "Konflikt" fallback below.
+        // swallowed by the generic "Konflikt" fallback below. Issue #657 (D-14): it is reached by
+        // the resolver's OUT rule for an open row that is a pending Zeitnachtrag (the selectors no
+        // longer hand such a row out) and by its database backstop for a coupled row whose request
+        // is still PENDING but which carries no marker (`PATCH /:id/revalidate` refuses such a row
+        // since WR-03, so only data written otherwise can reach this).
         if (resolution.reason === "RETRO_PENDING") {
           return reply.code(409).send({
             error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
@@ -1524,6 +1535,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             targetDate: new Date(body.date),
             status: "APPROVED",
             deletedAt: null,
+            // Issue #657 (CR-02): a grant was never coupled to an entry. An approved entry-first
+            // Nachtrag stays APPROVED and is coupled, so it must not be redeemable as a grant (it
+            // would let the employee write arbitrary times with no approval: four-eyes bypass).
+            timeEntry: { is: null },
           },
           select: { id: true },
         });
@@ -1575,9 +1590,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
           const retroReason = body.reason?.trim();
           if (retroReason && !resolvedGrantId) {
-            // Issue #92: one Zeitnachtrag per day (70b D-13) and a day with travel already holds
-            // two entries, so travel is never filed as a request — a manager books it as a
-            // correction, which the retro window exempts.
+            // Issue #92: travel is never filed as a request. A trip filed here would be created
+            // as an ordinary pending entry, and a pending row never anchors a trip, so the
+            // neighbour rule could not hold. Issue #657 keeps the refusal (D-15) — a manager books
+            // a trip as a correction, which the retro window exempts.
             if (travelToSalonId !== undefined) {
               return reply.code(409).send({
                 error: TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE,
@@ -1794,7 +1810,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             // same-grant writes — otherwise the loser could fail on the overlap check (409) before
             // the grant guard ever gets a chance to reject it with 403.
             const consumed = await tx.retroEntryRequest.updateMany({
-              where: { id: grantIdForTx, status: "APPROVED" },
+              where: { id: grantIdForTx, status: "APPROVED", timeEntry: { is: null } },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {
@@ -1876,6 +1892,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               callerEmployeeId: user.employeeId ?? null,
               access: accessContextFromRequest(req),
             });
+            // Issue #657 (D-01/D-13): the entry re-check above runs FIRST, so an overlap with a
+            // recorded or pending entry keeps its wording by the caller's reach; only a live
+            // request that no entry stands for (an uncoupled proposal or grant) answers the
+            // request code here.
+            const requestClash = await findOverlappingRetroRequest(tx, {
+              tenantId: user.tenantId,
+              employeeId,
+              targetDate: new Date(body.date),
+              interval: { start: newStart, end: newEnd ?? wholeTenantDay(body.date, tz).end },
+              tz,
+            });
+            if (requestClash) throw new RetroRequestOverlapError();
             await assertTravelEntry(tx, "RETRO_APPROVAL_PENDING");
             const request = await tx.retroEntryRequest.create({
               data: {
@@ -1964,6 +1992,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // Issue #92: the travel write rule refused inside the transaction (404/400 salon, 409 anchors).
         if (err instanceof TravelRefusalError) {
           return reply.code(err.refusal.status).send(err.refusal.body);
+        }
+        // Issue #657: the Nachtrag overlaps a pending Zeitnachtrag request of the same day (neutral
+        // text: no date, time or person, so no reach decision is needed).
+        if (err instanceof RetroRequestOverlapError) {
+          return reply
+            .code(409)
+            .send({ error: RETRO_REQUEST_OVERLAP_MESSAGE, code: RETRO_REQUEST_OVERLAP_CODE });
         }
         // Overlap re-checked inside the transaction (grant branch after the flip, Nachtrag and
         // plain branch under the Employee row lock), worded by the caller's reach → 409.
@@ -2315,6 +2350,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         existing.retroRequest?.status === "PENDING" &&
         existing.employeeId === user.employeeId;
 
+      // Issue #657 (WR-02): the request's date is the contract of a pending Nachtrag. Its entry may
+      // be re-timed within the day, never moved to another day — the request overlap rule (and the
+      // approval) judge the request's own `targetDate`, so a moved row would leave the request on
+      // one day and the entry on another. Refused before any other guard (409, nothing written).
+      if (isOwnPendingNachtragEdit && overlapDate.getTime() !== existing.date.getTime()) {
+        return reply.code(409).send({
+          error:
+            "Der Zeitnachtrag gilt für den beantragten Tag. Das Datum kann nicht verschoben werden.",
+          code: "RETRO_REQUEST_DATE_FIXED",
+        });
+      }
+
       // Phase 76.29.1 Plan 02 — PUT grant pre-validation (mirrors POST ~:1001–1017).
       // If the caller supplies a grantId, verify an APPROVED RetroEntryRequest exists for
       // (existing.employeeId, effective targetDate) — keyed to the ENTRY's employee, not the
@@ -2331,6 +2378,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             targetDate: overlapDate,
             status: "APPROVED",
             deletedAt: null,
+            // Issue #657 (CR-02): a grant was never coupled to an entry. An approved entry-first
+            // Nachtrag stays APPROVED and is coupled, so it must not be redeemable as a grant (it
+            // would let the employee write arbitrary times with no approval: four-eyes bypass).
+            timeEntry: { is: null },
           },
           select: { id: true },
         });
@@ -2560,12 +2611,32 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             // Conditional flip FIRST after the lock: only succeeds if still APPROVED (single-use
             // guard), so a losing same-grant request is rejected with 403 before any conflict check.
             const consumed = await tx.retroEntryRequest.updateMany({
-              where: { id: putResolvedGrantId, status: "APPROVED" },
+              where: { id: putResolvedGrantId, status: "APPROVED", timeEntry: { is: null } },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {
               throw new GrantAlreadyUsedError();
             }
+          }
+
+          // Issue #657 (WR-02): re-timing the entry of the employee's own pending Nachtrag re-times
+          // the request (an entry-coupled request is judged by its entry), so the other pending
+          // requests of the day are checked against the new interval, under the lock just taken.
+          if (isOwnPendingNachtragEdit && existing.retroRequestId) {
+            const requestClash = await findOverlappingRetroRequest(tx, {
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              targetDate: existing.date,
+              interval: {
+                start: updatedStart,
+                end:
+                  updatedEnd ??
+                  wholeTenantDay(existing.date.toISOString().split("T")[0], overlapTz).end,
+              },
+              tz: overlapTz,
+              excludeRequestId: existing.retroRequestId,
+            });
+            if (requestClash) throw new RetroRequestOverlapError();
           }
 
           await recheckOverlapInTx(tx, {
@@ -2686,6 +2757,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // Issue #92: the travel write rule or the neighbour check refused inside the transaction.
         if (err instanceof TravelRefusalError) {
           return reply.code(err.refusal.status).send(err.refusal.body);
+        }
+        if (err instanceof RetroRequestOverlapError) {
+          return reply
+            .code(409)
+            .send({ error: RETRO_REQUEST_OVERLAP_MESSAGE, code: RETRO_REQUEST_OVERLAP_CODE });
         }
         if (err instanceof EntryConflictError) {
           return reply.code(409).send({ error: err.userMessage });
@@ -2832,6 +2908,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         where: { id },
         include: {
           employee: { select: { tenantId: true } },
+          // Issue #657 (WR-03): the coupled request's status, to refuse releasing a pending Nachtrag.
+          retroRequest: { select: { status: true } },
           // Issue #81 (D-05): the stored allocation, for the check on a correction and the audit.
           activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
         },
@@ -2867,6 +2945,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply
           .code(403)
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      // Issue #657 (WR-03): a row coupled to a still PENDING Zeitnachtrag is released only by the
+      // request's decision (approval clears the marker, rejection or withdrawal deletes the row).
+      // Revalidating it here would let the row count as working time without the four-eyes
+      // approval while the request stays decidable.
+      if (existing.retroRequestId && existing.retroRequest?.status === "PENDING") {
+        return reply.code(409).send({
+          error: "Der Zeitnachtrag zu diesem Eintrag muss zuerst entschieden werden.",
+          code: "RETRO_REQUEST_PENDING",
+        });
       }
 
       // Build update data: always revalidate, optionally correct times
@@ -3052,7 +3141,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         action: hasCorrection ? "MANAGER_CORRECTION" : "REVALIDATE",
         entity: "TimeEntry",
         entityId: id,
-        oldValue: existing,
+        // The included request status is read-only context for the WR-03 refusal; the audit shape
+        // stays what it was.
+        oldValue: { ...existing, retroRequest: undefined },
         newValue: updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
