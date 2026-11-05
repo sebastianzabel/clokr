@@ -240,7 +240,7 @@
             {#each shownOffers as offer (offer.startTime)}
               <button
                 type="button"
-                class="btn btn-sm btn-secondary"
+                class="btn btn-sm btn-secondary dbp-offer"
                 data-testid="day-break-travel-offer"
                 disabled={recordingTravel}
                 onclick={() => recordTravel(offer)}
@@ -386,6 +386,15 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
+  }
+  /* Issue #660: the label names two salons and runs long; .btn is nowrap, so without this the
+     button overflows the callout at 384 px. */
+  .dbp-offer {
+    white-space: normal;
+    text-align: left;
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .dbp-error {
     color: var(--bad);

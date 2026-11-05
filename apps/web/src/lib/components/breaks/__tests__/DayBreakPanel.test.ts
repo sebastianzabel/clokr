@@ -3,6 +3,9 @@
 // cannot be mounted, so the panel is the unit that carries the contract: what it shows for a
 // full and a redacted day, and which actions it offers from the SERVER's flags.
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
@@ -450,6 +453,29 @@ describe("Issue #660 — the travel offer", () => {
     await fireEvent.click(buttons[0]);
     expect(onRecordTravel).toHaveBeenCalledTimes(1);
     expect(onRecordTravel.mock.calls[0][0]).toBe(served);
+  });
+
+  it("lets a long offer label wrap: scoped class on the button and a wrapping rule (WR-04)", () => {
+    renderWithTheme(DayBreakPanel, {
+      check: check(),
+      travelOffers: [
+        offer({
+          departureSalonName: "Salon Innenstadt Nord-West am Marktplatz",
+          arrivalSalonName: "Salon Hauptbahnhof Süd mit langem Namen",
+        }),
+      ],
+      onRecordTravel: vi.fn(async (_offer: DayCheckTravelOffer) => {}),
+    });
+    const button = screen.getByTestId("day-break-travel-offer");
+    expect(button.classList.contains("dbp-offer")).toBe(true);
+    // jsdom does not apply the component's scoped CSS; the rule itself is pinned from the source.
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/components/breaks/DayBreakPanel.svelte"),
+      "utf8",
+    );
+    const rule = /\.dbp-offer\s*\{([^}]*)\}/.exec(source)?.[1] ?? "";
+    expect(rule).toMatch(/white-space:\s*normal/);
+    expect(rule).toMatch(/max-width:\s*100%/);
   });
 
   it("disables the button while the request runs and ignores a second click", async () => {
