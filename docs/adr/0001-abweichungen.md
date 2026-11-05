@@ -6518,7 +6518,7 @@ gelten nicht mehr. **Schwere:** keine Änderung am Unterbau, kein Schema, keine 
   die vor ihr endet. Die Uhr beginnt einen neuen Eintrag, in jedem Salon; ein Zeitpunkt innerhalb oder vor dem beantragten
   Zeitraum wird von der Überschneidungsregel mit `ENTRY_OVERLAP` abgelehnt. Ein Ausstempeln neben einer offenen
   Antragszeile antwortet `RETRO_PENDING`; die Datenbankprüfung desselben Codes bleibt als Rückfallprüfung für Zeilen ohne
-  Markierung (z. B. nach `PATCH /time-entries/:id/revalidate`). Die Zusammenführung (`consolidate.ts`) kennt die Sperre
+  Markierung (`PATCH /time-entries/:id/revalidate` weist eine solche Zeile seit dem Review-Fix WR-03 mit 409 `RETRO_REQUEST_PENDING` ab). Die Zusammenführung (`consolidate.ts`) kennt die Sperre
   `retro_row`. Die Salonauswahl der Uhr (`clockSalonChoice()`) und der Tageszustand im Dashboard
   (`resolveDayState()`, `isPendingNachtragRow()`) folgen denselben Selektoren.
 - **Die Freigabe bleibt unverändert (D-06):** Sperre zuerst, Statuswechsel, Überschneidungsprüfung in derselben

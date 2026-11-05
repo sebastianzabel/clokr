@@ -863,7 +863,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // swallowed by the generic "Konflikt" fallback below. Issue #657 (D-14): it is reached by
         // the resolver's OUT rule for an open row that is a pending Zeitnachtrag (the selectors no
         // longer hand such a row out) and by its database backstop for a coupled row whose request
-        // is still PENDING after `PATCH /:id/revalidate` cleared the marker.
+        // is still PENDING but which carries no marker (`PATCH /:id/revalidate` refuses such a row
+        // since WR-03, so only data written otherwise can reach this).
         if (resolution.reason === "RETRO_PENDING") {
           return reply.code(409).send({
             error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
@@ -2907,6 +2908,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         where: { id },
         include: {
           employee: { select: { tenantId: true } },
+          // Issue #657 (WR-03): the coupled request's status, to refuse releasing a pending Nachtrag.
+          retroRequest: { select: { status: true } },
           // Issue #81 (D-05): the stored allocation, for the check on a correction and the audit.
           activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
         },
@@ -2942,6 +2945,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply
           .code(403)
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      // Issue #657 (WR-03): a row coupled to a still PENDING Zeitnachtrag is released only by the
+      // request's decision (approval clears the marker, rejection or withdrawal deletes the row).
+      // Revalidating it here would let the row count as working time without the four-eyes
+      // approval while the request stays decidable.
+      if (existing.retroRequestId && existing.retroRequest?.status === "PENDING") {
+        return reply.code(409).send({
+          error: "Der Zeitnachtrag zu diesem Eintrag muss zuerst entschieden werden.",
+          code: "RETRO_REQUEST_PENDING",
+        });
       }
 
       // Build update data: always revalidate, optionally correct times
@@ -3127,7 +3141,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         action: hasCorrection ? "MANAGER_CORRECTION" : "REVALIDATE",
         entity: "TimeEntry",
         entityId: id,
-        oldValue: existing,
+        // The included request status is read-only context for the WR-03 refusal; the audit shape
+        // stays what it was.
+        oldValue: { ...existing, retroRequest: undefined },
         newValue: updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });

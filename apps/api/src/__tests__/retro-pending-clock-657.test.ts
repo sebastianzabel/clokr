@@ -458,8 +458,8 @@ describe("Issue #657 — the clock next to a pending Zeitnachtrag", () => {
     });
   });
 
-  describe("D-14 — the RETRO_PENDING backstop (marker cleared by revalidate)", () => {
-    it("a coupled row whose request is PENDING but whose marker PATCH /revalidate cleared is still refused with RETRO_PENDING", async () => {
+  describe("D-14 — the RETRO_PENDING backstop (coupled row without the marker)", () => {
+    it("PATCH /revalidate refuses a row coupled to a PENDING request and changes nothing (WR-03)", async () => {
       const day = freshDay();
       const { request, entry } = await pendingRow(day, "08:00", "10:00", salonA.id);
 
@@ -469,10 +469,23 @@ describe("Issue #657 — the clock next to a pending Zeitnachtrag", () => {
         headers: { authorization: `Bearer ${seed.adminToken}` },
         payload: {},
       });
-      expect(revalidate.statusCode, revalidate.body).toBe(200);
-      const cleared = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
-      expect(cleared.isInvalid).toBe(false);
-      expect(cleared.invalidReasonCode).toBeNull();
+      expect(revalidate.statusCode, revalidate.body).toBe(409);
+      expect(JSON.parse(revalidate.body)).toEqual({
+        error: "Der Zeitnachtrag zu diesem Eintrag muss zuerst entschieden werden.",
+        code: "RETRO_REQUEST_PENDING",
+      });
+      const after = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+      expect(after.isInvalid).toBe(true);
+      expect(after.invalidReasonCode).toBe("RETRO_APPROVAL_PENDING");
+      expect(
+        (await app.prisma.retroEntryRequest.findUniqueOrThrow({ where: { id: request.id } }))
+          .status,
+      ).toBe("PENDING");
+    });
+
+    it("a coupled row whose request is PENDING but which carries no marker is still refused with RETRO_PENDING", async () => {
+      const day = freshDay();
+      const { request } = await pendingRow(day, "08:00", "10:00", salonA.id, false);
       expect(
         (await app.prisma.retroEntryRequest.findUniqueOrThrow({ where: { id: request.id } }))
           .status,
