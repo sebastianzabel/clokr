@@ -1143,7 +1143,8 @@ const MIN_FILES = 801;
 // employee-role-bridge) kept every case.
 // Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped); the drop from 11812 is
 // exactly the deliberately deleted #539/#75b role-column cases named in the #641 comment above.
-const MIN_TESTS = 11788;
+// Issue #531: imports.test.ts -1 (whole-import refusal replaced) +5 (Stammsalon per row); full run measured 801 files / 11793 tests (incl. 3 skipped).
+const MIN_TESTS = 11793;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
