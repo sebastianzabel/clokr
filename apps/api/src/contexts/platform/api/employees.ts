@@ -503,7 +503,10 @@ const deactivateBodySchema = z.object({
 });
 
 type ExitDayResolution =
-  | { ok: true; day: string; date: Date; today: string; tz: string }
+  | { ok: true; mode: "EXIT_DAY"; day: string; date: Date; today: string; tz: string }
+  // Review CR-02: the person has not started yet, so no last working day exists. The deactivation
+  // only switches the login off and revokes the tokens; the exit day and the exit rule stay untouched.
+  | { ok: true; mode: "HIRE_IN_FUTURE"; today: string; tz: string }
   | {
       ok: false;
       status: 400 | 409;
@@ -535,6 +538,11 @@ async function resolveExitDay(
 ): Promise<ExitDayResolution> {
   const tz = await readTenantTimezone(db, input.tenantId);
   const today = tenantLocalDay(new Date(), tz);
+  // Review CR-02: a person whose tenant-local hire day lies after today has no admissible last
+  // working day (not after today, not before the hire day), but the login must stay revocable.
+  if (tenantLocalDay(input.hireDate, tz) > today) {
+    return { ok: true, mode: "HIRE_IN_FUTURE", today, tz };
+  }
   const day =
     input.raw == null
       ? today
@@ -557,7 +565,7 @@ async function resolveExitDay(
   ) {
     return { ok: false, status: 409, body: EXIT_MONTH_LOCKED_RESPONSE, day, today };
   }
-  return { ok: true, day, date: dayToDate(day), today, tz };
+  return { ok: true, mode: "EXIT_DAY", day, date: dayToDate(day), today, tz };
 }
 
 /**
@@ -1423,7 +1431,9 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
   // a closed month is refused before anything is written (resolveExitDay). The #614 employment-exit
   // rule runs as its second caller with the marker DEACTIVATION: absences after the day end, the
   // exit-year entitlement is recomputed afterwards (#447), and the audit carries the previous and
-  // the new exit day.
+  // the new exit day. A person whose tenant-local hire day lies after today has no admissible last
+  // working day; for them the deactivation switches the login off and revokes the tokens only (the
+  // exit day and the exit rule stay untouched, the audit says `exitDateUnchanged: "HIRE_IN_FUTURE"`).
   app.patch("/:id/deactivate", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requirePermission("employee:manage-access:ZUGEWIESEN"),
@@ -1474,18 +1484,22 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
         raw: exitDate,
       });
       if (!resolved.ok) return reply.code(resolved.status).send(resolved.body);
-      const { day: exitDay, date: effectiveExitDate } = resolved;
+      // Review CR-02: a person who has not started yet gets the login switched off and nothing else.
+      const exitTarget =
+        resolved.mode === "EXIT_DAY" ? { day: resolved.day, date: resolved.date } : null;
 
       // Issue #615 (D-04): the Abwesenheiten rule decides what the exit ends. Pure reads, BEFORE the
       // transaction opens; reached through the app.absenceExit decoration (the Unterbau imports no
       // business context). The deactivation is a caller: it decides nothing about which absence ends.
-      const exitPlan = await app.absenceExit.plan({
-        tenantId: req.user.tenantId,
-        employeeId: id,
-        exitDay: effectiveExitDate,
-        actorUserId: requestAuditFields(req).userId ?? null,
-        marker: { auditReason: "Deaktivierung", trigger: "DEACTIVATION" },
-      });
+      const exitPlan = exitTarget
+        ? await app.absenceExit.plan({
+            tenantId: req.user.tenantId,
+            employeeId: id,
+            exitDay: exitTarget.date,
+            actorUserId: requestAuditFields(req).userId ?? null,
+            marker: { auditReason: "Deaktivierung", trigger: "DEACTIVATION" },
+          })
+        : null;
       let exitResult: Awaited<ReturnType<FastifyInstance["absenceExit"]["apply"]>> | undefined;
 
       // Phase 74b (D-19/D-20): deactivating the tenant's last active tenant-wide holder of
@@ -1500,27 +1514,28 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
               where: { id: employee.userId },
               data: { isActive: false },
             });
-            await tx.employee.update({
-              where: { id },
-              data: { exitDate: effectiveExitDate },
-            });
-            // Issue #615 (D-05): every absence change and its audit row, one per changed row.
-            const ended = await app.absenceExit.apply(tx, exitPlan, (entry) =>
-              app.audit({
-                tx,
-                action: entry.action,
-                entity: entry.entity,
-                entityId: entry.entityId,
-                oldValue: entry.oldValue,
-                ...requestAuditFields(req, entry.newValue),
-              }),
-            );
-            exitResult = ended;
-            // Issue #447 (D-07) - same invariant-carrying recompute as PATCH /:id: both the old and
-            // the new exit year's VACATION row are brought to their § 5 BUrlG value inside this
-            // guarded transaction, AFTER the exit rule (Issue #615, D-05).
-            {
-              const exitYears = new Set<number>([Number(exitDay.slice(0, 4))]);
+            let ended: Awaited<ReturnType<FastifyInstance["absenceExit"]["apply"]>> | null = null;
+            if (exitTarget && exitPlan) {
+              await tx.employee.update({
+                where: { id },
+                data: { exitDate: exitTarget.date },
+              });
+              // Issue #615 (D-05): every absence change and its audit row, one per changed row.
+              ended = await app.absenceExit.apply(tx, exitPlan, (entry) =>
+                app.audit({
+                  tx,
+                  action: entry.action,
+                  entity: entry.entity,
+                  entityId: entry.entityId,
+                  oldValue: entry.oldValue,
+                  ...requestAuditFields(req, entry.newValue),
+                }),
+              );
+              exitResult = ended;
+              // Issue #447 (D-07) - same invariant-carrying recompute as PATCH /:id: both the old and
+              // the new exit year's VACATION row are brought to their § 5 BUrlG value inside this
+              // guarded transaction, AFTER the exit rule (Issue #615, D-05).
+              const exitYears = new Set<number>([Number(exitTarget.day.slice(0, 4))]);
               if (employee.exitDate) exitYears.add(employee.exitDate.getUTCFullYear());
               for (const exitYear of exitYears) {
                 await syncExitYearVacationEntitlement(
@@ -1560,16 +1575,28 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
                 isActive: true,
                 exitDate: employee.exitDate ? employee.exitDate.toISOString().slice(0, 10) : null,
               },
-              ...requestAuditFields(req, {
-                isActive: false,
-                exitDate: exitDay,
-                absencesEnded: {
-                  cancelled: ended.cancelled.length,
-                  shortened: ended.shortened.length,
-                  deleted: ended.deleted.length,
-                },
-                exitSkipped: ended.skipped,
-              }),
+              ...requestAuditFields(
+                req,
+                exitTarget && ended
+                  ? {
+                      isActive: false,
+                      exitDate: exitTarget.day,
+                      absencesEnded: {
+                        cancelled: ended.cancelled.length,
+                        shortened: ended.shortened.length,
+                        deleted: ended.deleted.length,
+                      },
+                      exitSkipped: ended.skipped,
+                    }
+                  : {
+                      // Review CR-02: no exit day exists for a person who has not started yet.
+                      isActive: false,
+                      exitDate: employee.exitDate
+                        ? employee.exitDate.toISOString().slice(0, 10)
+                        : null,
+                      exitDateUnchanged: "HIRE_IN_FUTURE",
+                    },
+              ),
               tx,
             });
           });
@@ -1658,9 +1685,6 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
         storedExitDate: employee.exitDate,
         raw: exitDate,
       });
-      const day = resolved.day;
-      const exitInstant = dayToDate(day);
-
       // D-10/D-21: the saldo does not depend on the chosen day (live, through tenant-local
       // yesterday), so it stays visible next to a refused day - but only within the caller's
       // `overtime:read` reach, decided before anything is computed.
@@ -1686,8 +1710,28 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
         }
       }
 
+      // Review CR-02: a person who has not started yet has no last working day; the deactivation only
+      // switches the login off, so there is no exit date, no absence plan and no Resturlaub to show.
+      if (resolved.ok && resolved.mode === "HIRE_IN_FUTURE") {
+        return {
+          exitDate: null,
+          today: resolved.today,
+          storedExitDate: employee.exitDate ? employee.exitDate.toISOString().slice(0, 10) : null,
+          saldo,
+          saldoUnavailableReason,
+          loginOnlyReason: "HIRE_IN_FUTURE" as const,
+          refusal: null,
+          absences: [],
+          vacation: null,
+          vacationUnavailableReason: "HIRE_IN_FUTURE" as const,
+        };
+      }
+      const day = resolved.day;
+      const exitInstant = dayToDate(day);
+
       const base = {
         exitDate: day,
+        loginOnlyReason: null,
         today: resolved.today,
         storedExitDate: employee.exitDate ? employee.exitDate.toISOString().slice(0, 10) : null,
         saldo,

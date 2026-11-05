@@ -503,6 +503,61 @@ describe("Issue #615 — deactivation takes the last working day", () => {
     });
   });
 
+  // ── A person who has not started yet (review CR-02) ──────────────────────────────────────────
+  describe("a person whose hire day lies after today", () => {
+    it("is deactivated as a login-only action: login off, tokens revoked, exit day and exit rule untouched, audit says so", async () => {
+      const worker = await createWorker("not-hired", {
+        hireDate: utcMidnight(isoDay(addDays(today, 10))),
+      });
+      const vacationDay = onOrAfter(addDays(today, 14), 1);
+      const lateRequest = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: worker.employee.id,
+          leaveTypeId: data.vacationType.id,
+          startDate: vacationDay,
+          endDate: vacationDay,
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+      const before = await writeSnapshot(worker);
+      expect(before.unrevokedTokens).toBeGreaterThan(0);
+
+      // A date in the body does not matter: there is no admissible last working day for this person.
+      const res = await deactivate(worker.employee.id, { exitDate: isoDay(today) });
+      expect(res.statusCode, res.body).toBe(200);
+
+      const after = await app.prisma.employee.findUniqueOrThrow({
+        where: { id: worker.employee.id },
+        include: { user: true },
+      });
+      expect(after.user.isActive).toBe(false);
+      expect(after.exitDate).toBeNull();
+      expect(
+        await app.prisma.refreshToken.count({ where: { userId: worker.user.id, revokedAt: null } }),
+      ).toBe(0);
+      // The exit rule did not run: the later request is untouched.
+      const request = await app.prisma.leaveRequest.findUniqueOrThrow({
+        where: { id: lateRequest.id },
+      });
+      expect(request.status).toBe("APPROVED");
+      const update = await soleAuditRow(app.prisma, {
+        where: { entity: "Employee", entityId: worker.employee.id, action: "UPDATE" },
+      });
+      expect(update.oldValue).toEqual({ isActive: true, exitDate: null });
+      expect(update.newValue).toEqual({
+        isActive: false,
+        exitDate: null,
+        exitDateUnchanged: "HIRE_IN_FUTURE",
+      });
+      expect(await app.prisma.auditLog.count({ where: { entityId: lateRequest.id } })).toBe(0);
+
+      // No body works the same way, and a second call is the usual 409.
+      const again = await deactivate(worker.employee.id);
+      expect(again.statusCode).toBe(409);
+    });
+  });
+
   // ── Europe/Berlin day boundary (AC-615-3) ────────────────────────────────────────────────────
   describe("the default and the bounds follow the tenant-local day, not the UTC day", () => {
     it("at 00:30 Europe/Berlin (the UTC day is still the previous one) no body stores the Berlin day, that day is accepted and the next one refused", async () => {

@@ -41,7 +41,8 @@ const firstWeekdayOnOrAfter = (from: Date) => {
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 interface PreviewBody {
-  exitDate: string;
+  exitDate: string | null;
+  loginOnlyReason: string | null;
   today: string;
   storedExitDate: string | null;
   refusal: { status: number; code: string; error: string } | null;
@@ -247,6 +248,7 @@ describe("Issue #615 — deactivation preview", () => {
         [
           "absences",
           "exitDate",
+          "loginOnlyReason",
           "refusal",
           "saldo",
           "saldoUnavailableReason",
@@ -303,6 +305,41 @@ describe("Issue #615 — deactivation preview", () => {
       const res = await preview(worker.employee.id, { exitDate: isoDay(today) });
       expect(res.statusCode, res.body).toBe(200);
       expect((JSON.parse(res.body) as PreviewBody).storedExitDate).toBe(isoDay(stored));
+    });
+
+    it("a person whose hire day lies after today is login-only: no exit date, no absences, no Resturlaub (review CR-02)", async () => {
+      const worker = await createWorker("not-hired", {
+        hireDate: utcMidnight(isoDay(addDays(today, 10))),
+      });
+      const before = await writeSnapshot(worker);
+      const res = await preview(worker.employee.id, { exitDate: isoDay(today) });
+      expect(res.statusCode, res.body).toBe(200);
+      const body = JSON.parse(res.body) as PreviewBody;
+      expect(body.loginOnlyReason).toBe("HIRE_IN_FUTURE");
+      expect(body.refusal).toBeNull();
+      expect(body.exitDate).toBeNull();
+      expect(body.absences).toEqual([]);
+      expect(body.vacation).toBeNull();
+      expect(body.vacationUnavailableReason).toBe("HIRE_IN_FUTURE");
+      expect(await writeSnapshot(worker)).toEqual(before);
+    });
+
+    it("moving a stored exit day out of a closed month is refused in the body, the stored day itself is not (review CR-01)", async () => {
+      const worker = await createWorker("stored-closed");
+      const storedDay = firstWeekdayOnOrAfter(firstOfLastMonth);
+      await app.prisma.employee.update({
+        where: { id: worker.employee.id },
+        data: { exitDate: utcMidnight(isoDay(storedDay)) },
+      });
+      await closeLastMonth(worker);
+      const moved = JSON.parse(
+        (await preview(worker.employee.id, { exitDate: isoDay(today) })).body,
+      ) as PreviewBody;
+      expect(moved.refusal).toMatchObject({ status: 409, code: "MONTH_LOCKED" });
+      const same = JSON.parse(
+        (await preview(worker.employee.id, { exitDate: isoDay(storedDay) })).body,
+      ) as PreviewBody;
+      expect(same.refusal).toBeNull();
     });
 
     it("an inactive person gets the 409 of the deactivation", async () => {
