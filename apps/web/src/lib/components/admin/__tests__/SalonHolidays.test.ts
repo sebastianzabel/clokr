@@ -17,7 +17,11 @@ vi.mock("$api/client", () => ({
     delete: (...a: unknown[]) => del(...a),
   },
   ApiError: class ApiError extends Error {
-    status = 0;
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
   },
 }));
 vi.mock("$stores/toast", () => ({
@@ -25,6 +29,7 @@ vi.mock("$stores/toast", () => ({
 }));
 
 import { renderWithTheme } from "$tests/test-utils";
+import { ApiError } from "$api/client";
 import SalonHolidays from "../SalonHolidays.svelte";
 
 const YEAR = new Date().getFullYear();
@@ -92,20 +97,24 @@ describe("SalonHolidays", () => {
     expect(success).toHaveBeenCalledWith("Feiertag hinzugefügt.");
   });
 
-  it("refuses an empty name and a day that already has a manual holiday without calling the API", async () => {
+  it("refuses an empty name without calling the API", async () => {
     mount(true);
     await screen.findByText("Salonjubiläum");
     await fireEvent.input(screen.getByLabelText("Datum"), { target: { value: `${YEAR}-05-02` } });
     await fireEvent.click(screen.getByRole("button", { name: "Feiertag hinzufügen" }));
     expect(await screen.findByText("Bitte gib eine Bezeichnung ein.")).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+  });
 
+  it("shows the API's own message on a 409 and does no duplicate check of its own", async () => {
+    post.mockRejectedValue(new ApiError(409, "Für diesen Tag existiert bereits ein Feiertag."));
+    mount(true);
+    await screen.findByText("Salonjubiläum");
     await fireEvent.input(screen.getByLabelText("Datum"), { target: { value: `${YEAR}-03-10` } });
     await fireEvent.input(screen.getByLabelText("Bezeichnung"), { target: { value: "Doppelt" } });
     await fireEvent.click(screen.getByRole("button", { name: "Feiertag hinzufügen" }));
-    expect(
-      await screen.findByText("An diesem Tag gibt es bereits einen manuellen Feiertag."),
-    ).toBeTruthy();
-    expect(post).not.toHaveBeenCalled();
+    expect(await screen.findByText("Für diesen Tag existiert bereits ein Feiertag.")).toBeTruthy();
+    expect(post).toHaveBeenCalledTimes(1);
   });
 
   it("removes a manual holiday only after the confirmation", async () => {

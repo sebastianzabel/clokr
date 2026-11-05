@@ -108,10 +108,6 @@
       formError = "Die Bezeichnung darf höchstens 100 Zeichen lang sein.";
       return;
     }
-    if (manual.some((h) => h.date === newDate)) {
-      formError = "An diesem Tag gibt es bereits einen manuellen Feiertag.";
-      return;
-    }
     formError = "";
     adding = true;
     try {
@@ -121,7 +117,12 @@
       newName = "";
       await load();
     } catch (err) {
-      toasts.error(err instanceof Error ? err.message : "Hinzufügen fehlgeschlagen.");
+      // A refusal of the API (e.g. a second holiday on the same day) is shown as the server worded it.
+      if (err instanceof ApiError && (err.status === 409 || err.status === 400)) {
+        formError = err.message;
+      } else {
+        toasts.error(err instanceof Error ? err.message : "Hinzufügen fehlgeschlagen.");
+      }
     } finally {
       adding = false;
     }
