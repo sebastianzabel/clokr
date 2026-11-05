@@ -181,9 +181,72 @@ describe("DeactivateEmployeeDialog", () => {
     expect(screen.getByText("Krankmeldung")).toBeTruthy();
     expect(screen.getByText("wird auf den letzten Arbeitstag (05.11.2026) gekürzt")).toBeTruthy();
     expect(screen.getByText("Berufsschule")).toBeTruthy();
-    expect(screen.getByText("bleibt unverändert")).toBeTruthy();
-    expect(screen.getByText("Der Monat ist bereits abgeschlossen.")).toBeTruthy();
+    // Review WR-05: a SKIP row is listed in its own group, not under what ends.
+    expect(screen.getByRole("heading", { name: "Bleiben unverändert" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Abwesenheiten, die enden" })).toBeTruthy();
+    const unchanged = screen
+      .getByRole("heading", { name: "Bleiben unverändert" })
+      .closest("section")!;
+    expect(unchanged.textContent).toContain("Berufsschule");
+    expect(unchanged.textContent).toContain("Der Monat ist bereits abgeschlossen.");
+    const ending = screen
+      .getByRole("heading", { name: "Abwesenheiten, die enden" })
+      .closest("section")!;
+    expect(ending.textContent).not.toContain("Berufsschule");
     expect(screen.queryByText("Keine Abwesenheiten nach dem letzten Arbeitstag.")).toBeNull();
+  });
+
+  it("lists a plan of only unchanged rows under Bleiben unverändert and says nothing ends (review WR-05)", async () => {
+    post.mockResolvedValue(
+      preview({
+        absences: [
+          {
+            entity: "Absence",
+            id: "a9",
+            action: "SKIP",
+            reason: "PARENTAL_REDUCTION_ACTIVE",
+            typeCode: "OTHER",
+            status: null,
+            startDate: "2026-12-01",
+            endDate: "2026-12-31",
+            newEndDate: null,
+            days: 20,
+            newDays: null,
+          },
+        ],
+      }),
+    );
+    mount();
+    await screen.findByRole("heading", { name: "Bleiben unverändert" });
+    expect(screen.queryByRole("heading", { name: "Abwesenheiten, die enden" })).toBeNull();
+    expect(screen.getByText("Es läuft eine Elternzeit-Kürzung (§ 17 BEEG).")).toBeTruthy();
+  });
+
+  it("offers Erneut laden after a failed first load and then shows the day field (review WR-05)", async () => {
+    post.mockRejectedValueOnce(new ApiError(500, "Serverfehler"));
+    mount();
+    await screen.findByRole("alert");
+    expect(screen.queryByLabelText("Letzter Arbeitstag")).toBeNull();
+    expect(confirmButton().disabled).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: "Erneut laden" }));
+    await waitFor(() => expect(field().value).toBe(TODAY));
+    expect(screen.queryByRole("button", { name: "Erneut laden" })).toBeNull();
+    expect(confirmButton().disabled).toBe(false);
+  });
+
+  it("keeps the day field after a failed reload and Erneut laden asks again for that day (review WR-05)", async () => {
+    mount();
+    await waitFor(() => expect(field().value).toBe(TODAY));
+    post.mockRejectedValueOnce(new ApiError(500, "Serverfehler"));
+    await fireEvent.change(field(), { target: { value: "2026-11-03" } });
+    await screen.findByRole("alert");
+    expect(field().value).toBe("2026-11-03");
+    post.mockResolvedValueOnce(preview({ exitDate: "2026-11-03" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Erneut laden" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenLastCalledWith(PREVIEW_URL, { exitDate: "2026-11-03" }),
+    );
+    await waitFor(() => expect(confirmButton().disabled).toBe(false));
   });
 
   it("shows only the counts when the caller may not read the absences (review WR-03)", async () => {

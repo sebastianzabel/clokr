@@ -105,6 +105,20 @@
     });
   });
 
+  // Review WR-05: rows that end and rows that stay as they are are two groups; a SKIP row ends nothing.
+  let endingRows = $derived((view?.absences ?? []).filter((row) => row.action !== "SKIP"));
+  let unchangedRows = $derived((view?.absences ?? []).filter((row) => row.action === "SKIP"));
+
+  // Review WR-05: after a failed load the dialog offers to try again - the first load again when no
+  // answer ever arrived (no day is known yet), else the preview of the day in the field.
+  async function retry() {
+    if (today === null) {
+      await start();
+    } else if (day !== "") {
+      await load(day);
+    }
+  }
+
   let canConfirm = $derived(
     view !== null && view.refusal === null && view.exitDate === day && !loading && !saving,
   );
@@ -142,6 +156,11 @@
   <div class="dx-body">
     {#if errorText}
       <div class="callout error" role="alert">{errorText}</div>
+      {#if view === null && !loading && !saving}
+        <div>
+          <button type="button" class="btn btn-ghost" onclick={retry}>Erneut laden</button>
+        </div>
+      {/if}
     {/if}
 
     <div class="callout brand" role="note">
@@ -202,25 +221,38 @@
       </dl>
 
       {#if view.absences !== null}
-        <section class="dx-absences" aria-labelledby="dx-absences-title">
-          <h4 id="dx-absences-title">Abwesenheiten, die enden</h4>
-          {#if view.absences.length === 0}
-            <p class="form-hint">Keine Abwesenheiten nach dem letzten Arbeitstag.</p>
-          {:else}
+        {#if endingRows.length > 0 || unchangedRows.length === 0}
+          <section class="dx-absences" aria-labelledby="dx-absences-title">
+            <h4 id="dx-absences-title">Abwesenheiten, die enden</h4>
+            {#if endingRows.length === 0}
+              <p class="form-hint">Keine Abwesenheiten nach dem letzten Arbeitstag.</p>
+            {:else}
+              <ul class="dx-list">
+                {#each endingRows as row (`${row.entity}-${row.id}`)}
+                  <li class="dx-row">
+                    <span class="dx-type">{absenceTypeLabel(row.typeCode)}</span>
+                    <span class="dx-period">{absencePeriodText(row)}</span>
+                    <span class="dx-action">{absenceActionText(row)}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </section>
+        {/if}
+        {#if unchangedRows.length > 0}
+          <section class="dx-absences" aria-labelledby="dx-unchanged-title">
+            <h4 id="dx-unchanged-title">Bleiben unverändert</h4>
             <ul class="dx-list">
-              {#each view.absences as row (`${row.entity}-${row.id}`)}
+              {#each unchangedRows as row (`${row.entity}-${row.id}`)}
                 <li class="dx-row">
                   <span class="dx-type">{absenceTypeLabel(row.typeCode)}</span>
                   <span class="dx-period">{absencePeriodText(row)}</span>
-                  <span class="dx-action">{absenceActionText(row)}</span>
-                  {#if row.action === "SKIP"}
-                    <span class="dx-reason">{skipReasonText(row.reason)}</span>
-                  {/if}
+                  <span class="dx-reason">{skipReasonText(row.reason)}</span>
                 </li>
               {/each}
             </ul>
-          {/if}
-        </section>
+          </section>
+        {/if}
       {:else if view.absencesUnavailableReason === "NO_PERMISSION"}
         <section class="dx-absences" aria-labelledby="dx-absences-title">
           <h4 id="dx-absences-title">Abwesenheiten</h4>
