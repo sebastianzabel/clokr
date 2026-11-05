@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveDayState,
+  isPendingNachtragRow,
   primaryClockLabel,
   canReopenFinishedDay,
   reopenGapStartLabel,
@@ -388,5 +389,82 @@ describe("resolveDayState - a travel entry is never the entry a clock event acts
       { ...TRIP, workingMinutes: 30 },
     ];
     expect(dayTotals(rows, new Date("2026-08-28T18:00:00.000Z")).workingMinutes).toBe(270);
+  });
+});
+
+describe("resolveDayState — a pending Zeitnachtrag row (Issue #657)", () => {
+  // A row coupled to a pending Zeitnachtrag: the exact marker of the server's `isPendingRetroRow`.
+  const PENDING: ClockDayEntry = {
+    id: "e-pending",
+    startTime: "2026-08-28T09:00:00.000Z",
+    endTime: "2026-08-28T10:00:00.000Z",
+    isInvalid: true,
+    retroRequestId: "r-1",
+    invalidReasonCode: "RETRO_APPROVAL_PENDING",
+  };
+  const EARLIER: ClockDayEntry = {
+    id: "e-x",
+    startTime: "2026-08-28T05:00:00.000Z",
+    endTime: "2026-08-28T06:00:00.000Z",
+  };
+
+  it("isPendingNachtragRow needs the request id, isInvalid and the code together", () => {
+    expect(isPendingNachtragRow(PENDING)).toBe(true);
+    expect(isPendingNachtragRow({ ...PENDING, retroRequestId: null })).toBe(false);
+    expect(isPendingNachtragRow({ ...PENDING, isInvalid: false })).toBe(false);
+    expect(isPendingNachtragRow({ ...PENDING, invalidReasonCode: "MISSING_CLOCK_OUT" })).toBe(
+      false,
+    );
+    expect(isPendingNachtragRow({ ...PENDING, invalidReasonCode: null })).toBe(false);
+  });
+
+  it("a day whose only row is a closed pending row is idle and offers Einstempeln", () => {
+    const day = resolveDayState([PENDING]);
+    expect(day.kind).toBe("idle");
+    expect(primaryClockLabel(day)).toBe("Einstempeln");
+  });
+
+  it("a pending row shadows an earlier closed row: the day is idle, not finished", () => {
+    for (const rows of [
+      [EARLIER, PENDING],
+      [PENDING, EARLIER],
+    ]) {
+      expect(resolveDayState(rows).kind).toBe("idle");
+    }
+  });
+
+  it("a closed row ending after the pending row is the finished entry", () => {
+    const before: ClockDayEntry = {
+      ...PENDING,
+      id: "e-p-early",
+      startTime: "2026-08-28T05:00:00.000Z",
+      endTime: "2026-08-28T06:00:00.000Z",
+    };
+    const later: ClockDayEntry = {
+      id: "e-x2",
+      startTime: "2026-08-28T07:00:00.000Z",
+      endTime: "2026-08-28T09:00:00.000Z",
+    };
+    const day = resolveDayState([before, later]);
+    expect(day.kind).toBe("finished");
+    expect(day.entry?.id).toBe("e-x2");
+  });
+
+  it("an open pending row is never running; next to an earlier closed row the day is idle", () => {
+    const openPending: ClockDayEntry = { ...PENDING, id: "e-open-p", endTime: null };
+    expect(resolveDayState([openPending]).kind).toBe("idle");
+    expect(resolveDayState([EARLIER, openPending]).kind).toBe("idle");
+  });
+
+  it("an approved Nachtrag row is an ordinary row", () => {
+    const approved: ClockDayEntry = { ...PENDING, isInvalid: false, invalidReasonCode: null };
+    const day = resolveDayState([approved]);
+    expect(day.kind).toBe("finished");
+    expect(day.entry?.id).toBe("e-pending");
+  });
+
+  it("a coupled invalid row without the marker is an ordinary row (server backstop parity)", () => {
+    const unmarked: ClockDayEntry = { ...PENDING, invalidReasonCode: null };
+    expect(resolveDayState([unmarked]).kind).toBe("finished");
   });
 });
