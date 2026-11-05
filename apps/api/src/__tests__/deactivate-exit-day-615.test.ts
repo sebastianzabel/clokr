@@ -306,6 +306,29 @@ describe("Issue #615 — deactivation takes the last working day", () => {
     return day;
   };
 
+  /** Writes a closed MONTHLY snapshot for the month of `monthStart` the way the closer does. */
+  async function closeMonthDirectly(who: Worker, monthStart: Date) {
+    const range = monthRangeUtc(
+      monthStart.getUTCFullYear(),
+      monthStart.getUTCMonth() + 1,
+      "Europe/Berlin",
+    );
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId: who.employee.id,
+        periodType: "MONTHLY",
+        periodStart: range.start,
+        periodEnd: range.end,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+        closedBy: "test-system",
+      },
+    });
+  }
+
   // ── Refusals write nothing ───────────────────────────────────────────────────────────────────
   describe("refusals write nothing", () => {
     async function expectRefusedWithoutWrite(
@@ -374,6 +397,19 @@ describe("Issue #615 — deactivation takes the last working day", () => {
       );
     });
 
+    it("moving a STORED exit day out of a closed month is a 409 MONTH_LOCKED, although today's month is open (review CR-01)", async () => {
+      const worker = await workerWithVacation("stored-locked");
+      const storedDay = firstWeekday(firstOfLastMonth);
+      await app.prisma.employee.update({
+        where: { id: worker.employee.id },
+        data: { exitDate: utcMidnight(isoDay(storedDay)) },
+      });
+      await closeMonthDirectly(worker, firstOfLastMonth);
+      // No body = today: the old guard looked at the current month only and let this move through.
+      await expectRefusedWithoutWrite(worker, {}, 409, "MONTH_LOCKED");
+      await expectRefusedWithoutWrite(worker, { exitDate: isoDay(today) }, 409, "MONTH_LOCKED");
+    });
+
     it("a day in an OPEN month before a LATER closed month is a 409 MONTH_LOCKED (D-16)", async () => {
       // Two months back, so last month can be closed while the month before it stays open. Across a
       // year boundary the API cannot reach this state (the close is sequential per year), so the
@@ -427,6 +463,30 @@ describe("Issue #615 — deactivation takes the last working day", () => {
         where: { id: worker.employee.id },
       });
       expect(stored.exitDate!.toISOString()).toBe(`${isoDay(yesterday)}T00:00:00.000Z`);
+    });
+
+    it("choosing the STORED exit day in a closed month moves nothing and is accepted; the exit day stays (review CR-01)", async () => {
+      const worker = await workerWithVacation("stored-same");
+      const storedDay = firstWeekday(firstOfLastMonth);
+      await app.prisma.employee.update({
+        where: { id: worker.employee.id },
+        data: { exitDate: utcMidnight(isoDay(storedDay)) },
+      });
+      await closeMonthDirectly(worker, firstOfLastMonth);
+
+      const res = await deactivate(worker.employee.id, { exitDate: isoDay(storedDay) });
+      expect(res.statusCode, res.body).toBe(200);
+      const stored = await app.prisma.employee.findUniqueOrThrow({
+        where: { id: worker.employee.id },
+        include: { user: true },
+      });
+      expect(stored.exitDate!.toISOString()).toBe(`${isoDay(storedDay)}T00:00:00.000Z`);
+      expect(stored.user.isActive).toBe(false);
+      const update = await soleAuditRow(app.prisma, {
+        where: { entity: "Employee", entityId: worker.employee.id, action: "UPDATE" },
+      });
+      expect((update.oldValue as { exitDate: string }).exitDate).toBe(isoDay(storedDay));
+      expect((update.newValue as { exitDate: string }).exitDate).toBe(isoDay(storedDay));
     });
 
     it("an ISO datetime is reduced to its tenant-local calendar day (D-19)", async () => {

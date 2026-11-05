@@ -516,13 +516,24 @@ type ExitDayResolution =
  * Issue #615 (D-01/D-02/D-03/D-16/D-22) - the ONE resolution of a deactivation's last working day,
  * shared by the deactivation and its preview. Returns the tenant-local calendar day and its UTC
  * midnight (the stored `Employee.exitDate` convention), or the refusal to send. Reads only.
+ *
+ * The closed-month rule judges the MOVE of the end of the employment (review CR-01): the months from
+ * the earlier of the stored exit day and the chosen day through the current month. Moving a stored exit
+ * day out of a closed month changes that month's population and figures (§ 147 AO) and is refused;
+ * choosing the stored day itself moves nothing and passes (the exit rule skips closed-month rows).
  */
 async function resolveExitDay(
-  app: FastifyInstance,
+  db: Prisma.TransactionClient,
   opts: EmployeeRoutesOptions,
-  input: { tenantId: string; employeeId: string; hireDate: Date; raw: string | null | undefined },
+  input: {
+    tenantId: string;
+    employeeId: string;
+    hireDate: Date;
+    storedExitDate: Date | null;
+    raw: string | null | undefined;
+  },
 ): Promise<ExitDayResolution> {
-  const tz = await readTenantTimezone(app.prisma, input.tenantId);
+  const tz = await readTenantTimezone(db, input.tenantId);
   const today = tenantLocalDay(new Date(), tz);
   const day =
     input.raw == null
@@ -536,17 +547,13 @@ async function resolveExitDay(
   if (day < tenantLocalDay(input.hireDate, tz)) {
     return { ok: false, status: 400, body: EXIT_DATE_BEFORE_HIRE_RESPONSE, day, today };
   }
-  // D-16: the exit month or any later month up to the current one is closed - moving the end of the
-  // employment before a closed month would change that month's DATEV population (§ 147 AO).
+  // D-16 (review CR-01): the stored exit day is part of the judged range; an unchanged day moves nothing.
+  const storedDay = input.storedExitDate ? input.storedExitDate.toISOString().slice(0, 10) : null;
+  const unchanged = storedDay !== null && storedDay === day;
+  const from = storedDay !== null && storedDay < day ? storedDay : day;
   if (
-    await opts.exitPorts.closedMonthInRange(
-      app.prisma,
-      input.employeeId,
-      input.tenantId,
-      day,
-      today,
-      tz,
-    )
+    !unchanged &&
+    (await opts.exitPorts.closedMonthInRange(db, input.employeeId, input.tenantId, from, today, tz))
   ) {
     return { ok: false, status: 409, body: EXIT_MONTH_LOCKED_RESPONSE, day, today };
   }
@@ -1459,10 +1466,11 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
 
       // Issue #615: resolved only for an in-scope, active person, so no refusal reveals the state
       // of a person the caller may not administer.
-      const resolved = await resolveExitDay(app, opts, {
+      const resolved = await resolveExitDay(app.prisma, opts, {
         tenantId: req.user.tenantId,
         employeeId: id,
         hireDate: employee.hireDate,
+        storedExitDate: employee.exitDate,
         raw: exitDate,
       });
       if (!resolved.ok) return reply.code(resolved.status).send(resolved.body);
@@ -1643,10 +1651,11 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
       if (!employee.user.isActive)
         return reply.code(409).send({ error: "Mitarbeiter ist bereits deaktiviert" });
 
-      const resolved = await resolveExitDay(app, opts, {
+      const resolved = await resolveExitDay(app.prisma, opts, {
         tenantId,
         employeeId: id,
         hireDate: employee.hireDate,
+        storedExitDate: employee.exitDate,
         raw: exitDate,
       });
       const day = resolved.day;
