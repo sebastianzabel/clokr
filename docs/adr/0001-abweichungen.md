@@ -6738,6 +6738,7 @@ verschiedenen Salons. Die Fahrt dazwischen ist Arbeitszeit, hatte aber keinen Or
   (`BREAK_TOO_SHORT`); `MAX_DAILY_EXCEEDED` entsteht bei 630 Minuten (5 h + 30 Min + 5 h).
 - Eine **nicht erfasste** Lücke bleibt die Klärungsfrage „Fahrzeit oder Pause?“ (Grenzfall-Rechnung). Das System erkennt
   eine Fahrt nicht selbst; ein Angebot „Lücke als Fahrzeit erfassen“ ist das Folge-Issue #660.
+  _(Nachtrag Phase 660: umgesetzt; die Tagesprüfung bietet die Lücke als Fahrzeit an, siehe Nachtrag Phase 660 unten.)_
 - **Das Erfassen, Ändern oder Löschen einer Fahrzeit ändert den Tagesstand.** Der Schnappschuss einer Quittung
   (`DayBreakAck`) enthält die Ids der Einträge und die Nettominuten des Tages (`DaySnapshot`, D-17 des Tageskerns). Eine
   schon erteilte Quittung für diesen Tag wird dadurch **veraltet** und muss neu erteilt werden; das ist der bestehende
@@ -6817,6 +6818,7 @@ gestellt (die Seite zeigt einen Text statt des Zeitnachtrag-Formulars). Mandante
 - **Kein Geld:** keine Kilometer-, Reisekosten- oder Spesenabrechnung; **keine Standorterkennung**; **keine Wegezeit**
   Wohnung ↔ Salon.
 - **Kein Lücken-Angebot:** „Als Fahrzeit erfassen“ für eine nicht aufgelöste Lücke (D-08, nur Folge-Issue #660).
+  _(Nachtrag Phase 660: das Angebot gibt es seit Phase 660; die Massenübernahme bleibt zurückgestellt.)_
 - **Keine Fahrzeit als Zeitnachtrag** (409 `TRAVEL_NOT_AS_RETRO_REQUEST`; solange ein Zeitnachtrag je Tag gilt, Folge-Issue
   #657). **Keine Fahrzeit per CSV-Import oder Stempelereignis.**
   _(Nachtrag Phase 657: die Bedingung „solange ein Zeitnachtrag je Tag gilt“ besteht nicht mehr; die Abweisung bleibt
@@ -6879,6 +6881,60 @@ API: `travel-activity-kind-92`, `travel-entry-tracer-92`, `travel-migration-92`,
 `travel-clock-selectors-92`, `time-entries-travel-list-92`, `time-entries-travel-summary-92`,
 `travel-saldo-isolation-92`, `travel-saldo-equality-92`; Web: `travel-entry-form`, `today-entries-travel-92`,
 `time-entries-travel-wiring-92`; Playwright `travel-between-salons.spec.ts`.
+
+### Nachtrag 2026-11-05 (Phase 660, Issue #660) — Lücke zwischen zwei Salons als Fahrzeit übernehmen
+
+Die Aussage „das System erkennt eine Fahrt nicht selbst“ bleibt: das System bietet an, es unterstellt nichts. Die Tagesprüfung
+bietet eine Lücke mit dem Befund „Klärung nötig: Fahrzeit oder Pause?“ (`UNCLEAR`) als Fahrzeit an; erst ein bewusster Klick
+legt die Fahrzeit an.
+
+- **Schwere:** Erweiterung einer Leseantwort und eine Aktion der Oberfläche; keine Unterbau-, Schema-, Migrations-, Routen-
+  oder Permission-Katalog-Änderung. Eine neue Handler-Prüfung `time-entry:create` in `GET /day-breaks/checks` steht in
+  `docs/permissions.md`.
+- **Was sich geändert hat:**
+  - **Das Angebot (eine Stelle):** `GET /api/v1/day-breaks/checks` trägt auf einem Tag mit vollem Detail und ohne gesperrten
+    Eintrag den additiven Schlüssel `travelOffers` (nur wenn nicht leer). Jedes Element nennt die genaue Lücke
+    (`startTime`, `endTime`), den Abfahrtssalon (Salon des Eintrags davor) und den Zielsalon (Salon des Eintrags danach)
+    mit Id und Name. Gebaut wird es ausschließlich in `contexts/time-tracking/travel-offer.ts` aus den Lücken des
+    Tageskerns und der Ankerprüfung der Schreibregel (`validateTravelEntry()`); der Kern selbst ist unverändert.
+  - **Die eine Reichweitenregel:** `travelWriteCoversDay()` (`travel-entry.ts`) entscheidet, wer eine Fahrzeit auf diesem
+    Tag anlegen darf. `validateTravelEntry()` ruft dieselbe Funktion auf; Angebot und Schreibregel können nicht auseinanderlaufen.
+  - **Nachtragsfenster:** am eigenen Tag der Person erscheint das Angebot nur innerhalb des Nachtragsfensters, so wie die
+    Schreibregel den Eintrag dort zulässt.
+  - **Aktive Salons:** ein deaktivierter Salon als Abfahrts- oder Zielsalon erzeugt kein Angebot.
+  - **Keine Angebote** an einem geschwärzten Tag (kein Detail, keine verdeckte Zahl), an einem Tag mit gesperrtem Eintrag
+    oder geschlossenem Monat, an einer Lücke, die eine Fahrzeit oder eine ausstehende Zeitnachtragszeile berührt oder von
+    einer erfassten Tagespause überdeckt wird.
+  - **Die Aktion** ist das unveränderte `POST /api/v1/time-entries` (Fahrzeit-Körper wie im Formular; in der
+    Team-Zeiterfassung zusätzlich `employeeId` und `source: CORRECTION`). Ein veraltetes Angebot (Zieleintrag gelöscht oder
+    verschoben, Tagespause erfasst, Angebot ein zweites Mal gesendet) ist die 409 der Schreibregel; es wird nichts geschrieben.
+  - **Oberfläche:** eine Schaltfläche je Angebot in der Tagesprüfung beider Zeiterfassungsseiten (`/time-entries`,
+    `/team/time-entries`), nur für Mandanten mit Salonauswahl (#64, `multiEntryUi`); ein Mandant mit einem Salon sieht keine Änderung.
+- **Was bewusst NICHT geschah:** kein zweiter Schreibweg und keine zweite Regel; keine Änderung am Tageskern (deshalb kein
+  Eintrag im Nachtragsregister `fixtures/day-break-equivalence-80-amendments.json`, das Äquivalenz-Fixture ist unberührt);
+  kein Angebot an einem geschwärzten oder gesperrten Tag; keine Massenübernahme aller Lücken (zurückgestellt); keine
+  Unterstellung einer Fahrt (bewusster Klick; § 2 Abs. 1 und § 4 ArbZG, BAG 12.12.2012 – 5 AZR 355/12 für die Fahrt zwischen
+  Arbeitsstätten, BAG 25.02.2015 – 5 AZR 886/12 für die Pause).
+- **Akzeptierte Restrisiken:** das Angebot sagt Abweisungen nicht voraus, die die Schreibregel selbst ausspricht (genehmigter
+  Urlaub, § 8 BUrlG; deaktivierte Person; § 9 JArbSchG am Berufsschultag) – der Klick antwortet dann mit der Begründung der
+  Schreibregel. Eine zu Unrecht übernommene private Lücke ist wie jede Fahrzeit durch die Führungskraft korrigierbar
+  (Begründung, Audit). Eine erteilte Quittung des Tages veraltet durch die Fahrzeit (#80, keine neue Regel).
+- **Auswirkung auf die Kontexte:** Zeiterfassung – `travel-offer.ts`, `travelWriteCoversDay()`, Antwortschlüssel
+  `travelOffers`, Oberfläche. Abwesenheiten – keine. Schichtplanung – keine. Arbeitszeitkonto – keine (kein Saldo-, Soll-
+  oder Ist-Pfad liest das Angebot, `travel-offer-one-rule-660.test.ts`). Unterbau – keine. Kompositionsschicht – keine.
+- **Nachweis:** API `day-break-travel-offer-660` (6 Fälle: Angebot mit genauer Lücke, Weg durch `POST /time-entries` mit
+  einer Fahrzeit, einem `CREATE`-Audit, ohne `UNCLEAR` und mit +30 Minuten Saldo), `day-break-travel-offer-rules-660`
+  (17 Fälle: jeder Nicht-Angebotsfall mit Kontrolle aus derselben Antwort, Reichweite je Akteur, keine verdeckte Zahl,
+  veraltete Angebote mit 409), `travel-offer-one-rule-660` (6 Fälle: eine Reichweitenregel, kein Kern-, Saldo- oder
+  Kompositionsmodul nennt das Angebot); Web `DayBreakPanel` (4 neue Fälle), `travel-entry-form` (8 neue Fälle),
+  `time-entries-travel-offer-wiring-660` (Quellprüfung beider Seiten); Playwright `travel-between-salons.spec.ts` (Klick
+  legt die Fahrzeit an, veraltetes Angebot zeigt den Text der 409 und schreibt nichts, Mandant mit einem Salon ohne
+  Schaltfläche). Mutationsbeweise: zehn Mutanten (alle Personen berechtigt, Angebot auch am geschwärzten Tag, Tagespause
+  nicht ausgenommen, Nachbarschaftsregel entfernt, Nachtragsfenster entfernt, gesperrter Tag nicht ausgenommen, Import des
+  Angebots im Tageskern, Seite am Salonauswahl-Schalter vorbei, Hilfsfunktion ohne Salonauswahl, Team-Seite ohne `source`) –
+  jeder macht mindestens einen Fall rot. Die
+  Neutralitätsaufzeichnungen, das Äquivalenz-Fixture des Tageskerns und die Wächter von #92 sind gegenüber dem Merge-Basisstand
+  unverändert (Byte-Vergleich).
 
 ## U — Nachtrag Issue #470: Spalte `TenantConfig.monthlyHoursHolidayDeduction` gelöscht
 
