@@ -486,6 +486,49 @@ describe("Issue #657 — Zeitnachtrag per interval", () => {
     });
   });
 
+  describe("request times are real clock times (WR-01)", () => {
+    const bad: Array<[string, string, string]> = [
+      ["24:00 as end", "20:00", "24:00"],
+      ["25:30 as end", "08:00", "25:30"],
+      ["99:99 on both", "99:99", "99:99"],
+      ["60 minutes", "08:60", "10:00"],
+    ];
+    for (const [label, from, to] of bad) {
+      it(`POST /retro-entry-requests refuses ${label} with 400 and writes nothing`, async () => {
+        const day = nextDay();
+        const res = await propose(day, from, to);
+        expect(res.statusCode).toBe(400);
+        expect(await liveRequests(day)).toHaveLength(0);
+      });
+    }
+
+    it("accepts 00:00 and 23:59", async () => {
+      const day = nextDay();
+      expect((await propose(day, "00:00", "23:59")).statusCode).toBe(201);
+    });
+
+    it("the review refuses corrected times that are not real clock times", async () => {
+      const day = nextDay();
+      const request = await seedRequest(day, { status: "PENDING" });
+      for (const [startTime, endTime] of [
+        ["08:00", "24:00"],
+        ["25:30", "26:00"],
+      ]) {
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${seed.adminToken}` },
+          payload: { status: "APPROVED", startTime, endTime },
+        });
+        expect(res.statusCode).toBe(400);
+      }
+      expect(
+        (await app.prisma.retroEntryRequest.findUniqueOrThrow({ where: { id: request.id } }))
+          .status,
+      ).toBe("PENDING");
+    });
+  });
+
   describe("check and write run under the employee row lock (D-04)", () => {
     const holderRequest =
       (day: string) =>

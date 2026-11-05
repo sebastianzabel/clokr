@@ -69,10 +69,15 @@ export function retroRequestInterval(
   tz: string,
 ): RequestInterval {
   if (!request.startTime || !request.endTime) return wholeTenantDay(request.targetDateStr, tz);
-  return {
-    start: fromZonedTime(`${request.targetDateStr}T${request.startTime}:00`, tz),
-    end: fromZonedTime(`${request.targetDateStr}T${request.endTime}:00`, tz),
-  };
+  const start = fromZonedTime(`${request.targetDateStr}T${request.startTime}:00`, tz);
+  const end = fromZonedTime(`${request.targetDateStr}T${request.endTime}:00`, tz);
+  // Fail closed (Issue #657 WR-01): a value that is not a real clock time (`24:00`, `99:99`) yields an
+  // invalid or inverted interval, which `intervalsOverlap` would never see as overlapping. Treat it
+  // as the whole day so it refuses instead of slipping through.
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+    return wholeTenantDay(request.targetDateStr, tz);
+  }
+  return { start, end };
 }
 
 /** Half-open overlap: touching intervals do not overlap. */

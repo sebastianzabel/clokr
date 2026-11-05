@@ -44,6 +44,18 @@ describe("Issue #657 — retro request interval (pure)", () => {
     }
   });
 
+  it("fails closed: a value that is no real clock time covers the whole day (WR-01)", () => {
+    const day = wholeTenantDay("2026-06-09", TZ);
+    for (const times of [
+      { startTime: "20:00", endTime: "24:00" },
+      { startTime: "08:00", endTime: "25:30" },
+      { startTime: "99:99", endTime: "99:99" },
+      { startTime: "12:00", endTime: "08:00" },
+    ]) {
+      expect(retroRequestInterval({ targetDateStr: "2026-06-09", ...times }, TZ)).toEqual(day);
+    }
+  });
+
   it("half-open overlap truth table", () => {
     // touching in either order is no overlap
     expect(intervalsOverlap(iv(8, 12), iv(12, 16))).toBe(false);

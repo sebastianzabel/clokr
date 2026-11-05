@@ -39,7 +39,8 @@ import {
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
-const HHMM_REGEX = /^\d{2}:\d{2}$/;
+// Real clock times only: 00-23 hours, 00-59 minutes (Issue #657 WR-01; `24:00` / `99:99` are refused).
+const HHMM_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** Convert an "HH:MM" string to minutes since midnight. */
 function hhmmToMinutes(hhmm: string): number {
