@@ -1155,7 +1155,9 @@ const MIN_FILES = 805;
 // the full API run (11830 passed + 3 skipped = 11833 collected). Never lowered.
 // Issue #531: imports.test.ts -1 (whole-import refusal replaced) +5 (Stammsalon per row); full run measured 801 files / 11793 tests (incl. 3 skipped).
 // Merge of #657 onto main after #531: 11833 measured on its base 11788 (+45) plus #531 (+5) -> 11838.
-const MIN_TESTS = 11838;
+// Review fixes of #657 (CR-01..WR-03, IN-01): full API run on the final tree measured 805 files / 11853 tests
+// (incl. 3 skipped). The coordinator's 11838 carried a +5 for #531 that is +4; the figure is the measured total.
+const MIN_TESTS = 11853;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
