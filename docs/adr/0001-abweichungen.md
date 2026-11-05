@@ -6923,7 +6923,9 @@ legt die Fahrzeit an.
   Unterstellung einer Fahrt (bewusster Klick; § 2 Abs. 1 und § 4 ArbZG, BAG 12.12.2012 – 5 AZR 355/12 für die Fahrt zwischen
   Arbeitsstätten, BAG 25.02.2015 – 5 AZR 886/12 für die Pause).
 - **Akzeptierte Restrisiken:** das Angebot sagt Abweisungen nicht voraus, die die Schreibregel selbst ausspricht (genehmigter
-  Urlaub, § 8 BUrlG; deaktivierte Person; § 9 JArbSchG am Berufsschultag) – der Klick antwortet dann mit der Begründung der
+  Urlaub, § 8 BUrlG; deaktivierte Person; § 9 JArbSchG am Berufsschultag; eine Zeile der Art `OVERTIME` oder
+  `PUBLIC_HOLIDAY`, die in der Lücke liegt – sie fehlt in den Zeilen des Tageskerns, die Lücke wird also gemeldet, die
+  Überschneidungsprüfung der Schreibregel weist den Eintrag aber ab) – der Klick antwortet dann mit der Begründung der
   Schreibregel. Eine zu Unrecht übernommene private Lücke ist wie jede Fahrzeit durch die Führungskraft korrigierbar
   (Begründung, Audit). Eine erteilte Quittung des Tages veraltet durch die Fahrzeit (#80, keine neue Regel).
 - **Auswirkung auf die Kontexte:** Zeiterfassung – `travel-offer.ts`, `travelWriteCoversDay()`, Antwortschlüssel
