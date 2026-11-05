@@ -1631,8 +1631,10 @@ gebundene Salon nicht löschen (`RESTRICT`); Salons werden ohnehin nie gelöscht
 ## Phase 647 — Mindestbesetzung je Salon (Issue #647)
 
 **Hinweis für die Release Notes.** In Mandanten mit mehreren Salons lässt sich eine Besetzungsregel einem Salon zuordnen
-(Admin → Schichtplan → „Vorlagen & Bedarf“). Mit einem Salon in der Kopfleiste misst die Wochenansicht der Schichtplanung
-die Besetzung an den Regeln dieses Salons und den Regeln für alle Salons; auf derselben Stufe gewinnt die Salonregel.
+(Admin → Schichtplan → „Vorlagen & Bedarf“). Zeigt die Wochenansicht der Schichtplanung genau einen Salon (Wahl in der Kopfleiste,
+die einzige Salon-Reichweite einer Person oder der einzige aktive Salon des Mandanten), misst sie die Besetzung an den
+Regeln dieses Salons und den Regeln für alle Salons; auf derselben Stufe gewinnt die Salonregel. In der Ansicht „Alle
+Salons“ gelten nur die Regeln für alle Salons.
 Bestehende Regeln gelten weiter für alle Salons. Mandanten mit einem Salon sehen nichts Neues.
 
 **Was die Migration tut.** Ein Verzeichnis in `packages/db/prisma/migrations/`, rein additiv, keine Zeile wird geschrieben

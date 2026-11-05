@@ -698,9 +698,10 @@
       </select>
     </div>
     <p class="cfg-help">
-      Eine Regel für einen Salon geht in diesem Salon auf derselben Stufe der Regel für alle Salons
-      vor. Ohne gewählten Salon in der Kopfleiste rechnet die Wochenansicht nur mit den Regeln für
-      alle Salons.
+      Eine Regel für einen Salon geht auf derselben Stufe der Regel für alle Salons vor. Sie gilt,
+      wenn die Wochenansicht genau diesen Salon zeigt: bei Wahl in der Kopfleiste, für alle, die nur
+      diesen Salon planen, und in Mandanten mit nur einem aktiven Salon. Sonst gelten nur die Regeln
+      für alle Salons.
     </p>
   {/if}
   <div class="form-group">
