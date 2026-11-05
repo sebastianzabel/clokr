@@ -502,6 +502,20 @@ const deactivateBodySchema = z.object({
   exitDate: z.union([calendarDaySchema, z.string().datetime({ offset: true })]).nullish(),
 });
 
+/**
+ * Review WR-01: a refusal found INSIDE the deactivation transaction, after the Employee row lock
+ * (a concurrent deactivation or month close won the race). Rolls the transaction back; the route
+ * answers `status` + `body`, the same ones the pre-checks use.
+ */
+class DeactivationRefusedError extends Error {
+  constructor(
+    readonly status: 400 | 404 | 409,
+    readonly body: { error: string; code?: string },
+  ) {
+    super("deactivation refused");
+  }
+}
+
 type ExitDayResolution =
   | { ok: true; mode: "EXIT_DAY"; day: string; date: Date; today: string; tz: string }
   // Review CR-02: the person has not started yet, so no last working day exists. The deactivation
@@ -1509,6 +1523,42 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
       // inactive user holds no effective right, and reactivation restores it.
       try {
         await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          // Review WR-01: the Employee row lock comes FIRST (same lock as the #568 contract writes), then
+          // everything the pre-checks decided is read again. Two concurrent deactivations queue here: the
+          // second one sees the committed first and answers 409, and a month close that committed
+          // meanwhile refuses an exit day inside it. The audit `oldValue` comes from this read.
+          await tx.$queryRaw`SELECT "id" FROM "Employee" WHERE "id" = ${id} AND "tenantId" = ${req.user.tenantId} FOR NO KEY UPDATE`;
+          const locked = await tx.employee.findFirst({
+            where: { id, tenantId: req.user.tenantId },
+            select: { hireDate: true, exitDate: true, user: { select: { isActive: true } } },
+          });
+          if (!locked) {
+            throw new DeactivationRefusedError(404, { error: "Mitarbeiter nicht gefunden" });
+          }
+          if (!locked.user.isActive) {
+            throw new DeactivationRefusedError(409, {
+              error: "Mitarbeiter ist bereits deaktiviert",
+            });
+          }
+          const rechecked = await resolveExitDay(tx, opts, {
+            tenantId: req.user.tenantId,
+            employeeId: id,
+            hireDate: locked.hireDate,
+            storedExitDate: locked.exitDate,
+            raw: exitDate,
+          });
+          if (!rechecked.ok) throw new DeactivationRefusedError(rechecked.status, rechecked.body);
+          // The absence plan was read for the first resolution; a different day or mode now (the hire
+          // date or the tenant-local midnight moved) means the plan no longer fits.
+          const sameTarget =
+            rechecked.mode === resolved.mode &&
+            (rechecked.mode !== "EXIT_DAY" || rechecked.day === exitTarget?.day);
+          if (!sameTarget) {
+            throw Object.assign(new Error("deactivation target changed"), {
+              code: "EMPLOYMENT_EXIT_CONFLICT",
+            });
+          }
+          const previousExitDate = locked.exitDate;
           await withRoleLockoutGuard(tx, req.user.tenantId, async () => {
             await tx.user.update({
               where: { id: employee.userId },
@@ -1536,7 +1586,7 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
               // the new exit year's VACATION row are brought to their § 5 BUrlG value inside this
               // guarded transaction, AFTER the exit rule (Issue #615, D-05).
               const exitYears = new Set<number>([Number(exitTarget.day.slice(0, 4))]);
-              if (employee.exitDate) exitYears.add(employee.exitDate.getUTCFullYear());
+              if (previousExitDate) exitYears.add(previousExitDate.getUTCFullYear());
               for (const exitYear of exitYears) {
                 await syncExitYearVacationEntitlement(
                   tx,
@@ -1573,7 +1623,7 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
               entityId: id,
               oldValue: {
                 isActive: true,
-                exitDate: employee.exitDate ? employee.exitDate.toISOString().slice(0, 10) : null,
+                exitDate: previousExitDate ? previousExitDate.toISOString().slice(0, 10) : null,
               },
               ...requestAuditFields(
                 req,
@@ -1591,8 +1641,8 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
                   : {
                       // Review CR-02: no exit day exists for a person who has not started yet.
                       isActive: false,
-                      exitDate: employee.exitDate
-                        ? employee.exitDate.toISOString().slice(0, 10)
+                      exitDate: previousExitDate
+                        ? previousExitDate.toISOString().slice(0, 10)
                         : null,
                       exitDateUnchanged: "HIRE_IN_FUTURE",
                     },
@@ -1604,6 +1654,10 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
       } catch (err) {
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
+        // Review WR-01: a refusal found after the row lock; nothing was written.
+        if (err instanceof DeactivationRefusedError) {
+          return reply.code(err.status).send(err.body);
         }
         // Issue #614: a planned absence changed between plan and apply; nothing was written.
         if ((err as { code?: unknown }).code === "EMPLOYMENT_EXIT_CONFLICT") {

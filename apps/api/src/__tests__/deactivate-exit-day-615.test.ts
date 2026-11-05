@@ -558,6 +558,101 @@ describe("Issue #615 — deactivation takes the last working day", () => {
     });
   });
 
+  // ── Concurrency (review WR-01) ───────────────────────────────────────────────────────────────
+  describe("the checks and the audit old value are read under the Employee row lock", () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    /**
+     * Holds the Employee row lock in a transaction of its own, starts the deactivation (it passes its
+     * pre-checks and then waits for the lock), lets the holder write `during` and commit, and returns
+     * the deactivation's answer.
+     */
+    async function deactivateBehindLock(
+      who: Worker,
+      payload: Record<string, unknown>,
+      during: (tx: Parameters<Parameters<typeof app.prisma.$transaction>[0]>[0]) => Promise<void>,
+    ) {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let locked!: () => void;
+      const lockedPromise = new Promise<void>((resolve) => (locked = resolve));
+      const holder = app.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "Employee" WHERE "id" = ${who.employee.id} FOR UPDATE`;
+          locked();
+          await gate;
+          await during(tx);
+        },
+        { timeout: 30_000 },
+      );
+      await lockedPromise;
+      const racing = deactivate(who.employee.id, payload);
+      await sleep(600); // long enough for the request to reach the lock
+      release();
+      await holder;
+      return racing;
+    }
+
+    it("a deactivation that lost the race answers 409 and overwrites nothing", async () => {
+      const worker = await createWorker("race-loser");
+      const winnerDay = addDays(today, -1);
+      const res = await deactivateBehindLock(worker, { exitDate: isoDay(today) }, async (tx) => {
+        await tx.user.update({ where: { id: worker.user.id }, data: { isActive: false } });
+        await tx.employee.update({
+          where: { id: worker.employee.id },
+          data: { exitDate: utcMidnight(isoDay(winnerDay)) },
+        });
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({ error: "Mitarbeiter ist bereits deaktiviert" });
+      const stored = await app.prisma.employee.findUniqueOrThrow({
+        where: { id: worker.employee.id },
+      });
+      expect(stored.exitDate!.toISOString()).toBe(`${isoDay(winnerDay)}T00:00:00.000Z`);
+      expect(
+        await app.prisma.auditLog.count({
+          where: { entity: "Employee", entityId: worker.employee.id, action: "UPDATE" },
+        }),
+      ).toBe(0);
+    });
+
+    it("two concurrent deactivations with different days: one 200, one 409, one audit row with the right old value", async () => {
+      const worker = await createWorker("race-pair");
+      const [a, b] = await Promise.all([
+        deactivate(worker.employee.id, { exitDate: isoDay(today) }),
+        deactivate(worker.employee.id, { exitDate: isoDay(addDays(today, -1)) }),
+      ]);
+      expect([a.statusCode, b.statusCode].sort((x, y) => x - y)).toEqual([200, 409]);
+      const winner = a.statusCode === 200 ? isoDay(today) : isoDay(addDays(today, -1));
+      const stored = await app.prisma.employee.findUniqueOrThrow({
+        where: { id: worker.employee.id },
+      });
+      expect(isoDay(stored.exitDate!)).toBe(winner);
+      const update = await soleAuditRow(app.prisma, {
+        where: { entity: "Employee", entityId: worker.employee.id, action: "UPDATE" },
+      });
+      expect(update.oldValue).toEqual({ isActive: true, exitDate: null });
+      expect((update.newValue as { exitDate: string }).exitDate).toBe(winner);
+    });
+
+    it("an exit day stored while the deactivation waited is the audit old value, not the stale read", async () => {
+      const worker = await createWorker("race-old-value");
+      const stored = addDays(today, -3);
+      const res = await deactivateBehindLock(worker, { exitDate: isoDay(today) }, async (tx) => {
+        await tx.employee.update({
+          where: { id: worker.employee.id },
+          data: { exitDate: utcMidnight(isoDay(stored)) },
+        });
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const update = await soleAuditRow(app.prisma, {
+        where: { entity: "Employee", entityId: worker.employee.id, action: "UPDATE" },
+      });
+      expect(update.oldValue).toEqual({ isActive: true, exitDate: isoDay(stored) });
+      expect((update.newValue as { exitDate: string }).exitDate).toBe(isoDay(today));
+    });
+  });
+
   // ── Europe/Berlin day boundary (AC-615-3) ────────────────────────────────────────────────────
   describe("the default and the bounds follow the tenant-local day, not the UTC day", () => {
     it("at 00:30 Europe/Berlin (the UTC day is still the previous one) no body stores the Berlin day, that day is accepted and the next one refused", async () => {
