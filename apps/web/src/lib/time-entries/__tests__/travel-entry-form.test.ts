@@ -11,9 +11,14 @@ import {
   isTravelRow,
   travelArrivalOptions,
   travelFormMode,
+  travelOfferErrorText,
+  travelOfferLabel,
+  travelOfferPayload,
+  travelOffersShown,
   travelPayload,
   travelRouteLabel,
 } from "../travel-entry-form";
+import type { DayCheck, DayCheckTravelOffer, FullDayCheck } from "$lib/breaks/day-break-violation";
 
 const TRAVEL = { activityKind: "TRAVEL" };
 const ORDINARY = { activityKind: "UNSPECIFIED" };
@@ -152,5 +157,131 @@ describe("TRAVEL_TEXTS", () => {
     expect(TRAVEL_TEXTS.hint).toBe(
       "Erfassen Sie die Fahrt ab dem Verlassen des ersten Salons. Der Weg von oder nach Hause ist keine Arbeitszeit.",
     );
+  });
+});
+
+// Issue #660 (D-05, D-07, AC-660-6) - the presentation of the day-check travel offer. The offer
+// is the server's; these helpers only gate it (#64), label it and shape the request.
+const OFFER: DayCheckTravelOffer = {
+  startTime: "2026-03-10T12:00:00",
+  endTime: "2026-03-10T12:30:00",
+  departureSalonId: "s1",
+  arrivalSalonId: "s2",
+  departureSalonName: "Salon A",
+  arrivalSalonName: "Salon B",
+};
+const OFFER_2: DayCheckTravelOffer = {
+  ...OFFER,
+  startTime: "2026-03-10T14:00:00",
+  endTime: "2026-03-10T14:20:00",
+  departureSalonId: "s2",
+  arrivalSalonId: "s1",
+  departureSalonName: "Salon B",
+  arrivalSalonName: "Salon A",
+};
+
+function fullCheck(over: Partial<FullDayCheck> = {}): FullDayCheck {
+  return {
+    date: "2026-03-10",
+    detail: "full",
+    crossSalon: true,
+    warnings: [],
+    locked: false,
+    mayAcknowledge: false,
+    mayRecordDayBreak: false,
+    netWorkedMinutes: 480,
+    totalBreakMinutes: 10,
+    requiredBreakMinutes: 30,
+    breakShortfall: true,
+    maxDailyExceeded: false,
+    breakFinding: true,
+    positionUnknown: false,
+    acknowledged: false,
+    acknowledgement: null,
+    entries: [],
+    gaps: [],
+    dayBreaks: [],
+    ...over,
+  };
+}
+
+describe("travelOffersShown (#660, the #64 gate of the offer)", () => {
+  it("returns the served offers in served order on a full day with salon options", () => {
+    expect(travelOffersShown(fullCheck({ travelOffers: [OFFER, OFFER_2] }), true)).toEqual([
+      OFFER,
+      OFFER_2,
+    ]);
+  });
+
+  it("returns nothing without salon options (a single-salon tenant looks as before)", () => {
+    expect(travelOffersShown(fullCheck({ travelOffers: [OFFER] }), false)).toEqual([]);
+  });
+
+  it("returns nothing for a redacted day, even if offers were attached", () => {
+    const redacted = {
+      date: "2026-03-10",
+      detail: "redacted",
+      crossSalon: true,
+      warnings: [],
+      locked: false,
+      mayAcknowledge: false,
+      mayRecordDayBreak: false,
+      netWorkedMinutes: null,
+      totalBreakMinutes: null,
+      requiredBreakMinutes: null,
+      breakShortfall: null,
+      maxDailyExceeded: null,
+      breakFinding: null,
+      positionUnknown: null,
+      acknowledged: null,
+      acknowledgement: null,
+      entries: null,
+      gaps: null,
+      dayBreaks: null,
+      travelOffers: [OFFER],
+    } as unknown as DayCheck;
+    expect(travelOffersShown(redacted, true)).toEqual([]);
+  });
+
+  it("returns nothing when the full day carries no key", () => {
+    expect(travelOffersShown(fullCheck(), true)).toEqual([]);
+  });
+});
+
+describe("travelOfferLabel (#660)", () => {
+  it("names the interval and both salons, with an en dash between the times", () => {
+    const label = travelOfferLabel(OFFER);
+    expect(label).toBe("Fahrzeit 12:00\u201312:30 von Salon A nach Salon B erfassen");
+    expect(label).toContain("\u2013");
+  });
+});
+
+describe("travelOfferPayload (#660)", () => {
+  it("is exactly the five trip keys from the served values", () => {
+    const body = travelOfferPayload("2026-03-10", OFFER);
+    expect(body).toEqual({
+      date: "2026-03-10",
+      startTime: OFFER.startTime,
+      endTime: OFFER.endTime,
+      salonId: OFFER.departureSalonId,
+      travelToSalonId: OFFER.arrivalSalonId,
+    });
+    expect(Object.keys(body).sort()).toEqual(
+      ["date", "endTime", "salonId", "startTime", "travelToSalonId"].sort(),
+    );
+  });
+});
+
+describe("travelOfferErrorText (#660)", () => {
+  it("returns the server's own text", () => {
+    expect(
+      travelOfferErrorText(new Error("Fahrzeit kann nur zwischen zwei Einträgen liegen.")),
+    ).toBe("Fahrzeit kann nur zwischen zwei Einträgen liegen.");
+  });
+
+  it("falls back to the generic text for an empty message or a non-error", () => {
+    expect(travelOfferErrorText(new Error(""))).toBe(TRAVEL_TEXTS.offerFailed);
+    expect(travelOfferErrorText("boom")).toBe(TRAVEL_TEXTS.offerFailed);
+    expect(travelOfferErrorText(null)).toBe(TRAVEL_TEXTS.offerFailed);
   });
 });

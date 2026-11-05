@@ -29,10 +29,13 @@
     isTravelRow,
     travelArrivalOptions,
     travelFormMode,
+    travelOfferErrorText,
+    travelOfferPayload,
+    travelOffersShown,
     travelPayload,
     travelRouteLabel,
     type TravelRowFields,
-  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08
+  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08; offer: Issue #660
   // Issue #85 D-09/D-14/D-15 — the Salonansicht. The salon decision lives in team-view.ts (never
   // the raw selection getter); the server decides which entries are visible.
   import { isTeamSalonRejected, teamSalonViewSalon } from "$lib/dashboard/team-view";
@@ -64,6 +67,7 @@
   } from "$lib/breaks/deep-link";
   import {
     type DayCheck,
+    type DayCheckTravelOffer,
     type DayCheckWarning,
     type DayChecksResponse,
     type DayWarning,
@@ -1227,6 +1231,27 @@
     await loadAll();
   }
 
+  // Issue #660: an offer of the day check is recorded for the selected person exactly like the
+  // form's trip create (body of the form, `source: "CORRECTION"`); the server re-decides the write.
+  // A refusal is the server's own text (a toast survives the reload, the panel may not), and the
+  // reload shows the new day state either way.
+  async function recordTravelOffer(date: string, offer: DayCheckTravelOffer) {
+    if (!selectedEmployeeId) return;
+    try {
+      const saved = await api.post<{ warnings?: unknown }>("/time-entries", {
+        ...travelOfferPayload(date, offer),
+        employeeId: selectedEmployeeId,
+        source: "CORRECTION",
+      });
+      const notice = breakFindingSaveNotice(saved?.warnings);
+      if (notice) toasts.warning(notice);
+    } catch (e: unknown) {
+      toasts.error(travelOfferErrorText(e));
+    } finally {
+      await loadAll();
+    }
+  }
+
   async function deleteDayBreak(id: string, reason: string) {
     await api.delete(`/day-breaks/${id}`, { reason });
     await loadAll();
@@ -1886,6 +1911,8 @@
       onDeleteBreak={deleteDayBreak}
       onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
       onRevoke={revokeDayAck}
+      travelOffers={travelOffersShown(dayCheck, multiEntryUi)}
+      onRecordTravel={(offer) => recordTravelOffer(dayCheck.date, offer)}
     />
   {/each}
 
