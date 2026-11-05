@@ -7,12 +7,13 @@
   import { salonContext } from "$stores/salon-context";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
-  import { salonAdminRights } from "$lib/page-rights";
+  import { salonAdminRights, salonHolidayRights } from "$lib/page-rights";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import OpeningHoursEditor from "$lib/components/admin/OpeningHoursEditor.svelte";
+  import SalonHolidays from "$lib/components/admin/SalonHolidays.svelte";
   import { FEDERAL_STATE_OPTIONS } from "$lib/salons/federal-states";
   import { validateOpeningHours } from "$lib/salons/opening-hours";
   import {
@@ -38,6 +39,7 @@
   const salonId = $derived($page.params.id);
   // Presentation only: the API refuses a write without salon:manage on its own.
   const rights = $derived(salonAdminRights($authStore.user));
+  const holidayRights = $derived(salonHolidayRights($authStore.user));
 
   let salon = $state<SalonDto | null>(null);
   // Create mode: the route `/admin/salons/neu`, until the created salon has been adopted.
@@ -297,7 +299,7 @@
     title={salon ? salon.name : "Neuer Salon"}
     sub={isCreate
       ? "Stammdaten und Öffnungszeiten des neuen Salons"
-      : "Stammdaten und Öffnungszeiten dieses Salons"}
+      : "Stammdaten, Öffnungszeiten und Feiertage dieses Salons"}
     view="detail"
     crumbs={[
       { label: "Salons", href: "/admin/salons" },
@@ -465,6 +467,10 @@
           disabled={!rights.canManage}
         />
       </Section>
+
+      {#if !isCreate && salon}
+        <SalonHolidays salonId={salon.id} canManage={holidayRights.canManage} />
+      {/if}
 
       {#if rights.canManage && !isCreate && salon?.isActive}
         <DangerZone
