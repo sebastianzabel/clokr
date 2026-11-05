@@ -37,6 +37,7 @@ import {
   withRoleLockoutGuard,
 } from "../facade/role-assignments";
 import { foreignKeyConstraintOf } from "../prisma-foreign-key";
+import { assertModuleBooked } from "../tenant-packages";
 import { auditRoleAssignmentChange, roleAssignmentAuditValue } from "../role-assignment-audit";
 
 // D-09: plain `z.string().min(1)`, NOT `.uuid()` — both T-100-09 probe arms (a real foreign id and
@@ -280,6 +281,14 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
           async (tx: Prisma.TransactionClient): Promise<CreateOutcome> => {
             await lockTenantForRoleChanges(tx, tenantId);
 
+            // Issue #624: a NEW assignment with a salon or person reach is a Ketten-Paket feature.
+            // A tenant-wide assignment stays free (Grundversion). Decided before the reference
+            // checks: it depends on the tenant, not on the ids. PATCH and DELETE are not gated,
+            // and the reach resolution never reads packages (#566 D-06).
+            if (scope.scopeType !== "TENANT") {
+              await assertModuleBooked(tx, tenantId, "CHAIN");
+            }
+
             const resolution = await resolveAssignmentReferences(tx, tenantId, {
               userId: body.userId,
               accessRoleId: body.accessRoleId,
@@ -436,6 +445,13 @@ export async function roleAssignmentRoutes(app: FastifyInstance) {
             if (!roleChanged && !scopeChanged) {
               // A no-op is not a change (D-07/D-12): nothing to write, nothing to audit.
               return { kind: "UNCHANGED", row: current };
+            }
+
+            // Issue #624: moving an assignment onto a salon or person reach it did not have is
+            // setting up a new Ketten-Paket use, so it takes the same gate as POST. Keeping the
+            // reach type (a new salon list, another role) stays free: never retroactive.
+            if (nextScope.scopeType !== "TENANT" && nextScope.scopeType !== current.scopeType) {
+              await assertModuleBooked(tx, tenantId, "CHAIN");
             }
 
             // Resolve only the changed scope references — the same 404s as POST (D-08). The role
