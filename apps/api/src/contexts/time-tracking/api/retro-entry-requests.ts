@@ -21,6 +21,13 @@ import { getTenantTimezone, dateStrInTz, todayInTz } from "../../working-time-ac
 import { computeEntryAgeInDays } from "../retro-config";
 import { CLEARED_INVALID_REASON } from "../invalid-reason"; // Phase 96 (T1)
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
+import {
+  findOverlappingRetroRequest,
+  retroRequestInterval,
+  RetroRequestOverlapError,
+  RETRO_REQUEST_OVERLAP_CODE,
+  RETRO_REQUEST_OVERLAP_MESSAGE,
+} from "../retro-request-overlap"; // Issue #657 (D-01/D-02/D-13)
 import { otherWorkingMinutesOfDay } from "../day-entries"; // Issue #70 (D-04)
 import { recheckOverlapInTx } from "../entry-invariants"; // Issue #70 (D-10)
 import { checkTravelNeighbours, TravelRefusalError } from "../travel-entry"; // Issue #92 (T6)
@@ -32,7 +39,8 @@ import {
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
-const HHMM_REGEX = /^\d{2}:\d{2}$/;
+// Real clock times only: 00-23 hours, 00-59 minutes (Issue #657 WR-01; `24:00` / `99:99` are refused).
+const HHMM_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** Convert an "HH:MM" string to minutes since midnight. */
 function hhmmToMinutes(hhmm: string): number {
@@ -167,56 +175,74 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       const todayStr = dateStrInTz(todayInTz(tz), tz);
       const ageInDays = computeEntryAgeInDays(todayStr, body.targetDate);
 
-      // Duplicate-grant guard: reject if PENDING or APPROVED grant already exists
-      // for the same (employeeId, targetDate).
-      // Issue #70 (D-13), decision: with several entries per day a day could carry more than one
-      // Nachtrag, but the request model is one per (employee, day) and stays so for now — a second
-      // Nachtrag of the same day waits for the follow-up issue that 70b-08 creates. Entries
-      // themselves are never limited per day any more; only the request is.
-      const existing = await app.prisma.retroEntryRequest.findFirst({
-        where: {
-          employeeId,
-          targetDate: new Date(body.targetDate),
-          status: { in: ["PENDING", "APPROVED"] },
-          deletedAt: null,
-        },
-        select: { id: true, status: true },
-      });
-      if (existing) {
-        return reply
-          .code(409)
-          .send({ error: "Es existiert bereits ein offener Antrag für dieses Datum." });
+      // Issue #657 (D-01/D-04/D-12): a day may carry several requests as long as their intervals do
+      // not overlap (half-open, a legacy request without times covers the whole day). This path is
+      // the correction proposal / grant request: it runs the request interval rule under the
+      // employee row lock but NO entry-overlap check, because its interval overlaps the entry it
+      // corrects. The overlap of a correction is judged when it is applied (PUT/POST with grantId,
+      // manager PUT: lock, in-transaction re-check, exclusion constraint). Check and write share one
+      // transaction whose first statement is the lock, so a creation that waited on a competing one
+      // sees its committed request.
+      let request;
+      try {
+        request = await app.prisma.$transaction(async (tx) => {
+          await lockEmployeeForEntryWrite(tx, user.tenantId, employeeId);
+          const clash = await findOverlappingRetroRequest(tx, {
+            tenantId: user.tenantId,
+            employeeId,
+            targetDate: new Date(body.targetDate),
+            interval: retroRequestInterval(
+              {
+                targetDateStr: body.targetDate,
+                startTime: body.startTime,
+                endTime: body.endTime,
+              },
+              tz,
+            ),
+            tz,
+          });
+          if (clash) throw new RetroRequestOverlapError();
+
+          const created = await tx.retroEntryRequest.create({
+            data: {
+              employeeId,
+              targetDate: new Date(body.targetDate),
+              reason: body.reason,
+              startTime: body.startTime,
+              endTime: body.endTime,
+              breakMinutes: body.breakMinutes ?? null,
+              status: "PENDING",
+            },
+          });
+
+          await app.audit({
+            tx,
+            userId: user.sub,
+            action: "RETRO_ENTRY_REQUESTED",
+            entity: "RetroEntryRequest",
+            entityId: created.id,
+            newValue: {
+              employeeId,
+              targetDate: body.targetDate,
+              ageInDays,
+              reason: body.reason,
+              startTime: body.startTime,
+              endTime: body.endTime,
+              breakMinutes: body.breakMinutes ?? null,
+              requesterId: user.sub,
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return created;
+        });
+      } catch (err: unknown) {
+        if (err instanceof RetroRequestOverlapError) {
+          return reply
+            .code(409)
+            .send({ error: RETRO_REQUEST_OVERLAP_MESSAGE, code: RETRO_REQUEST_OVERLAP_CODE });
+        }
+        throw err;
       }
-
-      const request = await app.prisma.retroEntryRequest.create({
-        data: {
-          employeeId,
-          targetDate: new Date(body.targetDate),
-          reason: body.reason,
-          startTime: body.startTime,
-          endTime: body.endTime,
-          breakMinutes: body.breakMinutes ?? null,
-          status: "PENDING",
-        },
-      });
-
-      await app.audit({
-        userId: user.sub,
-        action: "RETRO_ENTRY_REQUESTED",
-        entity: "RetroEntryRequest",
-        entityId: request.id,
-        newValue: {
-          employeeId,
-          targetDate: body.targetDate,
-          ageInDays,
-          reason: body.reason,
-          startTime: body.startTime,
-          endTime: body.endTime,
-          breakMinutes: body.breakMinutes ?? null,
-          requesterId: user.sub,
-        },
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
-      });
 
       return reply.code(201).send({
         ...request,

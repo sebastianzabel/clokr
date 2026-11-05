@@ -8,6 +8,8 @@
 // `TimeEntry_no_overlap_closed`) and at most one is open (partial unique index
 // `TimeEntry_employeeId_date_open_unique`). The function returns a LIST; the two selectors below
 // answer the question every clock path asks of that list — "which entry does this event act on".
+// Neither selector hands out a row that is a pending Zeitnachtrag request, and a closed row it
+// shadows is not handed out either (Issue #657, D-14; Issue #92 adds the TRAVEL skip next to it).
 // `time-entry-day-lookup-guard.test.ts` fails the build if a day lookup appears anywhere else in
 // apps/api/src.
 import type { FastifyInstance } from "fastify";
@@ -48,6 +50,36 @@ interface DayRowShape {
   endTime: Date | null;
   /** Issue #92: a `TRAVEL` row is a trip between two salons, never a row a clock event acts on. */
   activityKind?: string;
+  /** Issue #657: a row coupled to a Zeitnachtrag (Phase 96, `TimeEntry.retroRequestId @unique`). */
+  retroRequestId?: string | null;
+  isInvalid?: boolean;
+  invalidReasonCode?: string | null;
+}
+
+/** The reason code the entry-first writer sets on a Zeitnachtrag row while its request is PENDING. */
+const RETRO_PENDING_MARKER = "RETRO_APPROVAL_PENDING";
+
+/**
+ * Issue #657 (IN-01): the ONE spelling of the pending-Zeitnachtrag marker — the reason code alone.
+ * It exists separately from {@link isPendingRetroRow} for a row that is only being PLANNED (the
+ * travel neighbour check's `with` row has a reason code but no request id yet). Every reader of the
+ * marker, `travel-entry.ts` included, goes through this function or `isPendingRetroRow`.
+ */
+export function hasPendingRetroMarker(row: { invalidReasonCode?: string | null }): boolean {
+  return row.invalidReasonCode === RETRO_PENDING_MARKER;
+}
+
+/**
+ * Issue #657 (D-07/D-14): true for a row that is a pending Zeitnachtrag REQUEST rather than a
+ * recorded punch — it is coupled to a request (`retroRequestId`) AND carries the marker the
+ * entry-first writer sets atomically with the request (`isInvalid` with the reason code, see
+ * {@link hasPendingRetroMarker}). The approval clears the marker, a rejection or withdrawal
+ * soft-deletes the row. `travel-entry.ts` (anchors) and the web page read the same marker (the
+ * former through `hasPendingRetroMarker`, because it also judges rows not stored yet). An approved
+ * Nachtrag row is an ordinary closed entry and is NOT pending.
+ */
+export function isPendingRetroRow(row: DayRowShape): boolean {
+  return Boolean(row.retroRequestId) && row.isInvalid === true && hasPendingRetroMarker(row);
 }
 
 /**
@@ -60,9 +92,12 @@ interface DayRowShape {
  * clock path changes at once. A travel row is never open — it is closed by the database CHECK
  * `TimeEntry_travel_shape_check` (an end time is required) — so this selector never meets one and
  * needs no skip of its own (Issue #92, D-06).
+ *
+ * Issue #657 (D-14): an open row that is a pending Zeitnachtrag request is skipped — it is a request
+ * without an end, never a running session a clock event may stop.
  */
 export function openEntryOf<T extends DayRowShape>(entries: readonly T[]): T | null {
-  return entries.find((e) => e.endTime === null) ?? null;
+  return entries.find((e) => e.endTime === null && !isPendingRetroRow(e)) ?? null;
 }
 
 /**
@@ -78,8 +113,16 @@ export function openEntryOf<T extends DayRowShape>(entries: readonly T[]): T | n
  * the REOPEN candidate, the fixed salon of a finished day and the consolidation predecessor are
  * always a salon row. A trip is anchored between two salon rows (T3), so a salon row always exists
  * on a day that holds one.
+ *
+ * Issue #657 (D-14): a pending Zeitnachtrag row is NOT skipped like a trip. A trip always has a
+ * later salon row, a pending row has none, so "skip and take the next" would let a re-open of an
+ * earlier row run over the requested interval. Pending rows therefore take part in the comparison
+ * and, when the latest-ending one is pending, the answer is `null`; an open pending row (its
+ * interval runs to the end of its day, after every closed row) also gives `null`. With no
+ * candidate the clock starts a NEW entry, whose instant the START overlap check judges.
  */
 export function latestEndingClosed<T extends DayRowShape>(entries: readonly T[]): T | null {
+  if (entries.some((e) => e.endTime === null && isPendingRetroRow(e))) return null;
   let best: T | null = null;
   for (const e of entries) {
     if (e.endTime === null) continue;
@@ -95,7 +138,7 @@ export function latestEndingClosed<T extends DayRowShape>(entries: readonly T[])
       if (startDiff > 0 || (startDiff === 0 && e.id > best.id)) best = e;
     }
   }
-  return best;
+  return best !== null && isPendingRetroRow(best) ? null : best;
 }
 
 /**

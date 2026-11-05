@@ -25,7 +25,7 @@
  */
 import type { Prisma, TimeEntry } from "@clokr/db";
 import { resolveAccessReach, type AccessContext } from "../platform";
-import { findEntriesOfDay } from "./day-entries";
+import { findEntriesOfDay, hasPendingRetroMarker } from "./day-entries";
 import { dayCoverage } from "./day-scope";
 import { resolveEntrySalon } from "./entry-salon";
 
@@ -164,7 +164,7 @@ function anchorRows(dayRows: readonly TravelDayRow[], excludeId?: string): Trave
     (r) =>
       r.type === "WORK" &&
       r.activityKind !== "TRAVEL" &&
-      r.invalidReasonCode !== "RETRO_APPROVAL_PENDING" &&
+      !hasPendingRetroMarker(r) &&
       r.id !== excludeId,
   );
 }
@@ -253,7 +253,7 @@ export function travelRowsOrphanedBy(rows: readonly TravelDayRow[]): string[] {
       row.activityKind !== "TRAVEL" ||
       row.travelToSalonId === null ||
       row.endTime === null ||
-      row.invalidReasonCode === "RETRO_APPROVAL_PENDING"
+      hasPendingRetroMarker(row)
     ) {
       continue;
     }

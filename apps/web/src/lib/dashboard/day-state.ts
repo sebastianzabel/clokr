@@ -38,6 +38,12 @@
  * module names provably the entry the resolver would REOPEN — and therefore what makes
  * `reopenGapStartLabel()` able to state the gap-break start as fact.
  *
+ * Issue #657 (D-14): a row coupled to a PENDING Zeitnachtrag (`isPendingNachtragRow`) is no
+ * candidate, exactly like the server. An open pending row is never "running"; a closed pending row
+ * is never "finished" and it SHADOWS every closed row ending before it (re-opening such a row would
+ * run over the requested interval), so a day whose latest-ending row is pending resolves to "idle" -
+ * the clock then starts a NEW entry. A day without a pending row resolves exactly as before.
+ *
  * `isInvalid` IS DELIBERATELY NOT FILTERED. Since Phase 118 (Issue #124) the resolver's READ
  * lookup no longer filters it either — this module is therefore an exact mirror of the
  * server, no longer a deliberate divergence. Why the filter would be wrong at either end:
@@ -57,8 +63,9 @@
  *
  * HISTORY: Phase 115 set `resolver.ts`/`state-machine.ts` as its scope boundary and defused
  * the REOPEN semantics only on the UI side. Phase 118 (Issue #124) opened the resolver itself:
- * the READ lookup no longer filters `isInvalid`, and a row coupled to a PENDING Zeitnachtrag is
- * rejected as CONFLICT RETRO_PENDING. `state-machine.ts` remains unchanged. The REOPEN
+ * the READ lookup no longer filters `isInvalid`, and a row coupled to a PENDING Zeitnachtrag was
+ * rejected as CONFLICT RETRO_PENDING; since Issue #657 such a row is no clock candidate at all (see
+ * ENTRY SELECTION) and that conflict is only a backstop. `state-machine.ts` remains unchanged. The REOPEN
  * semantics themselves stay regression-tested
  * (`services/clock/__tests__/consolidate.cross-source.test.ts`, 2026-06-04 prod incident).
  * This module still removes the ACCIDENTAL path into REOPEN. It is NOT an authorisation
@@ -84,6 +91,24 @@ export interface ClockDayEntry extends TravelRowFields {
   salonName?: string;
   /** Server-computed per-entry working minutes (closed rows); `null` for an open row. */
   workingMinutes?: number | null;
+  /** Issue #657 — the Zeitnachtrag request this row is coupled to (control value, not display). */
+  retroRequestId?: string | null;
+  /** Issue #657 — the invalid-reason CODE (control value); display text is never compared. */
+  invalidReasonCode?: string | null;
+}
+
+/**
+ * Issue #657 (D-14) - is this row a pending Zeitnachtrag? The exact marker of the server's
+ * `isPendingRetroRow` (`contexts/time-tracking/day-entries.ts`): a request id, `isInvalid` and the
+ * code RETRO_APPROVAL_PENDING. An approved Nachtrag row, or a coupled row without the code, is an
+ * ordinary row.
+ */
+export function isPendingNachtragRow(e: ClockDayEntry): boolean {
+  return (
+    Boolean(e.retroRequestId) &&
+    e.isInvalid === true &&
+    e.invalidReasonCode === "RETRO_APPROVAL_PENDING"
+  );
 }
 
 export interface DayState {
@@ -103,10 +128,19 @@ export const IDLE_DAY_STATE: DayState = { kind: "idle", entry: null, isLocked: f
 export function resolveDayState(entries: ClockDayEntry[] | null | undefined): DayState {
   const rows = entries ?? [];
 
-  // Open entry wins — mirrors `openEntryOf`, which looks for `endTime === null` FIRST.
-  const open = rows.find((e) => e.endTime === null || e.endTime === undefined);
+  const isOpen = (e: ClockDayEntry) => e.endTime === null || e.endTime === undefined;
+
+  // Open entry wins - mirrors `openEntryOf`, which looks for `endTime === null` FIRST and (Issue
+  // #657) skips an open pending Zeitnachtrag row: a request is never a running session.
+  const open = rows.find((e) => isOpen(e) && !isPendingNachtragRow(e));
   if (open) {
     return { kind: "running", entry: open, isLocked: open.isLocked === true };
+  }
+
+  // Mirrors `latestEndingClosed`: an open pending row (its interval runs to the end of its day)
+  // leaves no candidate.
+  if (rows.some((e) => isOpen(e) && isPendingNachtragRow(e))) {
+    return { ...IDLE_DAY_STATE, entry: rows[0] ?? null };
   }
 
   // Otherwise the closed entry with the LATEST endTime — mirrors `latestEndingClosed`: a tie goes to
@@ -129,7 +163,9 @@ export function resolveDayState(entries: ClockDayEntry[] | null | undefined): Da
       if (startDiff > 0 || (startDiff === 0 && e.id > closed.id)) closed = e;
     }
   }
-  if (closed) {
+  // Issue #657: pending rows take part in the comparison above; when the latest-ending one is
+  // pending there is no candidate and the clock starts a new entry.
+  if (closed && !isPendingNachtragRow(closed)) {
     return { kind: "finished", entry: closed, isLocked: closed.isLocked === true };
   }
 

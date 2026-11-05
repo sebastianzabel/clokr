@@ -424,10 +424,15 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   text for everyone else (a database refusal is always neutral). Database refusals are recognised structurally
   (`P2039` + `23P01`, `P2002` + index name), never by message; an inverted row (SQLSTATE `22000`) is deliberately not
   mapped to an overlap. `openEntryOf()` / `latestEndingClosed()` (`contexts/time-tracking/day-entries.ts`) are the ONE
-  choice of "the entry of the day" a clock acts on (both skip a TRAVEL row, Issue #92); consolidation never merges across
-  salons and never across a travel entry. Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
+  choice of "the entry of the day" a clock acts on (both skip a TRAVEL row, Issue #92, and a row coupled to a pending Zeitnachtrag, Issue #657 — such a row also
+  shadows every row ending before it, so the clock starts a new entry); consolidation never merges across
+  salons, never across a travel entry and never across a row coupled to a Zeitnachtrag (guard `retro_row`, Issue #657). Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
   (`docs/migrations.md`, "Phase 70b"). Never re-create a one-entry-per-day rule — not as an index, a check or a
-  comment. Zeitnachtrag stays one request per employee and day for now.
+  comment. A Zeitnachtrag is per interval (Issue #657): `findOverlappingRetroRequest()`
+  (`contexts/time-tracking/retro-request-overlap.ts`) is the ONE place that decides whether a new request overlaps a pending
+  request of the same day (only PENDING ones count: a decided request is no open question, and a real collision with a recorded time is the entry overlap rule's job; half-open; a request without times covers the whole day; 409 `RETRO_REQUEST_OVERLAP`), run
+  under `lockEmployeeForEntryWrite()` on both creation paths; the entry-first path keeps its entry re-check, the
+  correction proposal (`POST /retro-entry-requests`) has none because it overlaps the entry it corrects.
 - **Presence and working time come from one function (Issue #79).** `entryDurations()` and its
   fold step `addWorkingMinutes()` (`apps/api/src/contexts/time-tracking/entry-durations.ts`,
   exported via `contexts/time-tracking/index.ts`) are the ONLY place presence time (end − start)
@@ -502,7 +507,8 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   entries (409 `TRAVEL_NEEDS_NEIGHBOUR`). The CHECK `TimeEntry_travel_shape_check` (hand-written; Prisma models none)
   is the database backstop of the shape. `latestEndingClosed()` skips TRAVEL (defence in depth: the write rules make a
   trip the latest-ending row impossible), consolidation never merges into or across a trip, `resolveDayState()` in the
-  web mirrors the skip. A trip is never recordable as a Zeitnachtrag (409 `TRAVEL_NOT_AS_RETRO_REQUEST`, #657), by CSV
+  web mirrors the skip. A trip is never recordable as a Zeitnachtrag (409 `TRAVEL_NOT_AS_RETRO_REQUEST`; #657 made the
+  Zeitnachtrag per interval and kept this refusal), by CSV
   or by a clock event. Evaluation is separate and only through `activityMinutes.TRAVEL` of `GET /time-entries/summary`
   (module `ANALYTICS`, departure-salon attribution; recording is NEVER gated by a package and is exempt from the #529
   tenant switch); reports, PDFs and DATEV show a trip as ordinary working time. Recording a trip changes the day's
