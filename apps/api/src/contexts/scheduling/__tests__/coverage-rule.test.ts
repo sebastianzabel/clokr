@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_COVERAGE_RULE,
+  coverageSalonInView,
   pickCoverageRule,
   type CoverageRuleCandidate,
 } from "../coverage-rule";
@@ -179,5 +180,67 @@ describe("pickCoverageRule (Issue #647)", () => {
     expect(pickCoverageRule(templateRules, "s1", TEMPLATE_Y, FRIDAY)).toEqual(
       DEFAULT_COVERAGE_RULE,
     );
+  });
+});
+
+describe("coverageSalonInView — which salon is in view of the week coverage (D-03, D-03a)", () => {
+  const WHOLE = { kind: "wholeTenant" } as const;
+  const scoped = (salonIds: string[], employeeIds: string[] = []) =>
+    ({ kind: "scoped", salonIds, employeeIds }) as const;
+
+  it("the validated filter is always the salon in view", () => {
+    expect(
+      coverageSalonInView({ chosenSalonId: "a", activeSalonIds: ["a", "b"], reach: WHOLE }),
+    ).toBe("a");
+    expect(coverageSalonInView({ chosenSalonId: "a", activeSalonIds: ["a"], reach: WHOLE })).toBe(
+      "a",
+    );
+    // the filter wins over a one-salon reach (D-03a)
+    expect(
+      coverageSalonInView({
+        chosenSalonId: "b",
+        activeSalonIds: ["a", "b"],
+        reach: scoped(["a"]),
+      }),
+    ).toBe("b");
+  });
+
+  it("without a filter the tenant's only active salon is in view; with several or none, none", () => {
+    expect(
+      coverageSalonInView({ chosenSalonId: null, activeSalonIds: ["only"], reach: WHOLE }),
+    ).toBe("only");
+    expect(
+      coverageSalonInView({ chosenSalonId: null, activeSalonIds: ["a", "b"], reach: WHOLE }),
+    ).toBeNull();
+    expect(
+      coverageSalonInView({ chosenSalonId: null, activeSalonIds: [], reach: WHOLE }),
+    ).toBeNull();
+  });
+
+  it("D-03a: a person-free reach of exactly one active salon puts that salon in view", () => {
+    const active = ["a", "b"];
+    expect(
+      coverageSalonInView({ chosenSalonId: null, activeSalonIds: active, reach: scoped(["a"]) }),
+    ).toBe("a");
+    // person ids in the reach -> none
+    expect(
+      coverageSalonInView({
+        chosenSalonId: null,
+        activeSalonIds: active,
+        reach: scoped(["a"], ["e1"]),
+      }),
+    ).toBeNull();
+    // two salons -> none
+    expect(
+      coverageSalonInView({
+        chosenSalonId: null,
+        activeSalonIds: active,
+        reach: scoped(["a", "b"]),
+      }),
+    ).toBeNull();
+    // a reach salon that is not active -> none
+    expect(
+      coverageSalonInView({ chosenSalonId: null, activeSalonIds: active, reach: scoped(["c"]) }),
+    ).toBeNull();
   });
 });

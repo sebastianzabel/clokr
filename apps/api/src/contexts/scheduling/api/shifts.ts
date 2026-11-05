@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
-import { pickCoverageRule } from "../coverage-rule"; // Issue #647 (D-04/D-05) — the one place a day's coverage rule is chosen
+import { coverageSalonInView, pickCoverageRule } from "../coverage-rule"; // Issue #647 (D-04/D-05) — the one place a day's coverage rule is chosen
 import { getEffectiveBreakDuration, getWorkedEntriesInRange } from "../../time-tracking"; // Phase 101B (Issue #101, wave 8); getWorkedEntriesInRange (T2) added Phase 71b (issue #71, D-07)
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import {
@@ -1342,11 +1342,19 @@ export async function shiftRoutes(app: FastifyInstance) {
       // Issue #563 (D-15): display data for the week view's closed-day dimming — the ACTIVE salons in
       // the same `shift:read` reach as the shifts. The authoritative check stays
       // `assertWithinStoreHours()` on POST/PUT.
-      const salonOpeningHours = (await listSalons(app.prisma, tenantId, { includeInactive: false }))
+      const activeSalons = await listSalons(app.prisma, tenantId, { includeInactive: false });
+      const salonOpeningHours = activeSalons
         .filter(
           (s) => weekScopeReach.kind === "wholeTenant" || weekScopeReach.salonIds.includes(s.id),
         )
         .map((s) => ({ salonId: s.id, name: s.name, openingHours: s.openingHours }));
+      // Issue #647 (D-03/D-03a): the salon whose coverage rules act on this week, decided in one
+      // place from the same active-salon list (no extra read).
+      const coverageSalonId = coverageSalonInView({
+        chosenSalonId,
+        activeSalonIds: activeSalons.map((s) => s.id),
+        reach: weekScopeReach,
+      });
 
       // Phase 47.3 — Verfügbarkeits-System toggle. When false, the EmployeeAvailability
       // merge passes are skipped (Leave + Absence still apply).
@@ -1740,9 +1748,10 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Issue #558 (D-02): under a salon filter the coverage is computed from the filtered shifts and
-      // people. Issue #647 (D-04/D-05): the candidate rules are the tenant-wide ones plus those of the
-      // salon in view, chosen in coverage-rule.ts; the coverage algorithm is otherwise unchanged
-      // (tracer: the salon in view is the validated filter; 647-02 adds D-03).
+      // people. Issue #647 (D-03/D-04/D-05): the salon in view is decided by `coverageSalonInView`
+      // (the filter, else the caller's single person-free reach salon (D-03a), else the tenant's only
+      // active salon, else none); the candidate rules are that salon's rules plus the tenant-wide
+      // ones; the ladder is unchanged, a salon rule wins only within a rung. See coverage-rule.ts.
       // Compute coverage per day
       // weekday lookup: iso → 0..6 (Mo=0..So=6) — note JS getUTCDay returns 0=Sun..6=Sat
       function isoToDow(iso: string): number {
@@ -1767,7 +1776,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           new Set(dayShifts.map((s) => s.templateId).filter((t): t is string => !!t)),
         );
         const ruleScopeTemplateId = templateIds.length === 1 ? templateIds[0] : null;
-        const rule = pickCoverageRule(rules, chosenSalonId, ruleScopeTemplateId, dow);
+        const rule = pickCoverageRule(rules, coverageSalonId, ruleScopeTemplateId, dow);
 
         let effectiveStaff = 0;
         let hasSupervisor = false;

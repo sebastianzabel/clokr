@@ -14,20 +14,135 @@ import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "crypto";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData, createTestSalon } from "./setup";
+import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 
 const WEEK = "date=2026-06-17";
 const TUESDAY = "2026-06-16";
 const NOT_FOUND = '{"error":"Salon nicht gefunden"}';
+const PASSWORD = "test1234";
 
 type WeekBody = {
   coverage: { date: string; minStaff: number; coverageStatus: string }[];
 };
+
+// ── shared fixture helpers ───────────────────────────────────────────────────────────────────────
+function uniqueSuffix(label: string): string {
+  return `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+async function makePerson(
+  app: FastifyInstance,
+  tenantId: string,
+  label: string,
+  salonId: string | null,
+) {
+  const s = uniqueSuffix(label);
+  const user = await app.prisma.user.create({
+    data: {
+      email: `${s}@example.invalid`,
+      passwordHash: await bcrypt.hash(PASSWORD, 10),
+      isActive: true,
+    },
+  });
+  const employee = await app.prisma.employee.create({
+    data: {
+      tenantId,
+      userId: user.id,
+      employeeNumber: s.toUpperCase().slice(0, 20),
+      firstName: label,
+      lastName: "Cov647",
+      hireDate: new Date("2024-01-01"),
+    },
+  });
+  await app.prisma.workSchedule.create({
+    data: {
+      employeeId: employee.id,
+      type: "SHIFT_BASED",
+      weeklyHours: 32,
+      contractWorkDaysPerWeek: 5,
+      usualWorkDays: [1, 2, 3, 4, 5],
+      validFrom: new Date("2025-01-01"),
+    },
+  });
+  if (salonId) {
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId,
+        employeeId: employee.id,
+        salonId,
+        kind: "HOME",
+        validFrom: new Date("2024-01-01T00:00:00Z"),
+        validUntil: null,
+      },
+    });
+  }
+  return { user, employee };
+}
+
+function shiftOn(app: FastifyInstance, employeeId: string, salonId: string, date: string) {
+  return app.prisma.shift.create({
+    data: {
+      employeeId,
+      salonId,
+      date: new Date(`${date}T00:00:00Z`),
+      startTime: "09:00",
+      endTime: "15:00",
+    },
+  });
+}
+
+function ruleRow(
+  app: FastifyInstance,
+  tenantId: string,
+  minStaff: number,
+  opts: { salonId?: string | null; dayOfWeek?: number } = {},
+) {
+  return app.prisma.coverageRule.create({
+    data: {
+      tenantId,
+      salonId: opts.salonId ?? null,
+      templateId: null,
+      dayOfWeek: opts.dayOfWeek ?? -1,
+      minStaff,
+      requiresNonSupervised: false,
+    },
+  });
+}
+
+async function loginAs(app: FastifyInstance, email: string): Promise<string> {
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    payload: { email, password: PASSWORD },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+  return (JSON.parse(res.body) as { accessToken: string }).accessToken;
+}
+
+async function weekAs(app: FastifyInstance, token: string, salonId?: string): Promise<WeekBody> {
+  const res = await app.inject({
+    method: "GET",
+    url: `/api/v1/shifts/week?${WEEK}${salonId !== undefined ? `&salonId=${salonId}` : ""}`,
+    headers: { authorization: `Bearer ${token}` },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+  return JSON.parse(res.body) as WeekBody;
+}
+
+function minStaffByDay(body: WeekBody): number[] {
+  return [...body.coverage].sort((a, b) => a.date.localeCompare(b.date)).map((c) => c.minStaff);
+}
+
+function statusOn(body: WeekBody, day: string): string | undefined {
+  return body.coverage.find((c) => c.date.startsWith(day))?.coverageStatus;
+}
 
 describe("Issue #647 — a coverage rule may name a salon (tracer)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
   let salonA: { id: string };
   let salonB: { id: string };
+  let managerToken: string;
 
   function week(salonId?: string) {
     return app.inject({
@@ -107,11 +222,25 @@ describe("Issue #647 — a coverage rule may name a salon (tracer)", () => {
         requiresNonSupervised: false,
       },
     });
+    // Salon manager reaching salon A only (person-free SALONS assignment), Stammsalon A (D-03a)
+    const m = await makePerson(app, data.tenant.id, "manager", salonA.id);
+    await app.prisma.roleAssignment.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: m.user.id,
+        accessRoleId: SYSTEM_ROLE_IDS.SALON_MANAGER,
+        scopeType: "SALONS",
+        salonIds: [salonA.id],
+        employeeIds: [],
+      },
+    });
+    managerToken = await loginAs(app, m.user.email);
   });
 
   afterAll(async () => {
     vi.useRealTimers();
     try {
+      await app.prisma.roleAssignment.deleteMany({ where: { tenantId: data.tenant.id } });
       await cleanupTestData(app, data.tenant.id);
     } catch (err) {
       console.error("coverage-rule-salon-647 cleanup failed:", err);
@@ -171,5 +300,67 @@ describe("Issue #647 — a coverage rule may name a salon (tracer)", () => {
     expect(await app.prisma.coverageRule.count({ where: { tenantId: data.tenant.id } })).toBe(
       before,
     );
+  });
+
+  it("D-03a: a salon manager who reaches only salon A has A in view without any filter", async () => {
+    // A's rule (minStaff 1) was written by the first case; the admin's unfiltered view stays tenant-wide
+    expect(minStaffByDay(await weekAs(app, data.adminToken))).toEqual([3, 3, 3, 3, 3, 3, 3]);
+    const managerView = await weekAs(app, managerToken);
+    expect(minStaffByDay(managerView)).toEqual([1, 1, 1, 1, 1, 1, 1]);
+    expect(statusOn(managerView, TUESDAY)).toBe("ok");
+    // an explicit filter of the same salon is the same view
+    expect(minStaffByDay(await weekAs(app, managerToken, salonA.id))).toEqual([
+      1, 1, 1, 1, 1, 1, 1,
+    ]);
+  });
+});
+
+describe("Issue #647 D-03 — a single-salon tenant", () => {
+  let app: FastifyInstance;
+  let s1: Awaited<ReturnType<typeof seedTestData>>;
+  let s2: Awaited<ReturnType<typeof seedTestData>>;
+  const ALL = (n: number) => [n, n, n, n, n, n, n];
+
+  beforeAll(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-06-15T10:00:00.000Z"));
+    app = await getTestApp();
+    s1 = await seedTestData(app, "cov647s");
+    s2 = await seedTestData(app, "cov647t");
+    await createTestSalon(app.prisma, s1.tenant.id, { name: "Salon Alt", isActive: false });
+    const inactive = await app.prisma.salon.findFirstOrThrow({
+      where: { tenantId: s1.tenant.id, isActive: false },
+    });
+    const pS = await makePerson(app, s1.tenant.id, "pS", s1.salonId);
+    await shiftOn(app, pS.employee.id, s1.salonId, TUESDAY);
+    await ruleRow(app, s1.tenant.id, 1, { salonId: s1.salonId });
+    await ruleRow(app, s1.tenant.id, 3);
+    await ruleRow(app, s1.tenant.id, 7, { salonId: inactive.id });
+    await ruleRow(app, s2.tenant.id, 3);
+  });
+
+  afterAll(async () => {
+    vi.useRealTimers();
+    try {
+      await cleanupTestData(app, s1.tenant.id);
+      await cleanupTestData(app, s2.tenant.id);
+    } catch (err) {
+      console.error("coverage-rule-salon-647 (D-03) cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("the unfiltered week uses the only active salon's rule; a rule of an inactive salon never acts", async () => {
+    const body = await weekAs(app, s1.adminToken);
+    expect(minStaffByDay(body)).toEqual(ALL(1));
+    expect(statusOn(body, TUESDAY)).toBe("ok");
+  });
+
+  it("the filter naming that same salon gives the same seven values", async () => {
+    expect(minStaffByDay(await weekAs(app, s1.adminToken, s1.salonId))).toEqual(ALL(1));
+  });
+
+  it("a single-salon tenant without a salon rule keeps its tenant-wide minimum", async () => {
+    expect(minStaffByDay(await weekAs(app, s2.adminToken))).toEqual(ALL(3));
   });
 });
