@@ -2112,6 +2112,9 @@ Klicks).
 - _Übertrag in der Vorschau._ Der Resturlaub liest den gespeicherten Übertrag. Ein Rest aus dem Vorjahr, der noch nicht
   übertragen wurde (das passiert lazy beim ersten Lesen der Ansprüche oder per Cron), fehlt in der Vorschau, während die
   Kontoseite ihn danach zeigt.
+- _Anspruch im alten Austrittsjahr._ Liegt der gespeicherte Austrittstag in einem anderen Jahr, bringt das Deaktivieren auch
+  den Urlaubsanspruch dieses Jahres wieder auf seinen Regelwert (derselbe Abgleich wie #447, je Zeile auditiert). Die Vorschau
+  zeigt nur das neue Austrittsjahr.
 - _Ablehnungs-Audits._ Der gemeinsame 404 für unbekannte, fremde und nicht erreichbare Personen schreibt weiter seine
   Ablehnungs-Audits wie bisher, auch bei der Vorschau; nur eine erfolgreiche Vorschau schreibt keine Zeile.
 

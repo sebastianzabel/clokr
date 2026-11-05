@@ -1154,7 +1154,9 @@ const MIN_FILES = 807;
 // Issue #615 (2026-11-05): MIN_TESTS 11793 -> 11836, the measured total of the full run named at MIN_FILES
 // (the five new API files above plus the cases other merged PRs added since the previous entry). Never lowered.
 // Merge of #615 onto main after #624: 11807 + 44 (measured 11836 on the base 11792).
-const MIN_TESTS = 11851;
+// Issue #615 review fixes (2026-11-05): full run on the branch measured 807 files / 11861 tests (incl. 3 skipped);
+// +10 cases over the previous 11851 (CR-01/CR-02/WR-01/WR-02/WR-03/WR-06 in the API files above). Never lowered.
+const MIN_TESTS = 11861;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
