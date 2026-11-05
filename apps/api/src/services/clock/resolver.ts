@@ -149,19 +149,22 @@ export async function resolveClockEvent(
       // after the Nachtrag guard. The choice of `L` lives in `latestEndingClosed`.
       const closedEntry = !openEntry ? latestEndingClosed(dayEntries) : null;
 
-      // Phase 118 (D-02/D-03): a row coupled to a still-PENDING Zeitnachtrag
-      // (Phase 96, `TimeEntry.retroRequestId @unique`) is a REQUEST, not a punch.
-      // It is closed (startTime+endTime come from the request) and would be read
-      // above as CLOSED_SAME_DAY_ENTRY — a tap would REOPEN it to `endTime: null`
-      // and the approval flow would then release a corrupted entry. This is
-      // genuinely reachable: `createRetroRequestSchema` (retro-entry-requests.ts:20-42)
-      // has no past-date limit, `targetDate = today` is accepted.
+      // Phase 118 (D-02/D-03), Issue #657 (D-07/D-14): a row coupled to a still-PENDING Zeitnachtrag
+      // (Phase 96, `TimeEntry.retroRequestId @unique`) is a REQUEST, not a punch. It is closed
+      // (startTime+endTime come from the request), so a tap that re-opened it to `endTime: null`
+      // would let the approval flow release a corrupted entry.
+      //
+      // Since #657 the shared selectors (`openEntryOf` / `latestEndingClosed`) never hand out a row
+      // carrying the pending marker (`isPendingRetroRow`), so a pending Nachtrag no longer blocks the
+      // clock: the clock starts a new entry next to it. This database lookup stays as the BACKSTOP
+      // for a coupled row whose request is PENDING but whose marker is gone —
+      // `PATCH /time-entries/:id/revalidate` clears the marker without deciding the request — and for
+      // rows written before the marker existed.
       //
       // Qualified on "request still PENDING": the approve branch
-      // (retro-entry-requests.ts:363-365) sets `isInvalid` to `false` but leaves
-      // `retroRequestId` set — an approved Nachtrag row is a perfectly ordinary
-      // closed entry and must remain usable via REOPEN. The reject branch (:466-473)
-      // soft-deletes the row; it already falls out via `deletedAt: null`.
+      // (retro-entry-requests.ts) sets `isInvalid` to `false` but leaves `retroRequestId` set — an
+      // approved Nachtrag row is a perfectly ordinary closed entry and must remain usable via
+      // REOPEN. The reject branch soft-deletes the row; it already falls out via `deletedAt: null`.
       const retroCandidate = openEntry ?? closedEntry;
       if (retroCandidate?.retroRequestId) {
         const pendingRetro = await tx.retroEntryRequest.findFirst({
