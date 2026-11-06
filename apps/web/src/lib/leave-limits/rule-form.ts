@@ -92,3 +92,41 @@ export function ruleFormPayload(form: RuleForm): LeaveLimitRuleBody {
     name: name === "" ? null : name,
   };
 }
+
+/** The salon fields of the rule being edited, as the list serves them. */
+export interface EditedRuleSalon {
+  salonId: string | null;
+  salonName: string | null;
+  salonActive: boolean | null;
+}
+
+export interface RuleSalonChoice {
+  /** The select value: a salon id, or "" for all salons. */
+  value: string;
+  label: string;
+}
+
+export const ALL_SALONS_CHOICE_LABEL = "Alle Salons";
+
+/**
+ * The choices of the salon field. "Alle Salons" is offered only to a caller who may manage rules
+ * of every salon (`canManageAllSalons`); the API refuses it otherwise. A deactivated salon of the
+ * rule being edited stays a marked choice, so saving other fields never moves the rule.
+ */
+export function ruleSalonChoices(
+  salons: readonly { id: string; name: string }[],
+  canManageAllSalons: boolean,
+  editing: EditedRuleSalon | null,
+): RuleSalonChoice[] {
+  const choices: RuleSalonChoice[] = [];
+  if (canManageAllSalons) choices.push({ value: "", label: ALL_SALONS_CHOICE_LABEL });
+  for (const salon of salons) choices.push({ value: salon.id, label: salon.name });
+  if (editing && editing.salonId !== null && !salons.some((s) => s.id === editing.salonId)) {
+    const name = editing.salonName ?? "Salon";
+    choices.push({
+      value: editing.salonId,
+      label: editing.salonActive === false ? `${name} (deaktiviert)` : name,
+    });
+  }
+  return choices;
+}

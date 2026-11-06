@@ -5,6 +5,7 @@ import {
   emptyRuleForm,
   ruleFormFromDto,
   ruleFormPayload,
+  ruleSalonChoices,
   validateRuleForm,
   type RuleForm,
 } from "../rule-form";
@@ -177,5 +178,39 @@ describe("ruleFormFromDto", () => {
     expect(restored.name).toBe("");
     expect(restored.maxPersons).toBe("0");
     expect(restored.salonId).toBeNull();
+  });
+});
+
+describe("ruleSalonChoices", () => {
+  const salons = [
+    { id: "s1", name: "Salon Nord" },
+    { id: "s2", name: "Salon Süd" },
+  ];
+
+  it("offers 'Alle Salons' first, and only to a caller who may manage every salon", () => {
+    expect(ruleSalonChoices(salons, true, null)).toEqual([
+      { value: "", label: "Alle Salons" },
+      { value: "s1", label: "Salon Nord" },
+      { value: "s2", label: "Salon Süd" },
+    ]);
+    expect(ruleSalonChoices(salons, false, null).map((c) => c.value)).toEqual(["s1", "s2"]);
+  });
+
+  it("keeps a deactivated salon of the edited rule as a marked choice", () => {
+    const choices = ruleSalonChoices(salons, false, {
+      salonId: "s9",
+      salonName: "Salon Alt",
+      salonActive: false,
+    });
+    expect(choices.at(-1)).toEqual({ value: "s9", label: "Salon Alt (deaktiviert)" });
+  });
+
+  it("does not duplicate an edited salon that is already a choice", () => {
+    const choices = ruleSalonChoices(salons, false, {
+      salonId: "s1",
+      salonName: "Salon Nord",
+      salonActive: true,
+    });
+    expect(choices).toHaveLength(2);
   });
 });

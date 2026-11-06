@@ -48,3 +48,37 @@ export function groupPluralLabel(group: GroupFields): string {
   }
   return "Personen";
 }
+
+/** The rule fields the list row texts read. */
+export interface RuleTextFields extends GroupFields {
+  maxPersons: number;
+  validFrom: string | null;
+  validUntil: string | null;
+}
+
+/** A Urlaubssperre is the rule "everybody, at most 0". */
+export function isBlackout(rule: Pick<RuleTextFields, "groupKind" | "maxPersons">): boolean {
+  return rule.groupKind === "ALL" && rule.maxPersons === 0;
+}
+
+/** `YYYY-MM-DD` as `TT.MM.JJJJ`, by splitting the string: no time zone can move the day. */
+function germanDay(day: string): string {
+  const [year, month, date] = day.split("-");
+  return `${date}.${month}.${year}`;
+}
+
+/** The validity window of a rule: "ganzjährig" without one, else the dates. */
+export function windowLabel(rule: Pick<RuleTextFields, "validFrom" | "validUntil">): string {
+  if (!rule.validFrom && !rule.validUntil) return "ganzjährig";
+  if (rule.validFrom && rule.validUntil) {
+    return `${germanDay(rule.validFrom)} – ${germanDay(rule.validUntil)}`;
+  }
+  return rule.validFrom ? `ab ${germanDay(rule.validFrom)}` : `bis ${germanDay(rule.validUntil!)}`;
+}
+
+/** The limit for the rule list; the group has its own column, so no plural agreement is needed. */
+export function limitText(rule: Pick<RuleTextFields, "maxPersons">): string {
+  return rule.maxPersons === 0
+    ? "Urlaub gesperrt"
+    : `höchstens ${rule.maxPersons} gleichzeitig im Urlaub`;
+}

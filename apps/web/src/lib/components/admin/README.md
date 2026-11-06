@@ -306,6 +306,8 @@ Usage (detail mode with tabs):
 </ListDetail>
 ```
 
+List-mode consumer with a `<Modal>` form: `admin/leave-limits` (Urlaubsgrenzen & Sperren, Issue #836).
+
 ---
 
 ### `<ToolPage>`

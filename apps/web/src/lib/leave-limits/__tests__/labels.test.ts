@@ -1,7 +1,14 @@
 // Issue #836 (D-06, AC-11) — the group labels and the fixed legal hint of /admin/leave-limits.
 import { describe, it, expect } from "vitest";
 import { CLASSIFICATION_LABELS, CLASSIFICATION_OPTIONS } from "$lib/employee-classification";
-import { LEAVE_LIMIT_LEGAL_HINT, groupLabel, groupPluralLabel } from "../labels";
+import {
+  LEAVE_LIMIT_LEGAL_HINT,
+  groupLabel,
+  groupPluralLabel,
+  isBlackout,
+  limitText,
+  windowLabel,
+} from "../labels";
 
 const all = { groupKind: "ALL", classification: null, accessRoleName: null } as const;
 
@@ -71,5 +78,29 @@ describe("LEAVE_LIMIT_LEGAL_HINT (D-06)", () => {
     expect(LEAVE_LIMIT_LEGAL_HINT).toContain("12 aufeinanderfolgende Werktage");
     expect(LEAVE_LIMIT_LEGAL_HINT).toContain("§ 87 Abs. 1 Nr. 5 BetrVG");
     expect(LEAVE_LIMIT_LEGAL_HINT).toContain("Clokr prüft das nicht automatisch");
+  });
+});
+
+describe("windowLabel", () => {
+  it("is 'ganzjährig' without a window and prints German dates otherwise", () => {
+    expect(windowLabel({ validFrom: null, validUntil: null })).toBe("ganzjährig");
+    expect(windowLabel({ validFrom: "2027-12-01", validUntil: "2027-12-24" })).toBe(
+      "01.12.2027 – 24.12.2027",
+    );
+    expect(windowLabel({ validFrom: "2027-12-01", validUntil: null })).toBe("ab 01.12.2027");
+    expect(windowLabel({ validFrom: null, validUntil: "2027-12-24" })).toBe("bis 24.12.2027");
+  });
+});
+
+describe("limitText and isBlackout", () => {
+  it("words a limit and a block", () => {
+    expect(limitText({ maxPersons: 2 })).toBe("höchstens 2 gleichzeitig im Urlaub");
+    expect(limitText({ maxPersons: 0 })).toBe("Urlaub gesperrt");
+  });
+
+  it("a blackout is group ALL with a maximum of 0", () => {
+    expect(isBlackout({ groupKind: "ALL", maxPersons: 0 })).toBe(true);
+    expect(isBlackout({ groupKind: "CLASSIFICATION", maxPersons: 0 })).toBe(false);
+    expect(isBlackout({ groupKind: "ALL", maxPersons: 1 })).toBe(false);
   });
 });
