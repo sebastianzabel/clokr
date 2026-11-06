@@ -387,6 +387,24 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "gone. Proven by `leave-plan-tracer-835.test.ts`.",
   },
   {
+    route: "GET /api/v1/leave/plans",
+    reason:
+      "New route added in Issue #835, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, admission by the `leave-request:read:ZUGEWIESEN` reach over the salon or the own Stammsalon) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `leave-plan-routes-835.test.ts`.",
+  },
+  {
+    route: "PATCH /api/v1/leave/plans/:id",
+    reason:
+      "New route added in Issue #835, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`leave-plan:manage:ZUGEWIESEN`) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `leave-plan-routes-835.test.ts`.",
+  },
+  {
     route: "GET /api/v1/leave/plans/:id",
     reason:
       "New route added in Issue #835, long after the role guard (`requireRole`) was deleted from " +

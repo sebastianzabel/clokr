@@ -193,6 +193,12 @@ const HOME_SALON_REGISTER: readonly HomeSalonCaller[] = [
       "attributes a wish to the plan salon by the Stammsalon per day; counts nobody (Issue #835, D-05)",
   },
   {
+    file: "contexts/absence/leave-plan/population.ts",
+    region: "function planPopulation",
+    reason:
+      "lists the persons of a salon plan by the Stammsalon per day, Issue #835 D-05; counts nothing",
+  },
+  {
     file: "contexts/absence/salon-leave-attribution.ts",
     region: "function filterLeaveRowsToHomeSalon",
     reason: "filters leave ROWS to a salon by the Stammsalon of a day; counts nobody (Issue #558)",

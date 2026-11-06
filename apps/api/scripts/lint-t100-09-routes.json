@@ -929,6 +929,16 @@
       "validatedAt": null
     },
     {
+      "route": "PATCH /api/v1/leave/plans/:id",
+      "file": "apps/api/src/contexts/absence/api/leave-plans.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a LeavePlan, not Employee/LeaveType - the fixture cannot produce a foreign instance. leave-plans.ts loads it with a SCOPED `findFirst({ id, tenantId })` and then checks the plan's salon against the caller's manage reach; a foreign tenant's plan, an unknown id and a plan outside the reach answer the byte-identical `{ error: \"Urlaubsplanung nicht gefunden\" }` 404 - conformant. Proven by `leave-plan-routes-835.test.ts`.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "POST /api/v1/leave/plans/:id/takeover",
       "file": "apps/api/src/contexts/absence/api/leave-plans.ts",
       "category": "nicht anwendbar",

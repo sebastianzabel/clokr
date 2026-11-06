@@ -29,11 +29,13 @@ import {
   PLAN_NOT_FOUND_ERROR,
   canReadPlan,
   createWish,
+  readablePlanYears,
   readPlanner,
   takeOverLeavePlan,
   toPlanDto,
   toPlannerWish,
   dayToDate,
+  dayOf,
 } from "../leave-plan";
 import { isOpenPlanUniqueViolation } from "../leave-plan/db-refusals";
 
@@ -50,6 +52,13 @@ const dayString = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Datum im Format JJJJ-MM-TT erwartet")
   .refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), "Ungültiges Datum");
+
+const listQuerySchema = z.object({
+  salonId: z.string().uuid(),
+  year: z.coerce.number().int().min(2000).max(2100).optional(),
+});
+
+const deadlineBodySchema = z.object({ deadline: dayString.nullable() });
 
 const openBodySchema = z.object({
   salonId: z.string().uuid(),
@@ -179,6 +188,109 @@ export async function leavePlanRoutes(app: FastifyInstance) {
         });
       }
       return reply.code(201).send({ plan: toPlanDto(created) });
+    },
+  });
+
+  app.get("/", {
+    schema: {
+      tags: ["Abwesenheiten"],
+      security: [{ bearerAuth: [] }],
+      summary: "List the leave plans of a salon",
+      description:
+        "Lists the plans of one salon (optionally one year), newest first. Readable with a leave-request:read reach over the salon, or as a person whose own Stammsalon the salon is in the plan year.",
+    },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const query = listQuerySchema.parse(req.query);
+      const tenantId = req.user.tenantId;
+      const where = {
+        tenantId,
+        salonId: query.salonId,
+        ...(query.year !== undefined ? { year: query.year } : {}),
+      };
+      // Candidate years: the one asked, else the salon's plan years. Nothing of them is returned
+      // before the admission below; a refusal is one body whatever the cause (T-835-18).
+      const candidates =
+        query.year !== undefined
+          ? [query.year]
+          : (
+              await app.prisma.leavePlan.findMany({
+                where,
+                select: { year: true },
+                distinct: ["year"],
+              })
+            ).map((row) => row.year);
+      const years = await readablePlanYears(app.prisma, {
+        tenantId,
+        readReach: await readReach(req),
+        selfEmployeeId: req.user.employeeId ?? null,
+        salonId: query.salonId,
+        years: candidates,
+      });
+      if (years === null) return reply.code(404).send(SALON_NOT_FOUND);
+
+      const plans = await app.prisma.leavePlan.findMany({
+        where: { ...where, year: { in: [...years] } },
+        orderBy: [{ year: "desc" }, { openedAt: "desc" }, { id: "asc" }],
+      });
+      return reply.send({ plans: plans.map(toPlanDto) });
+    },
+  });
+
+  app.patch("/:id", {
+    schema: {
+      tags: ["Abwesenheiten"],
+      security: [{ bearerAuth: [] }],
+      summary: "Set or clear the deadline of an open leave plan",
+      description:
+        "Sets (YYYY-MM-DD) or clears (null) the deadline of an OPEN plan in the caller's leave-plan:manage reach. The deadline is a hint unless the tenant locks own changes after it.",
+    },
+    preHandler: requirePermission("leave-plan:manage:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const body = deadlineBodySchema.parse(req.body);
+      const tenantId = req.user.tenantId;
+      const plan = await loadPlan(req, id);
+      if (!plan || !(await manageCovers(req, plan.salonId))) {
+        return reply.code(404).send(PLAN_NOT_FOUND);
+      }
+
+      const outcome = await app.prisma.$transaction(async (tx) => {
+        // The plan row lock serialises the edit with a takeover flipping the plan to TAKEN_OVER.
+        const locked = await tx.$queryRaw<
+          Array<{ status: string; deadline: Date | null }>
+        >`SELECT "status", "deadline" FROM "LeavePlan" WHERE "id" = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
+        const current = locked[0];
+        if (!current) return { kind: "missing" } as const;
+        if (current.status !== "OPEN") return { kind: "closed" } as const;
+
+        const oldDeadline = current.deadline ? dayOf(current.deadline) : null;
+        const newDeadline = body.deadline ?? null;
+        if (oldDeadline === newDeadline) return { kind: "unchanged" } as const;
+        const row = await tx.leavePlan.update({
+          where: { id, tenantId },
+          data: { deadline: newDeadline ? dayToDate(newDeadline) : null },
+        });
+        await app.audit({
+          userId: req.user.sub,
+          action: "UPDATE",
+          entity: "LeavePlan",
+          entityId: id,
+          oldValue: { deadline: oldDeadline },
+          newValue: { deadline: newDeadline },
+          request: requestAudit(req),
+          tx,
+        });
+        return { kind: "updated", row } as const;
+      });
+      if (outcome.kind === "missing") return reply.code(404).send(PLAN_NOT_FOUND);
+      if (outcome.kind === "closed") {
+        return reply
+          .code(409)
+          .send({ error: LEAVE_PLAN_MESSAGES[LEAVE_PLAN_CLOSED], code: LEAVE_PLAN_CLOSED });
+      }
+      // An unchanged deadline writes nothing and answers the stored plan (200, no audit row).
+      return reply.send({ plan: toPlanDto(outcome.kind === "updated" ? outcome.row : plan) });
     },
   });
 
