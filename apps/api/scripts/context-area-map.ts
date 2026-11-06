@@ -340,7 +340,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-plan/admission.ts": "abwesenheiten", // Issue #835 - who may read a plan - reach over the salon or the own Stammsalon; reads the Stammsalon per day
   "src/contexts/absence/leave-plan/db-refusals.ts": "abwesenheiten", // Issue #835 - pure - recognises the database refusals of a second OPEN plan and of overlapping wishes by structured error fields
   "src/contexts/absence/leave-plan/population.ts": "abwesenheiten", // Issue #835 - planPopulation - the persons of a salon plan by Stammsalon per day, employed in the year, never anonymised; reads Employee and the assignment facade, counts nothing
-  "src/contexts/absence/leave-plan/wish-write.ts": "abwesenheiten", // Issue #835 - createWish - one locked transaction, writes LeavePlanWish and its audit
+  "src/contexts/absence/leave-plan/wish-write.ts": "abwesenheiten", // Issue #835 - createWish, updateWish, removeWish - one locked transaction each, writes LeavePlanWish and its audit
   "src/contexts/absence/leave-plan/takeover.ts": "abwesenheiten", // Issue #835 - takeOverLeavePlan - turns wishes into requests through the create and decision cores; writes LeavePlanWish and LeavePlan
   "src/contexts/absence/leave-plan/planner-read.ts": "abwesenheiten", // Issue #835 - the live planner read (DTO shape, wishes per person); reads LeavePlanWish
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)

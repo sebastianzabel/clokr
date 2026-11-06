@@ -187,8 +187,14 @@ const HOME_SALON_REGISTER: readonly HomeSalonCaller[] = [
       "attributes a plan reader to the plan salon by the Stammsalon per day; counts nobody (Issue #835, D-05)",
   },
   {
+    file: "contexts/absence/leave-plan/admission.ts",
+    region: "function manageCoversPersonOnDays",
+    reason:
+      "decides whether a manage reach covers a person on a day of a wish by the Stammsalon per day; counts nobody (Issue #835, D-04)",
+  },
+  {
     file: "contexts/absence/leave-plan/wish-write.ts",
-    region: "function createWish",
+    region: "function validateWishRules",
     reason:
       "attributes a wish to the plan salon by the Stammsalon per day; counts nobody (Issue #835, D-05)",
   },

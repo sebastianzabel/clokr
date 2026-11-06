@@ -29,16 +29,21 @@ import {
   LEAVE_PLAN_CLOSED,
   LEAVE_PLAN_MESSAGES,
   PLAN_NOT_FOUND_ERROR,
+  WISH_NOT_FOUND_ERROR,
   canReadPlan,
   createWish,
+  manageCoversPersonOnDays,
   planPopulation,
   readablePlanYears,
   readPlanner,
+  removeWish,
   takeOverLeavePlan,
   toPlanDto,
   toPlannerWish,
+  updateWish,
   dayToDate,
   dayOf,
+  type WishActor,
 } from "../leave-plan";
 import { isOpenPlanUniqueViolation } from "../leave-plan/db-refusals";
 
@@ -46,10 +51,12 @@ import { isOpenPlanUniqueViolation } from "../leave-plan/db-refusals";
 const SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
 const PLAN_NOT_FOUND = { error: PLAN_NOT_FOUND_ERROR } as const;
 const PERSON_NOT_FOUND = { error: "Mitarbeiter nicht gefunden" } as const;
+const WISH_NOT_FOUND = { error: WISH_NOT_FOUND_ERROR } as const;
 
 const MANAGE_KEY = "leave-plan:manage:ZUGEWIESEN" as const;
 
 const idParamSchema = z.object({ id: z.string().uuid() });
+const wishParamSchema = z.object({ id: z.string().uuid(), wishId: z.string().uuid() });
 
 const dayString = z
   .string()
@@ -80,6 +87,18 @@ const wishBodySchema = z
     message: "Das Enddatum darf nicht vor dem Startdatum liegen.",
     path: ["endDate"],
   });
+
+const wishPatchBodySchema = z
+  .object({
+    startDate: dayString.optional(),
+    endDate: dayString.optional(),
+    halfDay: z.boolean().optional(),
+  })
+  .refine(
+    (body) =>
+      body.startDate !== undefined || body.endDate !== undefined || body.halfDay !== undefined,
+    { message: "Mindestens eine Angabe ist erforderlich.", path: ["startDate"] },
+  );
 
 const takeoverBodySchema = z.object({
   limitExceptions: z
@@ -388,7 +407,7 @@ export async function leavePlanRoutes(app: FastifyInstance) {
           manageReach: reachToManage,
           approveReach: reachToApprove,
         },
-        now: new Date(),
+        now: req.testNow ?? new Date(),
       });
       return reply.send(dto);
     },
@@ -400,7 +419,7 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Add a vacation wish to a leave plan",
       description:
-        "Adds an own VACATION wish (leave-request:create:EIGENE) to an open plan the caller may read. The wish counts nowhere until the takeover turns it into a request.",
+        "Adds a VACATION wish to an open plan the caller may read: an own one (leave-request:create:EIGENE) or, with employeeId, one for a person inside the caller's leave-plan:manage reach. The wish counts nowhere until the takeover turns it into a request.",
     },
     preHandler: requireAuth,
     handler: async (req, reply) => {
@@ -420,22 +439,61 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       });
       if (!admitted) return reply.code(404).send(PLAN_NOT_FOUND);
 
-      // Tracer: only the caller's own person. A wish for someone else is the manager path (835-05).
+      const now = req.testNow ?? new Date();
+      const reachToManage = await manageReach(req);
+      let targetEmployeeId: string;
+      let actor: WishActor;
       if (body.employeeId !== undefined && body.employeeId !== selfEmployeeId) {
-        return reply.code(404).send(PERSON_NOT_FOUND);
-      }
-      if (!(await hasPermission(req, "leave-request:create:EIGENE"))) {
-        return reply.code(403).send({ error: "Forbidden" });
-      }
-      if (selfEmployeeId === null) {
-        return reply.code(400).send({ error: "Für dein Konto ist kein Mitarbeiter hinterlegt." });
+        // Manager path (D-04): another person's wish needs a manage reach over that person on a
+        // wish day. An unknown id, a foreign tenant's person and a person outside the reach are
+        // one cause with one body (T-835-25).
+        const target = await app.prisma.employee.findFirst({
+          where: { id: body.employeeId, tenantId },
+          select: { id: true },
+        });
+        if (
+          !target ||
+          !(await manageCoversPersonOnDays(
+            app.prisma,
+            tenantId,
+            reachToManage,
+            target.id,
+            body.startDate,
+            body.endDate,
+          ))
+        ) {
+          return reply.code(404).send(PERSON_NOT_FOUND);
+        }
+        targetEmployeeId = target.id;
+        actor = { userId: req.user.sub, kind: "MANAGER", isManagerOfPerson: true };
+      } else {
+        if (!(await hasPermission(req, "leave-request:create:EIGENE"))) {
+          return reply.code(403).send({ error: "Forbidden" });
+        }
+        if (selfEmployeeId === null) {
+          return reply.code(400).send({ error: "Für dein Konto ist kein Mitarbeiter hinterlegt." });
+        }
+        targetEmployeeId = selfEmployeeId;
+        actor = {
+          userId: req.user.sub,
+          kind: "OWN",
+          isManagerOfPerson: await manageCoversPersonOnDays(
+            app.prisma,
+            tenantId,
+            reachToManage,
+            selfEmployeeId,
+            body.startDate,
+            body.endDate,
+          ),
+        };
       }
 
       const outcome = await createWish(app, {
         tenantId,
         planId: plan.id,
-        employeeId: selfEmployeeId,
-        actorUserId: req.user.sub,
+        employeeId: targetEmployeeId,
+        actor,
+        now,
         startDay: body.startDate,
         endDay: body.endDate,
         halfDay: body.halfDay,
@@ -443,6 +501,122 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       });
       if (!outcome.ok) return reply.code(outcome.statusCode).send(outcome.body);
       return reply.code(201).send({ wish: toPlannerWish(outcome.wish, { planStatus: "OPEN" }) });
+    },
+  });
+
+  /**
+   * Loads the plan and the wish of a wish route and decides who the caller is for it. Every cause of
+   * "not yours to touch" (foreign tenant, unknown id, removed wish, wish of a person outside the
+   * manage reach) is the same frozen 404 body (D-04, T-835-25); a plan the caller may not read
+   * answers the plan body.
+   */
+  async function admitWishWrite(
+    req: FastifyRequest,
+    ids: { id: string; wishId: string },
+  ): Promise<
+    | { ok: true; plan: { id: string }; actor: WishActor }
+    | { ok: false; statusCode: 403 | 404; body: { error: string } }
+  > {
+    const tenantId = req.user.tenantId;
+    const plan = await loadPlan(req, ids.id);
+    if (!plan) return { ok: false, statusCode: 404, body: PLAN_NOT_FOUND };
+    const selfEmployeeId = req.user.employeeId ?? null;
+    const admitted = await canReadPlan(app.prisma, {
+      tenantId,
+      readReach: await readReach(req),
+      selfEmployeeId,
+      salonId: plan.salonId,
+      year: plan.year,
+    });
+    if (!admitted) return { ok: false, statusCode: 404, body: PLAN_NOT_FOUND };
+
+    const wish = await app.prisma.leavePlanWish.findFirst({
+      where: { id: ids.wishId, planId: plan.id, tenantId, deletedAt: null },
+      select: { employeeId: true, startDate: true, endDate: true },
+    });
+    if (!wish) return { ok: false, statusCode: 404, body: WISH_NOT_FOUND };
+
+    const covers = await manageCoversPersonOnDays(
+      app.prisma,
+      tenantId,
+      await manageReach(req),
+      wish.employeeId,
+      dayOf(wish.startDate),
+      dayOf(wish.endDate),
+    );
+    if (selfEmployeeId !== null && wish.employeeId === selfEmployeeId) {
+      if (!(await hasPermission(req, "leave-request:create:EIGENE"))) {
+        return { ok: false, statusCode: 403, body: { error: "Forbidden" } };
+      }
+      return {
+        ok: true,
+        plan,
+        actor: { userId: req.user.sub, kind: "OWN", isManagerOfPerson: covers },
+      };
+    }
+    if (!covers) return { ok: false, statusCode: 404, body: WISH_NOT_FOUND };
+    return {
+      ok: true,
+      plan,
+      actor: { userId: req.user.sub, kind: "MANAGER", isManagerOfPerson: true },
+    };
+  }
+
+  app.patch("/:id/wishes/:wishId", {
+    schema: {
+      tags: ["Abwesenheiten"],
+      security: [{ bearerAuth: [] }],
+      summary: "Move or resize a wish of a leave plan",
+      description:
+        "Changes the dates or the half-day flag of an own wish, or of a wish of a person inside the caller's leave-plan:manage reach, in an open plan. A taken-over wish cannot be moved.",
+    },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const ids = wishParamSchema.parse(req.params);
+      const body = wishPatchBodySchema.parse(req.body);
+      const admission = await admitWishWrite(req, ids);
+      if (!admission.ok) return reply.code(admission.statusCode).send(admission.body);
+
+      const outcome = await updateWish(app, {
+        tenantId: req.user.tenantId,
+        planId: admission.plan.id,
+        wishId: ids.wishId,
+        actor: admission.actor,
+        now: req.testNow ?? new Date(),
+        startDay: body.startDate,
+        endDay: body.endDate,
+        halfDay: body.halfDay,
+        request: requestAudit(req),
+      });
+      if (!outcome.ok) return reply.code(outcome.statusCode).send(outcome.body);
+      return reply.send({ wish: toPlannerWish(outcome.wish, { planStatus: "OPEN" }) });
+    },
+  });
+
+  app.delete("/:id/wishes/:wishId", {
+    schema: {
+      tags: ["Abwesenheiten"],
+      security: [{ bearerAuth: [] }],
+      summary: "Remove a wish of a leave plan",
+      description:
+        "Removes an own wish, or a wish of a person inside the caller's leave-plan:manage reach, from an open plan. The row is kept (soft removal) and the removal is audited.",
+    },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const ids = wishParamSchema.parse(req.params);
+      const admission = await admitWishWrite(req, ids);
+      if (!admission.ok) return reply.code(admission.statusCode).send(admission.body);
+
+      const outcome = await removeWish(app, {
+        tenantId: req.user.tenantId,
+        planId: admission.plan.id,
+        wishId: ids.wishId,
+        actor: admission.actor,
+        now: req.testNow ?? new Date(),
+        request: requestAudit(req),
+      });
+      if (!outcome.ok) return reply.code(outcome.statusCode).send(outcome.body);
+      return reply.code(204).send();
     },
   });
 

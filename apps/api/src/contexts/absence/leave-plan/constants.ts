@@ -22,6 +22,8 @@ export const LEAVE_PLAN_WISH_OVERLAP = "LEAVE_PLAN_WISH_OVERLAP";
 export const LEAVE_PLAN_WISH_OUTSIDE_YEAR = "LEAVE_PLAN_WISH_OUTSIDE_YEAR";
 /** A half day is only valid for a single day (400). */
 export const LEAVE_PLAN_WISH_HALF_DAY_RANGE = "LEAVE_PLAN_WISH_HALF_DAY_RANGE";
+/** The end of the wish lies before its start (400). */
+export const LEAVE_PLAN_WISH_RANGE = "LEAVE_PLAN_WISH_RANGE";
 /** The person is homed in the plan's salon on no day of the wish (400). */
 export const LEAVE_PLAN_WISH_NOT_HOMED = "LEAVE_PLAN_WISH_NOT_HOMED";
 /** The wish does not lie completely inside the person's employment (400). */
@@ -43,6 +45,7 @@ export const LEAVE_PLAN_MESSAGES: Record<string, string> = {
     "Für diesen Salon und dieses Jahr ist bereits eine Urlaubsplanung offen.",
   [LEAVE_PLAN_WISH_OUTSIDE_YEAR]: "Der Wunsch muss vollständig im Planungsjahr liegen.",
   [LEAVE_PLAN_WISH_HALF_DAY_RANGE]: "Ein halber Tag geht nur bei einem einzelnen Tag.",
+  [LEAVE_PLAN_WISH_RANGE]: "Das Enddatum darf nicht vor dem Startdatum liegen.",
   [LEAVE_PLAN_WISH_NOT_HOMED]: "Die Person gehört an keinem Tag des Wunsches zu diesem Salon.",
   [LEAVE_PLAN_WISH_NOT_EMPLOYED]: "Der Wunsch liegt nicht vollständig in der Beschäftigungszeit.",
   [LEAVE_PLAN_WISH_NOT_IN_SALON]:
@@ -57,3 +60,6 @@ export const LEAVE_PLAN_WISH_OVERLAP_WISH_MESSAGE =
 
 /** The one 404 text of an unknown, foreign, removed or unreadable plan (the route freezes the body). */
 export const PLAN_NOT_FOUND_ERROR = "Urlaubsplanung nicht gefunden";
+
+/** The one 404 text of an unknown, foreign, removed or out-of-reach wish (the route freezes the body). */
+export const WISH_NOT_FOUND_ERROR = "Wunsch nicht gefunden";

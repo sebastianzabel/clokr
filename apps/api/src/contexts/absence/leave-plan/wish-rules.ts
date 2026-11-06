@@ -34,3 +34,24 @@ export function halfDayShapeValid(startDay: string, endDay: string, halfDay: boo
 export function rangesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
   return aStart <= bEnd && bStart <= aEnd;
 }
+
+/** True iff the plan has a deadline and the tenant-local day `todayDay` lies after it (the deadline day itself is open). */
+export function deadlinePassed(deadlineDay: string | null, todayDay: string): boolean {
+  return deadlineDay !== null && todayDay > deadlineDay;
+}
+
+/**
+ * True iff an employee's OWN change is locked: the tenant locks wishes after the deadline, the
+ * deadline has passed and the actor holds no manage reach over the person (D-06, D-835-07). The
+ * planner read and every wish write call this one function.
+ */
+export function ownEditLocked(input: {
+  locksWishes: boolean;
+  deadlineDay: string | null;
+  todayDay: string;
+  actorIsManager: boolean;
+}): boolean {
+  return (
+    input.locksWishes && deadlinePassed(input.deadlineDay, input.todayDay) && !input.actorIsManager
+  );
+}

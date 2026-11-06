@@ -16,7 +16,7 @@ import type { LeavePlan, LeavePlanWish } from "@clokr/db";
 import { formatInTimeZone } from "date-fns-tz";
 import type { AccessReach } from "../../platform";
 import { getTenantTimezone } from "../../working-time-account";
-import { dayOf } from "./wish-rules";
+import { dayOf, deadlinePassed, ownEditLocked } from "./wish-rules";
 
 export type PlannerRow = {
   kind: "LEAVE" | "ABSENCE" | "COMPANY_SHUTDOWN";
@@ -219,7 +219,7 @@ export async function readPlanner(
   const timezone = await getTenantTimezone(app.prisma, tenantId);
   const todayLocal = formatInTimeZone(now, timezone, "yyyy-MM-dd");
   const deadlineDay = plan.deadline ? dayOf(plan.deadline) : null;
-  const deadlinePassed = deadlineDay !== null && todayLocal > deadlineDay;
+  const passed = deadlinePassed(deadlineDay, todayLocal);
 
   return {
     plan: {
@@ -230,7 +230,7 @@ export async function readPlanner(
       status: planStatus,
       openedAt: plan.openedAt.toISOString(),
       takenOverAt: plan.takenOverAt ? plan.takenOverAt.toISOString() : null,
-      deadlinePassed,
+      deadlinePassed: passed,
       deadlineLocksWishes,
       partiallyTakenOver: planStatus === "OPEN" && wishes.some((w) => w.leaveRequestId !== null),
     },
@@ -239,7 +239,12 @@ export async function readPlanner(
       canManage: viewer.canManage,
       canWishOwn:
         planStatus === "OPEN" && viewer.employeeId !== null && viewer.canCreateOwn !== false,
-      ownEditLocked: deadlineLocksWishes && deadlinePassed && !viewer.canManage,
+      ownEditLocked: ownEditLocked({
+        locksWishes: deadlineLocksWishes,
+        deadlineDay,
+        todayDay: todayLocal,
+        actorIsManager: viewer.canManage,
+      }),
     },
     persons,
     holidays: [],

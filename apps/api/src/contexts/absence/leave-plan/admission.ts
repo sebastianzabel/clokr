@@ -84,3 +84,37 @@ export async function readablePlanYears(
   }
   return years.size > 0 ? years : null;
 }
+
+/**
+ * True iff the caller's `leave-plan:manage` reach covers the person on at least one day of
+ * `[fromDay, toDay]` (D-835-04): a whole-tenant reach always, a reach naming the person always,
+ * otherwise the person's Stammsalon of some day of the range lies in the reach's salons (the
+ * any-day form of `isStammsalonScopeMatch`). An empty reach covers nobody. The caller has resolved
+ * the person inside the tenant; a miss and an out-of-reach person answer the same 404 body.
+ */
+export async function manageCoversPersonOnDays(
+  db: Db,
+  tenantId: string,
+  manageReach: AccessReach,
+  employeeId: string,
+  fromDay: string,
+  toDay: string,
+): Promise<boolean> {
+  if (manageReach.kind === "wholeTenant") return true;
+  if (manageReach.employeeIds.includes(employeeId)) return true;
+  if (manageReach.salonIds.length === 0) return false;
+  const homes = await homeSalonsForDays(db, tenantId, [employeeId], fromDay, toDay);
+  const dayMap = homes.get(employeeId);
+  if (!dayMap) return false;
+  for (const [day, homeSalon] of dayMap) {
+    if (
+      day >= fromDay &&
+      day <= toDay &&
+      homeSalon !== null &&
+      manageReach.salonIds.includes(homeSalon)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}

@@ -423,6 +423,24 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "gone. Proven by `leave-plan-tracer-835.test.ts`.",
   },
   {
+    route: "PATCH /api/v1/leave/plans/:id/wishes/:wishId",
+    reason:
+      "New route added in Issue #835, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, admission as the read plus `leave-request:create:EIGENE` for an own wish or a `leave-plan:manage:ZUGEWIESEN` reach over the person) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `leave-plan-wishes-835.test.ts`.",
+  },
+  {
+    route: "DELETE /api/v1/leave/plans/:id/wishes/:wishId",
+    reason:
+      "New route added in Issue #835, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, admission as the read plus `leave-request:create:EIGENE` for an own wish or a `leave-plan:manage:ZUGEWIESEN` reach over the person) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `leave-plan-wishes-835.test.ts`.",
+  },
+  {
     route: "POST /api/v1/leave/plans/:id/takeover",
     reason:
       "New route added in Issue #835, long after the role guard (`requireRole`) was deleted from " +

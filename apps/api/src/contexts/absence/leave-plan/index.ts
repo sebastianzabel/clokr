@@ -6,9 +6,21 @@
  */
 export * from "./constants";
 export * from "./wish-rules";
-export { canReadPlan, isOwnStammsalonPlan, readablePlanYears } from "./admission";
+export {
+  canReadPlan,
+  isOwnStammsalonPlan,
+  manageCoversPersonOnDays,
+  readablePlanYears,
+} from "./admission";
 export { planPopulation, type PlanPerson, type PlanPopulation } from "./population";
-export { createWish, type WishWriteOutcome } from "./wish-write";
+export {
+  createWish,
+  employedOnEveryWishDay,
+  removeWish,
+  updateWish,
+  type WishActor,
+  type WishWriteOutcome,
+} from "./wish-write";
 export { takeOverLeavePlan, type TakeoverResult } from "./takeover";
 export {
   readPlanner,
