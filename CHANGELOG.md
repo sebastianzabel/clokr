@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/sebastianzabel/clokr/compare/v1.18.0...v1.19.0) (2026-11-06)
+
+
+### Features
+
+* **836:** Urlaubsgrenzen und Urlaubssperren je Salon ([#837](https://github.com/sebastianzabel/clokr/issues/837)) ([ac18dc3](https://github.com/sebastianzabel/clokr/commit/ac18dc3b2a4fa245627d373320ad4a0dbf96e6dd))
+
 ## [1.18.0](https://github.com/sebastianzabel/clokr/compare/v1.17.0...v1.18.0) (2026-11-05)
 
 
