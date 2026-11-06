@@ -701,6 +701,21 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   the statutory floor is applied afterwards by the regular-entitlement formula. A settings or
   classification change writes no row by itself; new years, the #445 zero heal and the audited
   #447/#450 recomputes read the current value. No reader rebuilds the chain.
+- **Parallel leave per salon is counted in one place (Issue #836).** `parallelLeaveLoad()` (the pure
+  kernel) and `evaluateLeaveLimits()` (the checker) in `contexts/absence/leave-limits/` — deliberately NOT
+  re-exported from `contexts/absence/index.ts` (import-cycle cap 22), callers in Abwesenheiten import the
+  module by relative path — are the only place "how many persons of a group are on leave in a salon on a day"
+  is computed. A person counts once per salon, group and day: the Stammsalon of that day, only the person's own
+  workdays, only the allow-list `LEAVE_LIMIT_COUNTED_CODES` (never derived by excluding sick codes), PENDING
+  included. A `LeaveLimitRule` (all salons or one salon, group `ALL` / `CLASSIFICATION` / `ACCESS_ROLE`, a blackout
+  is `ALL` with `maxPersons` 0) gives a warning on request creation (`leaveLimitWarnings`, fail-open), and an
+  approval or a `/correct` over a limit is a 409 `LEAVE_LIMIT_EXCEPTION_REQUIRED` until the approver sends
+  `limitException: { reason }` (10-500 characters, audited with rule ids and counts, never another person's id;
+  fail-closed). Names of other persons appear only within the reader's `leave-request:read:ZUGEWIESEN` reach
+  (`redact.ts`), everyone else gets `hiddenCount`; the load read is `GET /leave/limits/load`. Never
+  retroactive: leave approved before a rule is only marked (`approvedBeforeRule`). A second count anywhere
+  turns `leave-limits-one-place-836.test.ts` red. Details and the documented limits (no classification/role
+  history, `reviewedAt` as the approval stamp, concurrent approvals): `docs/adr/0001-abweichungen.md`, Eintrag AG.
 
 ## Overtime Saldo Calculation (current)
 

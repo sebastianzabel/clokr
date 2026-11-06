@@ -53,6 +53,7 @@
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588
   import type { EditableLeaveRequest } from "$lib/leave/leave-request-form";
+  import type { LeaveLimitWarning } from "$lib/leave-limits/types";
 
   // ── Types ────────────────────────────────────────────────────────────────
   interface OverlapEntry {
@@ -108,8 +109,9 @@
      *  writer — see the component doc comment) — kept in the same YEAR to still show identical
      *  figures. */
     entitlementYear?: number;
-    /** Page-specific reload after a successful create/edit. */
-    onSaved: () => void | Promise<void>;
+    /** Page-specific reload after a successful create/edit. A create answered with limit
+     *  warnings (Issue #836) passes them along; the request itself is already saved. */
+    onSaved: (result?: { leaveLimitWarnings?: LeaveLimitWarning[] }) => void | Promise<void>;
     /** Team-context-only addition (Phase 415, D-03): the person picker. Rendered above this
      *  component's own first field. Omitted on `/leave` — nothing extra renders there. */
     personPicker?: Snippet;
@@ -522,6 +524,7 @@
     formSaving = true;
     formError = "";
     try {
+      let leaveLimitWarnings: LeaveLimitWarning[] = [];
       if (editingRequest) {
         await api.patch(`/leave/requests/${editingRequest.id}`, {
           startDate: formStart,
@@ -544,22 +547,28 @@
         // `employeeId === req.user.employeeId` as the plain self-create path and anything else
         // as manager-on-behalf-of (`apps/api/src/contexts/absence/api/leave.ts` POST /requests) —
         // sending it unconditionally is therefore behavior-preserving for `/leave` too.
-        await api.post("/leave/requests", {
-          employeeId,
-          type: src.type,
-          startDate: src.startDate,
-          endDate: src.endDate,
-          halfDay: src.halfDay,
-          note: src.note || null,
-          ...(src.type === "SPECIAL" && src.specialLeaveRuleId
-            ? { specialLeaveRuleId: src.specialLeaveRuleId }
-            : {}),
-        });
+        const created = await api.post<{ leaveLimitWarnings?: LeaveLimitWarning[] } | undefined>(
+          "/leave/requests",
+          {
+            employeeId,
+            type: src.type,
+            startDate: src.startDate,
+            endDate: src.endDate,
+            halfDay: src.halfDay,
+            note: src.note || null,
+            ...(src.type === "SPECIAL" && src.specialLeaveRuleId
+              ? { specialLeaveRuleId: src.specialLeaveRuleId }
+              : {}),
+          },
+        );
+        leaveLimitWarnings = created?.leaveLimitWarnings ?? [];
       }
       open = false;
       pendingCreate = null;
       collisionSummary = null;
-      await onSaved();
+      // Warnings never block (D-836-08): the request exists, the page only gets told.
+      if (leaveLimitWarnings.length > 0) await onSaved({ leaveLimitWarnings });
+      else await onSaved();
       return true;
     } catch (e: unknown) {
       // Issue #449 (D-1): prefer the thrown ApiError's own message — it already carries

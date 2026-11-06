@@ -317,6 +317,20 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/correction-lock.ts": "abwesenheiten", // Phase 94 manager LeaveRequest correction guard
   "src/contexts/absence/effective-leave-statuses.ts": "abwesenheiten", // Issue #446 (D-01) — the one definition of "leave that counts" (APPROVED + CANCELLATION_REQUESTED)
   "src/contexts/absence/salon-leave-attribution.ts": "abwesenheiten", // Issue #558 (D-02/D-08) — the one Stammsalon-per-day attribution of leave/absence rows to a salon; reads HOME assignments through the Unterbau facade only
+  "src/contexts/absence/api/leave-limits.ts": "abwesenheiten", // Issue #836 - GET/POST/PUT/DELETE of the leave limit rules and blackouts under /leave/limits; writes LeaveLimitRule
+  "src/contexts/absence/leave-limits/rule-dto.ts": "abwesenheiten", // Issue #836 - pure - the Zod body and the response DTO of a leave limit rule
+  "src/contexts/absence/leave-limits/constants.ts": "abwesenheiten", // Issue #836 - the counted leave type codes and statuses, an allow-list; zero runtime import beyond the status leaf
+  "src/contexts/absence/leave-limits/rules.ts": "abwesenheiten", // Issue #836 - pure rule helpers - which LeaveLimitRule applies on a salon and day, strictest per group
+  "src/contexts/absence/leave-limits/parallel-leave-load.ts": "abwesenheiten", // Issue #836 - the pure counting kernel, the only place parallel leave is counted
+  "src/contexts/absence/leave-limits/counted-days.ts": "abwesenheiten", // Issue #836 - pure - which days of one leave row count toward a limit
+  "src/contexts/absence/leave-limits/group-membership.ts": "abwesenheiten", // Issue #836 - pure - which groups a person belongs to on a day (seam for a later history model)
+  "src/contexts/absence/leave-limits/workdays.ts": "abwesenheiten", // Issue #836 - pure - which days of a window a person would work (contract segment, holidays, roster days, usual days)
+  "src/contexts/absence/leave-limits/load-facts.ts": "abwesenheiten", // Issue #836 - the loader - reads stored leave, employees, Stammsalon per day and contract workdays for the kernel
+  "src/contexts/absence/leave-limits/check.ts": "abwesenheiten", // Issue #836 - the checker evaluateLeaveLimits - adds candidate rows and reports exceedances; reads LeaveLimitRule
+  "src/contexts/absence/leave-limits/response.ts": "abwesenheiten", // Issue #836 - pure - serialises exceedances into leaveLimitWarnings - counts, plus names within the reader's leave reach
+  "src/contexts/absence/leave-limits/exception.ts": "abwesenheiten", // Issue #836 - pure - the exception reason schema, the 409 body, the audit snapshot and the correction delta ranges
+  "src/contexts/absence/leave-limits/load-view.ts": "abwesenheiten", // Issue #836 - the daily load per salon and group from parallelLeaveLoad, with the approved-before-rule marker; reads LeaveLimitRule
+  "src/contexts/absence/leave-limits/redact.ts": "abwesenheiten", // Issue #836 - pure - which persons a reader may be NAMED in a limit warning or the load view (leave-request:read reach)
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)
   "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
   "src/contexts/absence/format-hm.ts": "abwesenheiten", // hours:minutes display formatting; sole importer is routes/leave.ts

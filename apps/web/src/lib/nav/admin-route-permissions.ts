@@ -56,6 +56,15 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   navRoute("/admin/shutdowns", "PERSONAL", "Betriebsurlaub", "calendar", [
     Z("company-shutdown:manage"),
   ]),
+  // GET /leave/limits (handler checks: leave-limit:manage or leave-request:approve)
+  navRoute(
+    "/admin/leave-limits",
+    "PERSONAL",
+    "Urlaubsgrenzen & Sperren",
+    "umbrella",
+    [Z("leave-limit:manage")],
+    [Z("leave-request:approve")],
+  ),
   // Promise.all of templates/coverage, week, patterns
   navRoute("/admin/shifts", "PLANUNG", "Schichtplan", "grid", [
     Z("shift-config:manage"),

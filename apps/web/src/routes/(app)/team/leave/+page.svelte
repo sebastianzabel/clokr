@@ -42,6 +42,20 @@
   import LeaveRequestForm from "$lib/components/leave/LeaveRequestForm.svelte";
   // Issue #468 (D-12, A-2): "Elternzeit-Kürzung erklären" row action on an approved PARENTAL
   // request.
+  import LeaveLimitNotice from "$lib/components/leave/LeaveLimitNotice.svelte";
+  import { exceedanceDescription, warningSentences } from "$lib/leave-limits/sentences";
+  import {
+    exceedancesOf,
+    isLeaveLimitExceptionRequired,
+    validateExceptionReason,
+  } from "$lib/leave-limits/exception"; // Issue #836 (AC-7)
+  import {
+    exceededDaysFromLoad,
+    limitBadgeTitle,
+    loadRangeForMonth,
+    type ExceededDay,
+  } from "$lib/leave-limits/calendar-load"; // Issue #836 (AC-10)
+  import type { LeaveLimitLoadResponse } from "$lib/leave-limits/types";
   import ParentalReductionDialog from "$lib/components/leave/ParentalReductionDialog.svelte";
   import { showsParentalReductionAction } from "$lib/leave/parental-reduction";
   import { halfDayRangeError, endDateForHalfDay } from "$lib/leave/half-day"; // Issue #449 (D-4)
@@ -336,6 +350,8 @@
   // collision-confirm flow, and the mutation — moved into the shared `LeaveRequestForm.svelte`.
   // The page keeps only the person picker (its one addition, Phase 415 D-03) and what opens it.
   let createModalOpen = $state(false);
+  // Issue #836: sentences of the limit warnings returned by the last create (empty = no notice).
+  let limitSentences: string[] = $state([]);
   let createEmployeeId = $state("");
   // Preserves this page's pre-existing default (today/today) as the shared component's initial
   // date props — the component itself defaults to blank when these are omitted (matching
@@ -450,7 +466,38 @@
     };
   }
 
+  // ── Issue #836 (AC-10): days over a leave limit, read from the daily-load endpoint ─────
+  // Shown only to callers who may read the load; the request is a UX gate, the API decides
+  // (403/404). No count is computed here: every number comes from the response.
+  const canReadLimitLoad = $derived(
+    hasPermission($authStore.user, "leave-limit:manage:ZUGEWIESEN") ||
+      hasPermission($authStore.user, "leave-request:approve:ZUGEWIESEN"),
+  );
+  let limitDays: Map<string, ExceededDay> = $state(new Map());
+  let limitGeneration = 0;
+
+  async function loadLimitDays() {
+    const generation = ++limitGeneration;
+    if (!canReadLimitLoad) {
+      limitDays = new Map();
+      return;
+    }
+    const { from, to } = loadRangeForMonth(calYear, calMonth);
+    try {
+      const view = await api.get<LeaveLimitLoadResponse>(
+        withSalonId(`/leave/limits/load?from=${from}&to=${to}`, pageSalonId),
+      );
+      if (generation !== limitGeneration) return;
+      limitDays = exceededDaysFromLoad(view);
+    } catch {
+      // A failed load leaves no badge and no error: the marker is a hint, not a gate.
+      if (generation !== limitGeneration) return;
+      limitDays = new Map();
+    }
+  }
+
   async function loadCalendar() {
+    void loadLimitDays();
     const generation = ++calendarGeneration;
     calLoading = true;
     try {
@@ -706,6 +753,11 @@
     if (SICK_CODES.includes(correctType)) correctHalfDay = false;
   });
 
+  // Issue #836 (AC-7): the correction waiting for a limit exception reason.
+  let limitExceptionOpen = $state(false);
+  let limitExceptionText = $state("");
+  let pendingLimitCorrection: { id: string; body: Record<string, unknown> } | null = null;
+
   async function submitCorrection() {
     if (!correctModal) return;
     // Client-side pre-check (the server is authoritative): end date >= start date.
@@ -729,25 +781,54 @@
     }
     correctSaving = true;
     correctError = "";
+    const body = {
+      startDate: correctStart,
+      endDate: correctEnd,
+      halfDay: correctHalfDayEffective,
+      type: correctType,
+      note: correctNote || null,
+      reason: correctReason.trim(),
+    };
+    const requestId = correctModal.id;
     try {
-      await api.patch(`/leave/requests/${correctModal.id}/correct`, {
-        startDate: correctStart,
-        endDate: correctEnd,
-        halfDay: correctHalfDayEffective,
-        type: correctType,
-        note: correctNote || null,
-        reason: correctReason.trim(),
-      });
+      await api.patch(`/leave/requests/${requestId}/correct`, body);
       closeCorrect();
       await Promise.all([loadData(), loadCalendar()]);
       toasts.success("Antrag korrigiert");
     } catch (e: unknown) {
+      // Issue #836 (AC-7): the correction would exceed a leave limit. Keep the body, close the
+      // correction Modal (one scrim at a time) and ask for the exception reason; the correction's
+      // own `reason` stays mandatory and separate.
+      if (isLeaveLimitExceptionRequired(e)) {
+        limitExceptionText =
+          exceedanceDescription(exceedancesOf(e)) || "Eine Urlaubsgrenze ist überschritten.";
+        pendingLimitCorrection = { id: requestId, body };
+        closeCorrect();
+        limitExceptionOpen = true;
+        return;
+      }
       // A delta-lock 409 ("Gesperrter Monat — Korrektur nicht möglich") or a validation 400
       // lands here and stays visible in the open modal.
       correctError = e instanceof Error ? e.message : "Fehler";
     } finally {
       correctSaving = false;
     }
+  }
+
+  // Confirm handler of the exception step: resends the same correction plus `limitException`.
+  // Throws to keep the reason dialog open (its contract) on an invalid reason or a refusal.
+  async function confirmLimitException(reason: string) {
+    const invalid = validateExceptionReason(reason);
+    if (invalid) throw new Error(invalid);
+    const pending = pendingLimitCorrection;
+    if (!pending) return;
+    await api.patch(`/leave/requests/${pending.id}/correct`, {
+      ...pending.body,
+      limitException: { reason: reason.trim() },
+    });
+    pendingLimitCorrection = null;
+    await Promise.all([loadData(), loadCalendar()]);
+    toasts.success("Antrag korrigiert");
   }
 
   // ── Attest-Nachtrag (Phase 201) ─────────────────────────────────────────────
@@ -1007,6 +1088,9 @@
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {/if}
 
+<!-- Issue #836 (AC-5): non-blocking hint after a request exceeded a leave limit. -->
+<LeaveLimitNotice sentences={limitSentences} onDismiss={() => (limitSentences = [])} />
+
 <!-- ── Mitarbeiter-Filter ──────────────────────────────────────────────────── -->
 <div class="employee-selector card-animate">
   <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
@@ -1229,6 +1313,21 @@
             class:cal-holiday={isHoliday && day.isCurrentMonth}
           >
             <span class="cal-day-num">{day.dayNum}</span>
+            {#if day.isCurrentMonth}
+              {@const limitDay = limitDays.get(day.dateStr)}
+              {#if limitDay}
+                <span
+                  class="badge badge-yellow cal-limit-badge"
+                  role="img"
+                  data-testid="cal-limit-badge"
+                  title={limitBadgeTitle(limitDay)}
+                  aria-label="Urlaubsgrenze überschritten: {limitBadgeTitle(limitDay).replaceAll(
+                    '\n',
+                    '. ',
+                  )}">Grenze</span
+                >
+              {/if}
+            {/if}
             {#if isHoliday && day.isCurrentMonth}
               <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
                 {holidays[0].firstName}
@@ -1852,7 +1951,9 @@
   initialStartDate={createInitialDate}
   initialEndDate={createInitialDate}
   entitlementYear={calYear}
-  onSaved={async () => {
+  onSaved={async (result) => {
+    // Issue #836: limit warnings of the create — shown, never blocking.
+    limitSentences = warningSentences(result?.leaveLimitWarnings ?? []);
     await Promise.all([loadData(), loadCalendar()]);
   }}
 >
@@ -1999,6 +2100,19 @@
     danger
     onConfirm={confirmSection9Reject}
     onCancel={() => (section9RejectCase = null)}
+  />
+{/if}
+
+<!-- ── Issue #836 (AC-7): Ausnahme von der Urlaubsgrenze bei einer Korrektur ───── -->
+{#if limitExceptionText}
+  <ReasonDialog
+    bind:open={limitExceptionOpen}
+    title="Ausnahme von der Urlaubsgrenze"
+    description={`Mit dieser Korrektur wird eine Urlaubsgrenze überschritten:\n${limitExceptionText}`}
+    label="Begründung der Ausnahme"
+    confirmLabel="Trotzdem korrigieren"
+    onConfirm={confirmLimitException}
+    onCancel={() => (pendingLimitCorrection = null)}
   />
 {/if}
 
@@ -2400,6 +2514,13 @@
 
   .cal-day-num {
     z-index: 1;
+  }
+
+  /* Issue #836: marks a day over a leave limit; colour comes from the global .badge recipe. */
+  .cal-limit-badge {
+    align-self: flex-start;
+    padding: 1px 6px;
+    font-size: 0.6875rem;
   }
 
   .cal-chips {

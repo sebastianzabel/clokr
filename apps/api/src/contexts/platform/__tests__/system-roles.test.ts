@@ -15,7 +15,7 @@
  *   (iv)  the sets derived from the doc equal `SYSTEM_ROLE_PERMISSIONS`, element by element and in
  *         catalog order: Admin = ZUGEWIESEN keys admitting A plus every EIGENE key, Manager =
  *         ZUGEWIESEN keys admitting M plus every EIGENE key, Mitarbeiter = every EIGENE key;
- *   (v)   the sizes are 87 / 63 / 22;
+ *   (v)   the sizes are 88 / 63 / 22;
  *   (vi)  both sections yielded enough rows to mean something (input proof — an emptied or
  *         renamed section must turn this red, never let it pass having compared nothing).
  *
@@ -352,9 +352,9 @@ describe("Phase 75b — system-role permission sets derived from docs/permission
     expect([...SYSTEM_ROLE_PERMISSIONS.EMPLOYEE]).toEqual(docDerivedSet(null));
   });
 
-  it("(v) the sizes are Admin 87, Manager 63, Mitarbeiter 22", () => {
-    expect(PERMISSIONS.length).toBe(87);
-    expect(SYSTEM_ROLE_PERMISSIONS.ADMIN).toHaveLength(87);
+  it("(v) the sizes are Admin 88, Manager 63, Mitarbeiter 22", () => {
+    expect(PERMISSIONS.length).toBe(88);
+    expect(SYSTEM_ROLE_PERMISSIONS.ADMIN).toHaveLength(88);
     expect(SYSTEM_ROLE_PERMISSIONS.MANAGER).toHaveLength(63);
     expect(SYSTEM_ROLE_PERMISSIONS.EMPLOYEE).toHaveLength(22);
   });
@@ -420,6 +420,7 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     "section9:upload:ZUGEWIESEN",
     "section9:decide:ZUGEWIESEN",
     "leave-entitlement:read:ZUGEWIESEN",
+    "leave-limit:manage:ZUGEWIESEN",
     "vocational-school:read:ZUGEWIESEN",
     "shift:read:ZUGEWIESEN",
     "shift:plan:ZUGEWIESEN",
@@ -457,8 +458,8 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     "shift:read:ZUGEWIESEN",
   ];
 
-  it("(D-05) Salonmanager equals the hand-written literal list, 24 entries", () => {
-    expect(SALON_MANAGER_EXPECTED).toHaveLength(24);
+  it("(D-05) Salonmanager equals the hand-written literal list, 25 entries", () => {
+    expect(SALON_MANAGER_EXPECTED).toHaveLength(25);
     expect([...SYSTEM_ROLE_PERMISSIONS.SALON_MANAGER]).toEqual(SALON_MANAGER_EXPECTED);
   });
 

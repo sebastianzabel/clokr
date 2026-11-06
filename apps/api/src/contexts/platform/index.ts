@@ -131,6 +131,14 @@ export { userMayApply } from "./facade/role-assignments";
 // Phase 75b (#75), D-16/D-17: the holders of a ZUGEWIESEN permission in a tenant — the Unterbau
 // answer every notification-recipient site asks instead of a role-based Prisma predicate.
 export { userIdsHoldingPermission } from "./facade/role-assignments";
+// Issue #836: additive Unterbau read (Erweiterung) for leave-limit group membership - the stored
+// role assignment ids per user, any scope (D-836-05). Not a change of any existing export.
+// Issue #836: additive Unterbau reads for the leave-limit rules (role groups and the role choice).
+export {
+  accessRoleIdsByUserId,
+  accessRoleChoices,
+  accessRoleOfTenant,
+} from "./facade/role-assignments";
 // Phase 91b (Issue #91), D-03/D-04: how far a caller's access context reaches for one specific
 // permission — the reach every downstream context-owned scope filter narrows against.
 export { resolveAccessReach } from "./facade/role-assignments";

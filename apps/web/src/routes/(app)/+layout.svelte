@@ -53,6 +53,7 @@
     "/admin/integrations": "Integrationen",
     "/admin/shutdowns": "Betriebsurlaub",
     "/admin/special-leave": "Sonderurlaub",
+    "/admin/leave-limits": "Urlaubsgrenzen & Sperren",
     "/admin/vacation": "Urlaub",
     "/admin/roles": "Rollen & Rechte",
     "/admin/availability": "Verfügbarkeit",

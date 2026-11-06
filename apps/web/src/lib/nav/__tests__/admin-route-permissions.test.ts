@@ -137,14 +137,21 @@ describe("admin route permissions (Issue #83)", () => {
     const p = personas as Record<string, string[]>;
     expect(visibleFor(p.ADMIN)).toEqual(ALL);
     expect(visibleFor(p.OWNER)).toEqual(ALL);
+    // Issue #836: the leave-limits page opens for leave-request:approve, which MANAGER and
+    // SALON_MANAGER hold (fixture read by hand); HR and TRAINER hold neither key.
     expect(visibleFor(p.MANAGER)).toEqual([
       "/admin/employees",
+      "/admin/leave-limits",
       "/admin/availability",
       "/admin/salons",
       "/admin/month-close",
       "/admin/export",
     ]);
-    expect(visibleFor(p.SALON_MANAGER)).toEqual(["/admin/employees", "/admin/availability"]);
+    expect(visibleFor(p.SALON_MANAGER)).toEqual([
+      "/admin/employees",
+      "/admin/leave-limits",
+      "/admin/availability",
+    ]);
     // Issue #86 (owner decision 16.10.2026): the HR template holds salon:read, so "Salons" joins.
     expect(visibleFor(p.HR)).toEqual(["/admin/employees", "/admin/salons", "/admin/month-close"]);
     expect(visibleFor(p.TRAINER)).toEqual(["/admin/employees"]);

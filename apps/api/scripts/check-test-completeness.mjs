@@ -1038,7 +1038,11 @@ import { readFileSync } from "node:fs";
 // (incl. 3 skipped); new files day-break-travel-offer-660 (6), day-break-travel-offer-rules-660 (17),
 // travel-offer-one-rule-660 (6); nothing removed, skipped or loosened; MIN_FILES 810 -> 813
 // Merge of #660 onto main after #615: 815 + 3 new files.
-const MIN_FILES = 818;
+// Phase 836 (Issue #836): 16 new test files (leave-limits-* x10 incl. leave-limits-template-migration-836,
+// roles-delete-leave-limit-836, contract-segments-for-many-836, access-role-ids-836 and the kernel/exception/redact
+// files under contexts/); counted from `git diff --diff-filter=A origin/main`, verified with a full API run
+// (834 files); nothing removed, skipped or loosened; MIN_FILES 818 -> 834
+const MIN_FILES = 834;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1189,7 +1193,10 @@ const MIN_FILES = 818;
 // (incl. 3 skipped); the three new files carry 29 cases, the measured total is 30 above the previous floor (the previous
 // floor was a lower bound); nothing removed, skipped or loosened; MIN_TESTS 11911 -> 11941
 // Merge of #660 onto main after #615: 11965 + 29 (the three new files above).
-const MIN_TESTS = 11994;
+// Phase 836 (Issue #836): the 16 new files carry 179 cases (per-file counts of the full run's default reporter);
+// the full run measured 12176 tests (incl. 3 skipped), so the floor stays a lower bound; nothing removed, skipped or
+// loosened; MIN_TESTS 11994 -> 12173
+const MIN_TESTS = 12173;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

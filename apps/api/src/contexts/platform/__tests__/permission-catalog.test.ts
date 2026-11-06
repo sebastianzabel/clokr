@@ -123,6 +123,13 @@ const ISSUE_72_TABLE: readonly IssueTableRow[] = [
     relation: "Mandant",
     actions: ["read", "manage"],
   },
+  // Issue #836: the ticket that justifies the resource (leave limits and blackouts per salon).
+  {
+    resource: "leave-limit",
+    context: "Abwesenheiten",
+    relation: "Person",
+    actions: ["manage"],
+  },
   {
     resource: "company-shutdown",
     context: "Abwesenheiten",

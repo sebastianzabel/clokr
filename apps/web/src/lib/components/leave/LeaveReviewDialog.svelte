@@ -23,6 +23,7 @@
    */
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte";
   import AttestFields from "./AttestFields.svelte";
   import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
   import {
@@ -39,6 +40,12 @@
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility";
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import {
+    exceedancesOf,
+    isLeaveLimitExceptionRequired,
+    validateExceptionReason,
+  } from "$lib/leave-limits/exception"; // Issue #836
+  import { exceedanceDescription } from "$lib/leave-limits/sentences"; // Issue #836
   import {
     showsBurlgSection7Notice,
     type LeaveReviewRequest,
@@ -72,6 +79,13 @@
   let collisionOpen = $state(false);
   let collisionSummary = $state<CollisionSummary | null>(null);
   let pendingApprove = $state<{ id: string; typeCode: CalendarTypeCode } | null>(null);
+
+  // ── Issue #836: leave-limit exception step on APPROVE (D-836-16) ───────────
+  // The API answers 409 LEAVE_LIMIT_EXCEPTION_REQUIRED when the approval would exceed a limit;
+  // the approver then gives a reason and the approval is resent with `limitException`.
+  let exceptionOpen = $state(false);
+  let exceptionText = $state("");
+  let pendingException = $state<{ id: string; typeCode: CalendarTypeCode } | null>(null);
 
   // Re-initialise whenever the dialog is open with a request to show — including the very first
   // mount with `open: true` already set, which is how every mounted test in this file renders the
@@ -160,7 +174,30 @@
   async function confirmApproveWithCollisions() {
     if (!pendingApprove) return;
     const ok = await runReview("APPROVED", pendingApprove);
+    // The server asked for a limit exception: this dialog hands over to the reason dialog, so
+    // it closes without an error (exactly one dialog stays live).
+    if (!ok && pendingException) {
+      collisionOpen = false;
+      return;
+    }
     if (!ok) throw new Error("Genehmigung fehlgeschlagen");
+  }
+
+  // Confirm handler of the exception step: resends the same approval with the reason. Throws to
+  // keep the reason dialog open (its contract) when the reason is invalid or the resend fails.
+  async function confirmException(reason: string) {
+    const invalid = validateExceptionReason(reason);
+    if (invalid) throw new Error(invalid);
+    if (!pendingException) return;
+    const ok = await runReview("APPROVED", pendingException, {
+      limitException: { reason: reason.trim() },
+    });
+    if (!ok) throw new Error(error || "Genehmigung fehlgeschlagen");
+    pendingException = null;
+  }
+
+  function cancelException() {
+    pendingException = null;
   }
 
   // Shared review mutation, moved verbatim (with D-04's two adjustments below) from
@@ -169,6 +206,7 @@
   async function runReview(
     status: "APPROVED" | "REJECTED",
     ctx: { id: string; typeCode: CalendarTypeCode },
+    extra?: { limitException?: { reason: string } },
   ): Promise<boolean> {
     saving = true;
     error = "";
@@ -176,6 +214,7 @@
       await api.patch(`/leave/requests/${ctx.id}/review`, {
         status,
         reviewNote: note || null,
+        ...extra,
       });
       if (SICK_CODES.includes(ctx.typeCode)) {
         // D-02 (Phase 104-10): deliberately left untouched — this is the pre-existing,
@@ -193,6 +232,19 @@
       await onReviewed();
       return true;
     } catch (e: unknown) {
+      // Issue #836: a limit-exceeding APPROVAL is asked for an exception reason, never shown as a
+      // plain error. Only the first answer opens the step; a resend (extra set) that is refused
+      // again falls through to the normal error path.
+      if (status === "APPROVED" && !extra && isLeaveLimitExceptionRequired(e)) {
+        // Never empty: an empty text would leave the request stuck with no visible dialog.
+        exceptionText =
+          exceedanceDescription(exceedancesOf(e)) || "Eine Urlaubsgrenze ist überschritten.";
+        pendingException = ctx;
+        // One scrim at a time, as on the collision path.
+        open = false;
+        exceptionOpen = true;
+        return false;
+      }
       // D-04: /inbox's better error text — `data.error` is the German API message, `message` is
       // only the HTTP status text.
       const apiErr = e as { data?: { error?: string }; message?: string };
@@ -398,6 +450,19 @@
       {/if}
     {/snippet}
   </ConfirmDialog>
+{/if}
+
+<!-- Issue #836: leave-limit exception (approve) — reason is mandatory and audited by the API -->
+{#if exceptionText}
+  <ReasonDialog
+    bind:open={exceptionOpen}
+    title="Ausnahme von der Urlaubsgrenze"
+    description={`Mit dieser Genehmigung wird eine Urlaubsgrenze überschritten:\n${exceptionText}`}
+    label="Begründung der Ausnahme"
+    confirmLabel="Trotzdem genehmigen"
+    onConfirm={confirmException}
+    onCancel={cancelException}
+  />
 {/if}
 
 <style>

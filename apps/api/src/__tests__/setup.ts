@@ -849,6 +849,10 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.leaveType.deleteMany({ where: { tenantId } });
   await prisma.publicHoliday.deleteMany({ where: { tenantId } });
   await prisma.coverageRule.deleteMany({ where: { tenantId } });
+  // Issue #836: LeaveLimitRule -> Tenant, Salon and AccessRole are all onDelete: Restrict, so the
+  // rules must go before the salon, access-role and tenant deletes below, or the delete fails and
+  // leaks fixture rows into the shared test database.
+  await prisma.leaveLimitRule.deleteMany({ where: { tenantId } });
   await prisma.shiftTemplate.deleteMany({ where: { tenantId } });
   await prisma.companyShutdown.deleteMany({ where: { tenantId } });
   await prisma.terminalApiKey.deleteMany({ where: { tenantId } });

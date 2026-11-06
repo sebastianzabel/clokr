@@ -7429,3 +7429,142 @@ Push-Typen), `with-advisory-lock` (Schlüsselzahl), `cron-deactivated-tenants-88
 (`route-surface.txt`), Ausschlüsse der Neutralitätsmatrix für die zwei Routen. Tests (Web): `shift-reminder-settings`,
 `reminders`, `ReminderSettings`, `clock-reminder`, `dashboard-clock-reminder-wiring-609`, `admin-vacation-save-wiring`
 (Schlüsselzahl 41 auf 46).
+
+## AG — Urlaubsgrenzen und Urlaubssperren je Salon (Phase 836, Issue #836)
+
+### Ausgangslage
+
+Wie viele Personen eines Salons gleichzeitig im Urlaub sein dürfen, stand bisher nur in den Köpfen der Führungskräfte. Der
+Antrag, die Genehmigung und die Korrektur prüften nichts gegen eine Obergrenze. Phase 836 führt je Salon (oder für alle Salons)
+eine Regel ein: höchstens N Personen einer Gruppe (alle, eine Beschäftigungsart oder eine Zugriffsrolle) gleichzeitig im
+Urlaub, optional in einem Zeitfenster. Eine Urlaubssperre ist dieselbe Regel mit Gruppe „alle“ und N = 0. Die Regel warnt beim
+Antrag, verlangt bei Genehmigung und Korrektur eine begründete, protokollierte Ausnahme und ändert nie einen bereits
+genehmigten Antrag. Der Urlaubsplaner (#835) nutzt später denselben Zähler.
+
+### Rechtslage
+
+- § 7 Abs. 1 BUrlG: Der Arbeitgeber berücksichtigt die Urlaubswünsche, es sei denn, dringende betriebliche Belange oder
+  Urlaubswünsche anderer Arbeitnehmer stehen entgegen. Die Grenze ist ein betrieblicher Belang; die Abwägung bleibt bei der
+  genehmigenden Person. Deshalb ist die Überschreitung eine **Ausnahme mit Begründung**, kein hartes Verbot: Clokr lehnt nie
+  selbst ab, und die Begründung ist im Prüfprotokoll nachvollziehbar (Revisionssicherheit).
+- Art. 5 Abs. 1 lit. c, Art. 9 und Art. 32 DSGVO: Wer sonst noch Urlaub hat, ist Personendatum. Warnungen, der 409-Antwortkörper
+  und die Tageslast nennen eine andere Person nur, wenn die lesende Person deren Urlaub ohnehin lesen darf
+  (`leave-request:read` mit Reichweite `ZUGEWIESEN`, oder sie selbst); alle anderen sehen eine Zahl (`hiddenCount`). Kein Feld sagt,
+  wer verborgen ist oder warum. Das Prüfprotokoll der Genehmigung enthält Regel- und Salon-Kennungen und Zählstände, nie die
+  Kennung einer anderen Person (D-836-10).
+- Krankheit zählt nie (Art. 9 DSGVO, kein Urlaubswunsch): Die zählenden Arten sind eine Positivliste
+  (`LEAVE_LIMIT_COUNTED_CODES`), keine Negativliste (D-836-04).
+
+### Entscheidung
+
+- **Modell (D-836-01/02).** `LeaveLimitRule` in Abwesenheiten, eine Tabelle für Grenze und Sperre, nie hart gelöscht
+  (`deletedAt`, Entfernen und Ändern protokolliert mit altem und neuem Wert). Zwei Migrationen:
+  `20261106131444_leave_limit_rule` (erzeugt über `migrate diff`: Enum `LeaveLimitGroupKind`, Tabelle, drei Indizes, drei
+  Fremdschlüssel) und `20261106132018_leave_limit_rule_checks` (von Hand: `LeaveLimitRule_maxPersons_check`,
+  `LeaveLimitRule_window_check`, `LeaveLimitRule_group_shape_check`; Prisma modelliert keine CHECKs).
+- **Zwei neue Shared-Kernel-Fremdschlüssel (ADR 0002, Entscheidung 4).** `LeaveLimitRule.salonId` → `Salon` und
+  `LeaveLimitRule.accessRoleId` → `AccessRole`, beide `onDelete: Restrict`, dazu `LeaveLimitRule.tenantId` → `Tenant`
+  (`Restrict`). Beides sind **Erweiterungen** des Unterbaus (nichts ändert sich für einen bestehenden Leser) und mit dem
+  Status `Ready` des Issues freigegeben. Der referenzierte Salon und die Rolle gehören demselben Mandanten (oder die Rolle ist
+  eine Systemrolle); die Routen prüfen das mit `resolveSalonInReach` und `accessRoleOfTenant`, eine fremde oder unbekannte
+  Kennung ist dieselbe 404.
+- **Zusätzliche Unterbau-Lesezugriffe (Erweiterungen).** `accessRoleIdsByUserId` (Gruppenzugehörigkeit nach Zugriffsrolle in
+  einer Abfrage), `accessRoleChoices` und `accessRoleOfTenant` (Rollenauswahl und -prüfung für das Formular) und der Berechtigungs-
+  schlüssel `leave-limit:manage` (Ressource `leave-limit`, Relation `PERSON`, damit ein Salonmanager ihn halten kann). Außerdem
+  antwortet `DELETE /roles/:id` mit 409, wenn eine Regel die Rolle nennt (statt einer Restrict-Verletzung als 500). Die
+  Vorlagen der Systemrollen erhalten den neuen Schlüssel erst mit einem Nachtrag aus Plan 836-08.
+- **Ein Zähler (D-836-03, AC-3).** `contexts/absence/leave-limits/` hält den einzigen Zählcode in drei Schichten: der reine Kern
+  `parallelLeaveLoad` (`parallel-leave-load.ts`), der Lader (`load-facts.ts`, konstante Abfragezahl, alle Lesezugriffe
+  mandantengebunden) und der Prüfer `evaluateLeaveLimits` (`check.ts`). Die Tageslast (`GET /leave/limits/load`,
+  `load-view.ts`) liest denselben Kern. `leave-limits-one-place-836.test.ts` schlägt bei einer zweiten Zählung fehl. Das Modul
+  wird **nicht** aus `contexts/absence/index.ts` re-exportiert (D-836-21): es zieht `leave-days.ts` und die
+  Schichtplanungs-Fassade, ein Re-Export würde den gemessenen Importzyklus über die Obergrenze 22 heben
+  (`measure-context-boundary-imports.ts --cycles --check 22`). Aufrufer in Abwesenheiten importieren es relativ.
+- **Zählregeln (D-836-04, D-836-17, D-836-20).** Eine Person zählt je Salon, Gruppe und Tag einmal, im Stammsalon des Tages,
+  nur an eigenen Arbeitstagen (Vertragssegment, ohne Feiertag am Arbeitsort), nur im Beschäftigungsfenster, nie anonymisiert.
+  Ein halber Tag zählt als eine Person; ein offener Antrag zählt mit. **D-836-17:** Bei `SHIFT_BASED` zählt ein Tag, wenn eine
+  Schicht im Dienstplan steht **oder** der Wochentag in den üblichen Arbeitstagen liegt, sonst über die Arbeitstagskette;
+  ein reines „Schicht vorhanden“ zählt zu wenig, weil Dienstpläne an Urlaubstagen keine Schicht enthalten. **D-836-20:** Ein
+  Berufsschultag verdrängt Erholungsurlaub (nur `VACATION`), wie die Preisberechnung es tut.
+- **Überschreitung (D-836-07).** `Anzahl > Höchstzahl` an einem Tag, an dem der geprüfte Antrag selbst zählt; die Last
+  schließt den Antrag ein. Je Gruppe gilt die strengste Regel (kleinstes Maximum, bei Gleichstand die kleinere Kennung).
+- **Wirkung (D-836-08/09/19).** `POST /leave/requests` legt an und warnt (`leaveLimitWarnings`, ausfallsicher offen: eine
+  fehlschlagende Prüfung wird protokolliert und lässt den Antrag bestehen). `PATCH …/review` (APPROVED) und `PATCH …/correct`
+  antworten ohne Ausnahme mit 409 `LEAVE_LIMIT_EXCEPTION_REQUIRED` und schreiben nichts; mit `limitException: { reason }`
+  (10 bis 500 Zeichen) geht es durch und das Prüfprotokoll (`APPROVE`, `LEAVE_CORRECTED`) trägt `leaveLimitException`. Die
+  Genehmigung ist **fail-closed** (eine fehlschlagende Prüfung ist ein 500, nie eine stille Genehmigung). Die Korrektur prüft nur
+  die **hinzugekommenen** Tage; eine Verkürzung verlangt nie eine Ausnahme. Die Mitarbeiterbeendigung (#614) teilt sich den Kern
+  der Korrektur und wird von einer Grenze nie abgewiesen.
+- **Nie rückwirkend (D-836-11).** Eine Regel ändert keinen genehmigten Antrag. Die Tageslast kennzeichnet an einem überschrittenen
+  Tag Anträge, die vor dem Anlegen der Regel genehmigt wurden (`approvedBeforeRule`, Zähler `approvedBeforeRuleCount`), neutral
+  und ohne Folge.
+- **Sichtbarkeit (D-836-12).** Siehe Rechtslage: `redact.ts` (`readerVisibilityFrom`, `isPersonVisibleOn`) ist die einzige Stelle.
+- **Berechtigungen (D-836-13/22).** Schreiben: `leave-limit:manage:ZUGEWIESEN`, eine Regel für alle Salons nur mit
+  Mandanten-Reichweite (sonst 403). Lesen (`GET /leave/limits`, `GET /leave/limits/load`): `leave-limit:manage` oder
+  `leave-request:approve`, als zwei Handler-Prüfungen, weil `requireAnyPermission` zwei `Ressource:Aktion`-Paare nicht mischen kann.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** das Modell, das Modul `leave-limits/`, die Routen `api/leave-limits.ts` und drei Prüfstellen in `api/leave.ts`
+  (Antrag, Genehmigung, Korrektur).
+- **Schichtplanung:** liest Schichten ausschließlich über `index.ts` (`getShiftsInRange`); keine Änderung.
+- **Arbeitszeitkonto:** keine. Der Zähler liest weder Saldo noch Soll und ändert `calcLeaveAbsenceMinutesTz()` nicht.
+- **Kompositionsschicht:** keine (außer der Registrierung der Routen in `app.ts`); kein Geschäftsregel-Code dort.
+- **Unterbau:** **Erweiterung** nach ADR 0002, Entscheidung 7: die beiden Fremdschlüssel, die genannten Lesezugriffe, der neue
+  Berechtigungsschlüssel und die 409-Zuordnung in `DELETE /roles/:id`. Kein bestehender Leser ändert sich.
+
+### Grenzen
+
+- **Keine Historie (D-836-05).** Weder `Employee.classification` noch `RoleAssignment` speichern eine Gültigkeit. Die
+  Gruppenzugehörigkeit wird aus dem **jetzt** Gespeicherten beurteilt (`groupMembershipOn`, der Tag ist die Nahtstelle für ein
+  späteres Historienmodell). Eine geänderte Beschäftigungsart oder eine entzogene Rolle ändert die Zählung sofort und auch für
+  Tage, die schon in der Vergangenheit liegen.
+- **`reviewedAt` als Genehmigungsstempel (D-836-18).** `approvedBeforeRule` vergleicht `reviewedAt` mit `updatedAt` der Regel, damit eine nachträgliche Verschärfung derselben Regel (Bearbeitung an Ort und Stelle, D-836-02) wie eine neue Regel wirkt.
+  `reviewedAt` wird von der abgelehnten Stornierung überschrieben (der Antrag geht zurück auf `APPROVED`); danach kann der Hinweis
+  verschwinden. Eine Korrektur nach dem Anlegen der Regel schreibt ihre eigene Ausnahme.
+- **Entfernte Regeln halten die Rolle fest (WR-02).** Der Fremdschlüssel `LeaveLimitRule.accessRoleId` bleibt `Restrict`, und eine entfernte Regel behält ihre Zeile samt Rollenverweis zur Nachvollziehbarkeit; deshalb lässt sich eine Rolle, die je in einer Regel stand, nie löschen, und die Antwort 409 von `DELETE /roles/:id` nennt auch entfernte Regeln.
+- **Gleichzeitige Genehmigungen (C-2, T-836-18).** Die Prüfung ist ein lesender Vorabcheck vor dem ersten Schreiben; die
+  Genehmigungsroute läuft nicht in einer Transaktion, und die Sperre je Mitarbeiter serialisiert nicht zwei verschiedene
+  Personen. Zwei gleichzeitige Genehmigungen verschiedener Personen können deshalb beide bestehen und gemeinsam über die Grenze
+  gehen. Akzeptiert: die Grenze ist ein betrieblicher Belang mit Ausnahme, keine Integritätsinvariante.
+- **Ausfallsicherheit.** Die Warnung beim Antrag ist ausfallsicher offen, die Genehmigung und die Korrektur sind ausfallsicher
+  geschlossen. Eine Warnung kann also fehlen, eine Genehmigung nie ohne Prüfung geschehen.
+- **Zeitfenster der Tageslast:** höchstens 92 Tage.
+- Eine Regel ohne Stammsalon der Person an einem Tag zählt diesen Tag nicht.
+- Der Pfad `PATCH /leave/requests/:id` (Bearbeiten eines offenen Antrags) warnt nicht; die Genehmigung fängt es.
+
+### Nachweise
+
+Tests (API): `leave-limits-migration-836`, `leave-limits-kernel-836`, `contract-segments-for-many-836`, `access-role-ids-836`,
+`leave-limits-counting-836` (Nachrechnen der Zählregeln, auch gegen `filterLeaveRowsToHomeSalon`), `leave-limits-request-warning-836`,
+`leave-limits-approve-exception-836`, `leave-limits-correct-836`, `leave-limits-exception-836`, `leave-limits-routes-836`,
+`roles-delete-leave-limit-836`, `leave-limits-redact-836`, `leave-limits-redaction-836`, `leave-limits-load-836`,
+`leave-limits-one-place-836` (AST-Wächter mit Untergrenze und Positivkontrolle). Geänderte Prüfwerte: die Modellzahlen in
+`measure-foreign-context-access` und `lint-tenant-scoping-model-graph`, die Ausschlüsse der Neutralitätsmatrix für die vier
+Routen, der Importzähler der Kompositionswurzel.
+
+### Nachtrag Phase 836 — Systemrollen-Templates (Semantikänderung des Unterbaus)
+
+Die globalen Templates **Admin** (`…a001`), **Inhaber** (`…a004`) und **Salonmanager** (`…a005`) erhalten
+`leave-limit:manage:ZUGEWIESEN`; Manager, Mitarbeiter, Personalabteilung und Ausbilder bekommen ihn nicht. Das ist eine
+**Semantikänderung** des Unterbaus nach ADR 0002, Entscheidung 7: Die Änderung gilt sofort für jedes Konto, das eine dieser
+Rollen hält (die Kundenkopien der Templates, also mandanteneigene Rollen, bleiben unverändert).
+
+- **Owner-Entscheidung 06.11.2026: Admin, Inhaber, Salonmanager.** Der Owner hat die vorgeschlagene Rollenmenge (Option a) vor
+  dem Merge bestätigt (Issue #836). Die Vergabe steht in einem eigenen Commit und in einer eigenen Datenmigration.
+- **Admin und Inhaber sind keine Wahl.** Admin hält jeden Schlüssel, dessen Zeilen in `docs/permissions.md` den Buchstaben „A“
+  nennen (`system-roles.test.ts` (iv)), und Inhaber gleicht dem lebenden Katalog (`system-roles.test.ts` (D-04)). Den Schlüssel
+  bei einem der beiden wegzulassen hieße, ihn aus dem Katalog zu entfernen. Offen war nur der Salonmanager.
+- **Salonmanager.** Seine Reichweite ist `ZUGEWIESEN`: er pflegt die Regeln seiner Salons (Prüfung über `resolveSalonInReach`),
+  eine Regel für alle Salons braucht Mandanten-Reichweite und bleibt bei Admin und Inhaber. Lesen der Regeln und der Tageslast
+  geht auch mit `leave-request:approve` im Salon, unabhängig von dieser Vergabe.
+- **Mechanik.** Neue, rein datenverändernde Migration `20261106143731_leave_limit_template_grant` (drei `UPDATE "AccessRole"`,
+  `"tenantId" IS NULL`, `IS DISTINCT FROM`, kein DDL, keine `RoleAssignment`, kein `AuditLog`); die Arrays sind aus
+  `SYSTEM_ROLE_PERMISSIONS` erzeugt. Frühere Migrationen bleiben unberührt. Drift-Pins: `system-roles.test.ts` ((iv), (v) 88/63/22,
+  (D-04), Salonmanager 25 Einträge), `system-roles-migration.test.ts`, die Persona-Fixture des Web
+  (`web-system-role-fixture-83`) und die neue `leave-limits-template-migration-836.test.ts`.
+- **Auswirkung auf die Kontexte.** Zeiterfassung: keine. Abwesenheiten: Konten mit den drei Rollen dürfen `/admin/leave-limits`
+  bedienen und `/leave/limits` schreiben. Schichtplanung: keine. Arbeitszeitkonto: keine. Kompositionsschicht: keine.
+  Unterbau: die drei Template-Zeilen.
+- **Runbook und Rollback:** `docs/migrations.md`, Abschnitt „Phase 836“.

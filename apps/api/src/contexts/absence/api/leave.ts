@@ -72,6 +72,15 @@ import {
   resolveSalonInReach, // Issue #558 (D-01) — the one validator of a chosen salon
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
+import {
+  buildLeaveLimitExceptionAudit,
+  correctionCandidateRanges,
+  evaluateLeaveLimits,
+  leaveLimitExceptionRequiredBody,
+  limitExceptionSchema,
+  readerVisibilityFrom,
+  toLeaveLimitWarnings,
+} from "../leave-limits"; // Issue #836 (D-836-03/D-836-08/D-836-09/D-836-12)
 import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { supersedeSection9CreditsOfCancelledRequest } from "../section9-supersede";
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
@@ -196,6 +205,7 @@ const createSchema = z
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
   reviewNote: z.string().optional().nullable(),
+  limitException: limitExceptionSchema.optional(), // Issue #836 (D-836-09): approver's exception over a salon limit
 });
 
 const updateSchema = z
@@ -234,6 +244,7 @@ const correctSchema = z
     note: z.string().optional().nullable(),
     type: z.enum(TYPE_CODES).optional(),
     reason: auditReasonSchema, // Quick 260824-cjd — mandatory Korrektur-Begründung
+    limitException: limitExceptionSchema.optional(), // Issue #836 (D-836-19): exception when a correction adds days over a limit
   })
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
@@ -450,6 +461,20 @@ async function callerMaySeeSaldoOf(
   );
   const stichtag = req.testNow ?? new Date();
   return isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, employeeId, stichtag);
+}
+
+/**
+ * Issue #836 (AC-12, D-836-12): the reach within which the caller may be told the NAMES of the other
+ * persons behind a limit exceedance (`leave-request:read:ZUGEWIESEN`; the rest is a count). Resolved
+ * only when there is an exceedance, so a request under every limit (or a tenant without rules)
+ * costs no extra query.
+ */
+function limitReaderReach(app: FastifyInstance, req: FastifyRequest) {
+  return resolveAccessReach(
+    app.prisma,
+    accessContextFromRequest(req),
+    "leave-request:read:ZUGEWIESEN",
+  );
 }
 
 export async function leaveRoutes(app: FastifyInstance) {
@@ -914,11 +939,44 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
       }
 
+      // Issue #836 (D-836-08, D-836-19): a non-blocking salon-limit warning. The request already
+      // exists, so a failing check is logged and the key simply stays absent (fail-open).
+      let leaveLimitWarnings: ReturnType<typeof toLeaveLimitWarnings> = [];
+      try {
+        const limitResult = await evaluateLeaveLimits(app.prisma, tenantId, {
+          candidates: [
+            {
+              requestId: request.id,
+              employeeId,
+              typeCode: body.type,
+              startDay: body.startDate,
+              endDay: body.endDate,
+            },
+          ],
+          excludeRequestIds: [request.id],
+        });
+        leaveLimitWarnings = toLeaveLimitWarnings(
+          limitResult.exceedances,
+          limitResult.exceedances.length > 0
+            ? {
+                visibility: readerVisibilityFrom(
+                  await limitReaderReach(app, req),
+                  req.user.employeeId ?? null,
+                ),
+                personNames: limitResult.personNames,
+              }
+            : undefined,
+        );
+      } catch (err) {
+        app.log.warn({ err, requestId: request.id }, "leave limit check failed on request create");
+      }
+
       return reply.code(201).send({
         ...request,
         typeCode: body.type,
         startDate: request.startDate.toISOString().split("T")[0],
         endDate: request.endDate.toISOString().split("T")[0],
+        ...(leaveLimitWarnings.length > 0 && { leaveLimitWarnings }),
       });
     },
   });
@@ -1615,6 +1673,43 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #836 (D-836-09/10): an approval that pushes a salon group over a rule needs an
+      // explicit, audited exception. A pure read BEFORE the first write, so a refusal leaves no
+      // trace (status, reviewedAt, audit, notices); a rejection is never checked. Fail-closed: a
+      // failing check propagates (500) instead of approving without the legally relevant record.
+      let leaveLimitException: ReturnType<typeof buildLeaveLimitExceptionAudit> | null = null;
+      if (body.status === "APPROVED") {
+        const limitResult = await evaluateLeaveLimits(app.prisma, existing.employee.tenantId, {
+          candidates: [
+            {
+              requestId: existing.id,
+              employeeId: existing.employeeId,
+              typeCode: existing.leaveType.code,
+              startDay: existing.startDate.toISOString().slice(0, 10),
+              endDay: existing.endDate.toISOString().slice(0, 10),
+            },
+          ],
+          excludeRequestIds: [existing.id],
+        });
+        if (limitResult.exceedances.length > 0) {
+          if (!body.limitException) {
+            return reply.code(409).send(
+              leaveLimitExceptionRequiredBody(limitResult.exceedances, {
+                visibility: readerVisibilityFrom(
+                  await limitReaderReach(app, req),
+                  req.user.employeeId ?? null,
+                ),
+                personNames: limitResult.personNames,
+              }),
+            );
+          }
+          leaveLimitException = buildLeaveLimitExceptionAudit(
+            body.limitException.reason,
+            limitResult.exceedances,
+          );
+        }
+      }
+
       const reviewTypeCode = existing.leaveType.code;
 
       // Issue #294: the OVERTIME_COMP booking below is computed but NOT written where it is
@@ -1932,6 +2027,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           days: Number(updated.days),
           daysProvisional: updated.daysProvisional,
           reviewNote: body.reviewNote,
+          ...(leaveLimitException ? { leaveLimitException } : {}),
         },
         // Phase 120 (D-12): CLAUDE.md §Audit-Proof names "userId, timestamp, IP, and before/after
         // values" in ONE sentence — this entry was missing two of those parts, not one. Same call site,
@@ -2365,6 +2461,48 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { plan } = prepared;
       const { oldTypeCode, newType, oldOtMinutes, newOtMinutes, oldOtSource } = plan;
 
+      // Issue #836 (D-836-19): only the days a correction ADDS (or the whole range when an uncounted
+      // type becomes counted) can need a limit exception; a shortening never does. Checked here, in
+      // the route, after every pre-write guard and before the transaction — never inside
+      // prepareLeaveCorrection, which the employment exit shares and must not be refused by a limit.
+      let leaveLimitException: ReturnType<typeof buildLeaveLimitExceptionAudit> | null = null;
+      const limitRanges = correctionCandidateRanges({
+        oldStart: existing.startDate,
+        oldEnd: existing.endDate,
+        newStart: start,
+        newEnd: end,
+        oldTypeCode,
+        newTypeCode: newType,
+      });
+      if (limitRanges.length > 0) {
+        const limitResult = await evaluateLeaveLimits(app.prisma, req.user.tenantId, {
+          candidates: limitRanges.map((range) => ({
+            requestId: existing.id,
+            employeeId: existing.employeeId,
+            typeCode: newType,
+            ...range,
+          })),
+          excludeRequestIds: [existing.id],
+        });
+        if (limitResult.exceedances.length > 0) {
+          if (!body.limitException) {
+            return reply.code(409).send(
+              leaveLimitExceptionRequiredBody(limitResult.exceedances, {
+                visibility: readerVisibilityFrom(
+                  await limitReaderReach(app, req),
+                  req.user.employeeId ?? null,
+                ),
+                personNames: limitResult.personNames,
+              }),
+            );
+          }
+          leaveLimitException = buildLeaveLimitExceptionAudit(
+            body.limitException.reason,
+            limitResult.exceedances,
+          );
+        }
+      }
+
       // Steps 8-11 run inside ONE interactive transaction (94 CR-01): the correction issues TWO
       // authoritative ledger writes (reverse OLD + apply NEW); without a transaction a
       // mid-sequence failure would leave the OLD booking reversed but the NEW one unapplied. All
@@ -2425,6 +2563,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           // T-468-10: names whether the OLD side's reversal used the stored booking or the A-4
           // legacy recomputation fallback. Only present when the OLD side was OVERTIME_COMP.
           ...(oldTypeCode === "OVERTIME_COMP" ? { overtimeCompReversalSource: oldOtSource } : {}),
+          ...(leaveLimitException ? { leaveLimitException } : {}),
         },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });

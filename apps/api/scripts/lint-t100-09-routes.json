@@ -879,6 +879,16 @@
       "validatedAt": null
     },
     {
+      "route": "DELETE /api/v1/leave/limits/:id",
+      "file": "apps/api/src/contexts/absence/api/leave-limits.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a LeaveLimitRule, not Employee/LeaveType - fixture cannot produce a foreign instance. leave-limits.ts `loadManageableRule` uses a SCOPED `findFirst({ id, tenantId, deletedAt: null })`; a foreign tenant's rule, an unknown id and a removed rule answer the byte-identical `{ error: \"Regel nicht gefunden\" }` 404 - conformant. Proven by `leave-limits-routes-836.test.ts`.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "DELETE /api/v1/shifts/coverage-rules/:id",
       "file": "apps/api/src/contexts/scheduling/api/shifts.ts",
       "category": "nicht anwendbar",
@@ -895,6 +905,16 @@
       "params": null,
       "minimalBody": null,
       "reason": "`:id` addresses a ShiftTemplate, not Employee/LeaveType — fixture cannot produce a foreign instance. shifts.ts:716-719 uses a SCOPED `findFirst({id, tenantId})`, byte-identical `{ error: \"Vorlage nicht gefunden\" }` 404 — conformant.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
+      "route": "PUT /api/v1/leave/limits/:id",
+      "file": "apps/api/src/contexts/absence/api/leave-limits.ts",
+      "category": "nicht anwendbar",
+      "params": null,
+      "minimalBody": null,
+      "reason": "`:id` addresses a LeaveLimitRule, not Employee/LeaveType - fixture cannot produce a foreign instance. leave-limits.ts `loadManageableRule` uses a SCOPED `findFirst({ id, tenantId, deletedAt: null })`; a foreign tenant's rule, an unknown id and a removed rule answer the byte-identical `{ error: \"Regel nicht gefunden\" }` 404 - conformant. Proven by `leave-limits-routes-836.test.ts`.",
       "ticket": null,
       "validatedAt": null
     },
