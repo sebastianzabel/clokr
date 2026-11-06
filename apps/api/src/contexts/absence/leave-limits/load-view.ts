@@ -58,11 +58,12 @@ function windowIntersects(rule: LeaveLimitRuleRow, fromDay: string, toDay: strin
 
 /**
  * A request counts as "approved before the rule" for the strictest rule of its day when it was
- * approved (an effective status, `reviewedAt` set) before that rule was created. `reviewedAt` is the
+ * approved (an effective status, `reviewedAt` set) before that rule took its current form: rules are
+ * edited in place (D-836-02), so `updatedAt` stands for the last create or edit (D-836-11). `reviewedAt` is the
  * approval stamp; a rejected cancellation overwrites it (D-836-18, documented limit).
  */
 function approvedBefore(row: StoredLeaveRow, rule: LeaveLimitRuleRow): boolean {
-  return EFFECTIVE.has(row.status) && row.reviewedAt !== null && row.reviewedAt < rule.createdAt;
+  return EFFECTIVE.has(row.status) && row.reviewedAt !== null && row.reviewedAt < rule.updatedAt;
 }
 
 export async function leaveLimitLoadView(

@@ -34,6 +34,7 @@ function rule(over: Partial<LeaveLimitRuleRow> & { id: string }): LeaveLimitRule
     validUntil: null,
     name: null,
     createdAt: new Date("2027-01-01T00:00:00Z"),
+    updatedAt: new Date("2027-01-01T00:00:00Z"),
     ...over,
   };
 }

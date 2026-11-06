@@ -20,6 +20,8 @@ export type LeaveLimitRuleRow = {
   validUntil: string | null;
   name: string | null;
   createdAt: Date;
+  /** The moment the current parameters took effect: rules are edited in place (D-836-02). */
+  updatedAt: Date;
 };
 
 /** `ALL` | `CLASSIFICATION:<value>` | `ACCESS_ROLE:<id>` — the key a group is counted under. */
@@ -80,6 +82,8 @@ type LeaveLimitRuleRecordLike = {
   validUntil: Date | null;
   name: string | null;
   createdAt: Date;
+  /** The moment the current parameters took effect: rules are edited in place (D-836-02). */
+  updatedAt: Date;
 };
 
 /** A stored rule as a kernel row: the `@db.Date` bounds become `YYYY-MM-DD` strings, once. */
@@ -95,5 +99,6 @@ export function ruleRowOf(record: LeaveLimitRuleRecordLike): LeaveLimitRuleRow {
     validUntil: record.validUntil ? record.validUntil.toISOString().slice(0, 10) : null,
     name: record.name,
     createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
   };
 }

@@ -8,7 +8,7 @@
  * greppable. No real names.
  *
  * Mutation proof (Phase 836, 2026-11-06) — recorded, not re-run by CI; reverted with cp afterwards:
- * M1 load-view.ts `approvedBefore`: `row.reviewedAt < rule.createdAt` turned into `true` -> red: the
+ * M1 load-view.ts `approvedBefore`: `row.reviewedAt < rule.updatedAt` turned into `true` -> red: the
  *    blackout case (the later-approved and the PENDING entry are marked too).
  * M2 api/leave-limits.ts: the `spanDays > LEAVE_LIMIT_LOAD_MAX_DAYS` guard removed -> red: the
  *    93-day case.
@@ -197,6 +197,7 @@ describe("Issue #836 — GET /leave/limits/load", () => {
       validFrom: Date | null;
       validUntil: Date | null;
       createdAt: Date;
+      updatedAt: Date;
       name: string;
     }> = {},
   ) {
@@ -317,6 +318,7 @@ describe("Issue #836 — GET /leave/limits/load", () => {
       validFrom: new Date("2026-12-01T00:00:00Z"),
       validUntil: new Date("2026-12-31T00:00:00Z"),
       createdAt: new Date("2026-07-01T00:00:00Z"),
+      updatedAt: new Date("2026-07-01T00:00:00Z"),
       name: "Weihnachtssperre",
     });
     const before = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: a.id } });
@@ -341,6 +343,34 @@ describe("Issue #836 — GET /leave/limits/load", () => {
     const after = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: a.id } });
     expect(after).toEqual(before);
     expect(await auditRowsFor(app, "LeaveRequest", a.id)).toHaveLength(0);
+  });
+
+  it("treats an in-place tightening as a new rule for the approved-before marker (WR-01)", async () => {
+    // The rule is old (createdAt in January) but is tightened in place now: leave approved in October
+    // predates the CURRENT rule and must carry the neutral marker, even though createdAt is older.
+    await leave(personA, "APPROVED", "2026-12-02", "2026-12-02", new Date("2026-10-01"));
+    const created = await rule({
+      maxPersons: 5,
+      validFrom: new Date("2026-12-01T00:00:00Z"),
+      validUntil: new Date("2026-12-31T00:00:00Z"),
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      updatedAt: new Date("2026-01-01T00:00:00Z"),
+      name: "Sperre",
+    });
+    const url = `salonId=${one.salonId}&from=2026-12-01&to=2026-12-07`;
+    // untouched since January: the October approval is AFTER the rule, no marker
+    const untouched = await load(tenantManager, url);
+    const day0 = (JSON.parse(untouched.body) as Body).salons[0]!.groups[0]!.days;
+    expect(day0.map((d) => [d.exceeded, d.approvedBeforeRuleCount])).toEqual([[false, 0]]);
+
+    await app.prisma.leaveLimitRule.update({ where: { id: created.id }, data: { maxPersons: 0 } });
+    const res = await load(tenantManager, url);
+    expect(res.statusCode, res.body).toBe(200);
+    const days = (JSON.parse(res.body) as Body).salons[0]!.groups[0]!.days;
+    expect(days).toHaveLength(1);
+    expect(days[0]!.exceeded).toBe(true);
+    expect(days[0]!.approvedBeforeRuleCount).toBe(1);
+    expect(days[0]!.persons.find((p) => p.employeeId === personA)!.approvedBeforeRule).toBe(true);
   });
 
   it("shows only groups with an applicable rule; the strictest rule of a group decides", async () => {

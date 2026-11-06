@@ -7520,7 +7520,7 @@ genehmigten Antrag. Der Urlaubsplaner (#835) nutzt später denselben Zähler.
   Gruppenzugehörigkeit wird aus dem **jetzt** Gespeicherten beurteilt (`groupMembershipOn`, der Tag ist die Nahtstelle für ein
   späteres Historienmodell). Eine geänderte Beschäftigungsart oder eine entzogene Rolle ändert die Zählung sofort und auch für
   Tage, die schon in der Vergangenheit liegen.
-- **`reviewedAt` als Genehmigungsstempel (D-836-18).** `approvedBeforeRule` vergleicht `reviewedAt` mit `createdAt` der Regel.
+- **`reviewedAt` als Genehmigungsstempel (D-836-18).** `approvedBeforeRule` vergleicht `reviewedAt` mit `updatedAt` der Regel, damit eine nachträgliche Verschärfung derselben Regel (Bearbeitung an Ort und Stelle, D-836-02) wie eine neue Regel wirkt.
   `reviewedAt` wird von der abgelehnten Stornierung überschrieben (der Antrag geht zurück auf `APPROVED`); danach kann der Hinweis
   verschwinden. Eine Korrektur nach dem Anlegen der Regel schreibt ihre eigene Ausnahme.
 - **Gleichzeitige Genehmigungen (C-2, T-836-18).** Die Prüfung ist ein lesender Vorabcheck vor dem ersten Schreiben; die
