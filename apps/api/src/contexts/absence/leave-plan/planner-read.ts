@@ -20,7 +20,7 @@
 import type { FastifyInstance } from "fastify";
 import type { LeavePlan, LeavePlanWish } from "@clokr/db";
 import { formatInTimeZone } from "date-fns-tz";
-import { holidaysForSalon, type AccessReach } from "../../platform";
+import { holidaysForSalon, resolveSalonInReach, type AccessReach } from "../../platform";
 import { getTenantTimezone } from "../../working-time-account";
 import { getAbsencesOverlapping } from "../facade/absences";
 import { getCalendarLeaveOverlapping } from "../facade/leave-requests";
@@ -28,6 +28,9 @@ import { canSeeLeaveType } from "../leave-calendar-visibility";
 import { eachDay } from "../leave-limits/counted-days";
 import { isSickLeaveTypeCode } from "../leave-type";
 import { manageCoversFromHomeDays } from "./admission";
+import { plannerDayLoad, type PlannerDay } from "./day-load";
+
+export type { PlannerDay };
 import { planPopulation } from "./population";
 import { dayOf, dayToDate, deadlinePassed, ownEditLocked, rangesOverlap } from "./wish-rules";
 
@@ -73,19 +76,6 @@ export type PlannerPerson = {
   rows: PlannerRow[];
   wishes: PlannerWish[];
   forecast: PlannerForecast | null;
-};
-
-export type PlannerDay = {
-  day: string;
-  count: number;
-  limits: Array<{
-    ruleId: string;
-    ruleName: string | null;
-    groupKey: string;
-    max: number;
-    count: number;
-    exceeded: boolean;
-  }> | null;
 };
 
 export type PlannerReadDto = {
@@ -420,6 +410,33 @@ export async function readPlanner(
     forecast: null,
   }));
 
+  // ── Day load (D-835-10/31): the limit kernel's count with the active, not-taken-over wishes of
+  // the population as candidates; rule data only for a reader with the manage or approve reach. ──
+  const candidateWishes = [
+    ...(planStatus === "OPEN"
+      ? ownWishes.filter((w) => w.leaveRequestId === null && personIdSet.has(w.employeeId))
+      : []),
+    ...otherWishes,
+  ];
+  const showLimits = (
+    await Promise.all(
+      [viewer.manageReach, viewer.approveReach].map((reach) =>
+        resolveSalonInReach(db, tenantId, reach, plan.salonId),
+      ),
+    )
+  ).some((salon) => salon.ok && salon.salonId !== null);
+  const dayLoad = await plannerDayLoad(db, {
+    tenantId,
+    salonId: plan.salonId,
+    year: plan.year,
+    wishes: candidateWishes.map((w) => ({
+      employeeId: w.employeeId,
+      startDay: dayOf(w.startDate),
+      endDay: dayOf(w.endDate),
+    })),
+    showLimits,
+  });
+
   return {
     plan: {
       id: plan.id,
@@ -450,6 +467,6 @@ export async function readPlanner(
     },
     persons,
     holidays: holidays.map((h) => ({ date: h.date, name: h.name })),
-    dayLoad: [],
+    dayLoad,
   };
 }
