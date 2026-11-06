@@ -67,3 +67,33 @@ export function strictestRulesOn(
   }
   return winners;
 }
+
+/** The stored fields a `LeaveLimitRule` record needs to become a kernel row. */
+type LeaveLimitRuleRecordLike = {
+  id: string;
+  salonId: string | null;
+  groupKind: LeaveLimitGroupKindValue;
+  classification: EmployeeClassification | null;
+  accessRoleId: string | null;
+  maxPersons: number;
+  validFrom: Date | null;
+  validUntil: Date | null;
+  name: string | null;
+  createdAt: Date;
+};
+
+/** A stored rule as a kernel row: the `@db.Date` bounds become `YYYY-MM-DD` strings, once. */
+export function ruleRowOf(record: LeaveLimitRuleRecordLike): LeaveLimitRuleRow {
+  return {
+    id: record.id,
+    salonId: record.salonId,
+    groupKind: record.groupKind,
+    classification: record.classification,
+    accessRoleId: record.accessRoleId,
+    maxPersons: record.maxPersons,
+    validFrom: record.validFrom ? record.validFrom.toISOString().slice(0, 10) : null,
+    validUntil: record.validUntil ? record.validUntil.toISOString().slice(0, 10) : null,
+    name: record.name,
+    createdAt: record.createdAt,
+  };
+}

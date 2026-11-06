@@ -329,6 +329,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-limits/check.ts": "abwesenheiten", // Issue #836 - the checker evaluateLeaveLimits - adds candidate rows and reports exceedances; reads LeaveLimitRule
   "src/contexts/absence/leave-limits/response.ts": "abwesenheiten", // Issue #836 - pure - serialises exceedances into leaveLimitWarnings - counts, plus names within the reader's leave reach
   "src/contexts/absence/leave-limits/exception.ts": "abwesenheiten", // Issue #836 - pure - the exception reason schema, the 409 body, the audit snapshot and the correction delta ranges
+  "src/contexts/absence/leave-limits/load-view.ts": "abwesenheiten", // Issue #836 - the daily load per salon and group from parallelLeaveLoad, with the approved-before-rule marker; reads LeaveLimitRule
   "src/contexts/absence/leave-limits/redact.ts": "abwesenheiten", // Issue #836 - pure - which persons a reader may be NAMED in a limit warning or the load view (leave-request:read reach)
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)
   "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest

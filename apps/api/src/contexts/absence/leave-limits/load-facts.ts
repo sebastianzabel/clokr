@@ -51,6 +51,26 @@ function dayToDate(day: string): Date {
   return new Date(`${day}T00:00:00Z`);
 }
 
+/** Display names of the access roles rules group by (own roles and system roles); never compared. */
+export async function loadAccessRoleNames(
+  db: Db,
+  tenantId: string,
+  roleIds: readonly string[],
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  if (roleIds.length === 0) return names;
+  const own = await db.accessRole.findMany({
+    where: { id: { in: [...roleIds] }, tenantId },
+    select: { id: true, name: true },
+  });
+  const system = await db.accessRole.findMany({
+    where: { id: { in: [...roleIds] }, tenantId: null },
+    select: { id: true, name: true },
+  });
+  for (const role of [...own, ...system]) names.set(role.id, role.name);
+  return names;
+}
+
 export async function loadLeaveLimitFacts(
   db: Db,
   tenantId: string,

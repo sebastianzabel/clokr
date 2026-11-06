@@ -20,9 +20,9 @@ import { homeSalonsForDays } from "../../platform";
 import { isLeaveLimitCountedCode } from "./constants";
 import { countedDaysOfLeave } from "./counted-days";
 import { groupMembershipOn } from "./group-membership";
-import { loadLeaveLimitFacts } from "./load-facts";
+import { loadAccessRoleNames, loadLeaveLimitFacts } from "./load-facts";
 import { parallelLeaveLoad, type CountedPersonDay } from "./parallel-leave-load";
-import { ruleAppliesOn, strictestRulesOn, type LeaveLimitRuleRow } from "./rules";
+import { ruleAppliesOn, ruleRowOf, strictestRulesOn, type LeaveLimitRuleRow } from "./rules";
 
 type Db = FastifyInstance["prisma"];
 
@@ -69,10 +69,6 @@ export type LeaveLimitCheckResult = {
 
 const none = (): LeaveLimitCheckResult => ({ exceedances: [], personNames: new Map() });
 
-function dayOf(date: Date | null): string | null {
-  return date ? date.toISOString().slice(0, 10) : null;
-}
-
 export async function evaluateLeaveLimits(
   db: Db,
   tenantId: string,
@@ -85,18 +81,7 @@ export async function evaluateLeaveLimits(
   // 2. No rule, nothing to check.
   const ruleRecords = await db.leaveLimitRule.findMany({ where: { tenantId, deletedAt: null } });
   if (ruleRecords.length === 0) return none();
-  const rules: LeaveLimitRuleRow[] = ruleRecords.map((r) => ({
-    id: r.id,
-    salonId: r.salonId,
-    groupKind: r.groupKind,
-    classification: r.classification,
-    accessRoleId: r.accessRoleId,
-    maxPersons: r.maxPersons,
-    validFrom: dayOf(r.validFrom),
-    validUntil: dayOf(r.validUntil),
-    name: r.name,
-    createdAt: r.createdAt,
-  }));
+  const rules: LeaveLimitRuleRow[] = ruleRecords.map(ruleRowOf);
 
   // 3. Window = candidate days ∩ the union of the rule windows (an unwindowed rule spans it all).
   let fromDay = candidates.map((c) => c.startDay).reduce((a, b) => (a < b ? a : b));
@@ -133,19 +118,9 @@ export async function evaluateLeaveLimits(
   if (!mayBeLimited) return none();
 
   // Display names of the access roles the rules group by (never compared, only shown).
-  const roleIds = [...new Set(rules.flatMap((r) => (r.accessRoleId ? [r.accessRoleId] : [])))];
-  const roleNames = new Map<string, string>();
-  if (roleIds.length > 0) {
-    const roles = await db.accessRole.findMany({
-      where: { id: { in: roleIds }, tenantId },
-      select: { id: true, name: true },
-    });
-    const systemRoles = await db.accessRole.findMany({
-      where: { id: { in: roleIds }, tenantId: null },
-      select: { id: true, name: true },
-    });
-    for (const role of [...roles, ...systemRoles]) roleNames.set(role.id, role.name);
-  }
+  const roleNames = await loadAccessRoleNames(db, tenantId, [
+    ...new Set(rules.flatMap((r) => (r.accessRoleId ? [r.accessRoleId] : []))),
+  ]);
 
   // 4. Facts for the candidate persons and everyone with stored counted leave in the window.
   const facts = await loadLeaveLimitFacts(db, tenantId, {

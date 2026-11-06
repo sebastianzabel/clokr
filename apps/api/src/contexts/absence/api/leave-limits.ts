@@ -25,6 +25,10 @@ import {
   resolveSalonInReach,
   type AccessReach,
 } from "../../platform";
+import { LEAVE_LIMIT_LOAD_MAX_DAYS } from "../leave-limits/constants";
+import { leaveLimitLoadView } from "../leave-limits/load-view";
+import { isPersonVisibleOn, readerVisibilityFrom } from "../leave-limits/redact";
+import { comparePersons } from "../leave-limits/response";
 import {
   leaveLimitRuleBodySchema,
   ruleDataFromBody,
@@ -43,6 +47,20 @@ const ALL_SALONS_FORBIDDEN = {
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 const listQuerySchema = z.object({ salonId: z.string().uuid().optional() });
+
+const dayString = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Datum im Format JJJJ-MM-TT erwartet")
+  .refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), "Ungültiges Datum");
+const loadQuerySchema = z.object({
+  salonId: z.string().uuid().optional(),
+  from: dayString,
+  to: dayString,
+});
+const WINDOW_TOO_LONG = {
+  error: `Der Zeitraum darf höchstens ${LEAVE_LIMIT_LOAD_MAX_DAYS} Tage umfassen.`,
+} as const;
+const WINDOW_ORDER = { error: "Das Enddatum darf nicht vor dem Startdatum liegen." } as const;
 
 const MANAGE_KEY = "leave-limit:manage:ZUGEWIESEN" as const;
 
@@ -117,6 +135,47 @@ export async function leaveLimitRoutes(app: FastifyInstance) {
     return role ? { ok: true as const, name: role.name } : { ok: false as const };
   }
 
+  /**
+   * Read admission shared by `GET /` and `GET /load` (D-836-22): `leave-limit:manage` or
+   * `leave-request:approve`, two literal checks because `requireAnyPermission` cannot mix two
+   * resource:action pairs. `reach` is the union of the reaches of the keys held, `manage` the
+   * manage reach alone (null without the key).
+   */
+  async function readAdmission(
+    req: FastifyRequest,
+  ): Promise<{ ok: false } | { ok: true; reaches: Reach[]; reach: Reach; manage: Reach | null }> {
+    const context = accessContextFromRequest(req);
+    const holdsManage = await hasPermission(req, "leave-limit:manage:ZUGEWIESEN");
+    const holdsApprove = await hasPermission(req, "leave-request:approve:ZUGEWIESEN");
+    if (!holdsManage && !holdsApprove) return { ok: false };
+    const reaches: Reach[] = [];
+    if (holdsManage) reaches.push(await resolveAccessReach(app.prisma, context, MANAGE_KEY));
+    if (holdsApprove) {
+      reaches.push(
+        await resolveAccessReach(app.prisma, context, "leave-request:approve:ZUGEWIESEN"),
+      );
+    }
+    return {
+      ok: true,
+      reaches,
+      reach: unionReach(reaches),
+      manage: holdsManage ? reaches[0]! : null,
+    };
+  }
+
+  /** True iff the salon is an active salon of the tenant inside at least one of the reaches. */
+  async function salonAdmitted(
+    reaches: readonly Reach[],
+    tenantId: string,
+    salonId: string,
+  ): Promise<boolean> {
+    for (const candidate of reaches) {
+      const salon = await resolveSalonInReach(app.prisma, tenantId, candidate, salonId);
+      if (salon.ok) return true;
+    }
+    return false;
+  }
+
   app.get("/", {
     schema: {
       tags: ["Abwesenheiten"],
@@ -129,30 +188,17 @@ export async function leaveLimitRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const query = listQuerySchema.parse(req.query);
       const tenantId = req.user.tenantId;
-      const context = accessContextFromRequest(req);
-      // Two literal checks: requireAnyPermission cannot mix two resource:action pairs (D-836-22).
-      const holdsManage = await hasPermission(req, "leave-limit:manage:ZUGEWIESEN");
-      const holdsApprove = await hasPermission(req, "leave-request:approve:ZUGEWIESEN");
-      if (!holdsManage && !holdsApprove) return reply.code(403).send({ error: "Forbidden" });
+      const admission = await readAdmission(req);
+      if (!admission.ok) return reply.code(403).send({ error: "Forbidden" });
+      const { reaches, reach, manage } = admission;
+      const holdsManage = manage !== null;
 
-      const reaches: Reach[] = [];
-      if (holdsManage) reaches.push(await resolveAccessReach(app.prisma, context, MANAGE_KEY));
-      if (holdsApprove) {
-        reaches.push(
-          await resolveAccessReach(app.prisma, context, "leave-request:approve:ZUGEWIESEN"),
-        );
+      if (query.salonId !== undefined && !(await salonAdmitted(reaches, tenantId, query.salonId))) {
+        return reply.code(404).send(SALON_NOT_FOUND);
       }
-      const reach = unionReach(reaches);
-      const manage: Reach | null = holdsManage ? reaches[0]! : null;
 
       let where: Prisma.LeaveLimitRuleWhereInput;
       if (query.salonId !== undefined) {
-        let admitted = false;
-        for (const candidate of reaches) {
-          const salon = await resolveSalonInReach(app.prisma, tenantId, candidate, query.salonId);
-          if (salon.ok) admitted = true;
-        }
-        if (!admitted) return reply.code(404).send(SALON_NOT_FOUND);
         where = { tenantId, deletedAt: null, OR: [{ salonId: query.salonId }, { salonId: null }] };
       } else if (reach.kind === "wholeTenant") {
         where = { tenantId, deletedAt: null };
@@ -186,6 +232,100 @@ export async function leaveLimitRoutes(app: FastifyInstance) {
         ),
         canManageAllSalons: manage !== null && manage.kind === "wholeTenant",
         roleChoices: holdsManage ? roles : [],
+      };
+    },
+  });
+
+  app.get("/load", {
+    schema: {
+      tags: ["Abwesenheiten"],
+      security: [{ bearerAuth: [] }],
+      summary: "Daily parallel-leave load per salon and group",
+      description:
+        "Per salon and group with an applicable rule: the daily count, the strictest maximum and whether the day is exceeded, from the same kernel as the warnings (at most 92 days). Other persons are named only within the caller's leave-request:read reach, the rest is hiddenCount. Needs leave-limit:manage or leave-request:approve.",
+    },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const query = loadQuerySchema.parse(req.query);
+      const tenantId = req.user.tenantId;
+      const admission = await readAdmission(req);
+      if (!admission.ok) return reply.code(403).send({ error: "Forbidden" });
+      const { reaches, reach } = admission;
+
+      const spanDays =
+        (Date.parse(`${query.to}T00:00:00Z`) - Date.parse(`${query.from}T00:00:00Z`)) / 86_400_000 +
+        1;
+      if (spanDays < 1) return reply.code(400).send(WINDOW_ORDER);
+      if (spanDays > LEAVE_LIMIT_LOAD_MAX_DAYS) return reply.code(400).send(WINDOW_TOO_LONG);
+
+      // The chosen salon, or every active salon the union reach contains (D-836-14).
+      const salons = await listSalons(app.prisma, tenantId, { includeInactive: false });
+      let shown = salons;
+      if (query.salonId !== undefined) {
+        if (!(await salonAdmitted(reaches, tenantId, query.salonId))) {
+          return reply.code(404).send(SALON_NOT_FOUND);
+        }
+        shown = salons.filter((salon) => salon.id === query.salonId);
+      } else if (reach.kind === "scoped") {
+        shown = salons.filter((salon) => reach.salonIds.includes(salon.id));
+      }
+
+      const view = await leaveLimitLoadView(app.prisma, tenantId, {
+        salonIds: shown.map((salon) => salon.id),
+        fromDay: query.from,
+        toDay: query.to,
+      });
+
+      // Names only within the caller's leave reach (AC-12); the rest is a number, no flag.
+      const visibility = readerVisibilityFrom(
+        await resolveAccessReach(
+          app.prisma,
+          accessContextFromRequest(req),
+          "leave-request:read:ZUGEWIESEN",
+        ),
+        req.user.employeeId ?? null,
+      );
+      const salonNameById = new Map(shown.map((salon) => [salon.id, salon.name]));
+      return {
+        from: query.from,
+        to: query.to,
+        salons: view.salons.map((salon) => ({
+          salonId: salon.salonId,
+          salonName: salonNameById.get(salon.salonId) ?? "",
+          groups: salon.groups.map((group) => ({
+            groupKey: group.groupKey,
+            groupKind: group.groupKind,
+            classification: group.classification,
+            accessRoleId: group.accessRoleId,
+            accessRoleName: group.accessRoleName,
+            days: group.days.map((day) => {
+              const persons = day.entries
+                .filter((entry) => isPersonVisibleOn(visibility, entry.personId, salon.salonId))
+                .map((entry) => {
+                  const name = view.personNames.get(entry.personId);
+                  return {
+                    employeeId: entry.personId,
+                    firstName: name?.firstName ?? "",
+                    lastName: name?.lastName ?? "",
+                    approvedBeforeRule: entry.approvedBeforeRule,
+                  };
+                })
+                .sort(comparePersons);
+              return {
+                day: day.day,
+                count: day.count,
+                max: day.max,
+                ruleId: day.ruleId,
+                ruleName: day.ruleName,
+                exceeded: day.exceeded,
+                persons,
+                hiddenCount: day.entries.length - persons.length,
+                approvedBeforeRuleCount: day.entries.filter((entry) => entry.approvedBeforeRule)
+                  .length,
+              };
+            }),
+          })),
+        })),
       };
     },
   });
