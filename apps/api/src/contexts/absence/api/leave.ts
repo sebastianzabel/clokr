@@ -72,7 +72,13 @@ import {
   resolveSalonInReach, // Issue #558 (D-01) — the one validator of a chosen salon
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
-import { evaluateLeaveLimits, toLeaveLimitWarnings } from "../leave-limits"; // Issue #836 (D-836-03/D-836-08)
+import {
+  buildLeaveLimitExceptionAudit,
+  evaluateLeaveLimits,
+  leaveLimitExceptionRequiredBody,
+  limitExceptionSchema,
+  toLeaveLimitWarnings,
+} from "../leave-limits"; // Issue #836 (D-836-03/D-836-08/D-836-09)
 import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { supersedeSection9CreditsOfCancelledRequest } from "../section9-supersede";
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
@@ -197,6 +203,7 @@ const createSchema = z
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
   reviewNote: z.string().optional().nullable(),
+  limitException: limitExceptionSchema.optional(), // Issue #836 (D-836-09): approver's exception over a salon limit
 });
 
 const updateSchema = z
@@ -1638,6 +1645,35 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Issue #836 (D-836-09/10): an approval that pushes a salon group over a rule needs an
+      // explicit, audited exception. A pure read BEFORE the first write, so a refusal leaves no
+      // trace (status, reviewedAt, audit, notices); a rejection is never checked. Fail-closed: a
+      // failing check propagates (500) instead of approving without the legally relevant record.
+      let leaveLimitException: ReturnType<typeof buildLeaveLimitExceptionAudit> | null = null;
+      if (body.status === "APPROVED") {
+        const limitResult = await evaluateLeaveLimits(app.prisma, existing.employee.tenantId, {
+          candidates: [
+            {
+              requestId: existing.id,
+              employeeId: existing.employeeId,
+              typeCode: existing.leaveType.code,
+              startDay: existing.startDate.toISOString().slice(0, 10),
+              endDay: existing.endDate.toISOString().slice(0, 10),
+            },
+          ],
+          excludeRequestIds: [existing.id],
+        });
+        if (limitResult.exceedances.length > 0) {
+          if (!body.limitException) {
+            return reply.code(409).send(leaveLimitExceptionRequiredBody(limitResult.exceedances));
+          }
+          leaveLimitException = buildLeaveLimitExceptionAudit(
+            body.limitException.reason,
+            limitResult.exceedances,
+          );
+        }
+      }
+
       const reviewTypeCode = existing.leaveType.code;
 
       // Issue #294: the OVERTIME_COMP booking below is computed but NOT written where it is
@@ -1955,6 +1991,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           days: Number(updated.days),
           daysProvisional: updated.daysProvisional,
           reviewNote: body.reviewNote,
+          ...(leaveLimitException ? { leaveLimitException } : {}),
         },
         // Phase 120 (D-12): CLAUDE.md §Audit-Proof names "userId, timestamp, IP, and before/after
         // values" in ONE sentence — this entry was missing two of those parts, not one. Same call site,

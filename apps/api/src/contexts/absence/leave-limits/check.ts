@@ -16,12 +16,13 @@
  */
 import type { EmployeeClassification } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
+import { homeSalonsForDays } from "../../platform";
 import { isLeaveLimitCountedCode } from "./constants";
 import { countedDaysOfLeave } from "./counted-days";
 import { groupMembershipOn } from "./group-membership";
 import { loadLeaveLimitFacts } from "./load-facts";
 import { parallelLeaveLoad, type CountedPersonDay } from "./parallel-leave-load";
-import { strictestRulesOn, type LeaveLimitRuleRow } from "./rules";
+import { ruleAppliesOn, strictestRulesOn, type LeaveLimitRuleRow } from "./rules";
 
 type Db = FastifyInstance["prisma"];
 
@@ -101,6 +102,26 @@ export async function evaluateLeaveLimits(
   if (unionTo !== null && unionTo < toDay) toDay = unionTo;
   if (fromDay > toDay) return { ...NONE };
   const window = { fromDay, toDay };
+
+  // 3b. Salon applicability: a rule can only matter where a candidate has a Stammsalon on one of
+  // its own days and that salon/day is covered by some rule. One small read answers it, so the
+  // heavy fact loading below (holidays, roster, contracts, Berufsschule) runs only for a request
+  // that can actually be limited. A tenant with rules for other salons only costs exactly this read.
+  const homeByCandidate = await homeSalonsForDays(
+    db,
+    tenantId,
+    candidates.map((c) => c.employeeId),
+    fromDay,
+    toDay,
+  );
+  const mayBeLimited = candidates.some((c) => {
+    for (const [day, salonId] of homeByCandidate.get(c.employeeId) ?? []) {
+      if (salonId === null || day < c.startDay || day > c.endDay) continue;
+      if (rules.some((r) => ruleAppliesOn(r, salonId, day))) return true;
+    }
+    return false;
+  });
+  if (!mayBeLimited) return { ...NONE };
 
   // Display names of the access roles the rules group by (never compared, only shown).
   const roleIds = [...new Set(rules.flatMap((r) => (r.accessRoleId ? [r.accessRoleId] : [])))];
