@@ -17,10 +17,17 @@ export { loadLeaveLimitFacts, type StoredLeaveRow } from "./load-facts";
 export {
   evaluateLeaveLimits,
   type LeaveLimitCandidate,
+  type LeaveLimitCheckResult,
   type LeaveLimitExceedance,
   type LeaveLimitRuleSnapshot,
 } from "./check";
-export { toLeaveLimitWarnings, type LeaveLimitWarning } from "./response";
+export {
+  toLeaveLimitWarnings,
+  type LeaveLimitRedaction,
+  type LeaveLimitWarning,
+  type LeaveLimitWarningPerson,
+} from "./response";
+export { isPersonVisibleOn, readerVisibilityFrom, type ReaderVisibility } from "./redact";
 export {
   buildLeaveLimitExceptionAudit,
   correctionCandidateRanges,

@@ -58,7 +58,16 @@ export type LeaveLimitExceedance = {
   days: Array<{ day: string; count: number; max: number; personIds: string[] }>;
 };
 
-const NONE = { exceedances: [] as LeaveLimitExceedance[] };
+export type LeaveLimitCheckResult = {
+  exceedances: LeaveLimitExceedance[];
+  /**
+   * First and last name of every person behind an exceedance day. Internal: only `response.ts` /
+   * `load-view.ts` read it, and only through the reader's reach (`redact.ts`, AC-12).
+   */
+  personNames: Map<string, { firstName: string; lastName: string }>;
+};
+
+const none = (): LeaveLimitCheckResult => ({ exceedances: [], personNames: new Map() });
 
 function dayOf(date: Date | null): string | null {
   return date ? date.toISOString().slice(0, 10) : null;
@@ -68,14 +77,14 @@ export async function evaluateLeaveLimits(
   db: Db,
   tenantId: string,
   input: { candidates: readonly LeaveLimitCandidate[]; excludeRequestIds: readonly string[] },
-): Promise<{ exceedances: LeaveLimitExceedance[] }> {
+): Promise<LeaveLimitCheckResult> {
   // 1. Only counted leave types can exceed anything; a SICK request costs not a single query.
   const candidates = input.candidates.filter((c) => isLeaveLimitCountedCode(c.typeCode));
-  if (candidates.length === 0) return { ...NONE };
+  if (candidates.length === 0) return none();
 
   // 2. No rule, nothing to check.
   const ruleRecords = await db.leaveLimitRule.findMany({ where: { tenantId, deletedAt: null } });
-  if (ruleRecords.length === 0) return { ...NONE };
+  if (ruleRecords.length === 0) return none();
   const rules: LeaveLimitRuleRow[] = ruleRecords.map((r) => ({
     id: r.id,
     salonId: r.salonId,
@@ -100,7 +109,7 @@ export async function evaluateLeaveLimits(
     : rules.map((r) => r.validUntil as string).reduce((a, b) => (a > b ? a : b));
   if (unionFrom !== null && unionFrom > fromDay) fromDay = unionFrom;
   if (unionTo !== null && unionTo < toDay) toDay = unionTo;
-  if (fromDay > toDay) return { ...NONE };
+  if (fromDay > toDay) return none();
   const window = { fromDay, toDay };
 
   // 3b. Salon applicability: a rule can only matter where a candidate has a Stammsalon on one of
@@ -121,7 +130,7 @@ export async function evaluateLeaveLimits(
     }
     return false;
   });
-  if (!mayBeLimited) return { ...NONE };
+  if (!mayBeLimited) return none();
 
   // Display names of the access roles the rules group by (never compared, only shown).
   const roleIds = [...new Set(rules.flatMap((r) => (r.accessRoleId ? [r.accessRoleId] : [])))];
@@ -227,5 +236,15 @@ export async function evaluateLeaveLimits(
       }
     }
   }
-  return { exceedances: [...buckets.values()] };
+  const exceedances = [...buckets.values()];
+  const personNames = new Map<string, { firstName: string; lastName: string }>();
+  for (const e of exceedances) {
+    for (const d of e.days) {
+      for (const id of d.personIds) {
+        const person = facts.persons.get(id);
+        if (person) personNames.set(id, { firstName: person.firstName, lastName: person.lastName });
+      }
+    }
+  }
+  return { exceedances, personNames };
 }

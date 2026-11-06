@@ -78,8 +78,9 @@ import {
   evaluateLeaveLimits,
   leaveLimitExceptionRequiredBody,
   limitExceptionSchema,
+  readerVisibilityFrom,
   toLeaveLimitWarnings,
-} from "../leave-limits"; // Issue #836 (D-836-03/D-836-08/D-836-09)
+} from "../leave-limits"; // Issue #836 (D-836-03/D-836-08/D-836-09/D-836-12)
 import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { supersedeSection9CreditsOfCancelledRequest } from "../section9-supersede";
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
@@ -460,6 +461,20 @@ async function callerMaySeeSaldoOf(
   );
   const stichtag = req.testNow ?? new Date();
   return isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, employeeId, stichtag);
+}
+
+/**
+ * Issue #836 (AC-12, D-836-12): the reach within which the caller may be told the NAMES of the other
+ * persons behind a limit exceedance (`leave-request:read:ZUGEWIESEN`; the rest is a count). Resolved
+ * only when there is an exceedance, so a request under every limit (or a tenant without rules)
+ * costs no extra query.
+ */
+function limitReaderReach(app: FastifyInstance, req: FastifyRequest) {
+  return resolveAccessReach(
+    app.prisma,
+    accessContextFromRequest(req),
+    "leave-request:read:ZUGEWIESEN",
+  );
 }
 
 export async function leaveRoutes(app: FastifyInstance) {
@@ -940,7 +955,18 @@ export async function leaveRoutes(app: FastifyInstance) {
           ],
           excludeRequestIds: [request.id],
         });
-        leaveLimitWarnings = toLeaveLimitWarnings(limitResult.exceedances);
+        leaveLimitWarnings = toLeaveLimitWarnings(
+          limitResult.exceedances,
+          limitResult.exceedances.length > 0
+            ? {
+                visibility: readerVisibilityFrom(
+                  await limitReaderReach(app, req),
+                  req.user.employeeId ?? null,
+                ),
+                personNames: limitResult.personNames,
+              }
+            : undefined,
+        );
       } catch (err) {
         app.log.warn({ err, requestId: request.id }, "leave limit check failed on request create");
       }
@@ -1667,7 +1693,15 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
         if (limitResult.exceedances.length > 0) {
           if (!body.limitException) {
-            return reply.code(409).send(leaveLimitExceptionRequiredBody(limitResult.exceedances));
+            return reply.code(409).send(
+              leaveLimitExceptionRequiredBody(limitResult.exceedances, {
+                visibility: readerVisibilityFrom(
+                  await limitReaderReach(app, req),
+                  req.user.employeeId ?? null,
+                ),
+                personNames: limitResult.personNames,
+              }),
+            );
           }
           leaveLimitException = buildLeaveLimitExceptionAudit(
             body.limitException.reason,
@@ -2452,7 +2486,15 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
         if (limitResult.exceedances.length > 0) {
           if (!body.limitException) {
-            return reply.code(409).send(leaveLimitExceptionRequiredBody(limitResult.exceedances));
+            return reply.code(409).send(
+              leaveLimitExceptionRequiredBody(limitResult.exceedances, {
+                visibility: readerVisibilityFrom(
+                  await limitReaderReach(app, req),
+                  req.user.employeeId ?? null,
+                ),
+                personNames: limitResult.personNames,
+              }),
+            );
           }
           leaveLimitException = buildLeaveLimitExceptionAudit(
             body.limitException.reason,

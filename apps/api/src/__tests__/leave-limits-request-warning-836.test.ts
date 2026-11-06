@@ -30,7 +30,13 @@ type Warning = {
   ruleId: string;
   salonId: string;
   maxPersons: number;
-  days: Array<{ day: string; count: number; max: number }>;
+  days: Array<{
+    day: string;
+    count: number;
+    max: number;
+    persons: unknown[];
+    hiddenCount: number;
+  }>;
 };
 
 describe("Issue #836 — POST /leave/requests warns when a salon limit is exceeded", () => {
@@ -158,12 +164,13 @@ describe("Issue #836 — POST /leave/requests warns when a salon limit is exceed
     expect(warning.salonId).toBe(data.salonId);
     expect(warning.maxPersons).toBe(1);
     // Wed, Thu, Fri overlap; the weekend and the days only B takes (Mon 10th, Tue 11th) are absent
+    // B holds own-data reach only (836-05): A is a number in hiddenCount, never a person
     expect(warning.days).toEqual([
-      { day: "2026-08-05", count: 2, max: 1 },
-      { day: "2026-08-06", count: 2, max: 1 },
-      { day: "2026-08-07", count: 2, max: 1 },
+      { day: "2026-08-05", count: 2, max: 1, persons: [], hiddenCount: 1 },
+      { day: "2026-08-06", count: 2, max: 1, persons: [], hiddenCount: 1 },
+      { day: "2026-08-07", count: 2, max: 1, persons: [], hiddenCount: 1 },
     ]);
-    // counts only: no person id or name travels in a warning
+    // no person id or name travels in a warning for this reader
     expect(res.body).not.toContain(personA);
   });
 

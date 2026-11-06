@@ -180,12 +180,17 @@ describe("Issue #836 — review needs an exception over a limit", () => {
     expect(res.statusCode, res.body).toBe(409);
     const body = JSON.parse(res.body) as {
       code: string;
-      exceedances: Array<{ ruleId: string; days: Array<{ day: string; count: number }> }>;
+      exceedances: Array<{
+        ruleId: string;
+        days: Array<{ day: string; count: number; persons: Array<{ employeeId: string }> }>;
+      }>;
     };
     expect(body.code).toBe("LEAVE_LIMIT_EXCEPTION_REQUIRED");
     expect(body.exceedances[0].ruleId).toBe(r.id);
     expect(body.exceedances[0].days.map((d) => d.count)).toEqual([2, 2, 2]);
-    expect(res.body).not.toContain(personA);
+    // the seeded admin reads the whole tenant (836-05): A is named; who else is hidden is covered by
+    // leave-limits-redaction-836.test.ts
+    expect(body.exceedances[0].days[0].persons.map((p) => p.employeeId)).toEqual([personA]);
 
     const after = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: pending.id } });
     expect(after.status).toBe("PENDING");

@@ -10,7 +10,7 @@ import { z } from "zod";
 import { addedDayRanges } from "../leave-correction";
 import { LEAVE_LIMIT_EXCEPTION_REQUIRED, isLeaveLimitCountedCode } from "./constants";
 import type { LeaveLimitExceedance } from "./check";
-import { toLeaveLimitWarnings, type LeaveLimitWarning } from "./response";
+import { toLeaveLimitWarnings, type LeaveLimitRedaction, type LeaveLimitWarning } from "./response";
 
 const EXCEPTION_REASON_MESSAGE = "Die Begründung der Ausnahme muss 10 bis 500 Zeichen lang sein.";
 
@@ -21,7 +21,10 @@ export const limitExceptionSchema = z.object({
 
 export type LeaveLimitException = z.infer<typeof limitExceptionSchema>;
 
-export function leaveLimitExceptionRequiredBody(exceedances: readonly LeaveLimitExceedance[]): {
+export function leaveLimitExceptionRequiredBody(
+  exceedances: readonly LeaveLimitExceedance[],
+  redaction?: LeaveLimitRedaction,
+): {
   error: string;
   code: typeof LEAVE_LIMIT_EXCEPTION_REQUIRED;
   exceedances: LeaveLimitWarning[];
@@ -30,7 +33,7 @@ export function leaveLimitExceptionRequiredBody(exceedances: readonly LeaveLimit
     error:
       "Die Urlaubsgrenze ist überschritten. Für die Genehmigung ist eine Ausnahme mit Begründung nötig.",
     code: LEAVE_LIMIT_EXCEPTION_REQUIRED,
-    exceedances: toLeaveLimitWarnings(exceedances),
+    exceedances: toLeaveLimitWarnings(exceedances, redaction),
   };
 }
 

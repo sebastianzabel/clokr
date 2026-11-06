@@ -204,11 +204,23 @@ describe("Issue #836 — correction and exit-day shortening against a limit", ()
     const body = JSON.parse(res.body) as Conflict;
     expect(body.code).toBe("LEAVE_LIMIT_EXCEPTION_REQUIRED");
     expect(body.exceedances[0].ruleId).toBe(r.id);
+    // the seeded admin reads the whole tenant (836-05), so A is named on both days
     expect(body.exceedances[0].days).toEqual([
-      { day: "2026-08-06", count: 2, max: 1 },
-      { day: "2026-08-07", count: 2, max: 1 },
+      {
+        day: "2026-08-06",
+        count: 2,
+        max: 1,
+        persons: [expect.objectContaining({ employeeId: personA })],
+        hiddenCount: 0,
+      },
+      {
+        day: "2026-08-07",
+        count: 2,
+        max: 1,
+        persons: [expect.objectContaining({ employeeId: personA })],
+        hiddenCount: 0,
+      },
     ]);
-    expect(res.body).not.toContain(personA);
 
     const row = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id } });
     expect(row.endDate.toISOString().slice(0, 10)).toBe("2026-08-05");
