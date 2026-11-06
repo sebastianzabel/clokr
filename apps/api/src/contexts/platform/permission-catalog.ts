@@ -91,6 +91,9 @@ export const PERMISSION_RESOURCES = {
   // Salonmanager must be able to hold the key; the all-salons rule is gated by whole-tenant reach in
   // the route, not by the relation.
   "leave-limit": { context: "absence", relation: "PERSON" },
+  // Issue #835: relation PERSON for the same reason as leave-limit - a leave plan belongs to a salon
+  // and a SALONS-scoped Salonmanager must be able to hold the key.
+  "leave-plan": { context: "absence", relation: "PERSON" },
   "company-shutdown": { context: "absence", relation: "MANDANT" },
   "vocational-school": { context: "absence", relation: "PERSON" },
   // ── Arbeitszeitkonto ──
@@ -183,6 +186,7 @@ export const PERMISSIONS: readonly Permission[] = [
   { resource: "leave-config", action: "read", reach: "ZUGEWIESEN" },
   { resource: "leave-config", action: "manage", reach: "ZUGEWIESEN" },
   { resource: "leave-limit", action: "manage", reach: "ZUGEWIESEN" },
+  { resource: "leave-plan", action: "manage", reach: "ZUGEWIESEN" },
   { resource: "company-shutdown", action: "manage", reach: "ZUGEWIESEN" },
   { resource: "vocational-school", action: "read", reach: "EIGENE" },
   { resource: "vocational-school", action: "read", reach: "ZUGEWIESEN" },

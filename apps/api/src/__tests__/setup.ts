@@ -814,6 +814,12 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // fails silently (afterAll only console.error's cleanup failures) and leaks fixture rows
   // into clokr_test, breaking the next run's unique-constraint assumptions (see 104-04-SUMMARY.md).
   await prisma.section9Credit.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Issue #835: LeavePlanWish -> Tenant, LeavePlan, Employee AND LeaveRequest are all
+  // onDelete: Restrict, and LeavePlan -> Tenant and Salon too. The wishes and then the plans must go
+  // before leaveRequest.deleteMany (and the employee, salon and tenant deletes below), or the delete
+  // fails and leaks fixture rows into the shared test database.
+  await prisma.leavePlanWish.deleteMany({ where: { tenantId } });
+  await prisma.leavePlan.deleteMany({ where: { tenantId } });
   await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.leaveEntitlement.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: employeeIds } } });

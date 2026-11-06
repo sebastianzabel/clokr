@@ -49,6 +49,9 @@ model Tenant {
   coverageRules        CoverageRule[]
   // Issue #836: Prisma-only back-relation, no column on Tenant (leave limit rules of the tenant)
   leaveLimitRules      LeaveLimitRule[]
+  // Issue #835: Prisma-only back-relations, no column on Tenant (leave plans and wishes of the tenant)
+  leavePlans           LeavePlan[]
+  leavePlanWishes      LeavePlanWish[]
   terminalApiKeys      TerminalApiKey[]
   apiKeys              ApiKey[]
   specialLeaveRules    SpecialLeaveRule[]
@@ -133,6 +136,9 @@ model Salon {
   // Issue #836: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung named on
   // #836, D-01) — the leave limit rules that name this salon.
   leaveLimitRules     LeaveLimitRule[]
+  // Issue #835: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung named on
+  // #835, D-835-01) — the leave plans of this salon.
+  leavePlans          LeavePlan[]
 
   @@index([tenantId])
 }
@@ -275,6 +281,9 @@ model TenantConfig {
   bsSlotShortDayMinutes               Int?
   bsSlotBlockWeekMinutes              Int?
   halfDayAllowed                      Boolean @default(true) // Halbe Tage erlaubt
+  // Issue #835 (D-835-03, Unterbau Erweiterung): when true, an employee can no longer change their OWN
+  // leave plan wish after the plan deadline (a manager still can until the takeover).
+  leavePlanDeadlineLocksWishes        Boolean @default(false)
   sickSelfReport                      Boolean @default(true) // MA dürfen Krankmeldung selbst eintragen
   sickNoteRequiredAfterDays           Int     @default(3) // AU-Pflicht nach X Krankheitstagen
   // Teilzeit-Urlaub
@@ -558,6 +567,9 @@ model Employee {
   // cascade-delete history); Prisma-only back-relations, no column
   dayBreaks                DayBreak[]
   dayBreakAcks             DayBreakAck[]
+  // Issue #835 — leave plan wishes (Restrict FK — never cascade-delete history); Prisma-only
+  // back-relation, no column (Unterbau Erweiterung named on #835, D-835-02)
+  leavePlanWishes          LeavePlanWish[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -1017,6 +1029,8 @@ model LeaveRequest {
   // Issue #468 (D-09/A-1) — § 17 Abs. 1 BEEG manual reduction(s) anchored on this request when
   // it is an APPROVED PARENTAL leave request.
   parentalLeaveReductions ParentalLeaveReduction[]
+  // Issue #835 — the plan wish this request was created from at takeover (at most one)
+  leavePlanWish           LeavePlanWish?
 
   @@index([employeeId])
   @@index([employeeId, status])
@@ -2037,6 +2051,69 @@ model LeaveLimitRule {
   @@index([tenantId, deletedAt])
   @@index([salonId])
   @@index([accessRoleId])
+}
+
+enum LeavePlanStatus {
+  OPEN
+  TAKEN_OVER
+}
+
+// Issue #835 — Urlaubsplaner. A non-binding yearly leave plan per salon (Abwesenheiten): employees
+// enter VACATION wishes, a holder of leave-plan:manage takes them over into real leave requests
+// through the normal create core. A plan is never deleted; after a takeover a new plan for the same
+// salon and year may be opened (late hires). salonId is an FK onto the Unterbau Salon (a new
+// Shared-Kernel dependency named on #835). *ByUserId are plain strings without an FK (mirrors
+// LeaveLimitRule). At most one OPEN plan per salon and year is a partial unique index and the year
+// range a CHECK, both in a hand-written later migration (Prisma models neither).
+model LeavePlan {
+  id               String          @id @default(uuid())
+  tenantId         String
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  salonId          String
+  salon            Salon           @relation(fields: [salonId], references: [id], onDelete: Restrict)
+  year             Int
+  deadline         DateTime?       @db.Date
+  status           LeavePlanStatus @default(OPEN)
+  openedByUserId   String
+  openedAt         DateTime        @default(now()) @db.Timestamptz
+  takenOverAt      DateTime?       @db.Timestamptz
+  takenOverByUserId String?
+  updatedAt        DateTime        @updatedAt @db.Timestamptz
+  wishes           LeavePlanWish[]
+
+  @@index([tenantId, salonId, year])
+}
+
+// Issue #835 — one wish of one person inside a plan. The leave type is implicitly VACATION (no type
+// column) and there is NO free-text column (data minimisation: nothing for the DSGVO anonymisation
+// to clear). leaveRequestId is set exactly once, at takeover, inside the transaction that creates
+// the request; refusalCode/refusalMessage are system-generated, never person-authored. Removal is
+// soft (deletedAt); a hard delete exists only with the employee hard-delete path.
+model LeavePlanWish {
+  id              String        @id @default(uuid())
+  tenantId        String
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  planId          String
+  plan            LeavePlan     @relation(fields: [planId], references: [id], onDelete: Restrict)
+  employeeId      String
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  startDate       DateTime      @db.Date
+  endDate         DateTime      @db.Date
+  halfDay         Boolean       @default(false)
+  createdByUserId String
+  createdAt       DateTime      @default(now()) @db.Timestamptz
+  updatedAt       DateTime      @updatedAt @db.Timestamptz
+  deletedAt       DateTime?     @db.Timestamptz
+  deletedByUserId String?
+  leaveRequestId  String?       @unique
+  leaveRequest    LeaveRequest? @relation(fields: [leaveRequestId], references: [id], onDelete: Restrict)
+  takenOverAt     DateTime?     @db.Timestamptz
+  refusalCode     String?
+  refusalMessage  String?
+  refusedAt       DateTime?     @db.Timestamptz
+
+  @@index([tenantId, planId, deletedAt])
+  @@index([employeeId, deletedAt])
 }
 
 model Shift {

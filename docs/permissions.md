@@ -114,6 +114,7 @@ Jede Ressource des Katalogs mit ihrem Kontext (ADR 0001/0002) und ihrem Bezug; d
 | `leave-entitlement` | Abwesenheiten    | Person  | Urlaubsanspruch                                                                                    |
 | `leave-config`      | Abwesenheiten    | Mandant | Abwesenheitsarten und Sonderurlaubsregeln                                                          |
 | `leave-limit`       | Abwesenheiten    | Person  | Urlaubsgrenzen und Urlaubssperren                                                                  |
+| `leave-plan`        | Abwesenheiten    | Person  | Urlaubsplanung                                                                                     |
 | `company-shutdown`  | Abwesenheiten    | Mandant | Betriebsurlaub                                                                                     |
 | `vocational-school` | Abwesenheiten    | Person  | Berufsschule (Tage und Muster)                                                                     |
 | `overtime`          | Arbeitszeitkonto | Person  | Saldo und Überstundenkonto                                                                         |
@@ -360,6 +361,12 @@ Rückfallsicherung und liefert dieselbe 409.
 | Permission                      | erlaubt                                                                                                                                                                    | erlaubt ausdrücklich nicht                                                                                                                        |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `leave-limit:manage:ZUGEWIESEN` | Regeln für Salons im Scope anlegen, ändern und entfernen (`/leave/limits`), Regeln für alle Salons nur bei Scope Mandant, die Regeln und die Tageslast lesen (Issue #836). | Anträge genehmigen (`leave-request:approve`); Abwesenheitsarten (`leave-config:manage`); Mindestbesetzung im Schichtplan (`shift-config:manage`). |
+
+### `leave-plan` — Urlaubsplanung
+
+| Permission                     | erlaubt                                                                                                                                                                                                                                                               | erlaubt ausdrücklich nicht                                                                                                                                                                               |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `leave-plan:manage:ZUGEWIESEN` | Urlaubsplanung eines Salons im Scope eröffnen, Frist setzen, Wünsche aller Personen in Reichweite bearbeiten und die Wünsche in Urlaubsanträge übernehmen (`/leave/plans`, Issue #835). Das Lesen der Planung folgt `leave-request:read` bzw. dem eigenen Stammsalon. | Eigene Wünsche genehmigen (der eigene Wunsch bleibt beim Übernehmen offen, Vier-Augen-Prinzip); Wünsche außerhalb der Reichweite sehen oder ändern; Anträge selbst genehmigen (`leave-request:approve`). |
 
 ### `company-shutdown` — Betriebsurlaub
 
