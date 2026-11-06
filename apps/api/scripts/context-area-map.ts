@@ -317,6 +317,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/correction-lock.ts": "abwesenheiten", // Phase 94 manager LeaveRequest correction guard
   "src/contexts/absence/effective-leave-statuses.ts": "abwesenheiten", // Issue #446 (D-01) — the one definition of "leave that counts" (APPROVED + CANCELLATION_REQUESTED)
   "src/contexts/absence/salon-leave-attribution.ts": "abwesenheiten", // Issue #558 (D-02/D-08) — the one Stammsalon-per-day attribution of leave/absence rows to a salon; reads HOME assignments through the Unterbau facade only
+  "src/contexts/absence/api/leave-limits.ts": "abwesenheiten", // Issue #836 - GET/POST/PUT/DELETE of the leave limit rules and blackouts under /leave/limits; writes LeaveLimitRule
+  "src/contexts/absence/leave-limits/rule-dto.ts": "abwesenheiten", // Issue #836 - pure - the Zod body and the response DTO of a leave limit rule
   "src/contexts/absence/leave-limits/constants.ts": "abwesenheiten", // Issue #836 - the counted leave type codes and statuses, an allow-list; zero runtime import beyond the status leaf
   "src/contexts/absence/leave-limits/rules.ts": "abwesenheiten", // Issue #836 - pure rule helpers - which LeaveLimitRule applies on a salon and day, strictest per group
   "src/contexts/absence/leave-limits/parallel-leave-load.ts": "abwesenheiten", // Issue #836 - the pure counting kernel, the only place parallel leave is counted
