@@ -74,6 +74,7 @@ import {
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
 import {
   buildLeaveLimitExceptionAudit,
+  correctionCandidateRanges,
   evaluateLeaveLimits,
   leaveLimitExceptionRequiredBody,
   limitExceptionSchema,
@@ -242,6 +243,7 @@ const correctSchema = z
     note: z.string().optional().nullable(),
     type: z.enum(TYPE_CODES).optional(),
     reason: auditReasonSchema, // Quick 260824-cjd — mandatory Korrektur-Begründung
+    limitException: limitExceptionSchema.optional(), // Issue #836 (D-836-19): exception when a correction adds days over a limit
   })
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
@@ -2425,6 +2427,40 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { plan } = prepared;
       const { oldTypeCode, newType, oldOtMinutes, newOtMinutes, oldOtSource } = plan;
 
+      // Issue #836 (D-836-19): only the days a correction ADDS (or the whole range when an uncounted
+      // type becomes counted) can need a limit exception; a shortening never does. Checked here, in
+      // the route, after every pre-write guard and before the transaction — never inside
+      // prepareLeaveCorrection, which the employment exit shares and must not be refused by a limit.
+      let leaveLimitException: ReturnType<typeof buildLeaveLimitExceptionAudit> | null = null;
+      const limitRanges = correctionCandidateRanges({
+        oldStart: existing.startDate,
+        oldEnd: existing.endDate,
+        newStart: start,
+        newEnd: end,
+        oldTypeCode,
+        newTypeCode: newType,
+      });
+      if (limitRanges.length > 0) {
+        const limitResult = await evaluateLeaveLimits(app.prisma, req.user.tenantId, {
+          candidates: limitRanges.map((range) => ({
+            requestId: existing.id,
+            employeeId: existing.employeeId,
+            typeCode: newType,
+            ...range,
+          })),
+          excludeRequestIds: [existing.id],
+        });
+        if (limitResult.exceedances.length > 0) {
+          if (!body.limitException) {
+            return reply.code(409).send(leaveLimitExceptionRequiredBody(limitResult.exceedances));
+          }
+          leaveLimitException = buildLeaveLimitExceptionAudit(
+            body.limitException.reason,
+            limitResult.exceedances,
+          );
+        }
+      }
+
       // Steps 8-11 run inside ONE interactive transaction (94 CR-01): the correction issues TWO
       // authoritative ledger writes (reverse OLD + apply NEW); without a transaction a
       // mid-sequence failure would leave the OLD booking reversed but the NEW one unapplied. All
@@ -2485,6 +2521,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           // T-468-10: names whether the OLD side's reversal used the stored booking or the A-4
           // legacy recomputation fallback. Only present when the OLD side was OVERTIME_COMP.
           ...(oldTypeCode === "OVERTIME_COMP" ? { overtimeCompReversalSource: oldOtSource } : {}),
+          ...(leaveLimitException ? { leaveLimitException } : {}),
         },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
