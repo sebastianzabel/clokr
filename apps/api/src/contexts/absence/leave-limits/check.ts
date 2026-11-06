@@ -84,14 +84,23 @@ export async function evaluateLeaveLimits(
   const rules: LeaveLimitRuleRow[] = ruleRecords.map(ruleRowOf);
 
   // 3. Window = candidate days ∩ the union of the rule windows (an unwindowed rule spans it all).
-  let fromDay = candidates.map((c) => c.startDay).reduce((a, b) => (a < b ? a : b));
-  let toDay = candidates.map((c) => c.endDay).reduce((a, b) => (a > b ? a : b));
+  let fromDay = candidates.reduce(
+    (a, c) => (c.startDay < a ? c.startDay : a),
+    candidates[0].startDay,
+  );
+  let toDay = candidates.reduce((a, c) => (c.endDay > a ? c.endDay : a), candidates[0].endDay);
   const unionFrom = rules.some((r) => r.validFrom === null)
     ? null
-    : rules.map((r) => r.validFrom as string).reduce((a, b) => (a < b ? a : b));
+    : rules.reduce(
+        (a, r) => (r.validFrom !== null && r.validFrom < a ? r.validFrom : a),
+        rules[0].validFrom as string,
+      );
   const unionTo = rules.some((r) => r.validUntil === null)
     ? null
-    : rules.map((r) => r.validUntil as string).reduce((a, b) => (a > b ? a : b));
+    : rules.reduce(
+        (a, r) => (r.validUntil !== null && r.validUntil > a ? r.validUntil : a),
+        rules[0].validUntil as string,
+      );
   if (unionFrom !== null && unionFrom > fromDay) fromDay = unionFrom;
   if (unionTo !== null && unionTo < toDay) toDay = unionTo;
   if (fromDay > toDay) return none();

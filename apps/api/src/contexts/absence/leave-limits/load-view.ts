@@ -143,19 +143,21 @@ export async function leaveLimitLoadView(
         if (!persons || persons.size === 0) continue;
         const rule = strictestRulesOn(applicable, salonId, day).get(groupKey) ?? null;
         const exceeded = rule !== null && persons.size > rule.maxPersons;
-        const entries: LoadViewEntry[] = [...persons].sort().map((personId) => {
-          const behind = requestsBehind.get(`${salonId}|${day}|${personId}`) ?? [];
-          const before = exceeded ? behind.filter((row) => approvedBefore(row, rule!)) : [];
-          const chosen = before[0] ?? behind[0];
-          const name = facts.persons.get(personId);
-          if (name)
-            personNames.set(personId, { firstName: name.firstName, lastName: name.lastName });
-          return {
-            personId,
-            requestId: chosen?.requestId ?? "",
-            approvedBeforeRule: before.length > 0,
-          };
-        });
+        const entries: LoadViewEntry[] = [...persons]
+          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+          .map((personId) => {
+            const behind = requestsBehind.get(`${salonId}|${day}|${personId}`) ?? [];
+            const before = exceeded ? behind.filter((row) => approvedBefore(row, rule!)) : [];
+            const chosen = before[0] ?? behind[0];
+            const name = facts.persons.get(personId);
+            if (name)
+              personNames.set(personId, { firstName: name.firstName, lastName: name.lastName });
+            return {
+              personId,
+              requestId: chosen?.requestId ?? "",
+              approvedBeforeRule: before.length > 0,
+            };
+          });
         days.push({
           day,
           count: persons.size,
