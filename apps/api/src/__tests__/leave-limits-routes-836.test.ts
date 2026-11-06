@@ -6,7 +6,7 @@
  * whole-tenant manager, a manager scoped to S, an approver scoped to S, and a caller with an unrelated
  * key. No person names.
  */
-import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
@@ -18,6 +18,7 @@ import {
   createTestSalon,
   tokenWithoutSignIn,
   soleAuditRow,
+  auditRowsFor,
 } from "./setup";
 import { roleNameKey, normalizeRolePermissions } from "../contexts/platform/access-role";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
@@ -499,6 +500,65 @@ describe("Issue #836 - /api/v1/leave/limits", () => {
       expect(after.exceedances).toEqual([]);
       const listed = JSON.parse((await call("GET", "/", tenantManager)).body) as { rules: Dto[] };
       expect(listed.rules.map((r) => r.id)).not.toContain(blackout.id);
+    });
+
+    describe("write and audit row are one transaction (WR-03)", () => {
+      afterEach(() => vi.restoreAllMocks());
+      const failAudit = () =>
+        vi.spyOn(app, "audit").mockRejectedValueOnce(new Error("audit write failed"));
+
+      it("a failed audit rolls back the create", async () => {
+        failAudit();
+        const res = await call("POST", "/", tenantManager, body({ name: "Rolled back" }));
+        expect(res.statusCode).toBe(500);
+        expect(
+          await app.prisma.leaveLimitRule.count({
+            where: { tenantId: one.tenant.id, name: "Rolled back" },
+          }),
+        ).toBe(0);
+      });
+
+      it("a failed audit rolls back the update", async () => {
+        const existing = await rule();
+        failAudit();
+        const res = await call("PUT", `/${existing.id}`, tenantManager, body({ maxPersons: 7 }));
+        expect(res.statusCode).toBe(500);
+        const stored = await app.prisma.leaveLimitRule.findUniqueOrThrow({
+          where: { id: existing.id },
+        });
+        expect(stored.maxPersons).toBe(1);
+      });
+
+      it("a failed audit rolls back the removal", async () => {
+        const existing = await rule();
+        failAudit();
+        const res = await call("DELETE", `/${existing.id}`, tenantManager);
+        expect(res.statusCode).toBe(500);
+        const stored = await app.prisma.leaveLimitRule.findUniqueOrThrow({
+          where: { id: existing.id },
+        });
+        expect(stored.deletedAt).toBeNull();
+        expect(stored.deletedByUserId).toBeNull();
+      });
+
+      it("two racing edits each record what they really replaced as oldValue", async () => {
+        const existing = await rule();
+        const [r1, r2] = await Promise.all([
+          call("PUT", `/${existing.id}`, tenantManager, body({ maxPersons: 2 })),
+          call("PUT", `/${existing.id}`, tenantManager, body({ maxPersons: 3 })),
+        ]);
+        expect([r1.statusCode, r2.statusCode]).toEqual([200, 200]);
+        const rows = await auditRowsFor(app, "LeaveLimitRule", existing.id, "UPDATE");
+        expect(rows).toHaveLength(2);
+        const olds = (r: (typeof rows)[number]) =>
+          (r.oldValue as { maxPersons: number }).maxPersons;
+        const news = (r: (typeof rows)[number]) =>
+          (r.newValue as { maxPersons: number }).maxPersons;
+        const first = rows.find((r) => olds(r) === 1)!;
+        const second = rows.find((r) => r !== first)!;
+        expect(first).toBeDefined();
+        expect(olds(second)).toBe(news(first));
+      });
     });
 
     it("refuses a caller without the key", async () => {

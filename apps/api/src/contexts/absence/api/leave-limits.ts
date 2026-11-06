@@ -41,6 +41,9 @@ import {
 const SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
 const RULE_NOT_FOUND = { error: "Regel nicht gefunden" } as const;
 const ROLE_NOT_FOUND = { error: "Rolle nicht gefunden" } as const;
+const RULE_CHANGED_CONCURRENTLY = {
+  error: "Die Regel wurde gleichzeitig geändert. Bitte lade die Seite neu.",
+} as const;
 const ALL_SALONS_FORBIDDEN = {
   error: "Regeln für alle Salons kann nur verwalten, wer für den ganzen Mandanten zuständig ist.",
 } as const;
@@ -347,21 +350,27 @@ export async function leaveLimitRoutes(app: FastifyInstance) {
       const role = await admitRole(req, body);
       if (!role.ok) return reply.code(404).send(ROLE_NOT_FOUND);
 
-      const created = await app.prisma.leaveLimitRule.create({
-        data: {
-          tenantId,
-          salonId: salon.salonId,
-          createdByUserId: req.user.sub,
-          ...ruleDataFromBody(body),
-        },
-      });
-      await app.audit({
-        userId: req.user.sub,
-        action: "CREATE",
-        entity: "LeaveLimitRule",
-        entityId: created.id,
-        newValue: auditSnapshot(created),
-        request: requestAudit(req),
+      // The write and its audit row are one transaction: the audit is the only history of a rule
+      // that is edited in place (D-836-02), so a failed audit must undo the write.
+      const created = await app.prisma.$transaction(async (tx) => {
+        const row = await tx.leaveLimitRule.create({
+          data: {
+            tenantId,
+            salonId: salon.salonId,
+            createdByUserId: req.user.sub,
+            ...ruleDataFromBody(body),
+          },
+        });
+        await app.audit({
+          userId: req.user.sub,
+          action: "CREATE",
+          entity: "LeaveLimitRule",
+          entityId: row.id,
+          newValue: auditSnapshot(row),
+          request: requestAudit(req),
+          tx,
+        });
+        return row;
       });
       const salons = salon.salonId
         ? await listSalons(app.prisma, tenantId, { includeInactive: true })
@@ -381,8 +390,12 @@ export async function leaveLimitRoutes(app: FastifyInstance) {
    * a removed rule are one 404 body; a rule of a salon outside the manage reach is the same body;
    * an all-salons rule needs a whole-tenant reach (403).
    */
-  async function loadManageableRule(req: FastifyRequest, id: string) {
-    const existing = await app.prisma.leaveLimitRule.findFirst({
+  async function loadManageableRule(
+    req: FastifyRequest,
+    id: string,
+    db: Prisma.TransactionClient | typeof app.prisma = app.prisma,
+  ) {
+    const existing = await db.leaveLimitRule.findFirst({
       where: { id, tenantId: req.user.tenantId, deletedAt: null },
     });
     if (!existing) return { ok: false as const, status: 404, body: RULE_NOT_FOUND };
@@ -428,24 +441,39 @@ export async function leaveLimitRoutes(app: FastifyInstance) {
         roleName = role.name;
       }
 
-      // Tenant-scoped write; a rule removed concurrently since the read above is the same 404.
-      const written = await app.prisma.leaveLimitRule.updateMany({
-        where: { id, tenantId, deletedAt: null },
-        data: { salonId, ...ruleDataFromBody(body) },
+      // One transaction for the write and its audit row. The rule row is locked first and re-read, so
+      // `oldValue` is what was really replaced even when two edits race (the second waits, then
+      // records the first one's result as its old value).
+      const outcome = await app.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "LeaveLimitRule" WHERE id = ${id} AND "tenantId" = ${tenantId} AND "deletedAt" IS NULL FOR NO KEY UPDATE`;
+        const current = await loadManageableRule(req, id, tx);
+        if (!current.ok) return { ok: false as const, status: current.status, body: current.body };
+        // The salon decision above was made against the row as first read; a concurrent move of the
+        // rule to another salon invalidates it.
+        if (current.existing.salonId !== existing.salonId) {
+          return { ok: false as const, status: 409, body: RULE_CHANGED_CONCURRENTLY };
+        }
+        const written = await tx.leaveLimitRule.updateMany({
+          where: { id, tenantId, deletedAt: null },
+          data: { salonId, ...ruleDataFromBody(body) },
+        });
+        // A rule removed concurrently since the read above is the same 404.
+        if (written.count === 0) return { ok: false as const, status: 404, body: RULE_NOT_FOUND };
+        const row = await tx.leaveLimitRule.findFirstOrThrow({ where: { id, tenantId } });
+        await app.audit({
+          userId: req.user.sub,
+          action: "UPDATE",
+          entity: "LeaveLimitRule",
+          entityId: id,
+          oldValue: auditSnapshot(current.existing),
+          newValue: auditSnapshot(row),
+          request: requestAudit(req),
+          tx,
+        });
+        return { ok: true as const, updated: row };
       });
-      if (written.count === 0) return reply.code(404).send(RULE_NOT_FOUND);
-      const updated = await app.prisma.leaveLimitRule.findFirstOrThrow({
-        where: { id, tenantId },
-      });
-      await app.audit({
-        userId: req.user.sub,
-        action: "UPDATE",
-        entity: "LeaveLimitRule",
-        entityId: id,
-        oldValue: auditSnapshot(existing),
-        newValue: auditSnapshot(updated),
-        request: requestAudit(req),
-      });
+      if (!outcome.ok) return reply.code(outcome.status).send(outcome.body);
+      const { updated } = outcome;
       const salons = salonId
         ? await listSalons(app.prisma, tenantId, { includeInactive: true })
         : [];
@@ -468,21 +496,28 @@ export async function leaveLimitRoutes(app: FastifyInstance) {
     preHandler: requirePermission("leave-limit:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
-      const loaded = await loadManageableRule(req, id);
-      if (!loaded.ok) return reply.code(loaded.status).send(loaded.body);
-      const removed = await app.prisma.leaveLimitRule.updateMany({
-        where: { id, tenantId: req.user.tenantId, deletedAt: null },
-        data: { deletedAt: new Date(), deletedByUserId: req.user.sub },
+      const tenantId = req.user.tenantId;
+      const outcome = await app.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "LeaveLimitRule" WHERE id = ${id} AND "tenantId" = ${tenantId} AND "deletedAt" IS NULL FOR NO KEY UPDATE`;
+        const loaded = await loadManageableRule(req, id, tx);
+        if (!loaded.ok) return { ok: false as const, status: loaded.status, body: loaded.body };
+        const removed = await tx.leaveLimitRule.updateMany({
+          where: { id, tenantId, deletedAt: null },
+          data: { deletedAt: new Date(), deletedByUserId: req.user.sub },
+        });
+        if (removed.count === 0) return { ok: false as const, status: 404, body: RULE_NOT_FOUND };
+        await app.audit({
+          userId: req.user.sub,
+          action: "DELETE",
+          entity: "LeaveLimitRule",
+          entityId: id,
+          oldValue: auditSnapshot(loaded.existing),
+          request: requestAudit(req),
+          tx,
+        });
+        return { ok: true as const };
       });
-      if (removed.count === 0) return reply.code(404).send(RULE_NOT_FOUND);
-      await app.audit({
-        userId: req.user.sub,
-        action: "DELETE",
-        entity: "LeaveLimitRule",
-        entityId: id,
-        oldValue: auditSnapshot(loaded.existing),
-        request: requestAudit(req),
-      });
+      if (!outcome.ok) return reply.code(outcome.status).send(outcome.body);
       return reply.code(204).send();
     },
   });
