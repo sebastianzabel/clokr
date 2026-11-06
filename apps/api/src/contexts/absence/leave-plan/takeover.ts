@@ -303,5 +303,14 @@ export async function takeOverLeavePlan(
     return planStatus;
   });
 
+  // D-835-18: the announcement is obsolete once the plan is closed (reactive, after the commit).
+  if (result.planStatus === "TAKEN_OVER") {
+    try {
+      await app.dismissByRelated("LeavePlan", planId, "LEAVE_PLAN_OPENED");
+    } catch (err) {
+      app.log.warn({ err, planId }, "Failed to dismiss the leave plan announcements");
+    }
+  }
+
   return result;
 }

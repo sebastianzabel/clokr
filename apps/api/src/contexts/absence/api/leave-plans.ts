@@ -15,12 +15,14 @@ import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import {
   accessContextFromRequest,
+  findSalon,
   hasPermission,
   requirePermission,
   resolveAccessReach,
   resolveSalonInReach,
   type AccessReach,
 } from "../../platform";
+import { formatDateDe } from "../leave-decision";
 import { limitExceptionSchema } from "../leave-limits";
 import {
   LEAVE_PLAN_ALREADY_OPEN,
@@ -29,6 +31,7 @@ import {
   PLAN_NOT_FOUND_ERROR,
   canReadPlan,
   createWish,
+  planPopulation,
   readablePlanYears,
   readPlanner,
   takeOverLeavePlan,
@@ -125,6 +128,53 @@ export async function leavePlanRoutes(app: FastifyInstance) {
     return salon.ok && salon.salonId !== null;
   }
 
+  /**
+   * Issue #835 (D-835-18, D-835-32) — tells every person of the plan population (Stammsalon in the
+   * year, employed in the year, never anonymised, with a user account; never the opener) that the
+   * planning is open. Reactive: it runs after the open transaction committed and a failure is
+   * logged, never raised — the plan exists either way. The recipients come from the server-side
+   * population only, never from the request (T-835-23). Texts: the in-app message names salon,
+   * year and deadline (own data); mail and push use the neutral registry entries.
+   */
+  async function notifyPlanOpened(
+    req: FastifyRequest,
+    plan: { id: string; salonId: string; year: number; deadline: Date | null },
+  ): Promise<void> {
+    const tenantId = req.user.tenantId;
+    try {
+      const salon = await findSalon(app.prisma, tenantId, plan.salonId);
+      const { persons } = await planPopulation(app.prisma, tenantId, plan.salonId, plan.year);
+      const link = `/leave/planung?salonId=${plan.salonId}&year=${plan.year}`;
+      const frist = plan.deadline ? ` Frist: ${formatDateDe(plan.deadline)}.` : "";
+      const message = `Die Urlaubsplanung ${plan.year} für ${salon?.name ?? "deinen Salon"} ist eröffnet. Trag deine Urlaubswünsche ein.${frist}`;
+      const recipients = persons.filter((p) => p.userId !== null && p.userId !== req.user.sub);
+      const results = await Promise.allSettled(
+        recipients.map((p) =>
+          app.notify({
+            userId: p.userId as string,
+            type: "LEAVE_PLAN_OPENED",
+            title: "Urlaubsplanung eröffnet",
+            message,
+            link,
+            tenantId,
+            relatedType: "LeavePlan",
+            relatedId: plan.id,
+            emailSubject: "Urlaubsplanung eröffnet",
+          }),
+        ),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        app.log.warn(
+          { planId: plan.id, failed },
+          "Failed to notify persons of an opened leave plan",
+        );
+      }
+    } catch (err) {
+      app.log.warn({ err, planId: plan.id }, "Failed to notify persons of an opened leave plan");
+    }
+  }
+
   app.post("/", {
     schema: {
       tags: ["Abwesenheiten"],
@@ -187,6 +237,7 @@ export async function leavePlanRoutes(app: FastifyInstance) {
           code: LEAVE_PLAN_ALREADY_OPEN,
         });
       }
+      await notifyPlanOpened(req, created);
       return reply.code(201).send({ plan: toPlanDto(created) });
     },
   });
