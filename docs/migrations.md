@@ -1694,4 +1694,81 @@ bearbeitet (sie sind angewendet). Zurücknehmen heißt eine neue Migration, die 
 Rolle nennt, lassen sich diese nicht löschen (`RESTRICT`); Salons werden ohnehin nie gelöscht, und `DELETE /roles/:id` antwortet
 dann mit einem verständlichen 409.
 
-<!-- Plan 836-08 ergänzt hier die Vorlagenänderung der Systemrollen (Berechtigung `leave-limit:manage`) und deren Runbook. -->
+### Systemrollen-Templates: `leave-limit:manage:ZUGEWIESEN` (Plan 836-08)
+
+**Release-Hinweis.** Die Migration `20261106143731_leave_limit_template_grant` gilt sofort für **alle** Konten mit der Systemrolle
+Admin, Inhaber oder Salonmanager (Semantikänderung des Unterbaus): Sie erhalten `leave-limit:manage:ZUGEWIESEN` und dürfen damit
+Urlaubsgrenzen und Urlaubssperren ihrer Salons pflegen (Salonmanager) beziehungsweise des Mandanten (Admin, Inhaber). **Die
+Rollenmenge ist vorgeschlagen, die Owner-Bestätigung steht vor dem Merge noch aus** (Frage vom 06.11.2026 im Issue #836); fällt sie
+anders aus, wird die Migration vor dem Merge neu geschrieben, weil sie noch auf keiner Stage ausgerollt ist. Kundenkopien der Templates
+(mandanteneigene Rollen) bleiben unverändert.
+
+**Was die Migration tut.** Reine Datenmigration: keine Tabelle, Spalte, Index, Typ oder Bedingung wird angelegt, geändert oder gelöscht
+(`prisma migrate diff` bleibt leer). Sie aktualisiert genau drei Zeilen (`…a001` Admin 87 → 88, `…a004` Inhaber 87 → 88, `…a005`
+Salonmanager 24 → 25 Permissions, jeweils `tenantId` NULL). Der `IS DISTINCT FROM`-Schutz macht einen zweiten Lauf zu einem No-op, der
+weder eine Zeile noch einen Zeitstempel ändert. Niemandem wird etwas zugewiesen, es entsteht kein Audit-Eintrag.
+
+**1. Vor `migrate deploy` — wer die Rechte erhält (lesend).**
+
+```sql
+-- Assignments of the three global templates per tenant and scope: these accounts gain the key.
+SELECT "accessRoleId", "tenantId", "scopeType", count(*) AS assignments
+FROM "RoleAssignment"
+WHERE "accessRoleId" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+GROUP BY "accessRoleId", "tenantId", "scopeType"
+ORDER BY "accessRoleId", "tenantId", "scopeType";
+
+-- Before state of the three rows. Expected: 87 / 87 / 24 permissions, none holding the key.
+SELECT "id", "name", cardinality("permissions") AS permissions,
+       'leave-limit:manage:ZUGEWIESEN' = ANY("permissions") AS has_key
+FROM "AccessRole"
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+ORDER BY "id";
+```
+
+**2. Nach `migrate deploy` — Kontrolle (lesend).**
+
+```sql
+-- Expected: 3 rows, 88 / 88 / 25 permissions, has_key true, tenantId NULL; the other four global rows
+-- (a002, a003, a006, a007) are unchanged at 63 / 22 / 15 / 5.
+SELECT "id", "name", cardinality("permissions") AS permissions,
+       'leave-limit:manage:ZUGEWIESEN' = ANY("permissions") AS has_key, "tenantId"
+FROM "AccessRole"
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a002',
+  '00000000-0000-4000-8000-00000000a003',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005',
+  '00000000-0000-4000-8000-00000000a006',
+  '00000000-0000-4000-8000-00000000a007'
+)
+ORDER BY "id";
+```
+
+**3. Rollback.** Eine **neue** Migration, die den Schlüssel wieder entfernt (die angewendete Migration wird nie bearbeitet; Form wie
+Phase 86b). Ein Image-Rollback allein genügt nicht: das vorige Image liest die drei Zeilen aus der Datenbank, der Schlüssel bliebe dort
+stehen, wirkt unter dem alten Code aber nirgends (er kennt `/leave/limits` nicht). Für einen längeren Rollback das Gegen-UPDATE
+ausführen und im Audit-Pfad des Releases vermerken. Keine Schemaänderung, in beiden Richtungen kein Datenverlust.
+
+```sql
+-- Reverse of the Phase 836 template migration: removes the key from the three global rows.
+UPDATE "AccessRole"
+SET "permissions" = array_remove("permissions", 'leave-limit:manage:ZUGEWIESEN'),
+    "updatedAt" = NOW()
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+  AND "tenantId" IS NULL
+  AND 'leave-limit:manage:ZUGEWIESEN' = ANY("permissions");
+```

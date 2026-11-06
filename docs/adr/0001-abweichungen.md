@@ -7542,3 +7542,31 @@ Tests (API): `leave-limits-migration-836`, `leave-limits-kernel-836`, `contract-
 `leave-limits-one-place-836` (AST-Wächter mit Untergrenze und Positivkontrolle). Geänderte Prüfwerte: die Modellzahlen in
 `measure-foreign-context-access` und `lint-tenant-scoping-model-graph`, die Ausschlüsse der Neutralitätsmatrix für die vier
 Routen, der Importzähler der Kompositionswurzel.
+
+### Nachtrag Phase 836 — Systemrollen-Templates (Semantikänderung des Unterbaus)
+
+Die globalen Templates **Admin** (`…a001`), **Inhaber** (`…a004`) und **Salonmanager** (`…a005`) erhalten
+`leave-limit:manage:ZUGEWIESEN`; Manager, Mitarbeiter, Personalabteilung und Ausbilder bekommen ihn nicht. Das ist eine
+**Semantikänderung** des Unterbaus nach ADR 0002, Entscheidung 7: Die Änderung gilt sofort für jedes Konto, das eine dieser
+Rollen hält (die Kundenkopien der Templates, also mandanteneigene Rollen, bleiben unverändert).
+
+- **Owner-Entscheidung: vorgeschlagen, Owner-Bestätigung vor dem Merge ausstehend.** Die Frage ging am 06.11.2026 an den Owner
+  (Issue #836); bis zum Abschluss dieser Phase liegt keine Antwort vor. Die Rollenmenge Admin, Inhaber, Salonmanager ist der
+  Vorschlag (Option a). Die Vergabe steht deshalb in einem eigenen Commit und in einer eigenen Datenmigration und lässt sich
+  ändern oder zurücknehmen, ohne etwas anderes der Phase zu berühren. **Fällt die Entscheidung anders aus, wird dieser Nachtrag
+  vor dem Merge angepasst.**
+- **Admin und Inhaber sind keine Wahl.** Admin hält jeden Schlüssel, dessen Zeilen in `docs/permissions.md` den Buchstaben „A“
+  nennen (`system-roles.test.ts` (iv)), und Inhaber gleicht dem lebenden Katalog (`system-roles.test.ts` (D-04)). Den Schlüssel
+  bei einem der beiden wegzulassen hieße, ihn aus dem Katalog zu entfernen. Offen war nur der Salonmanager.
+- **Salonmanager.** Seine Reichweite ist `ZUGEWIESEN`: er pflegt die Regeln seiner Salons (Prüfung über `resolveSalonInReach`),
+  eine Regel für alle Salons braucht Mandanten-Reichweite und bleibt bei Admin und Inhaber. Lesen der Regeln und der Tageslast
+  geht auch mit `leave-request:approve` im Salon, unabhängig von dieser Vergabe.
+- **Mechanik.** Neue, rein datenverändernde Migration `20261106143731_leave_limit_template_grant` (drei `UPDATE "AccessRole"`,
+  `"tenantId" IS NULL`, `IS DISTINCT FROM`, kein DDL, keine `RoleAssignment`, kein `AuditLog`); die Arrays sind aus
+  `SYSTEM_ROLE_PERMISSIONS` erzeugt. Frühere Migrationen bleiben unberührt. Drift-Pins: `system-roles.test.ts` ((iv), (v) 88/63/22,
+  (D-04), Salonmanager 25 Einträge), `system-roles-migration.test.ts`, die Persona-Fixture des Web
+  (`web-system-role-fixture-83`) und die neue `leave-limits-template-migration-836.test.ts`.
+- **Auswirkung auf die Kontexte.** Zeiterfassung: keine. Abwesenheiten: Konten mit den drei Rollen dürfen `/admin/leave-limits`
+  bedienen und `/leave/limits` schreiben. Schichtplanung: keine. Arbeitszeitkonto: keine. Kompositionsschicht: keine.
+  Unterbau: die drei Template-Zeilen.
+- **Runbook und Rollback:** `docs/migrations.md`, Abschnitt „Phase 836“.

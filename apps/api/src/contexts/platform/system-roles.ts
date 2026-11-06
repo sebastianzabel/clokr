@@ -220,6 +220,7 @@ const ADMIN_PERMISSION_KEYS = [
   "leave-entitlement:update:ZUGEWIESEN",
   "leave-config:read:ZUGEWIESEN",
   "leave-config:manage:ZUGEWIESEN",
+  "leave-limit:manage:ZUGEWIESEN",
   "company-shutdown:manage:ZUGEWIESEN",
   "vocational-school:read:EIGENE",
   "vocational-school:read:ZUGEWIESEN",
@@ -318,6 +319,7 @@ const OWNER_PERMISSION_KEYS = [
   "leave-entitlement:update:ZUGEWIESEN",
   "leave-config:read:ZUGEWIESEN",
   "leave-config:manage:ZUGEWIESEN",
+  "leave-limit:manage:ZUGEWIESEN",
   "company-shutdown:manage:ZUGEWIESEN",
   "vocational-school:read:EIGENE",
   "vocational-school:read:ZUGEWIESEN",
@@ -357,6 +359,11 @@ const OWNER_PERMISSION_KEYS = [
  * only take effect at TENANT scope), `shift-pattern:update`/`availability:update`
  * (contract-adjacent — planning uses `shift:plan`), `vocational-school:manage` and
  * `leave-entitlement:update`.
+ *
+ * Issue #836: holds `leave-limit:manage` so each salon maintains its own leave limits and
+ * blackouts (reach SALONS: only the salons of the assignment; a rule for all salons needs
+ * whole-tenant reach). Proposed 06.11.2026; owner confirmation pending before the merge. Shipped
+ * by the data-only migration `<timestamp>_leave_limit_template_grant`.
  */
 const SALON_MANAGER_PERMISSION_KEYS = [
   "employee:read:ZUGEWIESEN",
@@ -377,6 +384,7 @@ const SALON_MANAGER_PERMISSION_KEYS = [
   "section9:upload:ZUGEWIESEN",
   "section9:decide:ZUGEWIESEN",
   "leave-entitlement:read:ZUGEWIESEN",
+  "leave-limit:manage:ZUGEWIESEN",
   "vocational-school:read:ZUGEWIESEN",
   "shift:read:ZUGEWIESEN",
   "shift:plan:ZUGEWIESEN",
