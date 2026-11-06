@@ -181,6 +181,18 @@ const HOME_SALON_REGISTER: readonly HomeSalonCaller[] = [
     reason: "attributes the monthly report's sick and § 9 days to a salon filter (Issue #542)",
   },
   {
+    file: "contexts/absence/leave-plan/admission.ts",
+    region: "function isOwnStammsalonPlan",
+    reason:
+      "attributes a plan reader to the plan salon by the Stammsalon per day; counts nobody (Issue #835, D-05)",
+  },
+  {
+    file: "contexts/absence/leave-plan/wish-write.ts",
+    region: "function createWish",
+    reason:
+      "attributes a wish to the plan salon by the Stammsalon per day; counts nobody (Issue #835, D-05)",
+  },
+  {
     file: "contexts/absence/salon-leave-attribution.ts",
     region: "function filterLeaveRowsToHomeSalon",
     reason: "filters leave ROWS to a salon by the Stammsalon of a day; counts nobody (Issue #558)",

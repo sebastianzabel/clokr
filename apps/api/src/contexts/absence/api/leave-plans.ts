@@ -123,7 +123,7 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       description:
         "Opens the non-binding yearly leave plan of one salon in the caller's leave-plan:manage reach. At most one open plan per salon and year.",
     },
-    preHandler: requirePermission(MANAGE_KEY),
+    preHandler: requirePermission("leave-plan:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const body = openBodySchema.parse(req.body);
       const tenantId = req.user.tenantId;
@@ -284,7 +284,7 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       description:
         "Creates a leave request for every active wish through the normal create core, approves the ones the caller may approve and leaves the caller's own wishes PENDING for a second approver.",
     },
-    preHandler: requirePermission(MANAGE_KEY),
+    preHandler: requirePermission("leave-plan:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
       const body = takeoverBodySchema.parse(req.body ?? {});

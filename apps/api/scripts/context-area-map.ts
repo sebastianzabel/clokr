@@ -333,6 +333,13 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-limits/exception.ts": "abwesenheiten", // Issue #836 - pure - the exception reason schema, the 409 body, the audit snapshot and the correction delta ranges
   "src/contexts/absence/leave-limits/load-view.ts": "abwesenheiten", // Issue #836 - the daily load per salon and group from parallelLeaveLoad, with the approved-before-rule marker; reads LeaveLimitRule
   "src/contexts/absence/leave-limits/redact.ts": "abwesenheiten", // Issue #836 - pure - which persons a reader may be NAMED in a limit warning or the load view (leave-request:read reach)
+  "src/contexts/absence/api/leave-plans.ts": "abwesenheiten", // Issue #835 - open, read, wish and take over routes of the leave planner under /leave/plans; writes LeavePlan and LeavePlanWish
+  "src/contexts/absence/leave-plan/constants.ts": "abwesenheiten", // Issue #835 - pure - the control codes, German texts and the CREATE audit marker of the leave planner
+  "src/contexts/absence/leave-plan/wish-rules.ts": "abwesenheiten", // Issue #835 - pure - the date rules of a wish (inside the plan year, half day shape, overlap of two ranges)
+  "src/contexts/absence/leave-plan/admission.ts": "abwesenheiten", // Issue #835 - who may read a plan - reach over the salon or the own Stammsalon; reads the Stammsalon per day
+  "src/contexts/absence/leave-plan/wish-write.ts": "abwesenheiten", // Issue #835 - createWish - one locked transaction, writes LeavePlanWish and its audit
+  "src/contexts/absence/leave-plan/takeover.ts": "abwesenheiten", // Issue #835 - takeOverLeavePlan - turns wishes into requests through the create and decision cores; writes LeavePlanWish and LeavePlan
+  "src/contexts/absence/leave-plan/planner-read.ts": "abwesenheiten", // Issue #835 - the live planner read (DTO shape, wishes per person); reads LeavePlanWish
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)
   "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
   "src/contexts/absence/format-hm.ts": "abwesenheiten", // hours:minutes display formatting; sole importer is routes/leave.ts
