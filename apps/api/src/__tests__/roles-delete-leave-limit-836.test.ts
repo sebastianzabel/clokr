@@ -55,7 +55,8 @@ describe("DELETE /api/v1/roles/:id with a leave-limit rule (Issue #836)", () => 
     });
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body)).toEqual({
-      error: "Die Rolle wird in Urlaubsgrenzen verwendet und kann nicht gelöscht werden.",
+      error:
+        "Die Rolle wird von einer Urlaubsgrenze verwendet (auch von entfernten Regeln) und kann daher nicht gelöscht werden.",
     });
     expect(await app.prisma.accessRole.findUnique({ where: { id: usedRoleId } })).not.toBeNull();
   });

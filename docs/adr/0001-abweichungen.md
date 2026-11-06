@@ -7523,6 +7523,7 @@ genehmigten Antrag. Der Urlaubsplaner (#835) nutzt später denselben Zähler.
 - **`reviewedAt` als Genehmigungsstempel (D-836-18).** `approvedBeforeRule` vergleicht `reviewedAt` mit `updatedAt` der Regel, damit eine nachträgliche Verschärfung derselben Regel (Bearbeitung an Ort und Stelle, D-836-02) wie eine neue Regel wirkt.
   `reviewedAt` wird von der abgelehnten Stornierung überschrieben (der Antrag geht zurück auf `APPROVED`); danach kann der Hinweis
   verschwinden. Eine Korrektur nach dem Anlegen der Regel schreibt ihre eigene Ausnahme.
+- **Entfernte Regeln halten die Rolle fest (WR-02).** Der Fremdschlüssel `LeaveLimitRule.accessRoleId` bleibt `Restrict`, und eine entfernte Regel behält ihre Zeile samt Rollenverweis zur Nachvollziehbarkeit; deshalb lässt sich eine Rolle, die je in einer Regel stand, nie löschen, und die Antwort 409 von `DELETE /roles/:id` nennt auch entfernte Regeln.
 - **Gleichzeitige Genehmigungen (C-2, T-836-18).** Die Prüfung ist ein lesender Vorabcheck vor dem ersten Schreiben; die
   Genehmigungsroute läuft nicht in einer Transaktion, und die Sperre je Mitarbeiter serialisiert nicht zwei verschiedene
   Personen. Zwei gleichzeitige Genehmigungen verschiedener Personen können deshalb beide bestehen und gemeinsam über die Grenze

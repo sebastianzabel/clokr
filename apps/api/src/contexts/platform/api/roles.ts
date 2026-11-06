@@ -38,7 +38,7 @@ const ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY = "RoleAssignment_accessRoleId_fkey";
  */
 const LEAVE_LIMIT_RULE_ROLE_FOREIGN_KEY = "LeaveLimitRule_accessRoleId_fkey";
 const ROLE_LEAVE_LIMIT_DELETE_MESSAGE =
-  "Die Rolle wird in Urlaubsgrenzen verwendet und kann nicht gelöscht werden.";
+  "Die Rolle wird von einer Urlaubsgrenze verwendet (auch von entfernten Regeln) und kann daher nicht gelöscht werden.";
 // Issue #354 (pre-merge security review of #75): a `role:manage` holder who also currently holds
 // the target role via an assignment could otherwise add rights to it and grant itself more —
 // self-service escalation. Rejected unless the caller additionally holds role-assignment:manage.
