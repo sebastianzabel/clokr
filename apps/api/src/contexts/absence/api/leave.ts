@@ -72,6 +72,7 @@ import {
   resolveSalonInReach, // Issue #558 (D-01) — the one validator of a chosen salon
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
+import { evaluateLeaveLimits, toLeaveLimitWarnings } from "../leave-limits"; // Issue #836 (D-836-03/D-836-08)
 import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
 import { supersedeSection9CreditsOfCancelledRequest } from "../section9-supersede";
 import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
@@ -914,11 +915,33 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
       }
 
+      // Issue #836 (D-836-08, D-836-19): a non-blocking salon-limit warning. The request already
+      // exists, so a failing check is logged and the key simply stays absent (fail-open).
+      let leaveLimitWarnings: ReturnType<typeof toLeaveLimitWarnings> = [];
+      try {
+        const limitResult = await evaluateLeaveLimits(app.prisma, tenantId, {
+          candidates: [
+            {
+              requestId: request.id,
+              employeeId,
+              typeCode: body.type,
+              startDay: body.startDate,
+              endDay: body.endDate,
+            },
+          ],
+          excludeRequestIds: [request.id],
+        });
+        leaveLimitWarnings = toLeaveLimitWarnings(limitResult.exceedances);
+      } catch (err) {
+        app.log.warn({ err, requestId: request.id }, "leave limit check failed on request create");
+      }
+
       return reply.code(201).send({
         ...request,
         typeCode: body.type,
         startDate: request.startDate.toISOString().split("T")[0],
         endDate: request.endDate.toISOString().split("T")[0],
+        ...(leaveLimitWarnings.length > 0 && { leaveLimitWarnings }),
       });
     },
   });
