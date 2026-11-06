@@ -307,6 +307,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/plugins/employment-exit-decorate.ts": "abwesenheiten", // Issue #614 — composition-root decoration plugin exposing employment-exit.ts as app.absenceExit
   "src/contexts/absence/employment-exit.ts": "abwesenheiten", // Issue #614 (D-02) — the one rule that ends a person's absences after the exit day on anonymization; writes LeaveRequest/Absence/LeaveEntitlement
   "src/contexts/absence/leave-correction.ts": "abwesenheiten", // Issue #614 — correction core extracted from the /correct route (plan/apply/finish behind an audit port); writes LeaveRequest/LeaveEntitlement
+  "src/contexts/absence/leave-request-create.ts": "abwesenheiten", // Issue #835 (D-835-12) — create core extracted from POST /leave/requests (refusals as data, hook inside the locked create transaction); writes LeaveRequest/LeaveEntitlement
   "src/contexts/absence/overtime-comp-minutes.ts": "abwesenheiten", // Issue #614 — the Überstundenausgleich amount rule moved out of the leave route; read-only over the stored minutes and the schedule
   "src/contexts/absence/ensure-leave-type.ts": "abwesenheiten", // Issue #614 — find-or-create of a LeaveType by code for the correction core; LeaveType belongs to Abwesenheiten
   "src/contexts/absence/section9-supersede.ts": "abwesenheiten", // Issue #662 — the one place a Section9Credit becomes SUPERSEDED (shared by /correct and the cancellation); writes Section9Credit, undoes the LeaveEntitlement ledger

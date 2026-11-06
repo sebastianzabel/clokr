@@ -905,7 +905,7 @@ ohne neue Tabelle.
 
 | Stelle                                                                       | Benachrichtigung                                                                   | heute | Permission               | Reichweite |
 | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----- | ------------------------ | ---------- |
-| `contexts/absence/api/leave.ts:760`                                          | `LEAVE_REQUEST`                                                                    | A, M  | `leave-request:approve`  | ZUGEWIESEN |
+| `contexts/absence/leave-request-create.ts:559`                               | `LEAVE_REQUEST`                                                                    | A, M  | `leave-request:approve`  | ZUGEWIESEN |
 | `contexts/absence/api/leave.ts:1416`                                         | `SECTION9_AU_PENDING_MANAGER`                                                      | A, M  | `section9:decide`        | ZUGEWIESEN |
 | `contexts/scheduling/shift-leave-conflict-notify.ts:91`                      | `SHIFT_LEAVE_CONFLICT`                                                             | A, M  | `shift:plan`             | ZUGEWIESEN |
 | `contexts/scheduling/shift-week-capacity.ts:136`                             | `SHIFT_WEEK_OVERBOOKED`                                                            | A, M  | `shift:plan`             | ZUGEWIESEN |
