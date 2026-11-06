@@ -11,9 +11,11 @@
  * What it checks (AST, comments and strings excluded; every non-test `.ts` file under `apps/api/src`):
  *   1. `parallelLeaveLoad` is declared only in `parallel-leave-load.ts` and called only in `check.ts`
  *      and `load-view.ts` (both of them, so the load view cannot grow its own fold).
- *   2. `evaluateLeaveLimits` is called exactly at the three registered sites of `api/leave.ts`
- *      (`post /requests`, `patch /requests/:id/review`, `patch /requests/:id/correct`); a register entry
- *      without a matching site is red too.
+ *   2. `evaluateLeaveLimits` is called exactly at the three registered sites (`post /requests` and
+ *      `patch /requests/:id/correct` in `api/leave.ts`, the approval in `decidePendingLeaveRequest` of
+ *      `leave-decision.ts`); a register entry without a matching site is red too. Issue #835
+ *      (D-835-28): the approval check moved out of `patch /requests/:id/review` into
+ *      `leave-decision.ts`; the assertion is unchanged.
  *   3. The allow-list identifier `LEAVE_LIMIT_COUNTED_CODES` and any `.leaveLimitRule` property access
  *      (the rule delegate) occur only under `contexts/absence/leave-limits/` and in
  *      `contexts/absence/api/leave-limits.ts`.
@@ -48,6 +50,7 @@ const SRC_ROOT = join(__dirname, "..");
 const MODULE_DIR = "contexts/absence/leave-limits/";
 const ROUTE_FILE = "contexts/absence/api/leave-limits.ts";
 const LEAVE_ROUTES = "contexts/absence/api/leave.ts";
+const DECISION_FILE = "contexts/absence/leave-decision.ts";
 const KERNEL_FILE = `${MODULE_DIR}parallel-leave-load.ts`;
 const KERNEL_CALLERS = [`${MODULE_DIR}check.ts`, `${MODULE_DIR}load-view.ts`];
 // Floor for the walked file count (measured 313 non-test files on 2026-11-06).
@@ -132,7 +135,7 @@ function measure(): Facts[] {
 // The three places a limit is checked (D-836-09/19): the request create, the approval, the correction.
 const CHECK_SITES = [
   `${LEAVE_ROUTES} | post /requests | evaluateLeaveLimits`,
-  `${LEAVE_ROUTES} | patch /requests/:id/review | evaluateLeaveLimits`,
+  `${DECISION_FILE} | function decidePendingLeaveRequest | evaluateLeaveLimits`,
   `${LEAVE_ROUTES} | patch /requests/:id/correct | evaluateLeaveLimits`,
 ];
 
@@ -227,7 +230,13 @@ describe("Issue #836 - parallel leave is counted in one place", () => {
   it("walks a non-empty set that contains the module", () => {
     expect(facts.length).toBeGreaterThanOrEqual(MIN_WALKED_FILES);
     const files = facts.map((f) => f.file);
-    for (const expected of [KERNEL_FILE, ...KERNEL_CALLERS, ROUTE_FILE, LEAVE_ROUTES]) {
+    for (const expected of [
+      KERNEL_FILE,
+      ...KERNEL_CALLERS,
+      ROUTE_FILE,
+      LEAVE_ROUTES,
+      DECISION_FILE,
+    ]) {
       expect(files, expected).toContain(expected);
     }
   });

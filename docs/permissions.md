@@ -906,7 +906,7 @@ ohne neue Tabelle.
 | Stelle                                                                       | Benachrichtigung                                                                   | heute | Permission               | Reichweite |
 | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----- | ------------------------ | ---------- |
 | `contexts/absence/leave-request-create.ts:559`                               | `LEAVE_REQUEST`                                                                    | A, M  | `leave-request:approve`  | ZUGEWIESEN |
-| `contexts/absence/api/leave.ts:1416`                                         | `SECTION9_AU_PENDING_MANAGER`                                                      | A, M  | `section9:decide`        | ZUGEWIESEN |
+| `contexts/absence/leave-decision.ts:585`                                     | `SECTION9_AU_PENDING_MANAGER`                                                      | A, M  | `section9:decide`        | ZUGEWIESEN |
 | `contexts/scheduling/shift-leave-conflict-notify.ts:91`                      | `SHIFT_LEAVE_CONFLICT`                                                             | A, M  | `shift:plan`             | ZUGEWIESEN |
 | `contexts/scheduling/shift-week-capacity.ts:136`                             | `SHIFT_WEEK_OVERBOOKED`                                                            | A, M  | `shift:plan`             | ZUGEWIESEN |
 | `contexts/absence/api/leave.ts:3455`                                         | `SECTION9_AU_PENDING_MANAGER`                                                      | A, M  | `section9:decide`        | ZUGEWIESEN |
@@ -956,13 +956,13 @@ Zusammenstellung einer Rolle abschalten ließen — und genau das darf nicht geh
 Genehmigungs-Permission hat, bleibt an sie gebunden:
 
 - **Keine Selbstgenehmigung von Urlaubs- und Abwesenheitsanträgen** —
-  `contexts/absence/api/leave.ts:1100-1108`: Wer einen Antrag prüft, darf nicht der Antragsteller
+  `contexts/absence/leave-decision.ts:137-143`: Wer einen Antrag prüft, darf nicht der Antragsteller
   sein.
 - **Keine Selbstgenehmigung von Zeitnachträgen** —
   `contexts/time-tracking/api/retro-entry-requests.ts:296-311` (zwei Prüfungen: über die
   `employeeId` und, unabhängig davon, über die `userId`): dieselbe Sperre für Zeitnachträge.
-- **Stornierung durch einen anderen Manager** — `contexts/absence/api/leave.ts:1112-1116`
-  (nicht durch die Person, die die Stornierung beantragt hat) und `:1118-1121` (nicht durch die
+- **Stornierung durch einen anderen Manager** — `contexts/absence/leave-decision.ts:146-155`
+  (nicht durch die Person, die die Stornierung beantragt hat) und `:157-163` (nicht durch die
   Person, die die Abwesenheit ursprünglich genehmigt hat): Eine Stornierung genehmigt nie dieselbe
   Person, die sie ausgelöst hat, gleich ob als Antragsteller oder als ursprünglicher Genehmiger.
 - **Vier-Augen-Regel bei der endgültigen Löschung** — `contexts/platform/api/employees.ts:1352`
