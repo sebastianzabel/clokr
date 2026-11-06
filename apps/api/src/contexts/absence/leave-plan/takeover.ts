@@ -446,7 +446,16 @@ export async function takeOverLeavePlan(
         where: { id: planId, tenantId, status: "OPEN" },
         data: { status: "TAKEN_OVER", takenOverAt: new Date(), takenOverByUserId: taker.userId },
       });
-      planStatus = closed.count > 0 ? "TAKEN_OVER" : "OPEN";
+      if (closed.count > 0) {
+        planStatus = "TAKEN_OVER";
+      } else {
+        // A concurrent run closed the plan first: report what is stored, not what this run did.
+        const current = await tx.leavePlan.findFirst({
+          where: { id: planId, tenantId },
+          select: { status: true },
+        });
+        planStatus = current?.status ?? "OPEN";
+      }
     }
     // Ids and counts only — no free text (D-835-08).
     await app.audit({
