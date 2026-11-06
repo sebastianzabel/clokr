@@ -42,6 +42,8 @@
   import LeaveRequestForm from "$lib/components/leave/LeaveRequestForm.svelte";
   // Issue #468 (D-12, A-2): "Elternzeit-Kürzung erklären" row action on an approved PARENTAL
   // request.
+  import LeaveLimitNotice from "$lib/components/leave/LeaveLimitNotice.svelte";
+  import { warningSentences } from "$lib/leave-limits/sentences";
   import ParentalReductionDialog from "$lib/components/leave/ParentalReductionDialog.svelte";
   import { showsParentalReductionAction } from "$lib/leave/parental-reduction";
   import { halfDayRangeError, endDateForHalfDay } from "$lib/leave/half-day"; // Issue #449 (D-4)
@@ -336,6 +338,8 @@
   // collision-confirm flow, and the mutation — moved into the shared `LeaveRequestForm.svelte`.
   // The page keeps only the person picker (its one addition, Phase 415 D-03) and what opens it.
   let createModalOpen = $state(false);
+  // Issue #836: sentences of the limit warnings returned by the last create (empty = no notice).
+  let limitSentences: string[] = $state([]);
   let createEmployeeId = $state("");
   // Preserves this page's pre-existing default (today/today) as the shared component's initial
   // date props — the component itself defaults to blank when these are omitted (matching
@@ -1006,6 +1010,9 @@
 {#if error}
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {/if}
+
+<!-- Issue #836 (AC-5): non-blocking hint after a request exceeded a leave limit. -->
+<LeaveLimitNotice sentences={limitSentences} onDismiss={() => (limitSentences = [])} />
 
 <!-- ── Mitarbeiter-Filter ──────────────────────────────────────────────────── -->
 <div class="employee-selector card-animate">
@@ -1852,7 +1859,9 @@
   initialStartDate={createInitialDate}
   initialEndDate={createInitialDate}
   entitlementYear={calYear}
-  onSaved={async () => {
+  onSaved={async (result) => {
+    // Issue #836: limit warnings of the create — shown, never blocking.
+    limitSentences = warningSentences(result?.leaveLimitWarnings ?? []);
     await Promise.all([loadData(), loadCalendar()]);
   }}
 >

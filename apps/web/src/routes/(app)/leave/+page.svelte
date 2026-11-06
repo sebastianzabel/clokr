@@ -11,6 +11,8 @@
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-06
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
+  import LeaveLimitNotice from "$lib/components/leave/LeaveLimitNotice.svelte";
+  import { warningSentences } from "$lib/leave-limits/sentences";
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // Phase 303-03 (#265's pattern)
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
   // modal, its balance/preview/overlap fetches, and its collision-confirm flow.
@@ -106,6 +108,8 @@
   // into the shared `LeaveRequestForm.svelte`. The page keeps only what opens it and what
   // reloads after it saves.
   let showForm = $state(false);
+  // Issue #836: sentences of the limit warnings returned by the last create (empty = no notice).
+  let limitSentences: string[] = $state([]);
   let editingRequest: LeaveRequest | null = $state(null); // gesetztes Objekt = Bearbeitungsmodus
   // Seeds the dialog's date fields on a fresh CREATE open (calendar drag-select / day click /
   // Enter-Space). Reset to "" by the plain "+ Neue Abwesenheit" button.
@@ -892,7 +896,9 @@
     initialStartDate={pendingInitialStart}
     initialEndDate={pendingInitialEnd}
     entitlementYear={calYear}
-    onSaved={async () => {
+    onSaved={async (result) => {
+      // Issue #836: limit warnings of the create — shown, never blocking.
+      limitSentences = warningSentences(result?.leaveLimitWarnings ?? []);
       await Promise.all([loadData(), loadCalendar(), loadVacationSummary(calYear)]);
     }}
   />
@@ -910,6 +916,8 @@
        to. Above BOTH views: the page is reachable from the nav and from the calendar, and
        the explanation is equally relevant there. Renders nothing when there is no overrun. -->
   <KarenzAttestPanel label={karenzSummary.label} days={karenzDays} />
+  <!-- Issue #836 (AC-5): non-blocking hint after a request exceeded a leave limit. -->
+  <LeaveLimitNotice sentences={limitSentences} onDismiss={() => (limitSentences = [])} />
   <!-- Phase 117 (issue #122, D-03) — while the entitlement figures for the selected year are in
        flight, the strip shows a skeleton, never the numbers of the year we just left. Same rule
        and same recipe as Phase 116's /time-entries list skeleton: the global `.skeleton` shimmer

@@ -651,3 +651,63 @@ describe("LeaveRequestForm", () => {
     });
   });
 });
+
+// Issue #836 (plan 07) — limit warnings of a create reach the page; they never block the save.
+describe("LeaveRequestForm — leave limit warnings (#836)", () => {
+  const warning = {
+    ruleId: "r1",
+    ruleName: null,
+    groupKind: "CLASSIFICATION",
+    classification: "AZUBI",
+    accessRoleId: null,
+    accessRoleName: null,
+    salonId: "s1",
+    maxPersons: 2,
+    validFrom: null,
+    validUntil: null,
+    days: [{ day: "2026-10-05", count: 3, max: 2 }],
+  };
+
+  async function fillAndSubmit() {
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-10-05" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-06" },
+    });
+    await fireEvent.click(screen.getByTestId("leave-form-submit"));
+  }
+
+  it("a create answered with leaveLimitWarnings passes them to onSaved", async () => {
+    apiPost.mockResolvedValue({ id: "req-1", leaveLimitWarnings: [warning] });
+    const { onSaved } = renderForm();
+    await fillAndSubmit();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(onSaved).toHaveBeenCalledWith({ leaveLimitWarnings: [warning] });
+  });
+
+  it("a create without the key calls onSaved with no warnings", async () => {
+    apiPost.mockResolvedValue({ id: "req-1" });
+    const { onSaved } = renderForm();
+    await fillAndSubmit();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(onSaved.mock.calls[0]).toHaveLength(0);
+  });
+
+  it("an edit (PATCH) never reports warnings", async () => {
+    apiPatch.mockResolvedValue({ leaveLimitWarnings: [warning] });
+    const { onSaved } = renderForm({
+      editingRequest: {
+        id: "req-9",
+        typeCode: "VACATION",
+        startDate: "2026-11-01",
+        endDate: "2026-11-03",
+        halfDay: false,
+        note: "",
+      },
+    });
+    await fireEvent.click(screen.getByTestId("leave-form-submit"));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(onSaved.mock.calls[0]).toHaveLength(0);
+  });
+});
