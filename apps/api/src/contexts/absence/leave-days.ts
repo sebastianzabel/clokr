@@ -242,6 +242,59 @@ export type LoadedContractSegment = VacationContractSegment & {
  * ({@link apportionAcrossContractSegments} in `vacation-calc.ts`) picks the LAST sorted segment
  * for any month at or after that `from` — i.e. the later of the two tied rows wins.
  */
+const CONTRACT_SEGMENT_SELECT = {
+  id: true,
+  employeeId: true,
+  validFrom: true,
+  contractWorkDaysPerWeek: true,
+  workDays: true,
+  // Issue #481 (R1/R2) — additive widening: type dispatches the per-segment pricing
+  // kernel; usualWorkDays is the SHIFT_BASED Angabe; the seven {day}Hours feed
+  // workDaysSetFrom() for the FIXED_SCHEDULE per-row derivation.
+  type: true,
+  usualWorkDays: true,
+  mondayHours: true,
+  tuesdayHours: true,
+  wednesdayHours: true,
+  thursdayHours: true,
+  fridayHours: true,
+  saturdayHours: true,
+  sundayHours: true,
+} as const;
+
+/**
+ * Issue #836 — the row -> segment mapping of {@link loadVacationContractSegments}, extracted so the
+ * batched {@link loadVacationContractSegmentsForMany} produces byte-identical segments. `rows` are
+ * one employee's `WorkSchedule` rows ordered by `validFrom`, `createdAt` ascending.
+ */
+function buildContractSegments(
+  rows: ReadonlyArray<Prisma.WorkScheduleGetPayload<{ select: typeof CONTRACT_SEGMENT_SELECT }>>,
+  tenantDefaultWorkDays: number[] | null | undefined,
+): LoadedContractSegment[] {
+  if (rows.length === 0) {
+    return [
+      {
+        from: new Date(0),
+        workDaysPerWeek: contractWorkDaysPerWeekFrom(null, tenantDefaultWorkDays),
+        workScheduleId: null,
+        validFrom: null,
+        type: null,
+        usualWorkDays: [],
+        resolvedWorkDays: workDaysSetFrom(null, tenantDefaultWorkDays),
+      },
+    ];
+  }
+  return rows.map((row, index) => ({
+    from: index === 0 ? row.validFrom : snapToMonthFirstUtc(row.validFrom, "up"),
+    workDaysPerWeek: contractWorkDaysPerWeekFrom(row, tenantDefaultWorkDays),
+    workScheduleId: row.id,
+    validFrom: row.validFrom,
+    type: row.type,
+    usualWorkDays: usualWorkDaysFrom(row),
+    resolvedWorkDays: workDaysSetFrom(row, tenantDefaultWorkDays),
+  }));
+}
+
 export async function loadVacationContractSegments(
   db: DbClient,
   employeeId: string,
@@ -251,52 +304,51 @@ export async function loadVacationContractSegments(
     db.workSchedule.findMany({
       where: { employeeId, employee: { tenantId } },
       orderBy: [{ validFrom: "asc" }, { createdAt: "asc" }],
-      select: {
-        id: true,
-        validFrom: true,
-        contractWorkDaysPerWeek: true,
-        workDays: true,
-        // Issue #481 (R1/R2) — additive widening: type dispatches the per-segment pricing
-        // kernel; usualWorkDays is the SHIFT_BASED Angabe; the seven {day}Hours feed
-        // workDaysSetFrom() for the FIXED_SCHEDULE per-row derivation.
-        type: true,
-        usualWorkDays: true,
-        mondayHours: true,
-        tuesdayHours: true,
-        wednesdayHours: true,
-        thursdayHours: true,
-        fridayHours: true,
-        saturdayHours: true,
-        sundayHours: true,
-      },
+      select: CONTRACT_SEGMENT_SELECT,
     }),
     db.tenantConfig.findUnique({
       where: { tenantId },
       select: { defaultWorkDays: true },
     }),
   ]);
-  if (rows.length === 0) {
-    return [
-      {
-        from: new Date(0),
-        workDaysPerWeek: contractWorkDaysPerWeekFrom(null, cfg?.defaultWorkDays),
-        workScheduleId: null,
-        validFrom: null,
-        type: null,
-        usualWorkDays: [],
-        resolvedWorkDays: workDaysSetFrom(null, cfg?.defaultWorkDays),
-      },
-    ];
+  return buildContractSegments(rows, cfg?.defaultWorkDays);
+}
+
+/**
+ * Issue #836 — {@link loadVacationContractSegments} for many employees in two queries in total
+ * (every `WorkSchedule` row of the ids, one `TenantConfig`), so the leave-limit loader reads a
+ * constant number of rows' worth of queries however many persons the window holds (precedent:
+ * `loadBsSlotOverridesForMany`, #696). Every requested id has an entry, equal to what the
+ * single-person loader returns for it.
+ */
+export async function loadVacationContractSegmentsForMany(
+  db: DbClient,
+  tenantId: string,
+  employeeIds: readonly string[],
+): Promise<Map<string, LoadedContractSegment[]>> {
+  const result = new Map<string, LoadedContractSegment[]>();
+  if (employeeIds.length === 0) return result;
+  const [rows, cfg] = await Promise.all([
+    db.workSchedule.findMany({
+      where: { employeeId: { in: [...employeeIds] }, employee: { tenantId } },
+      orderBy: [{ validFrom: "asc" }, { createdAt: "asc" }],
+      select: CONTRACT_SEGMENT_SELECT,
+    }),
+    db.tenantConfig.findUnique({
+      where: { tenantId },
+      select: { defaultWorkDays: true },
+    }),
+  ]);
+  const rowsByEmployee = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = rowsByEmployee.get(row.employeeId) ?? [];
+    list.push(row);
+    rowsByEmployee.set(row.employeeId, list);
   }
-  return rows.map((row, index) => ({
-    from: index === 0 ? row.validFrom : snapToMonthFirstUtc(row.validFrom, "up"),
-    workDaysPerWeek: contractWorkDaysPerWeekFrom(row, cfg?.defaultWorkDays),
-    workScheduleId: row.id,
-    validFrom: row.validFrom,
-    type: row.type,
-    usualWorkDays: usualWorkDaysFrom(row),
-    resolvedWorkDays: workDaysSetFrom(row, cfg?.defaultWorkDays),
-  }));
+  for (const id of employeeIds) {
+    result.set(id, buildContractSegments(rowsByEmployee.get(id) ?? [], cfg?.defaultWorkDays));
+  }
+  return result;
 }
 
 // German 2-letter weekday abbreviation, indexed by `Date.getUTCDay()` (0=So..6=Sa). Phase 436

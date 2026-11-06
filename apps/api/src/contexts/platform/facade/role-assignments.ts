@@ -693,6 +693,33 @@ export async function roleNamesByUserId(
   return result;
 }
 
+/**
+ * Issue #836 (D-836-05, D-836-22) — the ids of every stored role assignment per user, any scope: the
+ * leave-limit group membership ("holds role R"). Stored rows only (#539); a role of another tenant is
+ * never returned (the same tenant-or-system rule as {@link roleNamesByUserId}). Every requested id
+ * has an entry (an empty set when none). One query for any number of users; an empty input reads
+ * nothing.
+ */
+export async function accessRoleIdsByUserId(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  userIds: readonly string[],
+): Promise<Map<string, Set<string>>> {
+  const result = new Map<string, Set<string>>();
+  if (userIds.length === 0) return result;
+  for (const id of userIds) result.set(id, new Set());
+  const assignments = await db.roleAssignment.findMany({
+    where: { tenantId, userId: { in: [...userIds] } },
+    select: { userId: true, accessRoleId: true, accessRole: { select: { tenantId: true } } },
+  });
+  for (const assignment of assignments) {
+    const roleTenantId = assignment.accessRole.tenantId;
+    if (roleTenantId !== null && roleTenantId !== tenantId) continue;
+    result.get(assignment.userId)?.add(assignment.accessRoleId);
+  }
+  return result;
+}
+
 /** The role names of one user (see {@link roleNamesByUserId}); the caller's own label. */
 export async function ownRoleNames(
   db: Prisma.TransactionClient,
