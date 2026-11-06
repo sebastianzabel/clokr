@@ -102,12 +102,29 @@ export async function evaluateLeaveLimits(
   if (fromDay > toDay) return { ...NONE };
   const window = { fromDay, toDay };
 
+  // Display names of the access roles the rules group by (never compared, only shown).
+  const roleIds = [...new Set(rules.flatMap((r) => (r.accessRoleId ? [r.accessRoleId] : [])))];
+  const roleNames = new Map<string, string>();
+  if (roleIds.length > 0) {
+    const roles = await db.accessRole.findMany({
+      where: { id: { in: roleIds }, tenantId },
+      select: { id: true, name: true },
+    });
+    const systemRoles = await db.accessRole.findMany({
+      where: { id: { in: roleIds }, tenantId: null },
+      select: { id: true, name: true },
+    });
+    for (const role of [...roles, ...systemRoles]) roleNames.set(role.id, role.name);
+  }
+
   // 4. Facts for the candidate persons and everyone with stored counted leave in the window.
   const facts = await loadLeaveLimitFacts(db, tenantId, {
     fromDay,
     toDay,
     personIds: candidates.map((c) => c.employeeId),
     excludeRequestIds: input.excludeRequestIds,
+    candidateTypeCodes: candidates.map((c) => c.typeCode),
+    needsAccessRoles: rules.some((r) => r.groupKind === "ACCESS_ROLE"),
   });
 
   // 5. Person-day rows for the stored leave and the candidates; one kernel fold.
@@ -169,7 +186,7 @@ export async function evaluateLeaveLimits(
               groupKind: rule.groupKind,
               classification: rule.classification,
               accessRoleId: rule.accessRoleId,
-              accessRoleName: null, // filled by 836-02
+              accessRoleName: rule.accessRoleId ? (roleNames.get(rule.accessRoleId) ?? null) : null,
               maxPersons: rule.maxPersons,
               validFrom: rule.validFrom,
               validUntil: rule.validUntil,
