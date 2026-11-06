@@ -96,6 +96,7 @@
     vacationLeadTimeDays?: number;
     vacationMaxAdvanceMonths?: number;
     halfDayAllowed?: boolean;
+    leavePlanDeadlineLocksWishes?: boolean;
     sickSelfReport?: boolean;
     sickNoteRequiredAfterDays?: number;
     autoCalcPartTimeVacation?: boolean;
@@ -177,6 +178,7 @@
   let vacationLeadTimeDays = $state(0);
   let vacationMaxAdvanceMonths = $state(0);
   let halfDayAllowed = $state(true);
+  let leavePlanDeadlineLocksWishes = $state(false);
   let sickSelfReport = $state(true);
   /**
    * Mirrors normalizeKarenzDays() in apps/api/src/contexts/absence/find-karenz-overrun-days.ts:
@@ -259,6 +261,7 @@
       vacationLeadTimeDays,
       vacationMaxAdvanceMonths,
       halfDayAllowed,
+      leavePlanDeadlineLocksWishes,
       sickSelfReport,
       sickNoteRequiredAfterDays,
       autoCalcPartTimeVacation,
@@ -327,6 +330,7 @@
       vacationLeadTimeDays = cfg.vacationLeadTimeDays ?? 0;
       vacationMaxAdvanceMonths = cfg.vacationMaxAdvanceMonths ?? 0;
       halfDayAllowed = cfg.halfDayAllowed ?? true;
+      leavePlanDeadlineLocksWishes = cfg.leavePlanDeadlineLocksWishes ?? false;
       sickSelfReport = cfg.sickSelfReport ?? true;
       // Phase 104 review (WR-08): 104-08 narrowed the API range from 1-30 to 0-3 and
       // deliberately did NOT migrate legacy rows (Revisionssicherheit) — they are clamped on
@@ -381,6 +385,7 @@
         vacationLeadTimeDays,
         vacationMaxAdvanceMonths,
         halfDayAllowed,
+        leavePlanDeadlineLocksWishes,
         sickSelfReport,
         sickNoteRequiredAfterDays,
         autoCalcPartTimeVacation,
@@ -467,6 +472,7 @@
         vacationLeadTimeDays,
         vacationMaxAdvanceMonths,
         halfDayAllowed,
+        leavePlanDeadlineLocksWishes,
         sickSelfReport,
         // Clamped again on the way out: clearing the number input makes Svelte's bind:value
         // yield null, and the API field is .optional() (not .nullable()).
@@ -533,6 +539,7 @@
         vacationLeadTimeDays,
         vacationMaxAdvanceMonths,
         halfDayAllowed,
+        leavePlanDeadlineLocksWishes,
         sickSelfReport,
         sickNoteRequiredAfterDays,
         autoCalcPartTimeVacation,
@@ -1179,6 +1186,14 @@
             <input type="checkbox" bind:checked={halfDayAllowed} />
             Halbe Tage erlauben
           </label>
+          <label class="form-label toggle-label spaced-top-sm">
+            <input type="checkbox" bind:checked={leavePlanDeadlineLocksWishes} />
+            Frist sperrt eigene Änderungen
+          </label>
+          <p class="form-hint">
+            Ist eine Planungsfrist gesetzt, können Mitarbeitende ihre eigenen Wünsche danach nicht
+            mehr ändern. Planungsberechtigte können weiter ändern.
+          </p>
         </div>
 
         <hr class="settings-divider" />

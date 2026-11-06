@@ -112,6 +112,8 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "fullTimeWorkDaysPerWeek",
     "halfDayAllowed",
     "holidayRulesValidFromYear",
+    // Issue #835 (AC-13): +1 deadline lock of the leave planner (46 -> 47)
+    "leavePlanDeadlineLocksWishes",
     "missingEntriesDays",
     "newYearsEveRule",
     "overtimeThreshold",
@@ -133,7 +135,7 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "vacationReminderStartMonth",
   ] as const;
 
-  it("PUT /settings/work carries exactly the 46 known keys, no more, no fewer", () => {
+  it("PUT /settings/work carries exactly the 47 known keys, no more, no fewer", () => {
     const saveGlobalBody = fnBody("async function saveGlobal");
     const bodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
     expect(bodyStart, 'api.put("/settings/work", {...}) call not found').toBeGreaterThan(-1);
