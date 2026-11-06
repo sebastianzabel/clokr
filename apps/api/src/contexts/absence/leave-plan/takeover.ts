@@ -7,13 +7,23 @@
  *
  * Per wish, in deterministic order (person id, start date, wish id), each in its own short
  * transactions — a partial run keeps what succeeded and a re-run never duplicates:
- *   1. the wish is RE-READ at the start of its iteration (gone, removed or linked → skipped);
- *   2. `createLeaveRequestCore` creates the request on behalf of the person (actor = the taker,
+ *   1. the wish is RE-READ at the start of its iteration (gone, removed or linked → skipped); a
+ *      linked wish is only handled when its approval was refused earlier (`APPROVAL_…`, D-835-30);
+ *   2. the employment window and the Stammsalon are re-checked at takeover time (D-835-24, D-05):
+ *      a lapsed one is stored as a refusal on the wish, nothing is created;
+ *   3. a wish the taker will approve is pre-checked against the #836 limits with the wish as
+ *      candidate (D-835-29): an exceedance without a per-wish reason is stored as
+ *      `LEAVE_LIMIT_EXCEPTION_REQUIRED`, nothing is created;
+ *   4. `createLeaveRequestCore` creates the request on behalf of the person (actor = the taker,
  *      CREATE audit with `trigger`, `leavePlanId`, `leavePlanWishId`); its `inTransaction` hook
  *      locks the wish row `FOR UPDATE` and links it, so a request is only ever linked to a wish
  *      whose stored dates it equals (a wish moved or removed meanwhile rolls the create back);
- *   3. only a wish the taker may approve (not the taker's own, inside the approve reach) is
- *      approved; any other stays PENDING for a second approver (four-eyes).
+ *   5. only a wish the taker may approve (not the taker's own, inside the approve reach) is
+ *      approved; any other stays PENDING for a second approver (four-eyes). A re-run retries the
+ *      approval only and never approves a deliberately PENDING request.
+ * After every create the loop waits until the clock is past the row's `createdAt`, so requests of
+ * one run carry strictly increasing `createdAt` in start order (SHIFT_BASED marginal pricing sorts
+ * siblings by `createdAt`, D-835-27).
  * A last short transaction locks the plan row `FOR UPDATE`, closes the plan when no wish is left
  * open and writes ONE summary audit row with ids and counts only.
  *
@@ -21,7 +31,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
-import { isStammsalonScopeMatch, type AccessReach } from "../../platform";
+import { homeSalonsForDays, isStammsalonScopeMatch, type AccessReach } from "../../platform";
 import { createLeaveRequestCore } from "../leave-request-create";
 import {
   approveLeaveRequestCore,
@@ -29,8 +39,21 @@ import {
   loadLeaveRequestForReview,
   type AuditRequestMeta,
 } from "../leave-decision";
-import { APPROVAL_REFUSAL_PREFIX, LEAVE_PLAN_TRIGGER } from "./constants";
+import {
+  evaluateLeaveLimits,
+  LEAVE_LIMIT_EXCEPTION_REQUIRED,
+  leaveLimitExceptionRequiredBody,
+} from "../leave-limits";
+import { isHomedInSalonOnAnyDay } from "../salon-leave-attribution";
+import {
+  APPROVAL_REFUSAL_PREFIX,
+  LEAVE_PLAN_MESSAGES,
+  LEAVE_PLAN_TRIGGER,
+  LEAVE_PLAN_WISH_NOT_EMPLOYED,
+  LEAVE_PLAN_WISH_NOT_IN_SALON,
+} from "./constants";
 import { dayOf } from "./wish-rules";
+import { employedOnEveryWishDay } from "./wish-write";
 
 export type TakeoverPendingReason = "OWN_WISH" | "OUTSIDE_APPROVE_REACH" | "APPROVAL_REFUSED";
 
@@ -45,6 +68,8 @@ export type TakeoverResult = {
   refused: Array<{ wishId: string; employeeId: string; code: string; error: string }>;
   planStatus: "OPEN" | "TAKEN_OVER";
 };
+
+const ONE_AND_HALF_MS_NS = 1_500_000n;
 
 /** Thrown by the link hook when the wish is no longer exactly what the request was created from. */
 class WishNotLinkable extends Error {
@@ -72,6 +97,8 @@ type StoredWish = {
   startDate: Date;
   endDate: Date;
   halfDay: boolean;
+  leaveRequestId: string | null;
+  refusalCode: string | null;
 };
 
 export async function takeOverLeavePlan(
@@ -80,7 +107,7 @@ export async function takeOverLeavePlan(
     tenantId: string;
     planId: string;
     taker: { userId: string; employeeId: string | null; approveReach: AccessReach };
-    /** wishId → reason of the limit exception the taker grants for that wish (used from 835-07). */
+    /** wishId → reason of the limit exception the taker grants for that wish. */
     limitExceptions: ReadonlyMap<string, string>;
     request: AuditRequestMeta;
   },
@@ -89,15 +116,27 @@ export async function takeOverLeavePlan(
   const result: TakeoverResult = { created: [], pending: [], refused: [], planStatus: "OPEN" };
   let skippedCount = 0;
 
+  const plan = await app.prisma.leavePlan.findFirstOrThrow({
+    where: { id: planId, tenantId },
+    select: { salonId: true },
+  });
+
+  // Unlinked wishes, plus linked ones whose approval was refused earlier (retry of the approval
+  // only, D-835-30). A linked wish without a refusal is a deliberate four-eyes PENDING request.
   const wishIds = await app.prisma.leavePlanWish.findMany({
-    where: { planId, tenantId, deletedAt: null },
+    where: {
+      planId,
+      tenantId,
+      deletedAt: null,
+      OR: [{ leaveRequestId: null }, { refusalCode: { startsWith: APPROVAL_REFUSAL_PREFIX } }],
+    },
     orderBy: [{ employeeId: "asc" }, { startDate: "asc" }, { id: "asc" }],
     select: { id: true },
   });
 
-  /** Reads the wish as stored NOW; `null` when it is gone, removed or already linked. */
-  async function readOpenWish(id: string): Promise<StoredWish | null> {
-    const wish = await app.prisma.leavePlanWish.findFirst({
+  /** Reads the active wish as stored NOW; `null` when it is gone or removed. */
+  async function readWish(id: string): Promise<StoredWish | null> {
+    return app.prisma.leavePlanWish.findFirst({
       where: { id, tenantId, deletedAt: null },
       select: {
         id: true,
@@ -106,9 +145,57 @@ export async function takeOverLeavePlan(
         endDate: true,
         halfDay: true,
         leaveRequestId: true,
+        refusalCode: true,
       },
     });
+  }
+
+  /** Reads the wish as stored NOW; `null` when it is gone, removed or already linked. */
+  async function readOpenWish(id: string): Promise<StoredWish | null> {
+    const wish = await readWish(id);
     return wish && wish.leaveRequestId === null ? wish : null;
+  }
+
+  /**
+   * Resolves once at least 1.5 ms of MONOTONIC time have passed since `since` (taken right after a
+   * create returned). `createdAt` is stamped by the application clock inside the create, so the
+   * next create then carries a stamp at least one full millisecond later and the stamps stay
+   * strictly increasing after the ms truncation. A monotonic clock, not `Date.now()`: it cannot be
+   * rewound or frozen (a test that fakes `Date` must not hang this loop). A poll on `setImmediate`,
+   * no fixed sleep.
+   */
+  async function waitOneTick(since: bigint): Promise<void> {
+    while (process.hrtime.bigint() - since < ONE_AND_HALF_MS_NS) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+
+  /** Clears the refusal of a wish (a later success supersedes an earlier stored refusal). */
+  async function clearRefusal(wishId: string): Promise<void> {
+    await app.prisma.leavePlanWish.updateMany({
+      where: { id: wishId, tenantId },
+      data: { refusalCode: null, refusalMessage: null, refusedAt: null },
+    });
+  }
+
+  /** Stores a refusal on the wish and lists it in the result; nothing is created. */
+  async function refuse(wish: StoredWish, code: string, error: string): Promise<void> {
+    await storeRefusal(wish.id, code, error);
+    result.refused.push({ wishId: wish.id, employeeId: wish.employeeId, code, error });
+  }
+
+  /** True iff the taker may approve this person's request at `startDate` (never their own). */
+  async function takerMayApprove(employeeId: string, startDate: Date): Promise<boolean> {
+    return (
+      taker.employeeId !== employeeId &&
+      (await isStammsalonScopeMatch(
+        app.prisma,
+        tenantId,
+        taker.approveReach,
+        employeeId,
+        startDate,
+      ))
+    );
   }
 
   /** Stores a refusal of a core on the wish (system text only, never person-authored). */
@@ -173,15 +260,11 @@ export async function takeOverLeavePlan(
         { inTransaction: linkHook },
       );
       if (!created.ok) {
-        await storeRefusal(wish.id, created.reason, created.body.error);
-        result.refused.push({
-          wishId: wish.id,
-          employeeId: wish.employeeId,
-          code: created.reason,
-          error: created.body.error,
-        });
+        await refuse(wish, created.reason, created.body.error);
         return { kind: "refused" };
       }
+      // D-835-27: the next create of this run must be stamped strictly after this row's createdAt.
+      await waitOneTick(process.hrtime.bigint());
       return { kind: "created", leaveRequestId: created.request.id };
     } catch (error) {
       if (error instanceof WishNotLinkable) return { kind: "changed" };
@@ -207,21 +290,118 @@ export async function takeOverLeavePlan(
     return decided.ok ? null : { reason: decided.reason, error: decided.body.error };
   }
 
+  /**
+   * Approves the request of a wish; a refusal is stored as `APPROVAL_<reason>` (the request stays
+   * PENDING and the next run retries), a success clears every stored refusal of the wish.
+   */
+  async function approveWish(
+    wish: StoredWish,
+    leaveRequestId: string,
+    exceptionReason: string | undefined,
+  ): Promise<void> {
+    const refusal = await approveFor(leaveRequestId, exceptionReason);
+    if (refusal) {
+      await storeRefusal(wish.id, `${APPROVAL_REFUSAL_PREFIX}${refusal.reason}`, refusal.error);
+      result.pending.push({
+        wishId: wish.id,
+        employeeId: wish.employeeId,
+        leaveRequestId,
+        reason: "APPROVAL_REFUSED",
+      });
+      return;
+    }
+    await clearRefusal(wish.id);
+    result.created.push({ wishId: wish.id, employeeId: wish.employeeId, leaveRequestId });
+  }
+
+  /**
+   * A linked wish whose earlier approval was refused: approves the SAME request again, when it is
+   * still PENDING and the taker may approve it. No second request, no new pre-check (the approval
+   * core re-checks the limits fail-closed). A linked wish without an `APPROVAL_…` refusal is never
+   * selected here — a deliberate four-eyes PENDING request is not auto-approved.
+   */
+  async function retryApproval(wish: StoredWish): Promise<void> {
+    if (!wish.leaveRequestId || !wish.refusalCode?.startsWith(APPROVAL_REFUSAL_PREFIX)) return;
+    const request = await loadLeaveRequestForReview(app, wish.leaveRequestId);
+    if (!request || request.employee.tenantId !== tenantId) return;
+    if (request.status !== "PENDING") {
+      // Decided by someone else meanwhile: the stored refusal is obsolete and must not keep the
+      // plan open.
+      await clearRefusal(wish.id);
+      return;
+    }
+    if (!(await takerMayApprove(request.employeeId, request.startDate))) return;
+    await approveWish(wish, request.id, input.limitExceptions.get(wish.id));
+  }
+
   for (const { id } of wishIds) {
     // The wish is re-read at the start of its iteration: the values used below are the values as
     // stored now, and the link hook proves they are still the stored ones when the request exists.
-    let wish = await readOpenWish(id);
-    if (!wish) continue;
+    const stored = await readWish(id);
+    if (!stored) continue;
 
-    const willApprove =
-      taker.employeeId !== wish.employeeId &&
-      (await isStammsalonScopeMatch(
-        app.prisma,
-        tenantId,
-        taker.approveReach,
-        wish.employeeId,
-        wish.startDate,
-      ));
+    if (stored.leaveRequestId !== null) {
+      await retryApproval(stored);
+      continue;
+    }
+    let wish: StoredWish | null = stored;
+    const startDay = dayOf(wish.startDate);
+    const endDay = dayOf(wish.endDate);
+
+    // D-835-24: the employment window may have lapsed since the wish was entered.
+    if (!(await employedOnEveryWishDay(app.prisma, tenantId, wish.employeeId, startDay, endDay))) {
+      await refuse(
+        wish,
+        LEAVE_PLAN_WISH_NOT_EMPLOYED,
+        LEAVE_PLAN_MESSAGES[LEAVE_PLAN_WISH_NOT_EMPLOYED] ?? LEAVE_PLAN_WISH_NOT_EMPLOYED,
+      );
+      continue;
+    }
+
+    // D-05: the person must still be homed in the plan's salon on a day of the wish.
+    const homes = await homeSalonsForDays(
+      app.prisma,
+      tenantId,
+      [wish.employeeId],
+      startDay,
+      endDay,
+    );
+    if (!isHomedInSalonOnAnyDay(homes.get(wish.employeeId), plan.salonId, startDay, endDay)) {
+      await refuse(
+        wish,
+        LEAVE_PLAN_WISH_NOT_IN_SALON,
+        LEAVE_PLAN_MESSAGES[LEAVE_PLAN_WISH_NOT_IN_SALON] ?? LEAVE_PLAN_WISH_NOT_IN_SALON,
+      );
+      continue;
+    }
+
+    const willApprove = await takerMayApprove(wish.employeeId, wish.startDate);
+
+    // D-835-29: a wish that is approved at once is pre-checked against the #836 limits with the
+    // wish as candidate; a wish that stays PENDING gets no pre-check (the approver decides later).
+    const exceptionReason = input.limitExceptions.get(wish.id);
+    if (willApprove && exceptionReason === undefined) {
+      const limits = await evaluateLeaveLimits(app.prisma, tenantId, {
+        candidates: [
+          {
+            requestId: null,
+            employeeId: wish.employeeId,
+            typeCode: "VACATION",
+            startDay,
+            endDay,
+          },
+        ],
+        excludeRequestIds: [],
+      });
+      if (limits.exceedances.length > 0) {
+        await refuse(
+          wish,
+          LEAVE_LIMIT_EXCEPTION_REQUIRED,
+          leaveLimitExceptionRequiredBody([]).error,
+        );
+        continue;
+      }
+    }
 
     let step = await createFor(wish, willApprove);
     if (step.kind === "changed") {
@@ -245,20 +425,7 @@ export async function takeOverLeavePlan(
       });
       continue;
     }
-
-    // Approval through the review route's own guard and core, with the taker as reviewer.
-    const refusal = await approveFor(leaveRequestId, input.limitExceptions.get(wish.id));
-    if (refusal) {
-      await storeRefusal(wish.id, `${APPROVAL_REFUSAL_PREFIX}${refusal.reason}`, refusal.error);
-      result.pending.push({
-        wishId: wish.id,
-        employeeId: wish.employeeId,
-        leaveRequestId,
-        reason: "APPROVAL_REFUSED",
-      });
-      continue;
-    }
-    result.created.push({ wishId: wish.id, employeeId: wish.employeeId, leaveRequestId });
+    await approveWish(wish, leaveRequestId, exceptionReason);
   }
 
   // D-835-15/D-835-30: the plan closes only when no active wish is left without a request or with

@@ -11,11 +11,13 @@
  * What it checks (AST, comments and strings excluded; every non-test `.ts` file under `apps/api/src`):
  *   1. `parallelLeaveLoad` is declared only in `parallel-leave-load.ts` and called only in `check.ts`
  *      and `load-view.ts` (both of them, so the load view cannot grow its own fold).
- *   2. `evaluateLeaveLimits` is called exactly at the three registered sites (`post /requests` and
+ *   2. `evaluateLeaveLimits` is called exactly at the four registered sites (`post /requests` and
  *      `patch /requests/:id/correct` in `api/leave.ts`, the approval in `decidePendingLeaveRequest` of
- *      `leave-decision.ts`); a register entry without a matching site is red too. Issue #835
+ *      `leave-decision.ts`, the takeover pre-check); a register entry without a matching site is red too. Issue #835
  *      (D-835-28): the approval check moved out of `patch /requests/:id/review` into
- *      `leave-decision.ts`; the assertion is unchanged.
+ *      `leave-decision.ts`; the assertion is unchanged. Issue #835 (D-835-29): the planner takeover
+ *      pre-checks a wish it will approve (`function takeOverLeavePlan` in `leave-plan/takeover.ts`,
+ *      the fourth registered site).
  *   3. The allow-list identifier `LEAVE_LIMIT_COUNTED_CODES` and any `.leaveLimitRule` property access
  *      (the rule delegate) occur only under `contexts/absence/leave-limits/` and in
  *      `contexts/absence/api/leave-limits.ts`.
@@ -132,11 +134,13 @@ function measure(): Facts[] {
   return abs.map((a) => scan(readFileSync(a, "utf8"), relative(SRC_ROOT, a).split("\\").join("/")));
 }
 
-// The three places a limit is checked (D-836-09/19): the request create, the approval, the correction.
+// The places a limit is checked (D-836-09/19): the request create, the approval, the correction and,
+// since Issue #835 (D-835-29), the planner takeover's pre-check of a wish it will approve.
 const CHECK_SITES = [
   `${LEAVE_ROUTES} | post /requests | evaluateLeaveLimits`,
   `${DECISION_FILE} | function decidePendingLeaveRequest | evaluateLeaveLimits`,
   `${LEAVE_ROUTES} | patch /requests/:id/correct | evaluateLeaveLimits`,
+  `contexts/absence/leave-plan/takeover.ts | function takeOverLeavePlan | evaluateLeaveLimits`,
 ];
 
 interface HomeSalonCaller {
@@ -191,6 +195,12 @@ const HOME_SALON_REGISTER: readonly HomeSalonCaller[] = [
     region: "function manageCoversPersonOnDays",
     reason:
       "decides whether a manage reach covers a person on a day of a wish by the Stammsalon per day; counts nobody (Issue #835, D-04)",
+  },
+  {
+    file: "contexts/absence/leave-plan/takeover.ts",
+    region: "function takeOverLeavePlan",
+    reason:
+      "re-checks at takeover that the person still belongs to the plan salon on a wish day, Issue #835; counts nothing",
   },
   {
     file: "contexts/absence/leave-plan/wish-write.ts",
@@ -275,7 +285,7 @@ describe("Issue #836 - parallel leave is counted in one place", () => {
     expect(declaredIn.map((f) => f.file)).toEqual([KERNEL_FILE]);
   });
 
-  it("evaluateLeaveLimits is called exactly at the three registered sites of api/leave.ts", () => {
+  it("evaluateLeaveLimits is called exactly at the registered sites (three in the leave flow, one in the takeover)", () => {
     const sites = facts.flatMap((f) =>
       f.calls
         .filter((c) => c.callee === "evaluateLeaveLimits")
