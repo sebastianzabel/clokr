@@ -64,17 +64,18 @@ describe("MODEL_OWNER", () => {
   // OperatorAuditLog, platform 17 -> 19) — 50 -> 52 models — and Issue #93 (+ SupportAccess,
   // platform 19 -> 20) — 52 -> 53 models — and Issue #608 (+ PushSubscription,
   // platform 20 -> 21) — 53 -> 54 models — and Issue #610 (+ PresencePairingCode, time-tracking
-  // 9 -> 10) — 54 -> 55 models. This is the new models' own schema change landing in the
-  // count, not a correction of a prior miscount.
-  it("assigns exactly 55 models, every owner one of the five OWNER_AREAS", () => {
+  // 9 -> 10) — 54 -> 55 models — and Issue #836 (+ LeaveLimitRule, absence 10 -> 11) — 55 -> 56
+  // models. This is the new models' own schema change landing in the count, not a correction of a
+  // prior miscount.
+  it("assigns exactly 56 models, every owner one of the five OWNER_AREAS", () => {
     const models = Object.keys(MODEL_OWNER);
-    expect(models).toHaveLength(55);
+    expect(models).toHaveLength(56);
     for (const owner of Object.values(MODEL_OWNER)) {
       expect(OWNER_AREAS).toContain(owner);
     }
   });
 
-  it("matches the measurement authority's per-owner model count (21/10/10/5/9)", () => {
+  it("matches the measurement authority's per-owner model count (21/10/11/5/9)", () => {
     const counts: Record<string, number> = {};
     for (const owner of Object.values(MODEL_OWNER)) {
       counts[owner] = (counts[owner] ?? 0) + 1;
@@ -82,7 +83,7 @@ describe("MODEL_OWNER", () => {
     expect(counts).toEqual({
       platform: 21,
       "time-tracking": 10,
-      absence: 10,
+      absence: 11,
       "working-time-account": 5,
       scheduling: 9,
     });
