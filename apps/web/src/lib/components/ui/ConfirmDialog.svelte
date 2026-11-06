@@ -127,5 +127,7 @@
     font-size: 14px;
     line-height: 1.55;
     color: var(--text);
+    /* A description may carry line breaks (e.g. one line per exceeded leave limit, Issue #836). */
+    white-space: pre-line;
   }
 </style>

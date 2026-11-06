@@ -228,3 +228,96 @@ describe("LeaveReviewDialog", () => {
     expect(screen.queryByText("Bad Request")).toBeNull();
   });
 });
+
+// Issue #836 (plan 07) — the limit-exception step: 409 -> reason -> resend, or back out.
+describe("LeaveReviewDialog — leave limit exception step (#836)", () => {
+  const exceedance = {
+    ruleId: "r1",
+    ruleName: null,
+    groupKind: "CLASSIFICATION",
+    classification: "AZUBI",
+    accessRoleId: null,
+    accessRoleName: null,
+    salonId: "s1",
+    maxPersons: 2,
+    validFrom: null,
+    validUntil: null,
+    days: [
+      { day: "2026-09-02", count: 3, max: 2 },
+      { day: "2026-09-03", count: 3, max: 2 },
+    ],
+  };
+
+  function limitError() {
+    // Shape of the web ApiError (status + data); the helper reads the shape, not the class.
+    return Object.assign(new Error("Die Urlaubsgrenze ist überschritten."), {
+      status: 409,
+      data: { code: "LEAVE_LIMIT_EXCEPTION_REQUIRED", exceedances: [exceedance] },
+    });
+  }
+
+  async function approveUntilExceptionStep(typed = "Bitte dieses Mal durchlassen") {
+    const view = renderDialog({ typeCode: "VACATION" });
+    await fireEvent.input(screen.getByTestId("leave-approval-modal-reason"), {
+      target: { value: "Ok so" },
+    });
+    apiPatch.mockRejectedValueOnce(limitError());
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(document.getElementById("reason-dialog-textarea")).toBeTruthy());
+    const area = document.getElementById("reason-dialog-textarea") as HTMLTextAreaElement;
+    await fireEvent.input(area, { target: { value: typed } });
+    return { ...view, area };
+  }
+
+  it("a 409 closes the review modal and opens the reason dialog with the rule and the days", async () => {
+    await approveUntilExceptionStep();
+    expect(screen.queryByTestId("leave-approval-modal")).toBeNull();
+    expect(screen.getByText("Ausnahme von der Urlaubsgrenze")).toBeTruthy();
+    const description = document.querySelector(".confirm-description")?.textContent ?? "";
+    expect(description).toContain("Azubis");
+    expect(description).toContain("höchstens 2");
+    expect(description).toContain("02.09. (3)");
+    expect(document.querySelectorAll(".scrim").length).toBeLessThanOrEqual(1);
+  });
+
+  it("confirming resends the approval with the same note and a trimmed limitException", async () => {
+    const { onReviewed } = await approveUntilExceptionStep("   Bitte dieses Mal durchlassen   ");
+    await fireEvent.click(screen.getByText("Trotzdem genehmigen"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(apiPatch).toHaveBeenCalledTimes(2);
+    expect(apiPatch.mock.calls[0][1]).toEqual({ status: "APPROVED", reviewNote: "Ok so" });
+    expect(apiPatch.mock.calls[1][0]).toMatch(/\/review$/);
+    expect(apiPatch.mock.calls[1][1]).toEqual({
+      status: "APPROVED",
+      reviewNote: "Ok so",
+      limitException: { reason: "Bitte dieses Mal durchlassen" },
+    });
+  });
+
+  it("a reason below 10 characters keeps the dialog open with the German message and sends nothing", async () => {
+    const { onReviewed } = await approveUntilExceptionStep("kurz");
+    await fireEvent.click(screen.getByText("Trotzdem genehmigen"));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain("10 bis 500 Zeichen"),
+    );
+    expect(apiPatch).toHaveBeenCalledTimes(1);
+    expect(onReviewed).not.toHaveBeenCalled();
+    expect(document.getElementById("reason-dialog-textarea")).toBeTruthy();
+  });
+
+  it("cancelling sends nothing more and does not call onReviewed", async () => {
+    const { onReviewed } = await approveUntilExceptionStep();
+    await fireEvent.click(screen.getByText("Abbrechen"));
+    await waitFor(() => expect(document.getElementById("reason-dialog-textarea")).toBeNull());
+    expect(apiPatch).toHaveBeenCalledTimes(1);
+    expect(onReviewed).not.toHaveBeenCalled();
+  });
+
+  it("a REJECTED review never shows the step, even when the server answers the code", async () => {
+    renderDialog({ typeCode: "VACATION" });
+    apiPatch.mockRejectedValueOnce(limitError());
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-reject"));
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1));
+    expect(document.getElementById("reason-dialog-textarea")).toBeNull();
+  });
+});
