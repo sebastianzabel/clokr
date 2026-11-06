@@ -28,6 +28,7 @@ import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
 import { dayBreakRoutes } from "./contexts/time-tracking/api/day-breaks"; // Issue #80 (D-02..D-06, D-21)
 import { leaveRoutes } from "./contexts/absence/api/leave";
 import { leaveLimitRoutes } from "./contexts/absence/api/leave-limits"; // Issue #836
+import { leavePlanRoutes } from "./contexts/absence/api/leave-plans"; // Issue #835
 import { overtimeRoutes } from "./contexts/working-time-account/api/overtime";
 import { reportRoutes } from "./composition/reports";
 import { reportsPeriodRoutes } from "./composition/reports-period"; // Issue #612
@@ -392,6 +393,7 @@ export async function buildApp() {
   await app.register(dayBreakRoutes, { prefix: "/api/v1/day-breaks" }); // Issue #80 (D-02..D-06, D-21)
   await app.register(leaveRoutes, { prefix: "/api/v1/leave" });
   await app.register(leaveLimitRoutes, { prefix: "/api/v1/leave/limits" }); // Issue #836
+  await app.register(leavePlanRoutes, { prefix: "/api/v1/leave/plans" }); // Issue #835
   await app.register(retroEntryRequestRoutes, { prefix: "/api/v1/retro-entry-requests" });
   await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });
   await app.register(reportRoutes, { prefix: "/api/v1/reports" });
