@@ -101,7 +101,7 @@ describe("rows and bars", () => {
     expect(screen.getByTestId("plan-bar-beantragt").classList.contains("plan-bar--beantragt")).toBe(
       true,
     );
-    expect(screen.getByTestId("plan-wish-w1")).toBeTruthy();
+    expect(screen.getByTestId("leave-plan-wish-w1")).toBeTruthy();
     expect(screen.getAllByTestId("plan-holiday-2027-01-01").length).toBe(2);
   });
 
@@ -117,7 +117,7 @@ describe("rows and bars", () => {
     // The February bar and the May bar lie outside; the March wish is shown.
     expect(screen.queryByTestId("plan-bar-gesetzt")).toBeNull();
     expect(screen.queryByTestId("plan-bar-beantragt")).toBeNull();
-    expect(screen.getByTestId("plan-wish-w1")).toBeTruthy();
+    expect(screen.getByTestId("leave-plan-wish-w1")).toBeTruthy();
     expect(screen.getByTestId("plan-track-e1").style.width).toBe("620px");
   });
 });
@@ -142,7 +142,7 @@ describe("drag and resize", () => {
 
   it("the end handle by -2 columns moves the end by -2", async () => {
     const props = render();
-    await drag(screen.getByTestId("wish-handle-end-w1"), 200, 160);
+    await drag(screen.getByTestId("leave-plan-wish-handle-end-w1"), 200, 160);
     expect(props.onMoveWish).toHaveBeenCalledWith(expect.objectContaining({ id: "w1" }), {
       startDate: "2027-03-08",
       endDate: "2027-03-10",
@@ -151,7 +151,7 @@ describe("drag and resize", () => {
 
   it("the start handle by +1 column moves the start by +1", async () => {
     const props = render();
-    await drag(screen.getByTestId("wish-handle-start-w1"), 100, 120);
+    await drag(screen.getByTestId("leave-plan-wish-handle-start-w1"), 100, 120);
     expect(props.onMoveWish).toHaveBeenCalledWith(expect.objectContaining({ id: "w1" }), {
       startDate: "2027-03-09",
       endDate: "2027-03-12",
@@ -164,8 +164,8 @@ describe("drag and resize", () => {
     ["a wish with editable false", { editable: false }],
   ])("%s has no handles and ignores drags", async (_name, patch) => {
     const props = render({ persons: [person({ wishes: [wish(patch)] })] });
-    expect(screen.queryByTestId("wish-handle-start-w1")).toBeNull();
-    expect(screen.queryByTestId("wish-handle-end-w1")).toBeNull();
+    expect(screen.queryByTestId("leave-plan-wish-handle-start-w1")).toBeNull();
+    expect(screen.queryByTestId("leave-plan-wish-handle-end-w1")).toBeNull();
     const body = screen.queryByTestId("wish-bar-w1");
     if (body) await drag(body, 100, 200);
     expect(props.onMoveWish).not.toHaveBeenCalled();

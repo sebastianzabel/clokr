@@ -477,7 +477,7 @@
                     class:plan-wish--conflict={wish.conflict}
                     class:plan-wish--readonly={!editable}
                     class:plan-wish--dragging={drag?.wishId === wish.id}
-                    data-testid="plan-wish-{wish.id}"
+                    data-testid="leave-plan-wish-{wish.id}"
                     style:left="{left}px"
                     style:width="{width}px"
                     style:top="{4 + item.lane * LANE_HEIGHT}px"
@@ -511,7 +511,7 @@
                         <span
                           class="plan-handle plan-handle--start"
                           role="presentation"
-                          data-testid="wish-handle-start-{wish.id}"
+                          data-testid="leave-plan-wish-handle-start-{wish.id}"
                           onpointerdown={(event) => beginDrag(event, wish, "start")}
                           onpointermove={(event) => moveDrag(event, wish)}
                           onpointerup={(event) => endDrag(event, wish)}
@@ -520,7 +520,7 @@
                         <span
                           class="plan-handle plan-handle--end"
                           role="presentation"
-                          data-testid="wish-handle-end-{wish.id}"
+                          data-testid="leave-plan-wish-handle-end-{wish.id}"
                           onpointerdown={(event) => beginDrag(event, wish, "end")}
                           onpointermove={(event) => moveDrag(event, wish)}
                           onpointerup={(event) => endDrag(event, wish)}
