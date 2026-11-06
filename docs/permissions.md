@@ -113,6 +113,7 @@ Jede Ressource des Katalogs mit ihrem Kontext (ADR 0001/0002) und ihrem Bezug; d
 | `section9`          | Abwesenheiten    | Person  | § 9-Vorgänge (Krankheit im Urlaub) inkl. Dokumente                                                 |
 | `leave-entitlement` | Abwesenheiten    | Person  | Urlaubsanspruch                                                                                    |
 | `leave-config`      | Abwesenheiten    | Mandant | Abwesenheitsarten und Sonderurlaubsregeln                                                          |
+| `leave-limit`       | Abwesenheiten    | Person  | Urlaubsgrenzen und Urlaubssperren                                                                  |
 | `company-shutdown`  | Abwesenheiten    | Mandant | Betriebsurlaub                                                                                     |
 | `vocational-school` | Abwesenheiten    | Person  | Berufsschule (Tage und Muster)                                                                     |
 | `overtime`          | Arbeitszeitkonto | Person  | Saldo und Überstundenkonto                                                                         |
@@ -353,6 +354,12 @@ Rückfallsicherung und liefert dieselbe 409.
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `leave-config:read:ZUGEWIESEN`   | Die Konfiguration der Abwesenheitsarten des Mandanten lesen (`GET /settings/leave-types`).                                               | Abwesenheitsarten oder Sonderurlaubsregeln ändern (`leave-config:manage`); Anträge (`leave-request:read`). Wirkt nur bei einer Zuweisung mit Scope Mandant (seit Phase 91b durchgesetzt, #91).       |
 | `leave-config:manage:ZUGEWIESEN` | Abwesenheitsarten ändern (`PUT /settings/leave-types/:id`) und Sonderurlaubsregeln anlegen, ändern und löschen (`/special-leave/rules`). | Urlaubsansprüche einzelner Mitarbeiter (`leave-entitlement:update`); Betriebsurlaub (`company-shutdown:manage`). Wirkt nur bei einer Zuweisung mit Scope Mandant (seit Phase 91b durchgesetzt, #91). |
+
+### `leave-limit` — Urlaubsgrenzen und Urlaubssperren
+
+| Permission                      | erlaubt                                                                                                                                                                    | erlaubt ausdrücklich nicht                                                                                                                        |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `leave-limit:manage:ZUGEWIESEN` | Regeln für Salons im Scope anlegen, ändern und entfernen (`/leave/limits`), Regeln für alle Salons nur bei Scope Mandant, die Regeln und die Tageslast lesen (Issue #836). | Anträge genehmigen (`leave-request:approve`); Abwesenheitsarten (`leave-config:manage`); Mindestbesetzung im Schichtplan (`shift-config:manage`). |
 
 ### `company-shutdown` — Betriebsurlaub
 
