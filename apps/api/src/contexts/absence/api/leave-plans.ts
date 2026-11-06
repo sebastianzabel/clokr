@@ -35,6 +35,7 @@ import {
   toPlannerWish,
   dayToDate,
 } from "../leave-plan";
+import { isOpenPlanUniqueViolation } from "../leave-plan/db-refusals";
 
 /** One body per rejection cause (T-100-09), byte-identical for every reason inside that cause. */
 const SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
@@ -136,35 +137,41 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       if (!salon.ok || salon.salonId === null) return reply.code(404).send(SALON_NOT_FOUND);
       const salonId = salon.salonId;
 
-      const created = await app.prisma.$transaction(async (tx) => {
-        // Serialises two openers of the same salon and year; the partial unique index of 835-04 is
-        // the database backstop of the same rule.
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`leave-plan:${tenantId}:${salonId}:${body.year}`}, 0))`;
-        const open = await tx.leavePlan.findFirst({
-          where: { tenantId, salonId, year: body.year, status: "OPEN" },
-          select: { id: true },
+      const created = await app.prisma
+        .$transaction(async (tx) => {
+          // Serialises two openers of the same salon and year; the partial unique index
+          // `LeavePlan_open_unique` is the database backstop of the same rule.
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`leave-plan:${tenantId}:${salonId}:${body.year}`}, 0))`;
+          const open = await tx.leavePlan.findFirst({
+            where: { tenantId, salonId, year: body.year, status: "OPEN" },
+            select: { id: true },
+          });
+          if (open) return null;
+          const row = await tx.leavePlan.create({
+            data: {
+              tenantId,
+              salonId,
+              year: body.year,
+              deadline: body.deadline ? dayToDate(body.deadline) : null,
+              openedByUserId: req.user.sub,
+            },
+          });
+          await app.audit({
+            userId: req.user.sub,
+            action: "CREATE",
+            entity: "LeavePlan",
+            entityId: row.id,
+            newValue: { salonId, year: body.year, deadline: body.deadline ?? null },
+            request: requestAudit(req),
+            tx,
+          });
+          return row;
+        })
+        .catch((err: unknown) => {
+          // A racing opener that slipped past the application check: same answer as the check.
+          if (isOpenPlanUniqueViolation(err)) return null;
+          throw err;
         });
-        if (open) return null;
-        const row = await tx.leavePlan.create({
-          data: {
-            tenantId,
-            salonId,
-            year: body.year,
-            deadline: body.deadline ? dayToDate(body.deadline) : null,
-            openedByUserId: req.user.sub,
-          },
-        });
-        await app.audit({
-          userId: req.user.sub,
-          action: "CREATE",
-          entity: "LeavePlan",
-          entityId: row.id,
-          newValue: { salonId, year: body.year, deadline: body.deadline ?? null },
-          request: requestAudit(req),
-          tx,
-        });
-        return row;
-      });
       if (!created) {
         return reply.code(409).send({
           error: LEAVE_PLAN_MESSAGES[LEAVE_PLAN_ALREADY_OPEN],

@@ -24,8 +24,10 @@ import {
   LEAVE_PLAN_WISH_NOT_HOMED,
   LEAVE_PLAN_WISH_OUTSIDE_YEAR,
   LEAVE_PLAN_WISH_OVERLAP,
+  LEAVE_PLAN_WISH_OVERLAP_WISH_MESSAGE,
   PLAN_NOT_FOUND_ERROR,
 } from "./constants";
+import { isWishOverlapExclusion } from "./db-refusals";
 import { dayToDate, halfDayShapeValid, wishInsideYear } from "./wish-rules";
 
 export type WishWriteOutcome =
@@ -59,7 +61,7 @@ export async function createWish(
 ): Promise<WishWriteOutcome> {
   const { tenantId, planId, employeeId, startDay, endDay, halfDay } = input;
 
-  return app.prisma.$transaction(async (tx): Promise<WishWriteOutcome> => {
+  const write = app.prisma.$transaction(async (tx): Promise<WishWriteOutcome> => {
     await lockEmployeeForLeavePricing(tx, tenantId, employeeId);
 
     const locked = await tx.$queryRaw<
@@ -115,5 +117,13 @@ export async function createWish(
       tx,
     });
     return { ok: true, wish };
+  });
+  // A racing writer that slipped past the application check meets the exclusion constraint
+  // `LeavePlanWish_no_overlap_active`: same answer as the check. Anything else rethrows.
+  return write.catch((err: unknown): WishWriteOutcome => {
+    if (isWishOverlapExclusion(err)) {
+      return refused(409, LEAVE_PLAN_WISH_OVERLAP, LEAVE_PLAN_WISH_OVERLAP_WISH_MESSAGE);
+    }
+    throw err;
   });
 }
