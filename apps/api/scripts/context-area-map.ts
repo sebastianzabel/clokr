@@ -344,6 +344,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-plan/takeover.ts": "abwesenheiten", // Issue #835 - takeOverLeavePlan - turns wishes into requests through the create and decision cores; writes LeavePlanWish and LeavePlan
   "src/contexts/absence/leave-plan/planner-read.ts": "abwesenheiten", // Issue #835 - the live planner read (population, gesetzt/beantragt rows, wishes, conflict flag, type masking, holidays); reads LeavePlanWish and CompanyShutdown, leave and Absence rows only through the absence facades
   "src/contexts/absence/leave-plan/day-load.ts": "abwesenheiten", // Issue #835 - plannerDayLoad - the planner's per-day count read from leaveLimitLoadView with the wishes as candidates; counts nothing itself
+  "src/contexts/absence/leave-plan/forecast.ts": "abwesenheiten", // Issue #835 - plannerForecast - the entitlement forecast of one person (remaining days minus PENDING minus the wishes priced by resolveLeaveDays); read-only, creates or heals no entitlement row
   "src/contexts/absence/leave-calendar-visibility.ts": "abwesenheiten", // Issue #835 - pure - canSeeLeaveType, the calendar's one type-visibility rule (moved out of api/leave.ts, second caller is the planner read)
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)
   "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest

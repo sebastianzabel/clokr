@@ -768,9 +768,20 @@ export async function reverseVacationDays(
  * REQUIRED (not optional) on `resolveLeaveDays()` on purpose (Pitfall 1, 436-04-PLAN.md): making
  * it optional would let a new call site silently fall back to some default and skip this
  * decision entirely. The compiler enumerates every call site instead.
+ *
+ * Issue #835 (D-835-25): `extraSiblings` lets the leave planner price wishes as if filed one after
+ * another. The rows are appended to the stored siblings and treated as created EARLIER than the
+ * priced request (they are hypothetical, so the creation-order rule of `excludeRequestId` does not
+ * apply to them). Without it nothing changes.
  */
 export type LeaveDaysPricing =
-  { mode: "request"; leaveTypeCode: string; excludeRequestId?: string } | { mode: "isolated" };
+  | {
+      mode: "request";
+      leaveTypeCode: string;
+      excludeRequestId?: string;
+      extraSiblings?: ReadonlyArray<{ startDate: Date; endDate: Date; halfDay: boolean }>;
+    }
+  | { mode: "isolated" };
 
 /**
  * Issue #436, D-04/D-09 — loads the "other counted VACATION requests" for the week-union
@@ -945,14 +956,17 @@ export async function resolveLeaveDays(
       const activeSegment = contractSegmentAt(segments, start);
       if (activeSegment.type === "SHIFT_BASED") {
         if (pricing.mode === "request" && pricing.leaveTypeCode === "VACATION") {
-          const others = await countedVacationSiblingRequests(
-            prisma,
-            employeeId,
-            tenantId,
-            start,
-            end,
-            pricing.excludeRequestId,
-          );
+          const others = [
+            ...(await countedVacationSiblingRequests(
+              prisma,
+              employeeId,
+              tenantId,
+              start,
+              end,
+              pricing.excludeRequestId,
+            )),
+            ...(pricing.extraSiblings ?? []),
+          ];
           const days = marginalShiftBasedLeaveDaysBySegments(
             { startDate: start, endDate: end, halfDay },
             others,
@@ -1001,14 +1015,17 @@ export async function resolveLeaveDays(
       if (siblings === null) {
         siblings =
           pricing.mode === "request" && pricing.leaveTypeCode === "VACATION"
-            ? await countedVacationSiblingRequests(
-                prisma,
-                employeeId,
-                tenantId,
-                start,
-                end,
-                pricing.excludeRequestId,
-              )
+            ? [
+                ...(await countedVacationSiblingRequests(
+                  prisma,
+                  employeeId,
+                  tenantId,
+                  start,
+                  end,
+                  pricing.excludeRequestId,
+                )),
+                ...(pricing.extraSiblings ?? []),
+              ]
             : [];
       }
       return siblings;

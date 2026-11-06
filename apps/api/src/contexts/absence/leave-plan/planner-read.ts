@@ -26,11 +26,13 @@ import { getAbsencesOverlapping } from "../facade/absences";
 import { getCalendarLeaveOverlapping } from "../facade/leave-requests";
 import { canSeeLeaveType } from "../leave-calendar-visibility";
 import { eachDay } from "../leave-limits/counted-days";
+import { isPersonVisibleOn, readerVisibilityFrom } from "../leave-limits/redact";
 import { isSickLeaveTypeCode } from "../leave-type";
 import { manageCoversFromHomeDays } from "./admission";
 import { plannerDayLoad, type PlannerDay } from "./day-load";
+import { plannerForecast, type PlannerForecast } from "./forecast";
 
-export type { PlannerDay };
+export type { PlannerDay, PlannerForecast };
 import { planPopulation } from "./population";
 import { dayOf, dayToDate, deadlinePassed, ownEditLocked, rangesOverlap } from "./wish-rules";
 
@@ -57,15 +59,6 @@ export type PlannerWish = {
   refusalMessage: string | null;
   editable: boolean;
   createdAt: string;
-};
-
-export type PlannerForecast = {
-  entitlementBasis: "STORED" | "COMPUTED";
-  remainingDays: number;
-  pendingDays: number;
-  wishDays: number;
-  forecastDays: number;
-  forecastNegative: boolean;
 };
 
 export type PlannerPerson = {
@@ -436,6 +429,31 @@ export async function readPlanner(
     })),
     showLimits,
   });
+
+  // ── Forecast (D-835-11/25): only for the reader's own row or a person inside the reader's
+  // `leave-entitlement:read` reach; everybody else gets `null` (no new visibility rule, D-835-04). ──
+  const entitlementVisibility = readerVisibilityFrom(viewer.entitlementReach, viewer.employeeId);
+  const wishesByPerson = new Map<string, typeof candidateWishes>();
+  for (const w of candidateWishes) {
+    const list = wishesByPerson.get(w.employeeId);
+    if (list) list.push(w);
+    else wishesByPerson.set(w.employeeId, [w]);
+  }
+  for (const person of persons) {
+    if (!isPersonVisibleOn(entitlementVisibility, person.employeeId, plan.salonId)) continue;
+    person.forecast = await plannerForecast(db, {
+      tenantId,
+      employeeId: person.employeeId,
+      year: plan.year,
+      wishes: (wishesByPerson.get(person.employeeId) ?? []).map((w) => ({
+        id: w.id,
+        startDay: dayOf(w.startDate),
+        endDay: dayOf(w.endDate),
+        halfDay: w.halfDay,
+      })),
+      now,
+    });
+  }
 
   return {
     plan: {
