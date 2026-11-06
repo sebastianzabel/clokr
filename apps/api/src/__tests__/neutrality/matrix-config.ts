@@ -350,6 +350,24 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "Proven by `leave-limits-routes-836.test.ts`.",
   },
   {
+    route: "PUT /api/v1/leave/limits/:id",
+    reason:
+      "New route added in Issue #836, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`leave-limit:manage:ZUGEWIESEN`) " +
+      "from its very first commit and never had role-based access behavior to compare. Same " +
+      "vacuous-satisfaction reasoning as the Phase 430, 468 and 481 entries: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by `leave-limits-routes-836.test.ts`.",
+  },
+  {
+    route: "DELETE /api/v1/leave/limits/:id",
+    reason:
+      "New route added in Issue #836, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`leave-limit:manage:ZUGEWIESEN`) " +
+      "from its very first commit and never had role-based access behavior to compare. Same " +
+      "vacuous-satisfaction reasoning as the Phase 430, 468 and 481 entries: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by `leave-limits-routes-836.test.ts`.",
+  },
+  {
     route: "PATCH /api/v1/terminals/:id",
     reason:
       "New route added in Issue #541, long after the role guard (`requireRole`) was deleted from " +

@@ -38,9 +38,10 @@ const SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
 const RULE_NOT_FOUND = { error: "Regel nicht gefunden" } as const;
 const ROLE_NOT_FOUND = { error: "Rolle nicht gefunden" } as const;
 const ALL_SALONS_FORBIDDEN = {
-  error: "Eine Regel für alle Salons kann nur anlegen, wer für den ganzen Mandanten zuständig ist.",
+  error: "Regeln für alle Salons kann nur verwalten, wer für den ganzen Mandanten zuständig ist.",
 } as const;
 
+const idParamSchema = z.object({ id: z.string().uuid() });
 const listQuerySchema = z.object({ salonId: z.string().uuid().optional() });
 
 const MANAGE_KEY = "leave-limit:manage:ZUGEWIESEN" as const;
@@ -232,6 +233,117 @@ export async function leaveLimitRoutes(app: FastifyInstance) {
           canManage: true,
         }),
       );
+    },
+  });
+
+  /**
+   * The existing rule a write acts on, or the refusal: a rule of another tenant, an unknown id and
+   * a removed rule are one 404 body; a rule of a salon outside the manage reach is the same body;
+   * an all-salons rule needs a whole-tenant reach (403).
+   */
+  async function loadManageableRule(req: FastifyRequest, id: string) {
+    const existing = await app.prisma.leaveLimitRule.findFirst({
+      where: { id, tenantId: req.user.tenantId, deletedAt: null },
+    });
+    if (!existing) return { ok: false as const, status: 404, body: RULE_NOT_FOUND };
+    const reach = await manageReach(req);
+    if (existing.salonId === null) {
+      return reach.kind === "wholeTenant"
+        ? { ok: true as const, existing }
+        : { ok: false as const, status: 403, body: ALL_SALONS_FORBIDDEN };
+    }
+    return reachCovers(reach, existing.salonId)
+      ? { ok: true as const, existing }
+      : { ok: false as const, status: 404, body: RULE_NOT_FOUND };
+  }
+
+  app.put("/:id", {
+    schema: {
+      tags: ["Abwesenheiten"],
+      security: [{ bearerAuth: [] }],
+      summary: "Change a leave limit rule or blackout",
+      description:
+        "Replaces the fields of a rule in place and audits old and new values. A changed salon or role is validated like on create; an unchanged salon is not re-validated.",
+    },
+    preHandler: requirePermission("leave-limit:manage:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const body = leaveLimitRuleBodySchema.parse(req.body);
+      const tenantId = req.user.tenantId;
+      const loaded = await loadManageableRule(req, id);
+      if (!loaded.ok) return reply.code(loaded.status).send(loaded.body);
+      const { existing } = loaded;
+
+      // Only a CHANGED salon is validated, so a rule of a salon deactivated later stays editable.
+      let salonId = existing.salonId;
+      if (body.salonId !== existing.salonId) {
+        const salon = await admitSalon(req, body.salonId);
+        if (!salon.ok) return reply.code(salon.status).send(salon.body);
+        salonId = salon.salonId;
+      }
+      let roleName: string | null = null;
+      if (body.groupKind === "ACCESS_ROLE" && body.accessRoleId) {
+        const role = await accessRoleOfTenant(app.prisma, tenantId, body.accessRoleId);
+        if (!role) return reply.code(404).send(ROLE_NOT_FOUND);
+        roleName = role.name;
+      }
+
+      // Tenant-scoped write; a rule removed concurrently since the read above is the same 404.
+      const written = await app.prisma.leaveLimitRule.updateMany({
+        where: { id, tenantId, deletedAt: null },
+        data: { salonId, ...ruleDataFromBody(body) },
+      });
+      if (written.count === 0) return reply.code(404).send(RULE_NOT_FOUND);
+      const updated = await app.prisma.leaveLimitRule.findFirstOrThrow({
+        where: { id, tenantId },
+      });
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "LeaveLimitRule",
+        entityId: id,
+        oldValue: auditSnapshot(existing),
+        newValue: auditSnapshot(updated),
+        request: requestAudit(req),
+      });
+      const salons = salonId
+        ? await listSalons(app.prisma, tenantId, { includeInactive: true })
+        : [];
+      return toLeaveLimitRuleDto(updated, {
+        salon: salons.find((s) => s.id === updated.salonId) ?? null,
+        roleName,
+        canManage: true,
+      });
+    },
+  });
+
+  app.delete("/:id", {
+    schema: {
+      tags: ["Abwesenheiten"],
+      security: [{ bearerAuth: [] }],
+      summary: "Remove a leave limit rule or blackout",
+      description:
+        "Soft removal: the row keeps deletedAt and deletedByUserId, the rule no longer counts or lists. Audited with the old values.",
+    },
+    preHandler: requirePermission("leave-limit:manage:ZUGEWIESEN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const loaded = await loadManageableRule(req, id);
+      if (!loaded.ok) return reply.code(loaded.status).send(loaded.body);
+      const removed = await app.prisma.leaveLimitRule.updateMany({
+        where: { id, tenantId: req.user.tenantId, deletedAt: null },
+        data: { deletedAt: new Date(), deletedByUserId: req.user.sub },
+      });
+      if (removed.count === 0) return reply.code(404).send(RULE_NOT_FOUND);
+      await app.audit({
+        userId: req.user.sub,
+        action: "DELETE",
+        entity: "LeaveLimitRule",
+        entityId: id,
+        oldValue: auditSnapshot(loaded.existing),
+        request: requestAudit(req),
+      });
+      return reply.code(204).send();
     },
   });
 }

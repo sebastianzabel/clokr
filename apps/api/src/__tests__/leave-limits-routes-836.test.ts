@@ -21,6 +21,7 @@ import {
 } from "./setup";
 import { roleNameKey, normalizeRolePermissions } from "../contexts/platform/access-role";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
+import { evaluateLeaveLimits } from "../contexts/absence/leave-limits";
 
 const MANAGE = "leave-limit:manage:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
@@ -129,6 +130,17 @@ describe("Issue #836 - /api/v1/leave/limits", () => {
         },
       })
     ).id;
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: one.tenant.id,
+        employeeId: one.employee.id,
+        salonId: one.salonId,
+        kind: "HOME",
+        validFrom: new Date("2024-01-01T00:00:00Z"),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
     tenantManager = await actor("tm", [MANAGE], { scopeType: "TENANT" });
     salonManager = await actor("sm", [MANAGE], { scopeType: "SALONS", salonIds: [one.salonId] });
     salonApprover = await actor("sa", [APPROVE], { scopeType: "SALONS", salonIds: [one.salonId] });
@@ -341,6 +353,158 @@ describe("Issue #836 - /api/v1/leave/limits", () => {
       });
       const json = JSON.parse((await call("GET", "/", tenantManager)).body) as { rules: Dto[] };
       expect(json.rules.map((r) => r.id)).not.toContain(rules.s.id);
+    });
+  });
+
+  describe("PUT /:id and DELETE /:id", () => {
+    const rule = (over: Record<string, unknown> = {}) =>
+      app.prisma.leaveLimitRule.create({
+        data: {
+          tenantId: one.tenant.id,
+          salonId: one.salonId,
+          groupKind: "ALL",
+          maxPersons: 1,
+          ...over,
+        },
+      });
+
+    it("changes the limit in place and audits old and new values", async () => {
+      const existing = await rule();
+      const res = await call("PUT", `/${existing.id}`, tenantManager, body({ maxPersons: 2 }));
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toMatchObject({ id: existing.id, maxPersons: 2 });
+      const again = await call("PUT", `/${existing.id}`, tenantManager, body({ maxPersons: 200 }));
+      expect(JSON.parse(again.body).maxPersons).toBe(200);
+
+      const rows = await app.prisma.auditLog.findMany({
+        where: { entity: "LeaveLimitRule", action: "UPDATE", entityId: existing.id },
+        orderBy: { createdAt: "asc" },
+      });
+      expect(rows).toHaveLength(2);
+      expect(rows[0].oldValue).toMatchObject({ maxPersons: 1 });
+      expect(rows[0].newValue).toMatchObject({ maxPersons: 2 });
+      expect(await app.prisma.leaveLimitRule.count({ where: { tenantId: one.tenant.id } })).toBe(1);
+    });
+
+    it("keeps a rule of a deactivated salon editable, but validates a salon it is moved to", async () => {
+      const off = await createTestSalon(app.prisma, one.tenant.id, { name: "Limits836 later off" });
+      const existing = await rule({ salonId: off.id });
+      await app.prisma.salon.update({
+        where: { id: off.id },
+        data: { isActive: false, deactivatedAt: new Date() },
+      });
+      const kept = await call(
+        "PUT",
+        `/${existing.id}`,
+        tenantManager,
+        body({ salonId: off.id, maxPersons: 3 }),
+      );
+      expect(kept.statusCode).toBe(200);
+      expect(JSON.parse(kept.body)).toMatchObject({ salonId: off.id, maxPersons: 3 });
+
+      const mine = await rule();
+      const moved = await call("PUT", `/${mine.id}`, salonManager, body({ salonId: salonS2 }));
+      expect(moved.statusCode).toBe(404);
+      expect(JSON.parse(moved.body)).toEqual({ error: "Salon nicht gefunden" });
+      expect(
+        (await app.prisma.leaveLimitRule.findUniqueOrThrow({ where: { id: mine.id } })).salonId,
+      ).toBe(one.salonId);
+    });
+
+    it("a foreign tenant's rule, an unknown id and a removed rule answer the identical 404", async () => {
+      const foreign = await app.prisma.leaveLimitRule.create({
+        data: { tenantId: two.tenant.id, salonId: two.salonId, groupKind: "ALL", maxPersons: 1 },
+      });
+      const removed = await rule({ deletedAt: new Date() });
+      const answers = [
+        await call("PUT", `/${foreign.id}`, tenantManager, body()),
+        await call("PUT", `/${UNKNOWN_ID}`, tenantManager, body()),
+        await call("PUT", `/${removed.id}`, tenantManager, body()),
+        await call("DELETE", `/${foreign.id}`, tenantManager),
+        await call("DELETE", `/${UNKNOWN_ID}`, tenantManager),
+        await call("DELETE", `/${removed.id}`, tenantManager),
+      ];
+      for (const answer of answers) {
+        expect(answer.statusCode).toBe(404);
+        expect(answer.body).toBe(JSON.stringify({ error: "Regel nicht gefunden" }));
+      }
+      expect(
+        (await app.prisma.leaveLimitRule.findUniqueOrThrow({ where: { id: foreign.id } }))
+          .deletedAt,
+      ).toBeNull();
+    });
+
+    it("a salon-scoped holder gets 403 on an all-salons rule and 404 on a rule of a salon outside its reach", async () => {
+      const all = await rule({ salonId: null });
+      const other = await rule({ salonId: salonS2 });
+      for (const method of ["PUT", "DELETE"] as const) {
+        const onAll = await call(
+          method,
+          `/${all.id}`,
+          salonManager,
+          method === "PUT" ? body() : undefined,
+        );
+        expect(onAll.statusCode).toBe(403);
+        const onOther = await call(
+          method,
+          `/${other.id}`,
+          salonManager,
+          method === "PUT" ? body() : undefined,
+        );
+        expect(onOther.statusCode).toBe(404);
+        expect(onOther.body).toBe(JSON.stringify({ error: "Regel nicht gefunden" }));
+      }
+      expect(
+        (await call("PUT", `/${all.id}`, tenantManager, body({ salonId: null }))).statusCode,
+      ).toBe(200);
+    });
+
+    it("DELETE removes softly, audits the old values and the rule stops counting", async () => {
+      const blackout = await rule({
+        maxPersons: 0,
+        validFrom: new Date("2027-12-06"),
+        validUntil: new Date("2027-12-10"),
+      });
+      const candidate = {
+        requestId: null,
+        employeeId: one.employee.id,
+        typeCode: "VACATION",
+        startDay: "2027-12-06",
+        endDay: "2027-12-10",
+      };
+      const before = await evaluateLeaveLimits(app.prisma, one.tenant.id, {
+        candidates: [candidate],
+        excludeRequestIds: [],
+      });
+      expect(before.exceedances).toHaveLength(1);
+
+      const res = await call("DELETE", `/${blackout.id}`, tenantManager);
+      expect(res.statusCode).toBe(204);
+      expect(res.body).toBe("");
+
+      const stored = await app.prisma.leaveLimitRule.findUniqueOrThrow({
+        where: { id: blackout.id },
+      });
+      expect(stored.deletedAt).not.toBeNull();
+      expect(stored.deletedByUserId).not.toBeNull();
+      const audit = await soleAuditRow(app.prisma, {
+        where: { entity: "LeaveLimitRule", action: "DELETE", entityId: blackout.id },
+      });
+      expect(audit.oldValue).toMatchObject({ maxPersons: 0, validFrom: "2027-12-06" });
+
+      const after = await evaluateLeaveLimits(app.prisma, one.tenant.id, {
+        candidates: [candidate],
+        excludeRequestIds: [],
+      });
+      expect(after.exceedances).toEqual([]);
+      const listed = JSON.parse((await call("GET", "/", tenantManager)).body) as { rules: Dto[] };
+      expect(listed.rules.map((r) => r.id)).not.toContain(blackout.id);
+    });
+
+    it("refuses a caller without the key", async () => {
+      const existing = await rule();
+      expect((await call("PUT", `/${existing.id}`, outsider, body())).statusCode).toBe(403);
+      expect((await call("DELETE", `/${existing.id}`, salonApprover)).statusCode).toBe(403);
     });
   });
 });
