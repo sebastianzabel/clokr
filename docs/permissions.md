@@ -509,7 +509,7 @@ nur Summen je Person und Monat bzw. Jahr tragen — das ist durch `reports-hr-86
 inaktiven Salons. Das ist eine Semantikänderung des Unterbaus und kehrt Phase 76b D-07 für
 `report:read` um.
 
-**Seit #836 (Vorschlag 06.11.2026, Owner-Bestätigung vor dem Merge ausstehend).**
+**Seit #836 (Owner-Entscheidung 06.11.2026).**
 `leave-limit:manage:ZUGEWIESEN` (Urlaubsgrenzen und Urlaubssperren je Salon) liegt bei Admin,
 Inhaber und Salonmanager — nicht bei Manager, Mitarbeiter, Personalabteilung und Ausbilder. Admin
 und Inhaber sind durch die Template-Invarianten festgelegt (Admin = alle Schlüssel, deren Zeilen „A“

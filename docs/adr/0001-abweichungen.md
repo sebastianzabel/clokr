@@ -7551,11 +7551,8 @@ Die globalen Templates **Admin** (`…a001`), **Inhaber** (`…a004`) und **Salo
 **Semantikänderung** des Unterbaus nach ADR 0002, Entscheidung 7: Die Änderung gilt sofort für jedes Konto, das eine dieser
 Rollen hält (die Kundenkopien der Templates, also mandanteneigene Rollen, bleiben unverändert).
 
-- **Owner-Entscheidung: vorgeschlagen, Owner-Bestätigung vor dem Merge ausstehend.** Die Frage ging am 06.11.2026 an den Owner
-  (Issue #836); bis zum Abschluss dieser Phase liegt keine Antwort vor. Die Rollenmenge Admin, Inhaber, Salonmanager ist der
-  Vorschlag (Option a). Die Vergabe steht deshalb in einem eigenen Commit und in einer eigenen Datenmigration und lässt sich
-  ändern oder zurücknehmen, ohne etwas anderes der Phase zu berühren. **Fällt die Entscheidung anders aus, wird dieser Nachtrag
-  vor dem Merge angepasst.**
+- **Owner-Entscheidung 06.11.2026: Admin, Inhaber, Salonmanager.** Der Owner hat die vorgeschlagene Rollenmenge (Option a) vor
+  dem Merge bestätigt (Issue #836). Die Vergabe steht in einem eigenen Commit und in einer eigenen Datenmigration.
 - **Admin und Inhaber sind keine Wahl.** Admin hält jeden Schlüssel, dessen Zeilen in `docs/permissions.md` den Buchstaben „A“
   nennen (`system-roles.test.ts` (iv)), und Inhaber gleicht dem lebenden Katalog (`system-roles.test.ts` (D-04)). Den Schlüssel
   bei einem der beiden wegzulassen hieße, ihn aus dem Katalog zu entfernen. Offen war nur der Salonmanager.

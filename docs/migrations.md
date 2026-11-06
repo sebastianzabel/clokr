@@ -1698,9 +1698,8 @@ dann mit einem verständlichen 409.
 
 **Release-Hinweis.** Die Migration `20261106143731_leave_limit_template_grant` gilt sofort für **alle** Konten mit der Systemrolle
 Admin, Inhaber oder Salonmanager (Semantikänderung des Unterbaus): Sie erhalten `leave-limit:manage:ZUGEWIESEN` und dürfen damit
-Urlaubsgrenzen und Urlaubssperren ihrer Salons pflegen (Salonmanager) beziehungsweise des Mandanten (Admin, Inhaber). **Die
-Rollenmenge ist vorgeschlagen, die Owner-Bestätigung steht vor dem Merge noch aus** (Frage vom 06.11.2026 im Issue #836); fällt sie
-anders aus, wird die Migration vor dem Merge neu geschrieben, weil sie noch auf keiner Stage ausgerollt ist. Kundenkopien der Templates
+Urlaubsgrenzen und Urlaubssperren ihrer Salons pflegen (Salonmanager) beziehungsweise des Mandanten (Admin, Inhaber). Die
+Rollenmenge hat der Owner am 06.11.2026 bestätigt (Issue #836). Kundenkopien der Templates
 (mandanteneigene Rollen) bleiben unverändert.
 
 **Was die Migration tut.** Reine Datenmigration: keine Tabelle, Spalte, Index, Typ oder Bedingung wird angelegt, geändert oder gelöscht
