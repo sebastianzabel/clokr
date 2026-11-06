@@ -56,6 +56,7 @@ import {
   getAbsenceDocumentPaths,
   hardDeleteAbsencesForEmployee,
   hardDeleteLeaveRequestsForEmployee,
+  hardDeleteLeavePlanWishesForEmployee,
   statutoryMinimumVacationDays, // Issue #435 (D-11) — 5-day-base floor on POST/PATCH
   statutoryMinimumViolationMessage, // Issue #435 (D-11) — the ONE German 400 message builder
   daysDiffer, // Issue #435 code review (WR-01) — reused by the PATCH "did annualVacationDays change" guard
@@ -2460,6 +2461,9 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
             await hardDeleteTimeDataForEmployee(tx, id);
             // Restrict-protected models
             // Phase 100B Plan 13 — F3, contexts/absence facade (IN PLACE, ordering unchanged).
+            // Issue #835: the person's leave plan wishes reference the person and their requests
+            // (Restrict), so they go first.
+            await hardDeleteLeavePlanWishesForEmployee(tx, id, req.user.tenantId);
             await hardDeleteLeaveRequestsForEmployee(tx, id);
             // Phase 100B Plan 12 — F3, contexts/absence facade (IN PLACE, H5 ordering unchanged).
             await hardDeleteAbsencesForEmployee(tx, id);
