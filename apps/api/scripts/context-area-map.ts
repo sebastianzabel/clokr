@@ -322,6 +322,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-limits/parallel-leave-load.ts": "abwesenheiten", // Issue #836 - the pure counting kernel, the only place parallel leave is counted
   "src/contexts/absence/leave-limits/counted-days.ts": "abwesenheiten", // Issue #836 - pure - which days of one leave row count toward a limit
   "src/contexts/absence/leave-limits/group-membership.ts": "abwesenheiten", // Issue #836 - pure - which groups a person belongs to on a day (seam for a later history model)
+  "src/contexts/absence/leave-limits/workdays.ts": "abwesenheiten", // Issue #836 - pure - which days of a window a person would work (contract segment, holidays, roster days, usual days)
   "src/contexts/absence/leave-limits/load-facts.ts": "abwesenheiten", // Issue #836 - the loader - reads stored leave, employees, Stammsalon per day and contract workdays for the kernel
   "src/contexts/absence/leave-limits/check.ts": "abwesenheiten", // Issue #836 - the checker evaluateLeaveLimits - adds candidate rows and reports exceedances; reads LeaveLimitRule
   "src/contexts/absence/leave-limits/response.ts": "abwesenheiten", // Issue #836 - pure - serialises exceedances into counts-only leaveLimitWarnings
