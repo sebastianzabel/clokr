@@ -1660,3 +1660,38 @@ wieder läuft. Die Migration selbst zurückzunehmen heißt `ALTER TABLE "Coverag
 "CoverageRule_salonId_fkey"`, `DROP INDEX "CoverageRule_salonId_idx"` und `ALTER TABLE "CoverageRule" DROP COLUMN "salonId"`
 — das verliert jede Salonzuordnung einer Regel. Solange eine Regel einen Salon nennt, lässt sich dieser Salon nicht löschen
 (`RESTRICT`); Salons werden ohnehin nie gelöscht.
+
+## Phase 836 — Urlaubsgrenzen und Urlaubssperren je Salon (Issue #836)
+
+**Hinweis für die Release Notes.** Führungskräfte mit dem Recht „Urlaubsgrenzen verwalten“ legen unter Admin → „Urlaubsgrenzen &
+Sperren“ je Salon (oder für alle Salons) fest, wie viele Personen einer Gruppe gleichzeitig im Urlaub sein dürfen, optional in
+einem Zeitfenster; eine Urlaubssperre ist eine Grenze von null Personen. Ein Antrag über der Grenze wird angelegt und warnt;
+die Genehmigung und die Korrektur verlangen eine begründete Ausnahme, die im Prüfprotokoll steht. Bereits genehmigter Urlaub
+ändert sich nie. Ohne Regel ändert sich nichts.
+
+**Was die Migrationen tun.** Zwei Verzeichnisse in `packages/db/prisma/migrations/`, rein additiv: eine neue, leere Tabelle, keine
+bestehende Zeile wird gelesen, geschrieben oder geändert.
+
+- `20261106131444_leave_limit_rule` — vom Generator erzeugt (acht Anweisungen): der Typ `LeaveLimitGroupKind`
+  (`ALL`, `CLASSIFICATION`, `ACCESS_ROLE`), die Tabelle `LeaveLimitRule`, drei Indizes und drei Fremdschlüssel mit
+  `ON DELETE RESTRICT` auf `Tenant`, `Salon` und `AccessRole` (zwei neue Abhängigkeiten auf den Unterbau, genehmigt mit Issue
+  #836 in `Ready`; ADR `docs/adr/0001-abweichungen.md`, Eintrag AG).
+- `20261106132018_leave_limit_rule_checks` — von Hand geschrieben, weil Prisma keine CHECK-Bedingungen modelliert:
+  `LeaveLimitRule_maxPersons_check`, `LeaveLimitRule_window_check`, `LeaveLimitRule_group_shape_check`. Ein Test spielt sie nach
+  (`leave-limits-migration-836.test.ts`).
+
+**1. Vor dem Deploy.** Keine Datenprüfung nötig: die Tabelle ist neu und leer, kein Backfill, kein schreibendes Skript, und es
+gibt keine Zeile, die ein Prüfskript lesen könnte (kein bestehender Bestand ändert sich). Die CI-Driftprüfung
+(`prisma migrate diff --from-migrations … --to-schema … --exit-code`) bleibt leer, gemessen.
+
+**2. Deploy.** Der Einstiegspunkt des API-Containers führt `prisma migrate deploy` aus; ein zusätzlicher Schritt in der
+`.steps`-Datei des Release ist nicht nötig.
+
+**3. Rollback.** Ein Image-Rollback ist ohne Zurücksetzen der Migrationen möglich: der Prisma-Client des vorherigen Images kennt
+die Tabelle nicht und liest sie nicht; gespeicherte Regeln wirken dann nicht. Die Migrationen selbst werden **nie** nachträglich
+bearbeitet (sie sind angewendet). Zurücknehmen heißt eine neue Migration, die `DROP TABLE "LeaveLimitRule"` und
+`DROP TYPE "LeaveLimitGroupKind"` ausführt — das verliert alle gespeicherten Regeln. Solange eine Regel einen Salon oder eine
+Rolle nennt, lassen sich diese nicht löschen (`RESTRICT`); Salons werden ohnehin nie gelöscht, und `DELETE /roles/:id` antwortet
+dann mit einem verständlichen 409.
+
+<!-- Plan 836-08 ergänzt hier die Vorlagenänderung der Systemrollen (Berechtigung `leave-limit:manage`) und deren Runbook. -->
