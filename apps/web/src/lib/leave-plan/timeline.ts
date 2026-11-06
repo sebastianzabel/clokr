@@ -153,3 +153,26 @@ export function rangeToColumns(
     clippedEnd: end > viewEnd,
   };
 }
+
+/**
+ * Greedy lane packing for overlapping bars of one row: returns, per item (same order), the lane
+ * index (0-based) so that no two items of one lane overlap. Day indexes are inclusive.
+ */
+export function assignLanes(items: ReadonlyArray<{ start: number; end: number }>): number[] {
+  const order = items
+    .map((item, i) => ({ ...item, i }))
+    .sort((a, b) => a.start - b.start || a.end - b.end || a.i - b.i);
+  const laneEnds: number[] = [];
+  const lanes = new Array<number>(items.length).fill(0);
+  for (const item of order) {
+    let lane = laneEnds.findIndex((end) => end < item.start);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(item.end);
+    } else {
+      laneEnds[lane] = item.end;
+    }
+    lanes[item.i] = lane;
+  }
+  return lanes;
+}

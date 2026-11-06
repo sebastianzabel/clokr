@@ -1,6 +1,7 @@
 // Issue #835 (D-835-21) — the pure date ↔ column math of the planner timeline.
 import { describe, it, expect } from "vitest";
 import {
+  assignLanes,
   clampRangeToYear,
   dayFromIndex,
   dayIndex,
@@ -138,5 +139,22 @@ describe("rangeToColumns", () => {
 
   it("is null for a range outside the view", () => {
     expect(rangeToColumns({ startDate: "2027-05-01", endDate: "2027-05-03" }, 2027, 2)).toBeNull();
+  });
+});
+
+describe("assignLanes", () => {
+  it("packs overlapping items into separate lanes and reuses a free lane", () => {
+    expect(
+      assignLanes([
+        { start: 0, end: 5 },
+        { start: 3, end: 8 },
+        { start: 6, end: 9 },
+        { start: 10, end: 12 },
+      ]),
+    ).toEqual([0, 1, 0, 0]);
+  });
+
+  it("is empty for no items", () => {
+    expect(assignLanes([])).toEqual([]);
   });
 });
