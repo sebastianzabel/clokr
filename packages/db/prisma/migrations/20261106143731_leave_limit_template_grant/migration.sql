@@ -1,7 +1,7 @@
 -- Phase 836 (Issue #836) - the global system-role templates Admin, Inhaber and Salonmanager gain
 -- `leave-limit:manage:ZUGEWIESEN` (maintain leave limits and leave blackouts per salon). Role set
--- proposed 06.11.2026 (Admin and Inhaber are fixed by the template invariants, Salonmanager is the
--- proposal); owner confirmation is still pending before the merge. An Unterbau semantic change.
+-- confirmed by the owner 06.11.2026 (Admin and Inhaber are fixed by the template invariants,
+-- Salonmanager is the owner's choice). An Unterbau semantic change.
 --
 -- DATA ONLY: no table, column, index, type or constraint is created, altered or dropped
 -- (`prisma migrate diff` against the migration history stays empty). It updates exactly THREE rows,

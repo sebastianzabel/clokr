@@ -362,8 +362,8 @@ const OWNER_PERMISSION_KEYS = [
  *
  * Issue #836: holds `leave-limit:manage` so each salon maintains its own leave limits and
  * blackouts (reach SALONS: only the salons of the assignment; a rule for all salons needs
- * whole-tenant reach). Proposed 06.11.2026; owner confirmation pending before the merge. Shipped
- * by the data-only migration `<timestamp>_leave_limit_template_grant`.
+ * whole-tenant reach). Owner decision 06.11.2026. Shipped by
+ * the data-only migration `20261106143731_leave_limit_template_grant`.
  */
 const SALON_MANAGER_PERMISSION_KEYS = [
   "employee:read:ZUGEWIESEN",
