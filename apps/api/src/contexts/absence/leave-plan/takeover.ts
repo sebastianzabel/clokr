@@ -24,6 +24,10 @@
  * After every create the loop waits until the clock is past the row's `createdAt`, so requests of
  * one run carry strictly increasing `createdAt` in start order (SHIFT_BASED marginal pricing sorts
  * siblings by `createdAt`, D-835-27).
+ * The approvals defer the live-saldo recompute (D-835-37): after the loop the stored overtime balance
+ * is refreshed ONCE per distinct approved person with a wish starting before the tenant-local today
+ * (the live saldo never includes today, #438, and a future leave cannot change it) - reactively, a
+ * failure is logged with ids only and never fails the takeover.
  * A last short transaction locks the plan row `FOR UPDATE`, closes the plan when no wish is left
  * open and writes ONE summary audit row with ids and counts only.
  *
@@ -32,6 +36,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { homeSalonsForDays, isStammsalonScopeMatch, type AccessReach } from "../../platform";
+import { getTenantTimezone, todayInTz, updateOvertimeAccount } from "../../working-time-account";
 import { createLeaveRequestCore } from "../leave-request-create";
 import {
   approveLeaveRequestCore,
@@ -115,6 +120,9 @@ export async function takeOverLeavePlan(
   const { tenantId, planId, taker } = input;
   const result: TakeoverResult = { created: [], pending: [], refused: [], planStatus: "OPEN" };
   let skippedCount = 0;
+  /** Persons with an approved wish that starts before today: their stored balance is refreshed. */
+  const refreshEmployeeIds = new Set<string>();
+  const today = todayInTz(await getTenantTimezone(app.prisma, tenantId));
 
   const plan = await app.prisma.leavePlan.findFirstOrThrow({
     where: { id: planId, tenantId },
@@ -285,6 +293,8 @@ export async function takeOverLeavePlan(
       existing,
       reviewerUserId: taker.userId,
       ...(exceptionReason ? { limitException: { reason: exceptionReason } } : {}),
+      // D-835-37: the stored balance is refreshed once per person after the loop.
+      deferOvertimeRecompute: true,
       request: input.request,
     });
     return decided.ok ? null : { reason: decided.reason, error: decided.body.error };
@@ -311,6 +321,7 @@ export async function takeOverLeavePlan(
       return;
     }
     await clearRefusal(wish.id);
+    if (wish.startDate.getTime() < today.getTime()) refreshEmployeeIds.add(wish.employeeId);
     result.created.push({ wishId: wish.id, employeeId: wish.employeeId, leaveRequestId });
   }
 
@@ -426,6 +437,16 @@ export async function takeOverLeavePlan(
       continue;
     }
     await approveWish(wish, leaveRequestId, exceptionReason);
+  }
+
+  // D-835-37: refresh the stored overtime balance once per person whose approved leave can have
+  // moved the live saldo (reactive: a failure is logged and never fails the takeover).
+  for (const employeeId of refreshEmployeeIds) {
+    try {
+      await updateOvertimeAccount(app, employeeId);
+    } catch (err) {
+      app.log.warn({ err, employeeId }, "Failed to refresh the overtime balance after a takeover");
+    }
   }
 
   // D-835-15/D-835-30: the plan closes only when no active wish is left without a request or with

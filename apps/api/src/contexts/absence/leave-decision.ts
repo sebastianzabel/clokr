@@ -185,6 +185,14 @@ export interface DecideInput {
   reviewNote?: string | null;
   /** The approver's exception over a salon limit (Issue #836, D-836-09); approval only. */
   limitException?: { reason: string };
+  /**
+   * Issue #835 (D-835-37): skip ONLY the live-saldo recompute and the persist of the stored
+   * overtime balance after an approval. Every other effect (status, days, entitlement deduction,
+   * the OVERTIME_COMP booking, audit, four-eyes, limit check, snapshot recalculation) is the same.
+   * The caller then owns the refresh of the stored balance (the planner takeover refreshes once per
+   * person after its batch); a normal approval never sets it. Approval only.
+   */
+  deferOvertimeRecompute?: boolean;
   /** The audit request meta (`{ ip, headers }`). */
   request: AuditRequestMeta;
 }
@@ -631,7 +639,9 @@ export async function decidePendingLeaveRequest(
     // Issue #294: pure read BEFORE the transaction; booking (if any) then persist happen
     // inside ONE `$transaction` — no swallower any more, so a failed persist now answers
     // non-2xx instead of a silent 200 with a stale balance.
-    const effectiveBalanceHours = await computeOvertimeBalanceHours(app, existing.employeeId);
+    const effectiveBalanceHours = input.deferOvertimeRecompute
+      ? null
+      : await computeOvertimeBalanceHours(app, existing.employeeId);
     await app.prisma.$transaction(async (tx) => {
       if (pendingOvertimeBooking) {
         // Issue #468 (A-4/D-02): the booked minutes, the journal row and the audit commit
@@ -662,8 +672,8 @@ export async function decidePendingLeaveRequest(
           pendingOvertimeBooking.description,
         );
       }
-      // null = §18-exempt: persist nothing, the booking above (if any) still stands as the
-      // sole writer for that path.
+      // null = §18-exempt, or the caller deferred the recompute (Issue #835, D-835-37): persist
+      // nothing, the booking above (if any) still stands as the sole writer for that path.
       if (effectiveBalanceHours !== null) {
         await persistOvertimeBalance(app, tx, existing.employeeId, effectiveBalanceHours);
       }
