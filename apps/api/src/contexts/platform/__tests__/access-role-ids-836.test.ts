@@ -10,7 +10,11 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { SYSTEM_ROLE_IDS } from "..";
-import { accessRoleIdsByUserId } from "../facade/role-assignments";
+import {
+  accessRoleIdsByUserId,
+  accessRoleChoices,
+  accessRoleOfTenant,
+} from "../facade/role-assignments";
 import { roleNameKey } from "../access-role";
 
 describe("accessRoleIdsByUserId (Issue #836)", () => {
@@ -105,5 +109,81 @@ describe("accessRoleIdsByUserId (Issue #836)", () => {
     ]);
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
+  });
+});
+
+describe("accessRoleChoices / accessRoleOfTenant (Issue #836)", () => {
+  let app: FastifyInstance;
+  let one: Awaited<ReturnType<typeof seedTestData>>;
+  let two: Awaited<ReturnType<typeof seedTestData>>;
+  let ownRoleName: string;
+  let ownRoleId: string;
+  let foreignRoleId: string;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    one = await seedTestData(app, "arc836a");
+    two = await seedTestData(app, "arc836b");
+    ownRoleName = `Choice836 ${Date.now().toString(36)}`;
+    const own = await app.prisma.accessRole.create({
+      data: {
+        tenantId: one.tenant.id,
+        name: ownRoleName,
+        nameKey: roleNameKey(ownRoleName),
+        permissions: [],
+      },
+    });
+    ownRoleId = own.id;
+    const foreignName = `Choice836 foreign ${Date.now().toString(36)}`;
+    const foreign = await app.prisma.accessRole.create({
+      data: {
+        tenantId: two.tenant.id,
+        name: foreignName,
+        nameKey: roleNameKey(foreignName),
+        permissions: [],
+      },
+    });
+    foreignRoleId = foreign.id;
+  });
+
+  afterAll(async () => {
+    await app.prisma.accessRole.deleteMany({ where: { id: { in: [ownRoleId, foreignRoleId] } } });
+    await cleanupTestData(app, one.tenant.id);
+    await cleanupTestData(app, two.tenant.id);
+  });
+
+  it("lists the system roles and the tenant's own roles, never another tenant's", async () => {
+    const choices = await accessRoleChoices(app.prisma, one.tenant.id);
+    const ids = choices.map((c) => c.id);
+    for (const systemId of Object.values(SYSTEM_ROLE_IDS)) expect(ids).toContain(systemId);
+    expect(ids).toContain(ownRoleId);
+    expect(ids).not.toContain(foreignRoleId);
+    expect(choices.find((c) => c.id === ownRoleId)).toEqual({
+      id: ownRoleId,
+      name: ownRoleName,
+      isSystem: false,
+    });
+  });
+
+  it("sorts system roles first, then own roles by name", async () => {
+    const choices = await accessRoleChoices(app.prisma, one.tenant.id);
+    const firstOwn = choices.findIndex((c) => !c.isSystem);
+    expect(firstOwn).toBeGreaterThan(0);
+    expect(choices.slice(0, firstOwn).every((c) => c.isSystem)).toBe(true);
+    expect(choices.slice(firstOwn).every((c) => !c.isSystem)).toBe(true);
+  });
+
+  it("admits a system role and an own role, refuses a foreign role and an unknown id", async () => {
+    expect((await accessRoleOfTenant(app.prisma, one.tenant.id, SYSTEM_ROLE_IDS.ADMIN))?.id).toBe(
+      SYSTEM_ROLE_IDS.ADMIN,
+    );
+    expect(await accessRoleOfTenant(app.prisma, one.tenant.id, ownRoleId)).toEqual({
+      id: ownRoleId,
+      name: ownRoleName,
+    });
+    expect(await accessRoleOfTenant(app.prisma, one.tenant.id, foreignRoleId)).toBeNull();
+    expect(
+      await accessRoleOfTenant(app.prisma, one.tenant.id, "00000000-0000-0000-0000-000000000000"),
+    ).toBeNull();
   });
 });

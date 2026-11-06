@@ -720,6 +720,44 @@ export async function accessRoleIdsByUserId(
   return result;
 }
 
+/**
+ * The roles a leave-limit rule may name: the global system roles plus the tenant's own roles,
+ * system roles first, then by name (Issue #836, additive Unterbau read). Two reads, each with an
+ * inline filter, so the tenant boundary is visible at the call.
+ */
+export async function accessRoleChoices(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+): Promise<Array<{ id: string; name: string; isSystem: boolean }>> {
+  const [own, system] = await Promise.all([
+    db.accessRole.findMany({ where: { tenantId }, select: { id: true, name: true } }),
+    db.accessRole.findMany({ where: { tenantId: null }, select: { id: true, name: true } }),
+  ]);
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "de");
+  return [
+    ...system.sort(byName).map((role) => ({ ...role, isSystem: true })),
+    ...own.sort(byName).map((role) => ({ ...role, isSystem: false })),
+  ];
+}
+
+/**
+ * One role by id when it is a system role or belongs to the tenant, else null (Issue #836). A
+ * foreign tenant's role and an unknown id are indistinguishable. Two reads, each with an inline
+ * filter, so the tenant boundary is visible at the call.
+ */
+export async function accessRoleOfTenant(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  roleId: string,
+): Promise<{ id: string; name: string } | null> {
+  const select = { id: true, name: true } as const;
+  const own = await db.accessRole.findFirst({ where: { id: roleId, tenantId }, select });
+  if (own) return own;
+  // The global system roles are a handful of rows; matching in memory keeps the filter inline.
+  const system = await db.accessRole.findMany({ where: { tenantId: null }, select });
+  return system.find((role) => role.id === roleId) ?? null;
+}
+
 /** The role names of one user (see {@link roleNamesByUserId}); the caller's own label. */
 export async function ownRoleNames(
   db: Prisma.TransactionClient,

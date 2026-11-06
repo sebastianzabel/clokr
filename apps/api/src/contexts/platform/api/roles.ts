@@ -31,6 +31,14 @@ const ROLE_ASSIGNED_DELETE_MESSAGE =
   "Die Rolle ist noch Nutzern zugewiesen und kann nicht gelöscht werden.";
 /** The `onDelete: Restrict` backstop of D-21 (migration 20260924145050_role_assignment). */
 const ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY = "RoleAssignment_accessRoleId_fkey";
+/**
+ * Issue #836: a leave-limit rule may name a role; the `onDelete: Restrict` key of
+ * `LeaveLimitRule.accessRoleId` refuses the delete. Detected by constraint name only - the Unterbau
+ * never reads the absence table.
+ */
+const LEAVE_LIMIT_RULE_ROLE_FOREIGN_KEY = "LeaveLimitRule_accessRoleId_fkey";
+const ROLE_LEAVE_LIMIT_DELETE_MESSAGE =
+  "Die Rolle wird in Urlaubsgrenzen verwendet und kann nicht gelöscht werden.";
 // Issue #354 (pre-merge security review of #75): a `role:manage` holder who also currently holds
 // the target role via an assignment could otherwise add rights to it and grant itself more —
 // self-service escalation. Rejected unless the caller additionally holds role-assignment:manage.
@@ -480,6 +488,9 @@ export async function roleRoutes(app: FastifyInstance) {
         // for an API-key caller) is a real failure and must not be answered as a false 409.
         if (foreignKeyConstraintOf(err) === ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY) {
           return reply.code(409).send({ error: ROLE_ASSIGNED_DELETE_MESSAGE });
+        }
+        if (foreignKeyConstraintOf(err) === LEAVE_LIMIT_RULE_ROLE_FOREIGN_KEY) {
+          return reply.code(409).send({ error: ROLE_LEAVE_LIMIT_DELETE_MESSAGE });
         }
         if (isPrismaErrorCode(err, "P2025")) {
           return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
