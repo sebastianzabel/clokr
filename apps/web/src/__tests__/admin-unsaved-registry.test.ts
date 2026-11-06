@@ -49,6 +49,7 @@ const EXCLUDED: Record<string, string> = {
   "employees/+page.svelte":
     "the only editable form is the invite <Modal> with its own Abbrechen; a modal draft is a modal-dismissal concern that beforeNavigate never sees",
   "shutdowns/+page.svelte": "same — the only form is the create <Modal>",
+  "leave-limits/+page.svelte": "the only form is the rule <Modal>",
   "month-close/+page.svelte":
     "selectedYear/statusFilter are filters; unlockReason/gapAcknowledged are one-shot confirmations inside modals; the writes are operations, not form state",
   "import/+page.svelte":

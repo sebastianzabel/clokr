@@ -93,15 +93,17 @@ describe("admin navigation (Issue #83)", () => {
       "PLANUNG",
       "COMPLIANCE",
     ]);
+    // Issue #836: SALON_MANAGER holds leave-request:approve, so "Urlaubsgrenzen & Sperren" joins.
     expect(visibleAdminNavItems({ permissions: p.SALON_MANAGER }, on).map((i) => i.href)).toEqual([
       "/admin/employees",
+      "/admin/leave-limits",
       "/admin/availability",
     ]);
     expect(
       visibleAdminNavItems({ permissions: p.SALON_MANAGER }, { availabilityEnabled: false }).map(
         (i) => i.href,
       ),
-    ).toEqual(["/admin/employees"]);
+    ).toEqual(["/admin/employees", "/admin/leave-limits"]);
     expect(visibleAdminNavGroups({ permissions: p.EMPLOYEE }, on)).toEqual([]);
     expect(visibleAdminNavItems({ permissions: p.ADMIN }, on).map((i) => i.label)).toContain(
       "Rollen & Rechte",

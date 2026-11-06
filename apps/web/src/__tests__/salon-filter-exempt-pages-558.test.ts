@@ -87,6 +87,13 @@ const EXEMPT_PAGES: ReadonlyArray<{
       "work queue that follows the caller's shift:read reach on the server since #645 (all three buckets); a header salon filter is not its fix, the page lists every conflict the caller may see",
   },
   {
+    page: "admin/leave-limits",
+    file: "(app)/admin/leave-limits/+page.svelte",
+    loads: "fetchLeaveLimitRules",
+    reason:
+      "configuration page with its own salon selection; the header salon is not a filter here",
+  },
+  {
     page: "admin/shifts",
     file: "(app)/admin/shifts/+page.svelte",
     loads: "/shifts/coverage-rules",
