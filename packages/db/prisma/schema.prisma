@@ -47,6 +47,8 @@ model Tenant {
   companyShutdowns     CompanyShutdown[]
   shiftTemplates       ShiftTemplate[]
   coverageRules        CoverageRule[]
+  // Issue #836: Prisma-only back-relation, no column on Tenant (leave limit rules of the tenant)
+  leaveLimitRules      LeaveLimitRule[]
   terminalApiKeys      TerminalApiKey[]
   apiKeys              ApiKey[]
   specialLeaveRules    SpecialLeaveRule[]
@@ -128,6 +130,9 @@ model Salon {
   // Issue #647: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung named on
   // #647, D-02) — the coverage rules that apply to this salon's view.
   coverageRules       CoverageRule[]
+  // Issue #836: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung named on
+  // #836, D-01) — the leave limit rules that name this salon.
+  leaveLimitRules     LeaveLimitRule[]
 
   @@index([tenantId])
 }
@@ -1549,6 +1554,9 @@ model AccessRole {
   tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   // Phase 74b (issue #74) — role assignments referencing this role
   roleAssignments RoleAssignment[]
+  // Issue #836: Prisma-only back-relation, no column on AccessRole (Unterbau Erweiterung named on
+  // #836, D-01) — the leave limit rules whose group is this role.
+  leaveLimitRules LeaveLimitRule[]
 
   @@unique([tenantId, nameKey])
   @@index([tenantId])
@@ -1990,6 +1998,45 @@ model CoverageRule {
   @@index([tenantId])
   @@index([templateId])
   @@index([salonId])
+}
+
+enum LeaveLimitGroupKind {
+  ALL
+  CLASSIFICATION
+  ACCESS_ROLE
+}
+
+// Issue #836 — Urlaubsgrenzen und Urlaubssperren je Salon. At most `maxPersons` people of one group
+// (everyone, one classification, or one role) may be on plannable leave on the same day in a salon.
+// A blackout is the same row with maxPersons 0 and a window. Never hard-deleted: removal sets
+// deletedAt (audit-proof). salonId NULL = every salon of the tenant, still counted per salon.
+// The group shape (ALL / CLASSIFICATION / ACCESS_ROLE with exactly the matching column), the window
+// order and maxPersons >= 0 are CHECK constraints in a hand-written later migration (Prisma models
+// none). The same tenant of salonId / accessRoleId is enforced by the application. createdByUserId
+// and deletedByUserId are plain strings without an FK (mirrors LeaveRequest.reviewedBy).
+model LeaveLimitRule {
+  id              String                 @id @default(uuid())
+  tenantId        String
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  salonId         String?
+  salon           Salon?                 @relation(fields: [salonId], references: [id], onDelete: Restrict)
+  groupKind       LeaveLimitGroupKind
+  classification  EmployeeClassification?
+  accessRoleId    String?
+  accessRole      AccessRole?            @relation(fields: [accessRoleId], references: [id], onDelete: Restrict)
+  maxPersons      Int
+  validFrom       DateTime?              @db.Date
+  validUntil      DateTime?              @db.Date
+  name            String?
+  createdAt       DateTime               @default(now()) @db.Timestamptz
+  createdByUserId String?
+  updatedAt       DateTime               @updatedAt @db.Timestamptz
+  deletedAt       DateTime?              @db.Timestamptz
+  deletedByUserId String?
+
+  @@index([tenantId, deletedAt])
+  @@index([salonId])
+  @@index([accessRoleId])
 }
 
 model Shift {
