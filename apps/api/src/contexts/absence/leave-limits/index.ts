@@ -21,3 +21,11 @@ export {
   type LeaveLimitRuleSnapshot,
 } from "./check";
 export { toLeaveLimitWarnings, type LeaveLimitWarning } from "./response";
+export {
+  buildLeaveLimitExceptionAudit,
+  correctionCandidateRanges,
+  leaveLimitExceptionRequiredBody,
+  limitExceptionSchema,
+  type LeaveLimitException,
+  type LeaveLimitExceptionAudit,
+} from "./exception";
