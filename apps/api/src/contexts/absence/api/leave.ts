@@ -71,6 +71,7 @@ import {
   resolveSalonInReach, // Issue #558 (D-01) — the one validator of a chosen salon
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
+import { canSeeLeaveType } from "../leave-calendar-visibility"; // Issue #835 — moved out of this route (second caller)
 import {
   buildLeaveLimitExceptionAudit,
   correctionCandidateRanges,
@@ -317,26 +318,6 @@ const leaveSalonQuerySchema = z.object({ salonId: z.string().uuid().optional() }
 // id, an inactive salon, a salon outside the reach and a caller without the ZUGEWIESEN reach are
 // indistinguishable (byte-identical with the dashboard's and the people list's body).
 const SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
-
-/**
- * The ONE visibility decision behind an absence TYPE, shared by GET /overlap and GET /calendar
- * (Phase 262, GitHub issue #262, D-06): may this viewer learn `typeCode`/`typeName` (and, for
- * /calendar, `section9`/`section9Days`) for this entry, or must it be masked to `null`?
- *
- * `canSeeAll` is `hasPermission(req, "leave-request:read:ZUGEWIESEN")`, computed once per request
- * by the caller (Phase 75b, Issue #75, D-13) rather than re-derived per row — mirrors the
- * reasoning in `apps/web/src/lib/leave/team-calendar-visibility.ts`'s `canSeeLeaveType` (Phase
- * 257, D-06 in 262-CONTEXT.md): the masking decision must not silently widen for an unexpected
- * value on the PERMISSIVE side — the side that leaks.
- *
- * Deliberately module-private, NOT exported via `contexts/absence/index.ts`: no caller outside
- * this file exists yet (D-15b). GitHub issue #267 (`GET /shifts/week`'s ungated "sick" bucket)
- * is the case that would change that — making it public is issue #267's first task, not this
- * one's, per "no generalization on spec" (ADR 0001).
- */
-function canSeeLeaveType(isOwn: boolean, canSeeAll: boolean): boolean {
-  return isOwn === true || canSeeAll;
-}
 
 /**
  * Resolves the target employeeId for a read that defaults to the caller's own employeeId when

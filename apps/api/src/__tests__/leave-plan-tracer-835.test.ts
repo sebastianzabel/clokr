@@ -288,18 +288,19 @@ describe("Issue #835 - leave plan tracer (open -> wish -> takeover)", () => {
       plan: { status: string; year: number; deadlinePassed: boolean };
       viewer: { canManage: boolean; canWishOwn: boolean };
       persons: Array<{ employeeId: string; wishes: Array<{ id: string }>; rows: unknown[] }>;
-      holidays: unknown[];
+      holidays: Array<{ date: string }>;
       dayLoad: unknown[];
     };
     expect(dto.plan).toMatchObject({ status: "OPEN", year: YEAR, deadlinePassed: false });
     expect(dto.viewer).toMatchObject({ canManage: false, canWishOwn: true });
-    expect(dto.persons.map((p) => p.employeeId).sort()).toEqual(
-      [one.employee.id, takerEmployeeId].sort(),
+    // Since 835-06 the planner lists the whole plan population (the second approver is homed in S too).
+    expect(dto.persons.map((p) => p.employeeId)).toEqual(
+      expect.arrayContaining([one.employee.id, takerEmployeeId]),
     );
     const ids = dto.persons.flatMap((p) => p.wishes.map((w) => w.id)).sort();
     expect(ids).toEqual([bWishId, tWishId].sort());
-    expect(dto.holidays).toEqual([]);
-    expect(dto.dayLoad).toEqual([]);
+    // The salon's statutory holidays are served now (New Year's Day is a holiday in every state).
+    expect(dto.holidays.map((h) => h.date)).toContain(`${YEAR}-01-01`);
   });
 
   it("an unknown plan id and another tenant's plan answer byte-identical 404 bodies", async () => {

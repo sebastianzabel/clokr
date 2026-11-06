@@ -104,9 +104,26 @@ export async function manageCoversPersonOnDays(
   if (manageReach.employeeIds.includes(employeeId)) return true;
   if (manageReach.salonIds.length === 0) return false;
   const homes = await homeSalonsForDays(db, tenantId, [employeeId], fromDay, toDay);
-  const dayMap = homes.get(employeeId);
-  if (!dayMap) return false;
-  for (const [day, homeSalon] of dayMap) {
+  return manageCoversFromHomeDays(manageReach, employeeId, homes.get(employeeId), fromDay, toDay);
+}
+
+/**
+ * The pure core of {@link manageCoversPersonOnDays}, for a caller that already holds the person's
+ * Stammsalon per day (the planner read judges every wish of a plan from one `homeSalonsForDays`
+ * call instead of one per wish). The rule lives only here: a whole-tenant reach or a reach naming
+ * the person covers always, otherwise some day of `[fromDay, toDay]` must be homed in a reach salon.
+ */
+export function manageCoversFromHomeDays(
+  manageReach: AccessReach,
+  employeeId: string,
+  homeByDay: ReadonlyMap<string, string | null> | undefined,
+  fromDay: string,
+  toDay: string,
+): boolean {
+  if (manageReach.kind === "wholeTenant") return true;
+  if (manageReach.employeeIds.includes(employeeId)) return true;
+  if (manageReach.salonIds.length === 0 || !homeByDay) return false;
+  for (const [day, homeSalon] of homeByDay) {
     if (
       day >= fromDay &&
       day <= toDay &&

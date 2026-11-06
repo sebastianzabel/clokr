@@ -392,7 +392,6 @@ export async function leavePlanRoutes(app: FastifyInstance) {
 
       const reachToManage = await manageReach(req);
       const reachToApprove = await approveReach(req);
-      const holdsRead = await resolveSalonInReach(app.prisma, tenantId, reachToRead, plan.salonId);
       const canManage = await manageCovers(req, plan.salonId);
       const dto = await readPlanner(app, {
         tenantId,
@@ -401,9 +400,14 @@ export async function leavePlanRoutes(app: FastifyInstance) {
           userId: req.user.sub,
           employeeId: selfEmployeeId,
           canManage,
-          canSeeAllTypes: holdsRead.ok,
+          // The calendar's rule (`canSeeLeaveType`): the permission, computed once per request.
+          canSeeAllTypes: await hasPermission(req, "leave-request:read:ZUGEWIESEN"),
           canCreateOwn: await hasPermission(req, "leave-request:create:EIGENE"),
-          entitlementReach: reachToRead,
+          entitlementReach: await resolveAccessReach(
+            app.prisma,
+            accessContextFromRequest(req),
+            "leave-entitlement:read:ZUGEWIESEN",
+          ),
           manageReach: reachToManage,
           approveReach: reachToApprove,
         },
