@@ -195,6 +195,11 @@ export async function readPlanner(
       entitlementReach: AccessReach;
       manageReach: AccessReach;
       approveReach: AccessReach;
+      /**
+       * The caller's `leave-request:read` reach (D-835-44): a wish's refusal and the status of its
+       * linked request are shown for another person only inside it; the reader's own always.
+       */
+      readReach: AccessReach;
     };
     now: Date;
   },
@@ -372,15 +377,33 @@ export async function readPlanner(
     }
     return covers;
   };
-  const plannerWishOf = (wish: StoredPlanWish, foreignPlan: boolean): PlannerWish => ({
-    ...toPlannerWish(wish, {
-      planStatus,
-      leaveRequestStatus: wish.leaveRequestId ? (statusOf.get(wish.leaveRequestId) ?? null) : null,
-    }),
-    foreignPlan,
-    conflict: conflictOf(wish),
-    editable: foreignPlan ? false : editableOf(wish),
-  });
+  // D-835-44 (WR-08): a refusal text can carry entitlement facts („bereits X genutzt“) and the
+  // request status shows a REJECTED or CANCELLED request the calendar never shows, so both are
+  // served for the reader's own wishes and, for another person, only inside the reader's
+  // `leave-request:read` reach over that person (the same per-day Stammsalon rule as `editable`).
+  const requestDetailsVisible = (wish: StoredPlanWish): boolean =>
+    (viewer.employeeId !== null && wish.employeeId === viewer.employeeId) ||
+    manageCoversFromHomeDays(
+      viewer.readReach,
+      wish.employeeId,
+      population.homeByPerson.get(wish.employeeId),
+      dayOf(wish.startDate),
+      dayOf(wish.endDate),
+    );
+  const plannerWishOf = (wish: StoredPlanWish, foreignPlan: boolean): PlannerWish => {
+    const visible = requestDetailsVisible(wish);
+    return {
+      ...toPlannerWish(wish, {
+        planStatus,
+        leaveRequestStatus:
+          visible && wish.leaveRequestId ? (statusOf.get(wish.leaveRequestId) ?? null) : null,
+      }),
+      ...(visible ? {} : { refusalCode: null, refusalMessage: null }),
+      foreignPlan,
+      conflict: conflictOf(wish),
+      editable: foreignPlan ? false : editableOf(wish),
+    };
+  };
 
   const persons: PlannerPerson[] = population.persons.map((person) => ({
     employeeId: person.id,

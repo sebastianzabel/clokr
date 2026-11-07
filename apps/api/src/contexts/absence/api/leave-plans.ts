@@ -410,6 +410,7 @@ export async function leavePlanRoutes(app: FastifyInstance) {
           ),
           manageReach: reachToManage,
           approveReach: reachToApprove,
+          readReach: reachToRead,
         },
         now: req.testNow ?? new Date(),
       });

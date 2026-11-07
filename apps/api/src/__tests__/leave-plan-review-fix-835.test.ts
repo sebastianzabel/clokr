@@ -253,4 +253,43 @@ describe("Issue #835 - review fixes of the leave planner", () => {
     expect(after.leaveRequestId).toBe(requestId);
     expect(after.leaveRequestStatus).toBeNull();
   });
+
+  it("WR-08 (D-835-44): refusal and request status of a colleague's wish only inside the read reach", async () => {
+    const s = await salon();
+    const taker = await person("taker", s, TAKER);
+    const reader = await person("reader", s, [READ], { kind: "SALONS", salonIds: [s] });
+    const member = await person("member", s, [CREATE_OWN]);
+    const a = await person("a", s);
+    const c = await person("c", s);
+    const planId = await openPlan(taker.token, s);
+    const wishA = await addWish(taker.token, planId, a.employeeId, week(6, 2));
+    const wishC = await addWish(taker.token, planId, c.employeeId, week(3, 2));
+    const ownWish = await addWish(member.token, planId, member.employeeId, week(7, 2));
+    // A and the member leave before their wishes: the takeover stores a refusal on both wishes.
+    for (const employeeId of [a.employeeId, member.employeeId]) {
+      await app.prisma.employee.update({
+        where: { id: employeeId },
+        data: { exitDate: new Date(`${YEAR}-05-31T00:00:00Z`) },
+      });
+    }
+    const run = await takeOver(taker.token, planId);
+    expect(run.refused.map((r) => r.wishId).sort()).toEqual([wishA, ownWish].sort());
+    expect(run.created.map((r) => r.wishId)).toEqual([wishC]);
+
+    // Inside the read reach: the code, the text and the request status.
+    const asReader = await readPlan(reader.token, planId);
+    expect(wishOf(asReader, wishA)).toMatchObject({ refusalCode: "LEAVE_PLAN_WISH_NOT_EMPLOYED" });
+    expect(wishOf(asReader, wishA).refusalMessage).not.toBeNull();
+    expect(wishOf(asReader, wishC).leaveRequestStatus).toBe("APPROVED");
+
+    // A team member admitted by the own Stammsalon only: a colleague's wish without the reason
+    // and without the request status, the own wish with both.
+    const asMember = await readPlan(member.token, planId);
+    expect(wishOf(asMember, wishA)).toMatchObject({ refusalCode: null, refusalMessage: null });
+    expect(wishOf(asMember, wishC)).toMatchObject({ leaveRequestStatus: null });
+    expect(wishOf(asMember, wishC).leaveRequestId).not.toBeNull();
+    expect(wishOf(asMember, ownWish)).toMatchObject({
+      refusalCode: "LEAVE_PLAN_WISH_NOT_EMPLOYED",
+    });
+  });
 });
