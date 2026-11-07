@@ -524,17 +524,16 @@ export async function takeOverLeavePlan(
       await approveWish(wish, request.id, input.limitExceptions.get(wish.id));
     }
 
-    for (const { id } of wishIds) {
-      // The wish is re-read at the start of its iteration: the values used below are the values as
-      // stored now, and the link hook proves they are still the stored ones when the request exists.
-      const stored = await readWish(id);
-      if (!stored) continue;
-
-      if (stored.leaveRequestId !== null) {
-        await retryApproval(stored);
-        continue;
-      }
-      let wish: StoredWish | null = stored;
+    /**
+     * The per-wish checks before a request is created, on the wish AS STORED NOW: the employment
+     * window (D-835-24), the Stammsalon (D-05), whether the taker approves it in this run, and — for a
+     * wish approved at once — the #836 limit pre-check with the wish as candidate (D-835-29). A
+     * refusal is stored on the wish and listed; `null` then. The SAME function runs again on a wish
+     * that moved under the create (D-835-40).
+     */
+    async function preCheck(
+      wish: StoredWish,
+    ): Promise<{ willApprove: boolean; exceptionReason: string | undefined } | null> {
       const startDay = dayOf(wish.startDate);
       const endDay = dayOf(wish.endDate);
 
@@ -547,7 +546,7 @@ export async function takeOverLeavePlan(
           LEAVE_PLAN_WISH_NOT_EMPLOYED,
           LEAVE_PLAN_MESSAGES[LEAVE_PLAN_WISH_NOT_EMPLOYED] ?? LEAVE_PLAN_WISH_NOT_EMPLOYED,
         );
-        continue;
+        return null;
       }
 
       // D-05: the person must still be homed in the plan's salon on a day of the wish.
@@ -564,7 +563,7 @@ export async function takeOverLeavePlan(
           LEAVE_PLAN_WISH_NOT_IN_SALON,
           LEAVE_PLAN_MESSAGES[LEAVE_PLAN_WISH_NOT_IN_SALON] ?? LEAVE_PLAN_WISH_NOT_IN_SALON,
         );
-        continue;
+        return null;
       }
 
       const willApprove = await takerMayApprove(wish.employeeId, wish.startDate);
@@ -591,21 +590,48 @@ export async function takeOverLeavePlan(
             LEAVE_LIMIT_EXCEPTION_REQUIRED,
             leaveLimitExceptionRequiredBody([]).error,
           );
-          continue;
+          return null;
         }
       }
+      return { willApprove, exceptionReason };
+    }
 
-      let step = await createFor(wish, willApprove);
+    for (const { id } of wishIds) {
+      // The wish is re-read at the start of its iteration: the values used below are the values as
+      // stored now, and the link hook proves they are still the stored ones when the request exists.
+      const stored = await readWish(id);
+      if (!stored) continue;
+
+      if (stored.leaveRequestId !== null) {
+        await retryApproval(stored);
+        continue;
+      }
+      let wish: StoredWish = stored;
+      let checked = await preCheck(wish);
+      if (!checked) continue;
+
+      let step = await createFor(wish, checked.willApprove);
       if (step.kind === "changed") {
         // Moved, removed or linked meanwhile: retry ONCE with the fresh values, else skip this run.
-        wish = await readOpenWish(id);
-        step = wish ? await createFor(wish, willApprove) : step;
+        // D-835-40 (WR-04): the fresh wish runs the WHOLE pipeline again (employment, Stammsalon,
+        // approve decision, limit pre-check) — its new dates can lie outside the approve reach or
+        // over a limit, and nothing decided on the old dates carries over.
+        const fresh = await readOpenWish(id);
+        if (!fresh) {
+          skippedCount += 1;
+          continue;
+        }
+        wish = fresh;
+        checked = await preCheck(wish);
+        if (!checked) continue;
+        step = await createFor(wish, checked.willApprove);
         if (step.kind === "changed") {
           skippedCount += 1;
           continue;
         }
       }
-      if (step.kind === "refused" || !wish) continue;
+      if (step.kind === "refused") continue;
+      const { willApprove, exceptionReason } = checked;
 
       const leaveRequestId = step.leaveRequestId;
       if (!willApprove) {

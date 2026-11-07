@@ -7,10 +7,11 @@
  * "one open plan per salon and year" from colliding between cases) and its own persons homed in it,
  * Mo-Fr contract, 30 days of entitlement in the plan year. Callers are custom roles. No person names.
  *
- * Seam: `contexts/absence/leave-decision` is wrapped with `vi.mock` in THIS file only. While the
- * hoisted counter `mocks.refuse` is above 0, `approveLeaveRequestCore` refuses with MONTH_CLOSED and
- * counts down; otherwise it delegates to the real core, so every case without the counter runs the
- * real decision.
+ * Seams, both `vi.mock`ed in THIS file only and both delegating to the real function by default:
+ * while the hoisted counter `mocks.refuse` is above 0, `approveLeaveRequestCore` refuses with
+ * MONTH_CLOSED and counts down; `mocks.beforeCreate`, when set, runs once right before the next
+ * takeover create (after the takeover read the wish), the deterministic way to move a wish under
+ * the create (the pattern of leave-plan-takeover-concurrency-835).
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
@@ -34,7 +35,28 @@ import {
 } from "../contexts/absence/leave-decision";
 import { takeoverLockName } from "../contexts/absence/leave-plan/constants";
 
-const mocks = vi.hoisted(() => ({ refuse: 0 }));
+const mocks = vi.hoisted(() => ({
+  refuse: 0,
+  /** Runs once right before the next takeover create (after the takeover read the wish). */
+  beforeCreate: null as null | (() => Promise<void>),
+}));
+
+vi.mock("../contexts/absence/leave-request-create", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../contexts/absence/leave-request-create")>();
+  return {
+    ...actual,
+    createLeaveRequestCore: async (
+      ...args: Parameters<typeof actual.createLeaveRequestCore>
+    ): ReturnType<typeof actual.createLeaveRequestCore> => {
+      const callback = mocks.beforeCreate;
+      if (callback && args[2]?.inTransaction) {
+        mocks.beforeCreate = null;
+        await callback();
+      }
+      return actual.createLeaveRequestCore(...args);
+    },
+  };
+});
 
 vi.mock("../contexts/absence/leave-decision", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../contexts/absence/leave-decision")>();
@@ -628,5 +650,49 @@ describe("Issue #835 - review fixes of the leave planner", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("WR-04 (D-835-40): a wish moved under the create runs the whole pipeline again on its new dates", async () => {
+    const s = await salon();
+    const s2 = await salon();
+    const taker = await person("taker", s, TAKER);
+    const a = await person("a", s);
+    const planId = await openPlan(taker.token, s);
+    const march = week(3, 2);
+    const wishId = await addWish(taker.token, planId, a.employeeId, march);
+    // A is homed in S through March and in S2 from April on.
+    await app.prisma.employeeSalonAssignment.updateMany({
+      where: { employeeId: a.employeeId, kind: "HOME" },
+      data: { validUntil: new Date(`${YEAR}-03-31T00:00:00Z`) },
+    });
+    await app.prisma.employeeSalonAssignment.create({
+      data: {
+        tenantId: one.tenant.id,
+        employeeId: a.employeeId,
+        salonId: s2,
+        kind: "HOME",
+        validFrom: new Date(`${YEAR}-04-01T00:00:00Z`),
+        validUntil: null,
+        weekdays: [],
+      },
+    });
+
+    // After the takeover checked the March wish, it moves to May — days on which A belongs to S2.
+    const may = week(5, 2);
+    mocks.beforeCreate = async () => {
+      await app.prisma.leavePlanWish.update({
+        where: { id: wishId },
+        data: {
+          startDate: new Date(`${may.startDate}T00:00:00Z`),
+          endDate: new Date(`${may.endDate}T00:00:00Z`),
+        },
+      });
+    };
+    const run = await takeOver(taker.token, planId);
+    expect(mocks.beforeCreate).toBeNull();
+    // The decision on the March dates does not carry over: May fails the Stammsalon check.
+    expect(run.created).toEqual([]);
+    expect(run.refused).toMatchObject([{ wishId, code: "LEAVE_PLAN_WISH_NOT_IN_SALON" }]);
+    expect(await app.prisma.leaveRequest.count({ where: { employeeId: a.employeeId } })).toBe(0);
   });
 });

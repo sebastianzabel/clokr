@@ -16,8 +16,8 @@
  *      `leave-decision.ts`, the takeover pre-check); a register entry without a matching site is red too. Issue #835
  *      (D-835-28): the approval check moved out of `patch /requests/:id/review` into
  *      `leave-decision.ts`; the assertion is unchanged. Issue #835 (D-835-29): the planner takeover
- *      pre-checks a wish it will approve (`function takeOverLeavePlan` in `leave-plan/takeover.ts`,
- *      the fourth registered site).
+ *      pre-checks a wish it will approve (`function preCheck` in `leave-plan/takeover.ts`, the
+ *      fourth registered site; the review fix D-835-40 moved the per-wish checks into it).
  *   3. The allow-list identifier `LEAVE_LIMIT_COUNTED_CODES` and any `.leaveLimitRule` property access
  *      (the rule delegate) occur only under `contexts/absence/leave-limits/` and in
  *      `contexts/absence/api/leave-limits.ts`.
@@ -140,7 +140,7 @@ const CHECK_SITES = [
   `${LEAVE_ROUTES} | post /requests | evaluateLeaveLimits`,
   `${DECISION_FILE} | function decidePendingLeaveRequest | evaluateLeaveLimits`,
   `${LEAVE_ROUTES} | patch /requests/:id/correct | evaluateLeaveLimits`,
-  `contexts/absence/leave-plan/takeover.ts | function takeOverLeavePlan | evaluateLeaveLimits`,
+  `contexts/absence/leave-plan/takeover.ts | function preCheck | evaluateLeaveLimits`,
 ];
 
 interface HomeSalonCaller {
@@ -198,7 +198,7 @@ const HOME_SALON_REGISTER: readonly HomeSalonCaller[] = [
   },
   {
     file: "contexts/absence/leave-plan/takeover.ts",
-    region: "function takeOverLeavePlan",
+    region: "function preCheck",
     reason:
       "re-checks at takeover that the person still belongs to the plan salon on a wish day, Issue #835; counts nothing",
   },
