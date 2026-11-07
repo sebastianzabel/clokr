@@ -3,7 +3,8 @@
    * /leave/planung — the Urlaubsplanung (Issue #835, D-835-21/22/33).
    *
    * Presentation only: the page composes the planner building blocks and asks the API for every
-   * read and write. The salon comes from the header selection (`teamSalonViewSalon`, #82/#558), the
+   * read and write. The salon comes from the header selection (`teamSalonViewSalon`, #82/#558; a
+   * `?salonId=` deep link only preselects a reachable salon in it, WR-07), the
    * API validates it against the caller's reach and answers one 404 for every rejection. A
    * permission hint (`hasPermission`) only hides a button; the API refuses any action without reach.
    */
@@ -36,6 +37,7 @@
     setDeadline,
     updateWish,
   } from "$lib/leave-plan/api";
+  import { deepLinkSalon } from "$lib/leave-plan/deep-link";
   import { isPlanAlreadyOpen, planErrorMessage } from "$lib/leave-plan/errors";
   import {
     DAY_LOAD_HINT,
@@ -149,6 +151,25 @@
         return;
       }
       void load(salon, forYear);
+    });
+  });
+
+  // ── Deep link (WR-07): the LEAVE_PLAN_OPENED notice links to `?salonId=…&year=…`. Once the salon
+  // context is loaded, a salon the caller reaches is preselected in the header selection (the same
+  // store every page reads), then the parameter is dropped from the URL; an unreachable id is
+  // ignored. The API still validates the salon of every read. ────────────────────────────────────
+  let deepLinkHandled = false;
+  $effect(() => {
+    if (!contextLoaded || deepLinkHandled) return;
+    const param = $page.url.searchParams.get("salonId");
+    untrack(() => {
+      deepLinkHandled = true;
+      if (param === null) return;
+      const linked = deepLinkSalon(param, $salonContext);
+      if (linked !== null) salonContext.setSelection(linked);
+      const url = new URL($page.url);
+      url.searchParams.delete("salonId");
+      void goto(url, { replaceState: true, noScroll: true, keepFocus: true });
     });
   });
 

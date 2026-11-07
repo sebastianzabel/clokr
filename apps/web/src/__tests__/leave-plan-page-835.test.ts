@@ -142,4 +142,13 @@ describe("Issue #835 - /leave/planung", () => {
     expect(PAGE).toContain("disabled={openWishCount === 0}");
     expect(PAGE).not.toMatch(/wishes\.filter\(\(w\) => w\.leaveRequestId === null/);
   });
+
+  it("honours the deep link's ?salonId through the salon context, then drops it (WR-07)", () => {
+    expect(PAGE).toContain('searchParams.get("salonId")');
+    expect(PAGE).toContain("deepLinkSalon(param, $salonContext)");
+    expect(PAGE).toContain("salonContext.setSelection(linked)");
+    expect(PAGE).toContain('url.searchParams.delete("salonId")');
+    // The page still reads its salon only through the selection (never straight from the URL).
+    expect(PAGE).toContain("teamSalonViewSalon($salonContext)");
+  });
 });
