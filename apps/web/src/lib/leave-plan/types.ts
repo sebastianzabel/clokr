@@ -96,6 +96,11 @@ export interface PlannerReadDto {
     deadlinePassed: boolean;
     deadlineLocksWishes: boolean;
     partiallyTakenOver: boolean;
+    /**
+     * The wishes a takeover can still turn into a request or approve, counted by the server with the
+     * takeover's own close rule (D-835-38); `null` for a reader who may not take the plan over.
+     */
+    openWishCount: number | null;
   };
   viewer: {
     employeeId: string | null;

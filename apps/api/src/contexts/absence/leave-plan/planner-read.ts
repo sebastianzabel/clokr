@@ -29,6 +29,7 @@ import { eachDay } from "../leave-limits/counted-days";
 import { isPersonVisibleOn, readerVisibilityFrom } from "../leave-limits/redact";
 import { isSickLeaveTypeCode } from "../leave-type";
 import { manageCoversFromHomeDays } from "./admission";
+import { BLOCKS_PLAN_CLOSE } from "./constants";
 import { plannerDayLoad, type PlannerDay } from "./day-load";
 import { plannerForecast, type PlannerForecast } from "./forecast";
 
@@ -83,6 +84,13 @@ export type PlannerReadDto = {
     deadlinePassed: boolean;
     deadlineLocksWishes: boolean;
     partiallyTakenOver: boolean;
+    /**
+     * D-835-38 (WR-01): the active wishes a takeover can still turn into a request or approve, by
+     * the takeover's own close rule (`BLOCKS_PLAN_CLOSE`), over EVERY wish of the plan (a wish of a
+     * person outside the shown population included). Only for a reader who may take the plan over
+     * (`viewer.canManage`); `null` otherwise.
+     */
+    openWishCount: number | null;
   };
   viewer: {
     employeeId: string | null;
@@ -491,6 +499,11 @@ export async function readPlanner(
       deadlinePassed: passed,
       deadlineLocksWishes,
       partiallyTakenOver: planStatus === "OPEN" && ownWishes.some((w) => w.leaveRequestId !== null),
+      openWishCount: viewer.canManage
+        ? await db.leavePlanWish.count({
+            where: { planId: plan.id, tenantId, deletedAt: null, ...BLOCKS_PLAN_CLOSE },
+          })
+        : null,
     },
     viewer: {
       employeeId: viewer.employeeId,

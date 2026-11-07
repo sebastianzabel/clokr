@@ -564,7 +564,7 @@ describe("Issue #835 - leave plan takeover in full", () => {
       ).toBe(true);
     });
 
-    it("a person who left before the wish since it was entered is refused LEAVE_PLAN_WISH_NOT_EMPLOYED; removing the wish lets the plan close", async () => {
+    it("a person who left before the wish since it was entered is refused LEAVE_PLAN_WISH_NOT_EMPLOYED; the terminal refusal does not keep the plan open (D-835-38)", async () => {
       const g = await rawPerson("g-exit");
       await approvable(g.employeeId);
       const planId = await freshPlan();
@@ -578,19 +578,16 @@ describe("Issue #835 - leave plan takeover in full", () => {
       const body = await run(planId);
       expect(body.created).toEqual([]);
       expect(body.refused).toMatchObject([{ wishId, code: "LEAVE_PLAN_WISH_NOT_EMPLOYED" }]);
-      expect(body.planStatus).toBe("OPEN");
+      // D-835-38: no run and no manager can turn this wish into a request of the plan, so it stays as
+      // a record with its refusal and the plan closes.
+      expect(body.planStatus).toBe("TAKEN_OVER");
       expect(await app.prisma.leaveRequest.count({ where: { employeeId: g.employeeId } })).toBe(0);
-
-      const removed = await app.inject({
-        method: "DELETE",
-        url: `/api/v1/leave/plans/${planId}/wishes/${wishId}`,
-        headers: authed(takerToken),
+      const stored = await app.prisma.leavePlanWish.findUniqueOrThrow({ where: { id: wishId } });
+      expect(stored).toMatchObject({
+        deletedAt: null,
+        leaveRequestId: null,
+        refusalCode: "LEAVE_PLAN_WISH_NOT_EMPLOYED",
       });
-      expect(removed.statusCode, removed.body).toBeLessThan(300);
-      const rerun = await run(planId);
-      expect(rerun.created).toEqual([]);
-      expect(rerun.refused).toEqual([]);
-      expect(rerun.planStatus).toBe("TAKEN_OVER");
     });
 
     it("a person homed elsewhere on every wish day is refused LEAVE_PLAN_WISH_NOT_IN_SALON and still shows in the other salon's plan", async () => {
@@ -599,6 +596,22 @@ describe("Issue #835 - leave plan takeover in full", () => {
       const planS = await freshPlan();
       const range = week(11, 1);
       const wishId = await addWish(planS, b.employeeId, range);
+      // A wish the create core refuses (an overlap with a request filed after it) keeps plan S OPEN,
+      // so B's wish is still a wish of an open plan when S2's planner is read below (D-835-38: B's
+      // own terminal refusal alone would close the plan).
+      const h = await rawPerson("h-overlap");
+      const hRange = week(11, 3);
+      await addWish(planS, h.employeeId, hRange);
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: h.employeeId,
+          leaveTypeId: one.vacationType.id,
+          startDate: new Date(`${hRange.startDate}T00:00:00Z`),
+          endDate: new Date(`${hRange.endDate}T00:00:00Z`),
+          days: 5,
+          status: "APPROVED",
+        },
+      });
 
       // B moves from S to S2 on the first wish day (gapless HOME periods).
       const previousDay = new Date(new Date(`${range.startDate}T00:00:00Z`).getTime() - DAY_MS);
@@ -620,9 +633,13 @@ describe("Issue #835 - leave plan takeover in full", () => {
 
       const body = await run(planS);
       expect(body.created).toEqual([]);
-      expect(body.refused).toHaveLength(1);
-      expect(body.refused[0]).toMatchObject({ wishId, code: "LEAVE_PLAN_WISH_NOT_IN_SALON" });
-      expect(body.refused[0]!.error).toContain("Salon");
+      const salonRefusals = body.refused.filter((r) => r.wishId === wishId);
+      expect(salonRefusals).toHaveLength(1);
+      expect(salonRefusals[0]).toMatchObject({ wishId, code: "LEAVE_PLAN_WISH_NOT_IN_SALON" });
+      expect(salonRefusals[0]!.error).toContain("Salon");
+      expect(body.refused.filter((r) => r.wishId !== wishId).map((r) => r.code)).toEqual([
+        "OVERLAP",
+      ]);
       expect(body.planStatus).toBe("OPEN");
       expect(await app.prisma.leaveRequest.count({ where: { employeeId: b.employeeId } })).toBe(0);
       const stored = await app.prisma.leavePlanWish.findUniqueOrThrow({ where: { id: wishId } });

@@ -135,4 +135,11 @@ describe("Issue #835 - /leave/planung", () => {
     expect(LAYOUT).toContain('"/leave/planung": "Urlaubsplanung"');
     expect(PAGE).not.toMatch(/var\(--(color-|glass-|radius-|gray-)/);
   });
+
+  it("takes the open-wish count from the server's close rule, never recounts it (WR-01, D-835-38)", () => {
+    // A linked wish whose approval was refused counts as open; only the API knows that rule.
+    expect(PAGE).toContain("plan?.openWishCount ?? 0");
+    expect(PAGE).toContain("disabled={openWishCount === 0}");
+    expect(PAGE).not.toMatch(/wishes\.filter\(\(w\) => w\.leaveRequestId === null/);
+  });
 });

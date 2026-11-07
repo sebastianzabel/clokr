@@ -1,6 +1,7 @@
 /**
  * Issue #835 (D-835-06/07/08) — the control codes, German texts and the audit marker of the leave
- * planner (Urlaubsplaner). Pure: no runtime import, so the cycle gate sees a leaf.
+ * planner (Urlaubsplaner). Pure: a type-only import and no runtime import, so the cycle gate sees a
+ * leaf.
  *
  * A code is the control value of a refusal, the German text is display only (CLAUDE.md "Never use
  * a new display string as a control value"). The web branches on `code`, never on the message.
@@ -8,6 +9,7 @@
  * Deliberately NOT re-exported from `contexts/absence/index.ts` (import-cycle cap 22); importer:
  * `contexts/absence/api/leave-plans.ts` and the sibling files of this directory.
  */
+import type { Prisma } from "@clokr/db";
 
 /** Value of `newValue.trigger` on the CREATE audit of a request created by the takeover. */
 export const LEAVE_PLAN_TRIGGER = "LEAVE_PLAN";
@@ -48,6 +50,35 @@ export function takeoverLockName(planId: string): string {
 
 /** A stored approval-step refusal of a wish is `APPROVAL_<DecisionRefusalReason>`. */
 export const APPROVAL_REFUSAL_PREFIX = "APPROVAL_";
+
+/**
+ * D-835-38 (WR-01): the takeover refusals that are terminal for the PLAN. The person is no longer
+ * employed on the wish's days, or no longer homed in the plan's salon on any of them — no later run
+ * and no manager can turn such a wish into a request of this plan, and the planner may not even show
+ * it (the person left the population). Such a wish stays as a record with its refusal but never keeps
+ * the plan open.
+ */
+export const TERMINAL_WISH_REFUSAL_CODES: readonly string[] = [
+  LEAVE_PLAN_WISH_NOT_EMPLOYED,
+  LEAVE_PLAN_WISH_NOT_IN_SALON,
+];
+
+/**
+ * D-835-38 (WR-01): the ONE rule of "this active wish keeps the plan open", shared by the takeover's
+ * close and the count the planner serves for the takeover button: a wish without a request that
+ * carries no terminal refusal, or a linked wish whose approval was refused (`APPROVAL_…`, its request
+ * still PENDING for a taker who may approve it — the takeover clears the refusal otherwise). The
+ * caller adds `planId`, `tenantId` and `deletedAt: null`.
+ */
+export const BLOCKS_PLAN_CLOSE = {
+  OR: [
+    {
+      leaveRequestId: null,
+      OR: [{ refusalCode: null }, { refusalCode: { notIn: [...TERMINAL_WISH_REFUSAL_CODES] } }],
+    },
+    { refusalCode: { startsWith: APPROVAL_REFUSAL_PREFIX } },
+  ],
+} satisfies Prisma.LeavePlanWishWhereInput;
 
 /** German display texts (du-form) per code. An overlap with a request uses `LEAVE_OVERLAP_ERROR`. */
 export const LEAVE_PLAN_MESSAGES: Record<string, string> = {

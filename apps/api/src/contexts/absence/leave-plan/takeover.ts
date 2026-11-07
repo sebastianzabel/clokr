@@ -55,6 +55,7 @@ import {
 import { isHomedInSalonOnAnyDay } from "../salon-leave-attribution";
 import {
   APPROVAL_REFUSAL_PREFIX,
+  BLOCKS_PLAN_CLOSE,
   LEAVE_PLAN_CLOSED,
   LEAVE_PLAN_MESSAGES,
   LEAVE_PLAN_TAKEOVER_RUNNING,
@@ -490,14 +491,27 @@ export async function takeOverLeavePlan(
     async function retryApproval(wish: StoredWish): Promise<void> {
       if (!wish.leaveRequestId || !wish.refusalCode?.startsWith(APPROVAL_REFUSAL_PREFIX)) return;
       const request = await loadLeaveRequestForReview(app, wish.leaveRequestId);
-      if (!request || request.employee.tenantId !== tenantId) return;
-      if (request.status !== "PENDING") {
-        // Decided by someone else meanwhile: the stored refusal is obsolete and must not keep the
-        // plan open.
+      if (!request || request.employee.tenantId !== tenantId || request.status !== "PENDING") {
+        // Decided (or removed) by someone else meanwhile: the stored refusal is obsolete and must
+        // not keep the plan open. Counted, so no run returns silently (WR-01).
         await clearRefusal(wish.id);
+        skippedCount += 1;
         return;
       }
-      if (!(await takerMayApprove(request.employeeId, request.startDate))) return;
+      if (!(await takerMayApprove(request.employeeId, request.startDate))) {
+        // D-835-38 (WR-01): this taker may not approve the person (their own wish, or outside the
+        // approve reach). The request stays PENDING for a regular approver, who is told (D-835-39);
+        // the refusal is cleared, so it no longer keeps the plan open, and the run reports it.
+        await clearRefusal(wish.id);
+        await notifyApproversOnce(request.id);
+        result.pending.push({
+          wishId: wish.id,
+          employeeId: wish.employeeId,
+          leaveRequestId: request.id,
+          reason: taker.employeeId === wish.employeeId ? "OWN_WISH" : "OUTSIDE_APPROVE_REACH",
+        });
+        return;
+      }
       await approveWish(wish, request.id, input.limitExceptions.get(wish.id));
     }
 
@@ -610,17 +624,13 @@ export async function takeOverLeavePlan(
       }
     }
 
-    // D-835-15/D-835-30: the plan closes only when no active wish is left without a request or with
-    // a request whose approval was refused (a re-run can still fix that).
+    // D-835-15/D-835-30/D-835-38: the plan closes only when no active wish is left that a run can
+    // still turn into a request or approve (`BLOCKS_PLAN_CLOSE`, the rule the planner's open count
+    // shares); a terminally refused wish stays as a record and does not block.
     result.planStatus = await app.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "LeavePlan" WHERE "id" = ${planId} AND "tenantId" = ${tenantId} FOR UPDATE`;
       const stillOpen = await tx.leavePlanWish.count({
-        where: {
-          planId,
-          tenantId,
-          deletedAt: null,
-          OR: [{ leaveRequestId: null }, { refusalCode: { startsWith: APPROVAL_REFUSAL_PREFIX } }],
-        },
+        where: { planId, tenantId, deletedAt: null, ...BLOCKS_PLAN_CLOSE },
       });
       let planStatus: TakeoverResult["planStatus"] = "OPEN";
       if (stillOpen === 0) {

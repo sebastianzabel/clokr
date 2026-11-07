@@ -413,21 +413,29 @@ describe("Issue #835 - takeover under concurrency and wish races", () => {
 
   it("after the takeover linked a wish, a move is 409 LEAVE_PLAN_WISH_TAKEN_OVER and the request keeps its dates", async () => {
     const b = await rawPerson("b-linked");
-    const exited = await rawPerson("c-exited");
+    const overlapping = await rawPerson("c-overlap");
     const planId = await freshPlan();
     const start = monday(7, 1);
     const wishId = await addWish(planId, b.employeeId, start, addDays(start, 1));
-    // A second wish that is refused keeps the plan OPEN, so the linked wish is reachable by the route.
+    // A second wish that the create core refuses keeps the plan OPEN, so the linked wish is reachable
+    // by the route. The refusal is an overlap with a request filed after the wish: a refusal a run can
+    // still resolve (a terminal one, such as a lapsed employment, no longer blocks the close, D-835-38).
     const keepOpen = monday(7, 3);
-    await addWish(planId, exited.employeeId, keepOpen, addDays(keepOpen, 1));
-    await app.prisma.employee.update({
-      where: { id: exited.employeeId },
-      data: { exitDate: new Date(Date.UTC(YEAR, 0, 15)) },
+    await addWish(planId, overlapping.employeeId, keepOpen, addDays(keepOpen, 1));
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: overlapping.employeeId,
+        leaveTypeId: one.vacationType.id,
+        startDate: new Date(`${keepOpen}T00:00:00Z`),
+        endDate: new Date(`${addDays(keepOpen, 1)}T00:00:00Z`),
+        days: 2,
+        status: "APPROVED",
+      },
     });
 
     const body = await takeOver(planId);
     expect(body.planStatus).toBe("OPEN");
-    expect(body.refused.map((r) => r.code)).toEqual(["LEAVE_PLAN_WISH_NOT_EMPLOYED"]);
+    expect(body.refused.map((r) => r.code)).toEqual(["OVERLAP"]);
     expect(body.pending.map((p) => p.wishId)).toEqual([wishId]);
 
     const res = await patchWish(planId, wishId, { endDate: addDays(start, 3) });

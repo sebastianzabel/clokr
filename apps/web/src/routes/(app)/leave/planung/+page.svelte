@@ -168,12 +168,9 @@
   const personsById = $derived(
     Object.fromEntries(persons.map((p) => [p.employeeId, p])) as Record<string, PlannerPerson>,
   );
-  const openWishCount = $derived(
-    persons.reduce(
-      (sum, p) => sum + p.wishes.filter((w) => w.leaveRequestId === null && !w.foreignPlan).length,
-      0,
-    ),
-  );
+  // D-835-38 (WR-01): the server counts the open wishes with the takeover's own close rule (a wish
+  // whose approval was refused counts, a terminally refused one does not); the page never recounts.
+  const openWishCount = $derived(plan?.openWishCount ?? 0);
 
   function canAddFor(employeeId: string): boolean {
     if (!isOpen || !viewer) return false;

@@ -489,4 +489,101 @@ describe("Issue #835 - review fixes of the leave planner", () => {
       where: { userId: approver.userId, type: "LEAVE_REQUEST", relatedId: requestId },
     });
   });
+
+  it("WR-01 (D-835-38): terminally refused wishes, hidden ones included, never keep the plan open", async () => {
+    const s = await salon();
+    const elsewhere = await salon();
+    const taker = await person("taker", s, TAKER);
+    const member = await person("member", s, [CREATE_OWN]);
+    const a = await person("a", s);
+    const b = await person("b", s);
+    const c = await person("c", s);
+    const planId = await openPlan(taker.token, s);
+    const wishA = await addWish(taker.token, planId, a.employeeId, week(11, 1));
+    const wishB = await addWish(taker.token, planId, b.employeeId, week(11, 2));
+    const wishC = await addWish(taker.token, planId, c.employeeId, week(11, 3));
+    // A leaves before the wish; B's Stammsalon is moved to another salon for the whole time, so B
+    // drops out of the plan population and the planner no longer shows B's wish.
+    await app.prisma.employee.update({
+      where: { id: a.employeeId },
+      data: { exitDate: new Date(`${YEAR}-05-31T00:00:00Z`) },
+    });
+    await app.prisma.employeeSalonAssignment.updateMany({
+      where: { employeeId: b.employeeId, kind: "HOME" },
+      data: { salonId: elsewhere },
+    });
+
+    const before = await readPlan(taker.token, planId);
+    expect(before.persons.some((p) => p.employeeId === b.employeeId)).toBe(false);
+    // The served count is the takeover's close rule over every wish, the hidden one included.
+    expect(before.plan.openWishCount).toBe(3);
+    expect((await readPlan(member.token, planId)).plan.openWishCount).toBeNull();
+
+    const run = await takeOver(taker.token, planId);
+    expect(run.refused.map((r) => [r.wishId, r.code]).sort()).toEqual(
+      [
+        [wishA, "LEAVE_PLAN_WISH_NOT_EMPLOYED"],
+        [wishB, "LEAVE_PLAN_WISH_NOT_IN_SALON"],
+      ].sort(),
+    );
+    expect(run.created.map((r) => r.wishId)).toEqual([wishC]);
+    expect(run.planStatus).toBe("TAKEN_OVER");
+    // The refused wishes stay as a record with their refusal.
+    const kept = await app.prisma.leavePlanWish.findMany({
+      where: { id: { in: [wishA, wishB] }, deletedAt: null },
+      select: { refusalCode: true },
+    });
+    expect(kept).toHaveLength(2);
+  });
+
+  it("WR-01 (D-835-38): a retry by a taker who may not approve clears the refusal, reports the wish and closes the plan", async () => {
+    const s = await salon();
+    const taker = await person("taker", s, TAKER);
+    const second = await person("second", s, [MANAGE, READ, CREATE_OTHERS]);
+    const approver = await person("approver", s, [APPROVE, READ]);
+    const a = await person("a", s);
+    const planId = await openPlan(taker.token, s);
+    const wishId = await addWish(taker.token, planId, a.employeeId, week(12, 2));
+
+    mocks.refuse = 1;
+    const first = await takeOver(taker.token, planId);
+    expect(first.pending).toMatchObject([{ wishId, reason: "APPROVAL_REFUSED" }]);
+    expect(first.planStatus).toBe("OPEN");
+    const requestId = first.pending[0]!.leaveRequestId;
+    // The linked wish whose approval was refused still counts as open, so the button stays usable.
+    expect((await readPlan(taker.token, planId)).plan.openWishCount).toBe(1);
+
+    // The second taker holds no approve permission: the request stays PENDING for an approver.
+    const rerun = await takeOver(second.token, planId);
+    expect(rerun.pending).toEqual([
+      {
+        wishId,
+        employeeId: a.employeeId,
+        leaveRequestId: requestId,
+        reason: "OUTSIDE_APPROVE_REACH",
+      },
+    ]);
+    expect(rerun.created).toEqual([]);
+    expect(rerun.planStatus).toBe("TAKEN_OVER");
+    const request = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: requestId } });
+    expect(request.status).toBe("PENDING");
+    const wish = await app.prisma.leavePlanWish.findUniqueOrThrow({ where: { id: wishId } });
+    expect(wish).toMatchObject({
+      leaveRequestId: requestId,
+      refusalCode: null,
+      refusalMessage: null,
+    });
+    const cleared = (await auditRowsFor(app, "LeavePlanWish", wishId, "UPDATE")).filter(
+      (row) => row.userId === second.userId,
+    );
+    expect(cleared).toHaveLength(1);
+    expect(cleared[0]).toMatchObject({
+      oldValue: { refusalCode: "APPROVAL_MONTH_CLOSED", leaveRequestId: requestId },
+      newValue: { refusalCode: null, leaveRequestId: requestId },
+    });
+    // The approver was told once (the refused approval of the first run), not again.
+    await soleNotification(app.prisma, {
+      where: { userId: approver.userId, type: "LEAVE_REQUEST", relatedId: requestId },
+    });
+  });
 });
