@@ -548,56 +548,88 @@ export async function createLeaveRequestCore(
   // Issue #835 (D-835-12/P-10): the planner takeover that approves in the same run passes
   // `notifyApprovers: false`, so approvers are not pinged once per wish; a plain call notifies.
   if (input.notifyApprovers !== false) {
-    // ── Benachrichtigung: Manager über neuen Antrag informieren ──
-    // Issue #200: title and phrase both come from the single LEAVE_TYPE_DEFS mapping and are
-    // display text only (ADR 0001, never compared). The mail subject is deliberately neutral
-    // while the in-app title is type-specific (owner decision 2026-09-15).
-    const typeDef = LEAVE_TYPE_DEFS[body.type];
-    // Phase 75b Plan 10 (#75), D-16: holders of leave-request:approve replace the legacy A,M
-    // role predicate — the recorded recipient set is unchanged (docs/permissions.md §
-    // Empfängersuchen).
-    const leaveRequestApproveHolderIds = await userIdsHoldingPermission(
-      app.prisma,
+    await notifyLeaveRequestApprovers(app, {
       tenantId,
-      "leave-request:approve:ZUGEWIESEN",
-    );
-    // Phase 91b Plan 09 (Issue #91), D-17: narrow the tenant-wide holder list to holders whose
-    // OWN reach covers the request's own employee — Stammsalon-only (D-10), Stichtag = the
-    // request's own startDate (the affected period, not "today").
-    const scopedLeaveRequestApproveHolderIds = await resolveScopedHolderIds(
-      app.prisma,
-      tenantId,
-      leaveRequestApproveHolderIds,
-      "leave-request:approve:ZUGEWIESEN",
-      (reach) =>
-        isStammsalonScopeMatch(app.prisma, tenantId, reach, request.employeeId, request.startDate),
-    );
-    const managers = await app.prisma.user.findMany({
-      where: {
-        id: { in: scopedLeaveRequestApproveHolderIds },
-        isActive: true,
-        employee: { tenantId: tenantId },
-      },
-      select: { id: true },
+      request,
+      typeCode: body.type,
+      startDay: body.startDate,
+      endDay: body.endDate,
     });
-    for (const mgr of managers) {
-      await app.notify({
-        userId: mgr.id,
-        type: "LEAVE_REQUEST",
-        title: typeDef.notificationTitle,
-        message: `${request.employee.firstName} ${request.employee.lastName} ${typeDef.requestPhrase} (${body.startDate} – ${body.endDate})`,
-        // Manager-facing: link to the approval surface (/team/leave honors ?request=),
-        // NOT /leave (which only shows the recipient's OWN requests).
-        link: `/team/leave?request=${request.id}`,
-        tenantId,
-        relatedType: "LeaveRequest",
-        relatedId: request.id,
-        emailSubject: LEAVE_REQUEST_EMAIL_SUBJECT,
-      });
-    }
   }
 
   return { ok: true, request, pricedDays };
+}
+
+/**
+ * The approver notification of a new PENDING request (`LEAVE_REQUEST`): every holder of
+ * `leave-request:approve` whose OWN reach covers the request's person at its start date. ONE
+ * recipient rule, used by the create core and by the planner takeover for a takeover request that
+ * ends PENDING after all (Issue #835, D-835-39).
+ */
+export async function notifyLeaveRequestApprovers(
+  app: FastifyInstance,
+  input: {
+    tenantId: string;
+    request: {
+      id: string;
+      employeeId: string;
+      startDate: Date;
+      employee: { firstName: string; lastName: string };
+    };
+    typeCode: RequestableCode;
+    /** YYYY-MM-DD, as the message names the period. */
+    startDay: string;
+    endDay: string;
+  },
+): Promise<void> {
+  const { tenantId, request } = input;
+  // ── Notification: tell the approvers about the new request ──
+  // Issue #200: title and phrase both come from the single LEAVE_TYPE_DEFS mapping and are
+  // display text only (ADR 0001, never compared). The mail subject is deliberately neutral
+  // while the in-app title is type-specific (owner decision 2026-09-15).
+  const typeDef = LEAVE_TYPE_DEFS[input.typeCode];
+  // Phase 75b Plan 10 (#75), D-16: holders of leave-request:approve replace the legacy A,M
+  // role predicate — the recorded recipient set is unchanged (docs/permissions.md §
+  // Empfängersuchen).
+  const leaveRequestApproveHolderIds = await userIdsHoldingPermission(
+    app.prisma,
+    tenantId,
+    "leave-request:approve:ZUGEWIESEN",
+  );
+  // Phase 91b Plan 09 (Issue #91), D-17: narrow the tenant-wide holder list to holders whose
+  // OWN reach covers the request's own employee — Stammsalon-only (D-10), Stichtag = the
+  // request's own startDate (the affected period, not "today").
+  const scopedLeaveRequestApproveHolderIds = await resolveScopedHolderIds(
+    app.prisma,
+    tenantId,
+    leaveRequestApproveHolderIds,
+    "leave-request:approve:ZUGEWIESEN",
+    (reach) =>
+      isStammsalonScopeMatch(app.prisma, tenantId, reach, request.employeeId, request.startDate),
+  );
+  const managers = await app.prisma.user.findMany({
+    where: {
+      id: { in: scopedLeaveRequestApproveHolderIds },
+      isActive: true,
+      employee: { tenantId: tenantId },
+    },
+    select: { id: true },
+  });
+  for (const mgr of managers) {
+    await app.notify({
+      userId: mgr.id,
+      type: "LEAVE_REQUEST",
+      title: typeDef.notificationTitle,
+      message: `${request.employee.firstName} ${request.employee.lastName} ${typeDef.requestPhrase} (${input.startDay} – ${input.endDay})`,
+      // Manager-facing: link to the approval surface (/team/leave honors ?request=),
+      // NOT /leave (which only shows the recipient's OWN requests).
+      link: `/team/leave?request=${request.id}`,
+      tenantId,
+      relatedType: "LeaveRequest",
+      relatedId: request.id,
+      emailSubject: LEAVE_REQUEST_EMAIL_SUBJECT,
+    });
+  }
 }
 
 /**

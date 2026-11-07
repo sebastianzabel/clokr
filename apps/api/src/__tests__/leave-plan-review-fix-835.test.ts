@@ -6,8 +6,13 @@
  * carries a future stamp): tenant one. Every case builds its OWN salon (a fresh one per case keeps
  * "one open plan per salon and year" from colliding between cases) and its own persons homed in it,
  * Mo-Fr contract, 30 days of entitlement in the plan year. Callers are custom roles. No person names.
+ *
+ * Seam: `contexts/absence/leave-decision` is wrapped with `vi.mock` in THIS file only. While the
+ * hoisted counter `mocks.refuse` is above 0, `approveLeaveRequestCore` refuses with MONTH_CLOSED and
+ * counts down; otherwise it delegates to the real core, so every case without the counter runs the
+ * real decision.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
@@ -20,6 +25,7 @@ import {
   seedEntitlementYears,
   tokenWithoutSignIn,
   auditRowsFor,
+  soleNotification,
 } from "./setup";
 import { roleNameKey, normalizeRolePermissions } from "../contexts/platform/access-role";
 import {
@@ -27,6 +33,29 @@ import {
   loadLeaveRequestForReview,
 } from "../contexts/absence/leave-decision";
 import { takeoverLockName } from "../contexts/absence/leave-plan/constants";
+
+const mocks = vi.hoisted(() => ({ refuse: 0 }));
+
+vi.mock("../contexts/absence/leave-decision", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../contexts/absence/leave-decision")>();
+  return {
+    ...actual,
+    approveLeaveRequestCore: async (
+      ...args: Parameters<typeof actual.approveLeaveRequestCore>
+    ): ReturnType<typeof actual.approveLeaveRequestCore> => {
+      if (mocks.refuse > 0) {
+        mocks.refuse -= 1;
+        return {
+          ok: false,
+          statusCode: 409,
+          body: { error: "Der Monat ist bereits abgeschlossen", code: "LEAVE_MONTH_CLOSED" },
+          reason: "MONTH_CLOSED",
+        };
+      }
+      return actual.approveLeaveRequestCore(...args);
+    },
+  };
+});
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
@@ -429,5 +458,35 @@ describe("Issue #835 - review fixes of the leave planner", () => {
       newValue: { employeeId: c.employeeId, leaveRequestId: requestC, refusalCode: null },
     });
     expect(typeof (linkRows[0]!.newValue as { takenOverAt: unknown }).takenOverAt).toBe("string");
+  });
+
+  it("WR-02 (D-835-39): a takeover request whose approval is refused notifies its approvers once", async () => {
+    const s = await salon();
+    const taker = await person("taker", s, TAKER);
+    const approver = await person("approver", s, [APPROVE, READ]);
+    const a = await person("a", s);
+    const planId = await openPlan(taker.token, s);
+    const wishId = await addWish(taker.token, planId, a.employeeId, week(10, 2));
+
+    mocks.refuse = 1;
+    const first = await takeOver(taker.token, planId);
+    expect(mocks.refuse).toBe(0);
+    expect(first.pending).toMatchObject([{ wishId, reason: "APPROVAL_REFUSED" }]);
+    const requestId = first.pending[0]!.leaveRequestId;
+    const notice = await soleNotification(app.prisma, {
+      where: { userId: approver.userId, type: "LEAVE_REQUEST", relatedId: requestId },
+    });
+    expect(notice).toMatchObject({
+      relatedType: "LeaveRequest",
+      link: `/team/leave?request=${requestId}`,
+    });
+
+    // A second run whose approval is refused again tells nobody a second time.
+    mocks.refuse = 1;
+    const second = await takeOver(taker.token, planId);
+    expect(second.pending).toMatchObject([{ wishId, reason: "APPROVAL_REFUSED" }]);
+    await soleNotification(app.prisma, {
+      where: { userId: approver.userId, type: "LEAVE_REQUEST", relatedId: requestId },
+    });
   });
 });

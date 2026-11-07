@@ -40,7 +40,7 @@ import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { homeSalonsForDays, isStammsalonScopeMatch, type AccessReach } from "../../platform";
 import { getTenantTimezone, todayInTz, updateOvertimeAccount } from "../../working-time-account";
-import { createLeaveRequestCore } from "../leave-request-create";
+import { createLeaveRequestCore, notifyLeaveRequestApprovers } from "../leave-request-create";
 import {
   approveLeaveRequestCore,
   leaveDecisionGuard,
@@ -391,6 +391,50 @@ export async function takeOverLeavePlan(
       }
     }
 
+    /**
+     * D-835-39 (WR-02): a takeover request that ends PENDING after all (its approval was refused)
+     * was created without the approver notification (D-835-35), so it would wait unseen. The
+     * approvers are told exactly as for a regular request, ONCE per request (any earlier
+     * LEAVE_REQUEST notice of the request, dismissed or not, counts). Reactive: a failure is logged
+     * and never fails the takeover.
+     */
+    async function notifyApproversOnce(leaveRequestId: string): Promise<void> {
+      try {
+        const earlier = await app.prisma.notification.count({
+          where: {
+            type: "LEAVE_REQUEST",
+            relatedType: "LeaveRequest",
+            relatedId: leaveRequestId,
+            user: { employee: { tenantId } },
+          },
+        });
+        if (earlier > 0) return;
+        const request = await app.prisma.leaveRequest.findFirst({
+          where: { id: leaveRequestId, deletedAt: null, status: "PENDING", employee: { tenantId } },
+          select: {
+            id: true,
+            employeeId: true,
+            startDate: true,
+            endDate: true,
+            employee: { select: { firstName: true, lastName: true } },
+          },
+        });
+        if (!request) return;
+        await notifyLeaveRequestApprovers(app, {
+          tenantId,
+          request,
+          typeCode: "VACATION",
+          startDay: dayOf(request.startDate),
+          endDay: dayOf(request.endDate),
+        });
+      } catch (err) {
+        app.log.warn(
+          { err, leaveRequestId },
+          "Failed to notify the approvers of a takeover request",
+        );
+      }
+    }
+
     /** Approves the just created request as the taker; the refusal (reason + text), or null. */
     async function approveFor(
       leaveRequestId: string,
@@ -423,6 +467,7 @@ export async function takeOverLeavePlan(
       const refusal = await approveFor(leaveRequestId, exceptionReason);
       if (refusal) {
         await storeRefusal(wish.id, `${APPROVAL_REFUSAL_PREFIX}${refusal.reason}`, refusal.error);
+        await notifyApproversOnce(leaveRequestId);
         result.pending.push({
           wishId: wish.id,
           employeeId: wish.employeeId,
