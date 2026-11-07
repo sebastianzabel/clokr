@@ -7730,9 +7730,9 @@ keiner Preisberechnung, bis er ein Antrag ist (D-835-19).
 - **Übernahme in einer Anfrage.** Die Messung (siehe oben) trägt rund 100 Wünsche in 4 s; auf einem stark belasteten Rechner
   rechnet 835-11 mit etwa 27 s und damit nahe am 30-s-Abbruch des Web-Proxys. Eine Stapelung bleibt als eigener Plan verfügbar.
 - **Ein Wunsch einer später anonymisierten oder ausgetretenen Person** wird bei der Übernahme mit `LEAVE_PLAN_WISH_NOT_EMPLOYED`
-  abgelehnt und zählt nirgends; eine Führungskraft entfernt ihn.
-- **Gleichzeitige Übernahmen** werden über die Zeilensperre der Planung und die eindeutige Verknüpfung serialisiert
-  (`leave-plan-takeover-concurrency-835`); der verlierende Lauf antwortet mit dem gespeicherten Status der Planung.
+  abgelehnt und zählt nirgends; seit der Review-Korrektur (Nachtrag unten) hält er die Planung nicht mehr offen.
+- **Gleichzeitige Übernahmen** sind seit der Review-Korrektur ganz ausgeschlossen: ein zweiter Lauf derselben Planung antwortet
+  409 `LEAVE_PLAN_TAKEOVER_RUNNING` (Nachtrag unten); die eindeutige Verknüpfung bleibt die Absicherung darunter.
 
 ### Nachtrag Phase 835 — Systemrollen-Templates (Semantikänderung des Unterbaus)
 
@@ -7753,6 +7753,43 @@ Kopien bleiben unverändert).
   eröffnen, bearbeiten und übernehmen. Schichtplanung: keine. Arbeitszeitkonto: keine. Kompositionsschicht: keine. Unterbau: die
   drei Template-Zeilen.
 - **Runbook und Rollback:** `docs/migrations.md`, Abschnitt „Phase 835“ (Vorher/Nachher-Abfragen, Rollback als neue Migration).
+
+### Nachtrag Phase 835 — Review-Korrekturen (835-REVIEW.md, D-835-38..45)
+
+- **Eine Planung bleibt nie hängen (D-835-38).** `LEAVE_PLAN_WISH_NOT_EMPLOYED` und `LEAVE_PLAN_WISH_NOT_IN_SALON` sind für die
+  Planung endgültig: der Wunsch bleibt mit seiner Ablehnung als Aufzeichnung stehen, hält den Abschluss aber nicht mehr auf
+  (das deckt auch den Wunsch einer Person, die der Planer nicht mehr zeigt). Abschluss und Zähler des Übernehmen-Knopfs folgen
+  einer Regel (`BLOCKS_PLAN_CLOSE` in `leave-plan/constants.ts`); der Planer liefert sie als `plan.openWishCount` an Leser, die
+  übernehmen dürfen. Darf ein Wiederholungslauf die Person nicht genehmigen, wird die gespeicherte Ablehnung gelöscht, der Antrag
+  bleibt PENDING und die Genehmigenden werden benachrichtigt.
+- **Kein stiller PENDING-Antrag (D-835-39).** Scheitert die Genehmigung eines Übernahme-Antrags, erhalten die Genehmigenden die
+  gewöhnliche `LEAVE_REQUEST`-Benachrichtigung, einmal je Antrag (`notifyLeaveRequestApprovers`, dieselbe Empfängerregel wie
+  der Anlegekern).
+- **Neuprüfung nach einer Verschiebung (D-835-40).** Der zweite Anlegeversuch nach einer gleichzeitigen Verschiebung durchläuft
+  die ganze Prüfkette (`preCheck`: Beschäftigung, Stammsalon, Anlege-Reichweite, Genehmigungsentscheidung, Grenzen-Vorprüfung).
+- **Ein Lauf je Planung (D-835-41).** Der Lauf hält eine Advisory-Sperre je Planung; ein zweiter Lauf antwortet 409
+  `LEAVE_PLAN_TAKEOVER_RUNNING`. Abweichend vom Wortlaut der Entscheidung ist es keine Sitzungssperre, sondern die
+  transaktionsgebundene Sperre auf einer für den Lauf festgehaltenen Verbindung (das poolsichere Muster von
+  `utils/with-advisory-lock.ts`; eine Sitzungs-Freigabe kann eine andere Pool-Verbindung treffen und die Sperre verlieren). Dazu
+  ist der Statuswechsel im Entscheidungskern bedingt (`status = 'PENDING'`): auch zwei gewöhnliche Prüfungen ziehen den Urlaub
+  nicht mehr doppelt ab.
+- **Protokoll (D-835-42).** Ablehnung setzen oder löschen und die Verknüpfung schreiben je eine `UPDATE LeavePlanWish`-Zeile mit
+  alten und neuen Werten (Ids, Codes, Zeitstempel, nie der Ablehnungstext).
+- **Saldo-Fenster (D-835-43).** Der nachgezogene Überstundenstand wird für jede Person mit einem genehmigten Wunsch bis zum
+  letzten Tag des laufenden Monats aktualisiert (ein SHIFT_BASED-Saldo liest den ganzen laufenden Monat).
+- **Sichtbarkeit (D-835-44).** Ablehnungsgrund und Antragsstatus fremder Wünsche nur innerhalb der `leave-request:read`-Reichweite;
+  ein weich gelöschter verknüpfter Antrag wird nicht gezeigt.
+- **Anlege-Reichweite (D-835-45).** Übernommen wird nur, wo der Übernehmende `leave-request:create` über die Person hält
+  (ZUGEWIESEN, für den eigenen Wunsch EIGENE), sonst `LEAVE_PLAN_WISH_NO_CREATE_REACH` am Wunsch; das hält die Planung für einen
+  Berechtigten offen. Die Systemrollen halten beide Schlüssel, ihr Verhalten ändert sich nicht.
+- **Eröffnen (IN-05).** Planungsjahr: das laufende Jahr bis zwei Jahre voraus (`LEAVE_PLAN_YEAR_OUT_OF_RANGE`); Frist: spätestens
+  am 31.12. des Planungsjahres (`LEAVE_PLAN_DEADLINE_OUT_OF_RANGE`), nicht vor Jahresbeginn, weil eine Planung des laufenden
+  Jahres (D-835-01) und eine Frist im Januar des Planungsjahres gewöhnlich sind.
+- **Auswirkung auf die Kontexte.** Zeiterfassung: keine. Abwesenheiten: die Punkte oben. Schichtplanung: keine.
+  Arbeitszeitkonto: keine Regeländerung (nur das Fenster, in dem der bestehende Schreiber `updateOvertimeAccount` aufgerufen
+  wird). Kompositionsschicht: keine. Unterbau: keine.
+- **Nachweise:** `leave-plan-review-fix-835` (ein Fall je Befund), `reset-demo-leave-plan-835`, Web
+  `lib/leave-plan/__tests__/deep-link`, `takeover-result`, `leave-plan-page-835`, `LeavePlanTakeoverDialog`.
 
 ### Nachweise
 
