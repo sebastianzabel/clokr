@@ -19,6 +19,7 @@ import {
   createTestSalon,
   seedEntitlementYears,
   tokenWithoutSignIn,
+  auditRowsFor,
 } from "./setup";
 import { roleNameKey, normalizeRolePermissions } from "../contexts/platform/access-role";
 import {
@@ -386,5 +387,47 @@ describe("Issue #835 - review fixes of the leave planner", () => {
     const run = await takeOver(taker.token, planId);
     expect(run.created.map((c) => c.wishId)).toEqual([wishId]);
     expect(run.planStatus).toBe("TAKEN_OVER");
+  });
+
+  it("WR-06 (D-835-42): a stored refusal and the link of a wish are audited with codes only", async () => {
+    const s = await salon();
+    const taker = await person("taker", s, TAKER);
+    const a = await person("a", s);
+    const c = await person("c", s);
+    const planId = await openPlan(taker.token, s);
+    const wishA = await addWish(taker.token, planId, a.employeeId, week(9, 2));
+    const wishC = await addWish(taker.token, planId, c.employeeId, week(9, 3));
+    await app.prisma.employee.update({
+      where: { id: a.employeeId },
+      data: { exitDate: new Date(`${YEAR}-05-31T00:00:00Z`) },
+    });
+    const run = await takeOver(taker.token, planId);
+    expect(run.refused.map((r) => r.wishId)).toEqual([wishA]);
+    const requestC = run.created.find((r) => r.wishId === wishC)!.leaveRequestId;
+
+    const refusalRows = await auditRowsFor(app, "LeavePlanWish", wishA, "UPDATE");
+    expect(refusalRows).toHaveLength(1);
+    expect(refusalRows[0]).toMatchObject({
+      userId: taker.userId,
+      oldValue: { planId, employeeId: a.employeeId, leaveRequestId: null, refusalCode: null },
+      newValue: {
+        planId,
+        employeeId: a.employeeId,
+        leaveRequestId: null,
+        refusalCode: "LEAVE_PLAN_WISH_NOT_EMPLOYED",
+        takenOverAt: null,
+      },
+    });
+    // Codes only: the German refusal text never reaches the audit row.
+    expect(JSON.stringify(refusalRows[0]!.newValue)).not.toContain(run.refused[0]!.error);
+
+    const linkRows = await auditRowsFor(app, "LeavePlanWish", wishC, "UPDATE");
+    expect(linkRows).toHaveLength(1);
+    expect(linkRows[0]).toMatchObject({
+      userId: taker.userId,
+      oldValue: { employeeId: c.employeeId, leaveRequestId: null, takenOverAt: null },
+      newValue: { employeeId: c.employeeId, leaveRequestId: requestC, refusalCode: null },
+    });
+    expect(typeof (linkRows[0]!.newValue as { takenOverAt: unknown }).takenOverAt).toBe("string");
   });
 });

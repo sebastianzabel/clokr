@@ -97,14 +97,34 @@ class WishNotLinkable extends Error {
   }
 }
 
-type LockedWish = {
+/** The state of a wish the takeover writes and audits (D-835-42). */
+type WishState = {
+  employeeId: string;
+  leaveRequestId: string | null;
+  refusalCode: string | null;
+  takenOverAt: Date | null;
+};
+
+type LockedWishState = WishState;
+
+type LockedWish = WishState & {
   id: string;
   startDate: Date;
   endDate: Date;
   halfDay: boolean;
   deletedAt: Date | null;
-  leaveRequestId: string | null;
 };
+
+/** The audit values of a wish state: ids, a code and a timestamp, never the refusal text. */
+function wishStateValues(planId: string, state: WishState) {
+  return {
+    planId,
+    employeeId: state.employeeId,
+    leaveRequestId: state.leaveRequestId,
+    refusalCode: state.refusalCode,
+    takenOverAt: state.takenOverAt ? state.takenOverAt.toISOString() : null,
+  };
+}
 
 type CreateStep =
   { kind: "created"; leaveRequestId: string } | { kind: "refused" } | { kind: "changed" };
@@ -217,12 +237,60 @@ export async function takeOverLeavePlan(
       }
     }
 
+    /**
+     * D-835-42 (WR-06): the takeover's own writes on a wish (a refusal stored or cleared, the link to
+     * its request) are audited like every other change: one `UPDATE LeavePlanWish` row per change,
+     * with ids, codes and timestamps only — never the refusal text.
+     */
+    async function auditWishState(
+      tx: Prisma.TransactionClient,
+      wishId: string,
+      before: WishState,
+      after: WishState,
+    ): Promise<void> {
+      await app.audit({
+        userId: taker.userId,
+        action: "UPDATE",
+        entity: "LeavePlanWish",
+        entityId: wishId,
+        oldValue: wishStateValues(planId, before),
+        newValue: wishStateValues(planId, after),
+        request: input.request,
+        tx,
+      });
+    }
+
+    /**
+     * Stores a refusal on the wish (`refusal`, system text only, never person-authored) or clears a
+     * stored one (`null`; a later success supersedes an earlier refusal). The wish row is locked for
+     * the write and its audit; clearing a wish without a refusal writes nothing.
+     */
+    async function setRefusal(
+      wishId: string,
+      refusal: { code: string; message: string } | null,
+    ): Promise<void> {
+      await app.prisma.$transaction(async (tx) => {
+        const rows = await tx.$queryRaw<
+          LockedWishState[]
+        >`SELECT "employeeId", "leaveRequestId", "refusalCode", "takenOverAt" FROM "LeavePlanWish" WHERE "id" = ${wishId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+        const current = rows[0];
+        if (!current || (refusal === null && current.refusalCode === null)) return;
+        await tx.leavePlanWish.updateMany({
+          where: { id: wishId, tenantId },
+          data: refusal
+            ? { refusalCode: refusal.code, refusalMessage: refusal.message, refusedAt: new Date() }
+            : { refusalCode: null, refusalMessage: null, refusedAt: null },
+        });
+        await auditWishState(tx, wishId, current, {
+          ...current,
+          refusalCode: refusal?.code ?? null,
+        });
+      });
+    }
+
     /** Clears the refusal of a wish (a later success supersedes an earlier stored refusal). */
     async function clearRefusal(wishId: string): Promise<void> {
-      await app.prisma.leavePlanWish.updateMany({
-        where: { id: wishId, tenantId },
-        data: { refusalCode: null, refusalMessage: null, refusedAt: null },
-      });
+      await setRefusal(wishId, null);
     }
 
     /** Stores a refusal on the wish and lists it in the result; nothing is created. */
@@ -247,10 +315,7 @@ export async function takeOverLeavePlan(
 
     /** Stores a refusal of a core on the wish (system text only, never person-authored). */
     async function storeRefusal(wishId: string, code: string, message: string): Promise<void> {
-      await app.prisma.leavePlanWish.updateMany({
-        where: { id: wishId, tenantId },
-        data: { refusalCode: code, refusalMessage: message, refusedAt: new Date() },
-      });
+      await setRefusal(wishId, { code, message });
     }
 
     /**
@@ -263,7 +328,7 @@ export async function takeOverLeavePlan(
       const linkHook = async (tx: Prisma.TransactionClient, row: { id: string }) => {
         const rows = await tx.$queryRaw<
           LockedWish[]
-        >`SELECT "id", "startDate", "endDate", "halfDay", "deletedAt", "leaveRequestId" FROM "LeavePlanWish" WHERE "id" = ${wish.id} AND "tenantId" = ${tenantId} FOR UPDATE`;
+        >`SELECT "id", "employeeId", "startDate", "endDate", "halfDay", "deletedAt", "leaveRequestId", "refusalCode", "takenOverAt" FROM "LeavePlanWish" WHERE "id" = ${wish.id} AND "tenantId" = ${tenantId} FOR UPDATE`;
         const stored = rows[0];
         if (
           !stored ||
@@ -275,15 +340,22 @@ export async function takeOverLeavePlan(
         ) {
           throw new WishNotLinkable();
         }
+        const takenOverAt = new Date();
         await tx.leavePlanWish.updateMany({
           where: { id: wish.id, tenantId },
           data: {
             leaveRequestId: row.id,
-            takenOverAt: new Date(),
+            takenOverAt,
             refusalCode: null,
             refusalMessage: null,
             refusedAt: null,
           },
+        });
+        await auditWishState(tx, wish.id, stored, {
+          employeeId: stored.employeeId,
+          leaveRequestId: row.id,
+          refusalCode: null,
+          takenOverAt,
         });
       };
 
