@@ -245,9 +245,10 @@ export async function readPlanner(
   const shownForeignWishes = otherWishes.filter(touchesSalon);
 
   const requestIds = shownOwnWishes.flatMap((w) => (w.leaveRequestId ? [w.leaveRequestId] : []));
+  // A soft-deleted linked request is no request any more: its status is not shown (WR-09).
   const requests = requestIds.length
     ? await db.leaveRequest.findMany({
-        where: { id: { in: requestIds }, employee: { tenantId } },
+        where: { id: { in: requestIds }, deletedAt: null, employee: { tenantId } },
         select: { id: true, status: true },
       })
     : [];
