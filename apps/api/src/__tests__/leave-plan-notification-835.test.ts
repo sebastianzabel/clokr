@@ -2,7 +2,7 @@
  * Issue #835 (AC-N; D-835-18, D-835-32) — opening a leave plan tells every person of the plan
  * population, and the takeover that closes the plan takes the announcement away again.
  *
- * Fixture (fake clock 2026-11-10, installed BEFORE the app boots; plan year 2027): tenant one with
+ * Fixture (fake clock 2026-11-03, installed BEFORE the app boots; plan year 2027): tenant one with
  * salons S (the default) and S2. The opener O (manage + approve + read + create-own, TENANT scope,
  * homed in S) opens the plans. Persons: A homed in S, J homed in S2 until 2027-06-30 and in S from
  * 2027-07-01, P homed in S2 only, X homed in S but exited on 2026-12-31 (not employed in 2027), Z
@@ -118,7 +118,9 @@ describe("Issue #835 - LEAVE_PLAN_OPENED notification", () => {
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    // A PAST date on purpose: audit rows written under a fake clock stay in the worker database, and a future stamp is
+    // counted by usual-work-days-backfill-route-481 (it counts every leave audit with createdAt >= now).
+    vi.setSystemTime(new Date("2026-11-03T10:00:00.000Z"));
     app = await getTestApp();
     one = await seedTestData(app, "ln835a");
     salonS2 = await createTestSalon(app.prisma, one.tenant.id, { name: "Notify835 S2" });

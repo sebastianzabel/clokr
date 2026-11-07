@@ -2,7 +2,7 @@
  * Issue #835 (AC-5, AC-11; D-04, D-835-06/24) — the validity of a leave plan wish, its edit and soft
  * removal, and the manager path with its identical 404, against the real database and the routes.
  *
- * Fixture (fake clock 2026-11-10, installed BEFORE the app boots; plan year 2027): tenant one with
+ * Fixture (fake clock 2026-11-03, installed BEFORE the app boots; plan year 2027): tenant one with
  * salons S (the default) and S2, tenant two with its own salon. Open plans: P_S (S, no deadline) and
  * P_S2 (S2). Callers are built from custom roles, never from what the seeded admin holds: the seeded
  * employee EMP (system role EMPLOYEE, homed in S), a second plain employee PEER (create-own, homed
@@ -142,7 +142,9 @@ describe("Issue #835 - leave plan wishes (validity, edit, removal, manager path)
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    // A PAST date on purpose: audit rows written under a fake clock stay in the worker database, and a future stamp is
+    // counted by usual-work-days-backfill-route-481 (it counts every leave audit with createdAt >= now).
+    vi.setSystemTime(new Date("2026-11-03T10:00:00.000Z"));
     app = await getTestApp();
     one = await seedTestData(app, "lw835a");
     two = await seedTestData(app, "lw835b");

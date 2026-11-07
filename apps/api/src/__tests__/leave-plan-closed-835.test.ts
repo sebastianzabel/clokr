@@ -2,7 +2,7 @@
  * Issue #835 (AC-10; D-835-15, D-835-26, C-6) — a TAKEN_OVER plan is read-only, and retention deletion
  * of a person who planned leave still works (the person's wishes go first, the plan row stays).
  *
- * Fixture (fake clock 2026-11-10, installed BEFORE the app boots; plan year 2027): tenant one with its
+ * Fixture (fake clock 2026-11-03, installed BEFORE the app boots; plan year 2027): tenant one with its
  * default salon S. Callers are built from custom roles: the taker T (leave-plan:manage + approve +
  * read + create-own, TENANT scope, homed in S) and the seeded employee B (system role EMPLOYEE, homed
  * in S). The TAKEN_OVER plan is the result of a REAL takeover through the route, not a row written
@@ -63,7 +63,9 @@ describe("Issue #835 - closed plans and the hard-delete path", () => {
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    // A PAST date on purpose: audit rows written under a fake clock stay in the worker database, and a future stamp is
+    // counted by usual-work-days-backfill-route-481 (it counts every leave audit with createdAt >= now).
+    vi.setSystemTime(new Date("2026-11-03T10:00:00.000Z"));
     app = await getTestApp();
     one = await seedTestData(app, "lc835a");
 

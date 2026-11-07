@@ -3,7 +3,7 @@
  * plan, add a wish, take it over. One path through every layer (route, wish write, takeover, the
  * two leave cores, the audit), against the real database.
  *
- * Fixture (fake clock 2026-11-10, installed BEFORE the app boots; plan year 2027): tenant one with
+ * Fixture (fake clock 2026-11-03, installed BEFORE the app boots; plan year 2027): tenant one with
  * its default salon S, tenant two with its own salon. Callers are built from custom roles, never
  * from what the seeded admin holds: the taker T (leave-plan:manage + leave-request:approve/read/
  * create), a second approver A2 (approve + read), and the seeded employee B (system role EMPLOYEE),
@@ -142,7 +142,9 @@ describe("Issue #835 - leave plan tracer (open -> wish -> takeover)", () => {
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    // A PAST date on purpose: audit rows written under a fake clock stay in the worker database, and a future stamp is
+    // counted by usual-work-days-backfill-route-481 (it counts every leave audit with createdAt >= now).
+    vi.setSystemTime(new Date("2026-11-03T10:00:00.000Z"));
     app = await getTestApp();
     one = await seedTestData(app, "lp835a");
     two = await seedTestData(app, "lp835b");

@@ -3,7 +3,7 @@
  * its home ranges, the gesetzt and beantragt rows, the wishes of this plan and read-only wishes of
  * other open plans, the conflict flag and the type masking, against the real database and routes.
  *
- * Fixture (fake clock 2026-11-10, installed BEFORE the app boots; plan year 2027): tenant one with
+ * Fixture (fake clock 2026-11-03, installed BEFORE the app boots; plan year 2027): tenant one with
  * salons S (the default) and S2, tenant two with its own salon. Open plans: P_S (S) and P_S2 (S2).
  * Callers are built from custom roles, never from what the seeded admin holds: the seeded employee
  * EMP (system role EMPLOYEE, homed in S), a reader RD (leave-request:read), an approver AP (read +
@@ -238,7 +238,9 @@ describe("Issue #835 - leave plan read (rows, population, conflict, masking)", (
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    // A PAST date on purpose: audit rows written under a fake clock stay in the worker database, and a future stamp is
+    // counted by usual-work-days-backfill-route-481 (it counts every leave audit with createdAt >= now).
+    vi.setSystemTime(new Date("2026-11-03T10:00:00.000Z"));
     app = await getTestApp();
     one = await seedTestData(app, "lr835a");
     two = await seedTestData(app, "lr835b");

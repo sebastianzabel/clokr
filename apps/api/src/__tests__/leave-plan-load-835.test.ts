@@ -4,7 +4,7 @@
  * taken-over or removed wish adds nothing, sick leave never counts, a day exists without any rule,
  * and rule data reaches only a reader with the manage or approve reach over the salon.
  *
- * Fixture (fake clock 2026-11-10, installed BEFORE the app boots; plan year 2027): tenant one with
+ * Fixture (fake clock 2026-11-03, installed BEFORE the app boots; plan year 2027): tenant one with
  * salons S (the default) and S2, tenant two with its own salon. Open plans: P_S and P_S2. Callers
  * are built from custom roles: the seeded employee EMP (system role EMPLOYEE, homed in S, sees no
  * limits), AP (read + approve, whole tenant). Persons without a role: P1, P2, P3 and B (homed in S,
@@ -209,7 +209,9 @@ describe("Issue #835 - leave plan day load (the #836 kernel with wishes as candi
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    // A PAST date on purpose: audit rows written under a fake clock stay in the worker database, and a future stamp is
+    // counted by usual-work-days-backfill-route-481 (it counts every leave audit with createdAt >= now).
+    vi.setSystemTime(new Date("2026-11-03T10:00:00.000Z"));
     app = await getTestApp();
     one = await seedTestData(app, "ll835a");
     two = await seedTestData(app, "ll835b");

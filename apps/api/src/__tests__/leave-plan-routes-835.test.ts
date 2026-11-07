@@ -4,7 +4,7 @@
  * deadline), the `deadlinePassed` hint of `GET /leave/plans/:id`, the absence of a delete route and
  * the wish-overlap answer of the database exclusion constraint.
  *
- * Fixture (fake clock 2026-11-10, installed BEFORE the app boots): tenant one with salons S (the
+ * Fixture (fake clock 2026-11-03, installed BEFORE the app boots): tenant one with salons S (the
  * default), S2 and an inactive S3, tenant two with its own salon. Callers are built from custom
  * roles, never from what the seeded admin holds: M_S (leave-plan:manage + read, SALONS scope [S],
  * homed in S), M_S2 (the same for S2), P_S (create-own only, homed in S: a plan reader by own
@@ -117,7 +117,9 @@ describe("Issue #835 - leave plan list, deadline and reader admission", () => {
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    // A PAST date on purpose: audit rows written under a fake clock stay in the worker database, and a future stamp is
+    // counted by usual-work-days-backfill-route-481 (it counts every leave audit with createdAt >= now).
+    vi.setSystemTime(new Date("2026-11-03T10:00:00.000Z"));
     app = await getTestApp();
     one = await seedTestData(app, "lr835a");
     two = await seedTestData(app, "lr835b");
@@ -437,10 +439,10 @@ describe("Issue #835 - leave plan list, deadline and reader admission", () => {
       expect(res.statusCode, res.body).toBe(200);
       return (res.json() as { plan: { deadlinePassed: boolean; deadline: string } }).plan;
     }
-    // The fake clock stands at 2026-11-10: yesterday has passed, today and tomorrow have not.
-    expect(await deadlinePassedFor("2026-11-09")).toMatchObject({ deadlinePassed: true });
-    expect(await deadlinePassedFor("2026-11-10")).toMatchObject({ deadlinePassed: false });
-    expect(await deadlinePassedFor("2026-11-11")).toMatchObject({ deadlinePassed: false });
+    // The fake clock stands at 2026-11-03: yesterday has passed, today and tomorrow have not.
+    expect(await deadlinePassedFor("2026-11-02")).toMatchObject({ deadlinePassed: true });
+    expect(await deadlinePassedFor("2026-11-03")).toMatchObject({ deadlinePassed: false });
+    expect(await deadlinePassedFor("2026-11-04")).toMatchObject({ deadlinePassed: false });
   });
 
   it("there is no delete route: DELETE /plans/:id is 404 and the surface lists none", async () => {

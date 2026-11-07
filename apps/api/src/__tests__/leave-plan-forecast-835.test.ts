@@ -3,7 +3,7 @@
  * the year minus PENDING days minus the person's wishes priced like filed requests, a warning when
  * negative, no entitlement row written by the read, and no forecast outside the reader's reach.
  *
- * Fixture (fake clock 2026-11-10, installed BEFORE the app boots; plan year 2027): tenant one with
+ * Fixture (fake clock 2026-11-03, installed BEFORE the app boots; plan year 2027): tenant one with
  * its default salon S, tenant two with its own salon, one open plan P_S. Persons homed in S, all
  * with a Monday-Friday schedule unless noted: EMP (the seeded employee, system role EMPLOYEE;
  * entitlement 30, 5 used, a PENDING request of 3 days), SB (SHIFT_BASED, 4 contract days per week),
@@ -190,7 +190,9 @@ describe("Issue #835 - leave plan forecast (priced like filed requests)", () => 
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-11-10T10:00:00.000Z"));
+    // A PAST date on purpose: audit rows written under a fake clock stay in the worker database, and a future stamp is
+    // counted by usual-work-days-backfill-route-481 (it counts every leave audit with createdAt >= now).
+    vi.setSystemTime(new Date("2026-11-03T10:00:00.000Z"));
     app = await getTestApp();
     one = await seedTestData(app, "lf835a");
     two = await seedTestData(app, "lf835b");

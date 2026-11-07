@@ -110,7 +110,9 @@ describe("Issue #835 - leave plan deadline lock", () => {
 
   beforeAll(async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    clock("2026-11-10T10:00:00.000Z");
+    // A PAST date on purpose: audit rows written under a fake clock stay in the worker database, and a future stamp is
+    // counted by usual-work-days-backfill-route-481 (it counts every leave audit with createdAt >= now).
+    clock("2026-11-03T10:00:00.000Z");
     app = await getTestApp();
     one = await seedTestData(app, "ld835a");
     two = await seedTestData(app, "ld835b");
