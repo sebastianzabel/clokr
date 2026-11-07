@@ -32,6 +32,12 @@ export const LEAVE_PLAN_WISH_NOT_HOMED = "LEAVE_PLAN_WISH_NOT_HOMED";
 export const LEAVE_PLAN_WISH_NOT_EMPLOYED = "LEAVE_PLAN_WISH_NOT_EMPLOYED";
 /** A takeover refusal stored on the wish: no day of the wish is in the plan's salon any more. */
 export const LEAVE_PLAN_WISH_NOT_IN_SALON = "LEAVE_PLAN_WISH_NOT_IN_SALON";
+/**
+ * A takeover refusal stored on the wish (D-835-45): the taker holds no `leave-request:create` reach
+ * over the person (`ZUGEWIESEN`, or `EIGENE` for the taker's own wish). Terminal for THIS taker, not
+ * for the plan: the wish keeps the plan open until a taker with the reach takes it over.
+ */
+export const LEAVE_PLAN_WISH_NO_CREATE_REACH = "LEAVE_PLAN_WISH_NO_CREATE_REACH";
 /** The wish is taken over already (409). */
 export const LEAVE_PLAN_WISH_TAKEN_OVER = "LEAVE_PLAN_WISH_TAKEN_OVER";
 /** The tenant locks own changes after the deadline and the deadline has passed (409). */
@@ -92,6 +98,8 @@ export const LEAVE_PLAN_MESSAGES: Record<string, string> = {
   [LEAVE_PLAN_WISH_NOT_EMPLOYED]: "Der Wunsch liegt nicht vollständig in der Beschäftigungszeit.",
   [LEAVE_PLAN_WISH_NOT_IN_SALON]:
     "Die Person gehört an keinem Tag des Wunsches mehr zu diesem Salon.",
+  [LEAVE_PLAN_WISH_NO_CREATE_REACH]:
+    "Du darfst für diese Person keinen Urlaubsantrag stellen. Eine berechtigte Person muss den Wunsch übernehmen.",
   [LEAVE_PLAN_WISH_TAKEN_OVER]: "Dieser Wunsch ist bereits übernommen.",
   [LEAVE_PLAN_DEADLINE_PASSED]: "Die Frist für eigene Änderungen ist abgelaufen.",
   [LEAVE_PLAN_TAKEOVER_RUNNING]:

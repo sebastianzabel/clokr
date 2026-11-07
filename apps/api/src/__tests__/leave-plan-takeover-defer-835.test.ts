@@ -56,6 +56,8 @@ vi.mock("../contexts/working-time-account", async (importOriginal) => {
 });
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
+/** D-835-45: the takeover files requests, so a taker needs the create reach over each person. */
+const CREATE_OTHERS = "leave-request:create:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
 const READ = "leave-request:read:ZUGEWIESEN";
 const YEAR = new Date().getFullYear() + 1;
@@ -227,7 +229,7 @@ describe("Issue #835 - deferred live-saldo recompute of the takeover (plan 835-1
   beforeAll(async () => {
     app = await getTestApp();
     one = await seedTestData(app, "tkdef835");
-    const t = await actor("taker", [MANAGE, APPROVE, READ]);
+    const t = await actor("taker", [MANAGE, APPROVE, READ, CREATE_OTHERS]);
     taker = { userId: t.userId, employeeId: t.employeeId };
     takerToken = t.token;
 

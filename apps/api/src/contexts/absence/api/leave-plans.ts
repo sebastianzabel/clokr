@@ -631,7 +631,7 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Take the wishes of a leave plan over into leave requests",
       description:
-        "Creates a leave request for every active wish through the normal create core, approves the ones the caller may approve and leaves the caller's own wishes PENDING for a second approver.",
+        "Creates a leave request for every active wish through the normal create core, approves the ones the caller may approve and leaves the caller's own wishes PENDING for a second approver. A wish is taken over only for a person inside the caller's leave-request:create reach (ZUGEWIESEN; EIGENE for the caller's own wish); otherwise it is refused with LEAVE_PLAN_WISH_NO_CREATE_REACH.",
     },
     preHandler: requirePermission("leave-plan:manage:ZUGEWIESEN"),
     handler: async (req, reply) => {
@@ -658,6 +658,14 @@ export async function leavePlanRoutes(app: FastifyInstance) {
           userId: req.user.sub,
           employeeId: req.user.employeeId ?? null,
           approveReach: await approveReach(req),
+          // D-835-45 (IN-03): the takeover files requests, so it needs the create reach of
+          // `POST /leave/requests` over each person (the own wish: the EIGENE key).
+          createReach: await resolveAccessReach(
+            app.prisma,
+            accessContextFromRequest(req),
+            "leave-request:create:ZUGEWIESEN",
+          ),
+          mayCreateOwn: await hasPermission(req, "leave-request:create:EIGENE"),
         },
         limitExceptions,
         request: requestAudit(req),

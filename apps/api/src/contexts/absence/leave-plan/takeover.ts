@@ -10,7 +10,8 @@
  *   1. the wish is RE-READ at the start of its iteration (gone, removed or linked → skipped); a
  *      linked wish is only handled when its approval was refused earlier (`APPROVAL_…`, D-835-30);
  *   2. the employment window and the Stammsalon are re-checked at takeover time (D-835-24, D-05):
- *      a lapsed one is stored as a refusal on the wish, nothing is created;
+ *      a lapsed one is stored as a refusal on the wish, nothing is created; the taker must hold the
+ *      create reach over the person (D-835-45), else `LEAVE_PLAN_WISH_NO_CREATE_REACH`;
  *   3. a wish the taker will approve is pre-checked against the #836 limits with the wish as
  *      candidate (D-835-29): an exceedance without a per-wish reason is stored as
  *      `LEAVE_LIMIT_EXCEPTION_REQUIRED`, nothing is created;
@@ -60,6 +61,7 @@ import {
   LEAVE_PLAN_CLOSED,
   LEAVE_PLAN_MESSAGES,
   LEAVE_PLAN_TAKEOVER_RUNNING,
+  LEAVE_PLAN_WISH_NO_CREATE_REACH,
   LEAVE_PLAN_TRIGGER,
   LEAVE_PLAN_WISH_NOT_EMPLOYED,
   LEAVE_PLAN_WISH_NOT_IN_SALON,
@@ -146,7 +148,15 @@ export async function takeOverLeavePlan(
   input: {
     tenantId: string;
     planId: string;
-    taker: { userId: string; employeeId: string | null; approveReach: AccessReach };
+    taker: {
+      userId: string;
+      employeeId: string | null;
+      approveReach: AccessReach;
+      /** The taker's `leave-request:create:ZUGEWIESEN` reach (D-835-45). */
+      createReach: AccessReach;
+      /** Whether the taker holds `leave-request:create:EIGENE` (the taker's own wish, D-835-45). */
+      mayCreateOwn: boolean;
+    };
     /** wishId → reason of the limit exception the taker grants for that wish. */
     limitExceptions: ReadonlyMap<string, string>;
     request: AuditRequestMeta;
@@ -319,6 +329,16 @@ export async function takeOverLeavePlan(
           startDate,
         ))
       );
+    }
+
+    /**
+     * True iff the taker may file this person's request (D-835-45): the own wish with
+     * `leave-request:create:EIGENE`, anybody else inside the `leave-request:create:ZUGEWIESEN`
+     * reach — the Stammsalon at `startDate`, the rule the approve decision uses.
+     */
+    async function takerMayCreate(employeeId: string, startDate: Date): Promise<boolean> {
+      if (taker.employeeId === employeeId) return taker.mayCreateOwn;
+      return isStammsalonScopeMatch(app.prisma, tenantId, taker.createReach, employeeId, startDate);
     }
 
     /** Stores a refusal of a core on the wish (system text only, never person-authored). */
@@ -562,6 +582,18 @@ export async function takeOverLeavePlan(
           wish,
           LEAVE_PLAN_WISH_NOT_IN_SALON,
           LEAVE_PLAN_MESSAGES[LEAVE_PLAN_WISH_NOT_IN_SALON] ?? LEAVE_PLAN_WISH_NOT_IN_SALON,
+        );
+        return null;
+      }
+
+      // D-835-45 (IN-03): the takeover files a request on behalf of the person, so the taker needs
+      // the create reach the request route asks for — never more than `POST /leave/requests` would
+      // let the taker do. Refused for this taker; the wish keeps the plan open for one who has it.
+      if (!(await takerMayCreate(wish.employeeId, wish.startDate))) {
+        await refuse(
+          wish,
+          LEAVE_PLAN_WISH_NO_CREATE_REACH,
+          LEAVE_PLAN_MESSAGES[LEAVE_PLAN_WISH_NO_CREATE_REACH] ?? LEAVE_PLAN_WISH_NO_CREATE_REACH,
         );
         return null;
       }

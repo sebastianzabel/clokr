@@ -34,6 +34,8 @@ import { resolvePushPolicy, safePushUrl } from "../contexts/platform/notificatio
 import { resolveEmailPolicy } from "../contexts/platform/notification-email-policy";
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
+/** D-835-45: the takeover files requests, so a taker needs the create reach over each person. */
+const CREATE_OTHERS = "leave-request:create:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
 const READ = "leave-request:read:ZUGEWIESEN";
 const CREATE_OWN = "leave-request:create:EIGENE";
@@ -132,7 +134,7 @@ describe("Issue #835 - LEAVE_PLAN_OPENED notification", () => {
         tenantId: one.tenant.id,
         name,
         nameKey: roleNameKey(name),
-        permissions: normalizeRolePermissions([MANAGE, APPROVE, READ, CREATE_OWN]),
+        permissions: normalizeRolePermissions([MANAGE, APPROVE, READ, CREATE_OWN, CREATE_OTHERS]),
       },
     });
     await app.prisma.roleAssignment.create({

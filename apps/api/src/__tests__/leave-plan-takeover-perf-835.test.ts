@@ -28,6 +28,8 @@ import { roleNameKey, normalizeRolePermissions } from "../contexts/platform/acce
 import { dateStrInTz, getTenantTimezone } from "../contexts/working-time-account";
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
+/** D-835-45: the takeover files requests, so a taker needs the create reach over each person. */
+const CREATE_OTHERS = "leave-request:create:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
 const READ = "leave-request:read:ZUGEWIESEN";
 const CLOSE = "month-close:close:ZUGEWIESEN";
@@ -209,7 +211,7 @@ describe("Issue #835 - takeover wall time of 40 wishes (plan 835-11)", () => {
     app = await getTestApp();
     countStatements();
     one = await seedTestData(app, "tkperf835");
-    const t = await actor("taker", [MANAGE, APPROVE, READ]);
+    const t = await actor("taker", [MANAGE, APPROVE, READ, CREATE_OTHERS]);
     taker = { userId: t.userId, employeeId: t.employeeId };
     takerToken = t.token;
     closerToken = (await actor("closer", [CLOSE, READ])).token;

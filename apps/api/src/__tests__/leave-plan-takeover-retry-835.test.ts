@@ -59,6 +59,8 @@ vi.mock("../contexts/absence/leave-decision", async (importOriginal) => {
 });
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
+/** D-835-45: the takeover files requests, so a taker needs the create reach over each person. */
+const CREATE_OTHERS = "leave-request:create:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
 const READ = "leave-request:read:ZUGEWIESEN";
 const CREATE_OWN = "leave-request:create:EIGENE";
@@ -194,10 +196,10 @@ describe("Issue #835 - takeover retries the approval only", () => {
   beforeAll(async () => {
     app = await getTestApp();
     one = await seedTestData(app, "tr835");
-    const t = await person("taker", [MANAGE, READ, CREATE_OWN, APPROVE]);
+    const t = await person("taker", [MANAGE, READ, CREATE_OWN, APPROVE, CREATE_OTHERS]);
     takerToken = t.token;
     takerEmployeeId = t.employee.id;
-    const t2 = await person("taker2", [MANAGE, READ, APPROVE]);
+    const t2 = await person("taker2", [MANAGE, READ, APPROVE, CREATE_OTHERS]);
     taker2Token = t2.token;
     taker2UserId = t2.user.id;
     aEmployeeId = (await person("a", [])).employee.id;

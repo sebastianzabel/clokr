@@ -59,6 +59,8 @@ vi.mock("../contexts/absence/leave-request-create", async (importOriginal) => {
 });
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
+/** D-835-45: the takeover files requests, so a taker needs the create reach over each person. */
+const CREATE_OTHERS = "leave-request:create:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
 const READ = "leave-request:read:ZUGEWIESEN";
 const CREATE_OWN = "leave-request:create:EIGENE";
@@ -226,7 +228,7 @@ describe("Issue #835 - takeover under concurrency and wish races", () => {
   beforeAll(async () => {
     app = await getTestApp();
     one = await seedTestData(app, "rc835");
-    const t = await actor("taker", [MANAGE, READ, CREATE_OWN]);
+    const t = await actor("taker", [MANAGE, READ, CREATE_OWN, CREATE_OTHERS]);
     takerToken = t.token;
     takerUserId = t.userId;
     approver2 = await actor("second", [APPROVE, READ]);

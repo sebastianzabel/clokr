@@ -695,4 +695,39 @@ describe("Issue #835 - review fixes of the leave planner", () => {
     expect(run.refused).toMatchObject([{ wishId, code: "LEAVE_PLAN_WISH_NOT_IN_SALON" }]);
     expect(await app.prisma.leaveRequest.count({ where: { employeeId: a.employeeId } })).toBe(0);
   });
+
+  it("IN-03 (D-835-45): the takeover files a request only inside the taker's create reach", async () => {
+    const s = await salon();
+    const other = await salon();
+    // Manage and approve tenant-wide, but the create reach covers only another salon.
+    const taker = await person("taker", s, [MANAGE, APPROVE, READ]);
+    await grant(taker.userId, [CREATE_OTHERS], { kind: "SALONS", salonIds: [other] });
+    const full = await person("full", s, TAKER);
+    const a = await person("a", s);
+    const planId = await openPlan(full.token, s);
+    const wishA = await addWish(full.token, planId, a.employeeId, week(6, 4));
+    // The taker's own wish: the taker holds no leave-request:create:EIGENE.
+    const ownWish = await addWish(full.token, planId, taker.employeeId, week(8, 4));
+
+    const run = await takeOver(taker.token, planId);
+    expect(run.created).toEqual([]);
+    expect(run.pending).toEqual([]);
+    expect(run.refused.map((r) => [r.wishId, r.code]).sort()).toEqual(
+      [
+        [wishA, "LEAVE_PLAN_WISH_NO_CREATE_REACH"],
+        [ownWish, "LEAVE_PLAN_WISH_NO_CREATE_REACH"],
+      ].sort(),
+    );
+    expect(run.refused[0]!.error).toBe(
+      "Du darfst für diese Person keinen Urlaubsantrag stellen. Eine berechtigte Person muss den Wunsch übernehmen.",
+    );
+    expect(await app.prisma.leaveRequest.count({ where: { employeeId: a.employeeId } })).toBe(0);
+    // Terminal for this taker only: the plan stays open for a taker who has the reach.
+    expect(run.planStatus).toBe("OPEN");
+
+    const rerun = await takeOver(full.token, planId);
+    expect(rerun.created.map((c) => c.wishId).sort()).toEqual([wishA, ownWish].sort());
+    expect(rerun.refused).toEqual([]);
+    expect(rerun.planStatus).toBe("TAKEN_OVER");
+  });
 });

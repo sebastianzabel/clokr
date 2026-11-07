@@ -37,6 +37,8 @@ import {
 import { roleNameKey, normalizeRolePermissions } from "../contexts/platform/access-role";
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
+/** D-835-45: the takeover files requests, so a taker needs the create reach over each person. */
+const CREATE_OTHERS = "leave-request:create:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
 const READ = "leave-request:read:ZUGEWIESEN";
 const CREATE_OWN = "leave-request:create:EIGENE";
@@ -149,7 +151,7 @@ describe("Issue #835 - leave plan tracer (open -> wish -> takeover)", () => {
     one = await seedTestData(app, "lp835a");
     two = await seedTestData(app, "lp835b");
 
-    const taker = await actor("taker", [MANAGE, APPROVE, READ, CREATE_OWN]);
+    const taker = await actor("taker", [MANAGE, APPROVE, READ, CREATE_OWN, CREATE_OTHERS]);
     takerToken = taker.token;
     takerUserId = taker.user.id;
     takerEmployeeId = taker.employee.id;

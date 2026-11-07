@@ -39,6 +39,8 @@ import { roleNameKey, normalizeRolePermissions } from "../contexts/platform/acce
 import { getTenantTimezone, monthRangeUtc } from "../contexts/working-time-account";
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
+/** D-835-45: the takeover files requests, so a taker needs the create reach over each person. */
+const CREATE_OTHERS = "leave-request:create:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
 const READ = "leave-request:read:ZUGEWIESEN";
 const CREATE_OWN = "leave-request:create:EIGENE";
@@ -255,7 +257,7 @@ describe("Issue #835 - leave plan takeover in full", () => {
     one = await seedTestData(app, "tk835a");
     salonS2 = (await createTestSalon(app.prisma, one.tenant.id, { name: "Zweiter Salon" })).id;
 
-    const t = await actor("taker", [MANAGE, READ, CREATE_OWN]);
+    const t = await actor("taker", [MANAGE, READ, CREATE_OWN, CREATE_OTHERS]);
     taker = { userId: t.userId, employeeId: t.employeeId };
     takerToken = t.token;
     // The approve reach of the taker: a PERSONS assignment, filled per case through `approvable()`.
@@ -672,7 +674,7 @@ describe("Issue #835 - leave plan takeover in full", () => {
   // ── Wall time of a large plan (P-3) ───────────────────────────────────────────────────────────
 
   it("a plan of 40 wishes (40 persons, one wish each) is taken over within the reported wall time", async () => {
-    const bulk = await actor("bulk", [MANAGE, APPROVE, READ]);
+    const bulk = await actor("bulk", [MANAGE, APPROVE, READ, CREATE_OTHERS]);
     const planId = await freshPlan();
     const people: Person[] = [];
     for (let i = 0; i < 40; i += 1) people.push(await rawPerson(`bulk${i}`));
