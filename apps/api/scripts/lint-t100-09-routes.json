@@ -924,7 +924,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a LeavePlan, not Employee/LeaveType - the fixture cannot produce a foreign instance. leave-plans.ts loads it with a SCOPED `findFirst({ id, tenantId })`; a foreign tenant's plan, an unknown id and an unreadable plan answer the byte-identical `{ error: \"Urlaubsplanung nicht gefunden\" }` 404 - conformant. Proven by `leave-plan-tracer-835.test.ts`.",
+      "reason": "`:id` addresses a LeavePlan, not Employee/LeaveType - the fixture cannot produce a foreign instance. leave-plans.ts loads it with a SCOPED `findFirst({ id, tenantId })`; then admits the caller only with a `leave-request:read` reach over the plan's salon or as a person homed in it; a foreign tenant's plan, an unknown id and a plan the caller may not read answer the byte-identical `{ error: \"Urlaubsplanung nicht gefunden\" }` 404 - conformant. Unknown and foreign-tenant ids are proven by `leave-plan-tracer-835.test.ts`, an in-tenant reader of another salon by `leave-plan-review-fix-835.test.ts` (F1).",
       "ticket": null,
       "validatedAt": null
     },
@@ -964,7 +964,7 @@
       "category": "nicht anwendbar",
       "params": null,
       "minimalBody": null,
-      "reason": "`:id` addresses a LeavePlan, not Employee/LeaveType - the fixture cannot produce a foreign instance. leave-plans.ts loads it with a SCOPED `findFirst({ id, tenantId })`; a foreign tenant's plan, an unknown id and an unreadable plan answer the byte-identical `{ error: \"Urlaubsplanung nicht gefunden\" }` 404 - conformant. Proven by `leave-plan-tracer-835.test.ts`.",
+      "reason": "`:id` addresses a LeavePlan, not Employee/LeaveType - the fixture cannot produce a foreign instance. leave-plans.ts loads it with a SCOPED `findFirst({ id, tenantId })`; then checks the plan's salon against the caller's `leave-plan:manage` reach; a foreign tenant's plan, an unknown id and a plan outside that reach answer the byte-identical `{ error: \"Urlaubsplanung nicht gefunden\" }` 404 - conformant. Unknown and foreign-tenant ids are proven by `leave-plan-tracer-835.test.ts`, an in-tenant manager of another salon by `leave-plan-review-fix-835.test.ts` (F1).",
       "ticket": null,
       "validatedAt": null
     },

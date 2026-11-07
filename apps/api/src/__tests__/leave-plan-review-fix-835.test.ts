@@ -780,4 +780,46 @@ describe("Issue #835 - review fixes of the leave planner", () => {
     expect(patched.json()).toMatchObject({ code: "LEAVE_PLAN_DEADLINE_OUT_OF_RANGE" });
     expect((await patch(`${current + 2}-01-31`)).statusCode).toBe(200);
   });
+
+  it("F1 (T-100-09): a plan outside the caller's admission is the byte-identical 404 of an unknown id on GET and on the takeover", async () => {
+    const s = await salon();
+    const other = await salon();
+    const full = await person("full", s, TAKER);
+    const a = await person("a", s);
+    // An in-tenant reader and an in-tenant manager, both of ANOTHER salon and homed there.
+    const reader = await person("reader", other, [READ], { kind: "SALONS", salonIds: [other] });
+    const manager = await person("manager", other, [MANAGE, APPROVE, READ, CREATE_OTHERS], {
+      kind: "SALONS",
+      salonIds: [other],
+    });
+    const planId = await openPlan(full.token, s);
+    const wishId = await addWish(full.token, planId, a.employeeId, week(4, 4));
+    const unknownId = crypto.randomUUID();
+
+    const call = (method: "GET" | "POST", token: string, id: string, suffix = "") =>
+      app.inject({
+        method,
+        url: `/api/v1/leave/plans/${id}${suffix}`,
+        headers: authed(token),
+        ...(method === "POST" ? { payload: {} } : {}),
+      });
+
+    const unreadable = await call("GET", reader.token, planId);
+    const unknownRead = await call("GET", reader.token, unknownId);
+    expect(unreadable.statusCode).toBe(404);
+    expect(unknownRead.statusCode).toBe(404);
+    expect(unreadable.body).toBe(unknownRead.body);
+    expect(unreadable.json()).toEqual({ error: "Urlaubsplanung nicht gefunden" });
+
+    const outsideReach = await call("POST", manager.token, planId, "/takeover");
+    const unknownTakeover = await call("POST", manager.token, unknownId, "/takeover");
+    expect(outsideReach.statusCode).toBe(404);
+    expect(unknownTakeover.statusCode).toBe(404);
+    expect(outsideReach.body).toBe(unknownTakeover.body);
+    expect(outsideReach.body).toBe(unknownRead.body);
+    // Nothing was taken over.
+    const wish = await app.prisma.leavePlanWish.findUniqueOrThrow({ where: { id: wishId } });
+    expect(wish.leaveRequestId).toBeNull();
+    expect(await app.prisma.leaveRequest.count({ where: { employeeId: a.employeeId } })).toBe(0);
+  });
 });
