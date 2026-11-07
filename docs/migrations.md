@@ -1779,8 +1779,7 @@ Urlaubsplanung; Mitarbeitende des Salons tragen ihre Urlaubswünsche ein, und ei
 echte Urlaubsanträge durch dieselbe Prüfung wie ein normaler Antrag. Ein Wunsch zählt nirgends, bis er ein Antrag ist. Ohne
 Planung ändert sich nichts.
 
-**Was die Migrationen tun.** Zwei Verzeichnisse in `packages/db/prisma/migrations/` in diesem Plan (weitere folgen in den
-späteren Plänen der Phase):
+**Was die Migrationen tun.** Drei Verzeichnisse in `packages/db/prisma/migrations/`:
 
 - `20261106200013_leave_plan` — vom Generator erzeugt: der Typ `LeavePlanStatus` (`OPEN`, `TAKEN_OVER`), die Tabellen
   `LeavePlan` und `LeavePlanWish`, vier Indizes (darunter der eindeutige Index auf `LeavePlanWish.leaveRequestId`), sechs
@@ -1788,6 +1787,14 @@ späteren Plänen der Phase):
   `TenantConfig.leavePlanDeadlineLocksWishes BOOLEAN NOT NULL DEFAULT false`. Rein additiv: keine bestehende Zeile wird gelesen,
   geschrieben oder geändert. Neue Abhängigkeiten auf den Unterbau (Salon, Employee, TenantConfig) sind mit Issue #835 in `Ready`
   genehmigt.
+- `20261106203800_leave_plan_checks` — von Hand geschrieben (Prisma modelliert weder CHECKs noch Teil-Indizes noch Ausschluss-
+  Constraints): `CREATE EXTENSION IF NOT EXISTS btree_gist` (wie Phase 70b), der Teil-Unique-Index `LeavePlan_open_unique`
+  (`("salonId","year") WHERE status = 'OPEN'`: höchstens eine offene Planung je Salon und Jahr), die CHECKs
+  `LeavePlan_year_check`, `LeavePlan_taken_over_shape_check`, `LeavePlanWish_range_check`, `_half_day_check`,
+  `_refusal_shape_check`, `_link_shape_check`, `_removal_shape_check` und der Ausschluss-Constraint
+  `LeavePlanWish_no_overlap_active` (`gist ("employeeId" WITH =, daterange("startDate","endDate",'[]') WITH &&)` für aktive,
+  nicht übernommene Wünsche). Die Tabellen sind leer; kein Backfill. Die CI-Driftprüfung bleibt leer, weil Prisma diese Objekte
+  nicht kennt.
 - `20261106201828_leave_plan_template_grant` — reine Datenmigration, siehe unten.
 
 **1. Vor dem Deploy.** Keine Datenprüfung nötig: die Tabellen sind neu und leer, kein Backfill, kein schreibendes Skript. Die
@@ -1798,6 +1805,18 @@ CI-Driftprüfung bleibt leer.
 **3. Rollback.** Ein Image-Rollback ist ohne Zurücksetzen der Migrationen möglich: der Prisma-Client des vorherigen Images kennt die
 Tabellen nicht und liest sie nicht. Die angewendeten Migrationen werden nie bearbeitet. Zurücknehmen heißt eine neue Migration, die
 `LeavePlanWish`, `LeavePlan`, den Typ `LeavePlanStatus` und die Spalte entfernt — das verliert alle Pläne und Wünsche.
+
+**4. Hartes Löschen von Wünschen.** Wünsche werden im Betrieb nur weich entfernt (`deletedAt`). Hart gelöscht werden sie
+ausschließlich vom bestehenden Hard-Delete-Pfad für Mitarbeitende, und zwar **vor** den Urlaubsanträgen der Person
+(`hardDeleteLeavePlanWishesForEmployee` direkt vor `hardDeleteLeaveRequestsForEmployee`): Wunsch → Antrag und Wunsch → Person
+sind `Restrict`-Fremdschlüssel, die umgekehrte Reihenfolge würde mit einer Fremdschlüsselverletzung scheitern. Derselbe Aufruf
+steht im Test-Teardown (`DELETE /api/v1/test/tenant/:id`: Wünsche vor Plänen vor Anträgen). Ein Pfad, der Anträge einer
+Person hart löscht und Wünsche vergisst, bricht daran.
+
+**5. Übernahme und Überstundenstand.** Die Übernahme einer Planung genehmigt Anträge ohne die Live-Saldo-Berechnung je Antrag
+und aktualisiert den gespeicherten Überstundenstand danach einmal je genehmigter Person mit einem Wunsch, der vor dem heutigen
+Kalendertag des Mandanten beginnt. Das ist kein Migrationsschritt; es erklärt, warum nach einer Übernahme `OvertimeAccount`
+einmal je Person geschrieben wird (Fehler werden nur protokolliert).
 
 ### Systemrollen-Templates: `leave-plan:manage:ZUGEWIESEN` (Plan 835-03)
 

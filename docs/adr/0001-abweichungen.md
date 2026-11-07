@@ -7568,3 +7568,202 @@ Rollen hält (die Kundenkopien der Templates, also mandanteneigene Rollen, bleib
   bedienen und `/leave/limits` schreiben. Schichtplanung: keine. Arbeitszeitkonto: keine. Kompositionsschicht: keine.
   Unterbau: die drei Template-Zeilen.
 - **Runbook und Rollback:** `docs/migrations.md`, Abschnitt „Phase 836“.
+
+## AH — Urlaubsplaner: unverbindliche Jahresplanung je Salon mit Übernahme (Phase 835, Issue #835)
+
+### Ausgangslage
+
+Urlaubswünsche für das ganze Jahr wurden bisher außerhalb von Clokr gesammelt (Zettel, Tabelle, Chat) und danach einzeln als
+Anträge nachgetragen. Phase 835 führt den Urlaubsplaner ein: Eine Führungskraft eröffnet je Salon und Jahr eine **nicht
+bindende** Planung, die Personen des Salons tragen Wünsche ein (Zeitleiste am Desktop, Liste am Telefon), und ein Klick
+„Planung übernehmen“ macht aus den Wünschen echte Urlaubsanträge durch dieselben Prüfungen, die auch ein normaler Antrag
+durchläuft. Ein Wunsch ist **kein** Urlaub: Er zählt in keinem Saldo, keinem Bericht, keiner Grenze, keinem Dienstplan und
+keiner Preisberechnung, bis er ein Antrag ist (D-835-19).
+
+### Rechtslage
+
+- § 7 Abs. 1 BUrlG: Urlaubswünsche sind zu berücksichtigen, die Entscheidung bleibt beim Arbeitgeber. Der Planer sammelt
+  Wünsche und entscheidet nichts: Jede Genehmigung läuft über den bestehenden Genehmigungskern mit Vier-Augen-Prinzip, den
+  Urlaubsgrenzen (#836) und den Sperren eines geschlossenen Monats.
+- Art. 5 Abs. 1 lit. c, Art. 9 und Art. 32 DSGVO: Wer wann welchen Urlaub hat, ist Personendatum. Die Planungsansicht folgt den
+  Regeln des Urlaubskalenders (siehe „Sichtbarkeit“); Krankheitsarten sieht nur die Person selbst. `LeavePlanWish` hat bewusst
+  **keine Freitextspalte** (Datensparsamkeit): Die Anonymisierung hat dort nichts zu leeren.
+- Revisionssicherheit: Wünsche werden nur weich entfernt (`deletedAt`), jede Wunsch- und Planänderung ist ein Prüfprotokoll-
+  Eintrag mit Handelndem und Person, jeder durch die Übernahme entstandene Antrag trägt `trigger: "LEAVE_PLAN"` mit
+  `leavePlanId` und `leavePlanWishId`.
+
+### Entscheidung
+
+- **Modell (D-835-01/02/03).** `LeavePlan` (Salon, Jahr, optionale Frist, Status `OPEN` / `TAKEN_OVER`; nie gelöscht, es gibt
+  keine DELETE-Route) und `LeavePlanWish` (Person, Von/Bis, halber Tag, weiche Entfernung, `leaveRequestId` genau einmal beim
+  Übernehmen gesetzt, gespeicherte Ablehnung `refusalCode` / `refusalMessage` als systemerzeugter Text). Der Wunsch hat keine
+  Art-Spalte: Er ist immer `VACATION` (D-835-05). Drei Migrationen: `20261106200013_leave_plan` (erzeugt über `migrate diff`:
+  Enum, beide Tabellen, vier Indizes, sechs Fremdschlüssel mit `RESTRICT`, die Spalte `TenantConfig.leavePlanDeadlineLocksWishes`),
+  `20261106203800_leave_plan_checks` (von Hand: Teil-Unique-Index `LeavePlan_open_unique` — höchstens eine offene Planung je
+  Salon und Jahr —, sieben CHECKs, Ausschluss-Constraint `LeavePlanWish_no_overlap_active` über `btree_gist`: keine zwei aktiven,
+  nicht übernommenen Wünsche einer Person überschneiden sich) und `20261106201828_leave_plan_template_grant` (nur Daten, siehe
+  Nachtrag). Die Datenbank ist die letzte Verteidigungslinie jeder Invariante; die Anwendung erkennt die Refusals strukturell
+  (`P2002` + Indexname, `P2039` + `23P01`), nie an der Meldung.
+- **Drei neue Shared-Kernel-Abhängigkeiten (ADR 0002, Entscheidung 4).** `LeavePlan.salonId` → `Salon`,
+  `LeavePlanWish.employeeId` → `Employee` (beide `onDelete: Restrict`) und die Mandanten-Fremdschlüssel
+  `LeavePlan.tenantId` / `LeavePlanWish.tenantId` → `Tenant` (`Restrict`); dazu die Spalte
+  `TenantConfig.leavePlanDeadlineLocksWishes` (`Boolean`, Vorgabe `false`). Alle vier sind **Erweiterungen** des Unterbaus
+  (kein bestehender Leser ändert sich) und mit dem Status `Ready` des Issues freigegeben. Der referenzierte Salon und die
+  Person gehören demselben Mandanten; `Restrict` ist beabsichtigt (siehe „Löschen“).
+- **Neuer Unterbau-Lesezugriff.** `employeeIdsHomedInSalonDuring(db, tenantId, salonId, from, to)` (`contexts/platform/facade/`)
+  liefert die Personen mit Stammsalon in einem Fenster; er ist die einzige Quelle der Planungsbevölkerung (`planPopulation`).
+  Reine Erweiterung (Fassadenzähler 158 → 160 zusammen mit dem Hard-Delete-Zugriff).
+- **Berechtigung (D-835-04).** `leave-plan:manage:ZUGEWIESEN` (Ressource `leave-plan`, Relation `PERSON`, damit ein
+  Salonmanager ihn halten kann): Planung eröffnen, Frist setzen, Wünsche anderer Personen in Reichweite bearbeiten, übernehmen.
+  Eigene Wünsche braucht nur `leave-request:create:EIGENE`; wer Anträge stellen darf, darf wünschen. Lesen folgt
+  `leave-request:read` oder dem eigenen Stammsalon (Leser-Zulassung, siehe unten). Der Schlüssel hat Label, Katalogeintrag und
+  Zeilen in `docs/permissions.md`; `permission-site-mapping.test.ts` vergleicht Anzahl und Berechtigung je Datei.
+- **Zwei extrahierte Kerne (D-835-12), kein zweiter Prüfer.** `createLeaveRequestCore` (`contexts/absence/leave-request-create.ts`;
+  Optionen `auditExtra`, `notifyApprovers`, `hooks.inTransaction`) ist der Körper von `POST /leave/requests`;
+  `decidePendingLeaveRequest` / `approveLeaveRequestCore` / `leaveDecisionGuard` (`contexts/absence/leave-decision.ts`) sind der
+  PENDING-Zweig von `PATCH /leave/requests/:id/review`. Die Routen sind dünne Adapter, Verweigerungen sind Daten mit
+  Maschinen-Grund. Die Übernahme **legt Anträge ausschließlich über diese beiden Kerne an und entscheidet sie**; sie schreibt nie
+  selbst eine `LeaveRequest`, einen Anspruch oder ein Prüfprotokoll eines Antrags. Der Beweis ist die unveränderte Verhaltens-
+  Testmenge des Urlaubs (AC-0): 86 Dateien, 2655 Tests liefen nach der Extraktion ohne Änderung grün; angepasst wurden nur die
+  vier in D-835-28 benannten Wächter, die Code-Orte festhalten (`leave-limits-one-place-836`, `permission-site-mapping`,
+  `absence-vocabulary-guard`, `leave-type-identity-guard`).
+- **Ein Zähler, ein Preis (D-835-10/11/23/25).** Die Tageszahl im Planer kommt ausschließlich aus `leaveLimitLoadView` des
+  #836-Kerns, neu mit den additiven, standardmäßig ausgeschalteten Optionen `candidates` (Wünsche zählen dort als Kandidaten
+  wie ein offener Antrag) und `includeAllGroup` (Last auch ohne Regel). Der Preis eines Wunsches kommt ausschließlich aus
+  `resolveLeaveDays`, neu mit `extraSiblings` in `LeaveDaysPricing` (frühere Wünsche derselben Person wirken wie frühere offene
+  Anträge, damit die Prognose dasselbe rechnet wie die Übernahme; Beweis `leave-plan-takeover-parity-835`: einzeln gestellte
+  Anträge und die Übernahme liefern dieselben Tage, auch bei `SHIFT_BASED`). Die Prognose je Person ist der gespeicherte
+  Anspruch (`getVacationBalance`, sonst lesend `resolveRegularVacationDays`, es entsteht oder heilt nichts) minus offene Anträge
+  minus bepreiste Wünsche.
+- **Die Übernahme (D-835-13/14/15/27/29/30).** Je Person in fester Reihenfolge (Mitarbeiterkennung, Beginn, Kennung), je Wunsch
+  in eigener Transaktion mit Zeilensperre: (1) Beschäftigungsfenster (`LEAVE_PLAN_WISH_NOT_EMPLOYED`) und Stammsalon-Prüfung
+  gegen den Planungs-Salon (`LEAVE_PLAN_WISH_NOT_IN_SALON`) werden **erneut** geprüft, weil der Antragskern sie nicht kennt und
+  sich beides seit dem Eintragen geändert haben kann; (2) die Urlaubsgrenzen (#836) werden **nur für Wünsche vorab geprüft, die
+  die übernehmende Person sofort genehmigt** (ein Wunsch, der offen bleibt, bekommt keine Ausnahme; die genehmigende Person
+  entscheidet später über den normalen Weg); eine Überschreitung ohne Begründung je Wunsch ist
+  `LEAVE_LIMIT_EXCEPTION_REQUIRED`, die Begründung (10 bis 500 Zeichen) kommt als `limitExceptions: [{ wishId, reason }]` und
+  steht im Prüfprotokoll der Genehmigung; (3) `createLeaveRequestCore` im Namen der Person; (4) der Wunsch wird mit dem Antrag
+  verknüpft; (5) `approveLeaveRequestCore` mit der übernehmenden Person als Prüferin — **außer** der Wunsch gehört ihr selbst
+  oder liegt außerhalb ihrer Genehmigungsreichweite: dann bleibt der Antrag `PENDING` und die übrigen Genehmigenden werden
+  benachrichtigt (Vier-Augen-Prinzip, nie Selbstgenehmigung). Eine Ablehnung beim Anlegen steht als `refusalCode` am Wunsch.
+  Ein Wiederholungslauf versucht nur Wünsche ohne Antrag und Wünsche, deren Antrag wegen einer **Ablehnung der Genehmigung**
+  (`APPROVAL_*`) offen blieb — **auf demselben Antrag**, nie ein zweiter; ein absichtlich offener Vier-Augen-Antrag zählt als
+  übernommen. **Abstimmung D-835-15 mit D-835-30:** Die Planung wird erst `TAKEN_OVER`, wenn kein aktiver Wunsch mehr ohne Antrag
+  und keiner mit einer `APPROVAL_*`-Ablehnung übrig ist; sonst bleibt sie `OPEN` und gilt als „teilweise übernommen“ (abgeleitet,
+  nicht gespeichert). Die Anträge einer Person entstehen in Beginn-Reihenfolge mit **streng aufsteigendem `createdAt`**
+  (monotone Wartezeit von 1,5 ms; der Rest der Rechnung ist `SHIFT_BASED`-relevant, weil die Preise von früheren offenen Anträgen
+  abhängen). Genehmigte Übernahme-Anträge benachrichtigen die Genehmigenden nicht (`notifyApprovers: false`, D-835-35), die
+  Benachrichtigung der Person durch den Genehmigungskern bleibt.
+- **Verknüpfung nur mit dem gespeicherten Wunsch (D-835-17).** Der Hook `inTransaction` des Anlegekerns sperrt den Wunsch
+  `FOR UPDATE`, vergleicht Beginn, Ende und halben Tag mit dem **in diesem Moment gespeicherten** Stand und verknüpft nur dann;
+  weicht er ab (ein Verschieben oder Entfernen zwischen Lesen und Anlegen), wird der Antrag zurückgerollt (kein Antrag, kein
+  CREATE-Eintrag, keine Benachrichtigung) und die Übernahme versucht es einmal mit frischen Werten, sonst überspringt sie den
+  Wunsch in diesem Lauf. `LeavePlanWish.leaveRequestId` ist `UNIQUE`; die Planungszeile wird für den Statuswechsel gesperrt.
+- **Die Frist (D-835-07).** Standard ist ein Hinweis (`deadlinePassed` im Lesen). Mit `TenantConfig.leavePlanDeadlineLocksWishes`
+  sperrt die abgelaufene Frist **nur die eigenen Änderungen** einer Person (409 `LEAVE_PLAN_DEADLINE_PASSED`); eine Führungskraft
+  mit Reichweite über die Person ist nie gesperrt, auch nicht für den eigenen Wunsch. Der Frist-Tag selbst ist offen; „abgelaufen“
+  wird am Kalendertag des Mandanten entschieden. Eine übernommene Planung ist schreibgeschützt (409 `LEAVE_PLAN_CLOSED`).
+- **Leser-Zulassung (D-835-04/22).** Die Planung eines Salons sieht, wer `leave-request:read` mit Reichweite über den Salon hat
+  **oder** dort sein eigenes Stammsalon (im Planungsjahr) hat; jede andere Ursache (unbekannte Kennung, fremder Mandant,
+  fremder Salon, inaktiver Salon, fehlende Reichweite) ist **dieselbe 404** (`SALON_NOT_FOUND` / `PLAN_NOT_FOUND`, byte-identisch,
+  Register `lint-t100-09-routes.json`). Ein Wunsch außerhalb der Reichweite ist dieselbe 404 wie ein unbekannter (`WISH_NOT_FOUND`).
+- **Sichtbarkeit und Maskierung (D-835-22/31/34).** Die Zeilen der Personen sind `GESETZT` (wirksamer Urlaub, Abwesenheit,
+  Betriebsurlaub ohne Ausnahme) und `BEANTRAGT` (offen); die Art folgt der Kalenderregel (`canSeeLeaveType`): ohne
+  `leave-request:read:ZUGEWIESEN` ist die Art fremder Zeilen `null`, **Krankheitsarten (`SICK`, `SICK_CHILD`) sieht nur die
+  Person selbst**. Die Prognose (Anspruch) nur für die eigene Zeile oder Personen in der Reichweite von `leave-entitlement:read`.
+  Regelnamen, Höchstzahlen und Überschreitungsmarken der Tageslast nur mit `leave-plan:manage` oder `leave-request:approve`
+  über den Salon; alle anderen sehen nur die Zahl. Namen anderer Personen in Warnungen folgen der #836-Redaktion. Die Tageszahl
+  heißt „Urlaub“ (nur zählende Arten, D-835-34); gesetzte Krankheit, Abwesenheit und Betriebsurlaub stehen in den Zeilen, nicht in
+  der Zahl. Ein Wunsch, der eine Zeile überdeckt, trägt `conflict` (nie über Abwesenheit, Betriebsurlaub oder Feiertag).
+- **Wünsche zählen nirgends (D-835-19).** `leave-plan-isolation-835.test.ts` (AST, Anti-Vakuitäts-Untergrenze: 167 geprüfte
+  Dateien, Positivkontrolle je Form) schlägt fehl, wenn Saldo, Bericht, DATEV, Dienstplan, Preisberechnung, Monatsabschluss oder
+  die Kompositionsschicht `LeavePlan` / `LeavePlanWish` nennen. Das Modul `contexts/absence/leave-plan/` wird **nicht** aus
+  `contexts/absence/index.ts` re-exportiert (Importzyklus-Obergrenze 22).
+- **Benachrichtigung (D-835-18/32).** Typ `LEAVE_PLAN_OPENED`: nach dem Eröffnen an jede Person der Planungsbevölkerung (außer die
+  eröffnende Person; Stammsalon im Jahr, beschäftigt, nicht anonymisiert, mit Konto), in der App, per E-Mail (Richtlinie `always`)
+  und als neutraler Push „Die Urlaubsplanung ist eröffnet.“ (Klasse `TTL_3D`, Eintrag in `notification-push-policy.ts`, vom
+  Scan `notification-push-policy-608.test.ts` erzwungen). Die Übernahme, die die Planung schließt, entfernt die offenen
+  Hinweise (`dismissByRelated`).
+- **Zwei Leistungsentscheidungen (D-835-36/37, Messung 835-07/835-11).** Gemessen wurden 0,7 s je Wunsch (40 Wünsche ≈ 28 s) auf
+  einem stark belasteten Rechner; 57 % davon kostete `computeOvertimeBalanceHours` im Genehmigungskern. Der Entscheidungskern
+  bekommt `deferOvertimeRecompute?: boolean` (überspringt **nur** die Live-Saldo-Berechnung und ihre Speicherung; Buchung des
+  Überstundenausgleichs, Prüfprotokoll, Vier-Augen-Prinzip und Grenzen bleiben), die Übernahme setzt es und aktualisiert danach
+  **einmal je genehmigter Person** mit einem Wunsch, der vor dem Kalendertag „heute“ des Mandanten beginnt (der Live-Saldo
+  enthält „heute“ nie, #438; ein zukünftiger Urlaub kann ihn nicht ändern), den gespeicherten Überstundenstand über
+  `updateOvertimeAccount` (reaktiv: ein Fehler wird protokolliert und lässt die Übernahme nie scheitern). Gemessen auf ruhigem
+  Rechner, 40 Wünsche in einer Anfrage: **vorher 253 SQL-Anweisungen und 3,8 s je 40 Wünsche (ohne geschlossene Monate), 117 und
+  2,1 s (mit); nachher 93 Anweisungen und 1,5 bis 1,6 s in beiden Fällen**, also etwa 0,039 s je Wunsch und rund 4 s je 100
+  Wünsche. Die Stapelung der Übernahme mit Cursor (D-835-36) wurde deshalb **nicht gebaut**: die Entscheidungsregel (20 s je
+  100 Wünsche) ist weit unterschritten; der Wert aus 835-07 war derselbe Code auf einem rund 7-fach belasteten Rechner. Neu
+  bewerten, wenn die Planungsgrößen eines Mandanten oder die Last eine einzelne Anfrage an 20 s bringen. Die Anweisungszahl
+  ist über einen Treiber-Patch im Test gepinnt, weil die Wanduhrzeit von der Rechnerlast abhängt.
+- **Löschen.** Wünsche werden nur weich entfernt. Ausschließlich der bestehende Hard-Delete-Pfad für Mitarbeitende löscht sie
+  hart (`hardDeleteLeavePlanWishesForEmployee` direkt **vor** `hardDeleteLeaveRequestsForEmployee`, wegen der `Restrict`-
+  Fremdschlüssel auf Person und Antrag), genauso wie Urlaubsanträge; derselbe Aufruf steht im Test-Teardown
+  (`DELETE /api/v1/test/tenant/:id`, löscht Wünsche vor Plänen). Sonst gibt es keinen harten Löschpfad.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** das Modell, das Modul `contexts/absence/leave-plan/`, die Routen `api/leave-plans.ts`, die zwei extrahierten
+  Kerne (`leave-request-create.ts`, `leave-decision.ts`), die additiven Optionen des #836-Kerns und des Preises, der
+  Hard-Delete-Zugriff der Fassade und die Typregel `canSeeLeaveType` (jetzt aus `leave-calendar-visibility.ts` exportiert).
+- **Schichtplanung:** keine (liest Schichten nicht neu; der Planer nutzt den bestehenden Zähler, der sie bereits liest).
+- **Arbeitszeitkonto:** keine. Weder Saldo noch Soll werden gelesen oder geändert, `calcLeaveAbsenceMinutesTz()` bleibt unberührt;
+  die Übernahme aktualisiert den gespeicherten Überstundenstand nur über den bestehenden Schreiber `updateOvertimeAccount`.
+- **Kompositionsschicht:** keine (nur die Registrierung der Routen in `app.ts`); keine Geschäftsregel dort.
+- **Unterbau:** **Erweiterung** nach ADR 0002, Entscheidung 7: die Fremdschlüssel auf `Salon`, `Employee` und `Tenant`, die Spalte
+  `TenantConfig.leavePlanDeadlineLocksWishes`, der Lesezugriff `employeeIdsHomedInSalonDuring`, der Schlüssel
+  `leave-plan:manage` mit Label und Katalogeintrag und das Einstellungsfeld in `PUT /settings/work`. Dazu die **Semantikänderung**
+  der drei Systemrollen-Templates (Nachtrag).
+
+### Grenzen
+
+- **Eine offene Planung eines später deaktivierten Salons wird unerreichbar.** Die Zulassung verlangt einen aktiven Salon; die
+  Zeile und ihre Wünsche bleiben erhalten, sind aber über die Oberfläche nicht mehr zu öffnen. Ein neues Eröffnen ist für einen
+  inaktiven Salon nicht möglich.
+- **Der Überschneidungstest beim Anlegen läuft außerhalb der Sperre (C-8).** Ein Antrag, der zwischen Lesen und Anlegen eines
+  Wunsches entsteht, wird erst als `conflict` sichtbar; die Datenbank erzwingt nur die Überschneidung zweier Wünsche. Beim
+  Übernehmen entscheidet der Anlegekern (Überschneidung → Ablehnung am Wunsch).
+- **Keine Aufbewahrungsfrist-Bereinigung für Pläne und Wünsche.** Die Jahresbereinigung (`data-retention`) kennt die Tabellen
+  noch nicht; sie sind nicht aufbewahrungspflichtig (kein Lohnbeleg), wachsen aber. Eine Folgearbeit, kein Blocker.
+- **Übernahme in einer Anfrage.** Die Messung (siehe oben) trägt rund 100 Wünsche in 4 s; auf einem stark belasteten Rechner
+  rechnet 835-11 mit etwa 27 s und damit nahe am 30-s-Abbruch des Web-Proxys. Eine Stapelung bleibt als eigener Plan verfügbar.
+- **Ein Wunsch einer später anonymisierten oder ausgetretenen Person** wird bei der Übernahme mit `LEAVE_PLAN_WISH_NOT_EMPLOYED`
+  abgelehnt und zählt nirgends; eine Führungskraft entfernt ihn.
+- **Gleichzeitige Übernahmen** werden über die Zeilensperre der Planung und die eindeutige Verknüpfung serialisiert
+  (`leave-plan-takeover-concurrency-835`); der verlierende Lauf antwortet mit dem gespeicherten Status der Planung.
+
+### Nachtrag Phase 835 — Systemrollen-Templates (Semantikänderung des Unterbaus)
+
+Die globalen Templates **Admin** (`…a001`), **Inhaber** (`…a004`) und **Salonmanager** (`…a005`) erhalten
+`leave-plan:manage:ZUGEWIESEN`; Manager (Legacy) und Personalabteilung erhalten ihn nicht. Das ist eine **Semantikänderung** des
+Unterbaus nach ADR 0002, Entscheidung 7: Sie gilt sofort für jedes Konto, das eine dieser Rollen hält (mandanteneigene
+Kopien bleiben unverändert).
+
+- **Owner-Entscheidung 06.11.2026: Admin, Inhaber, Salonmanager** (Issue #835, D-835-20), vor der Umsetzung entschieden; die
+  Vergabe steht in einem eigenen Commit und einer eigenen Datenmigration.
+- **Mechanik.** `20261106201828_leave_plan_template_grant` (drei `UPDATE "AccessRole"`, `"tenantId" IS NULL`,
+  `IS DISTINCT FROM`, kein DDL, keine `RoleAssignment`, kein `AuditLog`; Vorher/Nachher 88/88/25 → 89/89/26). Die Pins sind
+  vorwärtssicher: `leave-limits-template-migration-836.test.ts` vergleicht gegen das Template **zum Zeitpunkt seiner Migration**
+  und spielt die Kette in einer zurückgerollten Transaktion nach (`template-grant-chain.ts`); sonst hätte sein Nachspielen der
+  älteren Migration die drei Zeilen zurückgesetzt. Weitere Drift-Pins: `system-roles.test.ts`, `system-roles-migration.test.ts`,
+  die Persona-Fixture des Web, `leave-plan-template-migration-835.test.ts`.
+- **Auswirkung auf die Kontexte.** Zeiterfassung: keine. Abwesenheiten: Konten mit den drei Rollen dürfen Planungen ihrer Salons
+  eröffnen, bearbeiten und übernehmen. Schichtplanung: keine. Arbeitszeitkonto: keine. Kompositionsschicht: keine. Unterbau: die
+  drei Template-Zeilen.
+- **Runbook und Rollback:** `docs/migrations.md`, Abschnitt „Phase 835“ (Vorher/Nachher-Abfragen, Rollback als neue Migration).
+
+### Nachweise
+
+Tests (API): `leave-request-create-core-835`, `leave-decision-core-835`, `leave-plan-migration-835`,
+`leave-plan-template-migration-835`, `leave-plan-tracer-835`, `leave-plan-routes-835`, `leave-plan-notification-835`,
+`leave-plan-wishes-835`, `leave-plan-deadline-835`, `leave-plan-closed-835`, `leave-plan-isolation-835` (AST-Wächter mit
+Untergrenze und Positivkontrolle), `leave-plan-read-835`, `leave-plan-load-835`, `leave-days-extra-siblings-835`,
+`leave-plan-forecast-835`, `leave-plan-takeover-835`, `leave-plan-takeover-retry-835`, `leave-plan-takeover-parity-835`,
+`leave-plan-takeover-concurrency-835`, `leave-plan-takeover-perf-835`, `leave-plan-takeover-defer-835`, `employee-ids-homed-in-salon-835`
+(Fassade `employeeIdsHomedInSalonDuring`). Web: `lib/leave-plan/__tests__/*`, vier eingehängte Komponententests, `leave-plan-page-835`.
+Browser: `apps/e2e/tests/leave-plan.spec.ts` (Eröffnen → Wunsch → Ziehen → Übernehmen, genehmigter Antrag auf den verschobenen
+Tagen). Geänderte Prüfwerte: die Register der Fremdzugriffe und Mandantenbindung, das T-100-09-Register (+8 Routen), die
+Neutralitätsausschlüsse, `route-surface.txt`, `permission-site-mapping`, der Fassadenzähler und der Nutzlast-Zähler
+`admin-vacation-save-wiring`.
