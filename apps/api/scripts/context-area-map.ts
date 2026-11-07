@@ -95,6 +95,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/__tests__/notify-emit-sites.ts": "rahmen", // Issue #608 — the one notify() call-site scanner shared by the e-mail and push registry tests; test infra, no model of its own
   "src/__tests__/shift-reminder-fixtures-609.ts": "rahmen", // Issue #609 — shared fixture of the shift-reminder tests (tenant with the switches, persons, shifts, entries, tenant-local instants); test infra, no model of its own
   "src/__tests__/monthly-export-fixture-617.ts": "rahmen", // Issue #617 — shared nine-person fixture of the Monatsexport tests (closed/open months, every leave kind, § 9, exit, Azubi); test infra, no model of its own
+  "src/__tests__/template-grant-chain.ts": "rahmen", // Issue #835 — ordered chain of the data-only template-grant migrations (templateAsOf, replayChainFrom, rolled-back replay) shared by the template migration pins; test infra, no model of its own
   "src/__tests__/datev-rows.ts": "rahmen", // Issue #304 — shared parser of the DATEV LODAS file for tests; test infra, no model of its own
   "src/__tests__/tenant-packages-migration-566-fixtures.ts": "rahmen", // Phase 566 (Issue #566) — test infra: fixture catalogue and verbatim reader of the checked-in packages backfill SQL, shared by the migration test and the dry-run parity test; no model of its own
   "src/__tests__/neutrality/route-derivation.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: parses the route set from source; test infra, no model
@@ -307,6 +308,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/plugins/employment-exit-decorate.ts": "abwesenheiten", // Issue #614 — composition-root decoration plugin exposing employment-exit.ts as app.absenceExit
   "src/contexts/absence/employment-exit.ts": "abwesenheiten", // Issue #614 (D-02) — the one rule that ends a person's absences after the exit day on anonymization; writes LeaveRequest/Absence/LeaveEntitlement
   "src/contexts/absence/leave-correction.ts": "abwesenheiten", // Issue #614 — correction core extracted from the /correct route (plan/apply/finish behind an audit port); writes LeaveRequest/LeaveEntitlement
+  "src/contexts/absence/leave-request-create.ts": "abwesenheiten", // Issue #835 (D-835-12) — create core extracted from POST /leave/requests (refusals as data, hook inside the locked create transaction); writes LeaveRequest/LeaveEntitlement
+  "src/contexts/absence/leave-decision.ts": "abwesenheiten", // Issue #835 (D-835-12) — decision core extracted from PATCH /leave/requests/:id/review (approve/reject a PENDING request); writes LeaveRequest/LeaveEntitlement/Section9Credit
   "src/contexts/absence/overtime-comp-minutes.ts": "abwesenheiten", // Issue #614 — the Überstundenausgleich amount rule moved out of the leave route; read-only over the stored minutes and the schedule
   "src/contexts/absence/ensure-leave-type.ts": "abwesenheiten", // Issue #614 — find-or-create of a LeaveType by code for the correction core; LeaveType belongs to Abwesenheiten
   "src/contexts/absence/section9-supersede.ts": "abwesenheiten", // Issue #662 — the one place a Section9Credit becomes SUPERSEDED (shared by /correct and the cancellation); writes Section9Credit, undoes the LeaveEntitlement ledger
@@ -331,6 +334,18 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-limits/exception.ts": "abwesenheiten", // Issue #836 - pure - the exception reason schema, the 409 body, the audit snapshot and the correction delta ranges
   "src/contexts/absence/leave-limits/load-view.ts": "abwesenheiten", // Issue #836 - the daily load per salon and group from parallelLeaveLoad, with the approved-before-rule marker; reads LeaveLimitRule
   "src/contexts/absence/leave-limits/redact.ts": "abwesenheiten", // Issue #836 - pure - which persons a reader may be NAMED in a limit warning or the load view (leave-request:read reach)
+  "src/contexts/absence/api/leave-plans.ts": "abwesenheiten", // Issue #835 - open, read, wish and take over routes of the leave planner under /leave/plans; writes LeavePlan and LeavePlanWish
+  "src/contexts/absence/leave-plan/constants.ts": "abwesenheiten", // Issue #835 - pure - the control codes, German texts and the CREATE audit marker of the leave planner
+  "src/contexts/absence/leave-plan/wish-rules.ts": "abwesenheiten", // Issue #835 - pure - the date rules of a wish (inside the plan year, half day shape, overlap of two ranges)
+  "src/contexts/absence/leave-plan/admission.ts": "abwesenheiten", // Issue #835 - who may read a plan - reach over the salon or the own Stammsalon; reads the Stammsalon per day
+  "src/contexts/absence/leave-plan/db-refusals.ts": "abwesenheiten", // Issue #835 - pure - recognises the database refusals of a second OPEN plan and of overlapping wishes by structured error fields
+  "src/contexts/absence/leave-plan/population.ts": "abwesenheiten", // Issue #835 - planPopulation - the persons of a salon plan by Stammsalon per day, employed in the year, never anonymised; reads Employee and the assignment facade, counts nothing
+  "src/contexts/absence/leave-plan/wish-write.ts": "abwesenheiten", // Issue #835 - createWish, updateWish, removeWish - one locked transaction each, writes LeavePlanWish and its audit
+  "src/contexts/absence/leave-plan/takeover.ts": "abwesenheiten", // Issue #835 - takeOverLeavePlan - turns wishes into requests through the create and decision cores; writes LeavePlanWish and LeavePlan
+  "src/contexts/absence/leave-plan/planner-read.ts": "abwesenheiten", // Issue #835 - the live planner read (population, gesetzt/beantragt rows, wishes, conflict flag, type masking, holidays); reads LeavePlanWish and CompanyShutdown, leave and Absence rows only through the absence facades
+  "src/contexts/absence/leave-plan/day-load.ts": "abwesenheiten", // Issue #835 - plannerDayLoad - the planner's per-day count read from leaveLimitLoadView with the wishes as candidates; counts nothing itself
+  "src/contexts/absence/leave-plan/forecast.ts": "abwesenheiten", // Issue #835 - plannerForecast - the entitlement forecast of one person (remaining days minus PENDING minus the wishes priced by resolveLeaveDays); read-only, creates or heals no entitlement row
+  "src/contexts/absence/leave-calendar-visibility.ts": "abwesenheiten", // Issue #835 - pure - canSeeLeaveType, the calendar's one type-visibility rule (moved out of api/leave.ts, second caller is the planner read)
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)
   "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
   "src/contexts/absence/format-hm.ts": "abwesenheiten", // hours:minutes display formatting; sole importer is routes/leave.ts

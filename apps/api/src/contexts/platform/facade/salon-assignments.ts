@@ -423,6 +423,45 @@ export async function homeSalonsForDays(
   return result;
 }
 
+/**
+ * Issue #835 (D-835-05, D-835-22) — the persons whose Stammsalon is `salonId` on at least one
+ * calendar day of `[fromDay, toDay]`: the membership of a salon's leave plan. Additive
+ * Unterbau-Erweiterung (ADR 0002 Entscheidung 7; announced on #835 with its per-context impact
+ * section, ADR Nachtrag in the closing plan of the phase).
+ *
+ * HOME rows only — a DEPLOYMENT row (Einsatzsalon) never makes someone a member. A row overlaps
+ * the window when `validFrom <= toDay` and `validUntil` is null or `>= fromDay` (both bounds
+ * inclusive); a voided row (D-03, `validUntil` before its own `validFrom`) is effective on no day
+ * and never counts, exactly as in {@link homeSalonsForDays}. No hire-date floor and no `isActive`
+ * filter on the salon (history); who is employed or anonymised is the caller's population rule
+ * (`reportPopulationWhere`). Answers ids only, each once, sorted; `fromDay > toDay` answers `[]`
+ * without a query. The tenant is an inline filter of the query (T-835-22).
+ */
+export async function employeeIdsHomedInSalonDuring(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  salonId: string,
+  fromDay: CalendarDay,
+  toDay: CalendarDay,
+): Promise<string[]> {
+  if (fromDay > toDay) return [];
+  const rows = await db.employeeSalonAssignment.findMany({
+    where: {
+      tenantId,
+      salonId,
+      kind: "HOME",
+      validFrom: { lte: dayToDate(toDay) },
+      OR: [{ validUntil: null }, { validUntil: { gte: dayToDate(fromDay) } }],
+    },
+    select: { employeeId: true, validFrom: true, validUntil: true },
+  });
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (!isVoided(row)) ids.add(row.employeeId);
+  }
+  return [...ids].sort();
+}
+
 // ── Phase 67b Plan 03 (issue #67) additions — the employee-lifecycle write helpers ───────────────
 //
 // These three functions keep the D-24 invariant ("exactly one HOME row per day from hireDate")

@@ -461,6 +461,9 @@ async function main() {
     const ids = wrongTenantEmps.map((e) => e.id);
     const uids = wrongTenantEmps.map((e) => e.userId);
     await prisma.timeEntry.deleteMany({ where: { employeeId: { in: ids } } });
+    // Issue #835 (WR-10) — LeavePlanWish -> Employee and -> LeaveRequest are onDelete: Restrict:
+    // a person's plan wishes go before the requests they may be linked to and before the person.
+    await prisma.leavePlanWish.deleteMany({ where: { employeeId: { in: ids } } });
     await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: ids } } });
     await prisma.absence.deleteMany({ where: { employeeId: { in: ids } } });
     await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: ids } } });
@@ -494,6 +497,8 @@ async function main() {
 
     // Delete Restrict-guarded relations first
     await prisma.timeEntry.deleteMany({ where: { employeeId: { in: empIds } } }); // Breaks cascade
+    // Issue #835 (WR-10) — same reasoning as the wrongTenantEmps block above.
+    await prisma.leavePlanWish.deleteMany({ where: { employeeId: { in: empIds } } });
     await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: empIds } } });
     await prisma.absence.deleteMany({ where: { employeeId: { in: empIds } } });
     await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: empIds } } });
@@ -522,6 +527,10 @@ async function main() {
 
   // Clear existing time entries (Breaks cascade)
   await prisma.timeEntry.deleteMany({ where: { employeeId: adminEmp.id } });
+  // Issue #835 (WR-10) — the admin's plan wishes go before the admin's requests; with every
+  // person's wishes gone, the tenant's leave plans are reset too (a plan is no record a demo keeps).
+  await prisma.leavePlanWish.deleteMany({ where: { employeeId: adminEmp.id } });
+  await prisma.leavePlan.deleteMany({ where: { tenantId: tenant.id } });
   await prisma.leaveRequest.deleteMany({ where: { employeeId: adminEmp.id } });
   await prisma.leaveEntitlement.deleteMany({ where: { employeeId: adminEmp.id } });
   await prisma.absence.deleteMany({ where: { employeeId: adminEmp.id } });

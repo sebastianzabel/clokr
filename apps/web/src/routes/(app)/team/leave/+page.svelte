@@ -1077,6 +1077,9 @@
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <PageHead eyebrow="Team" title="Team-Anträge" accent="Anträge">
   {#snippet actions()}
+    <a href="/leave/planung" class="btn btn-secondary btn-sm" data-testid="leave-plan-link"
+      >Urlaubsplanung</a
+    >
     {#if hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN")}
       <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
     {/if}

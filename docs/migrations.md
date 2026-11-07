@@ -1771,3 +1771,97 @@ WHERE "id" IN (
   AND "tenantId" IS NULL
   AND 'leave-limit:manage:ZUGEWIESEN' = ANY("permissions");
 ```
+
+## Phase 835 — Urlaubsplaner (Issue #835)
+
+**Hinweis für die Release Notes.** Führungskräfte mit dem Recht „Urlaubsplanung“ eröffnen je Salon und Jahr eine nicht bindende
+Urlaubsplanung; Mitarbeitende des Salons tragen ihre Urlaubswünsche ein, und ein Klick auf „Übernehmen“ macht aus den Wünschen
+echte Urlaubsanträge durch dieselbe Prüfung wie ein normaler Antrag. Ein Wunsch zählt nirgends, bis er ein Antrag ist. Ohne
+Planung ändert sich nichts.
+
+**Was die Migrationen tun.** Drei Verzeichnisse in `packages/db/prisma/migrations/`:
+
+- `20261106200013_leave_plan` — vom Generator erzeugt: der Typ `LeavePlanStatus` (`OPEN`, `TAKEN_OVER`), die Tabellen
+  `LeavePlan` und `LeavePlanWish`, vier Indizes (darunter der eindeutige Index auf `LeavePlanWish.leaveRequestId`), sechs
+  Fremdschlüssel mit `ON DELETE RESTRICT` (auf `Tenant`, `Salon`, `Employee`, `LeavePlan` und `LeaveRequest`) und die Spalte
+  `TenantConfig.leavePlanDeadlineLocksWishes BOOLEAN NOT NULL DEFAULT false`. Rein additiv: keine bestehende Zeile wird gelesen,
+  geschrieben oder geändert. Neue Abhängigkeiten auf den Unterbau (Salon, Employee, TenantConfig) sind mit Issue #835 in `Ready`
+  genehmigt.
+- `20261106203800_leave_plan_checks` — von Hand geschrieben (Prisma modelliert weder CHECKs noch Teil-Indizes noch Ausschluss-
+  Constraints): `CREATE EXTENSION IF NOT EXISTS btree_gist` (wie Phase 70b), der Teil-Unique-Index `LeavePlan_open_unique`
+  (`("salonId","year") WHERE status = 'OPEN'`: höchstens eine offene Planung je Salon und Jahr), die CHECKs
+  `LeavePlan_year_check`, `LeavePlan_taken_over_shape_check`, `LeavePlanWish_range_check`, `_half_day_check`,
+  `_refusal_shape_check`, `_link_shape_check`, `_removal_shape_check` und der Ausschluss-Constraint
+  `LeavePlanWish_no_overlap_active` (`gist ("employeeId" WITH =, daterange("startDate","endDate",'[]') WITH &&)` für aktive,
+  nicht übernommene Wünsche). Die Tabellen sind leer; kein Backfill. Die CI-Driftprüfung bleibt leer, weil Prisma diese Objekte
+  nicht kennt.
+- `20261106201828_leave_plan_template_grant` — reine Datenmigration, siehe unten.
+
+**1. Vor dem Deploy.** Keine Datenprüfung nötig: die Tabellen sind neu und leer, kein Backfill, kein schreibendes Skript. Die
+CI-Driftprüfung bleibt leer.
+
+**2. Deploy.** `prisma migrate deploy` im Einstiegspunkt des API-Containers, kein zusätzlicher Schritt.
+
+**3. Rollback.** Ein Image-Rollback ist ohne Zurücksetzen der Migrationen möglich: der Prisma-Client des vorherigen Images kennt die
+Tabellen nicht und liest sie nicht. Die angewendeten Migrationen werden nie bearbeitet. Zurücknehmen heißt eine neue Migration, die
+`LeavePlanWish`, `LeavePlan`, den Typ `LeavePlanStatus` und die Spalte entfernt — das verliert alle Pläne und Wünsche.
+
+**4. Hartes Löschen von Wünschen.** Wünsche werden im Betrieb nur weich entfernt (`deletedAt`). Hart gelöscht werden sie
+ausschließlich vom bestehenden Hard-Delete-Pfad für Mitarbeitende, und zwar **vor** den Urlaubsanträgen der Person
+(`hardDeleteLeavePlanWishesForEmployee` direkt vor `hardDeleteLeaveRequestsForEmployee`): Wunsch → Antrag und Wunsch → Person
+sind `Restrict`-Fremdschlüssel, die umgekehrte Reihenfolge würde mit einer Fremdschlüsselverletzung scheitern. Derselbe Aufruf
+steht im Test-Teardown (`DELETE /api/v1/test/tenant/:id`: Wünsche vor Plänen vor Anträgen). Ein Pfad, der Anträge einer
+Person hart löscht und Wünsche vergisst, bricht daran.
+
+**5. Übernahme und Überstundenstand.** Die Übernahme einer Planung genehmigt Anträge ohne die Live-Saldo-Berechnung je Antrag
+und aktualisiert den gespeicherten Überstundenstand danach einmal je genehmigter Person mit einem Wunsch, der vor dem heutigen
+Kalendertag des Mandanten beginnt. Das ist kein Migrationsschritt; es erklärt, warum nach einer Übernahme `OvertimeAccount`
+einmal je Person geschrieben wird (Fehler werden nur protokolliert).
+
+### Systemrollen-Templates: `leave-plan:manage:ZUGEWIESEN` (Plan 835-03)
+
+**Release-Hinweis.** Die Migration `20261106201828_leave_plan_template_grant` gilt sofort für **alle** Konten mit der Systemrolle
+Admin, Inhaber oder Salonmanager (Semantikänderung des Unterbaus): Sie erhalten `leave-plan:manage:ZUGEWIESEN` und dürfen damit
+Urlaubsplanungen ihrer Salons eröffnen, bearbeiten und übernehmen. Die Rollenmenge hat der Owner am 06.11.2026 entschieden
+(Issue #835, D-835-20). Manager (Legacy) und Personalabteilung erhalten den Schlüssel nicht. Kundenkopien der Templates
+(mandanteneigene Rollen) bleiben unverändert.
+
+**Was die Migration tut.** Reine Datenmigration, keine DDL. Sie aktualisiert genau drei Zeilen (`…a001` Admin 88 → 89, `…a004`
+Inhaber 88 → 89, `…a005` Salonmanager 25 → 26 Permissions, jeweils `tenantId` NULL). Der `IS DISTINCT FROM`-Schutz macht einen
+zweiten Lauf zu einem No-op. Niemandem wird etwas zugewiesen, es entsteht kein Audit-Eintrag.
+
+**1. Vor `migrate deploy` (lesend).**
+
+```sql
+-- Expected: 88 / 88 / 25 permissions, none holding the key.
+SELECT "id", "name", cardinality("permissions") AS permissions,
+       'leave-plan:manage:ZUGEWIESEN' = ANY("permissions") AS has_key
+FROM "AccessRole"
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+ORDER BY "id";
+```
+
+**2. Nach `migrate deploy` (lesend).** Dieselbe Abfrage; erwartet: 89 / 89 / 26 Permissions, `has_key` true. Die vier anderen
+globalen Zeilen (`…a002`, `…a003`, `…a006`, `…a007`) bleiben unverändert bei 63 / 22 / 15 / 5.
+
+**3. Rollback.** Eine **neue** Migration, die den Schlüssel wieder entfernt (die angewendete Migration wird nie bearbeitet; Form wie
+Phase 836). Ein Image-Rollback allein genügt nicht: die drei Zeilen stehen in der Datenbank, der Schlüssel wirkt unter dem alten Code
+aber nirgends (er kennt `/leave/plans` nicht). Keine Schemaänderung, in beiden Richtungen kein Datenverlust.
+
+```sql
+-- Reverse of the Phase 835 template migration: removes the key from the three global rows.
+UPDATE "AccessRole"
+SET "permissions" = array_remove("permissions", 'leave-plan:manage:ZUGEWIESEN'),
+    "updatedAt" = NOW()
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+  AND "tenantId" IS NULL
+  AND 'leave-plan:manage:ZUGEWIESEN' = ANY("permissions");
+```

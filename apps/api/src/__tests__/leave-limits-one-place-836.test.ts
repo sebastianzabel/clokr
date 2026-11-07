@@ -11,9 +11,13 @@
  * What it checks (AST, comments and strings excluded; every non-test `.ts` file under `apps/api/src`):
  *   1. `parallelLeaveLoad` is declared only in `parallel-leave-load.ts` and called only in `check.ts`
  *      and `load-view.ts` (both of them, so the load view cannot grow its own fold).
- *   2. `evaluateLeaveLimits` is called exactly at the three registered sites of `api/leave.ts`
- *      (`post /requests`, `patch /requests/:id/review`, `patch /requests/:id/correct`); a register entry
- *      without a matching site is red too.
+ *   2. `evaluateLeaveLimits` is called exactly at the four registered sites (`post /requests` and
+ *      `patch /requests/:id/correct` in `api/leave.ts`, the approval in `decidePendingLeaveRequest` of
+ *      `leave-decision.ts`, the takeover pre-check); a register entry without a matching site is red too. Issue #835
+ *      (D-835-28): the approval check moved out of `patch /requests/:id/review` into
+ *      `leave-decision.ts`; the assertion is unchanged. Issue #835 (D-835-29): the planner takeover
+ *      pre-checks a wish it will approve (`function preCheck` in `leave-plan/takeover.ts`, the
+ *      fourth registered site; the review fix D-835-40 moved the per-wish checks into it).
  *   3. The allow-list identifier `LEAVE_LIMIT_COUNTED_CODES` and any `.leaveLimitRule` property access
  *      (the rule delegate) occur only under `contexts/absence/leave-limits/` and in
  *      `contexts/absence/api/leave-limits.ts`.
@@ -48,6 +52,7 @@ const SRC_ROOT = join(__dirname, "..");
 const MODULE_DIR = "contexts/absence/leave-limits/";
 const ROUTE_FILE = "contexts/absence/api/leave-limits.ts";
 const LEAVE_ROUTES = "contexts/absence/api/leave.ts";
+const DECISION_FILE = "contexts/absence/leave-decision.ts";
 const KERNEL_FILE = `${MODULE_DIR}parallel-leave-load.ts`;
 const KERNEL_CALLERS = [`${MODULE_DIR}check.ts`, `${MODULE_DIR}load-view.ts`];
 // Floor for the walked file count (measured 313 non-test files on 2026-11-06).
@@ -129,11 +134,13 @@ function measure(): Facts[] {
   return abs.map((a) => scan(readFileSync(a, "utf8"), relative(SRC_ROOT, a).split("\\").join("/")));
 }
 
-// The three places a limit is checked (D-836-09/19): the request create, the approval, the correction.
+// The places a limit is checked (D-836-09/19): the request create, the approval, the correction and,
+// since Issue #835 (D-835-29), the planner takeover's pre-check of a wish it will approve.
 const CHECK_SITES = [
   `${LEAVE_ROUTES} | post /requests | evaluateLeaveLimits`,
-  `${LEAVE_ROUTES} | patch /requests/:id/review | evaluateLeaveLimits`,
+  `${DECISION_FILE} | function decidePendingLeaveRequest | evaluateLeaveLimits`,
   `${LEAVE_ROUTES} | patch /requests/:id/correct | evaluateLeaveLimits`,
+  `contexts/absence/leave-plan/takeover.ts | function preCheck | evaluateLeaveLimits`,
 ];
 
 interface HomeSalonCaller {
@@ -176,6 +183,36 @@ const HOME_SALON_REGISTER: readonly HomeSalonCaller[] = [
     file: "composition/reports.ts",
     region: "get /monthly",
     reason: "attributes the monthly report's sick and § 9 days to a salon filter (Issue #542)",
+  },
+  {
+    file: "contexts/absence/leave-plan/admission.ts",
+    region: "function isOwnStammsalonPlan",
+    reason:
+      "attributes a plan reader to the plan salon by the Stammsalon per day; counts nobody (Issue #835, D-05)",
+  },
+  {
+    file: "contexts/absence/leave-plan/admission.ts",
+    region: "function manageCoversPersonOnDays",
+    reason:
+      "decides whether a manage reach covers a person on a day of a wish by the Stammsalon per day; counts nobody (Issue #835, D-04)",
+  },
+  {
+    file: "contexts/absence/leave-plan/takeover.ts",
+    region: "function preCheck",
+    reason:
+      "re-checks at takeover that the person still belongs to the plan salon on a wish day, Issue #835; counts nothing",
+  },
+  {
+    file: "contexts/absence/leave-plan/wish-write.ts",
+    region: "function validateWishRules",
+    reason:
+      "attributes a wish to the plan salon by the Stammsalon per day; counts nobody (Issue #835, D-05)",
+  },
+  {
+    file: "contexts/absence/leave-plan/population.ts",
+    region: "function planPopulation",
+    reason:
+      "lists the persons of a salon plan by the Stammsalon per day, Issue #835 D-05; counts nothing",
   },
   {
     file: "contexts/absence/salon-leave-attribution.ts",
@@ -227,7 +264,13 @@ describe("Issue #836 - parallel leave is counted in one place", () => {
   it("walks a non-empty set that contains the module", () => {
     expect(facts.length).toBeGreaterThanOrEqual(MIN_WALKED_FILES);
     const files = facts.map((f) => f.file);
-    for (const expected of [KERNEL_FILE, ...KERNEL_CALLERS, ROUTE_FILE, LEAVE_ROUTES]) {
+    for (const expected of [
+      KERNEL_FILE,
+      ...KERNEL_CALLERS,
+      ROUTE_FILE,
+      LEAVE_ROUTES,
+      DECISION_FILE,
+    ]) {
       expect(files, expected).toContain(expected);
     }
   });
@@ -242,7 +285,7 @@ describe("Issue #836 - parallel leave is counted in one place", () => {
     expect(declaredIn.map((f) => f.file)).toEqual([KERNEL_FILE]);
   });
 
-  it("evaluateLeaveLimits is called exactly at the three registered sites of api/leave.ts", () => {
+  it("evaluateLeaveLimits is called exactly at the registered sites (three in the leave flow, one in the takeover)", () => {
     const sites = facts.flatMap((f) =>
       f.calls
         .filter((c) => c.callee === "evaluateLeaveLimits")

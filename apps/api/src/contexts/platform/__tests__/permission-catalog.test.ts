@@ -130,6 +130,13 @@ const ISSUE_72_TABLE: readonly IssueTableRow[] = [
     relation: "Person",
     actions: ["manage"],
   },
+  // Issue #835: the ticket that justifies the resource (the leave planner, Urlaubsplanung).
+  {
+    resource: "leave-plan",
+    context: "Abwesenheiten",
+    relation: "Person",
+    actions: ["manage"],
+  },
   {
     resource: "company-shutdown",
     context: "Abwesenheiten",

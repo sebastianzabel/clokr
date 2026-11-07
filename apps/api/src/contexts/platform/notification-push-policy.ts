@@ -104,6 +104,9 @@ export const NOTIFICATION_PUSH_POLICY: Record<string, PushPolicy> = {
   // WLAN pairing (Issue #610, D-10): the one type that is pushed although its e-mail policy is `never`
   WIFI_DEVICE_NOT_SEEN:   { push: "send", body: "Dein Handy wird im Salon nicht mehr erkannt. Bitte koppel es neu.", ttlSeconds: TTL_3D },
 
+  // Leave planning (Issue #835, D-835-18): the plan of the person's salon was opened
+  LEAVE_PLAN_OPENED:      { push: "send", body: "Die Urlaubsplanung ist eröffnet.", ttlSeconds: TTL_3D },
+
   // Shift planning
   SHIFT_LEAVE_CONFLICT:   { push: "send", body: "Es gibt einen Hinweis zur Schichtplanung.", ttlSeconds: TTL_24H },
   SHIFT_WEEK_OVERBOOKED:  { push: "send", body: "Es gibt einen Hinweis zur Schichtplanung.", ttlSeconds: TTL_24H },

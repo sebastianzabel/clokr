@@ -126,6 +126,8 @@ export type PrismaModelName =
   | "section9Credit"
   | "parentalLeaveReduction" // Issue #468 — Elternzeit-Kürzung (§ 17 BEEG)
   | "leaveLimitRule" // Issue #836 — Urlaubsgrenzen und Urlaubssperren je Salon
+  | "leavePlan" // Issue #835 — Urlaubsplaner: Plan je Salon und Jahr
+  | "leavePlanWish" // Issue #835 — Urlaubsplaner: Wunsch einer Person
   | "absence"
   | "publicHoliday"
   | "schoolHolidayPeriod"
@@ -192,7 +194,7 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   presenceSource: "time-tracking",
   terminalApiKey: "time-tracking",
   retroEntryRequest: "time-tracking",
-  // absence — 11 (Issue #468: + ParentalLeaveReduction, 9 -> 10; Issue #836: + LeaveLimitRule, 10 -> 11)
+  // absence — 13 (Issue #468: + ParentalLeaveReduction, 9 -> 10; Issue #836: + LeaveLimitRule, 10 -> 11; Issue #835: + LeavePlan, LeavePlanWish, 11 -> 13)
   leaveRequest: "absence",
   leaveType: "absence",
   leaveEntitlement: "absence",
@@ -204,6 +206,8 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   section9Credit: "absence",
   parentalLeaveReduction: "absence", // Issue #468 — Elternzeit-Kürzung (§ 17 BEEG)
   leaveLimitRule: "absence", // Issue #836 — Urlaubsgrenzen und Urlaubssperren je Salon
+  leavePlan: "absence", // Issue #835 — Urlaubsplaner: Plan je Salon und Jahr
+  leavePlanWish: "absence", // Issue #835 — Urlaubsplaner: Wunsch einer Person
   // working-time-account — 5
   overtimeAccount: "working-time-account",
   overtimeTransaction: "working-time-account",
