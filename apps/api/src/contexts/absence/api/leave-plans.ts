@@ -651,7 +651,7 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       const limitExceptions = new Map(
         (body.limitExceptions ?? []).map((entry) => [entry.wishId, entry.reason] as const),
       );
-      const result = await takeOverLeavePlan(app, {
+      const outcome = await takeOverLeavePlan(app, {
         tenantId,
         planId: plan.id,
         taker: {
@@ -662,7 +662,13 @@ export async function leavePlanRoutes(app: FastifyInstance) {
         limitExceptions,
         request: requestAudit(req),
       });
-      return reply.send(result);
+      if (!outcome.ok) {
+        // D-835-41: another run of this plan holds the lock, or the plan was closed meanwhile.
+        return reply
+          .code(409)
+          .send({ error: LEAVE_PLAN_MESSAGES[outcome.code], code: outcome.code });
+      }
+      return reply.send(outcome.result);
     },
   });
 }

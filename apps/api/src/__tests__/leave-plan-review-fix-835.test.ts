@@ -25,6 +25,7 @@ import {
   approveLeaveRequestCore,
   loadLeaveRequestForReview,
 } from "../contexts/absence/leave-decision";
+import { takeoverLockName } from "../contexts/absence/leave-plan/constants";
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
@@ -349,5 +350,41 @@ describe("Issue #835 - review fixes of the leave planner", () => {
     expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
     expect(outcomes.filter((o) => !o.ok)).toMatchObject([{ reason: "NOT_DECIDABLE" }]);
     expect(await usedDays()).toBe(beforeRace + 5);
+  });
+
+  it("WR-05 (D-835-41): a second takeover run of a plan while one runs is 409 and changes nothing", async () => {
+    const s = await salon();
+    const taker = await person("taker", s, TAKER);
+    const a = await person("a", s);
+    const planId = await openPlan(taker.token, s);
+    const wishId = await addWish(taker.token, planId, a.employeeId, week(5, 2));
+
+    // A run in flight holds the plan's lock; the takeover asked meanwhile is refused.
+    let refused: Awaited<ReturnType<typeof app.inject>> | null = null;
+    await app.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${takeoverLockName(planId)}, 0))`;
+        refused = await app.inject({
+          method: "POST",
+          url: `/api/v1/leave/plans/${planId}/takeover`,
+          headers: authed(taker.token),
+          payload: {},
+        });
+      },
+      { timeout: 30_000 },
+    );
+    expect(refused!.statusCode, refused!.body).toBe(409);
+    expect(refused!.json()).toEqual({
+      error: "Diese Urlaubsplanung wird gerade übernommen. Warte kurz und lade die Seite dann neu.",
+      code: "LEAVE_PLAN_TAKEOVER_RUNNING",
+    });
+    const untouched = await app.prisma.leavePlanWish.findUniqueOrThrow({ where: { id: wishId } });
+    expect(untouched.leaveRequestId).toBeNull();
+    expect(await app.prisma.leaveRequest.count({ where: { employeeId: a.employeeId } })).toBe(0);
+
+    // Once the lock is free the run goes through.
+    const run = await takeOver(taker.token, planId);
+    expect(run.created.map((c) => c.wishId)).toEqual([wishId]);
+    expect(run.planStatus).toBe("TAKEN_OVER");
   });
 });

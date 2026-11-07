@@ -257,7 +257,13 @@ describe("Issue #835 - takeover under concurrency and wish races", () => {
     const [first, second] = await Promise.all([takeOverRaw(planId), takeOverRaw(planId)]);
     for (const res of [first, second]) {
       expect([200, 409], res.body).toContain(res.statusCode);
-      if (res.statusCode === 409) expect(res.json()).toMatchObject({ code: "LEAVE_PLAN_CLOSED" });
+      // D-835-41: the second click either finds the plan closed or finds the first run holding the
+      // plan's takeover lock.
+      if (res.statusCode === 409) {
+        expect(["LEAVE_PLAN_CLOSED", "LEAVE_PLAN_TAKEOVER_RUNNING"]).toContain(
+          (res.json() as { code: string }).code,
+        );
+      }
     }
 
     const stored = await app.prisma.leavePlanWish.findMany({

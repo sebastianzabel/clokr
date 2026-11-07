@@ -35,6 +35,17 @@ export const LEAVE_PLAN_WISH_TAKEN_OVER = "LEAVE_PLAN_WISH_TAKEN_OVER";
 /** The tenant locks own changes after the deadline and the deadline has passed (409). */
 export const LEAVE_PLAN_DEADLINE_PASSED = "LEAVE_PLAN_DEADLINE_PASSED";
 
+/** Another takeover of the same plan is running right now (409, D-835-41). */
+export const LEAVE_PLAN_TAKEOVER_RUNNING = "LEAVE_PLAN_TAKEOVER_RUNNING";
+
+/**
+ * The name the per-plan takeover lock is derived from (`hashtextextended(name, 0)`, D-835-41). One
+ * spelling, so a test can hold the same lock.
+ */
+export function takeoverLockName(planId: string): string {
+  return `leave-plan-takeover:${planId}`;
+}
+
 /** A stored approval-step refusal of a wish is `APPROVAL_<DecisionRefusalReason>`. */
 export const APPROVAL_REFUSAL_PREFIX = "APPROVAL_";
 
@@ -52,6 +63,8 @@ export const LEAVE_PLAN_MESSAGES: Record<string, string> = {
     "Die Person gehört an keinem Tag des Wunsches mehr zu diesem Salon.",
   [LEAVE_PLAN_WISH_TAKEN_OVER]: "Dieser Wunsch ist bereits übernommen.",
   [LEAVE_PLAN_DEADLINE_PASSED]: "Die Frist für eigene Änderungen ist abgelaufen.",
+  [LEAVE_PLAN_TAKEOVER_RUNNING]:
+    "Diese Urlaubsplanung wird gerade übernommen. Warte kurz und lade die Seite dann neu.",
 };
 
 /** Text of an overlap with another wish of the same person (an overlap with a request: `LEAVE_OVERLAP_ERROR`). */
