@@ -514,7 +514,7 @@ describe("Issue #835 - leave plan list, deadline and reader admission", () => {
         method: "POST",
         url: "/api/v1/leave/plans",
         headers: authed(tokens.mS),
-        payload: { salonId: one.salonId, year: 2031 },
+        payload: { salonId: one.salonId, year: 2028 },
       });
       expect(res.statusCode, res.body).toBe(409);
       expect(res.json()).toMatchObject({ code: "LEAVE_PLAN_ALREADY_OPEN" });
@@ -528,7 +528,7 @@ describe("Issue #835 - leave plan list, deadline and reader admission", () => {
         method: "POST",
         url: "/api/v1/leave/plans",
         headers: authed(tokens.mS),
-        payload: { salonId: one.salonId, year: 2032 },
+        payload: { salonId: one.salonId, year: 2028 },
       });
       expect(res.statusCode).toBe(500);
     } finally {

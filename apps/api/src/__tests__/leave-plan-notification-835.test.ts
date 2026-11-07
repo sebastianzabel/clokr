@@ -258,7 +258,7 @@ describe("Issue #835 - LEAVE_PLAN_OPENED notification", () => {
         method: "POST",
         url: "/api/v1/leave/plans",
         headers: authed(openerToken),
-        payload: { salonId: one.salonId, year: 2029 },
+        payload: { salonId: one.salonId, year: 2028 },
       });
       expect(res.statusCode, res.body).toBe(201);
       expect(spy).toHaveBeenCalled();

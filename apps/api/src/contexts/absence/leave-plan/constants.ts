@@ -43,6 +43,20 @@ export const LEAVE_PLAN_WISH_TAKEN_OVER = "LEAVE_PLAN_WISH_TAKEN_OVER";
 /** The tenant locks own changes after the deadline and the deadline has passed (409). */
 export const LEAVE_PLAN_DEADLINE_PASSED = "LEAVE_PLAN_DEADLINE_PASSED";
 
+/**
+ * IN-05: a plan is opened only for the tenant-local current year or one of the next
+ * `PLAN_YEARS_AHEAD` years (400). A past year could only produce refusals at takeover (lead time,
+ * closed months); a year far ahead has no contracts or entitlements to plan against yet.
+ */
+export const LEAVE_PLAN_YEAR_OUT_OF_RANGE = "LEAVE_PLAN_YEAR_OUT_OF_RANGE";
+export const PLAN_YEARS_AHEAD = 2;
+/**
+ * IN-05: the deadline lies on or before the last day of the plan year (400). Not "before the year
+ * starts": a plan for the running year (a late hire, D-835-01) and a deadline in January of the plan
+ * year are both ordinary; a deadline after the year has nothing left to plan.
+ */
+export const LEAVE_PLAN_DEADLINE_OUT_OF_RANGE = "LEAVE_PLAN_DEADLINE_OUT_OF_RANGE";
+
 /** Another takeover of the same plan is running right now (409, D-835-41). */
 export const LEAVE_PLAN_TAKEOVER_RUNNING = "LEAVE_PLAN_TAKEOVER_RUNNING";
 
@@ -102,6 +116,10 @@ export const LEAVE_PLAN_MESSAGES: Record<string, string> = {
     "Du darfst für diese Person keinen Urlaubsantrag stellen. Eine berechtigte Person muss den Wunsch übernehmen.",
   [LEAVE_PLAN_WISH_TAKEN_OVER]: "Dieser Wunsch ist bereits übernommen.",
   [LEAVE_PLAN_DEADLINE_PASSED]: "Die Frist für eigene Änderungen ist abgelaufen.",
+  [LEAVE_PLAN_YEAR_OUT_OF_RANGE]:
+    "Eine Urlaubsplanung kannst du nur für das laufende Jahr und die zwei folgenden Jahre eröffnen.",
+  [LEAVE_PLAN_DEADLINE_OUT_OF_RANGE]:
+    "Die Frist muss spätestens am 31.12. des Planungsjahres liegen.",
   [LEAVE_PLAN_TAKEOVER_RUNNING]:
     "Diese Urlaubsplanung wird gerade übernommen. Warte kurz und lade die Seite dann neu.",
 };

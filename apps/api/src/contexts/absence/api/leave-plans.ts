@@ -22,12 +22,17 @@ import {
   resolveSalonInReach,
   type AccessReach,
 } from "../../platform";
+import { formatInTimeZone } from "date-fns-tz";
+import { getTenantTimezone } from "../../working-time-account";
 import { formatDateDe } from "../leave-decision";
 import { limitExceptionSchema } from "../leave-limits";
 import {
   LEAVE_PLAN_ALREADY_OPEN,
   LEAVE_PLAN_CLOSED,
+  LEAVE_PLAN_DEADLINE_OUT_OF_RANGE,
   LEAVE_PLAN_MESSAGES,
+  LEAVE_PLAN_YEAR_OUT_OF_RANGE,
+  PLAN_YEARS_AHEAD,
   PLAN_NOT_FOUND_ERROR,
   WISH_NOT_FOUND_ERROR,
   canReadPlan,
@@ -106,11 +111,27 @@ const takeoverBodySchema = z.object({
     .optional(),
 });
 
+/** `{ error, code }` of a planner refusal: the code is the control value, the text display only. */
+function planRefusalBody(code: string): { error: string; code: string } {
+  return { error: LEAVE_PLAN_MESSAGES[code] ?? code, code };
+}
+
+/** IN-05: a deadline (`YYYY-MM-DD`) lies on or before the last day of the plan year. */
+function deadlineInsidePlanYear(deadline: string, year: number): boolean {
+  return deadline <= `${year}-12-31`;
+}
+
 function requestAudit(req: FastifyRequest) {
   return { ip: req.ip, headers: req.headers as Record<string, string> };
 }
 
 export async function leavePlanRoutes(app: FastifyInstance) {
+  /** The tenant-local calendar year of the request's clock. */
+  async function tenantLocalYear(req: FastifyRequest): Promise<number> {
+    const timezone = await getTenantTimezone(app.prisma, req.user.tenantId);
+    return Number(formatInTimeZone(req.testNow ?? new Date(), timezone, "yyyy"));
+  }
+
   async function manageReach(req: FastifyRequest): Promise<AccessReach> {
     return resolveAccessReach(app.prisma, accessContextFromRequest(req), MANAGE_KEY);
   }
@@ -206,6 +227,15 @@ export async function leavePlanRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const body = openBodySchema.parse(req.body);
       const tenantId = req.user.tenantId;
+      // IN-05: the running year (tenant-local) up to PLAN_YEARS_AHEAD years ahead, and a deadline
+      // inside the plan year.
+      const currentYear = await tenantLocalYear(req);
+      if (body.year < currentYear || body.year > currentYear + PLAN_YEARS_AHEAD) {
+        return reply.code(400).send(planRefusalBody(LEAVE_PLAN_YEAR_OUT_OF_RANGE));
+      }
+      if (body.deadline && !deadlineInsidePlanYear(body.deadline, body.year)) {
+        return reply.code(400).send(planRefusalBody(LEAVE_PLAN_DEADLINE_OUT_OF_RANGE));
+      }
       const salon = await resolveSalonInReach(
         app.prisma,
         tenantId,
@@ -323,6 +353,11 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       const plan = await loadPlan(req, id);
       if (!plan || !(await manageCovers(req, plan.salonId))) {
         return reply.code(404).send(PLAN_NOT_FOUND);
+      }
+      // IN-05: the deadline lies inside the plan year (checked after the admission, so a foreign
+      // or unknown plan still answers the one 404 body).
+      if (body.deadline && !deadlineInsidePlanYear(body.deadline, plan.year)) {
+        return reply.code(400).send(planRefusalBody(LEAVE_PLAN_DEADLINE_OUT_OF_RANGE));
       }
 
       const outcome = await app.prisma.$transaction(async (tx) => {

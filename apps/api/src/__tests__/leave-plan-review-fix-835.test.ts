@@ -730,4 +730,54 @@ describe("Issue #835 - review fixes of the leave planner", () => {
     expect(rerun.refused).toEqual([]);
     expect(rerun.planStatus).toBe("TAKEN_OVER");
   });
+
+  it("IN-05: a plan year from the running year to two years ahead, a deadline inside the plan year", async () => {
+    const s = await salon();
+    const taker = await person("taker", s, TAKER);
+    const current = new Date().getFullYear();
+    async function open(payload: Record<string, unknown>) {
+      return app.inject({
+        method: "POST",
+        url: "/api/v1/leave/plans",
+        headers: authed(taker.token),
+        payload: { salonId: s, ...payload },
+      });
+    }
+    for (const year of [current - 1, current + 3]) {
+      const res = await open({ year });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json()).toEqual({
+        error:
+          "Eine Urlaubsplanung kannst du nur für das laufende Jahr und die zwei folgenden Jahre eröffnen.",
+        code: "LEAVE_PLAN_YEAR_OUT_OF_RANGE",
+      });
+    }
+    const late = await open({ year: YEAR, deadline: `${YEAR + 1}-01-01` });
+    expect(late.statusCode, late.body).toBe(400);
+    expect(late.json()).toEqual({
+      error: "Die Frist muss spätestens am 31.12. des Planungsjahres liegen.",
+      code: "LEAVE_PLAN_DEADLINE_OUT_OF_RANGE",
+    });
+    expect(await app.prisma.leavePlan.count({ where: { salonId: s } })).toBe(0);
+
+    // The bounds themselves are allowed: the running year, two years ahead, the year's last day.
+    expect((await open({ year: current })).statusCode).toBe(201);
+    expect((await open({ year: current + 2, deadline: `${current + 2}-12-31` })).statusCode).toBe(
+      201,
+    );
+    const planId = (
+      await app.prisma.leavePlan.findFirstOrThrow({ where: { salonId: s, year: current + 2 } })
+    ).id;
+    const patch = (deadline: string) =>
+      app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/plans/${planId}`,
+        headers: authed(taker.token),
+        payload: { deadline },
+      });
+    const patched = await patch(`${current + 3}-01-15`);
+    expect(patched.statusCode, patched.body).toBe(400);
+    expect(patched.json()).toMatchObject({ code: "LEAVE_PLAN_DEADLINE_OUT_OF_RANGE" });
+    expect((await patch(`${current + 2}-01-31`)).statusCode).toBe(200);
+  });
 });
