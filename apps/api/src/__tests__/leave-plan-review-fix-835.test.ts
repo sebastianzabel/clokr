@@ -586,4 +586,47 @@ describe("Issue #835 - review fixes of the leave planner", () => {
       where: { userId: approver.userId, type: "LEAVE_REQUEST", relatedId: requestId },
     });
   });
+
+  it("WR-03 (D-835-43): an approved wish later in the current month refreshes the stored overtime balance", async () => {
+    // A fixed PAST clock (a future stamp would leak into usual-work-days-backfill-route-481): today
+    // is Tuesday 2026-11-03, the wish is the week of Monday 2026-11-23 — after today, inside the
+    // running month.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-03T10:00:00.000Z"));
+    try {
+      const s = await salon();
+      const taker = await person("taker", s, TAKER);
+      const a = await person("a", s);
+      const later = await person("later", s);
+      for (const employeeId of [a.employeeId, later.employeeId]) {
+        await seedEntitlementYears(app, {
+          employeeId,
+          leaveTypeId: one.vacationType.id,
+          years: [2026],
+        });
+      }
+      const planId = await openPlan(taker.token, s, 2026);
+      const inMonth = await addWish(taker.token, planId, a.employeeId, {
+        startDate: "2026-11-23",
+        endDate: "2026-11-27",
+      });
+      const nextMonth = await addWish(taker.token, planId, later.employeeId, {
+        startDate: "2026-12-07",
+        endDate: "2026-12-11",
+      });
+      const balanceRow = (employeeId: string) =>
+        app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+      expect(await balanceRow(a.employeeId)).toBeNull();
+      expect(await balanceRow(later.employeeId)).toBeNull();
+
+      const run = await takeOver(taker.token, planId);
+      expect(run.created.map((c) => c.wishId).sort()).toEqual([inMonth, nextMonth].sort());
+      // The current-month wish's person gets the refresh; a wish of a later month cannot move the
+      // live saldo and stays without one (D-835-37 unchanged).
+      expect(await balanceRow(a.employeeId)).not.toBeNull();
+      expect(await balanceRow(later.employeeId)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

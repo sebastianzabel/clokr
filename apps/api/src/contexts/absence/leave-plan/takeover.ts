@@ -25,9 +25,10 @@
  * one run carry strictly increasing `createdAt` in start order (SHIFT_BASED marginal pricing sorts
  * siblings by `createdAt`, D-835-27).
  * The approvals defer the live-saldo recompute (D-835-37): after the loop the stored overtime balance
- * is refreshed ONCE per distinct approved person with a wish starting before the tenant-local today
- * (the live saldo never includes today, #438, and a future leave cannot change it) - reactively, a
- * failure is logged with ids only and never fails the takeover.
+ * is refreshed ONCE per distinct approved person with a wish starting on or before the last day of the
+ * tenant-local current month (D-835-43: a SHIFT_BASED live saldo reads the approved leave of the whole
+ * running month; a leave of a later month cannot change it) - reactively, a failure is logged with
+ * ids only and never fails the takeover.
  * A last short transaction locks the plan row `FOR UPDATE`, closes the plan when no wish is left
  * open and writes ONE summary audit row with ids and counts only.
  * The whole run holds a per-plan advisory lock (D-835-41): two runs of one plan never interleave, so
@@ -180,9 +181,15 @@ export async function takeOverLeavePlan(
     const { tenantId, planId, taker } = input;
     const result: TakeoverResult = { created: [], pending: [], refused: [], planStatus: "OPEN" };
     let skippedCount = 0;
-    /** Persons with an approved wish that starts before today: their stored balance is refreshed. */
+    /**
+     * Persons with an approved wish that can move the live saldo: their stored balance is refreshed.
+     * D-835-43 (WR-03): every wish starting on or before the last day of the tenant-local CURRENT
+     * month — a SHIFT_BASED live saldo reads the approved leave of the whole running month (the
+     * open-month C_net credit), so a leave later this month moves it; a wish of a later month cannot.
+     */
     const refreshEmployeeIds = new Set<string>();
     const today = todayInTz(await getTenantTimezone(app.prisma, tenantId));
+    const currentMonthEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
 
     const plan = await app.prisma.leavePlan.findFirstOrThrow({
       where: { id: planId, tenantId },
@@ -478,7 +485,9 @@ export async function takeOverLeavePlan(
         return;
       }
       await clearRefusal(wish.id);
-      if (wish.startDate.getTime() < today.getTime()) refreshEmployeeIds.add(wish.employeeId);
+      if (wish.startDate.getTime() <= currentMonthEnd.getTime()) {
+        refreshEmployeeIds.add(wish.employeeId);
+      }
       result.created.push({ wishId: wish.id, employeeId: wish.employeeId, leaveRequestId });
     }
 
