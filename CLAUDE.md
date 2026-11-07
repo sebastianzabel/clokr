@@ -730,7 +730,17 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   or a copy of their checks; the taker's own wish and wishes outside the taker's approve reach stay `PENDING` (four-eyes); the
   employment window and the Stammsalon are re-checked at takeover (`LEAVE_PLAN_WISH_NOT_EMPLOYED`, `LEAVE_PLAN_WISH_NOT_IN_SALON`)
   and the #836 limit pre-check runs only for wishes approved at once; a request is linked to a wish only if the wish still has
-  the stored dates (`FOR UPDATE` link hook); the plan closes only when no active wish is unlinked or approval-refused. **The
+  the stored dates (`FOR UPDATE` link hook; a wish moved mid-run re-runs the whole per-wish pipeline); a wish is taken over
+  only under the taker's `leave-request:create` reach over the person (`LEAVE_PLAN_WISH_NO_CREATE_REACH` otherwise -
+  `leave-plan:manage` never goes around the create rule); every takeover write on a wish (link, refusal, `takenOverAt`) is
+  audited, codes only; a request that ends `PENDING` notifies its approvers like any request, never silently. The two refusals
+  `LEAVE_PLAN_WISH_NOT_EMPLOYED` / `LEAVE_PLAN_WISH_NOT_IN_SALON` are terminal and never block the close; an `APPROVAL_…`
+  refusal blocks it only while the request is `PENDING` and the taker may approve it (else the refusal is cleared and the
+  request stays for a regular approver); the plan closes only when nothing else is open, so a plan never gets stuck OPEN.
+  **One takeover run per plan at a time** (advisory lock held for the run on one connection, `utils/with-advisory-lock.ts`
+  pattern; a second run is 409 `LEAVE_PLAN_TAKEOVER_RUNNING`), and the decision core writes a decision only on a `PENDING`
+  row, so no request is approved and deducted twice - for the regular review route too. A refusal reason of another person's
+  wish is shown only within the reader's `leave-request:read` reach. **The
   database is the last wall:** one OPEN plan per salon and year (`LeavePlan_open_unique`, partial unique), no two active
   wishes of a person overlap (`LeavePlanWish_no_overlap_active`, exclusion constraint) - both recognised structurally
   (`P2002` + index name, `P2039` + `23P01`), never by message. **Permission:** `leave-plan:manage:ZUGEWIESEN` (open, set the
@@ -741,7 +751,8 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   is read-only (409 `LEAVE_PLAN_CLOSED`). **Notification:** the type `LEAVE_PLAN_OPENED` has its push text ("Die
   Urlaubsplanung ist eröffnet.") and e-mail policy in the registries (#608). **Takeover cost:** the decision core's
   `deferOvertimeRecompute` skips only the live-saldo recompute and the takeover refreshes the stored overtime balance once per
-  approved person with a past-start wish (reactive; measured 253 -> 93 SQL statements and 3.8 s -> 1.5 s per 40 wishes, about
+  approved person whose wish starts on or before the end of the tenant-local current month - SHIFT_BASED reads the
+  running month's approved leave (reactive; measured 253 -> 93 SQL statements and 3.8 s -> 1.5 s per 40 wishes, about
   4 s per 100); batching with a cursor (D-835-36) was deliberately not built. Wishes are hard-deleted only by the employee
   hard-delete path (`hardDeleteLeavePlanWishesForEmployee` before `hardDeleteLeaveRequestsForEmployee`, `Restrict` FKs). ADR
   `docs/adr/0001-abweichungen.md`, Eintrag AH.
