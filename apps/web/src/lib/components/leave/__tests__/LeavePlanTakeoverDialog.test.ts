@@ -259,6 +259,33 @@ describe("limit exception reason", () => {
     expect(dialogs()).toHaveLength(1);
   });
 
+  it("keeps the first run's created and pending wishes listed after the reason run (IN-01)", async () => {
+    await toReason();
+    // The reason run skips the wishes the first run linked: it reports only the retried two.
+    takeOver.mockResolvedValueOnce(
+      resultOf({
+        created: [
+          { wishId: "w3", employeeId: "e3", leaveRequestId: "r3" },
+          { wishId: "w4", employeeId: "e4", leaveRequestId: "r4" },
+        ],
+        pending: [],
+        refused: [],
+        planStatus: "OPEN",
+      }),
+    );
+    await fireEvent.input(screen.getByLabelText(/Begründung der Ausnahme/), {
+      target: { value: "Saisonspitze, Vertretung ist geklärt." },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Trotzdem übernehmen" }));
+    const created = await screen.findByTestId("takeover-created");
+    expect(created.textContent).toContain("Übernommen (3)");
+    for (const name of ["Alex Muster", "Cem Check", "Dana Dach"]) {
+      expect(created.textContent).toContain(name);
+    }
+    expect(screen.getByTestId("takeover-pending").textContent).toContain("Bea Beispiel");
+    expect(screen.queryByTestId("takeover-refused")).toBeNull();
+  });
+
   it("returns to the result when the reason dialog is cancelled", async () => {
     await toReason();
     await fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));

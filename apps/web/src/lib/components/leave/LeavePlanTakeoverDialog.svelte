@@ -18,6 +18,7 @@
   import Modal from "$components/ui/Modal.svelte";
   import { takeOver } from "$lib/leave-plan/api";
   import { planErrorMessage } from "$lib/leave-plan/errors";
+  import { mergeTakeoverResults } from "$lib/leave-plan/takeover-result";
   import { PENDING_REASON_LABELS, PLAN_STATUS_LABELS } from "$lib/leave-plan/labels";
   import {
     LEAVE_LIMIT_EXCEPTION_REQUIRED,
@@ -97,10 +98,13 @@
     const problem = validateExceptionReason(reason);
     // ReasonDialog shows a thrown message inline and stays open; nothing is sent.
     if (problem) throw new Error(problem);
-    result = await takeOver(
+    const earlier = result;
+    const later = await takeOver(
       planId,
       limitRefused.map((entry) => ({ wishId: entry.wishId, reason })),
     );
+    // IN-01: the reason run skips every wish the first run linked; the merge keeps them listed.
+    result = earlier ? mergeTakeoverResults(earlier, later) : later;
     step = "result";
   }
 </script>
