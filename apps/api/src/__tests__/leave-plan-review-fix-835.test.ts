@@ -21,6 +21,10 @@ import {
   tokenWithoutSignIn,
 } from "./setup";
 import { roleNameKey, normalizeRolePermissions } from "../contexts/platform/access-role";
+import {
+  approveLeaveRequestCore,
+  loadLeaveRequestForReview,
+} from "../contexts/absence/leave-decision";
 
 const MANAGE = "leave-plan:manage:ZUGEWIESEN";
 const APPROVE = "leave-request:approve:ZUGEWIESEN";
@@ -31,6 +35,7 @@ const CREATE_OTHERS = "leave-request:create:ZUGEWIESEN";
 const TAKER = [MANAGE, APPROVE, READ, CREATE_OWN, CREATE_OTHERS];
 const YEAR = new Date().getFullYear() + 1;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const AUDIT_META = { ip: "127.0.0.1", headers: {} };
 
 function iso(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -291,5 +296,58 @@ describe("Issue #835 - review fixes of the leave planner", () => {
     expect(wishOf(asMember, ownWish)).toMatchObject({
       refusalCode: "LEAVE_PLAN_WISH_NOT_EMPLOYED",
     });
+  });
+
+  it("WR-05 (D-835-41): the decision core approves a request once, also for a stale or a concurrent second decider", async () => {
+    const s = await salon();
+    const approver = await person("approver", s, [APPROVE, READ]);
+    const a = await person("a", s, [CREATE_OWN]);
+
+    async function pendingRequest(range: { startDate: string; endDate: string }) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: authed(a.token),
+        payload: { type: "VACATION", ...range },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      return (res.json() as { id: string }).id;
+    }
+    async function usedDays(): Promise<number> {
+      const row = await app.prisma.leaveEntitlement.findFirstOrThrow({
+        where: { employeeId: a.employeeId, leaveTypeId: one.vacationType.id, year: YEAR },
+      });
+      return Number(row.usedDays);
+    }
+    const decide = (existing: NonNullable<Awaited<ReturnType<typeof loadLeaveRequestForReview>>>) =>
+      approveLeaveRequestCore(app, {
+        existing,
+        reviewerUserId: approver.userId,
+        request: AUDIT_META,
+      });
+
+    // A stale second decider: both read the request while it was PENDING.
+    const staleId = await pendingRequest(week(3, 3));
+    const stale = (await loadLeaveRequestForReview(app, staleId))!;
+    const before = await usedDays();
+    const first = await decide(stale);
+    const second = await decide(stale);
+    expect(first.ok).toBe(true);
+    expect(second).toMatchObject({ ok: false, statusCode: 409, reason: "NOT_DECIDABLE" });
+    expect(await usedDays()).toBe(before + 5);
+    expect(
+      await app.prisma.auditLog.count({
+        where: { entity: "LeaveRequest", entityId: staleId, action: "APPROVE" },
+      }),
+    ).toBe(1);
+
+    // Two concurrent deciders: exactly one wins.
+    const raceId = await pendingRequest(week(4, 3));
+    const raced = (await loadLeaveRequestForReview(app, raceId))!;
+    const beforeRace = await usedDays();
+    const outcomes = await Promise.all([decide(raced), decide(raced)]);
+    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
+    expect(outcomes.filter((o) => !o.ok)).toMatchObject([{ reason: "NOT_DECIDABLE" }]);
+    expect(await usedDays()).toBe(beforeRace + 5);
   });
 });

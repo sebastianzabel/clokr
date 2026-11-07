@@ -366,8 +366,18 @@ export async function decidePendingLeaveRequest(
     daysProvisional: existing.daysProvisional,
   };
 
-  const updated = await app.prisma.leaveRequest.update({
-    where: { id },
+  // Issue #835 (D-835-41, WR-05): the status flip is the FIRST write and is conditional on the row
+  // still being PENDING. Two deciders that both read the request as PENDING (two reviewers, or a
+  // review and a planner takeover) serialise on the row: the second one's UPDATE re-evaluates the
+  // condition after the first committed, writes nothing and gets the same "already decided" refusal
+  // as a request read in a decided state — so the entitlement is never deducted twice.
+  const flipped = await app.prisma.leaveRequest.updateMany({
+    where: {
+      id,
+      status: "PENDING",
+      deletedAt: null,
+      employee: { tenantId: existing.employee.tenantId },
+    },
     data: {
       status: input.status,
       reviewedBy: input.reviewerUserId,
@@ -380,6 +390,12 @@ export async function decidePendingLeaveRequest(
           }
         : {}),
     },
+  });
+  if (flipped.count === 0) {
+    return refusal(409, { error: "Antrag kann nicht mehr geändert werden" }, "NOT_DECIDABLE");
+  }
+  const updated = await app.prisma.leaveRequest.findFirstOrThrow({
+    where: { id, employee: { tenantId: existing.employee.tenantId } },
     include: {
       employee: { select: { firstName: true, lastName: true } },
       leaveType: true,
