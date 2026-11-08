@@ -151,6 +151,14 @@ html[data-mode="dark"] {
   --shift-violet: #80377b;
   --shift-slate: #6e6470;
 
+  /* #840 G-2 — the weekend band of the absence timeline (header cell, person tracks, legend swatch).
+     A 12 % tint of the ink colour, declared once: it re-resolves in every skin and mode because the
+     mode attributes sit on the same <html> element as :root. The earlier --bg-subtle at 0.8 opacity
+     measured 1.09:1 on the editorial card and about 1:1 on the translucent modern card, so the
+     weekend was invisible. Measured by leave-looks-840-gaps.test.ts in all four surface modes
+     (>= 1.2:1 against the card); a quiet background, clearly below any leave-type fill. */
+  --weekend-shade: color-mix(in srgb, var(--text) 12%, transparent);
+
   /* Leave-type palette — referenced by app.css .cal-abs-* and by inline
      style:background bindings in /leave + /team/leave legend dots.
      Theme-independent: hand-picked to read on --bg-card (light) at 100% and

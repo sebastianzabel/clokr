@@ -165,7 +165,7 @@
   }
 
   .legend-swatch--weekend {
-    background: var(--bg-subtle);
+    background: var(--weekend-shade);
     border: 1px solid var(--border);
   }
 

@@ -1,0 +1,151 @@
+// Issue #840, gap round (840-UAT.md, plan 840-15) — the look of the one timeline and the one legend.
+//
+// G-2: the weekend band was the near-white `--bg-subtle` at 0.8 opacity (1.09:1 on editorial light,
+// about 1:1 on the translucent modern card), so the owner could not see weekends. The proofs here
+// resolve the declared tokens from `tokens.css` (jsdom resolves no custom properties) in all four
+// surface modes and measure the contrast of the shade against the card it lies on.
+//
+// G-4: every look of the legend means exactly one thing (describe further down).
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, it, expect } from "vitest";
+import { screen } from "@testing-library/svelte";
+import { renderWithTheme } from "$tests/test-utils";
+import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte";
+import { periodOf, type TimelinePerson } from "$lib/leave/timeline-model";
+import {
+  SURFACES,
+  cardSurface,
+  contrast,
+  over,
+  readTokensCss,
+  resolveColor,
+  tokenIn,
+  type SurfaceName,
+} from "./token-css";
+
+function readSource(relativeFromHere: string, relativeFromCwd: string): string {
+  try {
+    return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
+  } catch {
+    return readFileSync(resolve(process.cwd(), relativeFromCwd), "utf8");
+  }
+}
+
+const TOKENS = readTokensCss();
+const TIMELINE_SRC = readSource(
+  "../lib/components/leave/timeline/AbsenceTimeline.svelte",
+  "src/lib/components/leave/timeline/AbsenceTimeline.svelte",
+);
+const LEGEND_SRC = readSource(
+  "../lib/components/leave/LeaveLegend.svelte",
+  "src/lib/components/leave/LeaveLegend.svelte",
+);
+
+/** The declarations of the first rule whose selector list is exactly `selector`. */
+function ruleBody(source: string, selector: string): string {
+  const style = source.slice(source.indexOf("<style>"));
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`(?:^|\\n)\\s*${escaped}\\s*\\{([^}]*)\\}`).exec(style);
+  if (!match) throw new Error(`Rule not found: ${selector}`);
+  return match[1];
+}
+
+describe("#840 G-2 weekend shade", () => {
+  describe("the token resolves to a visible tint in every surface mode", () => {
+    for (const name of Object.keys(SURFACES) as SurfaceName[]) {
+      it(`${name}: --weekend-shade reaches 1.2:1 against the card`, () => {
+        const blocks = SURFACES[name];
+        const card = cardSurface(TOKENS, blocks);
+        const shade = resolveColor(TOKENS, blocks, "var(--weekend-shade)");
+        const ratio = contrast(over(shade, card), card);
+        expect(ratio).toBeGreaterThanOrEqual(1.2);
+      });
+    }
+
+    it("the shade is a quiet background, far below a leave-type fill", () => {
+      for (const name of Object.keys(SURFACES) as SurfaceName[]) {
+        const blocks = SURFACES[name];
+        const card = cardSurface(TOKENS, blocks);
+        const shade = over(resolveColor(TOKENS, blocks, "var(--weekend-shade)"), card);
+        const fill = over(resolveColor(TOKENS, blocks, "var(--leave-type-absent)"), card);
+        expect(contrast(shade, card)).toBeLessThan(contrast(fill, card));
+      }
+    });
+
+    it("the old value (the subtle background at 0.8 opacity) is invisible — the proof can fail", () => {
+      const old = (name: SurfaceName) => {
+        const blocks = SURFACES[name];
+        const card = cardSurface(TOKENS, blocks);
+        const subtle = resolveColor(TOKENS, blocks, "var(--bg-subtle)");
+        return contrast(over({ ...subtle, a: subtle.a * 0.8 }, card), card);
+      };
+      expect(old("editorial-light")).toBeLessThan(1.2);
+      expect(old("modern-light")).toBeLessThan(1.2);
+    });
+
+    it("the helper reads the dark block, never the `html[data-mode=dark]` one (prefix trap)", () => {
+      expect(tokenIn(TOKENS, [":root", '[data-mode="dark"]'], "--bg-card")).toBe("#1f1827");
+      expect(tokenIn(TOKENS, [":root"], "--bg-card")).toBe("#ffffff");
+    });
+  });
+
+  describe("source pins", () => {
+    it("the timeline weekend rules read the token and carry no opacity", () => {
+      const track = ruleBody(TIMELINE_SRC, ".tl-weekend");
+      expect(track).toContain("var(--weekend-shade)");
+      expect(track).not.toMatch(/opacity/);
+      expect(ruleBody(TIMELINE_SRC, ".absence-day--weekend")).toContain("var(--weekend-shade)");
+    });
+
+    it("the legend weekend swatch reads the same token", () => {
+      expect(ruleBody(LEGEND_SRC, ".legend-swatch--weekend")).toContain("var(--weekend-shade)");
+    });
+  });
+
+  describe("mounted timeline", () => {
+    const rows: TimelinePerson[] = [
+      { employeeId: "e1", name: "Anna Muster", isOwn: false, bars: [] },
+    ];
+
+    it("Quartal shades the Saturday/Sunday columns and keeps the closed hatch on top", () => {
+      const period = periodOf("quartal", "2026-11-15");
+      renderWithTheme(AbsenceTimeline, {
+        rows,
+        period,
+        holidays: [],
+        // Monday = 0, so 6 is Sunday.
+        closedWeekdays: new Set([6]),
+        columnWidthPx: 24,
+        today: "2026-11-10",
+      });
+      const track = screen.getByTestId("plan-track-e1");
+      expect(track.querySelectorAll(".tl-weekend").length).toBeGreaterThan(0);
+      // 2026-11-07 is a Saturday, 2026-11-08 a Sunday.
+      for (const day of ["2026-11-07", "2026-11-08"]) {
+        expect(screen.getByTestId(`absence-day-${day}`).classList).toContain(
+          "absence-day--weekend",
+        );
+      }
+      expect(screen.getByTestId("absence-day-2026-11-09").classList).not.toContain(
+        "absence-day--weekend",
+      );
+      // The closed Sunday is both shaded and hatched; the hatch is a layer of its own after the shade.
+      expect(screen.getByTestId("absence-day-2026-11-08").classList).toContain(
+        "absence-day--closed",
+      );
+      const layers = [...track.children].map((el) =>
+        el.classList.contains("tl-weekend")
+          ? "weekend"
+          : el.classList.contains("tl-closed")
+            ? "closed"
+            : "",
+      );
+      const lastWeekend = layers.lastIndexOf("weekend");
+      const firstClosed = layers.indexOf("closed");
+      expect(firstClosed).toBeGreaterThan(-1);
+      expect(firstClosed).toBeGreaterThan(lastWeekend);
+    });
+  });
+});

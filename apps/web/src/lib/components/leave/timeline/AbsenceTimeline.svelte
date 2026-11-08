@@ -936,8 +936,9 @@
     outline-offset: -2px;
   }
 
+  /* Issue 840 G-2: one visible weekend token for the header cell and the tracks (no opacity dilution). */
   .absence-day--weekend {
-    background: var(--bg-subtle);
+    background: var(--weekend-shade);
   }
 
   .absence-day--closed {
@@ -977,8 +978,7 @@
   }
 
   .tl-weekend {
-    background: var(--bg-subtle);
-    opacity: 0.8;
+    background: var(--weekend-shade);
   }
 
   .tl-closed {
