@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import LeavePlanningPanel from "../LeavePlanningPanel.svelte";
+import LeavePlanControls from "../LeavePlanControls.svelte";
 import { periodOf } from "$lib/leave/timeline-model";
 import type {
   LeavePlanListItem,
@@ -182,6 +183,14 @@ function refusal(status: number, message: string): Error {
   return Object.assign(new Error(message), { status, data: { error: message } });
 }
 
+type Controls = {
+  statusLabel: string;
+  statusOpen: boolean;
+  deadlineText: string | null;
+  canAdd: boolean;
+  add: () => void;
+};
+
 function render(overrides: Record<string, unknown> = {}) {
   const props = {
     mode: "team" as "team" | "own",
@@ -189,10 +198,23 @@ function render(overrides: Record<string, unknown> = {}) {
     period: Q1,
     today: "2027-02-01",
     onViewer: vi.fn(),
+    onControls: vi.fn(),
     ...overrides,
   };
   const result = renderWithTheme(LeavePlanningPanel, props);
   return { props, ...result };
+}
+
+/** Issue 840 G-6: the last thing the panel told its host about the toolbar controls. */
+function lastControls(props: { onControls: ReturnType<typeof vi.fn> }): Controls | null {
+  const calls = props.onControls.mock.calls;
+  return calls.length === 0 ? null : (calls[calls.length - 1][0] as Controls | null);
+}
+
+/** Waits until the panel reports non-null controls and returns them. */
+async function controlsOf(props: { onControls: ReturnType<typeof vi.fn> }): Promise<Controls> {
+  await waitFor(() => expect(lastControls(props)).not.toBeNull());
+  return lastControls(props) as Controls;
 }
 
 function stubMatchMedia(matches: boolean) {
@@ -358,18 +380,20 @@ describe("LeavePlanningPanel - manage rights", () => {
     expect(props.onViewer).not.toHaveBeenCalledWith({ canManage: true });
   });
 
-  it("a non-manager sees the deadline as read-only text", async () => {
+  // #840 G-6: the deadline text is reported to the toolbar; the panel keeps only the lock notices.
+  it("a non-manager gets the deadline as read-only text for the toolbar", async () => {
     getPlan.mockResolvedValue(
       dto({
         plan: { ...dto().plan, deadline: "2027-02-01", deadlineLocksWishes: true },
       }),
     );
-    render();
-    const text = await screen.findByTestId("leave-plan-deadline-text");
-    expect(text.textContent).toContain("01.02.2027");
+    const { props } = render();
+    const controls = await controlsOf(props);
+    expect(controls.deadlineText).toBe("Wünsche bis 01.02.2027");
     expect(screen.queryByTestId("leave-plan-deadline")).toBeNull();
     expect(screen.queryByLabelText("Frist für Wünsche")).toBeNull();
-    expect(screen.getByTestId("leave-plan-lock-hint")).toBeTruthy();
+    expect(await screen.findByTestId("leave-plan-lock-hint")).toBeTruthy();
+    expect(screen.queryByTestId("leave-plan-deadline-text")).toBeNull();
   });
 
   it("shows the own-edit lock after the deadline", async () => {
@@ -379,8 +403,12 @@ describe("LeavePlanningPanel - manage rights", () => {
         viewer: { employeeId: "e1", canManage: false, canWishOwn: true, ownEditLocked: true },
       }),
     );
-    render();
+    const { props } = render();
     expect(await screen.findByTestId("leave-plan-locked")).toBeTruthy();
+    // #840 G-6: no add action is offered, and the panel itself renders none.
+    const controls = await controlsOf(props);
+    expect(controls.canAdd).toBe(false);
+    expect(controls.deadlineText).toBe("Frist abgelaufen (10.01.2027)");
     expect(screen.queryByTestId("leave-plan-add-wish")).toBeNull();
   });
 });
@@ -406,8 +434,11 @@ describe("LeavePlanningPanel - own mode (E-03)", () => {
         viewer: { employeeId: "e1", canManage: true, canWishOwn: true, ownEditLocked: false },
       }),
     );
-    render({ mode: "own" });
-    await fireEvent.click(await screen.findByTestId("leave-plan-add-wish"));
+    // #840 G-6: the add action lives in the toolbar; the panel reports it.
+    const { props } = render({ mode: "own" });
+    const controls = await controlsOf(props);
+    expect(controls.canAdd).toBe(true);
+    controls.add();
     expect(await screen.findByTestId("leave-plan-wish-form")).toBeTruthy();
     expect(screen.queryByTestId("wish-person")).toBeNull();
   });
@@ -472,8 +503,9 @@ describe("LeavePlanningPanel - own mode (E-03)", () => {
         viewer: { employeeId: "e1", canManage: true, canWishOwn: true, ownEditLocked: false },
       }),
     );
-    render();
-    await fireEvent.click(await screen.findByTestId("leave-plan-add-wish"));
+    // #840 G-6: the add action lives in the toolbar; the panel reports it.
+    const { props } = render();
+    (await controlsOf(props)).add();
     expect(await screen.findByTestId("wish-person")).toBeTruthy();
   });
 });
@@ -509,8 +541,9 @@ describe("LeavePlanningPanel - wishes", () => {
   });
 
   it("creates a wish through the dialog and reloads", async () => {
-    render({ period: FEB });
-    await fireEvent.click(await screen.findByTestId("leave-plan-add-wish"));
+    // #840 G-6: the add action lives in the toolbar; the panel reports it.
+    const { props } = render({ period: FEB });
+    (await controlsOf(props)).add();
     await fireEvent.input(await screen.findByTestId("wish-start"), {
       target: { value: "2027-02-24" },
     });
@@ -533,9 +566,10 @@ describe("LeavePlanningPanel - load row", () => {
     expect(busy.getAttribute("data-exceeded")).toBe("true");
     expect(busy.getAttribute("aria-label")).toContain("Wochenregel: 2 von höchstens 1");
     expect(screen.getByTestId("day-load-2027-02-15").getAttribute("data-exceeded")).toBe("false");
-    expect(screen.getByText("Abwesend (Personen)").getAttribute("title")).toContain(
-      "Genehmigt, beantragt und gewünscht",
-    );
+    // #840 G-6: Quartal and Monat show the server's day load under the label „Urlaub (Personen)“.
+    expect(
+      screen.getByText("Urlaub (Personen)", { selector: ".tl-name" }).getAttribute("title"),
+    ).toContain("Genehmigt, beantragt und gewünscht");
   });
 
   it("Jahr uses the week load of the model, keyed by Monday", async () => {
@@ -548,11 +582,14 @@ describe("LeavePlanningPanel - load row", () => {
 });
 
 describe("LeavePlanningPanel - mobile", () => {
-  it("shows the wish list and the add button instead of the timeline below 768 px", async () => {
+  // #840 G-6: the wish list renders inside the panel's one card; the toolbar owns „Wunsch hinzufügen“.
+  it("shows the wish list in the one card instead of the timeline below 768 px", async () => {
     stubMatchMedia(true);
-    render();
-    expect(await screen.findByTestId("leave-plan-wish-list")).toBeTruthy();
-    expect(screen.getByTestId("leave-plan-add-wish")).toBeTruthy();
+    const { container } = render();
+    const list = await screen.findByTestId("leave-plan-wish-list");
+    expect(list.closest(".card")).not.toBeNull();
+    expect(container.querySelectorAll(".card")).toHaveLength(1);
+    expect(screen.queryByTestId("leave-plan-add-wish")).toBeNull();
     expect(screen.queryByTestId("leave-plan-timeline-host")).toBeNull();
   });
 
@@ -561,5 +598,129 @@ describe("LeavePlanningPanel - mobile", () => {
     render();
     expect(await screen.findByTestId("leave-plan-timeline-host")).toBeTruthy();
     expect(screen.queryByTestId("leave-plan-wish-list")).toBeNull();
+  });
+});
+
+describe("LeavePlanningPanel - one card and the controls for the toolbar (G-6)", () => {
+  it("reports null while loading and without a plan", async () => {
+    let release: (items: LeavePlanListItem[]) => void = () => {};
+    listPlans.mockImplementation(() => new Promise((resolve) => (release = resolve)));
+    const { props } = render();
+    expect(lastControls(props)).toBeNull();
+    release([]);
+    await screen.findByText("Noch keine Planung");
+    expect(lastControls(props)).toBeNull();
+  });
+
+  it("reports null without a salon", () => {
+    const { props } = render({ salonId: null });
+    expect(lastControls(props)).toBeNull();
+  });
+
+  it("reports the status, the deadline and an add function that opens the wish dialog", async () => {
+    getPlan.mockResolvedValue(dto({ plan: { ...dto().plan, deadline: "2027-02-01" } }));
+    const { props } = render();
+    const controls = await controlsOf(props);
+    expect(controls).toMatchObject({
+      statusLabel: "Offen",
+      statusOpen: true,
+      deadlineText: "Wünsche bis 01.02.2027",
+      canAdd: true,
+    });
+    expect(screen.queryByTestId("leave-plan-wish-form")).toBeNull();
+    controls.add();
+    expect(await screen.findByTestId("leave-plan-wish-form")).toBeTruthy();
+  });
+
+  it("reports canAdd false for a viewer without a wish right", async () => {
+    getPlan.mockResolvedValue(
+      dto({
+        viewer: { employeeId: "e1", canManage: false, canWishOwn: false, ownEditLocked: false },
+      }),
+    );
+    const { props } = render();
+    expect((await controlsOf(props)).canAdd).toBe(false);
+  });
+
+  it("the loaded panel holds exactly one card: legend, help line and timeline", async () => {
+    const { container } = render();
+    const host = await screen.findByTestId("leave-plan-timeline-host");
+    const cards = container.querySelectorAll(".card");
+    expect(cards).toHaveLength(1);
+    expect(cards[0].contains(screen.getByTestId("leave-plan-legend"))).toBe(true);
+    expect(cards[0].contains(host)).toBe(true);
+    expect(screen.queryByTestId("leave-plan-head")).toBeNull();
+  });
+
+  it("the lock notice sits inside the one card", async () => {
+    getPlan.mockResolvedValue(
+      dto({
+        plan: { ...dto().plan, deadline: "2027-01-10", deadlinePassed: true },
+        viewer: { employeeId: "e1", canManage: false, canWishOwn: true, ownEditLocked: true },
+      }),
+    );
+    render();
+    const locked = await screen.findByTestId("leave-plan-locked");
+    expect(locked.closest(".card")).not.toBeNull();
+  });
+
+  it("the help line quotes the label and the hint of the load row (Quartal)", async () => {
+    render({ period: Q1 });
+    await screen.findByTestId("plan-day-load");
+    const row = screen.getByTestId("plan-day-load").querySelector(".tl-name") as HTMLElement;
+    const help = screen.getByTestId("leave-plan-load-help");
+    expect(row.textContent?.trim()).toBe("Urlaub (Personen)");
+    expect(help.textContent).toContain(`„${row.textContent?.trim()}“`);
+    expect(help.textContent).toContain(row.getAttribute("title") ?? "never");
+    expect(help.textContent).not.toContain("Kopfzeile");
+  });
+
+  it("the help line quotes the label and the hint of the load row (Jahr)", async () => {
+    render({ period: YEAR });
+    await screen.findByTestId("plan-day-load");
+    const row = screen.getByTestId("plan-day-load").querySelector(".tl-name") as HTMLElement;
+    const help = screen.getByTestId("leave-plan-load-help");
+    expect(row.textContent?.trim()).toBe("Abwesend (Personen)");
+    expect(help.textContent).toContain(`„${row.textContent?.trim()}“`);
+    expect(help.textContent).toContain(row.getAttribute("title") ?? "never");
+    expect(help.textContent).not.toContain("Kopfzeile");
+  });
+});
+
+describe("LeavePlanControls", () => {
+  function controls(overrides: Partial<Controls> = {}): Controls {
+    return {
+      statusLabel: "Offen",
+      statusOpen: true,
+      deadlineText: "Wünsche bis 01.02.2027",
+      canAdd: true,
+      add: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("renders the badge, the deadline and the add button, and a click calls add once", async () => {
+    const c = controls();
+    renderWithTheme(LeavePlanControls, { controls: c });
+    const head = screen.getByTestId("leave-plan-head");
+    expect(head.textContent).toContain("Offen");
+    expect(screen.getByTestId("leave-plan-deadline-text").textContent).toContain("01.02.2027");
+    expect(head.querySelector(".badge-blue")).not.toBeNull();
+    await fireEvent.click(screen.getByTestId("leave-plan-add-wish"));
+    expect(c.add).toHaveBeenCalledTimes(1);
+  });
+
+  it("a taken-over plan shows the green badge; no add button without canAdd; no deadline element without text", () => {
+    renderWithTheme(LeavePlanControls, {
+      controls: controls({
+        statusLabel: "Übernommen",
+        statusOpen: false,
+        deadlineText: null,
+        canAdd: false,
+      }),
+    });
+    expect(screen.getByTestId("leave-plan-head").querySelector(".badge-green")).not.toBeNull();
+    expect(screen.queryByTestId("leave-plan-add-wish")).toBeNull();
+    expect(screen.queryByTestId("leave-plan-deadline-text")).toBeNull();
   });
 });

@@ -50,6 +50,14 @@ export const DAY_LOAD_LABEL = "Urlaub";
 export const DAY_LOAD_HINT =
   "Genehmigt, beantragt und gewünscht – ohne Krankheit, Berufsschule und Betriebsurlaub";
 
+// Issue 840 G-6: the load row's name per zoom. Quartal and Monat show the server's day load of
+// the leave-limit kernel (counted codes only, wishes included); Jahr shows the week load of the
+// rows in view (any visible or masked absent Werktag, wishes not counted).
+export const PLAN_DAY_LOAD_ROW_LABEL = "Urlaub (Personen)";
+export const PLAN_WEEK_LOAD_ROW_LABEL = "Abwesend (Personen)";
+export const PLAN_WEEK_LOAD_HINT =
+  "Personen mit mindestens einem abwesenden Werktag in der Woche – Wünsche zählen nicht";
+
 export const PENDING_REASON_LABELS: Record<TakeoverPendingReason, string> = {
   OWN_WISH: "Eigener Wunsch – wartet auf eine zweite Genehmigung",
   OUTSIDE_APPROVE_REACH: "Wartet auf Genehmigung durch eine berechtigte Person",

@@ -45,9 +45,10 @@
   import { createWish, getPlan, listPlans, removeWish, updateWish } from "$lib/leave-plan/api";
   import { planErrorMessage } from "$lib/leave-plan/errors";
   import {
-    ADD_WISH_LABEL,
     DAY_LOAD_HINT,
-    DAY_LOAD_LABEL,
+    PLAN_DAY_LOAD_ROW_LABEL,
+    PLAN_WEEK_LOAD_HINT,
+    PLAN_WEEK_LOAD_ROW_LABEL,
     planStatusLabel,
   } from "$lib/leave-plan/labels";
   import type {
@@ -72,6 +73,19 @@
     manageOpen?: boolean;
     /** Reports whether „Planung verwalten“ may be offered (server value once a plan is loaded). */
     onViewer?: (viewer: { canManage: boolean }) => void;
+    /**
+     * Status, deadline text and the add action for the host's toolbar (Issue 840 G-6). `null`
+     * while there is nothing to show: loading, an error, no salon, a rejected salon, no plan.
+     */
+    onControls?: (
+      controls: {
+        statusLabel: string;
+        statusOpen: boolean;
+        deadlineText: string | null;
+        canAdd: boolean;
+        add: () => void;
+      } | null,
+    ) => void;
     /** A click on a week cell of the Jahr zoom (the host may zoom into that week). */
     onWeekSelect?: (monday: string) => void;
   }
@@ -84,6 +98,7 @@
     today,
     manageOpen = $bindable(false),
     onViewer,
+    onControls,
     onWeekSelect,
   }: Props = $props();
 
@@ -210,6 +225,40 @@
     return `${d}.${m}.${y}`;
   }
 
+  const deadlineText = $derived(
+    plan?.deadline
+      ? plan.deadlinePassed
+        ? `Frist abgelaufen (${fmtDate(plan.deadline)})`
+        : `Wünsche bis ${fmtDate(plan.deadline)}`
+      : null,
+  );
+
+  // The host's toolbar shows these. `canAdd` is the panel's own server-derived `canAddAny`; the
+  // host never computes a right (T-840-63).
+  const controls = $derived(
+    loading ||
+      loadError !== "" ||
+      forbidden ||
+      salonId === null ||
+      rejected ||
+      salonRejected ||
+      plan === null ||
+      viewer === null
+      ? null
+      : {
+          statusLabel: planStatusLabel(plan),
+          statusOpen: plan.status === "OPEN",
+          deadlineText,
+          canAdd: canAddAny,
+          add: () => startWish(viewer.employeeId),
+        },
+  );
+
+  $effect(() => {
+    const current = controls;
+    untrack(() => onControls?.(current));
+  });
+
   // ── The one timeline ───────────────────────────────────────────────────────
   const timeline = $derived(planData ? plannerToTimeline(planData) : null);
   const planSalons = $derived(
@@ -234,7 +283,8 @@
       return {
         kind: "week" as const,
         counts: weekLoad(timeline.rows, period.year, workdaySet(closedWeekdays), timeline.holidays),
-        hint: DAY_LOAD_HINT,
+        label: PLAN_WEEK_LOAD_ROW_LABEL,
+        hint: PLAN_WEEK_LOAD_HINT,
       };
     }
     const counts = new Map<string, number>();
@@ -256,7 +306,13 @@
         );
       }
     }
-    return { kind: "day" as const, counts, exceeded, hint: DAY_LOAD_HINT };
+    return {
+      kind: "day" as const,
+      counts,
+      exceeded,
+      label: PLAN_DAY_LOAD_ROW_LABEL,
+      hint: DAY_LOAD_HINT,
+    };
   });
 
   const legend = $derived.by(() => {
@@ -417,61 +473,30 @@
         : "Für dieses Jahr ist noch keine Planung eröffnet."}
     />
   {:else}
-    <!-- ── Header block: status, deadline as text, hints, add ───────────────── -->
+    <!-- ── One card: lock notice, legend, then the timeline (desktop) or the wish list (mobile).
+         Status, deadline and „Wunsch hinzufügen“ live in the host's toolbar (Issue 840 G-6). ─ -->
     <Card animate>
-      <div class="plan-head" data-testid="leave-plan-head">
-        <div class="plan-head-main">
-          <span class="badge {plan.status === 'OPEN' ? 'badge-blue' : 'badge-green'}"
-            >{planStatusLabel(plan)}</span
-          >
-          {#if plan.deadline}
-            <span class="plan-deadline" data-testid="leave-plan-deadline-text">
-              {#if plan.deadlinePassed}
-                Frist abgelaufen ({fmtDate(plan.deadline)})
-              {:else}
-                Wünsche bis {fmtDate(plan.deadline)}
-              {/if}
-            </span>
-          {/if}
-        </div>
-
-        {#if isOpen && viewer.ownEditLocked}
-          <p class="callout brand" role="status" data-testid="leave-plan-locked">
-            Die Frist ist abgelaufen. Du kannst deine eigenen Wünsche nicht mehr ändern.
-          </p>
-        {:else if isOpen && plan.deadlineLocksWishes && plan.deadline && !viewer.canManage}
-          <p class="form-hint" data-testid="leave-plan-lock-hint">
-            Nach der Frist kannst du deine eigenen Wünsche nicht mehr ändern.
-          </p>
-        {/if}
-
-        {#if canAddAny}
-          <div class="plan-head-actions">
-            <button
-              type="button"
-              class="btn btn-primary btn-sm"
-              data-testid="leave-plan-add-wish"
-              onclick={() => startWish(viewer.employeeId)}
-            >
-              {ADD_WISH_LABEL}
-            </button>
-          </div>
-        {/if}
-      </div>
-    </Card>
-
-    <!-- ── Legend, then the timeline (desktop) or the wish list (mobile) ───────── -->
-    <Card animate>
+      {#if isOpen && viewer.ownEditLocked}
+        <p class="callout brand plan-notice" role="status" data-testid="leave-plan-locked">
+          Die Frist ist abgelaufen. Du kannst deine eigenen Wünsche nicht mehr ändern.
+        </p>
+      {:else if isOpen && plan.deadlineLocksWishes && plan.deadline && !viewer.canManage}
+        <p class="form-hint plan-notice" data-testid="leave-plan-lock-hint">
+          Nach der Frist kannst du deine eigenen Wünsche nicht mehr ändern.
+        </p>
+      {/if}
       <div data-testid="leave-plan-legend">
         <LeaveLegend
           typeCodes={legend.typeCodes}
           styles={legend.styles}
           markings={legend.markings}
         />
-        <p class="form-hint plan-legend-hint">
-          <strong>{DAY_LOAD_LABEL}</strong> in der Kopfzeile: {DAY_LOAD_HINT}. Wunsch: verschiebbar
-          und in der Länge änderbar, solange die Planung offen ist.
-        </p>
+        {#if loadRow && !isMobile}
+          <p class="form-hint plan-legend-hint" data-testid="leave-plan-load-help">
+            <strong>„{loadRow.label}“</strong>: {loadRow.hint}. Wunsch: im Quartal und im Monat
+            verschiebbar und in der Länge änderbar, solange die Planung offen ist.
+          </p>
+        {/if}
       </div>
       {#if isMobile}
         <LeavePlanWishList
@@ -555,28 +580,8 @@
     color: var(--text-muted);
     padding: var(--s-4) 0;
   }
-  .plan-head {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-3);
-  }
-  .plan-head-main {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--s-3);
-  }
-  .plan-deadline {
-    color: var(--text-muted);
-    font-size: 0.875rem;
-  }
-  .plan-head-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-2);
-  }
-  .plan-head p {
-    margin: 0;
+  .plan-notice {
+    margin: var(--s-3) 1.25rem;
   }
   .plan-legend-hint {
     margin: 0 0 var(--s-3);
