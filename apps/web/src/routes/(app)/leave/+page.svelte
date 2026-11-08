@@ -16,6 +16,7 @@
   import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
   import LeaveToolbar from "$lib/components/leave/LeaveToolbar.svelte"; // Issue #840 (D-840-13, E-01)
   import LeavePlanningPanel from "$lib/components/leave/LeavePlanningPanel.svelte"; // Issue #840 (D-840-16)
+  import LeavePlanControls from "$lib/components/leave/LeavePlanControls.svelte"; // Issue #840 (G-6)
   import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte"; // Issue #840 (E-05)
   import AbsenceList from "$lib/components/leave/timeline/AbsenceList.svelte"; // Issue #840 (D-840-11)
   import { CALENDAR_LEGEND_STYLES, legendFrom } from "$lib/leave/leave-colors";
@@ -503,6 +504,18 @@
   // exactly as on the team page; without exactly one salon the panel shows its empty state.
   const contextLoaded = $derived($salonContext.loaded);
   const planSalonId = $derived(teamSalonViewSalon($salonContext));
+  // Issue 840 G-6: the panel reports status, deadline and the add action; the toolbar shows them.
+  // The shape is spelled the same in the panel, in LeavePlanControls and here (no type module).
+  let planControls = $state<null | {
+    statusLabel: string;
+    statusOpen: boolean;
+    deadlineText: string | null;
+    canAdd: boolean;
+    add: () => void;
+  }>(null);
+  $effect(() => {
+    if (activeTab !== "planung") planControls = null;
+  });
 
   // Deep link (WR-07): the LEAVE_PLAN_OPENED notice links with `?salonId=…`. Once the salon context
   // is loaded, a salon the caller reaches is preselected in the header selection, then the
@@ -1068,6 +1081,9 @@
   <!-- ── The one toolbar: tabs, period, zoom (Issue #840, E-01, D-840-13) ─────────────────── -->
   <!-- The KPI cards above stay on every tab. The tab ids are the URL's (`tab=`); the test ids keep
        the names the e2e specs know (`leave-view-calendar`, `leave-view-list`). -->
+  {#snippet plannerControls()}
+    {#if planControls}<LeavePlanControls controls={planControls} />{/if}
+  {/snippet}
   <LeaveToolbar
     ariaLabel="Abwesenheiten"
     tabs={toolbarTabs}
@@ -1080,6 +1096,7 @@
     onShift={(step) =>
       void navigate({ datum: shiftPeriod(activeZoom, urlState.datum, step) }, true)}
     onToday={() => void navigate({ datum: today }, true)}
+    filters={activeTab === "planung" ? plannerControls : undefined}
     testIdPrefix="leave-view"
   />
 
@@ -1613,6 +1630,7 @@
           salonId={planSalonId}
           period={activePeriod}
           {today}
+          onControls={(controls) => (planControls = controls)}
           onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
         />
       {/if}

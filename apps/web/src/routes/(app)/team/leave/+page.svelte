@@ -29,6 +29,7 @@
   import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
   import LeaveToolbar from "$lib/components/leave/LeaveToolbar.svelte"; // Issue #840 (D-840-13, E-01)
   import LeavePlanningPanel from "$lib/components/leave/LeavePlanningPanel.svelte"; // Issue #840 (D-840-17)
+  import LeavePlanControls from "$lib/components/leave/LeavePlanControls.svelte"; // Issue #840 (G-6)
   import { legendFrom } from "$lib/leave/leave-colors";
   import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte"; // Issue #840
   import AbsenceList from "$lib/components/leave/timeline/AbsenceList.svelte"; // Issue #840 (D-840-11)
@@ -841,6 +842,18 @@
   const planSalonId = $derived(teamSalonViewSalon($salonContext));
   let canManagePlan = $state(false);
   let manageOpen = $state(false);
+  // Issue 840 G-6: the panel reports status, deadline and the add action; the toolbar shows them.
+  // The shape is spelled the same in the panel, in LeavePlanControls and here (no type module).
+  let planControls = $state<null | {
+    statusLabel: string;
+    statusOpen: boolean;
+    deadlineText: string | null;
+    canAdd: boolean;
+    add: () => void;
+  }>(null);
+  $effect(() => {
+    if (activeTab !== "planung") planControls = null;
+  });
 
   // Presentation only: the open request's action is offered to approvers (the API decides).
   const canApproveHint = $derived(
@@ -1025,6 +1038,11 @@
   </div>
 {/snippet}
 
+<!-- Issue 840 G-6: on Planung the filter area holds the planner's status, deadline and add action. -->
+{#snippet plannerControls()}
+  {#if planControls}<LeavePlanControls controls={planControls} />{/if}
+{/snippet}
+
 <!-- ── The one toolbar: tabs, period, zoom, filters (Issue #840, E-01) ──────────── -->
 <LeaveToolbar
   ariaLabel="Abwesenheiten"
@@ -1038,7 +1056,7 @@
   onShift={(step) =>
     void navigate({ datum: shiftPeriod(toolbarPeriod.zoom, urlState.datum, step) }, true)}
   onToday={() => void navigate({ datum: today }, true)}
-  filters={activeTab === "planung" ? undefined : personFilter}
+  filters={activeTab === "planung" ? plannerControls : personFilter}
   testIdPrefix="leave-team-view"
 />
 
@@ -1333,6 +1351,7 @@
         {today}
         bind:manageOpen
         onViewer={(viewer) => (canManagePlan = viewer.canManage)}
+        onControls={(controls) => (planControls = controls)}
         onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
       />
     {/if}

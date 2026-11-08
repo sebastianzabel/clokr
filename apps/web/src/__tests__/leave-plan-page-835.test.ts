@@ -42,6 +42,11 @@ const MANAGE = readRouteFile(
   "../lib/components/leave/ManagePlanDialog.svelte",
   "src/lib/components/leave/ManagePlanDialog.svelte",
 );
+// #840 G-6: status, deadline text and „Wunsch hinzufügen“ moved into the toolbar's component.
+const CONTROLS = readRouteFile(
+  "../lib/components/leave/LeavePlanControls.svelte",
+  "src/lib/components/leave/LeavePlanControls.svelte",
+);
 const TIMELINE = readRouteFile(
   "../lib/components/leave/timeline/AbsenceTimeline.svelte",
   "src/lib/components/leave/timeline/AbsenceTimeline.svelte",
@@ -72,7 +77,9 @@ describe("Issue #835 - the planner (hosts of the Planung tab, #840)", () => {
     expect(MANAGE.length).toBeGreaterThan(3_000);
     expect(TIMELINE.length).toBeGreaterThan(10_000);
     // #840 (D-840-10): the legend sits in the timeline card, so there are two blocks, not three.
-    expect(animatedBlocks().length).toBeGreaterThanOrEqual(2);
+    // #840 G-6: the head card is gone (status, deadline and add moved into the toolbar), so the
+    // panel has exactly one animated card.
+    expect(animatedBlocks().length).toBe(1);
   });
 
   it("picks the one salon through teamSalonViewSalon and shows no second salon display (D-835-21/22, #840 D-840-14)", () => {
@@ -176,8 +183,11 @@ describe("Issue #835 - the planner (hosts of the Planung tab, #840)", () => {
     expect(PANEL).toContain("viewer.ownEditLocked");
     // #840 (D-840-15): a non-manager's deadline is read-only text; the testid `leave-plan-deadline`
     // belongs to the section button of the dialog.
-    expect(PANEL).toContain('data-testid="leave-plan-deadline-text"');
+    // #840 G-6: the panel builds the text, the toolbar component renders it.
+    expect(CONTROLS).toContain('data-testid="leave-plan-deadline-text"');
+    expect(PANEL).not.toContain('data-testid="leave-plan-deadline-text"');
     expect(PANEL).not.toContain('data-testid="leave-plan-deadline"');
+    expect(CONTROLS).not.toContain('data-testid="leave-plan-deadline"');
     expect(MANAGE).toContain('data-testid="leave-plan-deadline"');
   });
 
@@ -195,10 +205,18 @@ describe("Issue #835 - the planner (hosts of the Planung tab, #840)", () => {
 
   it("carries the data-testids the e2e spec uses", () => {
     // #840: the testids moved with their elements (panel root, manage dialog, host action).
+    // #840 G-6: `leave-plan-head` and `leave-plan-add-wish` live in LeavePlanControls (toolbar), both
+    // hosts mount it, and the panel hands the controls over through `onControls`.
+    for (const id of ["leave-plan-head", "leave-plan-add-wish"]) {
+      expect(CONTROLS).toContain(`data-testid="${id}"`);
+      expect(PANEL).not.toContain(`data-testid="${id}"`);
+    }
+    for (const host of HOSTS) {
+      expect(host).toContain("<LeavePlanControls");
+      expect(host).toContain("onControls={(controls) => (planControls = controls)}");
+    }
     for (const id of [
       "leave-plan-page",
-      "leave-plan-head",
-      "leave-plan-add-wish",
       "leave-plan-locked",
       "leave-plan-lock-hint",
       "leave-plan-error",

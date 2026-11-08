@@ -50,7 +50,9 @@ describe("Issue #840 E-01 - one page, one toolbar, one timeline", () => {
     expect(PAGE).toContain('ariaLabel="Abwesenheiten"');
     expect(PAGE).toContain('testIdPrefix="leave-team-view"');
     expect(PAGE).toContain("tabs={toolbarTabs}");
-    expect(PAGE).toContain('filters={activeTab === "planung" ? undefined : personFilter}');
+    // #840 G-6: on Planung the filter slot holds the planner controls (status, deadline, add).
+    expect(PAGE).toContain('filters={activeTab === "planung" ? plannerControls : personFilter}');
+    expect(count(PAGE, "<LeavePlanControls")).toBe(1);
   });
 
   it("[tabs] the three tabs are Übersicht / Anträge / Planung, the Anträge one badged and named „list“", () => {
