@@ -119,6 +119,19 @@
     hasAnyPermission($authStore.user, ["section9:read:ZUGEWIESEN", "section9:decide:ZUGEWIESEN"]),
   );
 
+  // The leave list is read only by an approver: `GET /leave/requests` answers 403 without any
+  // `leave-request:read`, and with the EIGENE reach only the caller's OWN requests, which would
+  // show up under „Offen“ as items to decide. A role that only decides § 9 cases never loads it,
+  // neither on mount nor after a § 9 decision (review WR-06). A UX hint; the API decides.
+  const canListLeave = $derived(
+    hasAnyPermission($authStore.user, ["leave-request:approve:ZUGEWIESEN"]),
+  );
+
+  /** Reloads what a § 9 decision can change: the § 9 cases, and the leave list for an approver only. */
+  async function reloadAfterSection9() {
+    await Promise.all([canListLeave ? loadRequests() : Promise.resolve(), loadSection9Cases()]);
+  }
+
   // ── Permission gate (Phase 378, #378; § 9 since #840 D-840-29) ──────────────
   // Any one of the three decide keys is enough — this Postfach decides leave requests, Zeitnachträge
   // and § 9 cases. A Salonmanager (Salon-Scope role assignment) holds all three; an Ausbilder holds
@@ -142,7 +155,7 @@
       const loads: Promise<unknown>[] = [loadRetroRequests()];
       // The leave list is skipped for a role that only decides § 9 cases: it would answer 403 and
       // show an error alert for a list that role never sees.
-      if (hasAnyPermission($authStore.user, ["leave-request:approve:ZUGEWIESEN"])) {
+      if (canListLeave) {
         loads.push(loadRequests());
       } else {
         loading = false;
@@ -508,7 +521,7 @@
         reason,
       });
       closeSection9Confirm();
-      await Promise.all([loadRequests(), loadSection9Cases()]);
+      await reloadAfterSection9();
       toasts.success("AU bestätigt — Urlaubstage gutgeschrieben");
     } catch (e: unknown) {
       section9Error = e instanceof Error ? e.message : "Fehler";
@@ -530,7 +543,7 @@
     if (!section9RejectCase) return;
     await api.post(`/leave/section9/${section9RejectCase.id}/reject`, { reason });
     section9RejectCase = null;
-    await Promise.all([loadRequests(), loadSection9Cases()]);
+    await reloadAfterSection9();
     toasts.success("AU-Vorgang abgelehnt");
   }
 

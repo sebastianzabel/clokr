@@ -123,9 +123,8 @@ describe("Issue #840 D-840-29 - the gate admits § 9 deciders", () => {
 
   it("[gate] a role that only decides § 9 cases does not load the leave list (no 403 alert)", () => {
     const mount = onMountBody(INBOX);
-    expect(mount).toContain(
-      'hasAnyPermission($authStore.user, ["leave-request:approve:ZUGEWIESEN"])',
-    );
+    // The hint is one derived value since review WR-06 (the reload after a § 9 decision asks it too).
+    expect(mount).toContain("if (canListLeave) {");
     expect(mount).toContain("loads.push(loadRequests())");
     expect(mount).toContain("loading = false;");
   });
@@ -177,5 +176,26 @@ describe("Issue #840 D-840-05 - inbox deep links", () => {
     expect(strip).toContain("url.searchParams.delete(name)");
     expect(strip).toContain("replaceState(url, {})");
     expect(onMountBody(INBOX)).toContain("stripDeepLinkParams()");
+  });
+});
+
+describe("review WR-06 - a § 9 decision reloads the leave list only for an approver", () => {
+  it("the reload after a § 9 decision goes through one function that asks the approve permission", () => {
+    expect(INBOX.replace(/\s+/g, " ")).toContain(
+      'const canListLeave = $derived( hasAnyPermission($authStore.user, ["leave-request:approve:ZUGEWIESEN"]), );',
+    );
+    const reload = functionBody(INBOX, "reloadAfterSection9");
+    expect(reload).toContain("canListLeave ? loadRequests() : Promise.resolve()");
+    expect(reload).toContain("loadSection9Cases()");
+  });
+
+  it("confirm and reject use it, and nothing reloads the leave list unconditionally with the cases", () => {
+    expect(functionBody(INBOX, "submitSection9Confirm")).toContain("await reloadAfterSection9();");
+    expect(functionBody(INBOX, "confirmSection9Reject")).toContain("await reloadAfterSection9();");
+    expect(INBOX).not.toContain("Promise.all([loadRequests(), loadSection9Cases()])");
+  });
+
+  it("the first load uses the same permission hint", () => {
+    expect(onMountBody(INBOX)).toContain("if (canListLeave) {");
   });
 });
