@@ -587,7 +587,7 @@
 
 <Modal
   bind:open
-  eyebrow={typeName(formType)}
+  eyebrow={editingRequest ? typeName(editingRequest.typeCode) : undefined}
   title={editingRequest
     ? "Antrag bearbeiten"
     : personPicker
@@ -612,69 +612,79 @@
       onsubmit={preventDefault(submitRequest)}
       class="form-grid"
     >
-      {#if personPicker}
-        {@render personPicker()}
-      {/if}
+      <!-- Issue #840 G-9: row 1 = who and what (Mitarbeiter + Art; Anlass for Sonderurlaub),
+           row 2 = when (Von + Bis). Every other group below stays a full-width line. -->
+      <div
+        class="form-row"
+        class:form-row--single={!personPicker && formType !== "SPECIAL"}
+        data-form-row="who"
+      >
+        {#if personPicker}
+          {@render personPicker()}
+        {/if}
 
-      <div class="form-group">
-        <label class="form-label" for="f-type">Art der Abwesenheit</label>
-        <select
-          id="f-type"
-          data-testid="leave-form-type"
-          bind:value={formType}
-          class="form-input"
-          disabled={!!editingRequest}
-          onchange={() => {
-            if (formType === "SPECIAL") loadSpecialLeaveRules();
-          }}
-        >
-          {#each LEAVE_TYPE_OPTIONS as t (t.code)}
-            <option value={t.code}>{t.label}</option>
-          {/each}
-        </select>
-      </div>
-
-      {#if formType === "SPECIAL"}
         <div class="form-group">
-          <label class="form-label" for="f-special-rule">Anlass</label>
-          <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
-            <option value="">— Anlass wählen —</option>
-            {#each specialLeaveRules as rule (rule.id)}
-              <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
+          <label class="form-label" for="f-type">Art der Abwesenheit</label>
+          <select
+            id="f-type"
+            data-testid="leave-form-type"
+            bind:value={formType}
+            class="form-input"
+            disabled={!!editingRequest}
+            onchange={() => {
+              if (formType === "SPECIAL") loadSpecialLeaveRules();
+            }}
+          >
+            {#each LEAVE_TYPE_OPTIONS as t (t.code)}
+              <option value={t.code}>{t.label}</option>
             {/each}
           </select>
         </div>
-      {/if}
 
-      <div class="form-group">
-        <label class="form-label" for="f-start">Von</label>
-        <input
-          id="f-start"
-          data-testid="leave-form-from"
-          type="date"
-          bind:value={() => formStart, setFormStart}
-          required
-          class="form-input"
-        />
+        {#if formType === "SPECIAL"}
+          <div class="form-group" class:form-group--full={!!personPicker}>
+            <label class="form-label" for="f-special-rule">Anlass</label>
+            <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
+              <option value="">— Anlass wählen —</option>
+              {#each specialLeaveRules as rule (rule.id)}
+                <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
       </div>
 
-      <div class="form-group">
-        <label class="form-label" for="f-end">Bis</label>
-        <input
-          id="f-end"
-          data-testid="leave-form-to"
-          type="date"
-          bind:value={formEnd}
-          required
-          min={formStart}
-          disabled={formHalfDay}
-          class="form-input"
-        />
-        {#if halfDayRangeErrorText}
-          <p class="form-hint" data-testid="leave-form-half-day-range-hint">
-            {halfDayRangeErrorText}
-          </p>
-        {/if}
+      <div class="form-row" data-form-row="dates">
+        <div class="form-group">
+          <label class="form-label" for="f-start">Von</label>
+          <input
+            id="f-start"
+            data-testid="leave-form-from"
+            type="date"
+            bind:value={() => formStart, setFormStart}
+            required
+            class="form-input"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="f-end">Bis</label>
+          <input
+            id="f-end"
+            data-testid="leave-form-to"
+            type="date"
+            bind:value={formEnd}
+            required
+            min={formStart}
+            disabled={formHalfDay}
+            class="form-input"
+          />
+          {#if halfDayRangeErrorText}
+            <p class="form-hint" data-testid="leave-form-half-day-range-hint">
+              {halfDayRangeErrorText}
+            </p>
+          {/if}
+        </div>
       </div>
 
       {#if !employeeId}
@@ -1007,8 +1017,24 @@
 <style>
   .form-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
+  }
+  /* Issue 840 G-9: two rows of two. minmax(0, 1fr) lets a select shrink to its column instead of
+     being cut at the dialog edge; the groups and their controls may shrink below their content. */
+  .form-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .form-row--single {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .form-row > :global(.form-group) {
+    min-width: 0;
+  }
+  .form-row :global(.form-input) {
+    min-width: 0;
   }
   .form-group--full {
     grid-column: 1 / -1;
@@ -1173,16 +1199,13 @@
   }
 
   @media (max-width: 700px) {
-    .form-grid {
-      grid-template-columns: 1fr 1fr;
-    }
     .overlap-dates {
       margin-left: 0;
     }
   }
   @media (max-width: 480px) {
-    .form-grid {
-      grid-template-columns: 1fr;
+    .form-row {
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 </style>
