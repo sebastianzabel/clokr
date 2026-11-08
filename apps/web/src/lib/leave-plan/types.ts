@@ -15,8 +15,9 @@ export interface LeavePlanListItem {
 }
 
 export interface PlannerRow {
-  kind: "LEAVE" | "ABSENCE" | "COMPANY_SHUTDOWN";
-  state: "GESETZT" | "BEANTRAGT";
+  /** `MASKED`: a foreign absence outside the reader's reach — "abwesend", nothing else (#840). */
+  kind: "LEAVE" | "ABSENCE" | "COMPANY_SHUTDOWN" | "MASKED";
+  state: "GESETZT" | "BEANTRAGT" | "ABWESEND";
   startDate: string;
   endDate: string;
   halfDay: boolean;
@@ -102,6 +103,8 @@ export interface PlannerReadDto {
      */
     openWishCount: number | null;
   };
+  /** The plan salon (D-840-25): the personal planner draws its closed days from `openingHours`. */
+  salon: { id: string; name: string; openingHours: unknown };
   viewer: {
     employeeId: string | null;
     canManage: boolean;

@@ -23,18 +23,21 @@ export const ROW_STATE_LABELS = {
   GESETZT: "gesetzt",
   BEANTRAGT: "beantragt",
   WISH: "Wunsch",
+  ABWESEND: NEUTRAL_CHIP_LABEL,
 } as const;
 
 export const ROW_KIND_LABELS: Record<PlannerRow["kind"], string> = {
   LEAVE: "Urlaub",
   ABSENCE: "Abwesenheit",
   COMPANY_SHUTDOWN: "Betriebsurlaub",
+  MASKED: NEUTRAL_CHIP_LABEL,
 };
 
 export const HOLIDAY_LABEL = "Feiertag";
 
 /** The label of a row's type: the leave-type display helper, neutral when the type is masked. */
 export function rowTypeLabel(row: Pick<PlannerRow, "kind" | "typeCode">): string {
+  if (row.kind === "MASKED") return NEUTRAL_CHIP_LABEL;
   if (row.kind === "COMPANY_SHUTDOWN") return ROW_KIND_LABELS.COMPANY_SHUTDOWN;
   if (row.typeCode === null) return NEUTRAL_CHIP_LABEL;
   return LEAVE_TYPES.find((t) => t.code === row.typeCode)?.label ?? ROW_KIND_LABELS[row.kind];
