@@ -69,13 +69,14 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     expect(PAGE).toContain("salonPageFilter($salonContext)");
   });
 
-  it("[filter] the calendar, the § 9 list and the iCal download send the salon", () => {
+  it("[filter] the calendar and the iCal download send the salon; the § 9 loader left the page", () => {
     expect(functionBody("loadCalendar")).toContain(
       "withSalonId(`/leave/calendar?year=${calYear}&month=${calMonth}`, pageSalonId)",
     );
-    expect(functionBody("loadSection9Cases")).toContain(
-      'withSalonId("/leave/section9", pageSalonId)',
-    );
+    // #840 D-840-05: the § 9 cases moved to /inbox (unfiltered work queue, D-840-29); the page no
+    // longer loads, filters or names them (pinned in inbox-section9-840.test.ts).
+    expect(PAGE).not.toContain("loadSection9Cases");
+    expect(PAGE).not.toContain("/leave/section9");
     expect(functionBody("downloadIcal")).toContain(
       'withSalonId("/api/v1/leave/ical/team", pageSalonId)',
     );
@@ -88,13 +89,13 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     expect(PAGE).not.toMatch(/\.salonId\s*===/);
   });
 
-  it("[reload] one effect on the loaded context and the salon runs the three loaders via untrack", () => {
+  it("[reload] one effect on the loaded context and the salon runs the page loaders via untrack", () => {
     const effect = salonEffectBody();
     expect(effect).toContain("pageSalonId");
     expect(effect).toContain("untrack(");
     expect(effect).toContain("loadData()");
     expect(effect).toContain("loadCalendar()");
-    expect(effect).toContain("loadSection9Cases()");
+    expect(effect).not.toContain("loadSection9Cases()"); // #840 D-840-05: moved to /inbox
     expect(PAGE).toContain("const contextLoaded = $derived($salonContext.loaded)");
     expect(PAGE).toContain("const pageSalonId = $derived(salonPageFilter($salonContext))");
   });
@@ -103,7 +104,6 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     const loaders: [string, string, string, string][] = [
       ["loadData", "dataGeneration", "await Promise.all", "allTeamRequests = "],
       ["loadCalendar", "calendarGeneration", "await api.get", "calEntries = "],
-      ["loadSection9Cases", "section9Generation", "await api.get", "section9Cases = "],
     ];
     for (const [fn, counter, awaitText, assign] of loaders) {
       const body = functionBody(fn);
@@ -117,7 +117,7 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     }
   });
 
-  it("[404 calm] a rejected salon empties the three lists and shows the calm text: no error alert", () => {
+  it("[404 calm] a rejected salon empties the lists and shows the calm text: no error alert", () => {
     const body = functionBody("loadData");
     const catchAt = body.indexOf("catch (e: unknown)");
     expect(catchAt).toBeGreaterThan(-1);
@@ -132,9 +132,8 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     expect(branch).not.toContain("toasts.error");
     // Any other failure keeps today's handling.
     expect(body).toContain('error = e instanceof Error ? e.message : "Fehler beim Laden"');
-    // The calendar and the § 9 list empty silently (they always did).
+    // The calendar empties silently (it always did); the § 9 list left the page (#840 D-840-05).
     expect(functionBody("loadCalendar")).toContain("calEntries = []");
-    expect(functionBody("loadSection9Cases")).toContain("section9Cases = []");
   });
 
   it("[label once] the shared label is rendered exactly once, directly after the page head", () => {
@@ -153,7 +152,8 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     const body = onMountBody();
     expect(body).toContain('$page.url.searchParams.get("view") === "approvals"');
     expect(body).toContain('$page.url.searchParams.get("request")');
-    expect(body).toContain('$page.url.searchParams.get("section9")');
+    // #840 D-840-05: ?section9=<id> is now handled by /inbox (840-10 maps old links there).
+    expect(body).not.toContain('$page.url.searchParams.get("section9")');
     expect(body).toContain('view = "approvals"');
   });
 
@@ -167,7 +167,7 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     expect(run).toContain("requestAnimationFrame(");
     expect(run).toContain("scrollIntoView(");
     expect(run).toContain("`request-${");
-    expect(run).toContain("`section9-${");
+    expect(run).not.toContain("`section9-${"); // #840 D-840-05: the § 9 highlight moved to /inbox
     expect(run).toContain("setTimeout(");
     const effect = salonEffectBody();
     const loaded = effect.indexOf("await loadData()");
@@ -198,7 +198,6 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
   });
 
   it("[existing reloads] the write paths still call the same loaders", () => {
-    expect(PAGE).toContain("await Promise.all([loadData(), loadCalendar(), loadSection9Cases()]);");
     expect(PAGE).toContain("await Promise.all([loadData(), loadCalendar()]);");
   });
 });

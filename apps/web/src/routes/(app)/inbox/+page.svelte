@@ -11,6 +11,7 @@
   import KPIStat from "$components/ui/KPIStat.svelte";
   import ApprovalRow from "$components/ui/ApprovalRow.svelte";
   import Modal from "$components/ui/Modal.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // § 9 reject reason (moved from /team/leave, #840)
   import EmptyState from "$components/ui/EmptyState.svelte";
   import { LEAVE_TYPE_OPTIONS, type CalendarTypeCode } from "$lib/leave/team-calendar-visibility"; // Phase 262, Phase 255
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
@@ -107,6 +108,11 @@
   let retroEditEndTime = $state("");
   let retroEditBreakMinutes = $state(0);
 
+  // Hint only (T-840-28): shows the § 9 section to holders of either § 9 key.
+  const canSection9 = $derived(
+    hasAnyPermission($authStore.user, ["section9:read:ZUGEWIESEN", "section9:decide:ZUGEWIESEN"]),
+  );
+
   // ── Permission gate (Phase 378, #378) ─────────────────────────────────────
   // Either approve permission is enough — this Postfach approves both leave requests and
   // Zeitnachträge. A Salonmanager (Salon-Scope role assignment) holds both; an Ausbilder holds
@@ -122,6 +128,10 @@
     }
     void loadRequests();
     void loadRetroRequests();
+    // The § 9 section is only a UX hint: the API answers 403 without `section9:read` and decides
+    // every action by `section9:decide`.
+    if (canSection9) void loadSection9Cases();
+    else section9Loading = false;
   });
 
   // ── Data loading ─────────────────────────────────────────────────────────
@@ -291,6 +301,165 @@
       retroReviewSaving = false;
     }
   }
+
+  // ── § 9 BUrlG — "AU liegt vor" (Phase 104-10, R6/D-27/D-11/D-26; moved here from /team/leave, #840) ──
+  interface Section9Case {
+    id: string;
+    employeeId: string;
+    employeeName: string;
+    // #468: GET /leave/section9 can also return SUPERSEDED — a CONFIRMED credit a correction
+    // (PATCH /correct) made obsolete, never an open case (the filter below still only lists
+    // AU_PENDING and REJECTED).
+    status: "AU_PENDING" | "CONFIRMED" | "REJECTED" | "SUPERSEDED";
+    overlapStart: string;
+    overlapEnd: string;
+    creditedStart: string | null;
+    creditedEnd: string | null;
+    creditedDays: number | null;
+    attestSource: string | null;
+    attestValidFrom: string | null;
+    attestValidTo: string | null;
+    reason: string | null;
+    sickRequest: { id: string; startDate: string; endDate: string; status: string };
+    vacationRequest: {
+      id: string;
+      startDate: string;
+      endDate: string;
+      halfDay: boolean;
+      days: number;
+      typeName: string;
+    };
+  }
+
+  let section9Cases: Section9Case[] = $state([]);
+  let section9Loading = $state(true);
+  let highlightSection9Id: string | null = $state(null);
+
+  // The inbox is a work queue and stays unfiltered (#558): a due § 9 decision must never be hidden
+  // by the header selection, so this read sends no salon parameter and the API scopes it by reach.
+  // A newer response always wins over an older one (plain counter, not reactive on purpose).
+  let section9Generation = 0;
+
+  async function loadSection9Cases() {
+    const generation = ++section9Generation;
+    section9Loading = true;
+    try {
+      const cases = await api.get<Section9Case[]>("/leave/section9");
+      if (generation !== section9Generation) return;
+      section9Cases = cases;
+    } catch {
+      // 403/404 or a transient failure: a calm empty section, never an error alert.
+      if (generation !== section9Generation) return;
+      section9Cases = [];
+    } finally {
+      if (generation === section9Generation) section9Loading = false;
+    }
+  }
+
+  // ── Confirm-Dialog ("AU liegt vor") ──────────────────────────────────────
+  let section9ConfirmCase: Section9Case | null = $state(null);
+  let section9ConfirmOpen = $state(false);
+  let section9AttestFrom = $state("");
+  let section9AttestTo = $state("");
+  let section9AttestSource: "EAU" | "PAPIER" = $state("EAU");
+  let section9File: File | null = $state(null);
+  let section9Reason = $state("");
+  let section9Saving = $state(false);
+  let section9Error = $state("");
+
+  function openSection9Confirm(c: Section9Case) {
+    section9ConfirmCase = c;
+    section9AttestFrom = c.overlapStart;
+    section9AttestTo = c.overlapEnd;
+    section9AttestSource = "EAU";
+    section9File = null;
+    section9Reason = "";
+    section9Error = "";
+    section9ConfirmOpen = true;
+  }
+
+  function closeSection9Confirm() {
+    section9ConfirmOpen = false;
+    section9ConfirmCase = null;
+  }
+
+  // D-26: `api.post` always JSON.stringifies its body and cannot carry multipart/form-data,
+  // so this goes through `api.upload` — which, unlike the previous raw fetch (Phase 104
+  // review IN-06), shares the client's 401-refresh-and-retry. That matters here more than
+  // elsewhere: the upload runs BEFORE the confirm call, so an expired access token used to
+  // abort the whole "AU liegt vor" flow with "Upload fehlgeschlagen (401)".
+  async function uploadSection9Document(creditId: string, file: File): Promise<void> {
+    const formData = new FormData();
+    formData.append("file", file);
+    await api.upload(`/section9-documents/${creditId}`, formData);
+  }
+
+  async function submitSection9Confirm() {
+    if (!section9ConfirmCase) return;
+    const reason = section9Reason.trim();
+    if (!reason) {
+      section9Error = "Begründung ist erforderlich (revisionssicherheitspflichtig).";
+      return;
+    }
+    section9Saving = true;
+    section9Error = "";
+    try {
+      // T-104-10-PARTIAL: upload FIRST — a CONFIRMED case must never claim a paper
+      // certificate that was never actually stored. Only relevant when a file was
+      // actually chosen; "Papier" without a file just means the paper original is
+      // kept outside the system (documentPath stays null).
+      if (section9AttestSource === "PAPIER" && section9File) {
+        await uploadSection9Document(section9ConfirmCase.id, section9File);
+      }
+      await api.post(`/leave/section9/${section9ConfirmCase.id}/confirm`, {
+        attestSource: section9AttestSource,
+        attestValidFrom: section9AttestFrom,
+        attestValidTo: section9AttestTo,
+        reason,
+      });
+      closeSection9Confirm();
+      await Promise.all([loadRequests(), loadSection9Cases()]);
+      toasts.success("AU bestätigt — Urlaubstage gutgeschrieben");
+    } catch (e: unknown) {
+      section9Error = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      section9Saving = false;
+    }
+  }
+
+  // ── Ablehnen / Wieder eröffnen (D-11) ────────────────────────────────────
+  let section9RejectCase: Section9Case | null = $state(null);
+  let section9RejectOpen = $state(false);
+
+  function openSection9Reject(c: Section9Case) {
+    section9RejectCase = c;
+    section9RejectOpen = true;
+  }
+
+  async function confirmSection9Reject(reason: string) {
+    if (!section9RejectCase) return;
+    await api.post(`/leave/section9/${section9RejectCase.id}/reject`, { reason });
+    section9RejectCase = null;
+    await Promise.all([loadRequests(), loadSection9Cases()]);
+    toasts.success("AU-Vorgang abgelehnt");
+  }
+
+  async function reopenSection9Case(c: Section9Case) {
+    try {
+      await api.post(`/leave/section9/${c.id}/reopen`, {});
+      await loadSection9Cases();
+      toasts.success("Vorgang wieder eröffnet");
+    } catch (e: unknown) {
+      toasts.error(e instanceof Error ? e.message : "Fehler");
+    }
+  }
+
+  // Phase 104-10: AU_PENDING (needs "AU liegt vor" / Ablehnen) and REJECTED (needs Wieder
+  // eröffnen) — a CONFIRMED case is resolved and shown via the badge on the requests table
+  // instead.
+  let openSection9Cases = $derived(
+    section9Cases.filter((c) => c.status === "AU_PENDING" || c.status === "REJECTED"),
+  );
 </script>
 
 <svelte:head>
@@ -617,6 +786,84 @@
   {/if}
 </Card>
 
+<!-- ── § 9 BUrlG — Fälle (Phase 104-10, R6/D-27/D-11; moved here from /team/leave, #840 D-840-05) ── -->
+{#if canSection9}
+  <Card animate class="list-card section9-list-card" style="padding: 0;">
+    <div class="list-card-header">
+      <CardHeader
+        title="§ 9-Fälle"
+        sub="§ 9 BUrlG — Urlaub und Krankheit überschneiden sich, die AU wartet auf deine Entscheidung"
+      />
+    </div>
+    <div class="section9-cases" data-testid="section9-cases-list">
+      {#if section9Loading}
+        <div class="list-empty">Lädt…</div>
+      {:else if openSection9Cases.length === 0}
+        <EmptyState
+          icon="inbox"
+          title="Keine offenen § 9-Fälle"
+          description="Es wartet keine Entscheidung zu einer Arbeitsunfähigkeit im Urlaub."
+        />
+      {:else}
+        {#each openSection9Cases as c (c.id)}
+          <div
+            class="section9-case-row"
+            id="section9-{c.id}"
+            class:highlight-row={highlightSection9Id === c.id}
+          >
+            <div class="pending-info">
+              <span class="pending-name">{c.employeeName}</span>
+              <span class="pending-type">
+                Urlaub {fmtDate(c.vacationRequest.startDate)}–{fmtDate(c.vacationRequest.endDate)} · Krank
+                {fmtDate(c.sickRequest.startDate)}–{fmtDate(c.sickRequest.endDate)}
+              </span>
+              {#if c.status === "REJECTED"}
+                <span class="badge badge-red" data-testid="section9-case-status">AU abgelehnt</span>
+                {#if c.reason}
+                  <span class="text-muted" title={c.reason}>„{c.reason}"</span>
+                {/if}
+              {:else}
+                <span class="badge badge-yellow" data-testid="section9-case-status"
+                  >AU ausstehend</span
+                >
+              {/if}
+            </div>
+            <div class="section9-case-actions">
+              {#if c.status === "AU_PENDING"}
+                <button
+                  class="btn btn-sm btn-primary"
+                  data-testid={`section9-case-${c.id}-confirm`}
+                  onclick={() => openSection9Confirm(c)}
+                >
+                  AU liegt vor
+                </button>
+                <button
+                  class="btn btn-sm btn-ghost text-red"
+                  data-testid={`section9-case-${c.id}-reject`}
+                  onclick={() => openSection9Reject(c)}
+                >
+                  Ablehnen
+                </button>
+              {:else if c.status === "REJECTED"}
+                <button
+                  class="btn btn-sm btn-ghost"
+                  data-testid={`section9-case-${c.id}-reopen`}
+                  onclick={() => reopenSection9Case(c)}
+                >
+                  Wieder eröffnen
+                </button>
+                <p class="section9-case-hint text-muted">
+                  Trifft die AU später ein, kann der Vorgang wieder eröffnet werden.
+                </p>
+              {/if}
+            </div>
+          </div>
+        {/each}
+      {/if}
+    </div>
+  </Card>
+{/if}
+
 <!-- ── Retro detail/review modal ──────────────────────────────────────── -->
 {#if retroDetail}
   <Modal
@@ -760,6 +1007,126 @@
       {/if}
     {/snippet}
   </Modal>
+{/if}
+
+<!-- ── Phase 104-10 (R6/D-27/D-26): "AU liegt vor" — Confirm-Dialog ─────────── -->
+{#if section9ConfirmCase}
+  <Modal bind:open={section9ConfirmOpen} eyebrow="§ 9 BUrlG" title="AU liegt vor">
+    <div data-testid="section9-confirm-modal" style="display: contents">
+      <div class="review-grid">
+        <div class="review-field">
+          <span class="review-label">Mitarbeiter</span>
+          <span class="review-value">{section9ConfirmCase.employeeName}</span>
+        </div>
+        <div class="review-field">
+          <span class="review-label">Überschneidung</span>
+          <span class="review-value font-mono"
+            >{fmtDate(section9ConfirmCase.overlapStart)} – {fmtDate(
+              section9ConfirmCase.overlapEnd,
+            )}</span
+          >
+        </div>
+      </div>
+
+      <div class="form-group review-section">
+        <span class="form-label">Gültigkeit der AU</span>
+        <div class="attest-dates">
+          <div class="form-group">
+            <label class="form-label" for="s9-from">Gültig von</label>
+            <input
+              id="s9-from"
+              type="date"
+              bind:value={section9AttestFrom}
+              class="form-input attest-date-input"
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="s9-to">Gültig bis</label>
+            <input
+              id="s9-to"
+              type="date"
+              bind:value={section9AttestTo}
+              class="form-input attest-date-input"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group review-section">
+        <span class="form-label">Herkunft</span>
+        <label class="toggle-label">
+          <input type="radio" name="s9-source" value="EAU" bind:group={section9AttestSource} />
+          <span>eAU abgerufen</span>
+        </label>
+        <label class="toggle-label">
+          <input type="radio" name="s9-source" value="PAPIER" bind:group={section9AttestSource} />
+          <span>Papier</span>
+        </label>
+      </div>
+
+      {#if section9AttestSource === "PAPIER"}
+        <div class="form-group review-section">
+          <label class="form-label" for="s9-file">Papier-AU (optional)</label>
+          <input
+            id="s9-file"
+            type="file"
+            accept="application/pdf,image/jpeg,image/png"
+            class="form-input"
+            onchange={(e) => (section9File = (e.target as HTMLInputElement).files?.[0] ?? null)}
+          />
+          <p class="text-muted section9-hint">PDF, JPG oder PNG, max. 10 MB.</p>
+        </div>
+      {/if}
+
+      <div class="form-group review-section">
+        <label class="form-label" for="s9-reason">Begründung</label>
+        <textarea
+          id="s9-reason"
+          class="form-input"
+          rows="2"
+          bind:value={section9Reason}
+          placeholder="Verwaltungsvermerk zur Nachvollziehbarkeit"
+        ></textarea>
+        <p class="text-muted section9-hint">
+          Verwaltungsvermerk zur Nachvollziehbarkeit — bitte keine Diagnose oder Arztangaben
+          eintragen.
+        </p>
+      </div>
+
+      {#if section9Error}
+        <div class="alert alert-error review-error" role="alert">
+          <span>⚠</span><span>{section9Error}</span>
+        </div>
+      {/if}
+    </div>
+
+    {#snippet footer()}
+      <button class="btn btn-ghost" onclick={closeSection9Confirm} disabled={section9Saving}>
+        Abbrechen
+      </button>
+      <button
+        class="btn btn-primary"
+        data-testid="section9-confirm-submit"
+        onclick={submitSection9Confirm}
+        disabled={section9Saving || !section9Reason.trim()}
+      >
+        {section9Saving ? "…" : "Bestätigen"}
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
+
+<!-- ── Phase 104-10 (D-11): "AU liegt vor" — Ablehnen-Begründung ─────────────── -->
+{#if section9RejectCase}
+  <ReasonDialog
+    bind:open={section9RejectOpen}
+    title="AU ablehnen"
+    description="Trifft die AU später ein, kann der Vorgang wieder eröffnet werden."
+    confirmLabel="Ablehnen"
+    danger
+    onConfirm={confirmSection9Reject}
+    onCancel={() => (section9RejectCase = null)}
+  />
 {/if}
 
 <!-- ── Leave detail modal (Phase 255: the shared LeaveReviewDialog component) ──────── -->
@@ -913,5 +1280,114 @@
   }
   .spacer {
     flex: 1;
+  }
+
+  /* ── § 9 cases (moved from /team/leave, #840) ─────────────────────────── */
+  .section9-cases {
+    display: flex;
+    flex-direction: column;
+    padding: 0 18px;
+  }
+  .section9-case-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--border);
+  }
+  .section9-case-row:first-child {
+    border-top: none;
+  }
+  .section9-case-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .section9-case-hint {
+    font-size: 0.8125rem;
+    margin: 0;
+  }
+  .section9-hint {
+    font-size: 0.8125rem;
+    margin: 0.25rem 0 0;
+  }
+  .pending-info {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .pending-name {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .pending-type {
+    color: var(--brand);
+    font-weight: 500;
+  }
+  @keyframes highlight-fade {
+    0% {
+      background-color: var(--brand-soft);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+  .highlight-row {
+    animation: highlight-fade 3s var(--ease-out) both;
+  }
+
+  /* Modal body of the "AU liegt vor" dialog. */
+  .attest-dates {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
+  }
+  .attest-date-input {
+    max-width: 160px;
+  }
+  .toggle-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .review-error {
+    margin-top: 0.75rem;
+  }
+  .review-section {
+    margin-top: 1.25rem;
+  }
+  .review-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem 1.5rem;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 1rem 1.25rem;
+  }
+  .review-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+  .review-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+  .review-value {
+    font-size: 0.9375rem;
+    font-weight: 500;
   }
 </style>
