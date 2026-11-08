@@ -12549,6 +12549,346 @@
         "error": "Forbidden",
         "ids": []
       }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "foreign.leaveRequest.approved",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "foreign.leaveRequest.approved:null:unnamed:s9=null",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "EMPLOYEE | GET /api/v1/leave/calendar | june",
+      "reason": "Issue #840, Akzeptanzkriterien AC-4 und AC-5 (für Personen außerhalb der Reichweite keine Art, kein Status, kein halber Tag und kein § 9; Reichweite je Person statt bloßer Berechtigungsprüfung) und Owner-Entscheidung E-03 (fremde Abwesenheiten nur als „abwesend“). Umgesetzt mit der Reichweite leave-request:read je Person und Stammsalon-Tag: Eine fremde Abwesenheit außerhalb der Reichweite erscheint nur noch als Zeile mit Name und Zeitraum, ohne Kennung. Dass fremde beantragte Zeilen entfallen und angrenzende Zeiträume einer Person zusammengeführt werden, ist eine vom Planungsagenten getroffene Grauzonen-Entscheidung (D-840-19), auf Issue #840 dokumentiert; die Abnahme durch den Owner steht aus. Akteure mit mandantenweiter Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "foreign.employee",
+          "foreign.leaveRequest.section9Vacation",
+          "foreign.leaveRequest.sick",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "foreign.leaveRequest.section9Vacation:null:unnamed:s9=null",
+            "foreign.leaveRequest.sick:null:unnamed:s9=null",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "EMPLOYEE | GET /api/v1/leave/calendar | may",
+      "reason": "Issue #840, Akzeptanzkriterien AC-4 und AC-5 (für Personen außerhalb der Reichweite keine Art, kein Status, kein halber Tag und kein § 9; Reichweite je Person statt bloßer Berechtigungsprüfung) und Owner-Entscheidung E-03 (fremde Abwesenheiten nur als „abwesend“). Umgesetzt mit der Reichweite leave-request:read je Person und Stammsalon-Tag: Eine fremde Abwesenheit außerhalb der Reichweite erscheint nur noch als Zeile mit Name und Zeitraum, ohne Kennung. Dass fremde beantragte Zeilen entfallen und angrenzende Zeiträume einer Person zusammengeführt werden, ist eine vom Planungsagenten getroffene Grauzonen-Entscheidung (D-840-19), auf Issue #840 dokumentiert; die Abnahme durch den Owner steht aus. Akteure mit mandantenweiter Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "foreign.leaveRequest.approved",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "foreign.leaveRequest.approved:null:unnamed:s9=null",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_ADMIN | GET /api/v1/leave/calendar | june",
+      "reason": "Issue #840, Akzeptanzkriterien AC-4 und AC-5 (für Personen außerhalb der Reichweite keine Art, kein Status, kein halber Tag und kein § 9; Reichweite je Person statt bloßer Berechtigungsprüfung) und Owner-Entscheidung E-03 (fremde Abwesenheiten nur als „abwesend“). Umgesetzt mit der Reichweite leave-request:read je Person und Stammsalon-Tag: Eine fremde Abwesenheit außerhalb der Reichweite erscheint nur noch als Zeile mit Name und Zeitraum, ohne Kennung. Dass fremde beantragte Zeilen entfallen und angrenzende Zeiträume einer Person zusammengeführt werden, ist eine vom Planungsagenten getroffene Grauzonen-Entscheidung (D-840-19), auf Issue #840 dokumentiert; die Abnahme durch den Owner steht aus. Akteure mit mandantenweiter Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "foreign.employee",
+          "foreign.leaveRequest.section9Vacation",
+          "foreign.leaveRequest.sick",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "foreign.leaveRequest.section9Vacation:null:unnamed:s9=null",
+            "foreign.leaveRequest.sick:null:unnamed:s9=null",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_ADMIN | GET /api/v1/leave/calendar | may",
+      "reason": "Issue #840, Akzeptanzkriterien AC-4 und AC-5 (für Personen außerhalb der Reichweite keine Art, kein Status, kein halber Tag und kein § 9; Reichweite je Person statt bloßer Berechtigungsprüfung) und Owner-Entscheidung E-03 (fremde Abwesenheiten nur als „abwesend“). Umgesetzt mit der Reichweite leave-request:read je Person und Stammsalon-Tag: Eine fremde Abwesenheit außerhalb der Reichweite erscheint nur noch als Zeile mit Name und Zeitraum, ohne Kennung. Dass fremde beantragte Zeilen entfallen und angrenzende Zeiträume einer Person zusammengeführt werden, ist eine vom Planungsagenten getroffene Grauzonen-Entscheidung (D-840-19), auf Issue #840 dokumentiert; die Abnahme durch den Owner steht aus. Akteure mit mandantenweiter Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "foreign.leaveRequest.approved",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "foreign.leaveRequest.approved:null:unnamed:s9=null",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_EMPLOYEE | GET /api/v1/leave/calendar | june",
+      "reason": "Issue #840, Akzeptanzkriterien AC-4 und AC-5 (für Personen außerhalb der Reichweite keine Art, kein Status, kein halber Tag und kein § 9; Reichweite je Person statt bloßer Berechtigungsprüfung) und Owner-Entscheidung E-03 (fremde Abwesenheiten nur als „abwesend“). Umgesetzt mit der Reichweite leave-request:read je Person und Stammsalon-Tag: Eine fremde Abwesenheit außerhalb der Reichweite erscheint nur noch als Zeile mit Name und Zeitraum, ohne Kennung. Dass fremde beantragte Zeilen entfallen und angrenzende Zeiträume einer Person zusammengeführt werden, ist eine vom Planungsagenten getroffene Grauzonen-Entscheidung (D-840-19), auf Issue #840 dokumentiert; die Abnahme durch den Owner steht aus. Akteure mit mandantenweiter Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "foreign.employee",
+          "foreign.leaveRequest.section9Vacation",
+          "foreign.leaveRequest.sick",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "foreign.leaveRequest.section9Vacation:null:unnamed:s9=null",
+            "foreign.leaveRequest.sick:null:unnamed:s9=null",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_EMPLOYEE | GET /api/v1/leave/calendar | may",
+      "reason": "Issue #840, Akzeptanzkriterien AC-4 und AC-5 (für Personen außerhalb der Reichweite keine Art, kein Status, kein halber Tag und kein § 9; Reichweite je Person statt bloßer Berechtigungsprüfung) und Owner-Entscheidung E-03 (fremde Abwesenheiten nur als „abwesend“). Umgesetzt mit der Reichweite leave-request:read je Person und Stammsalon-Tag: Eine fremde Abwesenheit außerhalb der Reichweite erscheint nur noch als Zeile mit Name und Zeitraum, ohne Kennung. Dass fremde beantragte Zeilen entfallen und angrenzende Zeiträume einer Person zusammengeführt werden, ist eine vom Planungsagenten getroffene Grauzonen-Entscheidung (D-840-19), auf Issue #840 dokumentiert; die Abnahme durch den Owner steht aus. Akteure mit mandantenweiter Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "foreign.leaveRequest.approved",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "foreign.leaveRequest.approved:null:unnamed:s9=null",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_MANAGER | GET /api/v1/leave/calendar | june",
+      "reason": "Issue #840, Akzeptanzkriterien AC-4 und AC-5 (für Personen außerhalb der Reichweite keine Art, kein Status, kein halber Tag und kein § 9; Reichweite je Person statt bloßer Berechtigungsprüfung) und Owner-Entscheidung E-03 (fremde Abwesenheiten nur als „abwesend“). Umgesetzt mit der Reichweite leave-request:read je Person und Stammsalon-Tag: Eine fremde Abwesenheit außerhalb der Reichweite erscheint nur noch als Zeile mit Name und Zeitraum, ohne Kennung. Dass fremde beantragte Zeilen entfallen und angrenzende Zeiträume einer Person zusammengeführt werden, ist eine vom Planungsagenten getroffene Grauzonen-Entscheidung (D-840-19), auf Issue #840 dokumentiert; die Abnahme durch den Owner steht aus. Akteure mit mandantenweiter Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "foreign.employee",
+          "foreign.leaveRequest.section9Vacation",
+          "foreign.leaveRequest.sick",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "foreign.leaveRequest.section9Vacation:null:unnamed:s9=null",
+            "foreign.leaveRequest.sick:null:unnamed:s9=null",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_MANAGER | GET /api/v1/leave/calendar | may",
+      "reason": "Issue #840, Akzeptanzkriterien AC-4 und AC-5 (für Personen außerhalb der Reichweite keine Art, kein Status, kein halber Tag und kein § 9; Reichweite je Person statt bloßer Berechtigungsprüfung) und Owner-Entscheidung E-03 (fremde Abwesenheiten nur als „abwesend“). Umgesetzt mit der Reichweite leave-request:read je Person und Stammsalon-Tag: Eine fremde Abwesenheit außerhalb der Reichweite erscheint nur noch als Zeile mit Name und Zeitraum, ohne Kennung. Dass fremde beantragte Zeilen entfallen und angrenzende Zeiträume einer Person zusammengeführt werden, ist eine vom Planungsagenten getroffene Grauzonen-Entscheidung (D-840-19), auf Issue #840 dokumentiert; die Abnahme durch den Owner steht aus. Akteure mit mandantenweiter Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      }
     }
   ]
 }
