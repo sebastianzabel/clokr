@@ -1298,7 +1298,12 @@
 {#if view === "uebersicht"}
   <div class="card card-animate overview-card" data-testid="leave-overview">
     {#if overviewRows.length > 0}
-      <AbsenceTimeline rows={overviewRows} period={overviewPeriod} holidays={overviewHolidays} />
+      <AbsenceTimeline
+        rows={overviewRows}
+        period={overviewPeriod}
+        holidays={overviewHolidays}
+        today={toLocalDateStr(new Date())}
+      />
     {:else if overviewLoading}
       <p class="overview-empty">Lade Abwesenheiten …</p>
     {:else}
