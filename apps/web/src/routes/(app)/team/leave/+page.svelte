@@ -37,6 +37,7 @@
     calendarRangeQuery,
     calendarToTimeline,
     dayColumns,
+    hasMixedWeek,
     periodOf,
     shiftPeriod,
     weekLoad,
@@ -818,6 +819,10 @@
         holiday: daily && overviewHolidays.length > 0,
         closed: daily && closedDays.days.size > 0,
         today: daily,
+        // Issue 840 G-4: „Mehrere Arten“ only in Jahr and only when such a week is in view.
+        mixed:
+          !daily &&
+          hasMixedWeek(overviewPeople, overviewPeriod.year, workdaySet(werktage), overviewHolidays),
       },
       closedHint: closedDays.hint ? CLOSED_DAYS_HINT : null,
     };

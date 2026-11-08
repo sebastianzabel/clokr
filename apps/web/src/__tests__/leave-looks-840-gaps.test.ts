@@ -162,7 +162,71 @@ const barOf = (over: Partial<TimelineBar>): TimelineBar => ({
   ...over,
 });
 
+const MODES = {
+  light: SURFACES["editorial-light"],
+  dark: SURFACES["editorial-dark"],
+} as const;
+
+const HOSTS = [
+  "routes/(app)/team/leave/+page.svelte",
+  "routes/(app)/leave/+page.svelte",
+  "lib/components/leave/LeavePlanningPanel.svelte",
+] as const;
+
 describe("#840 G-4 one look, one meaning", () => {
+  describe("the solid neutral looks are pairwise apart in light and dark", () => {
+    for (const [mode, blocks] of Object.entries(MODES)) {
+      const colorOf = (token: string) =>
+        over(resolveColor(TOKENS, blocks, `var(${token})`), cardSurface(TOKENS, blocks));
+      const looks = {
+        Abwesend: "--leave-type-absent",
+        // BLOCKED (840-15 Task 3, see the SUMMARY): "Andere Abwesenheit" (--leave-type-default) still
+        // equals "Unbezahlter Urlaub" until leave-chip-contrast.test.ts Test 5, which pins the
+        // default literals, may be amended; its pairwise cases are added with the colour change.
+        "Unbezahlter Urlaub": "--leave-type-unpaid",
+      };
+      const names = Object.keys(looks) as Array<keyof typeof looks>;
+      for (let i = 0; i < names.length; i++) {
+        for (let j = i + 1; j < names.length; j++) {
+          it(`${mode}: ${names[i]} vs ${names[j]} are at least 1.3:1 apart`, () => {
+            expect(
+              contrast(colorOf(looks[names[i]]), colorOf(looks[names[j]])),
+            ).toBeGreaterThanOrEqual(1.3);
+          });
+        }
+      }
+
+      it(`${mode}: the unknown-type fill keeps its -text partner at WCAG AA`, () => {
+        const fill = colorOf("--leave-type-default");
+        const text = colorOf("--leave-type-default-text");
+        expect(contrast(fill, text)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  });
+
+  describe("Mehrere Arten differs from Abwesend by pattern", () => {
+    it("the timeline draws the mixed cell striped and the masked cell solid", () => {
+      const rule = ruleBody(TIMELINE_SRC, ".tl-week--mixed .tl-week-fill");
+      expect(rule).toContain("repeating-linear-gradient");
+      expect(ruleBody(TIMELINE_SRC, ".tl-week-fill")).not.toContain("repeating-linear-gradient");
+    });
+
+    it("the legend swatch of Mehrere Arten is striped, the Abwesend swatch is not", () => {
+      expect(ruleBody(LEGEND_SRC, ".legend-swatch--mixed")).toContain("repeating-linear-gradient");
+      expect(LEGEND_SRC).not.toMatch(/\.legend-swatch--abwesend\s*\{/);
+    });
+  });
+
+  describe("the legend hosts", () => {
+    for (const host of HOSTS) {
+      it(`${host} passes mixed only for Jahr, computed with hasMixedWeek(`, () => {
+        const source = readSource(`../${host}`, `src/${host}`);
+        expect(source).toContain("hasMixedWeek(");
+        expect(source).toMatch(/mixed:\s*!daily\s*&&\s*hasMixedWeek\(/);
+      });
+    }
+  });
+
   describe("mounted Jahr timeline: a mixed week", () => {
     const rows: TimelinePerson[] = [
       {

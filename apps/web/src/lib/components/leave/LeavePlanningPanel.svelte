@@ -31,6 +31,7 @@
   import ManagePlanDialog from "$lib/components/leave/ManagePlanDialog.svelte";
   import { legendFrom } from "$lib/leave/leave-colors";
   import {
+    hasMixedWeek,
     plannerToTimeline,
     weekLoad,
     workdaySet,
@@ -275,6 +276,15 @@
         holiday: daily && (timeline?.holidays.length ?? 0) > 0,
         closed: daily && closedDays.days.size > 0,
         today: daily,
+        // Issue 840 G-4: „Mehrere Arten“ only in Jahr and only when such a week is in view.
+        mixed:
+          !daily &&
+          hasMixedWeek(
+            timeline?.rows ?? [],
+            period.year,
+            workdaySet(closedWeekdays),
+            timeline?.holidays ?? [],
+          ),
       },
     };
   });

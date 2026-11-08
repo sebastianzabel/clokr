@@ -6,12 +6,18 @@ import { renderWithTheme } from "$tests/test-utils";
 import LeaveLegend from "../LeaveLegend.svelte";
 import { CLOSED_DAYS_HINT_SEVERAL_SALONS } from "$lib/leave-plan/labels";
 import { LEAVE_TYPES } from "$lib/leave/team-calendar-visibility";
-import { leaveTypeColor } from "$lib/leave/leave-colors";
+import { MIXED, leaveTypeColor } from "$lib/leave/leave-colors";
 
 type Props = {
   typeCodes: string[];
   styles: Array<"gesetzt" | "beantragt" | "wunsch" | "abwesend">;
-  markings?: { weekend?: boolean; holiday?: boolean; closed?: boolean; today?: boolean };
+  markings?: {
+    weekend?: boolean;
+    holiday?: boolean;
+    closed?: boolean;
+    today?: boolean;
+    mixed?: boolean;
+  };
   closedHint?: string | null;
   holidayLook?: "timeline" | "calendar";
 };
@@ -78,7 +84,36 @@ describe("styles", () => {
     expect(swatchOf(absent).style.getPropertyValue("--swatch")).toBe(
       `var(${leaveTypeColor(null).fill})`,
     );
-    expect(screen.getByTestId("legend-style-gesetzt").textContent).toContain("Gesetzt");
+    // #840 G-4: the style keys name the look and the status
+    expect(screen.getByTestId("legend-style-gesetzt").textContent).toContain("Genehmigt (voll)");
+  });
+
+  it("names the four style keys with exactly the agreed texts", () => {
+    render({ typeCodes: [], styles: ["gesetzt", "beantragt", "wunsch", "abwesend"] });
+    const text = (style: string) => screen.getByTestId(`legend-style-${style}`).textContent;
+    expect(text("gesetzt")).toBe("Genehmigt (voll)");
+    expect(text("beantragt")).toBe("Beantragt (gestrichelt)");
+    expect(text("wunsch")).toBe("Wunsch (gestreift)");
+    expect(text("abwesend")).toBe("Abwesend");
+  });
+
+  it("draws voll and gestrichelt in the colour of the first type the legend names", () => {
+    render({ typeCodes: ["SICK", "VACATION"], styles: ["gesetzt", "beantragt"] });
+    const expected = `var(${leaveTypeColor("SICK").fill})`;
+    for (const style of ["gesetzt", "beantragt"]) {
+      expect(
+        swatchOf(screen.getByTestId(`legend-style-${style}`)).style.getPropertyValue("--swatch"),
+      ).toBe(expected);
+    }
+  });
+
+  it("draws voll and gestrichelt in the brand colour when the legend names no type", () => {
+    render({ typeCodes: [], styles: ["gesetzt", "beantragt"] });
+    for (const style of ["gesetzt", "beantragt"]) {
+      expect(
+        swatchOf(screen.getByTestId(`legend-style-${style}`)).style.getPropertyValue("--swatch"),
+      ).toBe("var(--brand)");
+    }
   });
 });
 
@@ -93,6 +128,20 @@ describe("markings and the closed-day hint", () => {
     expect(screen.getByTestId("legend-marking-holiday").textContent).toContain("Feiertag");
     expect(screen.getByTestId("legend-marking-today").textContent).toContain("Heute");
     expect(screen.queryByTestId("legend-marking-closed")).toBeNull();
+  });
+
+  it("names the mixed Jahr look only when the host passes it", () => {
+    render({ typeCodes: [], styles: [], markings: { mixed: true } });
+    const entry = screen.getByTestId("legend-marking-mixed");
+    expect(entry.textContent).toContain("Mehrere Arten");
+    expect(swatchOf(entry).className).toContain("legend-swatch--mixed");
+    expect(swatchOf(entry).style.getPropertyValue("--swatch")).toBe(`var(${MIXED.fill})`);
+  });
+
+  it("renders no mixed entry without markings.mixed", () => {
+    render({ typeCodes: [], styles: [], markings: { weekend: true } });
+    expect(screen.queryByTestId("legend-marking-mixed")).toBeNull();
+    expect(screen.queryByText("Mehrere Arten")).toBeNull();
   });
 
   it("the holiday swatch follows the look of the host", () => {
