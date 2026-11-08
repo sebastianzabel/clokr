@@ -158,3 +158,88 @@ describe("Issue #840 E-01 - one page, one toolbar, one timeline", () => {
     expect(PAGE).not.toContain("salonScopeLabel");
   });
 });
+
+describe("Issue #840 E-02 - Anträge: a status filter, open requests marked, decisions only in the inbox", () => {
+  it("[status filter] six options, the state lives in the URL and the select writes it with replaceState", () => {
+    const at = PAGE.indexOf('data-testid="leave-team-filter-status"');
+    expect(at).toBeGreaterThan(-1);
+    const select = PAGE.slice(PAGE.lastIndexOf("<select", at), PAGE.indexOf("</select>", at));
+    for (const option of [
+      '<option value="">Alle Status</option>',
+      '<option value="PENDING">Offen</option>',
+      '<option value="APPROVED">Genehmigt</option>',
+      '<option value="CANCELLATION_REQUESTED">Storno angefragt</option>',
+      '<option value="REJECTED">Abgelehnt</option>',
+      '<option value="CANCELLED">Storniert</option>',
+    ]) {
+      expect(select, option).toContain(option);
+    }
+    expect(select).toContain("value={filterLeaveStatus}");
+    expect(select).toContain("void navigate({ status:");
+    expect(select).toContain("}, true)");
+    expect(PAGE).toContain(
+      'const filterLeaveStatus = $derived<LeaveStatusFilter | "">(urlState.status ?? "")',
+    );
+  });
+
+  it("[open requests of every year] the open filters read the merged list, never only the year list", () => {
+    expect(PAGE).toContain("requestsForStatus(urlState.status, allTeamRequests, pendingRequests)");
+    expect(PAGE).toContain("requestSource.filter(");
+    expect(PAGE).toContain("<Pagination");
+  });
+
+  it("[PENDING marking] an open row carries the „Offen“ badge and the dashed chip of the beantragt style", () => {
+    expect(functionBody("statusLabel")).toContain('? "Offen"');
+    expect(PAGE).not.toContain('"Ausstehend"');
+    expect(PAGE).toContain('class:req-chip--requested={req.status === "PENDING"}');
+    expect(PAGE).toContain("data-row-status={req.status}");
+    expect(PAGE).toContain("border: 1.5px dashed currentColor;");
+    expect(PAGE).toContain('class="badge {statusClass(req.status)}"');
+  });
+
+  it("[inbox link] the open row's action leads to the inbox, only behind the approve hint", () => {
+    const at = PAGE.indexOf("/inbox?request=");
+    expect(at).toBeGreaterThan(-1);
+    expect(count(PAGE, "/inbox?request=")).toBe(1);
+    // The link is rendered inside `{#if canApproveHint}` (Pitfall 7: readers see the badge, not the action).
+    const gate = PAGE.lastIndexOf("{#if canApproveHint}", at);
+    expect(gate).toBeGreaterThan(-1);
+    expect(PAGE.slice(gate, at)).not.toContain("{/if}");
+    expect(PAGE).toContain(
+      'const canApproveHint = $derived(\n    hasPermission($authStore.user, "leave-request:approve:ZUGEWIESEN"),\n  )',
+    );
+    expect(PAGE).toContain("href={`/inbox?request=${req.id}&year=${req.startDate.slice(0, 4)}`}");
+    // The testids of the former review buttons stay on the link.
+    expect(PAGE).toContain("`leave-team-row-${req.id}-review-cancel`");
+    expect(PAGE).toContain("`leave-team-row-${req.id}-review`");
+  });
+
+  it("[approved rows] correct, attest, Elternzeit-Kürzung and storno stay", () => {
+    for (const id of ["correct", "attest", "parental-reduction", "storno"]) {
+      expect(PAGE, id).toContain("`leave-team-row-${req.id}-" + id + "`");
+    }
+  });
+
+  it("[no approvals view] the queue, the review dialog and its opener are gone from this page", () => {
+    for (const gone of [
+      "pending-card",
+      "pending-list",
+      "openReview",
+      "reviewModal",
+      "reviewOpen",
+      "<LeaveReviewDialog",
+      'view === "approvals"',
+    ]) {
+      expect(PAGE, gone).not.toContain(gone);
+    }
+  });
+
+  it("[highlight] a request is paged to, marked and scrolled to, never navigated to", () => {
+    const focus = functionBody("focusRequest");
+    expect(focus).toContain("pageOfRequest(");
+    expect(focus).toContain("highlightRequestId = requestId");
+    expect(focus).not.toContain("goto(");
+    expect(PAGE).toContain('id="request-{req.id}"');
+    expect(PAGE).toContain("class:highlight-row={highlightRequestId === req.id}");
+  });
+});
