@@ -126,6 +126,12 @@ const ALWAYS_ENTRIES: Record<string, EmailPolicy> = {
       "An operational Schichtplanung conflict for managers, same family as SHIFT_LEAVE_CONFLICT — " +
       "no toggle covers shift planning.",
   },
+  LEAVE_PLAN_OPENED: {
+    email: "always",
+    reason:
+      "Announcement with a deadline to every person of a salon plan; no emailOn* toggle covers " +
+      "leave planning; the text names the salon and the year only, never a person or a figure.",
+  },
 };
 
 // ── D. never — the SECTION9_* types, the in-app notices and the push-only hint, reason mandatory ──

@@ -738,7 +738,14 @@ describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4; 
     // Issue #445: recalculateCarryOver — the THIRD writer — lives in leave-days.ts.
     const leaveDaysTs = readFileSync(join(apiSrc, "contexts", "absence", "leave-days.ts"), "utf-8");
 
-    const leaveMatches = leaveTs.match(/preserveCarryOverDeadline/g) ?? [];
+    // Issue #835 (D-835-12): the autoCarryOver writer moved with the create core into
+    // leave-request-create.ts; the two files together still hold both writers.
+    const leaveRequestCreateTs = readFileSync(
+      join(apiSrc, "contexts", "absence", "leave-request-create.ts"),
+      "utf-8",
+    );
+    const leaveMatches =
+      (leaveTs + "\n" + leaveRequestCreateTs).match(/preserveCarryOverDeadline/g) ?? [];
     expect(
       leaveMatches.length,
       "leave.ts must reference preserveCarryOverDeadline at least twice (both writers)",

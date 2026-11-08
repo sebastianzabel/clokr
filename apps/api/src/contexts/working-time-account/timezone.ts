@@ -19,7 +19,8 @@ const CACHE_TTL_MS = 5 * 60_000; // 5 minutes
  * Cached for 5 minutes to avoid repeated DB queries.
  */
 export async function getTenantTimezone(
-  prisma: FastifyInstance["prisma"],
+  // Only the tenant-config delegate is read, so a transaction client is accepted as well (#835).
+  prisma: Pick<FastifyInstance["prisma"], "tenantConfig">,
   tenantId: string,
 ): Promise<string> {
   const cached = tzCache.get(tenantId);

@@ -421,7 +421,8 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
 
     const leaveSrc = readFileSync(join(apiSrc, "contexts", "absence", "api", "leave.ts"), "utf-8");
     const firstIdx = leaveSrc.indexOf('app.get("/section9');
-    const endMarker = leaveSrc.indexOf("async function autoCarryOver");
+    // Issue #835: autoCarryOver moved to leave-request-create.ts; the region still ends where it did.
+    const endMarker = leaveSrc.indexOf("class Section9MissingEntitlementError");
     expect(firstIdx).toBeGreaterThan(-1);
     expect(endMarker).toBeGreaterThan(firstIdx);
     const section9Region = leaveSrc.slice(firstIdx, endMarker);

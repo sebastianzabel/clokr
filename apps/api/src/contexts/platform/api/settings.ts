@@ -187,6 +187,9 @@ const tenantConfigSchema = z
     vacationLeadTimeDays: z.number().int().min(0).max(365).optional(),
     vacationMaxAdvanceMonths: z.number().int().min(0).max(24).optional(),
     halfDayAllowed: z.boolean().optional(),
+    // Issue #835 (D-835-03, Unterbau Erweiterung): when on, an employee's OWN change of a leave plan
+    // wish is locked after the plan deadline; a manager covering the person is never locked.
+    leavePlanDeadlineLocksWishes: z.boolean().optional(),
     sickSelfReport: z.boolean().optional(),
     // Phase 104 (D-22 / R4): § 5 Abs. 1 EFZG spricht wörtlich von "länger als drei
     // Kalendertage" — mehr als 3 ist kein zulässiger Schwellwert. Bereich daher 0-3
@@ -756,6 +759,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         vacationLeadTimeDays: 0,
         vacationMaxAdvanceMonths: 0,
         halfDayAllowed: true,
+        leavePlanDeadlineLocksWishes: false,
         sickSelfReport: true,
         sickNoteRequiredAfterDays: 3,
         autoCalcPartTimeVacation: true,

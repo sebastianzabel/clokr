@@ -232,6 +232,11 @@ export default defineConfig({
       //     /settings shows no push section on the test stack, which carries no VAPID keys);
       //     tenant fixture only, no seed, no date dependency
       //
+      // Issue #835 added a thirteenth file:
+      //   - the leave planner in a real browser (open the plan, enter a wish through the dialog,
+      //     drag its end handle, take the plan over, APPROVED request on the moved dates); tenant
+      //     fixture plus API-created employee, plan year computed as next year, no fixed date
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -247,6 +252,7 @@ export default defineConfig({
         /hr-view-86\.spec\.ts/,
         /multi-entry-day\.spec\.ts/,
         /travel-between-salons\.spec\.ts/,
+        /leave-plan\.spec\.ts/,
         /reports-period\.spec\.ts/,
         /role-editor-visibility-710\.spec\.ts/,
         /push-pwa\.spec\.ts/,

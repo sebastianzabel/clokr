@@ -7,10 +7,18 @@
  *
  * The view lists the person ids behind a day; WHO of them a reader may be named is decided by the
  * route through `redact.ts`, never here. `personNames` is internal like in the checker result.
+ *
+ * Issue #835 (D-835-23): `candidates` and `includeAllGroup` are for the leave planner; without them
+ * the function is unchanged. A candidate (a wish, `requestId: null`) goes through exactly the same
+ * `countedDaysOfLeave` -> `groupMembershipOn` -> `parallelLeaveLoad` fold as a stored row, as in
+ * `check.ts`; `includeAllGroup` always emits the `ALL` group, with or without a rule, so the planner
+ * has a per-day count on a salon that has no rule at all.
  */
 import type { EmployeeClassification } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses";
+import type { LeaveLimitCandidate } from "./check";
+import { isLeaveLimitCountedCode } from "./constants";
 import { countedDaysOfLeave, eachDay } from "./counted-days";
 import { groupMembershipOn } from "./group-membership";
 import { loadAccessRoleNames, loadLeaveLimitFacts, type StoredLeaveRow } from "./load-facts";
@@ -19,7 +27,14 @@ import { groupKeyOf, ruleRowOf, strictestRulesOn, type LeaveLimitRuleRow } from 
 
 type Db = FastifyInstance["prisma"];
 
-export type LoadViewEntry = { personId: string; requestId: string; approvedBeforeRule: boolean };
+export type LoadViewEntry = {
+  personId: string;
+  /** The request behind the person-day; null for a hypothetical candidate (a #835 wish). */
+  requestId: string | null;
+  /** `wish` only when no stored request counts the person on that day. */
+  source: "request" | "wish";
+  approvedBeforeRule: boolean;
+};
 
 export type LoadViewDay = {
   day: string;
@@ -69,7 +84,15 @@ function approvedBefore(row: StoredLeaveRow, rule: LeaveLimitRuleRow): boolean {
 export async function leaveLimitLoadView(
   db: Db,
   tenantId: string,
-  input: { salonIds: readonly string[]; fromDay: string; toDay: string },
+  input: {
+    salonIds: readonly string[];
+    fromDay: string;
+    toDay: string;
+    /** Hypothetical rows counted like stored ones (Issue #835: the planner's wishes). */
+    candidates?: readonly LeaveLimitCandidate[];
+    /** Emit the `ALL` group even where no rule applies (Issue #835). */
+    includeAllGroup?: boolean;
+  },
 ): Promise<LoadView> {
   const empty = (): LoadView => ({ salons: [], personNames: new Map() });
   const { fromDay, toDay } = input;
@@ -84,14 +107,20 @@ export async function leaveLimitLoadView(
         [salonId, rules.filter((r) => r.salonId === null || r.salonId === salonId)] as const,
     ),
   );
-  if ([...salonRules.values()].every((list) => list.length === 0)) return empty();
+  const includeAllGroup = input.includeAllGroup === true;
+  if (!includeAllGroup && [...salonRules.values()].every((list) => list.length === 0)) {
+    return empty();
+  }
 
-  // 2. Facts of everyone with stored counted leave in the window (no candidate).
+  // 2. Facts of everyone with stored counted leave in the window and of every candidate person
+  // (only counted types can count, so a sick candidate costs nothing).
+  const candidates = (input.candidates ?? []).filter((c) => isLeaveLimitCountedCode(c.typeCode));
   const facts = await loadLeaveLimitFacts(db, tenantId, {
     fromDay,
     toDay,
-    personIds: [],
+    personIds: candidates.map((c) => c.employeeId),
     excludeRequestIds: [],
+    candidateTypeCodes: candidates.map((c) => c.typeCode),
     needsAccessRoles: rules.some((r) => r.groupKind === "ACCESS_ROLE"),
   });
 
@@ -99,6 +128,23 @@ export async function leaveLimitLoadView(
   const window = { fromDay, toDay };
   const personDays: CountedPersonDay[] = [];
   const requestsBehind = new Map<string, StoredLeaveRow[]>();
+  for (const c of candidates) {
+    const person = facts.persons.get(c.employeeId);
+    if (!person) continue;
+    for (const { day, salonId } of countedDaysOfLeave(
+      person,
+      { typeCode: c.typeCode, startDay: c.startDay, endDay: c.endDay },
+      window,
+    )) {
+      personDays.push({
+        personId: c.employeeId,
+        requestId: c.requestId,
+        day,
+        salonId,
+        groups: groupMembershipOn(person, day),
+      });
+    }
+  }
   for (const row of facts.storedRows) {
     const person = facts.persons.get(row.personId);
     if (!person) continue;
@@ -127,10 +173,16 @@ export async function leaveLimitLoadView(
   const salons: LoadView["salons"] = [];
   for (const salonId of input.salonIds) {
     const applicable = salonRules.get(salonId) ?? [];
-    const byGroup = new Map<string, LeaveLimitRuleRow>();
+    const byGroup = new Map<
+      string,
+      Pick<LeaveLimitRuleRow, "groupKind" | "classification" | "accessRoleId">
+    >();
     for (const rule of applicable) {
       const key = groupKeyOf(rule);
       if (!byGroup.has(key)) byGroup.set(key, rule);
+    }
+    if (includeAllGroup && !byGroup.has("ALL")) {
+      byGroup.set("ALL", { groupKind: "ALL", classification: null, accessRoleId: null });
     }
     const groups: LoadViewGroup[] = [];
     for (const [groupKey, sample] of [...byGroup.entries()].sort(([a], [b]) =>
@@ -154,7 +206,8 @@ export async function leaveLimitLoadView(
               personNames.set(personId, { firstName: name.firstName, lastName: name.lastName });
             return {
               personId,
-              requestId: chosen?.requestId ?? "",
+              requestId: chosen ? chosen.requestId : null,
+              source: chosen ? ("request" as const) : ("wish" as const),
               approvedBeforeRule: before.length > 0,
             };
           });

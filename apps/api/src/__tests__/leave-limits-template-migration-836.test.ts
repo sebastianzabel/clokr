@@ -8,22 +8,42 @@
  *
  * - Static shape: three `UPDATE "AccessRole"` statements, one per granted slot id and no other
  *   system-role id, each with `"tenantId" IS NULL` and an `IS DISTINCT FROM` guard; no DDL, no
- *   RoleAssignment/AuditLog insert. Both ARRAY literals of every statement equal
- *   `SYSTEM_ROLE_PERMISSIONS.<slot>` element by element, in catalog order.
- * - Replay: `test:setup`'s `prisma migrate deploy` already applied the file once, so both
- *   executions here are replays; neither changes a row count nor any `updatedAt` of a global row.
- * - Customer copy: a tenant-owned copy of the Salonmanager template (old 24 keys) is not touched
- *   by the replay.
- * - Content drift: each migrated row equals its constant.
+ *   RoleAssignment/AuditLog insert. Both ARRAY literals of every statement equal the slot's
+ *   template AS OF THIS MIGRATION (`templateAsOf`, the live constant minus the keys later grants
+ *   added) element by element, in catalog order.
+ * - Replay: runs inside a transaction that is always rolled back (Issue #835, see below). The file
+ *   alone is idempotent: its second execution affects no row. The chain from this file onward
+ *   (this one, then every later grant) leaves every global row equal to its live constant and
+ *   changes nothing outside the transaction.
+ * - Customer copy: a tenant-owned copy of the Salonmanager template (as of this migration, minus
+ *   the key: 24 keys) is not touched by the chain replay.
+ * - Content drift: each migrated row equals its (live) constant.
+ *
+ * Issue #835 (why this file moved): this is a migration pin, and a migration pin has to move with
+ * every later change of the same templates. Before the leave plan grant, the array-equality case
+ * compared this file with the LIVE constant and the replay case executed this file against the
+ * shared worker database; after the grant (`leave-plan:manage` joins the same three templates) the
+ * first would be red and the second would revert the three global rows to the 836 template for
+ * every later test of the worker. Every assertion stays; the comparison is made against
+ * `templateAsOf(...)` and the replay runs through `template-grant-chain.ts` in a rolled-back
+ * transaction. A future grant adds one entry there and no line here.
  *
  * Mutation proof (run locally, then undone): removing `leave-limit:manage:ZUGEWIESEN` from one
  * ARRAY of the migration file turns the "array equals the constant" case red for that slot.
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import {
+  MIGRATIONS_ROOT as TEMPLATE_GRANT_MIGRATIONS_ROOT,
+  grantMigrationSql,
+  locateGrantDir,
+  replayChainFrom,
+  templateAsOf,
+  withRolledBackTransaction,
+} from "./template-grant-chain";
 import {
   SYSTEM_ROLE_IDS,
   SYSTEM_ROLE_PERMISSIONS,
@@ -31,37 +51,18 @@ import {
   roleNameKey,
 } from "../contexts/platform";
 
-// __dirname is apps/api/src/__tests__ — four levels up is the repo root.
-const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
-const MIGRATIONS_ROOT = join(REPO_ROOT, "packages", "db", "prisma", "migrations");
+const MIGRATIONS_ROOT = TEMPLATE_GRANT_MIGRATIONS_ROOT;
 const MIGRATION_DIR_SUFFIX = "_leave_limit_template_grant";
 const KEY = "leave-limit:manage:ZUGEWIESEN";
 
 /** The slots that receive the key (Admin and Inhaber are fixed by the template invariants). */
 const GRANTED_SLOTS = ["ADMIN", "OWNER", "SALON_MANAGER"] as const;
 
-/** Locates the migration directory by name suffix; zero or several matches throw (input proof). */
-function locateMigrationDir(): string {
-  const entries = readdirSync(MIGRATIONS_ROOT);
-  if (entries.length === 0) {
-    throw new Error(`leave limit template migration: ${MIGRATIONS_ROOT} lists no entries at all`);
-  }
-  const matches = entries.filter((name) => name.endsWith(MIGRATION_DIR_SUFFIX));
-  if (matches.length !== 1) {
-    throw new Error(
-      `leave limit template migration: expected exactly one directory ending in ` +
-        `"${MIGRATION_DIR_SUFFIX}" under ${MIGRATIONS_ROOT}, found ${matches.length}: ` +
-        JSON.stringify(matches),
-    );
-  }
-  return matches[0];
-}
-
-const MIGRATION_DIR = locateMigrationDir();
+const MIGRATION_DIR = locateGrantDir(MIGRATION_DIR_SUFFIX);
 const MIGRATION_PATH = join(MIGRATIONS_ROOT, MIGRATION_DIR, "migration.sql");
 
 function readMigrationSql(): string {
-  const sql = readFileSync(MIGRATION_PATH, "utf8");
+  const sql = grantMigrationSql(MIGRATION_DIR_SUFFIX);
   if (!sql.includes('UPDATE "AccessRole"')) {
     throw new Error(
       `leave limit template migration: ${MIGRATION_PATH} does not contain an AccessRole update`,
@@ -137,7 +138,7 @@ describe("Phase 836 — leave limit template migration, static shape (#836)", ()
     expect(body).not.toContain('INSERT INTO "AuditLog"');
   });
 
-  it("both ARRAY literals of each UPDATE equal SYSTEM_ROLE_PERMISSIONS.<slot>, in catalog order", () => {
+  it("both ARRAY literals of each UPDATE equal the slot's template as of this migration, in catalog order", () => {
     for (const slot of GRANTED_SLOTS) {
       const statement = statements.find((s) =>
         s.includes(`WHERE "id" = '${SYSTEM_ROLE_IDS[slot]}'`),
@@ -148,7 +149,7 @@ describe("Phase 836 — leave limit template migration, static shape (#836)", ()
       // SET list and the IS DISTINCT FROM comparison.
       expect(arrays, slot).toHaveLength(2);
       for (const keys of arrays) {
-        expect(keys, slot).toEqual([...SYSTEM_ROLE_PERMISSIONS[slot]]);
+        expect(keys, slot).toEqual(templateAsOf(slot, MIGRATION_DIR_SUFFIX));
         expect(keys, slot).toContain(KEY);
       }
     }
@@ -189,27 +190,48 @@ describe("Phase 836 — leave limit template migration, replay and content drift
     });
   }
 
-  it("replaying the file twice changes no row count and no timestamp of any global role", async () => {
+  it("the file is idempotent and the chain replay changes no row count and nothing outside its transaction", async () => {
     const before = await globalRows();
     expect(before).toHaveLength(7);
     const countsBefore = await countTables();
-    const sql = readMigrationSql();
+    const updates = statementsOf(nonCommentText(readMigrationSql()));
+    expect(updates).toHaveLength(GRANTED_SLOTS.length);
 
-    // test:setup already applied the file once — both executions are replays, never a first run.
-    await app.prisma.$executeRawUnsafe(sql);
-    const countsAfterFirst = await countTables();
-    await app.prisma.$executeRawUnsafe(sql);
-    const countsAfterSecond = await countTables();
+    const observed = await withRolledBackTransaction(app.prisma, async (tx) => {
+      // The live rows already hold the LATER grants, so this file's first execution is a real
+      // change back to its own template; its second execution must then affect no row.
+      for (const statement of updates) await tx.$executeRawUnsafe(statement);
+      const second: number[] = [];
+      for (const statement of updates) second.push(await tx.$executeRawUnsafe(statement));
+      // The chain from this file onward restores every global row to its live constant.
+      await replayChainFrom(tx, MIGRATION_DIR_SUFFIX);
+      return {
+        second,
+        counts: {
+          roles: await tx.accessRole.count(),
+          assignments: await tx.roleAssignment.count(),
+          audits: await tx.auditLog.count(),
+        },
+        rows: await tx.accessRole.findMany({
+          where: { id: { in: globalIds } },
+          select: { id: true, permissions: true },
+          orderBy: { id: "asc" },
+        }),
+      };
+    });
 
-    expect(countsAfterFirst).toEqual(countsBefore);
-    expect(countsAfterSecond).toEqual(countsBefore);
+    expect(observed.second).toEqual(updates.map(() => 0));
+    expect(observed.counts).toEqual(countsBefore);
+    expect(observed.rows).toEqual(before.map(({ id, permissions }) => ({ id, permissions })));
+    // Nothing outside the transaction changed: same rows, same timestamps, same counts.
     expect(await globalRows()).toEqual(before);
+    expect(await countTables()).toEqual(countsBefore);
   });
 
   it("a tenant-owned copy of the Salonmanager template is not changed by the replay", async () => {
     const data = await seedTestData(app, "lltm836");
     tenantId = data.tenant.id;
-    const oldKeys = SYSTEM_ROLE_PERMISSIONS.SALON_MANAGER.filter((k) => k !== KEY);
+    const oldKeys = templateAsOf("SALON_MANAGER", MIGRATION_DIR_SUFFIX).filter((k) => k !== KEY);
     expect(oldKeys).toHaveLength(24);
     const name = "Salonmanager Kopie 836";
     const copy = await app.prisma.accessRole.create({
@@ -221,12 +243,16 @@ describe("Phase 836 — leave limit template migration, replay and content drift
       },
     });
 
-    await app.prisma.$executeRawUnsafe(readMigrationSql());
+    const afterReplay = await withRolledBackTransaction(app.prisma, async (tx) => {
+      await replayChainFrom(tx, MIGRATION_DIR_SUFFIX);
+      return tx.accessRole.findUniqueOrThrow({ where: { id: copy.id } });
+    });
 
-    const after = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: copy.id } });
-    expect(after.permissions).toEqual([...oldKeys]);
-    expect(after.permissions).not.toContain(KEY);
-    expect(after.updatedAt).toEqual(copy.updatedAt);
+    expect(afterReplay.permissions).toEqual([...oldKeys]);
+    expect(afterReplay.permissions).not.toContain(KEY);
+    expect(afterReplay.updatedAt).toEqual(copy.updatedAt);
+    const stored = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: copy.id } });
+    expect(stored.permissions).toEqual([...oldKeys]);
   });
 
   it("writes no AuditLog row referencing a granted template id", async () => {

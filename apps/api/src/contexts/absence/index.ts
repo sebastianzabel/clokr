@@ -77,6 +77,7 @@ export {
   getPendingLeaveForShiftProtection,
   anonymizeLeaveRequestsForEmployee,
   hardDeleteLeaveRequestsForEmployee,
+  hardDeleteLeavePlanWishesForEmployee,
   archiveLeaveRequestsBefore,
 } from "./facade/leave-requests";
 // Issue #93 (D-05): operator support month view — allow-list read

@@ -774,6 +774,9 @@
   <!-- ── Header ─────────────────────────────────────────────────────────────── -->
   <PageHead eyebrow="Mein Bereich" title="Urlaub & Abwesenheit" accent="Abwesenheit">
     {#snippet actions()}
+      <a href="/leave/planung" class="btn btn-secondary btn-sm" data-testid="leave-plan-link"
+        >Urlaubsplanung</a
+      >
       {#if !showForm}
         <button
           data-testid="leave-new-request"

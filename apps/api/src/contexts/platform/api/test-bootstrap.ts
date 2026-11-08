@@ -290,6 +290,10 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       });
       await prisma.shift.deleteMany({ where: { employeeId: { in: employeeIds } } });
       await prisma.absence.deleteMany({ where: { employeeId: { in: employeeIds } } });
+      // Issue #835: leave plan wishes and plans are onDelete: Restrict onto the request, employee,
+      // salon and tenant — they must go before those deletes.
+      await prisma.leavePlanWish.deleteMany({ where: { tenantId: id } });
+      await prisma.leavePlan.deleteMany({ where: { tenantId: id } });
       await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
       await prisma.leaveEntitlement.deleteMany({
         where: { employeeId: { in: employeeIds } },

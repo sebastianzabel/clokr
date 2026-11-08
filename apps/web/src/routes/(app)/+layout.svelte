@@ -31,6 +31,7 @@
     "/dashboard": "Übersicht",
     "/time-entries": "Zeiterfassung",
     "/leave": "Urlaub",
+    "/leave/planung": "Urlaubsplanung",
     "/reports": "Berichte",
     // v1.5 Phase 30 manager screens — primary nav targets.
     "/inbox": "Anträge",

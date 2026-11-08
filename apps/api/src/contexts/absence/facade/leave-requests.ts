@@ -710,6 +710,23 @@ export async function hardDeleteLeaveRequestsForEmployee(
 }
 
 /**
+ * Issue #835 (D-835-26, C-6): HARD delete of every `LeavePlanWish` row of `employeeId`, invoked ONLY
+ * from `platform/api/employees.ts`'s `DELETE /:id/hard-delete` sequence (the retention hard delete),
+ * inside its own `$transaction`, DIRECTLY BEFORE `hardDeleteLeaveRequestsForEmployee`: a wish
+ * references both its person and its linked request with `onDelete: Restrict`, so the wishes must go
+ * first. No `deletedAt` guard — a hard delete must reach soft-deleted wishes too. `tenantId` is part
+ * of the statement. This is the only hard delete of wishes in production code; the leave plan row
+ * itself stays.
+ */
+export async function hardDeleteLeavePlanWishesForEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<void> {
+  await db.leavePlanWish.deleteMany({ where: { employeeId, tenantId } });
+}
+
+/**
  * Retention archival (§ 16 Abs. 2 ArbZG / CLAUDE.md § Data Retention): soft-deletes every
  * `LeaveRequest` for the given `employeeIds` whose `endDate` is at or before `cutoff`. The
  * `deletedAt: null` clause in the `where` below is an IDEMPOTENCY guard — it keeps a second run of

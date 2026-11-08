@@ -44,6 +44,14 @@
       group: "Navigation",
     },
     {
+      id: "leave-plan",
+      label: "Urlaubsplanung",
+      description: "Urlaubswünsche fürs Jahr planen",
+      icon: "calendar",
+      href: "/leave/planung",
+      group: "Navigation",
+    },
+    {
       id: "reports",
       label: "Berichte",
       description: "Auswertungen & Exporte",

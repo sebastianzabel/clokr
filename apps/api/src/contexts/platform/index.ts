@@ -114,10 +114,12 @@ export type {
 // per-context impact section).
 // Phase 87b (Issue #87, D-10) — additive Unterbau-Erweiterung: the salons of an employee's current
 // and future assignments.
+// Issue #835 (D-835-05) — additive Unterbau-Erweiterung: the persons homed in a salon during a window.
 export {
   salonForDay,
   listSalonAssignments,
   homeSalonsForDays,
+  employeeIdsHomedInSalonDuring,
   currentAndFutureAssignmentSalonIds,
 } from "./facade/salon-assignments";
 export type { SalonForDay } from "./facade/salon-assignments";
