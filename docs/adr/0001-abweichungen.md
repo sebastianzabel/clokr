@@ -7933,3 +7933,73 @@ API: `leave-calendar-masking-840`, `leave-calendar-scope-840`, `leave-plan-maski
 `inbox-open-all-years-840`, `teamcal-redirect-840`, die Komponententests der Zeitleiste, Liste, Legende, Werkzeugleiste,
 des Zeitraumwechsels, des Planungsdialogs und des `ApprovalRow`-Modus `onPrimary`. Browser: `apps/e2e/tests/leave-area-840.spec.ts`
 (Manager-Pfad, Mitarbeiter-Pfad, Markierungen, Weiterleitungen, axe auf jeder Seite einschließlich Inbox).
+
+### Nachtrag: Lückenrunde nach dem Manager-Selbsttest (840-15 … 840-18)
+
+**Herkunft, genau.** Die Befunde G-1 bis G-8 stammen aus dem Selbsttest des Managers auf dev vom 08.11.2026
+(`840-UAT.md`); G-9 hat der Owner am selben Tag gemeldet. Die Befunde sind Beobachtungen, keine Entscheidungen. **Jede
+Lösung im Einzelnen ist eine Grauzonen-Entscheidung des Planungsagenten**, begründet in den Plänen 840-15 bis 840-18 —
+keine ist eine Owner-Entscheidung (die Owner-Entscheidungen bleiben genau E-01 bis E-06). Die Abnahme dieser Lösungen
+durch den Owner auf dev steht zum Zeitpunkt dieses Nachtrags **noch aus**; er behauptet keine Zustimmung.
+
+**Was gefunden wurde und was jetzt gilt.**
+
+- **G-1 Zähler am Tab „Anträge“.** Der rote Zähler war unerklärt und fehlte auf der Planung, solange die Seite lud. Jetzt:
+  ein neutraler Zähler mit Erklärung („3 offen: 2 Anträge, 1 Storno angefragt“), eigener Ladevorgang (`loadOpenRequests`),
+  sichtbar auf jedem Tab; ein Klick führt zu Anträge mit dem Filter „Offen“. Entscheidung des Planungsagenten:
+  „Offen“ umfasst beide wartenden Status (beantragt und Storno angefragt), und der Zähler ignoriert den Personenfilter,
+  weil dieser auf der Planung nicht sichtbar ist.
+- **G-2 Wochenenden.** Wochenenden waren in Quartal und Monat ohne einen einzelnen Salon nicht sichtbar. Jetzt: ein Token
+  (`--weekend-shade`, 12 % Textfarbe), in allen vier Oberflächen (editorial und modern, hell und dunkel) sichtbar; Schließtage
+  behalten die Schraffur.
+- **G-3 Farben der Typ-Chips.** Die Anträge-Liste und die Inbox zeigten jeden Typ in Violett. Jetzt: `LeaveTypeChip` mit der
+  einen Farbzuordnung (`leave-colors.ts`); beantragte Zeilen gestrichelt, gesetzte gefüllt.
+- **G-4 Legende.** „Gesetzt“ war irreführend, und „Andere Abwesenheit“ teilte sich ein Grau mit einer anderen Bedeutung.
+  Jetzt: „Genehmigt (voll)“, „Beantragt (gestrichelt)“, „Wunsch (gestreift)“, „Abwesend“; „Mehrere Arten“ nur im Jahr und nur,
+  wenn vorhanden. Entscheidungen des Planungsagenten: der Wortlaut der Legende, eine Woche mit mehreren sichtbaren Arten
+  hat einen eigenen Stil (Streifen; eine maskierte Woche bleibt „abwesend“, es wird nie aus einem maskierten Tag auf eine
+  Mischung geschlossen), und die Farbe der unbekannten Art ist ein Braun, das kein anderer Stil teilt (die Werte in
+  `tokens.css` wurden dafür geändert; `leave-chip-contrast` nennt die neuen Werte).
+- **G-5 Prognosespalte.** Die Spalte „Anspruch“ überdeckte die letzten Tage des Quartals. Jetzt: eine eigene Spalte neben dem
+  Tagesraster, kein Tag liegt darunter; der Hinweis „weiter →“ steht als Bildunterschrift unter dem Raster.
+- **G-6 Planungstext und Steuerung.** Die Hilfezeile sprach von einer „Kopfzeile“, die Zeile heißt „Abwesend (Personen)“; eine
+  Karte mit Status und „Wunsch hinzufügen“ lag auf der Zeitleistenkarte. Jetzt: ein Wortlaut aus derselben Quelle wie die
+  Zeile, der Planer ist eine Karte, Status, Frist und „Wunsch hinzufügen“ stehen in der Werkzeugleiste beider Bereiche.
+- **G-7 Primärknöpfe.** Gemessen im Browser (Test 9 von `leave-area-840.spec.ts`) vor der Änderung: Die Knöpfe der
+  Urlaubsseiten berechnen **dieselben** Farben wie der Referenzknopf auf `/admin/employees` — die Ursache ist das gemeinsame
+  Rezept, keine lokale Überschreibung. Im modernen Stil stand weißer Text auf einem hellen Neonverlauf (1,40:1 bis 2,07:1 im
+  hellen Modus), und die Rezeptregel `.btn-primary:hover` ersetzte den Verlauf durch einen einfarbigen hellen Grund; im
+  Editorial-Stil hellte der Hover den Grund unter weißem Text auf (Pflaume 4,44:1, Nacht 3,85:1, Wald 2,47:1). Jetzt: ein
+  eigenes Token `--text-on-brand-modern` (dunkle Tinte `#0a0a10`) für den Text des modernen Primärknopfs in beiden Modi, der
+  Hover behält den Verlauf, und der Editorial-Hover dunkelt (`--brand-dark`, die ursprüngliche v1-Regel). Alle 12
+  Kombinationen aus Stil, Thema und Modus erreichen im Ruhezustand und beim Überfahren mindestens 4,5:1.
+  `--text-on-brand` selbst bleibt unverändert weiß: Es wird auch als **Hintergrund** gelesen (die invertierte Primärfläche
+  der Dashboard-Zeitkarte, Issue #546).
+- **G-8 Kopf der Inbox.** Eigener Kopf mit Eyebrow „MANAGER“ und kursivem Titel. Jetzt: derselbe `PageHead` wie auf den
+  Urlaubsseiten (Eyebrow „Team“, Titel „Inbox“).
+- **G-9 Formular „Neue Abwesenheit“.** „Bis“ brach allein um, die Mitarbeiterauswahl war abgeschnitten, der Eyebrow „Urlaub“
+  stand über einem allgemeinen Formular. Jetzt: Zeile 1 Mitarbeiter + Art (im eigenen Formular Art, bei Sonderurlaub mit
+  „Anlass“ daneben), Zeile 2 Von + Bis nebeneinander, alle übrigen Felder in voller Breite, unter 480 px eine Spalte. Das
+  Anlegen zeigt keinen Eyebrow (der Typ wird im Formular gewählt), das Bearbeiten zeigt den Typ des bearbeiteten Antrags.
+  Entscheidungen des Planungsagenten: die Zeilenaufteilung und der Wegfall des Eyebrows beim Anlegen.
+
+**Grenzen dieser Runde.**
+
+- Der Monatsraster von „Mein Bereich → Kalender“ und die Kalender der Zeiterfassung behalten das gemeinsame
+  Wochenendrezept; nur die Zeitleiste und ihre Legende nutzen das neue Token.
+- Die Zähler der Inbox-Tabs bleiben rot; die Neutralisierung gilt nur dem Zähler am Tab „Anträge“.
+- Folgebefunde, bewusst nicht in dieser Runde angefasst: Andere Leser von `--text-on-brand` zeigen im modernen Stil weißen
+  Text auf hellen Neonflächen — die Schrittkreise von `ToolPage`, das Wunschfarbpaar
+  (`leave-colors.ts`, `WISH`) und die Zähler-Pille `.tab-bar .btn-primary .count-pill` (fester weißer Text). Sie brauchen
+  jeweils eine eigene Entscheidung; die Dashboard-Zeitkarte liest das Token als Hintergrund und bleibt unberührt.
+
+**Auswirkung auf die Kontexte.** Abwesenheiten: nur die Web-Oberfläche (Zeitleiste, Legende, Planer, Formular, Inbox-Kopf);
+keine API-Änderung, keine Migration, keine neue Berechtigung. Oberflächenrezepte der gesamten App: das Primärknopf-Rezept
+(`app.css`, `tokens.css`) gilt für jede Seite. Unterbau, Zeiterfassung, Schichtplanung, Arbeitszeitkonto,
+Kompositionsschicht: keine.
+
+**Nachweise.** Web: `btn-primary-contrast-840` (Kontrast jeder Kombination aus Stil, Thema, Modus und Zustand aus den
+Tokens, dazu die Rezeptdeklarationen), `leave-looks-840-gaps`, `leave-chip-contrast`, `inbox-chrome-840`, die
+Komponententests von `LeaveRequestForm`, `LeaveTypeChip`, `LeaveToolbar`, `LeavePlanningPanel`, `AbsenceTimeline` und
+`LeaveLegend` sowie die angepassten Fixierungen (jede mit `#840 G-n` im Test benannt). Browser:
+`apps/e2e/tests/leave-area-840.spec.ts`, Tests 6 bis 9 (Planung, Zähler/Chips/Inbox-Kopf, Formular, Primärknöpfe).
