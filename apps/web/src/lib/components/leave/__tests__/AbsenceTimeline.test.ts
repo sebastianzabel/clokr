@@ -1,6 +1,8 @@
 // Issue #840 (D-840-07/10) — the mounted test of the absence timeline (tracer subset). The
 // component imports neither the auth store nor the API client, so nothing needs mocking.
 // `lib/components/leave/` is outside `lint:ui-classes`, so this file is its safeguard.
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import { screen, within, fireEvent } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
@@ -800,5 +802,143 @@ describe("Monat: markings", () => {
   it("without a single salon (null) nothing is closed", () => {
     renderMonth({ closedWeekdays: null });
     expect(screen.getByTestId("plan-track-e1").querySelectorAll(".tl-closed")).toHaveLength(0);
+  });
+});
+
+// Issue 840 G-5: the forecast column is a pane BESIDE the day grid. In the self-test the sticky
+// „Anspruch“ cell lay over the last two weeks of the quarter and the „weiter →“ hint over the month
+// header. Structure, heights and the hint position are pinned here; the pixels are measured by e2e.
+describe("#840 G-5 forecast pane", () => {
+  const twoLanes = planPerson({
+    employeeId: "e1",
+    forecast: { forecastDays: 12, forecastNegative: false },
+    bars: [
+      {
+        key: "a",
+        start: "2027-03-08",
+        end: "2027-03-12",
+        style: "gesetzt",
+        typeCode: "VACATION",
+        label: "Urlaub",
+        editable: false,
+      },
+      {
+        key: "b",
+        start: "2027-03-10",
+        end: "2027-03-11",
+        style: "beantragt",
+        typeCode: "VACATION",
+        label: "Urlaub",
+        editable: false,
+      },
+    ],
+  });
+  const negative = planPerson({
+    employeeId: "e2",
+    name: "Bea Beispiel",
+    isOwn: false,
+    forecast: { forecastDays: -2, forecastNegative: true },
+  });
+
+  it("no forecast cell is a descendant of the scrolling day grid", () => {
+    renderPlan({ showForecast: true, rows: [twoLanes, negative] });
+    const scroll = screen.getByTestId("absence-timeline-scroll");
+    expect(scroll.classList.contains("tl-scroll")).toBe(true);
+    expect(scroll.contains(screen.getByTestId("plan-forecast-head"))).toBe(false);
+    expect(scroll.contains(screen.getByTestId("plan-forecast-e1"))).toBe(false);
+    expect(scroll.contains(screen.getByTestId("plan-forecast-e2"))).toBe(false);
+    expect(scroll.contains(screen.getByTestId("plan-track-e1"))).toBe(true);
+  });
+
+  it("a forecast cell is as high as the track of its person (Quartal, two lanes)", () => {
+    renderPlan({ showForecast: true, rows: [twoLanes, negative] });
+    for (const id of ["e1", "e2"]) {
+      const track = screen.getByTestId(`plan-track-${id}`).style.height;
+      expect(track).not.toBe("");
+      expect(screen.getByTestId(`plan-forecast-${id}`).style.height).toBe(track);
+    }
+    // Two lanes of 24 px plus 8 px.
+    expect(screen.getByTestId("plan-track-e1").style.height).toBe("56px");
+  });
+
+  it("a forecast cell is as high as the track of its person (Jahr)", () => {
+    renderPlan({
+      period: YEAR_2027,
+      widthPx: 1144,
+      columnWidthPx: undefined,
+      showForecast: true,
+      rows: [twoLanes, negative],
+    });
+    for (const id of ["e1", "e2"]) {
+      const track = screen.getByTestId(`plan-track-${id}`).style.height;
+      expect(track).not.toBe("");
+      expect(screen.getByTestId(`plan-forecast-${id}`).style.height).toBe(track);
+    }
+    expect(screen.getByTestId("plan-track-e1").style.height).toBe("36px");
+  });
+
+  it("the head cell and the load cell of the pane match the header line and the load line", () => {
+    renderPlan({
+      showForecast: true,
+      rows: [twoLanes],
+      load: { kind: "day", counts: new Map([["2027-03-10", 1]]) },
+    });
+    expect(screen.getByTestId("plan-forecast-head").style.height).toBe("52px");
+    expect(screen.getByTestId("plan-forecast-load").style.height).toBe("28px");
+  });
+
+  it("overflowing: the hint is a caption outside the grid and the fade belongs to the day viewport", () => {
+    renderPlan({
+      showForecast: true,
+      rows: [twoLanes, negative],
+      widthPx: 900,
+      columnWidthPx: undefined,
+    });
+    const hint = screen.getByTestId("timeline-overflow-hint");
+    expect(hint.textContent).toContain("weiter →");
+    const scroll = screen.getByTestId("absence-timeline-scroll");
+    expect(scroll.contains(hint)).toBe(false);
+    const header = scroll.querySelector(".tl-head");
+    expect(header?.contains(hint)).toBe(false);
+    const fade = screen.getByTestId("timeline-overflow-fade");
+    expect(
+      screen.getByTestId("plan-forecast-head").closest(".tl-forecast-pane")?.contains(fade),
+    ).toBe(false);
+    expect(fade.closest(".tl-viewport")).not.toBeNull();
+    // The caption follows the grid body in document order.
+    const body = scroll.closest(".tl-body");
+    expect(body?.contains(hint)).toBe(false);
+  });
+
+  it("the forecast width is reserved outside the day viewport (no day column under it)", () => {
+    renderPlan({
+      showForecast: true,
+      rows: [twoLanes],
+      widthPx: 900,
+      columnWidthPx: undefined,
+    });
+    const track = parseFloat(screen.getByTestId("plan-track-e1").style.width);
+    // Quartal Q1 2027 has 90 days; 160 px name column; 184 px forecast pane stays outside the viewport.
+    expect(track / 90).toBeGreaterThanOrEqual(10);
+    expect(screen.getByTestId("absence-timeline").style.getPropertyValue("--tl-forecast-w")).toBe(
+      "184px",
+    );
+  });
+
+  it("the load row prints the label it is given and falls back to „Abwesend (Personen)“", () => {
+    renderPlan({
+      load: { kind: "day", counts: new Map([["2027-03-10", 1]]), label: "Urlaub (Personen)" },
+    });
+    expect(within(screen.getByTestId("plan-day-load")).getByText("Urlaub (Personen)")).toBeTruthy();
+  });
+
+  it("source pin: the forecast rules set no sticky position", () => {
+    const source = readFileSync(resolve(__dirname, "../timeline/AbsenceTimeline.svelte"), "utf8");
+    const style = source.slice(source.indexOf("<style>"));
+    const rules = [...style.matchAll(/(\.tl-forecast[^{]*)\{([^}]*)\}/g)];
+    expect(rules.length).toBeGreaterThan(0);
+    for (const [, selector, body] of rules) {
+      expect(body, selector).not.toMatch(/position:\s*sticky/);
+    }
   });
 });

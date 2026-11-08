@@ -60,6 +60,8 @@
       counts: Map<string, number>;
       exceeded?: Map<string, string>;
       hint?: string;
+      /** Name of the load row; default „Abwesend (Personen)“. */
+      label?: string;
     };
     onWeekSelect?: (monday: string) => void;
     onMoveWish?: (bar: TimelineBar, range: DayRange) => void | Promise<void>;
@@ -96,6 +98,12 @@
   const NAME_WIDTH = 160;
   const FORECAST_WIDTH = 184;
   const LANE_HEIGHT = 24;
+  /** Row heights shared by the day grid and the forecast pane (Issue 840 G-5). */
+  const HEAD_HEIGHT = 52;
+  const LOAD_HEIGHT = 28;
+  const WEEK_ROW_HEIGHT = 36;
+  /** A person with a negative forecast shows label plus warning badge, which need this much room. */
+  const NEGATIVE_FORECAST_HEIGHT = 64;
   /** A text label on a bar needs room for a word (D-840-10). */
   const LABEL_MIN_WIDTH = 56;
   /** Header cells print letter and number from this column width on. */
@@ -134,14 +142,16 @@
   const containerWidth = $derived(
     widthPx ?? (measuredWidth > 0 ? measuredWidth : FALLBACK_CONTAINER),
   );
-  const sideWidth = $derived(NAME_WIDTH + (showForecast ? FORECAST_WIDTH : 0));
+  // The forecast pane sits beside the day viewport, so its width is taken off the container and
+  // never reduces what the day grid may scroll through (Issue 840 G-5).
+  const viewportWidth = $derived(containerWidth - (showForecast ? FORECAST_WIDTH : 0));
   const columnWidth = $derived.by(() => {
     if (columnWidthPx !== undefined) return columnWidthPx;
-    return Math.max(MIN_WIDTH[period.zoom], (containerWidth - sideWidth) / count);
+    return Math.max(MIN_WIDTH[period.zoom], (viewportWidth - NAME_WIDTH) / count);
   });
   const trackWidth = $derived(count * columnWidth);
-  const totalWidth = $derived(sideWidth + trackWidth);
-  const overflowing = $derived(totalWidth > containerWidth + 1);
+  const totalWidth = $derived(NAME_WIDTH + trackWidth);
+  const overflowing = $derived(totalWidth > viewportWidth + 1);
   const showMoreHint = $derived(overflowing && !scrolledToEnd);
   const showDayText = $derived(columnWidth >= DAY_TEXT_MIN_WIDTH);
 
@@ -389,6 +399,19 @@
       : new Map(rows.map((person) => [person.employeeId, layoutOf(person)])),
   );
 
+  /**
+   * The ONE height of a person's row, fed to the track and to the forecast cell, so the two panes
+   * stay aligned line by line. A negative forecast needs more room than a single lane.
+   */
+  function rowHeight(person: TimelinePerson): number {
+    const base = isYear
+      ? WEEK_ROW_HEIGHT
+      : (layouts.get(person.employeeId)?.lanes ?? 1) * LANE_HEIGHT + 8;
+    return showForecast && person.forecast?.forecastNegative
+      ? Math.max(base, NEGATIVE_FORECAST_HEIGHT)
+      : base;
+  }
+
   function barColor(bar: TimelineBar) {
     if (bar.style === "abwesend") return ABSENT;
     return leaveTypeColor(bar.typeCode);
@@ -501,291 +524,330 @@
   style:--tl-forecast-w="{FORECAST_WIDTH}px"
   style:--tl-col-w="{columnWidth}px"
 >
-  <div class="tl-scroll" bind:this={scrollEl} onscroll={onScroll}>
-    <div class="tl-inner" style:min-width="{totalWidth}px">
-      <!-- Header: month names, then weeks (Jahr) or weekday letter and day number -->
-      <div class="tl-line tl-head">
-        <div class="tl-name tl-name--head"></div>
-        <div class="tl-track tl-track--head" style:width="{trackWidth}px">
-          {#each months as month (month.month)}
+  <div class="tl-body">
+    <div class="tl-viewport">
+      <div
+        class="tl-scroll"
+        data-testid="absence-timeline-scroll"
+        bind:this={scrollEl}
+        onscroll={onScroll}
+      >
+        <div class="tl-inner" style:min-width="{totalWidth}px">
+          <!-- Header: month names, then weeks (Jahr) or weekday letter and day number -->
+          <div class="tl-line tl-head">
+            <div class="tl-name tl-name--head"></div>
             <div
-              class="tl-month"
-              class:tl-month--sticky={stickyMonths}
-              data-testid="absence-month-{month.month}"
-              style:left="{month.left}px"
-              style:width="{month.width}px"
-            >
-              <span class="tl-month-label">{month.label}</span>
-            </div>
-          {/each}
-          {#if isYear}
-            {#each weeks as week, i (week.monday)}
-              <div
-                class="tl-weekhead"
-                class:tl-weekhead--today={week.monday === todayWeek}
-                data-testid="week-head-{week.monday}"
-                style:left="{i * columnWidth}px"
-                style:width="{columnWidth}px"
-                title="KW {week.isoWeek}: {fmtShort(week.monday)} bis {fmtDate(week.sunday)}"
-              >
-                {#if showDayText}{week.isoWeek}{/if}
-              </div>
-            {/each}
-          {:else}
-            {#each columns as column, i (column.day)}
-              {@const mark = markings.get(column.day)}
-              {@const holiday = dayHeadTitle(column.day)}
-              {@const text = dayHeadText(column)}
-              <svelte:element
-                this={holiday === undefined ? "div" : "button"}
-                type={holiday === undefined ? undefined : "button"}
-                class="absence-day"
-                class:absence-day--weekend={column.isWeekend}
-                class:absence-day--holiday={holiday !== undefined}
-                class:absence-day--closed={mark?.closed}
-                class:absence-day--today={mark?.today}
-                data-testid="absence-day-{column.day}"
-                style:left="{i * columnWidth}px"
-                style:width="{columnWidth}px"
-                title={holiday}
-                aria-label={dayHeadLabel(column.day)}
-              >
-                <span class="absence-day-letter">{text.letter}</span>
-                <span class="absence-day-number">{text.number}</span>
-              </svelte:element>
-            {/each}
-          {/if}
-        </div>
-        {#if showForecast}<div class="tl-forecast tl-forecast--head">Anspruch</div>{/if}
-      </div>
-
-      <!-- Load: how many persons are absent per day (Quartal, Monat) or per week (Jahr) -->
-      {#if load}
-        <div class="tl-line tl-load" data-testid="plan-day-load">
-          <div class="tl-name" title={load.hint}>Abwesend (Personen)</div>
-          <div class="tl-track" style:width="{trackWidth}px" style:height="28px">
-            {#each loadCells as cell (cell.key)}
-              <div
-                class="tl-load-cell"
-                class:tl-load-cell--exceeded={cell.exceeded}
-                data-testid="day-load-{cell.key}"
-                data-exceeded={cell.exceeded ? "true" : "false"}
-                style:left="{cell.index * columnWidth}px"
-                style:width="{columnWidth}px"
-                style:--tl-load-share="{Math.round((cell.count / maxLoad) * 60) + 15}%"
-                title={loadLabel(cell)}
-                aria-label={loadLabel(cell)}
-                role="img"
-              >
-                {#if columnWidth >= DAY_TEXT_MIN_WIDTH}{cell.count}{/if}
-              </div>
-            {/each}
-          </div>
-          {#if showForecast}<div class="tl-forecast"></div>{/if}
-        </div>
-      {/if}
-
-      <!-- One row per person -->
-      {#each rows as person (person.employeeId)}
-        {@const layout = layouts.get(person.employeeId) ?? { bars: [], lanes: 1 }}
-        <div class="tl-line tl-person" data-testid="plan-row-{person.employeeId}">
-          <div class="tl-name" class:tl-name--own={person.isOwn} title={person.name}>
-            {person.name}
-          </div>
-          {#if isYear}
-            <div
-              class="tl-track tl-track--weeks"
-              data-testid="plan-track-{person.employeeId}"
+              class="tl-track tl-track--head"
               style:width="{trackWidth}px"
+              style:height="{HEAD_HEIGHT}px"
             >
-              {#each cellsByPerson.get(person.employeeId) ?? [] as cell, i (cell.monday)}
-                {@const week = weeks[i]}
-                {@const color = cellColor(cell)}
-                <button
-                  type="button"
-                  class="tl-week"
-                  class:tl-week--beantragt={cell.hasBeantragt}
-                  class:tl-week--wish={cell.hasWish}
-                  class:tl-week--mixed={cell.fill === "mixed"}
-                  class:tl-week--edge={cell.outOfYearDays > 0}
-                  data-testid="week-cell-{person.employeeId}-{cell.monday}"
-                  style:left="{i * columnWidth}px"
-                  style:width="{columnWidth}px"
-                  style:--bar-fill="var({color.fill})"
-                  title={weekLabel(week, cell)}
-                  aria-label="{person.name}: {weekLabel(week, cell)}"
-                  onclick={() => onWeekSelect?.(cell.monday)}
-                  onkeydown={(event) => onWeekKeydown(event, cell.monday)}
+              {#each months as month (month.month)}
+                <div
+                  class="tl-month"
+                  class:tl-month--sticky={stickyMonths}
+                  data-testid="absence-month-{month.month}"
+                  style:left="{month.left}px"
+                  style:width="{month.width}px"
                 >
-                  {#if cell.share > 0}
-                    <span class="tl-week-fill" style:height="{cell.share * 100}%"></span>
-                  {/if}
-                  {#if cell.outOfYearDays > 0}
-                    <span
-                      class="tl-week-out"
-                      class:tl-week-out--end={cell.monday >= period.startDay}
-                      style:width="{(cell.outOfYearDays / 7) * 100}%"
-                    ></span>
-                  {/if}
-                </button>
+                  <span class="tl-month-label">{month.label}</span>
+                </div>
               {/each}
-            </div>
-          {:else}
-            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-            <div
-              class="tl-track"
-              class:tl-track--addable={onAddWish !== undefined && canAddWishFor(person.employeeId)}
-              data-testid="plan-track-{person.employeeId}"
-              style:width="{trackWidth}px"
-              style:height="{layout.lanes * LANE_HEIGHT + 8}px"
-              onclick={(event) => onTrackClick(event, person)}
-            >
-              {#each weekendRuns as run (run.left)}
-                <div class="tl-weekend" style:left="{run.left}px" style:width="{run.width}px"></div>
-              {/each}
-              {#each closedCells as closed (closed.day)}
-                <div
-                  class="tl-closed"
-                  style:left="{closed.left}px"
-                  style:width="{columnWidth}px"
-                ></div>
-              {/each}
-              {#each holidayCells as holiday (holiday.day)}
-                <div
-                  class="tl-holiday"
-                  data-testid="plan-holiday-{holiday.day}"
-                  style:left="{holiday.left}px"
-                  style:width="{columnWidth}px"
-                ></div>
-              {/each}
-              {#each person.outsideRanges ?? [] as away, i (i)}
-                {@const from = dayIndex(period.year, away.start) - startIndex}
-                {@const to = dayIndex(period.year, away.end) - startIndex}
-                {#if to >= 0 && from < count}
+              {#if isYear}
+                {#each weeks as week, i (week.monday)}
                   <div
-                    class="tl-away"
-                    style:left="{Math.max(from, 0) * columnWidth}px"
-                    style:width="{(Math.min(to, count - 1) - Math.max(from, 0) + 1) *
-                      columnWidth}px"
-                  ></div>
-                {/if}
-              {/each}
-              {#if todayLeft !== null}
-                <div class="tl-today" style:left="{todayLeft + columnWidth / 2 - 1}px"></div>
-              {/if}
-
-              {#each layout.bars as placed (placed.bar.key)}
-                {@const bar = placed.bar}
-                {#if bar.style === "wunsch"}
-                  <div
-                    class="absence-bar absence-bar--wunsch absence-wish"
-                    class:absence-wish--conflict={bar.conflict}
-                    class:absence-wish--readonly={!bar.editable}
-                    class:absence-wish--dragging={drag?.key === bar.key}
-                    data-testid="leave-plan-wish-{bar.key}"
-                    data-bar-style="wunsch"
-                    style:left="{placed.left}px"
-                    style:width="{placed.width}px"
-                    style:top="{4 + placed.lane * LANE_HEIGHT}px"
+                    class="tl-weekhead"
+                    class:tl-weekhead--today={week.monday === todayWeek}
+                    data-testid="week-head-{week.monday}"
+                    style:left="{i * columnWidth}px"
+                    style:width="{columnWidth}px"
+                    title="KW {week.isoWeek}: {fmtShort(week.monday)} bis {fmtDate(week.sunday)}"
                   >
-                    {#if bar.foreignPlan}
-                      <span
-                        class="absence-wish-body absence-wish-body--static"
-                        role="img"
-                        aria-label={wishAriaLabel(person, bar)}
-                        title={barTitle(bar)}
+                    {#if showDayText}{week.isoWeek}{/if}
+                  </div>
+                {/each}
+              {:else}
+                {#each columns as column, i (column.day)}
+                  {@const mark = markings.get(column.day)}
+                  {@const holiday = dayHeadTitle(column.day)}
+                  {@const text = dayHeadText(column)}
+                  <svelte:element
+                    this={holiday === undefined ? "div" : "button"}
+                    type={holiday === undefined ? undefined : "button"}
+                    class="absence-day"
+                    class:absence-day--weekend={column.isWeekend}
+                    class:absence-day--holiday={holiday !== undefined}
+                    class:absence-day--closed={mark?.closed}
+                    class:absence-day--today={mark?.today}
+                    data-testid="absence-day-{column.day}"
+                    style:left="{i * columnWidth}px"
+                    style:width="{columnWidth}px"
+                    title={holiday}
+                    aria-label={dayHeadLabel(column.day)}
+                  >
+                    <span class="absence-day-letter">{text.letter}</span>
+                    <span class="absence-day-number">{text.number}</span>
+                  </svelte:element>
+                {/each}
+              {/if}
+            </div>
+          </div>
+
+          <!-- Load: how many persons are absent per day (Quartal, Monat) or per week (Jahr) -->
+          {#if load}
+            <div class="tl-line tl-load" data-testid="plan-day-load">
+              <div class="tl-name" title={load.hint}>{load.label ?? "Abwesend (Personen)"}</div>
+              <div class="tl-track" style:width="{trackWidth}px" style:height="{LOAD_HEIGHT}px">
+                {#each loadCells as cell (cell.key)}
+                  <div
+                    class="tl-load-cell"
+                    class:tl-load-cell--exceeded={cell.exceeded}
+                    data-testid="day-load-{cell.key}"
+                    data-exceeded={cell.exceeded ? "true" : "false"}
+                    style:left="{cell.index * columnWidth}px"
+                    style:width="{columnWidth}px"
+                    style:--tl-load-share="{Math.round((cell.count / maxLoad) * 60) + 15}%"
+                    title={loadLabel(cell)}
+                    aria-label={loadLabel(cell)}
+                    role="img"
+                  >
+                    {#if columnWidth >= DAY_TEXT_MIN_WIDTH}{cell.count}{/if}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          <!-- One row per person -->
+          {#each rows as person (person.employeeId)}
+            {@const layout = layouts.get(person.employeeId) ?? { bars: [], lanes: 1 }}
+            {@const height = rowHeight(person)}
+            <div class="tl-line tl-person" data-testid="plan-row-{person.employeeId}">
+              <div class="tl-name" class:tl-name--own={person.isOwn} title={person.name}>
+                {person.name}
+              </div>
+              {#if isYear}
+                <div
+                  class="tl-track tl-track--weeks"
+                  data-testid="plan-track-{person.employeeId}"
+                  style:width="{trackWidth}px"
+                  style:height="{height}px"
+                >
+                  {#each cellsByPerson.get(person.employeeId) ?? [] as cell, i (cell.monday)}
+                    {@const week = weeks[i]}
+                    {@const color = cellColor(cell)}
+                    <button
+                      type="button"
+                      class="tl-week"
+                      class:tl-week--beantragt={cell.hasBeantragt}
+                      class:tl-week--wish={cell.hasWish}
+                      class:tl-week--mixed={cell.fill === "mixed"}
+                      class:tl-week--edge={cell.outOfYearDays > 0}
+                      data-testid="week-cell-{person.employeeId}-{cell.monday}"
+                      style:left="{i * columnWidth}px"
+                      style:width="{columnWidth}px"
+                      style:--bar-fill="var({color.fill})"
+                      title={weekLabel(week, cell)}
+                      aria-label="{person.name}: {weekLabel(week, cell)}"
+                      onclick={() => onWeekSelect?.(cell.monday)}
+                      onkeydown={(event) => onWeekKeydown(event, cell.monday)}
+                    >
+                      {#if cell.share > 0}
+                        <span class="tl-week-fill" style:height="{cell.share * 100}%"></span>
+                      {/if}
+                      {#if cell.outOfYearDays > 0}
+                        <span
+                          class="tl-week-out"
+                          class:tl-week-out--end={cell.monday >= period.startDay}
+                          style:width="{(cell.outOfYearDays / 7) * 100}%"
+                        ></span>
+                      {/if}
+                    </button>
+                  {/each}
+                </div>
+              {:else}
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                <div
+                  class="tl-track"
+                  class:tl-track--addable={onAddWish !== undefined &&
+                    canAddWishFor(person.employeeId)}
+                  data-testid="plan-track-{person.employeeId}"
+                  style:width="{trackWidth}px"
+                  style:height="{height}px"
+                  onclick={(event) => onTrackClick(event, person)}
+                >
+                  {#each weekendRuns as run (run.left)}
+                    <div
+                      class="tl-weekend"
+                      style:left="{run.left}px"
+                      style:width="{run.width}px"
+                    ></div>
+                  {/each}
+                  {#each closedCells as closed (closed.day)}
+                    <div
+                      class="tl-closed"
+                      style:left="{closed.left}px"
+                      style:width="{columnWidth}px"
+                    ></div>
+                  {/each}
+                  {#each holidayCells as holiday (holiday.day)}
+                    <div
+                      class="tl-holiday"
+                      data-testid="plan-holiday-{holiday.day}"
+                      style:left="{holiday.left}px"
+                      style:width="{columnWidth}px"
+                    ></div>
+                  {/each}
+                  {#each person.outsideRanges ?? [] as away, i (i)}
+                    {@const from = dayIndex(period.year, away.start) - startIndex}
+                    {@const to = dayIndex(period.year, away.end) - startIndex}
+                    {#if to >= 0 && from < count}
+                      <div
+                        class="tl-away"
+                        style:left="{Math.max(from, 0) * columnWidth}px"
+                        style:width="{(Math.min(to, count - 1) - Math.max(from, 0) + 1) *
+                          columnWidth}px"
+                      ></div>
+                    {/if}
+                  {/each}
+                  {#if todayLeft !== null}
+                    <div class="tl-today" style:left="{todayLeft + columnWidth / 2 - 1}px"></div>
+                  {/if}
+
+                  {#each layout.bars as placed (placed.bar.key)}
+                    {@const bar = placed.bar}
+                    {#if bar.style === "wunsch"}
+                      <div
+                        class="absence-bar absence-bar--wunsch absence-wish"
+                        class:absence-wish--conflict={bar.conflict}
+                        class:absence-wish--readonly={!bar.editable}
+                        class:absence-wish--dragging={drag?.key === bar.key}
+                        data-testid="leave-plan-wish-{bar.key}"
+                        data-bar-style="wunsch"
+                        style:left="{placed.left}px"
+                        style:width="{placed.width}px"
+                        style:top="{4 + placed.lane * LANE_HEIGHT}px"
                       >
-                        {#if placed.width >= LABEL_MIN_WIDTH}{bar.label}{/if}
-                      </span>
+                        {#if bar.foreignPlan}
+                          <span
+                            class="absence-wish-body absence-wish-body--static"
+                            role="img"
+                            aria-label={wishAriaLabel(person, bar)}
+                            title={barTitle(bar)}
+                          >
+                            {#if placed.width >= LABEL_MIN_WIDTH}{bar.label}{/if}
+                          </span>
+                        {:else}
+                          <button
+                            type="button"
+                            class="absence-wish-body"
+                            data-testid="wish-bar-{bar.key}"
+                            aria-label={wishAriaLabel(person, bar)}
+                            title={barTitle(bar)}
+                            onpointerdown={(event) => beginDrag(event, bar, "move")}
+                            onpointermove={(event) => moveDrag(event, bar)}
+                            onpointerup={(event) => endDrag(event, bar)}
+                            onpointercancel={cancelDrag}
+                            onclick={(event) => onWishClick(event, bar)}
+                            onkeydown={(event) => onWishKeydown(event, bar)}
+                          >
+                            {#if placed.width >= LABEL_MIN_WIDTH}{bar.label}{/if}
+                          </button>
+                          {#if bar.editable}
+                            <span
+                              class="absence-handle absence-handle--start"
+                              role="presentation"
+                              data-testid="leave-plan-wish-handle-start-{bar.key}"
+                              onpointerdown={(event) => beginDrag(event, bar, "start")}
+                              onpointermove={(event) => moveDrag(event, bar)}
+                              onpointerup={(event) => endDrag(event, bar)}
+                              onpointercancel={cancelDrag}
+                            ></span>
+                            <span
+                              class="absence-handle absence-handle--end"
+                              role="presentation"
+                              data-testid="leave-plan-wish-handle-end-{bar.key}"
+                              onpointerdown={(event) => beginDrag(event, bar, "end")}
+                              onpointermove={(event) => moveDrag(event, bar)}
+                              onpointerup={(event) => endDrag(event, bar)}
+                              onpointercancel={cancelDrag}
+                            ></span>
+                          {/if}
+                        {/if}
+                      </div>
                     {:else}
+                      {@const color = barColor(bar)}
                       <button
                         type="button"
-                        class="absence-wish-body"
-                        data-testid="wish-bar-{bar.key}"
-                        aria-label={wishAriaLabel(person, bar)}
+                        class="absence-bar absence-bar--{bar.style}"
+                        class:absence-bar--selectable={onBarSelect !== undefined}
+                        data-testid="absence-bar-{bar.key}"
+                        data-bar-style={bar.style}
+                        style:left="{placed.left}px"
+                        style:width="{placed.width}px"
+                        style:top="{4 + placed.lane * LANE_HEIGHT}px"
+                        style:--bar-fill="var({color.fill})"
+                        style:--bar-text="var({color.text})"
                         title={barTitle(bar)}
-                        onpointerdown={(event) => beginDrag(event, bar, "move")}
-                        onpointermove={(event) => moveDrag(event, bar)}
-                        onpointerup={(event) => endDrag(event, bar)}
-                        onpointercancel={cancelDrag}
-                        onclick={(event) => onWishClick(event, bar)}
-                        onkeydown={(event) => onWishKeydown(event, bar)}
+                        aria-label="{person.name}: {barTitle(bar)}"
+                        onclick={() => onBarSelect?.(bar)}
+                        onkeydown={(event) => onBarKeydown(event, bar)}
                       >
                         {#if placed.width >= LABEL_MIN_WIDTH}{bar.label}{/if}
                       </button>
-                      {#if bar.editable}
-                        <span
-                          class="absence-handle absence-handle--start"
-                          role="presentation"
-                          data-testid="leave-plan-wish-handle-start-{bar.key}"
-                          onpointerdown={(event) => beginDrag(event, bar, "start")}
-                          onpointermove={(event) => moveDrag(event, bar)}
-                          onpointerup={(event) => endDrag(event, bar)}
-                          onpointercancel={cancelDrag}
-                        ></span>
-                        <span
-                          class="absence-handle absence-handle--end"
-                          role="presentation"
-                          data-testid="leave-plan-wish-handle-end-{bar.key}"
-                          onpointerdown={(event) => beginDrag(event, bar, "end")}
-                          onpointermove={(event) => moveDrag(event, bar)}
-                          onpointerup={(event) => endDrag(event, bar)}
-                          onpointercancel={cancelDrag}
-                        ></span>
-                      {/if}
                     {/if}
-                  </div>
-                {:else}
-                  {@const color = barColor(bar)}
-                  <button
-                    type="button"
-                    class="absence-bar absence-bar--{bar.style}"
-                    class:absence-bar--selectable={onBarSelect !== undefined}
-                    data-testid="absence-bar-{bar.key}"
-                    data-bar-style={bar.style}
-                    style:left="{placed.left}px"
-                    style:width="{placed.width}px"
-                    style:top="{4 + placed.lane * LANE_HEIGHT}px"
-                    style:--bar-fill="var({color.fill})"
-                    style:--bar-text="var({color.text})"
-                    title={barTitle(bar)}
-                    aria-label="{person.name}: {barTitle(bar)}"
-                    onclick={() => onBarSelect?.(bar)}
-                    onkeydown={(event) => onBarKeydown(event, bar)}
-                  >
-                    {#if placed.width >= LABEL_MIN_WIDTH}{bar.label}{/if}
-                  </button>
-                {/if}
-              {/each}
-            </div>
-          {/if}
-          {#if showForecast}
-            <div class="tl-forecast" data-testid="plan-forecast-{person.employeeId}">
-              {#if person.forecast}
-                <span>{forecastLabel(person.forecast.forecastDays)}</span>
-                {#if person.forecast.forecastNegative}
-                  <span class="badge badge-red">{FORECAST_WARNING}</span>
-                {/if}
+                  {/each}
+                </div>
               {/if}
             </div>
-          {/if}
+          {/each}
         </div>
-      {/each}
+      </div>
+      {#if showMoreHint}
+        <div class="tl-fade" data-testid="timeline-overflow-fade" aria-hidden="true"></div>
+      {/if}
     </div>
+
+    <!-- Forecast pane: beside the day viewport, never over a day column (Issue 840 G-5) -->
+    {#if showForecast}
+      <div class="tl-forecast-pane">
+        <div
+          class="tl-forecast tl-forecast--head"
+          data-testid="plan-forecast-head"
+          style:height="{HEAD_HEIGHT}px"
+        >
+          Anspruch
+        </div>
+        {#if load}
+          <div
+            class="tl-forecast"
+            data-testid="plan-forecast-load"
+            style:height="{LOAD_HEIGHT}px"
+          ></div>
+        {/if}
+        {#each rows as person (person.employeeId)}
+          <div
+            class="tl-forecast"
+            data-testid="plan-forecast-{person.employeeId}"
+            style:height="{rowHeight(person)}px"
+          >
+            {#if person.forecast}
+              <span>{forecastLabel(person.forecast.forecastDays)}</span>
+              {#if person.forecast.forecastNegative}
+                <span class="badge badge-red">{FORECAST_WARNING}</span>
+              {/if}
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
-  {#if showMoreHint}
-    <div
-      class="tl-fade"
-      class:tl-fade--forecast={showForecast}
-      data-testid="timeline-overflow-fade"
-      aria-hidden="true"
-    ></div>
-    <span
-      class="tl-more"
-      class:tl-more--forecast={showForecast}
-      data-testid="timeline-overflow-hint"
-      aria-hidden="true">weiter →</span
-    >
+  {#if overflowing}
+    <div class="tl-caption">
+      {#if showMoreHint}
+        <span class="tl-more" data-testid="timeline-overflow-hint" aria-hidden="true">weiter →</span
+        >
+      {/if}
+    </div>
   {/if}
 </div>
 
@@ -796,6 +858,18 @@
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--r-md);
+  }
+
+  /* Issue 840 G-5: the day viewport and the forecast pane are two columns of one body row. */
+  .tl-body {
+    display: flex;
+    align-items: flex-start;
+  }
+
+  .tl-viewport {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .tl-scroll {
@@ -810,6 +884,11 @@
     display: flex;
     align-items: stretch;
     border-bottom: 1px solid var(--border);
+  }
+
+  /* The load line is exactly as high as its forecast cell: no padded name cell stretches it. */
+  .tl-load .tl-name {
+    padding-block: 0;
   }
 
   .tl-line:last-child {
@@ -1254,29 +1333,36 @@
     right: -4px;
   }
 
-  /* Forecast column („Anspruch“) of the planner */
-  .tl-forecast {
-    position: sticky;
-    right: 0;
-    z-index: 3;
+  /* Forecast pane („Anspruch“) of the planner: its own column beside the day viewport. */
+  .tl-forecast-pane {
     flex: none;
     width: var(--tl-forecast-w);
-    padding: 0.35rem 0.75rem;
-    background: var(--bg-card);
     border-left: 1px solid var(--border);
+  }
+
+  .tl-forecast {
+    box-sizing: content-box;
+    padding: 0 0.75rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
     font-size: 0.8125rem;
     color: var(--text);
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     justify-content: center;
     gap: 0.25rem;
   }
 
+  .tl-forecast:last-child {
+    border-bottom: none;
+  }
+
   .tl-forecast--head {
     font-weight: 500;
   }
 
-  /* Overflow: a fade at the right edge and a hint, while there is more to scroll to. */
+  /* Overflow: a fade at the right edge of the day viewport, a caption below the grid. */
   .tl-fade {
     position: absolute;
     top: 0;
@@ -1284,29 +1370,21 @@
     bottom: 0;
     width: 48px;
     background: linear-gradient(to right, transparent, var(--bg-card));
-    border-radius: 0 var(--r-md) var(--r-md) 0;
     pointer-events: none;
     z-index: 4;
   }
 
-  .tl-fade--forecast {
-    right: var(--tl-forecast-w);
+  .tl-caption {
+    display: flex;
+    justify-content: flex-end;
+    min-height: 1.5rem;
+    padding: 0.125rem 0.5rem;
+    border-top: 1px solid var(--border);
   }
 
   .tl-more {
-    position: absolute;
-    top: 4px;
-    right: 8px;
-    z-index: 5;
-    padding: 0 0.4rem;
-    border-radius: var(--r-sm);
-    background: var(--bg-card);
     font-size: 0.75rem;
     color: var(--text-muted);
     pointer-events: none;
-  }
-
-  .tl-more--forecast {
-    right: calc(var(--tl-forecast-w) + 8px);
   }
 </style>
