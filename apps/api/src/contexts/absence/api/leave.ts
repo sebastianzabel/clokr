@@ -329,9 +329,15 @@ const CALENDAR_RANGE_MAX_DAYS = 366;
 const calendarDaySchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
-  .refine((v) => new Date(`${v}T00:00:00.000Z`).toISOString().slice(0, 10) === v, {
-    message: "Ungültiges Datum",
-  });
+  // Zod 4 runs this refinement even after the regex above failed, so an unparsable value must not
+  // reach `toISOString()` (a RangeError would answer 500 instead of 400).
+  .refine(
+    (v) => {
+      const t = Date.parse(`${v}T00:00:00.000Z`);
+      return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === v;
+    },
+    { message: "Ungültiges Datum" },
+  );
 const leaveCalendarQuerySchema = z
   .object({
     salonId: z.string().uuid().optional(),
