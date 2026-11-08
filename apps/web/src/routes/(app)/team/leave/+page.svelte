@@ -28,6 +28,7 @@
   import { parseLeaveCreateDeepLink, type LeaveCreateDeepLink } from "$lib/leave/create-deep-link"; // Issue #587
   import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
   import LeaveToolbar from "$lib/components/leave/LeaveToolbar.svelte"; // Issue #840 (D-840-13, E-01)
+  import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"; // Issue #840 (G-3)
   import LeavePlanningPanel from "$lib/components/leave/LeavePlanningPanel.svelte"; // Issue #840 (D-840-17)
   import LeavePlanControls from "$lib/components/leave/LeavePlanControls.svelte"; // Issue #840 (G-6)
   import { legendFrom } from "$lib/leave/leave-colors";
@@ -60,6 +61,8 @@
   import {
     emptyRequestsText,
     locateDeepLinkedRequest,
+    matchesStatusFilter,
+    openRequestsSummary,
     overviewPersons,
     pageOfRequest,
     requestsForStatus,
@@ -149,6 +152,8 @@
   let salonRejected = $state(false);
   // Plain lets: an older response never overwrites a newer one (not reactive on purpose).
   let dataGeneration = 0;
+  // #840 G-1: the open count has its own loader so it shows on every tab as soon as it is known.
+  let openGeneration = 0;
 
   // Korrektur-Modal (EDIT-05): Manager korrigiert einen bereits GENEHMIGTEN Antrag
   let correctModal: LeaveRequest | null = $state(null);
@@ -385,14 +390,12 @@
     loading = true;
     error = "";
     try {
-      const [all, pending, emps] = await Promise.all([
+      const [all, emps] = await Promise.all([
         api.get<LeaveRequest[]>(withSalonId(`/leave/requests?year=${listYear}`, pageSalonId)),
-        api.get<LeaveRequest[]>(withSalonId("/leave/requests?status=PENDING", pageSalonId)),
         api.get<Employee[]>(withSalonId("/employees", pageSalonId)),
       ]);
       if (generation !== dataGeneration) return;
       allTeamRequests = all;
-      pendingRequests = pending;
       employees = emps;
       salonRejected = false;
     } catch (e: unknown) {
@@ -400,7 +403,6 @@
       if (isSalonFilterRejected(e)) {
         // The one 404 of an inadmissible salon: a calm text, no error alert.
         allTeamRequests = [];
-        pendingRequests = [];
         employees = [];
         salonRejected = true;
       } else {
@@ -408,6 +410,31 @@
       }
     } finally {
       if (generation === dataGeneration) loading = false;
+    }
+  }
+
+  /**
+   * The open requests (`PENDING` and a requested cancellation, every year) of the header salon.
+   * Read on its own so the count of the Anträge tab shows on every tab as soon as it is known and
+   * keeps its last value while a reload runs (Issue #840 G-1): a failure other than the calm
+   * rejected salon leaves the shown count in place.
+   */
+  async function loadOpenRequests() {
+    const generation = ++openGeneration;
+    try {
+      const pending = await api.get<LeaveRequest[]>(
+        withSalonId("/leave/requests?status=PENDING", pageSalonId),
+      );
+      if (generation !== openGeneration) return;
+      pendingRequests = pending;
+    } catch (e: unknown) {
+      if (generation !== openGeneration) return;
+      if (isSalonFilterRejected(e)) {
+        // The one 404 of an inadmissible salon: nothing is open there; the calm text is loadData's.
+        pendingRequests = [];
+      } else {
+        error = e instanceof Error ? e.message : "Fehler beim Laden";
+      }
     }
   }
 
@@ -522,7 +549,10 @@
     void listYear;
     untrack(() => {
       void (async () => {
+        // Both reads start at once; the deep link below waits for both (it reads the open list too).
+        const open = loadOpenRequests();
         await loadData();
+        await open;
         if (!firstLoadDone) {
           firstLoadDone = true;
           runDeepLink();
@@ -546,6 +576,7 @@
   async function reloadAll() {
     await Promise.all([
       loadData(),
+      loadOpenRequests(),
       activeTab === "uebersicht" ? loadOverview() : Promise.resolve(),
     ]);
   }
@@ -763,12 +794,16 @@
     empDropdownOpen = false;
   }
 
-  // Filtered views based on selected employee
-  let filteredPendingRequests = $derived(
-    filterEmployeeId
-      ? pendingRequests.filter((r) => r.employeeId === filterEmployeeId)
-      : pendingRequests,
-  );
+  // Issue #840 G-1: the open count follows the header salon only, never the person filter (that
+  // filter is not even shown on Planung).
+  const openSummary = $derived(openRequestsSummary(pendingRequests));
+
+  /** A click on the count: the Anträge list at „Offen“, with no person or type filter hiding a counted row. */
+  function openOpenRequests() {
+    filterEmployeeId = "";
+    filterLeaveType = "";
+    void navigate({ tab: "antraege", status: "PENDING" });
+  }
 
   // ── Übersicht: rows, load and legend (Issue #840, E-06, D-840-10/27) ─────────────────────
   // Rows: the persons of the calendar answer plus every person of the page's own (salon-filtered)
@@ -829,10 +864,18 @@
     };
   });
 
-  // The tabs of the one toolbar; the open requests (salon- and person-filtered) badge the Anträge tab.
+  // The tabs of the one toolbar; the open requests of the salon selection badge the Anträge tab
+  // with a neutral, explained count (Issue #840 G-1).
   const toolbarTabs = $derived([
     { id: "uebersicht", label: "Übersicht" },
-    { id: "antraege", label: "Anträge", badge: filteredPendingRequests.length, testId: "list" },
+    {
+      id: "antraege",
+      label: "Anträge",
+      badge: openSummary?.count,
+      badgeLabel: openSummary?.label,
+      onBadgeSelect: openOpenRequests,
+      testId: "list",
+    },
     { id: "planung", label: "Planung" },
   ]);
 
@@ -877,7 +920,7 @@
   let filteredTeamRequests = $derived(
     requestSource.filter((req) => {
       if (filterEmployeeId && req.employeeId !== filterEmployeeId) return false;
-      if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
+      if (!matchesStatusFilter(req.status, urlState.status)) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
       return true;
     }),
@@ -1198,13 +1241,13 @@
                 >
                   <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
                   <td>
-                    <span
-                      class="chip chip-brand req-chip"
-                      class:req-chip--requested={req.status === "PENDING"}
+                    <LeaveTypeChip
+                      code={req.typeCode}
+                      label={typeName(req.typeCode)}
+                      requested={req.status === "PENDING"}
                       data-row-status={req.status}
                       data-testid={`leave-team-row-${req.id}-type-chip`}
-                      >{typeName(req.typeCode)}</span
-                    >
+                    />
                   </td>
                   <td class="font-mono">{fmtDate(req.startDate)}</td>
                   <td class="font-mono">{fmtDate(req.endDate)}</td>
@@ -1875,11 +1918,8 @@
   /* view-tabs, view-tab, tab-badge → global in app.css */
 
   /* ── Anträge list (Issue #840, E-02) ─────────────────────────────────── */
-  /* An open request wears the dashed outline of the „beantragt“ bar style, so the cue is not
-     the colour alone (WCAG 1.4.1); the „Offen“ badge in the status cell says it in words. */
-  .req-chip--requested {
-    border: 1.5px dashed currentColor;
-  }
+  /* The type chip is LeaveTypeChip (Issue 840 G-3): colour from the one mapping, a pending request
+     dashed; the „Offen“ badge in the status cell says it in words. */
 
   /* #840 D-840-10: the legend is LeaveLegend.svelte. */
   .badge-attest {

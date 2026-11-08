@@ -57,10 +57,21 @@ describe("Issue #840 E-01 - one page, one toolbar, one timeline", () => {
 
   it("[tabs] the three tabs are Übersicht / Anträge / Planung, the Anträge one badged and named „list“", () => {
     expect(PAGE).toContain('{ id: "uebersicht", label: "Übersicht" }');
-    expect(PAGE).toContain(
-      'id: "antraege", label: "Anträge", badge: filteredPendingRequests.length',
-    );
+    // #840 G-1: the count is the open requests of the salon selection (NOT narrowed by the person
+    // filter), with its explanation, and a click on it opens the „Offen“ filter.
+    expect(PAGE).toContain("openRequestsSummary(pendingRequests)");
+    expect(PAGE).not.toContain("filteredPendingRequests");
+    const tabs = PAGE.slice(PAGE.indexOf("const toolbarTabs = $derived("));
+    const antraege = tabs.slice(tabs.indexOf('id: "antraege"'), tabs.indexOf('id: "planung"'));
+    expect(antraege).toContain("badge: openSummary?.count");
+    expect(antraege).toContain("badgeLabel: openSummary?.label");
+    expect(antraege).toContain("onBadgeSelect: openOpenRequests");
     expect(PAGE).toContain('testId: "list"');
+    const select = PAGE.slice(PAGE.indexOf("function openOpenRequests("));
+    const selectBody = select.slice(0, select.indexOf("\n  }\n"));
+    expect(selectBody).toContain('tab: "antraege"');
+    expect(selectBody).toContain('status: "PENDING"');
+    expect(selectBody).toContain('filterEmployeeId = ""');
     expect(PAGE).toContain('{ id: "planung", label: "Planung" }');
     // The old tabs are gone.
     expect(PAGE).not.toContain("Genehmigungen");
@@ -187,15 +198,21 @@ describe("Issue #840 E-02 - Anträge: a status filter, open requests marked, dec
   it("[open requests of every year] the open filters read the merged list, never only the year list", () => {
     expect(PAGE).toContain("requestsForStatus(urlState.status, allTeamRequests, pendingRequests)");
     expect(PAGE).toContain("requestSource.filter(");
+    // #840 G-1: „Offen“ lists every request that waits for a decision, so the list shows what was counted.
+    expect(PAGE).toContain("matchesStatusFilter(req.status, urlState.status)");
+    expect(PAGE).not.toContain("req.status !== filterLeaveStatus");
     expect(PAGE).toContain("<Pagination");
   });
 
   it("[PENDING marking] an open row carries the „Offen“ badge and the dashed chip of the beantragt style", () => {
     expect(functionBody("statusLabel")).toContain('? "Offen"');
     expect(PAGE).not.toContain('"Ausstehend"');
-    expect(PAGE).toContain('class:req-chip--requested={req.status === "PENDING"}');
+    // #840 G-3: the type chip is LeaveTypeChip (colour from the mapping); the dashed look moved there.
+    expect(PAGE).toContain("<LeaveTypeChip");
+    expect(PAGE).toContain('requested={req.status === "PENDING"}');
     expect(PAGE).toContain("data-row-status={req.status}");
-    expect(PAGE).toContain("border: 1.5px dashed currentColor;");
+    expect(PAGE).not.toContain("chip-brand");
+    expect(PAGE).not.toContain("req-chip");
     expect(PAGE).toContain('class="badge {statusClass(req.status)}"');
   });
 

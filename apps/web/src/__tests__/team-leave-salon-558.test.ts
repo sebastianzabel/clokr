@@ -71,7 +71,11 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     const body = functionBody("loadData");
     // #840: the list year follows the URL anchor day (`listYear`), no longer a page-local calYear.
     expect(body).toContain("withSalonId(`/leave/requests?year=${listYear}`, pageSalonId)");
-    expect(body).toContain('withSalonId("/leave/requests?status=PENDING", pageSalonId)');
+    // #840 G-1: the open count has its own loader so it shows on every tab as soon as it is known
+    expect(body).not.toContain("status=PENDING");
+    expect(functionBody("loadOpenRequests")).toContain(
+      'withSalonId("/leave/requests?status=PENDING", pageSalonId)',
+    );
     expect(body).toContain('withSalonId("/employees", pageSalonId)');
     expect(PAGE).toContain("salonPageFilter($salonContext)");
   });
@@ -102,6 +106,8 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     expect(effect).toContain("pageSalonId");
     expect(effect).toContain("untrack(");
     expect(effect).toContain("loadData()");
+    // #840 G-1: the open count has its own loader so it shows on every tab as soon as it is known
+    expect(effect).toContain("loadOpenRequests()");
     expect(effect).not.toContain("loadCalendar()"); // #840: the month grid is gone
     expect(effect).not.toContain("loadSection9Cases()"); // #840 D-840-05: moved to /inbox
     expect(PAGE).toContain("const contextLoaded = $derived($salonContext.loaded)");
@@ -111,6 +117,8 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
   it("[order] each salon-carrying loader has its own generation counter checked after the await", () => {
     const loaders: [string, string, string, string][] = [
       ["loadData", "dataGeneration", "await Promise.all", "allTeamRequests = "],
+      // #840 G-1: the open count has its own loader so it shows on every tab as soon as it is known
+      ["loadOpenRequests", "openGeneration", "await api.get", "pendingRequests = "],
       // #840: the calendar loader is the range-form Übersicht loader (formerly loadCalendar).
       ["loadOverview", "overviewGeneration", "await api.get", "overviewRows = "],
     ];
@@ -135,8 +143,15 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     const branch = body.slice(rejected, body.indexOf("} else {", rejected));
     expect(branch).toContain("salonRejected = true");
     expect(branch).toContain("allTeamRequests = []");
-    expect(branch).toContain("pendingRequests = []");
     expect(branch).toContain("employees = []");
+    // #840 G-1: the open count has its own loader so it shows on every tab as soon as it is known
+    const open = functionBody("loadOpenRequests");
+    const openRejected = open.indexOf("isSalonFilterRejected(e)");
+    expect(openRejected).toBeGreaterThan(-1);
+    const openBranch = open.slice(openRejected, open.indexOf("} else {", openRejected));
+    expect(openBranch).toContain("pendingRequests = []");
+    expect(openBranch).not.toContain("error =");
+    expect(openBranch).not.toContain("toasts.error");
     expect(branch).not.toContain("error =");
     expect(branch).not.toContain("toasts.error");
     // Any other failure keeps today's handling.
