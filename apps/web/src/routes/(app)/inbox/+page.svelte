@@ -77,7 +77,11 @@
   }
 
   // ── State ────────────────────────────────────────────────────────────────
+  // Year-bound list (approved / rejected / all tabs).
   let requests: LeaveRequest[] = $state([]);
+  // Every open request in the caller's approve reach, regardless of the year it starts in (#840 E-02:
+  // the inbox is the only approval place, so a request for next January must not be missing).
+  let pendingRequests: LeaveRequest[] = $state([]);
   let loading = $state(true);
   let error = $state("");
   let tab: TabKey = $state("open");
@@ -160,10 +164,18 @@
     loading = true;
     error = "";
     try {
-      requests = await api.get<LeaveRequest[]>(`/leave/requests?year=${currentYear}`);
+      // The open list is loaded without `year` on purpose: for an approver `status=PENDING` also
+      // covers CANCELLATION_REQUESTED, in every year.
+      const [yearList, openList] = await Promise.all([
+        api.get<LeaveRequest[]>(`/leave/requests?year=${currentYear}`),
+        api.get<LeaveRequest[]>("/leave/requests?status=PENDING"),
+      ]);
+      requests = yearList;
+      pendingRequests = openList;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
       requests = [];
+      pendingRequests = [];
     } finally {
       loading = false;
     }
@@ -188,7 +200,10 @@
 
   async function applyDeepLink(link: InboxDeepLink) {
     if (link.requestId) {
-      let found: LeaveRequest | null = requests.find((r) => r.id === link.requestId) ?? null;
+      let found: LeaveRequest | null =
+        pendingRequests.find((r) => r.id === link.requestId) ??
+        requests.find((r) => r.id === link.requestId) ??
+        null;
       if (!found && link.year !== null && link.year !== currentYear) {
         found = await findRequestInYear(link.requestId, link.year);
       }
@@ -249,7 +264,7 @@
 
   // ── Derived: filtered lists + KPIs ───────────────────────────────────────
   let openRequests = $derived(
-    requests.filter((r) => r.status === "PENDING" || r.status === "CANCELLATION_REQUESTED"),
+    pendingRequests.filter((r) => r.status === "PENDING" || r.status === "CANCELLATION_REQUESTED"),
   );
   let approvedRequests = $derived(requests.filter((r) => r.status === "APPROVED"));
   let rejectedRequests = $derived(requests.filter((r) => r.status === "REJECTED"));
