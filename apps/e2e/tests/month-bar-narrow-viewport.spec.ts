@@ -77,7 +77,8 @@ const SURFACES: Surface[] = [
     next: "Nächstes Jahr",
     today: false,
   },
-  { path: "/team/leave", ...MONTH, today: true },
+  // Issue #840 (plan 840-10): the page opens on the quarter; the month bar is the month zoom.
+  { path: "/team/leave?tab=uebersicht&zoom=monat", ...MONTH, today: true },
   { path: "/teamcal", ...MONTH, today: true },
   // Issue #612: the period bar of /reports (MonthBar with the period label); no "Heute" (the preset
   // "Dieser Monat" covers it) and, in the current month the clock is fixed on, a disabled next arrow.

@@ -243,3 +243,76 @@ describe("Issue #840 E-02 - Anträge: a status filter, open requests marked, dec
     expect(PAGE).toContain("class:highlight-row={highlightRequestId === req.id}");
   });
 });
+
+describe("Issue #840 D-840-17/03/31 - Planung tab, legacy links, create link on every tab", () => {
+  const LOADER = readRouteFile(
+    "../routes/(app)/team/leave/+page.ts",
+    "src/routes/(app)/team/leave/+page.ts",
+  );
+
+  it("[+page.ts] the universal load redirects with 307 through teamLeaveRedirect and does nothing else", () => {
+    expect(LOADER.length).toBeGreaterThan(300);
+    expect(count(LOADER, "teamLeaveRedirect(")).toBe(1);
+    expect(LOADER).toContain("teamLeaveRedirect(url.searchParams)");
+    expect(LOADER).toContain("redirect(307, target)");
+    expect(LOADER).toContain('from "$lib/leave/area-tabs"');
+    // The target is never built here: no template string, no concatenation, no second redirect.
+    const code = LOADER.split("\n")
+      .filter((line) => !line.trimStart().startsWith("//"))
+      .join("\n");
+    expect(count(code, "redirect(")).toBe(1);
+    expect(code).not.toContain("searchParams.get(");
+    expect(code).not.toContain("`");
+  });
+
+  it("[panel] the Planung tab mounts the planning panel once, in team mode, outside every animated block", () => {
+    expect(count(PAGE, "<LeavePlanningPanel")).toBe(1);
+    const at = PAGE.indexOf("<LeavePlanningPanel");
+    const panel = PAGE.slice(at, PAGE.indexOf("/>", at));
+    expect(panel).toContain('mode="team"');
+    expect(panel).toContain("salonId={planSalonId}");
+    expect(panel).toContain("period={overviewPeriod}");
+    expect(panel).toContain("bind:manageOpen");
+    expect(panel).toContain("onViewer={(viewer) => (canManagePlan = viewer.canManage)}");
+    // #570: an animated block traps fixed dialogs. The panel's host div and its ancestors carry no
+    // `animate` / `card-animate` (the panel animates its own cards).
+    const tabPanel = PAGE.lastIndexOf('<div role="tabpanel" id="leave-panel-planung"', at);
+    expect(tabPanel).toBeGreaterThan(-1);
+    expect(PAGE.slice(tabPanel, at)).not.toContain("animate");
+    expect(PAGE.slice(0, at)).not.toMatch(/<Card animate[^>]*>(?![\s\S]*<\/Card>)/);
+  });
+
+  it("[salon] the plan's salon is the header selection through teamSalonViewSalon; a ?salonId deep link is preselected, then dropped", () => {
+    expect(PAGE).toContain("teamSalonViewSalon($salonContext)");
+    expect(PAGE).toContain("deepLinkSalon(param, $salonContext)");
+    expect(PAGE).toContain("salonContext.setSelection(linked)");
+    expect(PAGE).toContain('url.searchParams.delete("salonId")');
+  });
+
+  it("[manage] „Planung verwalten“ is the primary action of the Planung tab, only after the panel reported canManage", () => {
+    const head = PAGE.slice(PAGE.indexOf("<PageHead"), PAGE.indexOf("</PageHead>"));
+    const planung = head.indexOf('{#if activeTab === "planung"}');
+    expect(planung).toBeGreaterThan(-1);
+    const manage = head.indexOf("{#if canManagePlan}", planung);
+    expect(manage).toBeGreaterThan(planung);
+    expect(head.slice(manage)).toContain('data-testid="leave-plan-manage"');
+    expect(head.slice(manage)).toContain("Planung verwalten");
+    expect(head.slice(manage)).toContain("manageOpen = true");
+    // The create action belongs to the other two tabs; the old planner link button is gone.
+    expect(head.indexOf("Neue Abwesenheit")).toBeGreaterThan(head.indexOf("{:else if"));
+    expect(PAGE).not.toContain("leave-plan-link");
+    expect(PAGE).not.toContain("Urlaubsplanung</a");
+  });
+
+  it("[create link] ?create=1&employeeId&date is read once in onMount and opens the dialog on whatever tab is active", () => {
+    const mountAt = PAGE.indexOf("onMount(() => {");
+    const mount = PAGE.slice(mountAt, PAGE.indexOf("\n  });", mountAt));
+    expect(mount).toContain("deepLinkCreate = parseLeaveCreateDeepLink($page.url.searchParams)");
+    const run = functionBody("runDeepLink");
+    const create = run.slice(run.indexOf("const createLink = deepLinkCreate;"));
+    expect(create).toContain('hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN")');
+    expect(create).toContain("createModalOpen = true");
+    // No tab condition between reading the link and opening the dialog.
+    expect(create).not.toContain("activeTab");
+  });
+});
