@@ -7862,7 +7862,12 @@ Aufrufer mandantenweit alle Zeilen, nur nach Art maskiert.
   `holidaysForSalon` (Unterbau-Fassade, nur lesend).
 - **Planer (D-840-20).** `GET /leave/plans/:id` maskiert fremde Zeilen mit derselben Regel (`MASKED`, Zustand `ABWESEND`,
   beantragte Fremdzeilen entfallen, `mergeDayRanges`); `?view=own` maskiert jede fremde Zeile unabhängig von der
-  Reichweite; die Antwort nennt den Planungssalon mit Öffnungszeiten. Wünsche bleiben unverändert.
+  Reichweite und gibt jedem fremden Wunsch nur den Zeitraum (nie bearbeitbar, kein Antragsstatus, keine Ablehnung, kein
+  Konfliktkennzeichen, keine Prognose, keine Regeldaten im Tageswert; Review WR-02, die Web-App verengt die Antwort ein
+  zweites Mal in `lib/leave-plan/neutral.ts`); die Antwort nennt den Planungssalon mit Öffnungszeiten. Ohne `view=own`
+  bleiben Wünsche unverändert. Maskierte Zeiträume werden vor dem Zusammenführen auf das Fenster (Kalender) bzw. das Planjahr
+  gekürzt (Review WR-03), und ein Aufrufer ohne Leseberechtigungsreichweite, der kein `scope` sendet, wird wie mit
+  `scope=team` beantwortet (Review WR-04); wer eine Reichweite hat, behält den mandantenweiten Kalender.
 - **Benachrichtigungslinks (D-840-28).** Neuer Antrag → `/inbox?request=<id>`, beide § 9-Links → `/inbox?section9=<id>`,
   „Urlaubsplanung eröffnet“ → `/leave?tab=planung&salonId&year`. Gespeicherte Benachrichtigungen werden nicht umgeschrieben.
   Zwei Links bleiben auf `/team/leave?request=` (Korrektur nach Berufsschule: der Antrag ist nicht offen, die Inbox listet

@@ -763,7 +763,9 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   through the #836 visibility rule (`maskCalendarRows`): a foreign row outside the reader's reach has no id, status,
   halfDay, type or § 9, a foreign PENDING row is dropped, adjacent masked ranges of a person are merged (`mergeDayRanges`);
   `from`/`to` (at most 366 days) answers `{ entries, salons }`, and `scope=own|team` serve Mein Bereich and mask every
-  foreign row whatever the caller's reach (`GET /leave/plans/:id?view=own` does the same for the planner read). Leave
+  foreign row whatever the caller's reach (`GET /leave/plans/:id?view=own` does the same for the planner read and gives a
+  foreign wish the period only). Masked ranges are clipped to the requested window before the merge, and a caller with an
+  empty `leave-request:read` reach who sends no `scope` is answered as `scope=team`. Leave
   decisions, § 9 cases included, wait only in `/inbox`; old leave URLs are mapped only by `lib/leave/area-tabs.ts`.
   ADR `docs/adr/0001-abweichungen.md`, Eintrag AI.
 
