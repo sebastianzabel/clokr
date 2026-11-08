@@ -243,7 +243,7 @@ describe("Issue #840 E-03 / E-05 / D-840-16 / AC-3 - Team is neutral and read-on
     expect(count(PAGE, "<AbsenceList")).toBe(1);
     expect(count(TEAM_PANEL, "<AbsenceTimeline")).toBe(1);
     expect(count(TEAM_PANEL, "<AbsenceList")).toBe(1);
-    expect(TEAM_PANEL).toContain("closedWeekdays={teamClosedDays.days}");
+    expect(TEAM_PANEL).toContain("closedWeekdays={teamWerktage}");
     expect(TEAM_PANEL).toContain("load={teamLoad}");
     expect(TEAM_PANEL).toContain("{:else if isMobile}");
   });

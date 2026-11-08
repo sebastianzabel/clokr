@@ -93,7 +93,7 @@ describe("Issue #840 E-01 - one page, one toolbar, one timeline", () => {
     expect(count(PAGE, "<AbsenceList")).toBe(1);
     expect(count(PAGE, "<LeaveLegend")).toBe(1);
     expect(PAGE).toContain("period={overviewPeriod}");
-    expect(PAGE).toContain("closedWeekdays={closedDays.days}");
+    expect(PAGE).toContain("closedWeekdays={werktage}");
     expect(PAGE).toContain("load={overviewLoad}");
   });
 

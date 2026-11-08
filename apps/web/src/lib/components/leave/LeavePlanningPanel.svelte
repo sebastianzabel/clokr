@@ -34,6 +34,7 @@
     plannerToTimeline,
     weekLoad,
     workdaySet,
+    werktageBasis,
     type Period,
     type TimelineBar,
   } from "$lib/leave/timeline-model";
@@ -207,14 +208,20 @@
 
   // ── The one timeline ───────────────────────────────────────────────────────
   const timeline = $derived(planData ? plannerToTimeline(planData) : null);
-  const closedWeekdays = $derived.by(() => {
-    if (!planData) return null;
-    const { salon } = planData;
-    return closedDaysFor(
-      [{ salonId: salon.id, name: salon.name, openingHours: salon.openingHours }],
-      $salonContext,
-    ).days;
-  });
+  const planSalons = $derived(
+    planData
+      ? [
+          {
+            salonId: planData.salon.id,
+            name: planData.salon.name,
+            openingHours: planData.salon.openingHours,
+          },
+        ]
+      : [],
+  );
+  const closedDays = $derived(closedDaysFor(planSalons, $salonContext));
+  // Werktage basis decided once (D-840-08): null (Mon-Sat) while the plan salon has no opening hours.
+  const closedWeekdays = $derived(planData ? werktageBasis(closedDays, planSalons) : null);
   const showForecast = $derived(persons.some((p) => p.forecast !== null));
 
   const loadRow = $derived.by(() => {
@@ -263,7 +270,7 @@
       markings: {
         weekend: daily,
         holiday: daily && (timeline?.holidays.length ?? 0) > 0,
-        closed: daily && (closedWeekdays?.size ?? 0) > 0,
+        closed: daily && closedDays.days.size > 0,
         today: daily,
       },
     };

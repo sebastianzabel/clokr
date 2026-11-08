@@ -21,6 +21,7 @@ import {
   rowTypeLabel,
 } from "$lib/leave-plan/labels";
 import type { PlannerReadDto } from "$lib/leave-plan/types";
+import type { ClosedDaysView, SalonOpeningHoursEntry } from "$lib/shifts/closed-days";
 import { NEUTRAL_CHIP_LABEL, type CalendarTypeCode } from "./team-calendar-visibility";
 
 export type Zoom = "jahr" | "quartal" | "monat";
@@ -335,6 +336,24 @@ export function isoWeekColumns(year: number): IsoWeekColumn[] {
 export function workdaySet(closedWeekdays: ReadonlySet<number> | null): Set<number> {
   if (closedWeekdays === null) return new Set([0, 1, 2, 3, 4, 5]);
   return new Set([0, 1, 2, 3, 4, 5, 6].filter((weekday) => !closedWeekdays.has(weekday)));
+}
+
+/**
+ * The ONE place the Werktage basis of a view is decided (D-840-08): the closed weekdays of the
+ * single salon in view, or `null` (= Monday to Saturday) when no single salon with configured
+ * opening hours is in view. `closedDaysFor()` always answers a Set, empty for "no single salon" and
+ * for "a salon without opening hours"; read as a closed-day set that would make Sunday a Werktag,
+ * so every host (the two pages, the planning panel) passes its view through here and feeds the
+ * result to both `workdaySet()` and the timeline's `closedWeekdays`.
+ */
+export function werktageBasis(
+  view: ClosedDaysView,
+  salons: readonly SalonOpeningHoursEntry[] | undefined,
+): ReadonlySet<number> | null {
+  if (view.salonName === null) return null;
+  const salon = salons?.find((candidate) => candidate.name === view.salonName);
+  if (!salon || !Array.isArray(salon.openingHours) || salon.openingHours.length === 0) return null;
+  return view.days;
 }
 
 export interface WeekCell {

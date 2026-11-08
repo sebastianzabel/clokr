@@ -41,6 +41,7 @@
     shiftPeriod,
     weekLoad,
     workdaySet,
+    werktageBasis,
     type CalendarRangeAnswer,
     type CalendarSalon,
     type TimelineBar,
@@ -735,6 +736,8 @@
   );
   // Closed days only for ONE salon in view (D-840-14); with several the legend says why none are drawn.
   const closedDays = $derived(closedDaysFor(overviewSalons, $salonContext));
+  // The Werktage basis is decided once (D-840-08): null = Mon-Sat when no single salon with hours is in view.
+  const werktage = $derived(werktageBasis(closedDays, overviewSalons));
   const LOAD_HINT =
     "Personen mit genehmigter oder beantragter Abwesenheit – Wünsche der Planung zählen nicht";
   const CLOSED_DAYS_HINT = "Schließtage nur bei einem Salon";
@@ -746,7 +749,7 @@
         counts: weekLoad(
           overviewPeople,
           overviewPeriod.year,
-          workdaySet(closedDays.days),
+          workdaySet(werktage),
           overviewHolidays,
         ),
         hint: LOAD_HINT,
@@ -1026,7 +1029,7 @@
           rows={overviewPeople}
           period={overviewPeriod}
           holidays={overviewHolidays}
-          closedWeekdays={closedDays.days}
+          closedWeekdays={werktage}
           {today}
           load={overviewLoad}
           onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
