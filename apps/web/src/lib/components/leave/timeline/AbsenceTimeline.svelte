@@ -1178,7 +1178,7 @@
 
   .absence-wish--dragging {
     opacity: 0.85;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-md);
     z-index: 4;
   }
 

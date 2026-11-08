@@ -162,3 +162,15 @@ describe("Issue #840 AC-6 - one absence timeline", () => {
     expect(source(MY_HOST)).toContain("scope=own");
   });
 });
+
+describe("review IN-04 - the timeline styles use tokens, no colour literal", () => {
+  it("AbsenceTimeline.svelte has no rgba()/hsl() and no hex colour in its style block", () => {
+    const file = "lib/components/leave/timeline/AbsenceTimeline.svelte";
+    const text = readFileSync(join(SRC_ROOT, file), "utf8");
+    const style = text.slice(text.indexOf("<style"));
+    expect(style.length, "style block not found").toBeGreaterThan(500);
+    expect(style).not.toMatch(/\brgba?\(/);
+    expect(style).not.toMatch(/\bhsla?\(/);
+    expect(style).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+  });
+});
