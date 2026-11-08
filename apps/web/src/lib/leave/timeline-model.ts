@@ -360,8 +360,11 @@ export interface WeekCell {
   monday: string;
   /** Absent Werktage ÷ Werktage of the week inside the year (0 when there are none). */
   share: number;
-  /** `type`: one visible type fills the cell; `absent`: neutral; `null`: not absent. */
-  fill: "type" | "absent" | null;
+  /**
+   * `type`: one visible type fills the cell; `mixed`: two or more distinct VISIBLE types and no
+   * masked bar; `absent`: neutral (a masked bar is in the week); `null`: not absent.
+   */
+  fill: "type" | "mixed" | "absent" | null;
   typeCode: string | null;
   hasBeantragt: boolean;
   hasWish: boolean;
@@ -377,7 +380,9 @@ function covers(bar: TimelineBar, day: string): boolean {
 /**
  * One cell per ISO week of the year for a person. A wish is no absence and never changes the
  * share; days outside the year are excluded from share and fill. A half day counts as half a
- * Werktag; a masked or mixed week reads as the neutral absent fill (T-840-17).
+ * Werktag. A week with any masked day reads as the neutral absent fill, whatever else is visible in
+ * it (T-840-17: nothing may be inferred about a hidden type); a week whose absent days show two or
+ * more distinct types and no masked bar is `mixed` (#840 G-4), drawn apart from a masked week.
  */
 export function weekCells(
   person: TimelinePerson,
@@ -403,16 +408,30 @@ export function weekCells(
       for (const bar of present) types.add(bar.typeCode);
     }
     const oneType = types.size === 1 && !types.has(null);
+    const fill: WeekCell["fill"] =
+      absent === 0 ? null : types.has(null) ? "absent" : oneType ? "type" : "mixed";
     return {
       monday: column.monday,
       share: werktage === 0 ? 0 : absent / werktage,
-      fill: absent === 0 ? null : oneType ? "type" : "absent",
+      fill,
       typeCode: absent > 0 && oneType ? ([...types][0] ?? null) : null,
       hasBeantragt: column.daysInYear.some((day) => requests.some((bar) => covers(bar, day))),
       hasWish: column.daysInYear.some((day) => wishes.some((bar) => covers(bar, day))),
       outOfYearDays: 7 - column.daysInYear.length,
     };
   });
+}
+
+/** Whether any person has a week in which two or more visible types meet (the Jahr legend's „Mehrere Arten“). */
+export function hasMixedWeek(
+  rows: readonly TimelinePerson[],
+  year: number,
+  workdays: ReadonlySet<number>,
+  holidays: HolidayDays,
+): boolean {
+  return rows.some((person) =>
+    weekCells(person, year, workdays, holidays).some((cell) => cell.fill === "mixed"),
+  );
 }
 
 export interface DayMarking {

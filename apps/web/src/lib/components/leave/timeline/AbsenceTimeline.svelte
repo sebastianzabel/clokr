@@ -22,7 +22,7 @@
    * store nor the API client, so it stays mountable in vitest.
    */
   import { onMount } from "svelte";
-  import { ABSENT, leaveTypeColor } from "$lib/leave/leave-colors";
+  import { ABSENT, MIXED, leaveTypeColor } from "$lib/leave/leave-colors";
   import {
     dayColumns,
     dayMarkings,
@@ -262,7 +262,8 @@
   const weekIndex = $derived(new Map(weeks.map((week, i) => [week.monday, i])));
   const todayWeek = $derived(weeks.find((w) => w.monday <= today && today <= w.sunday)?.monday);
 
-  function cellColor(cell: { fill: "type" | "absent" | null; typeCode: string | null }) {
+  function cellColor(cell: { fill: "type" | "mixed" | "absent" | null; typeCode: string | null }) {
+    if (cell.fill === "mixed") return MIXED;
     return cell.fill === "type" ? leaveTypeColor(cell.typeCode) : ABSENT;
   }
 
@@ -276,7 +277,7 @@
     week: { isoWeek: number; monday: string; sunday: string },
     cell: {
       share: number;
-      fill: "type" | "absent" | null;
+      fill: "type" | "mixed" | "absent" | null;
       typeCode: string | null;
       hasBeantragt: boolean;
       hasWish: boolean;
@@ -285,7 +286,12 @@
     const range = `${fmtShort(week.monday)} bis ${fmtDate(week.sunday)}`;
     const state: string[] = [];
     if (cell.share > 0) {
-      const type = cell.fill === "type" ? typeLabelOf(cell.typeCode) : null;
+      const type =
+        cell.fill === "type"
+          ? typeLabelOf(cell.typeCode)
+          : cell.fill === "mixed"
+            ? "mehrere Arten"
+            : null;
       state.push(
         `${Math.round(cell.share * 100)} % der Werktage abwesend${type ? ` (${type})` : ""}`,
       );
@@ -600,6 +606,7 @@
                   class="tl-week"
                   class:tl-week--beantragt={cell.hasBeantragt}
                   class:tl-week--wish={cell.hasWish}
+                  class:tl-week--mixed={cell.fill === "mixed"}
                   class:tl-week--edge={cell.outOfYearDays > 0}
                   data-testid="week-cell-{person.employeeId}-{cell.monday}"
                   style:left="{i * columnWidth}px"
@@ -1060,6 +1067,21 @@
     bottom: 0;
     min-height: 2px;
     background: var(--bar-fill);
+  }
+
+  /* Issue 840 G-4: several visible types in the week. The neutral colour as 135-degree stripes,
+     a different direction from the 45-degree wish stripes, so it never reads as a solid masked
+     week; the cell's aria-label says „mehrere Arten“. */
+  .tl-week--mixed .tl-week-fill {
+    background:
+      repeating-linear-gradient(
+        135deg,
+        var(--bar-fill) 0,
+        var(--bar-fill) 3px,
+        transparent 3px,
+        transparent 6px
+      ),
+      color-mix(in srgb, var(--bar-fill) 22%, transparent);
   }
 
   /* A requested day in the week: dashed 2 px border in the type colour. */

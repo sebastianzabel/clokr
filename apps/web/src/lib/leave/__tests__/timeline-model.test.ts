@@ -11,6 +11,7 @@ import {
   calendarToTimeline,
   dayColumns,
   dayMarkings,
+  hasMixedWeek,
   isoWeekColumns,
   periodLabel,
   periodOf,
@@ -384,12 +385,39 @@ describe("weekCells", () => {
     expect(cell).toMatchObject({ fill: "type", typeCode: "VACATION" });
   });
 
-  it("two types in the week (sick and vacation): neutral absent fill", () => {
+  it("two types in the week (sick and vacation): the mixed fill, no single type", () => {
+    // #840 G-4: a week with several visible types has its own look; masked stays absent
     const person = personWith([
       bar({ key: "a", start: "2026-11-02", end: "2026-11-03" }),
       bar({ key: "b", start: "2026-11-04", end: "2026-11-04", typeCode: "SICK" }),
     ]);
+    expect(cellOf(person, 2026, "2026-11-02")).toMatchObject({ fill: "mixed", typeCode: null });
+  });
+
+  it("a masked bar and a visible bar in the same week stay absent, never mixed (T-840-17)", () => {
+    // #840 G-4: nothing about a hidden type may be inferred from the look of the week
+    const person = personWith([
+      bar({ key: "a", start: "2026-11-02", end: "2026-11-03" }),
+      bar({
+        key: "m",
+        start: "2026-11-04",
+        end: "2026-11-04",
+        style: "abwesend",
+        typeCode: null,
+      }),
+    ]);
     expect(cellOf(person, 2026, "2026-11-02")).toMatchObject({ fill: "absent", typeCode: null });
+  });
+
+  it("a wish never changes the fill of a week", () => {
+    const person = personWith([
+      bar({ key: "a", start: "2026-11-02", end: "2026-11-03" }),
+      bar({ key: "w", style: "wunsch", typeCode: null, start: "2026-11-04", end: "2026-11-05" }),
+    ]);
+    expect(cellOf(person, 2026, "2026-11-02")).toMatchObject({
+      fill: "type",
+      typeCode: "VACATION",
+    });
   });
 
   it("a masked bar gives the neutral absent fill and no type", () => {
@@ -413,6 +441,33 @@ describe("weekCells", () => {
     });
     const wishWeek = cellOf(person, 2026, "2026-11-09");
     expect(wishWeek).toMatchObject({ hasBeantragt: false, hasWish: true, share: 0, fill: null });
+  });
+});
+
+describe("hasMixedWeek", () => {
+  const mixed = personWith([
+    bar({ key: "a", start: "2026-11-02", end: "2026-11-03" }),
+    bar({ key: "b", start: "2026-11-04", end: "2026-11-04", typeCode: "SICK" }),
+  ]);
+  const masked = personWith(
+    [
+      bar({ style: "abwesend", typeCode: null }),
+      bar({ key: "x", start: "2026-11-09", end: "2026-11-09" }),
+    ],
+    "e2",
+  );
+  const single = personWith([bar({})], "e3");
+
+  it("is true when a person has a week with two visible types", () => {
+    expect(hasMixedWeek([single, mixed], 2026, MON_SAT, [])).toBe(true);
+  });
+
+  it("is false for single-type and masked weeks only", () => {
+    expect(hasMixedWeek([single, masked], 2026, MON_SAT, [])).toBe(false);
+  });
+
+  it("is false for an empty set", () => {
+    expect(hasMixedWeek([], 2026, MON_SAT, [])).toBe(false);
   });
 });
 

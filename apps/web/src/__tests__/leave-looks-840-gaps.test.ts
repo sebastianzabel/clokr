@@ -13,7 +13,8 @@ import { describe, it, expect } from "vitest";
 import { screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte";
-import { periodOf, type TimelinePerson } from "$lib/leave/timeline-model";
+import { periodOf, type TimelineBar, type TimelinePerson } from "$lib/leave/timeline-model";
+import { MIXED } from "$lib/leave/leave-colors";
 import {
   SURFACES,
   cardSurface,
@@ -146,6 +147,74 @@ describe("#840 G-2 weekend shade", () => {
       const firstClosed = layers.indexOf("closed");
       expect(firstClosed).toBeGreaterThan(-1);
       expect(firstClosed).toBeGreaterThan(lastWeekend);
+    });
+  });
+});
+
+const barOf = (over: Partial<TimelineBar>): TimelineBar => ({
+  key: "b",
+  start: "2026-11-02",
+  end: "2026-11-03",
+  style: "gesetzt",
+  typeCode: "VACATION",
+  label: "Urlaub",
+  editable: false,
+  ...over,
+});
+
+describe("#840 G-4 one look, one meaning", () => {
+  describe("mounted Jahr timeline: a mixed week", () => {
+    const rows: TimelinePerson[] = [
+      {
+        employeeId: "mix",
+        name: "Mia Mixed",
+        isOwn: false,
+        bars: [
+          barOf({ key: "a" }),
+          barOf({ key: "b", start: "2026-11-04", end: "2026-11-04", typeCode: "SICK" }),
+        ],
+      },
+      {
+        employeeId: "msk",
+        name: "Mo Masked",
+        isOwn: false,
+        bars: [
+          barOf({ key: "a" }),
+          barOf({
+            key: "m",
+            start: "2026-11-04",
+            end: "2026-11-04",
+            style: "abwesend",
+            typeCode: null,
+            label: "abwesend",
+          }),
+        ],
+      },
+    ];
+
+    function mountYear() {
+      renderWithTheme(AbsenceTimeline, {
+        rows,
+        period: periodOf("jahr", "2026-06-15"),
+        holidays: [],
+        columnWidthPx: 12,
+        today: "2026-06-15",
+      });
+    }
+
+    it("the mixed cell has its own class, the mixed fill and names the mixture", () => {
+      mountYear();
+      const cell = screen.getByTestId("week-cell-mix-2026-11-02");
+      expect(cell.classList).toContain("tl-week--mixed");
+      expect(cell.style.getPropertyValue("--bar-fill")).toBe(`var(${MIXED.fill})`);
+      expect(cell.getAttribute("aria-label")).toContain("mehrere Arten");
+    });
+
+    it("a masked week is NOT mixed: no stripes, no statement about a hidden type", () => {
+      mountYear();
+      const cell = screen.getByTestId("week-cell-msk-2026-11-02");
+      expect(cell.classList).not.toContain("tl-week--mixed");
+      expect(cell.getAttribute("aria-label")).not.toContain("mehrere Arten");
     });
   });
 });

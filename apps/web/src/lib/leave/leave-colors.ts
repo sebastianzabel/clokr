@@ -38,6 +38,14 @@ const BY_CODE: Record<CalendarTypeCode, LeaveColor> = {
 /** A bar whose type the reader may not learn (and an imposed absence without a requestable type). */
 export const ABSENT: LeaveColor = pair("--leave-type-absent");
 
+/**
+ * #840 G-4: a Jahr week in which a person has two or more VISIBLE types. It shares the colour pair
+ * of `ABSENT` (no `--leave-type-*` token of its own) and differs by pattern: its readers draw the
+ * fill as diagonal stripes, the solid neutral stays the masked colleague. The meaning is carried by
+ * the legend text („Mehrere Arten“), not by the colour.
+ */
+export const MIXED: LeaveColor = pair("--leave-type-absent");
+
 /** The same neutral, for a colleague's request that is still pending (display of the absent chip). */
 export const ABSENT_MUTED: LeaveColor = pair("--leave-type-absent-muted");
 
