@@ -32,6 +32,9 @@
  *      colours of the reference primary (`/admin/employees`) and reach 4.5:1 in every skin, theme,
  *      mode and state (rest and hover), read from the computed styles in the real browser.
  *
+ * #840 G-1 ... G-9 (gap round): tests 6 to 9 are additions; of the pre-existing text only this header
+ * (the test count and the list of tests) was extended.
+ *
  * Setup goes through the API with the tenant admin's token (people, requests, plans, a manual
  * holiday, the salon's opening hours). No test depends on a fixed date: the Übersicht month is the
  * month after the current one, the planner year is next year, and the marking day is a Tuesday
