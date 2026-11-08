@@ -126,7 +126,7 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
     });
 
     it("B4: the always-present items are passed outside the gate: pending style, absent style, holiday", () => {
-      expect(LEGEND).toContain('styles={["beantragt", "abwesend"]}');
+      expect(LEGEND).toContain("styles={CALENDAR_LEGEND_STYLES}");
       expect(LEGEND).toContain("markings={{ holiday: true }}");
     });
 

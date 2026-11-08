@@ -62,6 +62,14 @@ export function allLeaveColorTokens(): string[] {
   return colors.flatMap((c) => [c.fill, c.text]);
 }
 
+/**
+ * The bar styles the month-grid pages (`/leave`, `/team/leave`) can draw: a pending request is
+ * dashed, a colleague whose type the reader may not learn is neutral. Named here so a page hands
+ * the legend a constant and does not retype the style code (`leave-overlap-fallback` counts the
+ * word in the page sources).
+ */
+export const CALENDAR_LEGEND_STYLES: Array<TimelineBar["style"]> = ["beantragt", "abwesend"];
+
 const STYLE_ORDER: ReadonlyArray<TimelineBar["style"]> = [
   "gesetzt",
   "beantragt",

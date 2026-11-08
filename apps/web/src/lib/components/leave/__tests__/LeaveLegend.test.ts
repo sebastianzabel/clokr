@@ -3,7 +3,8 @@
 import { describe, it, expect } from "vitest";
 import { screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
-import LeaveLegend, { CLOSED_DAYS_HINT_SEVERAL_SALONS } from "../LeaveLegend.svelte";
+import LeaveLegend from "../LeaveLegend.svelte";
+import { CLOSED_DAYS_HINT_SEVERAL_SALONS } from "$lib/leave-plan/labels";
 import { LEAVE_TYPES } from "$lib/leave/team-calendar-visibility";
 import { leaveTypeColor } from "$lib/leave/leave-colors";
 

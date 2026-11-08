@@ -13,6 +13,7 @@
   import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
   import LeaveLimitNotice from "$lib/components/leave/LeaveLimitNotice.svelte";
   import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
+  import { CALENDAR_LEGEND_STYLES } from "$lib/leave/leave-colors";
   import { warningSentences } from "$lib/leave-limits/sentences";
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // Phase 303-03 (#265's pattern)
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
@@ -1246,7 +1247,7 @@
       <!-- Legend: the one component; the types are the ones this calendar paints (#840, D-840-10). -->
       <LeaveLegend
         typeCodes={CALENDAR_LEGEND_TYPE_CODES}
-        styles={["beantragt", "abwesend"]}
+        styles={CALENDAR_LEGEND_STYLES}
         markings={{ holiday: true }}
         holidayLook="calendar"
       />

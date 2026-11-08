@@ -36,6 +36,7 @@
   import { parseLeaveCreateDeepLink, type LeaveCreateDeepLink } from "$lib/leave/create-deep-link"; // Issue #587
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // #265
   import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
+  import { CALENDAR_LEGEND_STYLES } from "$lib/leave/leave-colors";
   import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte"; // Issue #840
   import {
     calendarRangeQuery,
@@ -1508,7 +1509,7 @@
       typeCodes={canSeeLeaveType(false, canSeeOthersLeaveType)
         ? LEAVE_TYPE_OPTIONS.map((t) => t.code)
         : []}
-      styles={["beantragt", "abwesend"]}
+      styles={CALENDAR_LEGEND_STYLES}
       markings={{ holiday: true }}
       holidayLook="calendar"
     />
@@ -2667,7 +2668,7 @@
     padding: 2px 0.4rem;
     border-radius: 4px;
     /* Fallback only. The live value arrives per bar via style:color={_vis.textColor},
-       which resolves a --leave-type-*-text token (Phase 257, D-12). */
+       which resolves a `-text` foreground token of leave-colors.ts (Phase 257, D-12). */
     color: #ffffff;
     font-size: 0.75rem;
     line-height: 1.4;

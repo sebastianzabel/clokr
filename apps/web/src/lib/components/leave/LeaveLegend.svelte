@@ -1,8 +1,3 @@
-<script module lang="ts">
-  /** Shown when several salons are in view: a closed weekday belongs to one salon, not to all. */
-  export const CLOSED_DAYS_HINT_SEVERAL_SALONS = "Schließtage nur bei einem Salon";
-</script>
-
 <script lang="ts">
   /**
    * LeaveLegend — Issue #840 (D-840-10, D-840-25). The ONE legend of every absence view.

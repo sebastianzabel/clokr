@@ -35,6 +35,9 @@ export const ROW_KIND_LABELS: Record<PlannerRow["kind"], string> = {
 
 export const HOLIDAY_LABEL = "Feiertag";
 
+/** Legend hint (#840, D-840-10/25): with several salons in view a closed weekday belongs to one salon. */
+export const CLOSED_DAYS_HINT_SEVERAL_SALONS = "Schließtage nur bei einem Salon";
+
 /** The label of a row's type: the leave-type display helper, neutral when the type is masked. */
 export function rowTypeLabel(row: Pick<PlannerRow, "kind" | "typeCode">): string {
   if (row.kind === "MASKED") return NEUTRAL_CHIP_LABEL;

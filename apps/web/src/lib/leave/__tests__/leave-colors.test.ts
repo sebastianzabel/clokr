@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ABSENT,
+  CALENDAR_LEGEND_STYLES,
   ABSENT_MUTED,
   FALLBACK,
   WISH,
@@ -148,6 +149,12 @@ describe("the visibility helper reads the mapping (no value changed)", () => {
     );
     expect(visual.background).toBe(`var(${FALLBACK.fill})`);
     expect(visual.textColor).toBe(`var(${FALLBACK.text}, #ffffff)`);
+  });
+});
+
+describe("CALENDAR_LEGEND_STYLES", () => {
+  it("is the pending (dashed) and the neutral style of the month-grid pages", () => {
+    expect(CALENDAR_LEGEND_STYLES).toEqual(["beantragt", "abwesend"]);
   });
 });
 

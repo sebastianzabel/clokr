@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { leaveTypeColor, FALLBACK } from "$lib/leave/leave-colors"; // Issue #840 (D-840-12)
   import { onDestroy, onMount, tick } from "svelte";
   import { page } from "$app/stores";
   import {
@@ -1819,17 +1820,19 @@
   // Legend is derived from what the displayed month actually contains, and split by the
   // three encoding channels — quick task 260820-1i7. Colour = Soll status (left edge),
   // surface = Abwesenheit, mark = Hinweis.
+  // The swatch colour of an absence entry comes from the one leave-colour mapping and reaches the
+  // CSS as the custom property `--leg-fill` (#840, D-840-12).
   const LEGEND_ABSENCE = [
-    { code: "VACATION", cls: "leg-abs-vacation", label: "Urlaub" },
-    { code: "SICK", cls: "leg-abs-sick", label: "Krank" },
-    { code: "SICK_CHILD", cls: "leg-abs-sick_child", label: "Kinderkrank" },
-    { code: "SPECIAL", cls: "leg-abs-special", label: "Sonderurlaub" },
-    { code: "OVERTIME_COMP", cls: "leg-abs-overtime_comp", label: "Freizeitausgl." },
+    { code: "VACATION", label: "Urlaub" },
+    { code: "SICK", label: "Krank" },
+    { code: "SICK_CHILD", label: "Kinderkrank" },
+    { code: "SPECIAL", label: "Sonderurlaub" },
+    { code: "OVERTIME_COMP", label: "Freizeitausgl." },
   ] as const;
 
   let legendGroups = $derived.by(() => {
     const days = calendarDays.filter((d) => d.isCurrentMonth);
-    const soll: { cls: string; label: string }[] = [];
+    const soll: { cls: string; label: string; fill?: string }[] = [];
     if (days.some((d) => d.status === "ok" || d.status === "today-ok"))
       soll.push({ cls: "leg-ok", label: "Soll erfüllt" });
     if (days.some((d) => d.status === "partial" || d.status === "today-partial"))
@@ -1839,17 +1842,18 @@
       soll.push({ cls: "leg-noexpect", label: "Kein Soll" });
 
     const codes = new Set(days.map((d) => d.absenceType).filter(Boolean) as string[]);
-    const abwesenheit: { cls: string; label: string }[] = [];
+    const abwesenheit: { cls: string; label: string; fill?: string }[] = [];
     for (const e of LEGEND_ABSENCE)
-      if (codes.has(e.code)) abwesenheit.push({ cls: e.cls, label: e.label });
+      if (codes.has(e.code))
+        abwesenheit.push({ cls: "leg-abs", label: e.label, fill: leaveTypeColor(e.code).fill });
     // Absence codes outside the catalogue (e.g. EDUCATION, UNPAID) DO get a cell
     // background from app.css's .cal-abs-* recipes, so they must not stay unexplained.
     if ([...codes].some((c) => !LEGEND_ABSENCE.some((e) => e.code === c)))
-      abwesenheit.push({ cls: "leg-abs-other", label: "Sonstige Abwesenheit" });
+      abwesenheit.push({ cls: "leg-abs", label: "Sonstige Abwesenheit", fill: FALLBACK.fill });
     if (days.some((d) => d.isVocationalSchool))
       abwesenheit.push({ cls: "leg-abs-vocational_school", label: "Berufsschule" });
 
-    const hinweise: { cls: string; label: string }[] = [];
+    const hinweise: { cls: string; label: string; fill?: string }[] = [];
     if (days.some((d) => arbzgDayMap.has(d.dateStr)))
       hinweise.push({ cls: "leg-arbzg", label: "ArbZG-Hinweis" });
 
@@ -2134,20 +2138,23 @@
         {#if legendGroups.soll.length > 0}
           <div class="leg-group">
             <span class="leg-group-label">Soll-Status</span>
-            {#each legendGroups.soll as e (e.cls)}<span class="leg {e.cls}">{e.label}</span>{/each}
+            {#each legendGroups.soll as e (e.label)}<span class="leg {e.cls}">{e.label}</span
+              >{/each}
           </div>
         {/if}
         {#if legendGroups.abwesenheit.length > 0}
           <div class="leg-group">
             <span class="leg-group-label">Abwesenheit</span>
-            {#each legendGroups.abwesenheit as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
+            {#each legendGroups.abwesenheit as e (e.label)}<span
+                class="leg {e.cls}"
+                style:--leg-fill={e.fill ? `var(${e.fill})` : undefined}>{e.label}</span
               >{/each}
           </div>
         {/if}
         {#if legendGroups.hinweise.length > 0}
           <div class="leg-group">
             <span class="leg-group-label">Hinweise</span>
-            {#each legendGroups.hinweise as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
+            {#each legendGroups.hinweise as e (e.label)}<span class="leg {e.cls}">{e.label}</span
               >{/each}
           </div>
         {/if}
@@ -3260,28 +3267,9 @@
     background: var(--bg-subtle);
     border: 1px solid var(--border);
   }
-  .leg-abs-vacation::before {
-    background: var(--leave-type-vacation);
-    border: none;
-  }
-  .leg-abs-sick::before {
-    background: var(--leave-type-sick);
-    border: none;
-  }
-  .leg-abs-sick_child::before {
-    background: var(--leave-type-sick-child);
-    border: none;
-  }
-  .leg-abs-other::before {
-    background: var(--leave-type-default);
-    border: none;
-  }
-  .leg-abs-special::before {
-    background: var(--leave-type-special);
-    border: none;
-  }
-  .leg-abs-overtime_comp::before {
-    background: var(--leave-type-overtime);
+  /* Absence swatch: the colour is the custom property the template feeds from leave-colors.ts. */
+  .leg-abs::before {
+    background: var(--leg-fill);
     border: none;
   }
   /* bs-tage-in-calendar — Berufsschultag legend swatch. Mirrors the brand-tinted
@@ -3310,7 +3298,7 @@
   /* bs-tage-in-calendar — Berufsschultag cell background. Uses --brand at the
      same 15% mix as the other .cal-abs-* recipes in app.css. Scoped to this
      page (mirrors the 260611-ly6 .row-bs scoped CSS pattern); a token-level
-     --leave-type-vocational-school would be the long-term home if BS gets
+     a token-level leave type for Berufsschule would be the long-term home if BS gets
      promoted to a first-class leave type. */
   :global(.cal-cell.cal-abs-vocational_school:not(.cal-selected)) {
     background: color-mix(in srgb, var(--brand) 15%, var(--bg-card)) !important;

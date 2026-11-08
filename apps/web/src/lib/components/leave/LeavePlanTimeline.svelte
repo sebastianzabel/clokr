@@ -17,7 +17,7 @@
    * neither the auth store nor the API client, so it stays mountable in vitest.
    */
   import { onMount } from "svelte";
-  import { LEAVE_TYPES } from "$lib/leave/team-calendar-visibility";
+  import { ABSENT, leaveTypeColor } from "$lib/leave/leave-colors"; // Issue #840 (D-840-12)
   import {
     assignLanes,
     dayFromIndex,
@@ -327,9 +327,9 @@
 
   // ── Visuals ────────────────────────────────────────────────────────────────────────────────
   function rowColorVar(row: PlannerRow): string {
-    if (row.kind === "COMPANY_SHUTDOWN") return "--leave-type-absent";
-    if (row.typeCode === null) return "--leave-type-absent";
-    return LEAVE_TYPES.find((t) => t.code === row.typeCode)?.colorVar ?? "--leave-type-default";
+    // #840 (D-840-12): the colour of a type comes from the one mapping.
+    if (row.kind === "COMPANY_SHUTDOWN") return ABSENT.fill;
+    return leaveTypeColor(row.typeCode).fill;
   }
 
   function rowTitle(row: PlannerRow): string {
