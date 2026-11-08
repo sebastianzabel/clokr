@@ -343,6 +343,14 @@ html[data-mode="dark"] {
 
   /* Pad-card — modern surfaces breathe more */
   --pad-card: 28px;
+
+  /* Text on the primary button gradient. Issue #840 G-7: the modern brand colours are light neon
+     fills (--brand-light / --brand), so white text on them measured 1.4:1 to 2.1:1 in light mode.
+     This dark ink is >= 6.6:1 on every stop of every theme in both modes. --text-on-brand itself
+     stays white on purpose: it is also used as a BACKGROUND (the dashboard timer card's inverted
+     primary, Issue #546) and by step circles, the operator layout and the wish colour pair, so
+     changing the token would invert those. Pinned by btn-primary-contrast-840.test.ts. */
+  --text-on-brand-modern: #0a0a10;
 }
 
 /* Density compact still wins under Modern skin — restore 16 px override at higher specificity */

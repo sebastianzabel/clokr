@@ -2250,7 +2250,9 @@ textarea.form-input {
   border-radius: var(--r-sm);
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--brand-light);
+  /* Issue 840 G-7: darken on hover (the original v1 rule); lightening the fill under white text
+     measured 2.5:1 to 4.4:1. */
+  background: var(--brand-dark);
   box-shadow: var(--shadow-brand-lg);
   transform: translateY(-1px);
 }
@@ -3091,17 +3093,16 @@ button.approval-row:disabled {
 [data-skin="modern"] .btn-brand {
   background: linear-gradient(135deg, var(--brand-light), var(--brand));
   border: 0;
-  color: var(--text-on-brand);
+  /* Issue 840 G-7: one dark ink for both modes (the brand fills are light neon in the modern skin). */
+  color: var(--text-on-brand-modern);
   box-shadow: var(--shadow-brand);
-}
-[data-skin="modern"][data-mode="dark"] .btn-primary,
-[data-skin="modern"][data-mode="dark"] .btn.primary,
-[data-skin="modern"][data-mode="dark"] .btn-brand {
-  color: #0a0a10;
 }
 [data-skin="modern"] .btn-primary:hover,
 [data-skin="modern"] .btn.primary:hover,
 [data-skin="modern"] .btn-brand:hover {
+  /* Issue 840 G-7: the hover keeps the gradient; the v1.5 hover fill would replace it. */
+  background: linear-gradient(135deg, var(--brand-light), var(--brand));
+  color: var(--text-on-brand-modern);
   box-shadow: var(--shadow-brand-lg);
   transform: translateY(-1px);
 }
