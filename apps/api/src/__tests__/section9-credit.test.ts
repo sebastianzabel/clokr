@@ -1497,8 +1497,12 @@ describe("display surface — Phase 104-10 Task 1", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
+    // #840 D-840-19: a masked row (a foreign absence outside the reader's reach) has no `id`.
     return JSON.parse(res.body) as Array<{
-      id: string;
+      id?: string;
+      employeeId: string;
+      startDate: string;
+      endDate: string;
       typeCode: string | null;
       section9?: string | null;
       section9Days?: string[];
@@ -1568,15 +1572,26 @@ describe("display surface — Phase 104-10 Task 1", () => {
     expect(vacEntry?.section9 ?? null).toBeNull();
   });
 
-  it("Test 3: a colleague without detail visibility receives section9=null and section9Days=[] — masking mirrors typeCode", async () => {
+  it("Test 3: a colleague without detail visibility receives only a masked range — no § 9 field, no type, no id", async () => {
     const { sickId } = await vacAndSick(["2033-05-02", "2033-05-06"], ["2033-05-03", "2033-05-04"]);
 
+    // #840 D-840-19: the colleague is outside the reach, so the vacation (2nd-6th) and the sick
+    // spell (3rd-4th) of the person arrive as ONE masked range with exactly the seven masked keys;
+    // nothing of the § 9 marker or the type can be read off it.
     const entries = await calendar(2033, 5, colleagueToken);
-    const sickEntry = entries.find((e) => e.id === sickId);
-    expect(sickEntry).toBeDefined();
-    expect(sickEntry?.typeCode).toBeNull();
-    expect(sickEntry?.section9 ?? null).toBeNull();
-    expect(sickEntry?.section9Days ?? []).toEqual([]);
+    const foreign = entries.filter((e) => e.employeeId === data.employee.id);
+    expect(foreign).toHaveLength(1);
+    expect(Object.keys(foreign[0]).sort()).toEqual([
+      "employeeId",
+      "endDate",
+      "firstName",
+      "isOwn",
+      "lastName",
+      "masked",
+      "startDate",
+    ]);
+    expect(foreign[0]).toMatchObject({ startDate: "2033-05-02", endDate: "2033-05-06" });
+    expect(JSON.stringify(entries)).not.toContain(sickId);
   });
 
   it("Test 4: GET /leave/requests rows carry section9Status and section9CreditId", async () => {

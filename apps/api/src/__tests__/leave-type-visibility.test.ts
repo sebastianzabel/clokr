@@ -337,21 +337,26 @@ describe("Leave type visibility — /overlap and /calendar answer the same quest
     });
   });
 
-  // The block below pins /calendar's ALREADY-correct role masking as a regression guard. This
-  // handler is the correct neighbour D-07 extracts its decision from — nothing here should ever
-  // turn red by itself; a red result in THIS block would mean the fixture is wrong, not the
-  // handler. Its mutation proof (D-24, Fall B — proving these assertions would actually catch a
-  // silently-broken extraction, not just today's already-true value) is deferred to Plan 262-02
-  // Task 1: it can only be exercised meaningfully at the ONE place the decision lives after the
-  // extraction, not against this handler's inline `showDetails` expression here.
+  // #840 D-840-19: this block used to be a pure regression pin that never turned red by itself.
+  // That changed deliberately: /calendar now decides the detail level PER PERSON by the
+  // `leave-request:read` reach, and a foreign row outside the reach arrives as a masked range
+  // WITHOUT an id (name and period only), with overlapping/adjacent ranges of one person merged.
+  // The EMPLOYEE case below therefore finds the foreign row by employee and period and pins the
+  // exact masked key set instead of null-valued type fields. MANAGER, ADMIN and own-row cases are
+  // unchanged (whole-tenant reach / own row stay complete).
   describe("GET /leave/calendar — dieselbe Entscheidung, Regressionsriegel", () => {
+    // #840 D-840-19: a masked row has no `id`, so the field is optional here.
     type CalendarRow = {
-      id: string;
+      id?: string;
+      employeeId: string;
       isOwn: boolean;
+      startDate: string;
+      endDate: string;
       typeCode: string | null;
       typeName: string | null;
       section9: string | null;
       section9Days: string[];
+      masked?: boolean;
     };
 
     async function calendar(year: number, month: number, token: string): Promise<CalendarRow[]> {
@@ -362,18 +367,34 @@ describe("Leave type visibility — /overlap and /calendar answer the same quest
       });
       expect(res.statusCode).toBe(200);
       const rows = JSON.parse(res.body) as CalendarRow[];
-      return rows.filter((r) => !r.id.startsWith("holiday-"));
+      return rows.filter((r) => !(r.id ?? "").startsWith("holiday-"));
     }
 
-    it("EMPLOYEE sees a foreign entry with typeCode, typeName, section9 all null and an empty section9Days", async () => {
+    it("EMPLOYEE sees a foreign entry only as a masked range: exactly the seven masked keys, no id, no type, no § 9", async () => {
       const rows = await calendar(TARGET_YEAR, TARGET_MONTH, data.empToken);
       expect(rows.length).toBeGreaterThan(0); // D-25: guard before indexing
-      const row = rows.find((r) => r.id === sickRequestId);
-      expect(row).toBeDefined();
-      expect(row?.typeCode).toBeNull();
-      expect(row?.typeName).toBeNull();
-      expect(row?.section9).toBeNull();
-      expect(row?.section9Days).toEqual([]);
+      // #840 D-840-19: the sick request (5th-7th) and the overlapping vacation (6th-8th) of the
+      // same person are merged into ONE masked range, so the seam reveals no second kind.
+      const foreign = rows.filter((r) => r.employeeId === data.adminEmployee.id);
+      expect(foreign).toHaveLength(1);
+      expect(Object.keys(foreign[0]).sort()).toEqual([
+        "employeeId",
+        "endDate",
+        "firstName",
+        "isOwn",
+        "lastName",
+        "masked",
+        "startDate",
+      ]);
+      expect(foreign[0]).toMatchObject({
+        isOwn: false,
+        masked: true,
+        startDate: targetDateStr(5),
+        endDate: targetDateStr(8),
+      });
+      // The foreign PENDING sick request of the 20th is not an absence yet and is not served.
+      expect(rows.some((r) => r.startDate === targetDateStr(20))).toBe(false);
+      expect(JSON.stringify(rows)).not.toContain(sickRequestId);
     });
 
     it("EMPLOYEE sees their own entry unmasked via the isOwn branch", async () => {
