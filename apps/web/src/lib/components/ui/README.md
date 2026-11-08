@@ -258,6 +258,29 @@ Usage:
 </MonthBar>
 ```
 
+### `<PeriodSwitcher>`
+
+Source: `$components/ui/PeriodSwitcher.svelte`
+
+Phase 840 (Issue #840, D-840-13): one period control for all leave views; a wrapper around MonthBar, no new recipe. It renders ‹ label › Heute for a year, a quarter or a month and emits no markup or class of its own, so every `.month-bar` rule and the narrow-viewport proofs (Issue #553/#564) apply unchanged.
+
+```ts
+interface Props {
+  /** The shown period (`periodOf(zoom, datum)` from `$lib/leave/timeline-model`). */
+  period: Period;
+  /** Move one period back (-1) or forward (1). */
+  onShift: (step: -1 | 1) => void;
+  /** "Heute" jump-to-today handler. */
+  onToday: () => void;
+  /** Real disabled next arrow (MonthBar `nextDisabled`). */
+  nextDisabled?: boolean;
+  /** MonthBar test-id prefix (default "month-bar"). */
+  testIdPrefix?: string;
+}
+```
+
+Labels: „2026“ / „Q4 2026 · Okt–Dez“ / „November 2026“; arrow names „Vorheriges/Nächstes Jahr|Quartal“, „Vorheriger/Nächster Monat“.
+
 ### `<KPIStat>`
 
 Source: `$components/ui/KPIStat.svelte`
