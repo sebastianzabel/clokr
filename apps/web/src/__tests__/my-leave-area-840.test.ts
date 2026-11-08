@@ -206,3 +206,139 @@ describe("Issue #840 E-03 / D-840-24 / AC-3 - the Kalender is own data only", ()
     expect(PAGE).toContain("/leave/requests?year=${calYear}");
   });
 });
+
+describe("Issue #840 E-03 / E-05 / D-840-16 / AC-3 - Team is neutral and read-only", () => {
+  const TEAM_PANEL = between(
+    '<div role="tabpanel" id="leave-panel-team"',
+    '<div role="tabpanel" id="leave-panel-planung"',
+  );
+
+  it("[team scope] the Team loader carries scope=team and never a salon parameter", () => {
+    const body = functionBody("loadTeam");
+    expect(body).toContain("calendarRangeQuery(activePeriod)");
+    expect(body).toContain("&scope=team");
+    // The API refuses the combination of a scope and a salon; the page must never send one.
+    expect(body).not.toContain("salonId");
+    expect(body).not.toContain("withSalonId");
+  });
+
+  it("[generation] a superseded answer never overwrites a newer one, a failure is an empty view", () => {
+    const body = functionBody("loadTeam");
+    expect(body).toContain("const generation = ++teamGeneration;");
+    expect(count(body, "if (generation !== teamGeneration) return;")).toBe(2);
+    expect(body).toContain("teamRows = [];");
+    // No alert on a failed team read: the tab is context, not a task.
+    expect(body).not.toContain("error =");
+  });
+
+  it("[the Team tab reloads] on a period change while it is the tab in view", () => {
+    expect(PAGE).toContain(
+      "const teamKey = $derived(`${activePeriod.startDay}|${activePeriod.endDay}`);",
+    );
+    expect(PAGE).toContain('if (activeTab !== "team") return;');
+  });
+
+  it("[one timeline] exactly one AbsenceTimeline on the page, in the Team tab, with the phone list as its twin", () => {
+    expect(count(PAGE, "<AbsenceTimeline")).toBe(1);
+    expect(count(PAGE, "<AbsenceList")).toBe(1);
+    expect(count(TEAM_PANEL, "<AbsenceTimeline")).toBe(1);
+    expect(count(TEAM_PANEL, "<AbsenceList")).toBe(1);
+    expect(TEAM_PANEL).toContain("closedWeekdays={teamClosedDays.days}");
+    expect(TEAM_PANEL).toContain("load={teamLoad}");
+    expect(TEAM_PANEL).toContain("{:else if isMobile}");
+  });
+
+  it("[read-only] the Team timeline and list get no select, drag or edit callback (E-05)", () => {
+    for (const callback of [
+      "onBarSelect",
+      "onMoveWish",
+      "onEditWish",
+      "onAddWish",
+      "canAddWishFor",
+    ]) {
+      expect(TEAM_PANEL, `${callback} must not be passed in the Team tab`).not.toContain(callback);
+    }
+    // The only interaction is the week click of the Jahr zoom: it changes the period, nothing else.
+    expect(TEAM_PANEL).toContain(
+      'onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}',
+    );
+    // No click-through helper exists on the page: a bar leads nowhere.
+    expect(PAGE).not.toContain("function selectBar(");
+    expect(PAGE).not.toContain("requestId: bar.requestId");
+  });
+
+  it("[load row] day load in Quartal and Monat, week load in Jahr, and no limit data (#836 stays with the approvers)", () => {
+    const at = PAGE.indexOf("const teamLoad = $derived.by(() => {");
+    expect(at).toBeGreaterThan(-1);
+    const body = PAGE.slice(at, PAGE.indexOf("\n  });", at));
+    expect(body).toContain('activePeriod.zoom === "jahr"');
+    expect(body).toContain("weekLoad(");
+    expect(body).toContain("calendarDayLoad(");
+    expect(PAGE).not.toContain("/leave/limits/load");
+    expect(PAGE).not.toContain("exceededDaysFromLoad");
+  });
+
+  it("[closed days] they come from the answer's salons through closedDaysFor, with the legend hint", () => {
+    expect(PAGE).toContain("closedDaysFor(teamSalons, $salonContext)");
+    expect(PAGE).toContain("teamSalons = answer.salons ?? [];");
+    expect(PAGE).toContain('const CLOSED_DAYS_HINT = "Schließtage nur bei einem Salon";');
+  });
+
+  it("[legend] the neutral style and the own types come from legendFrom over the rows in view", () => {
+    expect(PAGE).toContain("const base = legendFrom(teamRows);");
+    expect(TEAM_PANEL).toContain("typeCodes={teamLegend.typeCodes}");
+    expect(TEAM_PANEL).toContain("styles={teamLegend.styles}");
+  });
+
+  it("[visible to everyone] the tab is offered unconditionally: no permission and no tenant switch gate it", () => {
+    expect(PAGE).toContain('{ id: "team", label: "Team" }');
+    expect(PAGE).not.toContain("hasPermission(");
+    expect(PAGE).not.toContain("tenantConfig");
+  });
+});
+
+describe("Issue #840 E-03 / D-840-16 / D-840-23 - Planung shows the own wishes", () => {
+  const PLANUNG_PANEL = between('<div role="tabpanel" id="leave-panel-planung"', "<ReasonDialog");
+
+  it("[own mode] the panel runs in own mode, once, with no manage controls", () => {
+    expect(count(PAGE, "<LeavePlanningPanel")).toBe(1);
+    expect(PLANUNG_PANEL).toContain('mode="own"');
+    expect(PAGE).not.toContain('mode="team"');
+    // No manage dialog, no manage button, no viewer callback: own mode offers none of it.
+    expect(PAGE).not.toContain("manageOpen");
+    expect(PAGE).not.toContain("onViewer");
+    expect(PAGE).not.toContain("leave-plan-manage");
+    expect(PAGE).not.toContain("Planung verwalten");
+  });
+
+  it("[salon] the salon is the header selection, the period is the toolbar's, and the panel is not animated", () => {
+    expect(PAGE).toContain("const planSalonId = $derived(teamSalonViewSalon($salonContext));");
+    expect(PLANUNG_PANEL).toContain("salonId={planSalonId}");
+    expect(PLANUNG_PANEL).toContain("period={activePeriod}");
+    // Mounted outside every animated block (#570): a transform would trap its fixed dialogs.
+    expect(PLANUNG_PANEL).not.toContain("card-animate");
+    expect(PLANUNG_PANEL).not.toContain("animate");
+  });
+
+  it("[waits for the context] before the salon context is loaded the tab shows a status, not an empty planner", () => {
+    expect(PLANUNG_PANEL).toContain("{#if !contextLoaded}");
+    expect(PLANUNG_PANEL).toContain('role="status"');
+  });
+
+  it("[deep link] the notification link's salon is preselected once, then dropped from the URL", () => {
+    const at = PAGE.indexOf("let salonDeepLinkHandled = false;");
+    expect(at).toBeGreaterThan(-1);
+    const effect = PAGE.slice(at, PAGE.indexOf("\n  });", at));
+    expect(effect).toContain('$page.url.searchParams.get("salonId")');
+    expect(effect).toContain("deepLinkSalon(param, $salonContext)");
+    expect(effect).toContain("salonContext.setSelection(linked)");
+    expect(effect).toContain('url.searchParams.delete("salonId")');
+  });
+
+  it("[default zoom] Planung opens on the quarter, Team on the month (the area-tabs defaults)", () => {
+    const zoomOf = (tab: string) =>
+      parseMyLeaveState(new URLSearchParams({ tab }), "2026-09-16").zoom;
+    expect(zoomOf("planung")).toBe("quartal");
+    expect(zoomOf("team")).toBe("monat");
+  });
+});
