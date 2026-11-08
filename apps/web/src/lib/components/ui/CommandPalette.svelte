@@ -3,6 +3,7 @@
   import { authStore } from "$stores/auth";
   import { focusTrap } from "$lib/utils/focus-trap";
   import { canAccessAdminPath, isAdminHref } from "$lib/nav/admin-route-permissions";
+  import { mayOpenTeamPage } from "$lib/nav/team-nav";
 
   interface Action {
     id: string;
@@ -11,6 +12,8 @@
     icon: string;
     href: string;
     group: string;
+    /** #840: a team page this entry opens; offered only when `mayOpenTeamPage` allows it. */
+    teamPage?: string;
   }
 
   interface ActionGroup {
@@ -48,8 +51,17 @@
       label: "Urlaubsplanung",
       description: "Urlaubswünsche fürs Jahr planen",
       icon: "calendar",
-      href: "/leave/planung",
+      href: "/leave?tab=planung",
       group: "Navigation",
+    },
+    {
+      id: "team-leave-plan",
+      label: "Team-Urlaubsplanung",
+      description: "Urlaubswünsche des Teams planen",
+      icon: "calendar",
+      href: "/team/leave?tab=planung",
+      group: "Navigation",
+      teamPage: "/team/leave",
     },
     {
       id: "reports",
@@ -99,8 +111,10 @@
   let inputRef: HTMLInputElement | undefined = $state();
 
   // Issue #83: an admin action is offered only when the admin route map lets the user open it.
+  // #840: a team entry follows the team nav's own permission (one source), UX only.
   const offered = (a: Action) =>
-    !isAdminHref(a.href) || canAccessAdminPath($authStore.user, a.href);
+    (!isAdminHref(a.href) || canAccessAdminPath($authStore.user, a.href)) &&
+    (a.teamPage === undefined || mayOpenTeamPage(a.teamPage, $authStore.user));
 
   let filtered = $derived(
     allActions.filter(offered).filter((a) => {
