@@ -2059,6 +2059,8 @@ export async function leaveRoutes(app: FastifyInstance) {
               row.endDate < windowToDay ? row.endDate : windowToDay,
             )),
         new Set<string>(EFFECTIVE_LEAVE_STATUSES),
+        // A masked range never reaches beyond the window asked for (WR-03).
+        { from: windowFromDay, to: windowToDay },
       );
       // § 9 markers and days only for detailed rows: whoever may not learn the type must not read
       // the sick-in-vacation marker either (it would reveal the sickness indirectly).

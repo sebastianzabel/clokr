@@ -10,6 +10,10 @@
  *    an absence, so it is dropped, not shown (Phase 262 D-05).
  *  - Overlapping or adjacent masked ranges of one person are merged, so the seam between two
  *    absences of different kinds (e.g. a sick spell right after a vacation) cannot be read off.
+ *  - A masked range is clipped to the window the reader asked for BEFORE the merge. The stored
+ *    length of an absence (14 weeks around a due date, a year of Elternzeit) would otherwise be
+ *    readable from the dates alone, and the answer would carry more than the window it answers
+ *    (Art. 9 DSGVO, Art. 5 Abs. 1 lit. c; review WR-03).
  *
  * The visibility decision is the caller's callback; the rule itself lives only in
  * `leave-limits/redact.ts` (`isPersonVisibleOnSomeDay`, #836), so there is no second visibility
@@ -48,6 +52,19 @@ function nextDay(day: string): string {
 }
 
 /**
+ * Clips a day range (`YYYY-MM-DD`, inclusive) to a window; `null` when nothing of it lies inside.
+ * Shared by the calendar and the planner (D-840-20), so both clip masked ranges the same way.
+ */
+export function clipDayRange(
+  range: { startDate: string; endDate: string },
+  window: { from: string; to: string },
+): { startDate: string; endDate: string } | null {
+  const startDate = range.startDate < window.from ? window.from : range.startDate;
+  const endDate = range.endDate > window.to ? window.to : range.endDate;
+  return startDate > endDate ? null : { startDate, endDate };
+}
+
+/**
  * Merges day ranges (`YYYY-MM-DD`, inclusive) that overlap or touch into one range; the result is
  * sorted by start. Shared by the calendar (per person) and the planner (D-840-20), so both hide the
  * seam between two absences of different kinds the same way. Callers group by person first.
@@ -75,6 +92,9 @@ export function mergeDayRanges<T extends { startDate: string; endDate: string }>
  * `detailed(row)` is the caller's per-row decision; `effectiveStatuses` are the statuses that
  * count as an absence (a masked candidate with another status is dropped).
  *
+ * `window` (inclusive calendar days) clips every masked range before the merge; detailed rows keep
+ * their real range (the reader may read them).
+ *
  * Output order of the masked ranges: by `employeeId`, then `startDate`. The detailed rows keep
  * their input order and are returned unchanged.
  */
@@ -82,6 +102,7 @@ export function maskCalendarRows<T extends MaskableCalendarRow>(
   rows: readonly T[],
   detailed: (row: T) => boolean,
   effectiveStatuses: ReadonlySet<string>,
+  window?: { from: string; to: string },
 ): { detailed: T[]; masked: MaskedCalendarEntry[] } {
   const keep: T[] = [];
   const candidates: MaskedCalendarEntry[] = [];
@@ -92,12 +113,14 @@ export function maskCalendarRows<T extends MaskableCalendarRow>(
       continue;
     }
     if (!effectiveStatuses.has(row.status)) continue;
+    const range = window ? clipDayRange(row, window) : row;
+    if (range === null) continue;
     candidates.push({
       employeeId: row.employeeId,
       firstName: row.firstName,
       lastName: row.lastName,
-      startDate: row.startDate,
-      endDate: row.endDate,
+      startDate: range.startDate,
+      endDate: range.endDate,
       isOwn: false,
       masked: true,
     });

@@ -136,6 +136,14 @@ describe("Issue #840 - the planner masks foreign rows per person", () => {
     });
   }
 
+  async function vacationTypeId(): Promise<string> {
+    return (
+      await app.prisma.leaveType.findFirstOrThrow({
+        where: { tenantId: data.tenant.id, code: "VACATION" },
+      })
+    ).id;
+  }
+
   async function read(token: string, qs = ""): Promise<Dto> {
     const res = await app.inject({
       method: "GET",
@@ -494,6 +502,39 @@ describe("Issue #840 - the planner masks foreign rows per person", () => {
         foreignPlan: false,
       });
     });
+  });
+
+  it("a masked range is clipped to the plan year, the stored length is not served (WR-03)", async () => {
+    const across = await leave(
+      emp.c,
+      await vacationTypeId(),
+      "APPROVED",
+      "2026-12-14",
+      "2027-01-10",
+    );
+    const beyond = await leave(
+      emp.c,
+      await vacationTypeId(),
+      "APPROVED",
+      "2027-12-20",
+      "2028-02-20",
+    );
+    try {
+      for (const token of [data.empToken, managerToken]) {
+        const dto = await read(token, token === managerToken ? "?view=own" : "");
+        const masked = rowsOf(dto, emp.c).filter((r) => r.kind === "MASKED");
+        expect(masked[0]).toMatchObject({ startDate: "2027-01-01", endDate: "2027-01-10" });
+        expect(masked[masked.length - 1]).toMatchObject({
+          startDate: "2027-12-20",
+          endDate: "2027-12-31",
+        });
+        const json = JSON.stringify(dto);
+        expect(json).not.toContain("2026-12-14");
+        expect(json).not.toContain("2028-02-20");
+      }
+    } finally {
+      await app.prisma.leaveRequest.deleteMany({ where: { id: { in: [across.id, beyond.id] } } });
+    }
   });
 
   it("an unknown view value answers 400", async () => {

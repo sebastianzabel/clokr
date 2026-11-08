@@ -29,7 +29,7 @@ import { findSalon, holidaysForSalon, resolveSalonInReach, type AccessReach } fr
 import { getTenantTimezone } from "../../working-time-account";
 import { getAbsencesOverlapping } from "../facade/absences";
 import { getCalendarLeaveOverlapping } from "../facade/leave-requests";
-import { mergeDayRanges } from "../leave-calendar-masking";
+import { clipDayRange, mergeDayRanges } from "../leave-calendar-masking";
 import { eachDay } from "../leave-limits/counted-days";
 import {
   isPersonVisibleOn,
@@ -371,7 +371,12 @@ export async function readPlanner(
     }
   }
   for (const [employeeId, ranges] of maskedByPerson) {
-    for (const range of mergeDayRanges(ranges)) {
+    // Clipped to the plan year BEFORE the merge: the stored length of an absence is not shown (WR-03).
+    const clipped = ranges.flatMap((range) => {
+      const inYear = clipDayRange(range, { from: firstDay, to: lastDay });
+      return inYear === null ? [] : [inYear];
+    });
+    for (const range of mergeDayRanges(clipped)) {
       pushRow(employeeId, {
         kind: "MASKED",
         state: "ABWESEND",

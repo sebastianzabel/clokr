@@ -430,6 +430,7 @@ describe("Issue #840 — AC-4 / AC-5 matrix of the calendar read", () => {
     await person("pM1", salonB.id);
     await person("pM2", salonB.id);
     await person("pM3", salonB.id);
+    await person("pLong", salonB.id);
     // pX / pY: replace the open-ended HOME row by two rows that meet on the 15th.
     await app.prisma.employeeSalonAssignment.deleteMany({
       where: { employeeId: { in: [emp.pX, emp.pY] } },
@@ -466,6 +467,8 @@ describe("Issue #840 — AC-4 / AC-5 matrix of the calendar read", () => {
     await leave("pM2full", "pM2", "2026-06-09", "2026-06-10");
     await leave("pM3a", "pM3", "2026-06-15", "2026-06-16");
     await leave("pM3b", "pM3", "2026-06-18", "2026-06-19");
+    // WR-03: a long absence (shape of a Mutterschutz) reaching far beyond the June windows
+    await leave("pLong", "pLong", "2026-05-20", "2026-07-10");
     // § 9: pS vacation with a sick spell inside it and a CONFIRMED credit
     await leave("pSvac", "pS", "2026-06-23", "2026-06-26");
     await leave("pSsick", "pS", "2026-06-24", "2026-06-25", { sick: true });
@@ -669,6 +672,48 @@ describe("Issue #840 — AC-4 / AC-5 matrix of the calendar read", () => {
         ["2026-06-15", "2026-06-16"],
         ["2026-06-18", "2026-06-19"],
       ]);
+    });
+  });
+
+  describe("WR-03 - a masked range never reaches beyond the window asked for", () => {
+    it("the range form clips a long foreign absence to the window", async () => {
+      const body = await range(token.mgrA, RANGE);
+      const rows = rowsOf(body, "pLong");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        startDate: "2026-06-01",
+        endDate: "2026-06-30",
+        masked: true,
+      });
+      expect(JSON.stringify(body)).not.toContain("2026-05-20");
+      expect(JSON.stringify(body)).not.toContain("2026-07-10");
+    });
+
+    it("the year/month form clips the same way", async () => {
+      const res = await get(token.mgrA, "year=2026&month=6");
+      expect(res.statusCode, res.body).toBe(200);
+      const rows = (JSON.parse(res.body) as Entry[]).filter((e) => e.employeeId === emp.pLong);
+      expect(rows.map((e) => [e.startDate, e.endDate])).toEqual([["2026-06-01", "2026-06-30"]]);
+    });
+
+    it("a window inside the absence answers exactly the window", async () => {
+      const body = await range(token.mgrA, "from=2026-06-10&to=2026-06-12");
+      const rows = rowsOf(body, "pLong");
+      expect(rows.map((e) => [e.startDate, e.endDate])).toEqual([["2026-06-10", "2026-06-12"]]);
+    });
+
+    it("clipping happens before the merge: two ranges stay two when the clip leaves a gap", async () => {
+      const body = await range(token.mgrA, "from=2026-06-16&to=2026-06-19");
+      expect(rowsOf(body, "pM3").map((e) => [e.startDate, e.endDate])).toEqual([
+        ["2026-06-16", "2026-06-16"],
+        ["2026-06-18", "2026-06-19"],
+      ]);
+    });
+
+    it("a detailed row keeps its real range", async () => {
+      const body = await range(data.adminToken, RANGE);
+      const rows = rowsOf(body, "pLong");
+      expect(rows.map((e) => [e.startDate, e.endDate])).toEqual([["2026-05-20", "2026-07-10"]]);
     });
   });
 

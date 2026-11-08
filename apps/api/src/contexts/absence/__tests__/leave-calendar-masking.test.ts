@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  clipDayRange,
   maskCalendarRows,
   mergeDayRanges,
   type MaskableCalendarRow,
@@ -233,5 +234,52 @@ describe("mergeDayRanges (shared by the calendar and the planner, D-840-20)", ()
     const out = mergeDayRanges(input);
     expect(Object.keys(out[0]).sort()).toEqual(["endDate", "startDate"]);
     expect(input[0].endDate).toBe("2026-06-02");
+  });
+});
+
+describe("clipDayRange and the window of maskCalendarRows (review WR-03)", () => {
+  const WINDOW = { from: "2026-06-01", to: "2026-06-30" };
+
+  it("clips a range to the window and drops one wholly outside", () => {
+    expect(clipDayRange({ startDate: "2026-05-20", endDate: "2026-07-10" }, WINDOW)).toEqual({
+      startDate: "2026-06-01",
+      endDate: "2026-06-30",
+    });
+    expect(clipDayRange({ startDate: "2026-06-10", endDate: "2026-06-12" }, WINDOW)).toEqual({
+      startDate: "2026-06-10",
+      endDate: "2026-06-12",
+    });
+    expect(clipDayRange({ startDate: "2026-07-01", endDate: "2026-07-05" }, WINDOW)).toBeNull();
+    expect(clipDayRange({ startDate: "2026-05-01", endDate: "2026-05-31" }, WINDOW)).toBeNull();
+  });
+
+  it("a masked 200-day row and a one-month window give a range equal to the window", () => {
+    const { masked } = maskCalendarRows(
+      [row("p1", "2026-03-01", "2026-09-16")],
+      () => false,
+      EFFECTIVE,
+      WINDOW,
+    );
+    expect(masked).toHaveLength(1);
+    expect(masked[0]).toMatchObject({ startDate: "2026-06-01", endDate: "2026-06-30" });
+  });
+
+  it("clips before the merge, so a gap outside the window leaves no trace", () => {
+    const { masked } = maskCalendarRows(
+      [row("p1", "2026-05-25", "2026-06-02"), row("p1", "2026-06-29", "2026-07-04")],
+      () => false,
+      EFFECTIVE,
+      WINDOW,
+    );
+    expect(masked.map((m) => [m.startDate, m.endDate])).toEqual([
+      ["2026-06-01", "2026-06-02"],
+      ["2026-06-29", "2026-06-30"],
+    ]);
+  });
+
+  it("does not clip a detailed row", () => {
+    const r = row("p1", "2026-05-20", "2026-07-10");
+    const { detailed } = maskCalendarRows([r], () => true, EFFECTIVE, WINDOW);
+    expect(detailed[0]).toBe(r);
   });
 });
