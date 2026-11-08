@@ -85,7 +85,6 @@ export const SCOPE_FILES = [
   "apps/web/src/routes/(app)/team/leave/+page.svelte",
   "apps/web/src/routes/(app)/inbox/+page.svelte",
   "apps/web/src/routes/(app)/shifts/+page.svelte",
-  "apps/web/src/routes/(app)/teamcal/+page.svelte",
   "apps/web/src/routes/(app)/leave/+page.svelte",
   "apps/web/src/lib/components/leave/CalendarDayDetail.svelte",
   "apps/web/src/lib/leave/team-calendar-visibility.ts",
