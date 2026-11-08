@@ -346,6 +346,10 @@ const leaveCalendarQuerySchema = z
     scope: z.enum(["own", "team"]).optional(),
     from: calendarDaySchema.optional(),
     to: calendarDaySchema.optional(),
+    // The month form (review IN-07): a non-numeric or out-of-range value is a 400, never a NaN that
+    // reaches `monthDateRange` and answers 500.
+    year: z.coerce.number().int().min(2000).max(2100).optional(),
+    month: z.coerce.number().int().min(1).max(12).optional(),
   })
   .superRefine((q, ctx) => {
     if (q.scope !== undefined && q.salonId !== undefined) {
@@ -1836,12 +1840,11 @@ export async function leaveRoutes(app: FastifyInstance) {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
-      const { year, month } = req.query as { year?: string; month?: string };
       const query = leaveCalendarQuerySchema.parse(req.query);
       const { salonId } = query;
       const rangeForm = query.from !== undefined && query.to !== undefined;
-      const y = year ? parseInt(year) : new Date().getFullYear();
-      const m = month ? parseInt(month) : new Date().getMonth() + 1;
+      const y = query.year ?? new Date().getFullYear();
+      const m = query.month ?? new Date().getMonth() + 1;
       const tenantId = req.user.tenantId;
 
       // Resolved ONCE per request: it validates the chosen salon (Issue #558, D-01 — a caller

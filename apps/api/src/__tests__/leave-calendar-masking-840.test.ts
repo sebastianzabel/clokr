@@ -778,6 +778,23 @@ describe("Issue #840 — AC-4 / AC-5 matrix of the calendar read", () => {
       expect((await get(data.adminToken, "from=2026-02-30&to=2026-03-02")).statusCode).toBe(400);
     });
 
+    it("a malformed or out-of-range year / month is 400, not 500 (IN-07)", async () => {
+      for (const qs of [
+        "year=abc&month=6",
+        "year=2026&month=abc",
+        "year=2026&month=13",
+        "year=2026&month=0",
+        "year=1&month=6",
+        "year=2026.5&month=6",
+        "year=&month=6",
+      ]) {
+        const res = await get(data.adminToken, qs);
+        expect(res.statusCode, `${qs}: ${res.body}`).toBe(400);
+      }
+      expect((await get(data.adminToken, "year=2026&month=12")).statusCode).toBe(200);
+      expect((await get(data.adminToken, "year=2026")).statusCode).toBe(200);
+    });
+
     it("without from / to the year / month form answers the bare array", async () => {
       const res = await get(data.adminToken, "year=2026&month=6");
       expect(res.statusCode, res.body).toBe(200);
