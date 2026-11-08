@@ -85,6 +85,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
   "src/utils/audit-diff.ts": "rahmen", // generic before/after diff for settings audit rows (Issue #285); pure, no model, imported by the platform and absence settings routes
   "src/utils/client-log-url.ts": "rahmen", // strips query/fragment from client-reported URLs before logging (Issue #610 review WR-02); pure, no model
+  "src/utils/code-unit-order.ts": "rahmen", // locale-independent code-unit comparator for stable sorts; pure, no model, imported by the platform and absence contexts
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own

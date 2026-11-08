@@ -46,6 +46,7 @@ import {
   type NormalizedRoleAssignmentScope,
   type RoleAssignmentTarget,
 } from "../role-assignment";
+import { byCodeUnit } from "../../../utils/code-unit-order";
 
 /**
  * D-15: does `userId` (of `tenantId`) currently hold `permission` for `target`?
@@ -230,12 +231,6 @@ export type ContextSalonIds = {
   /** The caller's HOME salon on `today`, only when it is in `salonIds`. */
   homeSalonId: string | null;
 };
-
-/** Ascending by UTF-16 code unit — the same order as a bare `.sort()`, stated explicitly. */
-function byCodeUnit(a: string, b: string): number {
-  if (a < b) return -1;
-  return a > b ? 1 : 0;
-}
 
 /** Every ZUGEWIESEN key of the catalog — "grants at least one of these" makes a role managing. */
 const ZUGEWIESEN_KEYS: readonly PermissionKey[] = PERMISSIONS.filter(

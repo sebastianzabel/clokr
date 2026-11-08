@@ -108,9 +108,15 @@ export function legendFrom(
     }
   }
   const ordered = codeOrder.filter((code) => codes.has(code));
-  const unknown = [...codes].filter((code) => !codeOrder.includes(code)).sort();
+  const unknown = [...codes].filter((code) => !codeOrder.includes(code)).sort(byCodeUnit);
   return {
     typeCodes: [...ordered, ...unknown],
     styles: STYLE_ORDER.filter((style) => styles.has(style)),
   };
+}
+
+/** Ascending by UTF-16 code unit — a bare `.sort()` stated explicitly, locale-independent. */
+function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
 }

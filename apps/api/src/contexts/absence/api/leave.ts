@@ -115,6 +115,7 @@ import {
 } from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
 import { vacationBalanceForRow, type VacationBalance } from "../facade/vacation-balance"; // Issue #451 (D-07) — the ONE Resturlaub function, additive on the VACATION row of GET /entitlements
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
+import { byCodeUnit } from "../../../utils/code-unit-order";
 import { REQUESTABLE_CODES as TYPE_CODES, DISPLAY_NAME, withHalfDayMarker } from "../leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
 
 // Forwarded for the same backward-compatibility reason as the import above.
@@ -2078,7 +2079,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const leaveEntries = detailed.map((row) => ({
         ...row,
         section9: section9ByEntry.get(row.id)?.marker ?? null,
-        section9Days: Array.from(section9ByEntry.get(row.id)?.days ?? []).sort(),
+        section9Days: Array.from(section9ByEntry.get(row.id)?.days ?? []).sort(byCodeUnit),
       }));
 
       // Feiertage als eigene Einträge hinzufügen
@@ -2920,7 +2921,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const overruns = karenzOverrunFromRequests(rows, tz, graceDays).map((o) => ({
         leaveRequestId: o.leaveRequestId,
-        days: [...o.days].sort(),
+        days: [...o.days].sort(byCodeUnit),
       }));
       const totalDays = new Set(overruns.flatMap((o) => o.days)).size;
       return { graceDays, overruns, totalDays };
