@@ -105,6 +105,9 @@ const wishPatchBodySchema = z
     { message: "Mindestens eine Angabe ist erforderlich.", path: ["startDate"] },
   );
 
+/** Issue #840 (D-840-23): `?view=own` is the personal planner (every foreign row masked). */
+const plannerQuerySchema = z.object({ view: z.enum(["own"]).optional() });
+
 const takeoverBodySchema = z.object({
   limitExceptions: z
     .array(z.object({ wishId: z.string().uuid() }).merge(limitExceptionSchema))
@@ -405,11 +408,12 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Read a leave plan (the planner)",
       description:
-        "Returns the planner of one plan: the persons with wishes inside the caller's admission. Readable with a leave-request:read reach over the salon or as a person homed in it.",
+        "Returns the planner of one plan: the persons with wishes inside the caller's admission. Readable with a leave-request:read reach over the salon or as a person homed in it. Rows of persons outside the caller's leave-request:read reach are masked (kind MASKED); view=own masks every foreign row.",
     },
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
+      const { view } = plannerQuerySchema.parse(req.query);
       const tenantId = req.user.tenantId;
       const plan = await loadPlan(req, id);
       if (!plan) return reply.code(404).send(PLAN_NOT_FOUND);
@@ -435,8 +439,8 @@ export async function leavePlanRoutes(app: FastifyInstance) {
           userId: req.user.sub,
           employeeId: selfEmployeeId,
           canManage,
-          // The calendar's rule (`canSeeLeaveType`): the permission, computed once per request.
-          canSeeAllTypes: await hasPermission(req, "leave-request:read:ZUGEWIESEN"),
+          // Issue #840 (D-840-23): the personal planner masks every foreign row whatever the reach.
+          forceNeutral: view === "own",
           canCreateOwn: await hasPermission(req, "leave-request:create:EIGENE"),
           entitlementReach: await resolveAccessReach(
             app.prisma,

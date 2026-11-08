@@ -7,9 +7,12 @@
  * Betriebsurlaub minus the person's exceptions; BEANTRAGT = PENDING leave), the person's wishes of
  * this plan plus read-only wishes of OTHER open plans that touch the person's days in this salon,
  * and the salon's holidays. The conflict flag marks an unlinked wish over a leave row of the same
- * person. Types are masked with the calendar's rule (`canSeeLeaveType`) and a sick type is shown
- * only on the reader's own rows (Art. 9 DSGVO); no note, attest, § 9 or document field is ever
- * read into the planner.
+ * person. Foreign rows are decided PER PERSON with the calendar's rule (Issue #840, D-840-20): a
+ * person the reader may read (`leave-request:read` reach, Stammsalon per day) gets detailed rows —
+ * a sick type is shown only on the reader's own rows (Art. 9 DSGVO) — everybody else only a
+ * merged `MASKED` / `ABWESEND` row, and a PENDING row of such a person is dropped. `forceNeutral`
+ * (`?view=own`, the personal planner) masks every foreign row whatever the reach. No note, attest,
+ * § 9 or document field is ever read into the planner.
  *
  * Everything is read live and nothing is copied: a wish never counts anywhere until it is a
  * request (D-01), and approving a request moves it from beantragt to gesetzt in the next read
@@ -20,13 +23,17 @@
 import type { FastifyInstance } from "fastify";
 import type { LeavePlan, LeavePlanWish } from "@clokr/db";
 import { formatInTimeZone } from "date-fns-tz";
-import { holidaysForSalon, resolveSalonInReach, type AccessReach } from "../../platform";
+import { findSalon, holidaysForSalon, resolveSalonInReach, type AccessReach } from "../../platform";
 import { getTenantTimezone } from "../../working-time-account";
 import { getAbsencesOverlapping } from "../facade/absences";
 import { getCalendarLeaveOverlapping } from "../facade/leave-requests";
-import { canSeeLeaveType } from "../leave-calendar-visibility";
+import { mergeDayRanges } from "../leave-calendar-masking";
 import { eachDay } from "../leave-limits/counted-days";
-import { isPersonVisibleOn, readerVisibilityFrom } from "../leave-limits/redact";
+import {
+  isPersonVisibleOn,
+  isPersonVisibleOnSomeDay,
+  readerVisibilityFrom,
+} from "../leave-limits/redact";
 import { isSickLeaveTypeCode } from "../leave-type";
 import { manageCoversFromHomeDays } from "./admission";
 import { BLOCKS_PLAN_CLOSE } from "./constants";
@@ -38,8 +45,9 @@ import { planPopulation } from "./population";
 import { dayOf, dayToDate, deadlinePassed, ownEditLocked, rangesOverlap } from "./wish-rules";
 
 export type PlannerRow = {
-  kind: "LEAVE" | "ABSENCE" | "COMPANY_SHUTDOWN";
-  state: "GESETZT" | "BEANTRAGT";
+  /** `MASKED`: a foreign absence outside the reader's reach — "abwesend", nothing else (#840). */
+  kind: "LEAVE" | "ABSENCE" | "COMPANY_SHUTDOWN" | "MASKED";
+  state: "GESETZT" | "BEANTRAGT" | "ABWESEND";
   startDate: string;
   endDate: string;
   halfDay: boolean;
@@ -92,6 +100,8 @@ export type PlannerReadDto = {
      */
     openWishCount: number | null;
   };
+  /** The plan salon (D-840-25): the personal planner draws its closed days from `openingHours`. */
+  salon: { id: string; name: string; openingHours: unknown };
   viewer: {
     employeeId: string | null;
     canManage: boolean;
@@ -171,19 +181,15 @@ function homeRangesIn(
 }
 
 /**
- * The type code a reader may see on a row of `ownerEmployeeId`: the reader's own rows always; a
- * sick code never on a colleague's row (stricter than the calendar, D-835-22); every other code by
- * the calendar rule `canSeeLeaveType` (`leave-request:read:ZUGEWIESEN` computed once per request).
+ * The type code of a DETAILED row of `ownerEmployeeId` (the reader may read the person): the
+ * reader's own rows always; a sick code never on a colleague's row (stricter than the calendar,
+ * D-835-22); every other code as it is.
  */
-function maskedTypeCode(
-  code: string | null,
-  isOwn: boolean,
-  canSeeAllTypes: boolean,
-): string | null {
+function detailedTypeCode(code: string | null, isOwn: boolean): string | null {
   if (code === null) return null;
   if (isOwn) return code;
   if (isSickLeaveTypeCode(code as Parameters<typeof isSickLeaveTypeCode>[0])) return null;
-  return canSeeLeaveType(isOwn, canSeeAllTypes) ? code : null;
+  return code;
 }
 
 type StoredPlanWish = LeavePlanWish;
@@ -197,7 +203,11 @@ export async function readPlanner(
       userId: string;
       employeeId: string | null;
       canManage: boolean;
-      canSeeAllTypes: boolean;
+      /**
+       * Issue #840 (D-840-23): true for the personal planner (`?view=own`) — every foreign row is
+       * masked whatever the reader's reach; own rows and wishes stay complete.
+       */
+      forceNeutral: boolean;
       /** Whether the caller may file requests of their own (`leave-request:create:EIGENE`). */
       canCreateOwn?: boolean;
       entitlementReach: AccessReach;
@@ -296,33 +306,77 @@ export async function readPlanner(
     if (list) list.push(row);
     else rowsByPerson.set(employeeId, [row]);
   };
+  // Issue #840 (D-840-20): the detail level is decided per person with the calendar's rule — own
+  // rows always, a foreign row iff the reader's `leave-request:read` reach covers the person on at
+  // least one day of the row (Stammsalon per day); `forceNeutral` takes the foreign branch away.
+  const visibility = readerVisibilityFrom(viewer.readReach, viewer.employeeId);
+  const maskedByPerson = new Map<string, Array<{ startDate: string; endDate: string }>>();
+  const detailedFor = (employeeId: string, startDate: string, endDate: string): boolean => {
+    if (viewer.employeeId !== null && employeeId === viewer.employeeId) return true;
+    if (viewer.forceNeutral) return false;
+    return isPersonVisibleOnSomeDay(
+      visibility,
+      employeeId,
+      population.homeByPerson.get(employeeId),
+      startDate < firstDay ? firstDay : startDate,
+      endDate > lastDay ? lastDay : endDate,
+    );
+  };
+  const collectMasked = (employeeId: string, startDate: string, endDate: string) => {
+    const list = maskedByPerson.get(employeeId);
+    if (list) list.push({ startDate, endDate });
+    else maskedByPerson.set(employeeId, [{ startDate, endDate }]);
+  };
   for (const r of leaveRows) {
     const isOwn = viewer.employeeId !== null && r.employeeId === viewer.employeeId;
     const startDate = dayOf(r.startDate);
     const endDate = dayOf(r.endDate);
-    pushRow(r.employeeId, {
-      kind: "LEAVE",
-      state: r.status === "PENDING" ? "BEANTRAGT" : "GESETZT",
-      startDate,
-      endDate,
-      halfDay: r.halfDay,
-      typeCode: maskedTypeCode(r.leaveType.code, isOwn, viewer.canSeeAllTypes),
-    });
+    // The conflict flag reads the unmasked ranges (D-835-44 behaviour, T-840-14 accepted).
     const list = leaveRangesByPerson.get(r.employeeId);
     const range = { from: startDate, to: endDate };
     if (list) list.push(range);
     else leaveRangesByPerson.set(r.employeeId, [range]);
+    if (detailedFor(r.employeeId, startDate, endDate)) {
+      pushRow(r.employeeId, {
+        kind: "LEAVE",
+        state: r.status === "PENDING" ? "BEANTRAGT" : "GESETZT",
+        startDate,
+        endDate,
+        halfDay: r.halfDay,
+        typeCode: detailedTypeCode(r.leaveType.code, isOwn),
+      });
+    } else if (r.status !== "PENDING") {
+      collectMasked(r.employeeId, startDate, endDate);
+    }
   }
   for (const a of absenceRows) {
     const isOwn = viewer.employeeId !== null && a.employeeId === viewer.employeeId;
-    pushRow(a.employeeId, {
-      kind: "ABSENCE",
-      state: "GESETZT",
-      startDate: dayOf(a.startDate),
-      endDate: dayOf(a.endDate),
-      halfDay: a.halfDay,
-      typeCode: maskedTypeCode(a.type, isOwn, viewer.canSeeAllTypes),
-    });
+    const startDate = dayOf(a.startDate);
+    const endDate = dayOf(a.endDate);
+    if (detailedFor(a.employeeId, startDate, endDate)) {
+      pushRow(a.employeeId, {
+        kind: "ABSENCE",
+        state: "GESETZT",
+        startDate,
+        endDate,
+        halfDay: a.halfDay,
+        typeCode: detailedTypeCode(a.type, isOwn),
+      });
+    } else {
+      collectMasked(a.employeeId, startDate, endDate);
+    }
+  }
+  for (const [employeeId, ranges] of maskedByPerson) {
+    for (const range of mergeDayRanges(ranges)) {
+      pushRow(employeeId, {
+        kind: "MASKED",
+        state: "ABWESEND",
+        startDate: range.startDate,
+        endDate: range.endDate,
+        halfDay: false,
+        typeCode: null,
+      });
+    }
   }
   for (const shutdown of shutdowns) {
     const excepted = new Set(shutdown.exceptions.map((e) => e.employeeId));
@@ -487,6 +541,8 @@ export async function readPlanner(
     });
   }
 
+  const salon = await findSalon(db, tenantId, plan.salonId);
+
   return {
     plan: {
       id: plan.id,
@@ -504,6 +560,11 @@ export async function readPlanner(
             where: { planId: plan.id, tenantId, deletedAt: null, ...BLOCKS_PLAN_CLOSE },
           })
         : null,
+    },
+    salon: {
+      id: plan.salonId,
+      name: salon?.name ?? "",
+      openingHours: salon?.openingHours ?? null,
     },
     viewer: {
       employeeId: viewer.employeeId,

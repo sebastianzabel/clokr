@@ -48,6 +48,29 @@ function nextDay(day: string): string {
 }
 
 /**
+ * Merges day ranges (`YYYY-MM-DD`, inclusive) that overlap or touch into one range; the result is
+ * sorted by start. Shared by the calendar (per person) and the planner (D-840-20), so both hide the
+ * seam between two absences of different kinds the same way. Callers group by person first.
+ */
+export function mergeDayRanges<T extends { startDate: string; endDate: string }>(
+  ranges: readonly T[],
+): Array<{ startDate: string; endDate: string }> {
+  const sorted = [...ranges].sort((a, b) =>
+    a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0,
+  );
+  const merged: Array<{ startDate: string; endDate: string }> = [];
+  for (const range of sorted) {
+    const prev = merged[merged.length - 1];
+    if (prev !== undefined && range.startDate <= nextDay(prev.endDate)) {
+      if (range.endDate > prev.endDate) prev.endDate = range.endDate;
+      continue;
+    }
+    merged.push({ startDate: range.startDate, endDate: range.endDate });
+  }
+  return merged;
+}
+
+/**
  * Splits `rows` into the rows the reader may see in detail and the masked ranges of the others.
  * `detailed(row)` is the caller's per-row decision; `effectiveStatuses` are the statuses that
  * count as an absence (a masked candidate with another status is dropped).
@@ -81,29 +104,18 @@ export function maskCalendarRows<T extends MaskableCalendarRow>(
   }
 
   candidates.sort((a, b) =>
-    a.employeeId === b.employeeId
-      ? a.startDate < b.startDate
-        ? -1
-        : a.startDate > b.startDate
-          ? 1
-          : 0
-      : a.employeeId < b.employeeId
-        ? -1
-        : 1,
+    a.employeeId === b.employeeId ? 0 : a.employeeId < b.employeeId ? -1 : 1,
   );
 
   const masked: MaskedCalendarEntry[] = [];
-  for (const entry of candidates) {
-    const prev = masked[masked.length - 1];
-    if (
-      prev !== undefined &&
-      prev.employeeId === entry.employeeId &&
-      entry.startDate <= nextDay(prev.endDate)
-    ) {
-      if (entry.endDate > prev.endDate) prev.endDate = entry.endDate;
-      continue;
+  for (let i = 0; i < candidates.length;) {
+    let j = i;
+    while (j < candidates.length && candidates[j].employeeId === candidates[i].employeeId) j++;
+    const person = candidates[i];
+    for (const range of mergeDayRanges(candidates.slice(i, j))) {
+      masked.push({ ...person, startDate: range.startDate, endDate: range.endDate });
     }
-    masked.push({ ...entry });
+    i = j;
   }
 
   return { detailed: keep, masked };

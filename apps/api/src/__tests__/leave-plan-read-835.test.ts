@@ -582,11 +582,12 @@ describe("Issue #835 - leave plan read (rows, population, conflict, masking)", (
   });
 
   it("masks the type by the calendar rule and a sick code on everybody's row but the own", async () => {
-    // A plain employee reads colleagues' VACATION and SICK rows without a code ...
+    // #840 D-840-20: a plain employee (reach: only themself) no longer reads colleagues' rows in
+    // detail - every effective row of B arrives as a MASKED / ABWESEND row without a code.
     const plain = await read("emp");
-    const bRows = personOf(plain, "b").rows.filter((r) => r.kind === "LEAVE");
+    const bRows = personOf(plain, "b").rows.filter((r) => r.kind !== "COMPANY_SHUTDOWN");
     expect(bRows.length).toBeGreaterThan(0);
-    expect(bRows.every((r) => r.typeCode === null)).toBe(true);
+    expect(bRows.every((r) => r.kind === "MASKED" && r.typeCode === null)).toBe(true);
     // ... and their own rows with the code, the sick one included.
     const ownRows = personOf(plain, "emp").rows.filter((r) => r.kind === "LEAVE");
     expect(ownRows).toEqual([

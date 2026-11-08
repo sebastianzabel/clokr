@@ -3,7 +3,11 @@
  * of the visibility rule. Pure, no database.
  */
 import { describe, expect, it } from "vitest";
-import { maskCalendarRows, type MaskableCalendarRow } from "../leave-calendar-masking";
+import {
+  maskCalendarRows,
+  mergeDayRanges,
+  type MaskableCalendarRow,
+} from "../leave-calendar-masking";
 import { isPersonVisibleOnSomeDay, readerVisibilityFrom } from "../leave-limits/redact";
 
 const EFFECTIVE = new Set(["APPROVED", "CANCELLATION_REQUESTED"]);
@@ -193,5 +197,41 @@ describe("isPersonVisibleOnSomeDay", () => {
     const v = readerVisibilityFrom({ kind: "scoped", salonIds: [], employeeIds: [] }, "me");
     expect(isPersonVisibleOnSomeDay(v, "p", days, "2026-06-01", "2026-06-04")).toBe(false);
     expect(isPersonVisibleOnSomeDay(v, "me", days, "2026-06-01", "2026-06-04")).toBe(true);
+  });
+});
+
+describe("mergeDayRanges (shared by the calendar and the planner, D-840-20)", () => {
+  it("returns an empty list for no ranges", () => {
+    expect(mergeDayRanges([])).toEqual([]);
+  });
+
+  it("merges overlapping and touching ranges and keeps a gap of one day apart", () => {
+    expect(
+      mergeDayRanges([
+        { startDate: "2026-06-08", endDate: "2026-06-10" },
+        { startDate: "2026-06-01", endDate: "2026-06-03" },
+        { startDate: "2026-06-04", endDate: "2026-06-05" },
+        { startDate: "2026-06-02", endDate: "2026-06-02" },
+      ]),
+    ).toEqual([
+      { startDate: "2026-06-01", endDate: "2026-06-05" },
+      { startDate: "2026-06-08", endDate: "2026-06-10" },
+    ]);
+  });
+
+  it("touches across a month and a year boundary", () => {
+    expect(
+      mergeDayRanges([
+        { startDate: "2026-12-30", endDate: "2026-12-31" },
+        { startDate: "2027-01-01", endDate: "2027-01-02" },
+      ]),
+    ).toEqual([{ startDate: "2026-12-30", endDate: "2027-01-02" }]);
+  });
+
+  it("strips every other key and does not mutate its input", () => {
+    const input = [{ startDate: "2026-06-01", endDate: "2026-06-02", id: "x", typeCode: "SICK" }];
+    const out = mergeDayRanges(input);
+    expect(Object.keys(out[0]).sort()).toEqual(["endDate", "startDate"]);
+    expect(input[0].endDate).toBe("2026-06-02");
   });
 });
