@@ -209,6 +209,8 @@
     isHoliday: boolean;
     section9?: Section9Marker;
     section9Days?: string[];
+    /** #840: set by the API on a foreign absence outside the reader's reach (name and period only). */
+    masked?: boolean;
   }
 
   type View = "calendar" | "list";
@@ -301,10 +303,34 @@
     };
   }
 
+  // #840 D-840-19: a masked row (a foreign absence outside the reader's reach) arrives without id,
+  // status, half day, type or § 9 field. Until this grid is replaced (840-10/11) the lane maps key
+  // on `e.id`, so a masked row gets a client-side key and neutral defaults here; its type stays
+  // null, so the chip shows the neutral label.
+  function withMaskedKeys(raw: Array<Partial<CalEntry>>): CalEntry[] {
+    return raw.map((e) =>
+      e.masked === true
+        ? ({
+            ...e,
+            id: `masked:${e.employeeId}:${e.startDate}`,
+            typeCode: null,
+            typeName: null,
+            halfDay: false,
+            status: "APPROVED",
+            isHoliday: false,
+          } as CalEntry)
+        : (e as CalEntry),
+    );
+  }
+
   async function loadCalendar() {
     calLoading = true;
     try {
-      calEntries = await api.get<CalEntry[]>(`/leave/calendar?year=${calYear}&month=${calMonth}`);
+      calEntries = withMaskedKeys(
+        await api.get<Array<Partial<CalEntry>>>(
+          `/leave/calendar?year=${calYear}&month=${calMonth}`,
+        ),
+      );
     } catch {
       calEntries = [];
     } finally {

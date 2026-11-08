@@ -372,6 +372,8 @@
     halfDay: boolean;
     status: Status;
     isHoliday: boolean;
+    /** #840: set by the API on a foreign absence outside the reader's reach (name and period only). */
+    masked?: boolean;
   }
 
   interface CalDay {
@@ -496,13 +498,35 @@
     }
   }
 
+  // #840 D-840-19: a masked row (a foreign absence outside the reader's reach) arrives without id,
+  // status, half day, type or § 9 field. Until this grid is replaced (840-10/11) the lane maps key
+  // on `e.id`, so a masked row gets a client-side key and neutral defaults here; its type stays
+  // null, so the chip shows the neutral label.
+  function withMaskedKeys(raw: Array<Partial<CalEntry>>): CalEntry[] {
+    return raw.map((e) =>
+      e.masked === true
+        ? ({
+            ...e,
+            id: `masked:${e.employeeId}:${e.startDate}`,
+            typeCode: null,
+            typeName: null,
+            halfDay: false,
+            status: "APPROVED",
+            isHoliday: false,
+          } as CalEntry)
+        : (e as CalEntry),
+    );
+  }
+
   async function loadCalendar() {
     void loadLimitDays();
     const generation = ++calendarGeneration;
     calLoading = true;
     try {
-      const entries = await api.get<CalEntry[]>(
-        withSalonId(`/leave/calendar?year=${calYear}&month=${calMonth}`, pageSalonId),
+      const entries = withMaskedKeys(
+        await api.get<Array<Partial<CalEntry>>>(
+          withSalonId(`/leave/calendar?year=${calYear}&month=${calMonth}`, pageSalonId),
+        ),
       );
       if (generation !== calendarGeneration) return;
       calEntries = entries;
