@@ -215,7 +215,8 @@ describe("leave-chip-contrast — WCAG AA for every --leave-type-* fill/text pai
       "--leave-type-parental": "#be185d",
       "--leave-type-absent": "#475569",
       "--leave-type-absent-muted": "#94a3b8",
-      "--leave-type-default": "#6b7280",
+      // #840 G-4: the unknown-type look equalled --leave-type-unpaid (two legend entries, one colour); now brown
+      "--leave-type-default": "#5a321b",
     };
     const EXPECTED_DARK: Record<string, string> = {
       "--leave-type-vacation": "#5ec78a",
@@ -230,7 +231,8 @@ describe("leave-chip-contrast — WCAG AA for every --leave-type-* fill/text pai
       "--leave-type-parental": "#f9a8d4",
       "--leave-type-absent": "#cbd5e1",
       "--leave-type-absent-muted": "#64748b",
-      "--leave-type-default": "#9ca3af",
+      // #840 G-4: the unknown-type look equalled --leave-type-unpaid (two legend entries, one colour); now brown
+      "--leave-type-default": "#874a29",
     };
     for (const [key, hex] of Object.entries(EXPECTED_LIGHT)) {
       expect(LIGHT[key], `light ${key}`).toBe(hex);

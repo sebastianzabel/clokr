@@ -14,7 +14,7 @@ import { screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte";
 import { periodOf, type TimelineBar, type TimelinePerson } from "$lib/leave/timeline-model";
-import { MIXED } from "$lib/leave/leave-colors";
+import { MIXED, allLeaveColorTokens } from "$lib/leave/leave-colors";
 import {
   SURFACES,
   cardSurface,
@@ -180,9 +180,7 @@ describe("#840 G-4 one look, one meaning", () => {
         over(resolveColor(TOKENS, blocks, `var(${token})`), cardSurface(TOKENS, blocks));
       const looks = {
         Abwesend: "--leave-type-absent",
-        // BLOCKED (840-15 Task 3, see the SUMMARY): "Andere Abwesenheit" (--leave-type-default) still
-        // equals "Unbezahlter Urlaub" until leave-chip-contrast.test.ts Test 5, which pins the
-        // default literals, may be amended; its pairwise cases are added with the colour change.
+        "Andere Abwesenheit": "--leave-type-default",
         "Unbezahlter Urlaub": "--leave-type-unpaid",
       };
       const names = Object.keys(looks) as Array<keyof typeof looks>;
@@ -195,6 +193,23 @@ describe("#840 G-4 one look, one meaning", () => {
           });
         }
       }
+
+      it(`${mode}: the unknown-type fill is 1.4:1 from the three neutrals and equals no other type fill`, () => {
+        const fill = colorOf("--leave-type-default");
+        for (const neutral of [
+          "--leave-type-unpaid",
+          "--leave-type-absent",
+          "--leave-type-absent-muted",
+        ]) {
+          expect(contrast(fill, colorOf(neutral)), neutral).toBeGreaterThanOrEqual(1.4);
+        }
+        const body = tokenIn(TOKENS, blocks, "--leave-type-default");
+        const others = [...allLeaveColorTokens()]
+          .filter((token) => !token.endsWith("-text") && token !== "--leave-type-default")
+          .map((token) => tokenIn(TOKENS, blocks, token));
+        expect(others.length).toBeGreaterThan(10); // the walked set is not empty
+        expect(others).not.toContain(body);
+      });
 
       it(`${mode}: the unknown-type fill keeps its -text partner at WCAG AA`, () => {
         const fill = colorOf("--leave-type-default");

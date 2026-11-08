@@ -175,7 +175,11 @@ html[data-mode="dark"] {
   --leave-type-parental: #be185d; /* rose — Elternzeit */
   --leave-type-absent: #475569; /* slate — Abwesend (APPROVED) */
   --leave-type-absent-muted: #94a3b8; /* light slate — Abwesend (PENDING) */
-  --leave-type-default: #6b7280; /* gray — Fallback */
+  /* Unknown-type look (G-4 of issue 840): „Andere Abwesenheit“ in the leave legend, „Sonstige
+     Abwesenheit“ in the Zeiterfassung legends. It was #6b7280, the very value of --leave-type-unpaid,
+     so two legend entries shared one colour. Now a dark brown, a hue none of the greys has:
+     2.28:1 from unpaid, 1.45:1 from absent, 4.30:1 from absent-muted. */
+  --leave-type-default: #5a321b; /* brown — Fallback (unknown type) */
 
   /* Foreground colours for text sitting ON a --leave-type-* fill (Phase 257, D-12).
      Each is whichever of #ffffff / #0f172a scores higher against the fill above, measured with
@@ -195,7 +199,7 @@ html[data-mode="dark"] {
   --leave-type-parental-text: #ffffff; /* 6.04:1 */
   --leave-type-absent-text: #ffffff; /* 7.58:1 */
   --leave-type-absent-muted-text: #0f172a; /* 6.96:1 */
-  --leave-type-default-text: #ffffff; /* 4.83:1 */
+  --leave-type-default-text: #ffffff; /* 11.01:1 */
 }
 
 [data-theme="nacht"] {
@@ -266,7 +270,10 @@ html[data-mode="dark"] {
   --leave-type-parental: #f9a8d4;
   --leave-type-absent: #cbd5e1;
   --leave-type-absent-muted: #64748b;
-  --leave-type-default: #9ca3af;
+  /* Unknown-type look (G-4 of issue 840), see the light block: was #9ca3af, equal to
+     --leave-type-unpaid. Now a mid brown: 2.72:1 from unpaid, 4.65:1 from absent, 1.45:1 from
+     absent-muted (a light fill cannot reach 1.4:1 from the light dark-mode absent #cbd5e1). */
+  --leave-type-default: #874a29;
 
   /* Foreground colours for text sitting ON a --leave-type-* fill (Phase 257, D-12).
      Each is whichever of #ffffff / #0f172a scores higher against the fill above, measured with
@@ -286,7 +293,7 @@ html[data-mode="dark"] {
   --leave-type-parental-text: #0f172a; /* 9.84:1 */
   --leave-type-absent-text: #0f172a; /* 12.02:1 */
   --leave-type-absent-muted-text: #ffffff; /* 4.76:1 */
-  --leave-type-default-text: #0f172a; /* 7.03:1 */
+  --leave-type-default-text: #ffffff; /* 6.90:1 */
 }
 
 [data-density="compact"] {
