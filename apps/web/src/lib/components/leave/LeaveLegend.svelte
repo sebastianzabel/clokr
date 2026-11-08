@@ -17,7 +17,7 @@
     typeCodes: string[];
     styles: BarStyle[];
     /**
-     * `mixed` is the Jahr look of a week with several visible types („Mehrere Arten“); a host sets
+     * `mixed` is the Jahr look of a week with several visible types; a host sets
      * it only when such a week is in view (`hasMixedWeek()`), so the legend never promises it.
      */
     markings?: {
