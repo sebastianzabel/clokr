@@ -593,6 +593,21 @@ describe("LeavePlanningPanel - mobile", () => {
     expect(screen.queryByTestId("leave-plan-timeline-host")).toBeNull();
   });
 
+  // #840 (840-17): below 768 px the toolbar's „Wunsch hinzufügen“ is the one add action; the list
+  // draws none of its own (it used to show a second one, two identical buttons on one screen).
+  it("offers exactly one add-wish action on mobile: the toolbar's, never the list's", async () => {
+    stubMatchMedia(true);
+    const { props } = render();
+    await screen.findByTestId("leave-plan-wish-list");
+    expect(screen.queryByTestId("wish-add")).toBeNull();
+    const controls = await controlsOf(props);
+    expect(controls.canAdd).toBe(true);
+    // The host's toolbar draws the reported controls: together there is exactly one button.
+    renderWithTheme(LeavePlanControls, { controls });
+    expect(screen.getAllByRole("button", { name: "Wunsch hinzufügen" })).toHaveLength(1);
+    expect(screen.getByTestId("leave-plan-add-wish")).toBeTruthy();
+  });
+
   it("shows the timeline on a desktop width", async () => {
     stubMatchMedia(false);
     render();

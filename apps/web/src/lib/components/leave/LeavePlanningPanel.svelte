@@ -499,10 +499,11 @@
         {/if}
       </div>
       {#if isMobile}
+        <!-- Issue 840 (840-17): the toolbar's „Wunsch hinzufügen“ is the one add action on a phone too. -->
         <LeavePlanWishList
           {persons}
           ownEmployeeId={viewer.employeeId}
-          canAdd={canAddAny}
+          canAdd={false}
           onAdd={(employeeId) => startWish(employeeId)}
           onEdit={editWish}
           onRemove={removeWishFromList}
