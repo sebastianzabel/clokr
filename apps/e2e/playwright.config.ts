@@ -238,11 +238,11 @@ export default defineConfig({
       //     fixture plus API-created employee, plan year computed as next year, no fixed date
       //
       // Issue #840 added a fourteenth file:
-      //   - the Abwesenheiten area in a real browser (slice 1: the Übersicht of /team/leave on the
-      //     masked calendar read, an approved request as a solid bar and a PENDING one as a dashed
-      //     bar, read from the computed border style; grown by the later plans of the phase);
-      //     tenant fixture plus API-created employee and requests, month computed as next month,
-      //     no fixed date
+      //   - the Abwesenheiten areas in a real browser (the Übersicht of /team/leave on the masked
+      //     calendar read with solid and dashed bars; plan 840-13 added the manager path, the
+      //     employee path, the Jahr/Quartal markings at 1440 x 900, the old-URL redirects on the
+      //     built app and the axe scans); tenant fixture plus API-created people, requests, plans,
+      //     a holiday and opening hours, every date computed from the clock
       //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
