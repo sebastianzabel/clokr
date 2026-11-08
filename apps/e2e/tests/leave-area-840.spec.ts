@@ -2,7 +2,7 @@
  * Issue #840 — the Abwesenheiten areas, driven in a real browser on the real test stack.
  *
  * The API tests prove the masked calendar read and the component tests prove the bars; this spec
- * proves the promises only a browser can show. Seven tests, named after the steps of plan 840-13 (and 840-16):
+ * proves the promises only a browser can show. Eight tests, named after the steps of plan 840-13 (and 840-16, 840-17):
  *
  *   0. (slice 1, plan 840-02) the Übersicht draws an approved request solid and a pending one
  *      dashed, read from the computed border style, so the style is the one the browser really draws;
@@ -21,7 +21,11 @@
  *   6. (gap round, plan 840-16, G-5/G-6/G-2) Planung at 1440 x 900: the forecast column sits beside
  *      the day grid and every day of the quarter can be scrolled into view, the „weiter →“ hint is
  *      below the header, the planner's controls are in the toolbar, the planner is one card and the
- *      weekend shade is visible.
+ *      weekend shade is visible;
+ *   7. (gap round, plan 840-17, G-1/G-3/G-8) the Anträge count is neutral and explained on every tab
+ *      (also on a directly opened Planung) and leads to the „Offen“ filter, the type chips of the
+ *      Anträge list and the inbox use the colours of the one mapping, the inbox header reads
+ *      „Team“ / „Inbox“.
  *
  * Setup goes through the API with the tenant admin's token (people, requests, plans, a manual
  * holiday, the salon's opening hours). No test depends on a fixed date: the Übersicht month is the
@@ -977,5 +981,118 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await nameButton.focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("dialog").first()).toBeVisible();
+  });
+
+  test("7. the Anträge count, the type chips and the inbox header", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    test.setTimeout(90_000);
+    const first = firstOfNextMonth();
+    const person = await createEmployee(request, tenant, {
+      key: "cnt",
+      firstName: "Zaehler",
+      lastName: "Farbe",
+    });
+    await ensureEntitlement(request, tenant, person.id, first.getUTCFullYear());
+
+    // One PENDING vacation request ...
+    const monday = nthMonday(first, 2);
+    const pendingId = await fileVacation(
+      request,
+      tenant,
+      person.id,
+      iso(monday),
+      iso(new Date(monday.getTime() + 2 * DAY_MS)),
+    );
+    // ... and one APPROVED sick leave (the first of the current month, at most through today).
+    const now = new Date();
+    const monthStart = localDay(new Date(now.getFullYear(), now.getMonth(), 1));
+    const sickEnd = [plusDays(monthStart, 1), localDay(now)].sort()[0];
+    const sickRes = await request.post(`${API_BASE}/api/v1/leave/requests`, {
+      headers: authHeaders(tenant),
+      data: { employeeId: person.id, type: "SICK", startDate: monthStart, endDate: sickEnd },
+    });
+    expect(sickRes.status(), `file the sick leave (${await sickRes.text()})`).toBeLessThan(300);
+    const sick = (await sickRes.json()) as { id: string; status: string };
+    if (sick.status !== "APPROVED") {
+      const approve = await request.patch(`${API_BASE}/api/v1/leave/requests/${sick.id}/review`, {
+        headers: authHeaders(tenant),
+        data: { status: "APPROVED" },
+      });
+      expect(approve.status(), `approve the sick leave (${await approve.text()})`).toBeLessThan(
+        300,
+      );
+    }
+
+    /** The computed colour of a design token, resolved through a probe element. */
+    const tokenColor = (token: string) =>
+      page.evaluate((name) => {
+        const probe = document.createElement("div");
+        probe.style.backgroundColor = `var(${name})`;
+        document.body.appendChild(probe);
+        const value = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return value;
+      }, token);
+
+    await loginAsTenantAdmin(page, tenant);
+
+    // ── G-1: the count is on a directly opened Planung tab, neutral and explained ──────────
+    await page.goto(`/team/leave?tab=planung&zoom=monat&datum=${PLAN_YEAR}-03-01`);
+    const count = page.getByTestId("leave-team-view-list-badge");
+    await expect(count).toBeVisible();
+    await expect(count).toHaveText("1");
+    await expect(count).toHaveClass(/tab-badge--count/);
+    await expect(count).toHaveAttribute("title", /1 offen: 1 Antrag/);
+    expect(await count.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(
+      await tokenColor("--bad"),
+    );
+
+    // The toolbar with the count passes axe, colour contrast included.
+    expect(await axeViolations(page), "axe on Planung with the open count").toEqual([]);
+
+    // ... and on the Übersicht.
+    await page.getByTestId("leave-team-view-uebersicht").click();
+    await expect(page).toHaveURL(/tab=uebersicht/);
+    await expect(page.getByTestId("leave-team-view-list-badge")).toHaveText("1");
+
+    // A click on the count opens Anträge at „Offen“ and shows the counted request.
+    await page.getByTestId("leave-team-view-list-badge").click();
+    await expect(page).toHaveURL(/tab=antraege/);
+    await expect(page).toHaveURL(/status=PENDING/);
+    const row = page.getByTestId(`leave-team-row-${pendingId}`);
+    await expect(row).toBeVisible();
+    await expect(page.getByTestId("leave-team-filter-status")).toHaveValue("PENDING");
+
+    // ── G-3: the chip of the PENDING row is dashed in the vacation colour ────────────────────
+    const vacation = await tokenColor("--leave-type-vacation");
+    const pendingChip = row.getByTestId(`leave-team-row-${pendingId}-type-chip`);
+    expect(await borderStyleOf(pendingChip)).toBe("dashed");
+    expect(await pendingChip.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(vacation);
+
+    // The approved sick row (all statuses, the current year) has a solid chip filled with the sick
+    // colour. The list year follows the anchor day of the URL, so open it on today's year.
+    await page.goto("/team/leave?tab=antraege");
+    await expect(page.getByTestId("leave-team-filter-status")).toHaveValue("");
+    const sickChip = page
+      .getByTestId(`leave-team-row-${sick.id}`)
+      .getByTestId(`leave-team-row-${sick.id}-type-chip`);
+    await expect(sickChip).toBeVisible();
+    expect(await sickChip.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
+      await tokenColor("--leave-type-sick"),
+    );
+
+    // ── G-3 / G-8: the inbox ─────────────────────────────────────────────────────────────────
+    await page.goto("/inbox");
+    const head = page.locator(".page-head");
+    await expect(head.locator(".eyebrow")).toHaveText("Team");
+    await expect(head.getByRole("heading", { level: 1 })).toHaveText("Inbox");
+    await expect(head.locator("h1 em")).toHaveCount(0);
+    const inboxChip = page.locator(".approval-row .leave-type-chip").first();
+    await expect(inboxChip).toBeVisible();
+    expect(await borderStyleOf(inboxChip)).toBe("dashed");
+    expect(await inboxChip.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(vacation);
   });
 });
