@@ -1028,6 +1028,20 @@ select.form-input {
   line-height: 1;
 }
 
+/*
+ * Issue 840 G-1: a neutral count. The alarm red of .tab-badge says „error“; the open-request count
+ * of the Anträge tab is information, so it is a quiet pill from the surface tokens instead.
+ */
+.tab-badge--count {
+  background: var(--bg-alt);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.tab-badge--link {
+  cursor: pointer;
+}
+
 /* ─── Filter Bar ─────────────────────────────────────────────────────── */
 .filter-bar {
   display: flex;

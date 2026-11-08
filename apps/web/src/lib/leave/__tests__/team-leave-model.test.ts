@@ -4,6 +4,8 @@ import { describe, it, expect } from "vitest";
 import {
   emptyRequestsText,
   locateDeepLinkedRequest,
+  matchesStatusFilter,
+  openRequestsSummary,
   overviewPersons,
   pageOfRequest,
   requestsForStatus,
@@ -137,5 +139,62 @@ describe("emptyRequestsText (IN-03)", () => {
   it("an empty year list names the year", () => {
     expect(emptyRequestsText(null, 2026, 0).title).toBe("Keine Anträge in 2026.");
     expect(emptyRequestsText("APPROVED", 2025, 0).title).toBe("Keine Anträge in 2025.");
+  });
+});
+
+describe("matchesStatusFilter (#840 G-1: one meaning of „Offen“)", () => {
+  it("lets a requested cancellation pass the open filter, but not a decided request", () => {
+    expect(matchesStatusFilter("PENDING", "PENDING")).toBe(true);
+    expect(matchesStatusFilter("CANCELLATION_REQUESTED", "PENDING")).toBe(true);
+    expect(matchesStatusFilter("APPROVED", "PENDING")).toBe(false);
+    expect(matchesStatusFilter("REJECTED", "PENDING")).toBe(false);
+  });
+
+  it("compares every other filter by equality and treats null as „Alle“", () => {
+    expect(matchesStatusFilter("CANCELLATION_REQUESTED", "CANCELLATION_REQUESTED")).toBe(true);
+    expect(matchesStatusFilter("PENDING", "CANCELLATION_REQUESTED")).toBe(false);
+    expect(matchesStatusFilter("APPROVED", "APPROVED")).toBe(true);
+    expect(matchesStatusFilter("REJECTED", null)).toBe(true);
+  });
+});
+
+describe("openRequestsSummary (#840 G-1: an explained count)", () => {
+  it("is null when nothing waits for a decision", () => {
+    expect(openRequestsSummary([])).toBeNull();
+    expect(openRequestsSummary([{ status: "APPROVED" }, { status: "REJECTED" }])).toBeNull();
+  });
+
+  it("names a single requested cancellation", () => {
+    expect(openRequestsSummary([{ status: "CANCELLATION_REQUESTED" }])).toEqual({
+      count: 1,
+      label: "1 offen: 1 Storno angefragt",
+    });
+  });
+
+  it("names a single request", () => {
+    expect(openRequestsSummary([{ status: "PENDING" }])).toEqual({
+      count: 1,
+      label: "1 offen: 1 Antrag",
+    });
+  });
+
+  it("splits requests and cancellations, ignoring decided rows", () => {
+    expect(
+      openRequestsSummary([
+        { status: "PENDING" },
+        { status: "APPROVED" },
+        { status: "PENDING" },
+        { status: "CANCELLATION_REQUESTED" },
+      ]),
+    ).toEqual({ count: 3, label: "3 offen: 2 Anträge, 1 Storno angefragt" });
+  });
+
+  it("pluralises the cancellations", () => {
+    expect(
+      openRequestsSummary([
+        { status: "CANCELLATION_REQUESTED" },
+        { status: "CANCELLATION_REQUESTED" },
+      ])?.label,
+    ).toBe("2 offen: 2 Stornos angefragt");
   });
 });

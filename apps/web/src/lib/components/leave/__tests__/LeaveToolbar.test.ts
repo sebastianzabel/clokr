@@ -4,6 +4,16 @@
 import { describe, it, expect, vi } from "vitest";
 import { createRawSnippet } from "svelte";
 import { screen, fireEvent } from "@testing-library/svelte";
+import {
+  SURFACES,
+  cardSurface,
+  contrast,
+  over,
+  readAppCss,
+  readTokensCss,
+  resolveColor,
+  type SurfaceName,
+} from "../../../../__tests__/token-css";
 import { renderWithTheme } from "$tests/test-utils";
 import { periodOf } from "$lib/leave/timeline-model";
 import LeaveToolbar from "../LeaveToolbar.svelte";
@@ -143,5 +153,82 @@ describe("period switcher and filters", () => {
     render({ filters });
     const toolbar = document.querySelector(".leave-toolbar")!;
     expect(toolbar.contains(screen.getByTestId("own-filter"))).toBe(true);
+  });
+});
+
+describe("the neutral count (#840 G-1)", () => {
+  const COUNT_TABS = [
+    { id: "uebersicht", label: "Übersicht" },
+    {
+      id: "antraege",
+      label: "Anträge",
+      badge: 2,
+      badgeLabel: "2 offen: 2 Anträge",
+      testId: "view-list",
+    },
+  ];
+
+  it("draws the count neutral, hidden from the tree and titled with the explanation", () => {
+    render({ tabs: COUNT_TABS, testIdPrefix: "leave-team" });
+    const count = screen.getByTestId("leave-team-view-list-badge");
+    expect(count.textContent).toBe("2");
+    expect(count.classList.contains("tab-badge")).toBe(true);
+    expect(count.classList.contains("tab-badge--count")).toBe(true);
+    expect(count.getAttribute("title")).toBe("2 offen: 2 Anträge");
+    expect(count.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("puts the explanation into the accessible name of the tab", () => {
+    render({ tabs: COUNT_TABS });
+    expect(screen.getByRole("tab", { name: /2 offen: 2 Anträge/ })).toBeTruthy();
+  });
+
+  it("a click on the count calls onBadgeSelect and not onTabChange", async () => {
+    const onBadgeSelect = vi.fn();
+    const tabs = [COUNT_TABS[0], { ...COUNT_TABS[1], onBadgeSelect }];
+    const p = render({ tabs, testIdPrefix: "leave-team" });
+    await fireEvent.click(screen.getByTestId("leave-team-view-list-badge"));
+    expect(onBadgeSelect).toHaveBeenCalledTimes(1);
+    expect(p.onTabChange).not.toHaveBeenCalled();
+  });
+
+  it("a click on the tab label still calls onTabChange, and keyboard keeps doing so", async () => {
+    const onBadgeSelect = vi.fn();
+    const tabs = [COUNT_TABS[0], { ...COUNT_TABS[1], onBadgeSelect }];
+    const p = render({ tabs });
+    await fireEvent.click(screen.getByRole("tab", { name: /Anträge/ }));
+    expect(p.onTabChange).toHaveBeenCalledWith("antraege");
+    await fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+    expect(p.onTabChange).toHaveBeenLastCalledWith("antraege");
+    expect(onBadgeSelect).not.toHaveBeenCalled();
+  });
+
+  it("a count without a handler is still a plain tab click", async () => {
+    const p = render({ tabs: COUNT_TABS, testIdPrefix: "leave-team" });
+    await fireEvent.click(screen.getByTestId("leave-team-view-list-badge"));
+    expect(p.onTabChange).toHaveBeenCalledWith("antraege");
+  });
+
+  describe("the neutral pair reaches 4.5:1 in every surface mode", () => {
+    const APP_CSS = readAppCss();
+    const TOKENS = readTokensCss();
+    const body = /\.tab-badge--count\s*\{([^}]*)\}/.exec(APP_CSS)?.[1] ?? "";
+    const declared = (prop: string) =>
+      new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;]+);`).exec(body)?.[1].trim();
+
+    it("declares a text and a background colour", () => {
+      expect(declared("color")).toBeTruthy();
+      expect(declared("background")).toBeTruthy();
+    });
+
+    for (const name of Object.keys(SURFACES) as SurfaceName[]) {
+      it(`${name}: the count text on its pill`, () => {
+        const blocks = SURFACES[name];
+        const card = cardSurface(TOKENS, blocks);
+        const pill = over(resolveColor(TOKENS, blocks, declared("background")!), card);
+        const text = over(resolveColor(TOKENS, blocks, declared("color")!), pill);
+        expect(contrast(text, pill)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
   });
 });

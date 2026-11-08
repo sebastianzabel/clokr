@@ -81,6 +81,42 @@ export function requestsForStatus<T extends HasIdAndCreation>(
   );
 }
 
+/**
+ * One meaning of „Offen“ (Issue #840 G-1): every request that waits for a decision, `PENDING` and
+ * a requested cancellation, the same meaning as the Inbox tab „Offen“. Every other filter is an
+ * equality; `null` is „Alle“. The Anträge list filters through this, so the list shows exactly what
+ * the open count counted.
+ */
+export function matchesStatusFilter(status: string, filter: LeaveStatusFilter | null): boolean {
+  if (filter === null) return true;
+  if (filter === "PENDING") return status === "PENDING" || status === "CANCELLATION_REQUESTED";
+  return status === filter;
+}
+
+/**
+ * The open count of the Anträge tab with its explanation (Issue #840 G-1), or `null` when nothing
+ * waits for a decision. The label is display text only (title and screen-reader text of the count)
+ * and is never compared.
+ */
+export function openRequestsSummary(
+  rows: ReadonlyArray<{ status: string }>,
+): { count: number; label: string } | null {
+  let requests = 0;
+  let cancellations = 0;
+  for (const row of rows) {
+    if (row.status === "PENDING") requests++;
+    else if (row.status === "CANCELLATION_REQUESTED") cancellations++;
+  }
+  const count = requests + cancellations;
+  if (count === 0) return null;
+  const parts: string[] = [];
+  if (requests > 0) parts.push(requests === 1 ? "1 Antrag" : `${requests} Anträge`);
+  if (cancellations > 0) {
+    parts.push(cancellations === 1 ? "1 Storno angefragt" : `${cancellations} Stornos angefragt`);
+  }
+  return { count, label: `${count} offen: ${parts.join(", ")}` };
+}
+
 /** The 1-based page of a list on which `id` sits, or `null` when it is not in the list. */
 export function pageOfRequest(ids: readonly string[], id: string, pageSize: number): number | null {
   const index = ids.indexOf(id);

@@ -18,6 +18,16 @@
     label: string;
     /** Count shown next to the label, e.g. pending requests; absent or 0 shows none. */
     badge?: number;
+    /**
+     * Explanation of the count (Issue #840 G-1): its title and a screen-reader text of the tab.
+     * Display text only.
+     */
+    badgeLabel?: string;
+    /**
+     * A pointer click on the count calls this instead of `onTabChange`. Keyboard activation of the
+     * tab keeps calling `onTabChange`, so the host's own filter control is the keyboard path.
+     */
+    onBadgeSelect?: () => void;
     /** Own test id suffix (`<testIdPrefix>-<testId>`); defaults to the tab id. */
     testId?: string;
   }
@@ -83,6 +93,17 @@
     tablist?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
   }
 
+  // The count is no nested button (a button inside a tab is invalid): the tab's click handler decides
+  // by the event target whether the pointer hit the count.
+  function onTabClick(e: MouseEvent, tab: ToolbarTab): void {
+    const target = e.target;
+    if (tab.onBadgeSelect && target instanceof Element && target.closest("[data-tab-count]")) {
+      tab.onBadgeSelect();
+      return;
+    }
+    onTabChange?.(tab.id);
+  }
+
   function onZoomSelected(value: string): void {
     const picked = zooms.find((z) => z === value);
     if (picked !== undefined) onZoomChange?.(picked);
@@ -111,10 +132,25 @@
           aria-controls="leave-panel-{tab.id}"
           tabindex={tab.id === activeTab ? 0 : -1}
           data-testid={tabTestId(tab)}
-          onclick={() => onTabChange?.(tab.id)}
+          onclick={(e) => onTabClick(e, tab)}
         >
           {tab.label}
-          {#if tab.badge}<span class="tab-badge">{tab.badge}</span>{/if}
+          {#if tab.badge}
+            {#if tab.badgeLabel}
+              <span
+                class="tab-badge tab-badge--count"
+                class:tab-badge--link={tab.onBadgeSelect}
+                title={tab.badgeLabel}
+                aria-hidden="true"
+                data-tab-count
+                data-testid={tabTestId(tab) ? `${tabTestId(tab)}-badge` : undefined}
+                >{tab.badge}</span
+              >
+              <span class="sr-only">{tab.badgeLabel}</span>
+            {:else}
+              <span class="tab-badge">{tab.badge}</span>
+            {/if}
+          {/if}
         </button>
       {/each}
     </div>
