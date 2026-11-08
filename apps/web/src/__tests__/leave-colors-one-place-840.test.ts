@@ -71,7 +71,8 @@ describe("Issue #840 AC-7 - one leave-colour source", () => {
     const readers = [
       "routes/(app)/time-entries/+page.svelte",
       "routes/(app)/team/time-entries/+page.svelte",
-      "lib/components/leave/LeavePlanTimeline.svelte",
+      // #840 (D-840-07, AC-6): the planner draws on the one timeline; LeavePlanTimeline is gone.
+      "lib/components/leave/timeline/AbsenceTimeline.svelte",
       "lib/components/leave/LeaveLegend.svelte",
       "lib/components/reports/VacationAbsenceTab.svelte",
       "lib/leave/team-calendar-visibility.ts",
