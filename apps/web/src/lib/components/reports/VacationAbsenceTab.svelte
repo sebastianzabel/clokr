@@ -12,6 +12,7 @@
   import Pagination from "$components/ui/Pagination.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
+  import { leaveTypeColor } from "$lib/leave/leave-colors";
   import { LEAVE_TYPES } from "$lib/leave/team-calendar-visibility";
   import { fmtDateDe, fmtDateShortDe, fmtDaysDe } from "$lib/reports/period-format";
   import type {
@@ -513,12 +514,9 @@
         </thead>
         <tbody>
           {#each shownAbsences as a (a.code)}
-            {@const entry = kindEntry(a.code)}
             <tr>
               <td>
-                <span
-                  class="type-dot"
-                  style={`--type-color: var(${entry?.colorVar ?? "--leave-type-default"})`}
+                <span class="type-dot" style={`--type-color: var(${leaveTypeColor(a.code).fill})`}
                 ></span>
                 {kindLabel(a)}
               </td>
@@ -649,7 +647,7 @@
     height: 8px;
     margin-right: var(--s-2);
     border-radius: 50%;
-    background: var(--type-color, var(--leave-type-default));
+    background: var(--type-color, currentColor);
   }
 
   .abs-table {

@@ -14,6 +14,8 @@
  * Call `getChartTheme()` after the DOM is available (onMount / an effect).
  */
 
+import { leaveTypeColor } from "$lib/leave/leave-colors";
+
 /** Chart.js-compatible colours derived from the current CSS theme variables. */
 export function getChartTheme() {
   const style = getComputedStyle(document.documentElement);
@@ -28,7 +30,7 @@ export function getChartTheme() {
     // modern light card and WCAG 1.4.11 asks 3:1 for a graphical object; --text-muted holds it in
     // every skin and mode.
     neutral: get("--text-muted"),
-    sick: get("--leave-type-sick"),
+    sick: get(leaveTypeColor("SICK").fill),
     green: get("--good"),
     red: get("--bad"),
     yellow: get("--warn"),
