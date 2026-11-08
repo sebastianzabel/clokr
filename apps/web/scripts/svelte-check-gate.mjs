@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const WARNING_CEILING = 85;
+const WARNING_CEILING = 84;
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const run = spawnSync(

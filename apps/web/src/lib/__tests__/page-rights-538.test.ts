@@ -431,9 +431,10 @@ describe("the employee list shows roles only from roleNames (Issue #538)", () =>
     expect(src).toContain("{#if showRoles}");
   });
 
-  it("the team calendar no longer renders a role under a name", () => {
+  it("the team absence page (formerly the team calendar) no longer renders a role under a name", () => {
+    // #840 (E-01): the team calendar page left; its timeline is the Übersicht tab of /team/leave.
     const cal = readFileSync(
-      resolve(process.cwd(), "src/routes/(app)/teamcal/+page.svelte"),
+      resolve(process.cwd(), "src/routes/(app)/team/leave/+page.svelte"),
       "utf8",
     );
     expect(cal.length).toBeGreaterThan(5_000);
