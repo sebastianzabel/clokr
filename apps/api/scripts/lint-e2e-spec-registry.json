@@ -175,6 +175,11 @@
       "file": "apps/e2e/tests/push-pwa.spec.ts",
       "category": "in-ci",
       "reason": "Issue #608 Web-Push plumbing on the production build: manifest, service worker and icon served without a session and the push config route answering 401 (not 404); the worker becomes active on a signed-in /dashboard with no securitypolicyviolation event; /settings renders (control: heading Passwort ändern) with no push section on the key-less test stack (3 tests). Tenant fixture only, no seed, no date dependency. Measured on a fresh own test stack on 2026-11-02: 3/3 pass in ~3 s alone, and the whole e2e-ci selection 288 passed, 1 skipped (the designed empty-corpus self-skip of functional.spec.ts), 0 failed; no existing spec needed serviceWorkers block."
+    },
+    {
+      "file": "apps/e2e/tests/leave-area-840.spec.ts",
+      "category": "in-ci",
+      "reason": "Issue #840 browser proof of the Abwesenheiten area on the real test stack, slice 1 (plan 840-02; grown by later plans of the phase) - 1 test, no browser-zone pin needed. A tenant fixture plus one API-created employee, two VACATION requests filed for them by the admin (the first approved by PATCH .../review, the second left PENDING), on the second and the third Monday to Wednesday of the month AFTER the current one and the entitlement of that year (GET /leave/entitlements/:id?year= creates the regular row): the admin logs in through the UI and opens /team/leave?tab=uebersicht&zoom=monat&datum=<first of next month>; the spec waits for the 200 of GET /leave/calendar?from=..., expects the person's track (plan-track-<employeeId>) inside the absence-timeline, exactly one bar with data-bar-style=gesetzt and one with beantragt (each found by the request id in its testid), and reads the computed border-top-style in the browser: dashed for the pending bar, solid for the approved one, so the style is what the browser draws and not a class name. No date dependency: the month is computed from the clock (next month, so no request lies in the past); a public holiday inside a span only changes the priced days, never the bar. No sleeps - every wait is on a response or an element. Needs only the tenant fixture; no seed. Measured on the rebuilt test stack (docker-compose.test.yml, rebuilt from this worktree): 1/1 pass on the first run (3.9 s) and 3/3 on a repeat-each=3 run (3.4 s)."
     }
   ]
 }

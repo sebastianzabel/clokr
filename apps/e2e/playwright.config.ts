@@ -237,6 +237,13 @@ export default defineConfig({
       //     drag its end handle, take the plan over, APPROVED request on the moved dates); tenant
       //     fixture plus API-created employee, plan year computed as next year, no fixed date
       //
+      // Issue #840 added a fourteenth file:
+      //   - the Abwesenheiten area in a real browser (slice 1: the Übersicht of /team/leave on the
+      //     masked calendar read, an approved request as a solid bar and a PENDING one as a dashed
+      //     bar, read from the computed border style; grown by the later plans of the phase);
+      //     tenant fixture plus API-created employee and requests, month computed as next month,
+      //     no fixed date
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -256,6 +263,7 @@ export default defineConfig({
         /reports-period\.spec\.ts/,
         /role-editor-visibility-710\.spec\.ts/,
         /push-pwa\.spec\.ts/,
+        /leave-area-840\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

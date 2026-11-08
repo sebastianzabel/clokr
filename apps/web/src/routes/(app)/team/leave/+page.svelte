@@ -35,6 +35,15 @@
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import { parseLeaveCreateDeepLink, type LeaveCreateDeepLink } from "$lib/leave/create-deep-link"; // Issue #587
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // #265
+  import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte"; // Issue #840
+  import {
+    calendarRangeQuery,
+    calendarToTimeline,
+    periodOf,
+    type CalendarRangeAnswer,
+    type TimelinePerson,
+  } from "$lib/leave/timeline-model"; // Issue #840 (D-840-07)
+  import { parseTeamLeaveState, type TeamLeaveState } from "$lib/leave/area-tabs"; // Issue #840 (D-840-01/02)
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
@@ -385,7 +394,9 @@
     isWeekend: boolean;
   }
 
-  type View = "calendar" | "list" | "approvals";
+  // #840 (D-840-07): "uebersicht" is the tracer view of the new person-by-day timeline; 840-10
+  // rebuilds the page around it.
+  type View = "calendar" | "list" | "approvals" | "uebersicht";
   let view: View = $state("calendar");
 
   // Phase 378 (#378): the one place this page decides whether a colleague's absence TYPE may be
@@ -538,6 +549,45 @@
     }
   }
 
+  // ── Übersicht (Issue #840, D-840-07/10) ───────────────────────────────────
+  // Period from the URL (`zoom`, `datum`); the switcher arrives with 840-07/10. The read is the
+  // range form of the one calendar route: the server decides per person what the reader sees in
+  // detail and what is only the neutral word, the page draws it.
+  let overviewState: TeamLeaveState = $state(
+    parseTeamLeaveState(new URLSearchParams(), toLocalDateStr(new Date())),
+  );
+  const overviewPeriod = $derived(periodOf(overviewState.zoom, overviewState.datum));
+  let overviewRows: TimelinePerson[] = $state([]);
+  let overviewHolidays: Array<{ day: string; name: string }> = $state([]);
+  let overviewLoading = $state(false);
+  let overviewGeneration = 0;
+
+  async function loadOverview() {
+    const generation = ++overviewGeneration;
+    overviewLoading = true;
+    try {
+      const answer = await api.get<CalendarRangeAnswer>(
+        withSalonId(`/leave/calendar?${calendarRangeQuery(overviewPeriod)}`, pageSalonId),
+      );
+      if (generation !== overviewGeneration) return;
+      const timeline = calendarToTimeline(answer.entries);
+      overviewRows = timeline.rows;
+      overviewHolidays = timeline.holidays;
+    } catch {
+      // The calm 404 of an inadmissible salon and every other failure: an empty view, no alert.
+      if (generation !== overviewGeneration) return;
+      overviewRows = [];
+      overviewHolidays = [];
+    } finally {
+      if (generation === overviewGeneration) overviewLoading = false;
+    }
+  }
+
+  function showOverview() {
+    view = "uebersicht";
+    void loadOverview();
+  }
+
   let showMonthPicker = $state(false);
   let pickerYear = $state(new Date().getFullYear());
 
@@ -688,6 +738,13 @@
   }
 
   onMount(() => {
+    // Issue #840 (D-840-01/02): ?tab=uebersicht&zoom&datum selects the new view; an unknown value
+    // falls back to the defaults and the old tabs stay as they are. The other deep links below
+    // win when they are present.
+    const areaState = parseTeamLeaveState($page.url.searchParams, toLocalDateStr(new Date()));
+    overviewState = areaState;
+    if (areaState.explicitTab && areaState.tab === "uebersicht") view = "uebersicht";
+
     // Deep-link: ?view=approvals (Phase 378, #378) — the dashboard "Offene Vorgänge" widget links
     // here with this param; it never selected a tab because neither /leave nor /team/leave read
     // it before this phase. Kept separate from the ?request=/?section9= handling below: those
@@ -718,6 +775,7 @@
         await loadData();
         void loadCalendar();
         void loadSection9Cases();
+        if (view === "uebersicht") void loadOverview();
         if (!firstLoadDone) {
           firstLoadDone = true;
           runDeepLink();
@@ -1198,6 +1256,14 @@
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
 <div class="view-tabs" data-testid="leave-team-view-tabs">
   <button
+    data-testid="leave-team-view-uebersicht"
+    class="view-tab"
+    class:view-tab--active={view === "uebersicht"}
+    onclick={showOverview}
+  >
+    Übersicht
+  </button>
+  <button
     data-testid="leave-team-view-calendar"
     class="view-tab"
     class:view-tab--active={view === "calendar"}
@@ -1227,6 +1293,21 @@
     {/if}
   </button>
 </div>
+
+<!-- ── Übersicht (Issue #840): one row per absent person, one bar per absence ─ -->
+{#if view === "uebersicht"}
+  <div class="card card-animate overview-card" data-testid="leave-overview">
+    {#if overviewRows.length > 0}
+      <AbsenceTimeline rows={overviewRows} period={overviewPeriod} holidays={overviewHolidays} />
+    {:else if overviewLoading}
+      <p class="overview-empty">Lade Abwesenheiten …</p>
+    {:else}
+      <p class="overview-empty" data-testid="leave-overview-empty">
+        Keine Abwesenheiten in diesem Zeitraum.
+      </p>
+    {/if}
+  </div>
+{/if}
 
 <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
 {#if view === "calendar"}
@@ -2144,6 +2225,18 @@
 {/if}
 
 <style>
+  .overview-card {
+    padding: 0.75rem;
+  }
+
+  .overview-empty {
+    margin: 0;
+    padding: 1.5rem 1rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+  }
+
   /* ── Employee selector / combobox ──────────────────────────────────── */
   .employee-selector {
     margin-bottom: 1rem;

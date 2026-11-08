@@ -177,6 +177,26 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     expect(PAGE.indexOf("onMount(() => {")).toBeLessThan(PAGE.indexOf(EFFECT_HEAD));
   });
 
+  it("[#840 Übersicht] the timeline loader sends the salon, has its own generation counter and empties calmly", () => {
+    // #840 D-840-07: the Übersicht reads the range form of the calendar with the same #558 hygiene
+    // as the month grid; the existing loader pins above stay unchanged.
+    const body = functionBody("loadOverview");
+    expect(body).toContain(
+      "withSalonId(`/leave/calendar?${calendarRangeQuery(overviewPeriod)}`, pageSalonId)",
+    );
+    expect(PAGE).toContain("let overviewGeneration = 0;");
+    expect(body).toContain("++overviewGeneration");
+    const awaitAt = body.indexOf("await api.get");
+    const check = body.indexOf("generation !== overviewGeneration", awaitAt);
+    expect(check).toBeGreaterThan(awaitAt);
+    expect(body.indexOf("overviewRows = timeline.rows", awaitAt)).toBeGreaterThan(check);
+    expect(body).toContain("overviewRows = []");
+    expect(body).not.toContain("toasts.error");
+    // The salon reload effect reruns it while the view is active.
+    expect(salonEffectBody()).toContain('view === "uebersicht"');
+    expect(salonEffectBody()).toContain("loadOverview()");
+  });
+
   it("[existing reloads] the write paths still call the same loaders", () => {
     expect(PAGE).toContain("await Promise.all([loadData(), loadCalendar(), loadSection9Cases()]);");
     expect(PAGE).toContain("await Promise.all([loadData(), loadCalendar()]);");
