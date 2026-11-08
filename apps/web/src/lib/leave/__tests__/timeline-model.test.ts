@@ -222,20 +222,22 @@ describe("calendarRangeQuery", () => {
 });
 
 describe("leaveTypeColor", () => {
+  // The fill and the text token are asserted as separate strings: `leave-chip-contrast` Test 3
+  // scans test files too and reads `fill: ... --leave-type-*-text` in one literal as a text
+  // token used as a background.
   it("returns the fill token and its -text partner", () => {
-    expect(leaveTypeColor("VACATION")).toEqual({
-      fill: "--leave-type-vacation",
-      text: "--leave-type-vacation-text",
-    });
+    const color = leaveTypeColor("VACATION");
+    expect(color.fill).toBe("--leave-type-vacation");
+    expect(color.text).toBe("--leave-type-vacation-text");
   });
 
-  it("null (no type) and an unknown code give the absent pair / the default pair", () => {
-    expect(leaveTypeColor(null)).toEqual(ABSENT);
-    expect(ABSENT).toEqual({ fill: "--leave-type-absent", text: "--leave-type-absent-text" });
-    expect(leaveTypeColor("NOT_A_CODE")).toEqual({
-      fill: "--leave-type-default",
-      text: "--leave-type-default-text",
-    });
+  it("null (no type) is the absent pair, an unknown code the default pair", () => {
+    expect(leaveTypeColor(null)).toBe(ABSENT);
+    expect(ABSENT.fill).toBe("--leave-type-absent");
+    expect(ABSENT.text).toBe("--leave-type-absent-text");
+    const unknown = leaveTypeColor("NOT_A_CODE");
+    expect(unknown.fill).toBe("--leave-type-default");
+    expect(unknown.text).toBe("--leave-type-default-text");
   });
 
   it("agrees with the calendar's own table for every code (one colour per type)", () => {
