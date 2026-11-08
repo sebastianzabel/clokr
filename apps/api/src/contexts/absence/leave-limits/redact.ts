@@ -50,3 +50,32 @@ export function isPersonVisibleOn(
     personId === visibility.selfEmployeeId
   );
 }
+
+function nextCalendarDay(day: string): string {
+  const d = new Date(`${day}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Issue #840 (D-840-19) — the per-person form of {@link isPersonVisibleOn} for a calendar row:
+ * true iff the person is visible on at least one day of `[fromDay, toDay]` (`YYYY-MM-DD`,
+ * inclusive). `homeByDay` is the person's Stammsalon per day (`homeSalonsForDays`); a missing map
+ * or a null day passes `""`, which never matches a salon (fail-closed). A whole-tenant reach, a
+ * PERSONS grant or the reader's own record answer without looking at any day. The rule stays in
+ * `isPersonVisibleOn`; this only walks the days.
+ */
+export function isPersonVisibleOnSomeDay(
+  visibility: ReaderVisibility,
+  personId: string,
+  homeByDay: ReadonlyMap<string, string | null> | undefined,
+  fromDay: string,
+  toDay: string,
+): boolean {
+  if (isPersonVisibleOn(visibility, personId, "")) return true;
+  if (homeByDay === undefined) return false;
+  for (let day = fromDay; day <= toDay; day = nextCalendarDay(day)) {
+    if (isPersonVisibleOn(visibility, personId, homeByDay.get(day) ?? "")) return true;
+  }
+  return false;
+}

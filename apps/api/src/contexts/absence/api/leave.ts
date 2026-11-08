@@ -69,9 +69,13 @@ import {
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
   employeeScopeFor, // Phase 430 Plan 04 (D-15) — rosterImported's getShiftsInRange scope
   resolveSalonInReach, // Issue #558 (D-01) — the one validator of a chosen salon
+  homeSalonsForDays, // Issue #840 (D-840-19) — Stammsalon per day, one call per calendar request
+  findSalon, // Issue #840 (D-840-25) — the salon in view of the range form
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
 import { canSeeLeaveType } from "../leave-calendar-visibility"; // Issue #835 — moved out of this route (second caller)
+import { maskCalendarRows } from "../leave-calendar-masking"; // Issue #840 (D-840-19) — per-person masking of the calendar read
+import { isPersonVisibleOnSomeDay } from "../leave-limits/redact"; // Issue #840 (D-840-19) — the #836 per-person rule, no second one
 import {
   buildLeaveLimitExceptionAudit,
   correctionCandidateRanges,
@@ -313,6 +317,45 @@ const sickDaysQuerySchema = z.object({ year: z.coerce.number().int().min(2000).m
 // list, it is never an access boundary — every handler validates it with `resolveSalonInReach`
 // against its own ZUGEWIESEN reach before any row read.
 const leaveSalonQuerySchema = z.object({ salonId: z.string().uuid().optional() });
+
+// Issue #840 (D-840-18/25): the calendar read alone also takes a day range. `from`/`to` are calendar
+// days, both or neither, `from <= to`, at most 366 days inclusive (one year plus a leap day); any
+// violation is a ZodError, i.e. a 400 through the global handler. `leaveSalonQuerySchema` stays
+// untouched because the other leave reads share it.
+const CALENDAR_RANGE_MAX_DAYS = 366;
+const calendarDaySchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((v) => new Date(`${v}T00:00:00.000Z`).toISOString().slice(0, 10) === v, {
+    message: "Ungültiges Datum",
+  });
+const leaveCalendarQuerySchema = z
+  .object({
+    salonId: z.string().uuid().optional(),
+    from: calendarDaySchema.optional(),
+    to: calendarDaySchema.optional(),
+  })
+  .superRefine((q, ctx) => {
+    if ((q.from === undefined) !== (q.to === undefined)) {
+      ctx.addIssue({ code: "custom", message: "from und to nur gemeinsam", path: ["from"] });
+      return;
+    }
+    if (q.from === undefined || q.to === undefined) return;
+    if (q.from > q.to) {
+      ctx.addIssue({ code: "custom", message: "from darf nicht nach to liegen", path: ["from"] });
+      return;
+    }
+    const days =
+      (Date.parse(`${q.to}T00:00:00.000Z`) - Date.parse(`${q.from}T00:00:00.000Z`)) / 86_400_000 +
+      1;
+    if (days > CALENDAR_RANGE_MAX_DAYS) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Zeitraum höchstens ${CALENDAR_RANGE_MAX_DAYS} Tage`,
+        path: ["to"],
+      });
+    }
+  });
 
 // Issue #558 (T-100-09): one body for every rejection cause — a foreign tenant's salon, an unknown
 // id, an inactive salon, a salon outside the reach and a caller without the ZUGEWIESEN reach are
@@ -1766,40 +1809,54 @@ export async function leaveRoutes(app: FastifyInstance) {
     },
   });
 
-  // ── GET /calendar  – Kalenderansicht für einen Monat ────────────────────
+  // ── GET /calendar  – calendar view for one month or a day range ───────
+  // Issue #840 (D-840-19): the detail level is decided PER PERSON by the reader's
+  // `leave-request:read:ZUGEWIESEN` reach (Stammsalon per day), not by a bare permission check.
   app.get("/calendar", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { year, month } = req.query as { year?: string; month?: string };
-      const { salonId } = leaveSalonQuerySchema.parse(req.query);
+      const query = leaveCalendarQuerySchema.parse(req.query);
+      const { salonId } = query;
+      const rangeForm = query.from !== undefined && query.to !== undefined;
       const y = year ? parseInt(year) : new Date().getFullYear();
       const m = month ? parseInt(month) : new Date().getMonth() + 1;
+      const tenantId = req.user.tenantId;
 
-      // Issue #558 (D-01): the salon is validated against the caller's leave-request
-      // ZUGEWIESEN reach before any read; a caller without it gets the same 404 body.
+      // Resolved ONCE per request: it validates the chosen salon (Issue #558, D-01 — a caller
+      // without the reach gets the same 404 body) and decides the detail level of every row below.
+      const reach = await resolveAccessReach(
+        app.prisma,
+        accessContextFromRequest(req),
+        "leave-request:read:ZUGEWIESEN",
+      );
       let chosenSalonId: string | null = null;
       if (salonId !== undefined) {
-        const reach = await resolveAccessReach(
-          app.prisma,
-          accessContextFromRequest(req),
-          "leave-request:read:ZUGEWIESEN",
-        );
-        const salon = await resolveSalonInReach(app.prisma, req.user.tenantId, reach, salonId);
+        const salon = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
         if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
         chosenSalonId = salon.salonId;
       }
 
-      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const tz = await getTenantTimezone(app.prisma, tenantId);
       // Issue #493: the leave overlap, the holiday window and the § 9 overlap all hit `@db.Date`
       // columns / date-string windows, so they take calendar-day bounds, not month instants.
-      const { firstDay, lastDay } = monthDateRange(y, m, tz);
+      // The range form (Issue #840) names calendar days directly.
+      const { firstDay, lastDay } =
+        query.from !== undefined && query.to !== undefined
+          ? {
+              firstDay: new Date(`${query.from}T00:00:00.000Z`),
+              lastDay: new Date(`${query.to}T00:00:00.000Z`),
+            }
+          : monthDateRange(y, m, tz);
+      const windowFromDay = firstDay.toISOString().slice(0, 10);
+      const windowToDay = lastDay.toISOString().slice(0, 10);
 
       const [allRows, holidayMap] = await Promise.all([
         app.prisma.leaveRequest.findMany({
           where: {
             deletedAt: null,
-            employee: { tenantId: req.user.tenantId },
+            employee: { tenantId },
             status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04): same set, now derived
             startDate: { lte: lastDay },
             endDate: { gte: firstDay },
@@ -1831,16 +1888,10 @@ export async function leaveRoutes(app: FastifyInstance) {
       const rows =
         chosenSalonId === null
           ? allRows
-          : await filterLeaveRowsToHomeSalon(
-              app.prisma,
-              req.user.tenantId,
-              allRows,
-              chosenSalonId,
-              {
-                fromDay: firstDay.toISOString().slice(0, 10),
-                toDay: lastDay.toISOString().slice(0, 10),
-              },
-            );
+          : await filterLeaveRowsToHomeSalon(app.prisma, tenantId, allRows, chosenSalonId, {
+              fromDay: windowFromDay,
+              toDay: windowToDay,
+            });
 
       // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
       // query, scoped to the tenant, so the per-row masking below never needs a query inside
@@ -1894,30 +1945,62 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
-      // Computed once per request (not per row, Pitfall 10) — hoisted above the loop below.
-      const canSeeAll = await hasPermission(req, "leave-request:read:ZUGEWIESEN");
-      const leaveEntries = rows.map((r) => {
-        const isOwn = r.employee.userId === req.user.sub;
-        const showDetails = canSeeLeaveType(isOwn, canSeeAll);
-        return {
-          id: r.id,
-          isOwn,
-          employeeId: r.employeeId,
-          firstName: r.employee.firstName,
-          lastName: r.employee.lastName,
-          typeCode: showDetails ? r.leaveType.code : null,
-          typeName: showDetails ? r.leaveType.name : null,
-          startDate: r.startDate.toISOString().split("T")[0],
-          endDate: r.endDate.toISOString().split("T")[0],
-          halfDay: r.halfDay,
-          status: r.status,
-          isHoliday: false,
-          // Sichtbarkeit folgt exakt showDetails — wer typeCode nicht sehen darf, sieht auch
-          // keine § 9-Markierung (sonst wäre die Krankheit indirekt ablesbar).
-          section9: showDetails ? (section9ByEntry.get(r.id)?.marker ?? null) : null,
-          section9Days: showDetails ? Array.from(section9ByEntry.get(r.id)?.days ?? []).sort() : [],
-        };
-      });
+      // Issue #840 (D-840-19): the per-person decision. A row is detailed iff it is the caller's own
+      // or the person is visible on at least one day of the row clipped to the window (Stammsalon
+      // per day, ONE `homeSalonsForDays` call; skipped when no day can matter — a whole-tenant
+      // reach, or a reach without salons, answers without looking at days).
+      const visibility = readerVisibilityFrom(reach, req.user.employeeId ?? null);
+      const foreignIds = new Set<string>();
+      for (const r of rows) {
+        if (r.employee.userId === req.user.sub) continue;
+        foreignIds.add(r.employeeId);
+      }
+      const needHomeDays =
+        !visibility.wholeTenant && visibility.salonIds.size > 0 && foreignIds.size > 0;
+      const homes = needHomeDays
+        ? await homeSalonsForDays(
+            app.prisma,
+            tenantId,
+            Array.from(foreignIds),
+            windowFromDay,
+            windowToDay,
+          )
+        : new Map<string, Map<string, string | null>>();
+
+      const candidates = rows.map((r) => ({
+        id: r.id,
+        isOwn: r.employee.userId === req.user.sub,
+        employeeId: r.employeeId,
+        firstName: r.employee.firstName,
+        lastName: r.employee.lastName,
+        typeCode: r.leaveType.code,
+        typeName: r.leaveType.name,
+        startDate: r.startDate.toISOString().split("T")[0],
+        endDate: r.endDate.toISOString().split("T")[0],
+        halfDay: r.halfDay,
+        status: r.status as string,
+        isHoliday: false,
+      }));
+      const { detailed, masked } = maskCalendarRows(
+        candidates,
+        (row) =>
+          row.isOwn ||
+          isPersonVisibleOnSomeDay(
+            visibility,
+            row.employeeId,
+            homes.get(row.employeeId),
+            row.startDate > windowFromDay ? row.startDate : windowFromDay,
+            row.endDate < windowToDay ? row.endDate : windowToDay,
+          ),
+        new Set<string>(EFFECTIVE_LEAVE_STATUSES),
+      );
+      // § 9 markers and days only for detailed rows: whoever may not learn the type must not read
+      // the sick-in-vacation marker either (it would reveal the sickness indirectly).
+      const leaveEntries = detailed.map((row) => ({
+        ...row,
+        section9: section9ByEntry.get(row.id)?.marker ?? null,
+        section9Days: Array.from(section9ByEntry.get(row.id)?.days ?? []).sort(),
+      }));
 
       // Feiertage als eigene Einträge hinzufügen
       const holidayEntries = Array.from(holidayMap.entries()).map(([date, name]) => ({
@@ -1934,7 +2017,20 @@ export async function leaveRoutes(app: FastifyInstance) {
         isHoliday: true,
       }));
 
-      return [...leaveEntries, ...holidayEntries];
+      const entries = [...leaveEntries, ...masked, ...holidayEntries];
+      if (!rangeForm) return entries;
+
+      // Issue #840 (D-840-25): the range form also names the salon in view (opening hours are
+      // salon master data, not personal data) so the web can draw closed days from the one rule.
+      const salon =
+        chosenSalonId === null ? null : await findSalon(app.prisma, tenantId, chosenSalonId);
+      return {
+        entries,
+        salons:
+          salon === null
+            ? []
+            : [{ salonId: salon.id, name: salon.name, openingHours: salon.openingHours }],
+      };
     },
   });
 
