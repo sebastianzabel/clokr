@@ -891,7 +891,12 @@ entfallen; ein `salonId` wird weiter mit `resolveSalonInReach` gegen dieselbe Re
 Zeilen und die Personen, die an mindestens einem Tag des Fensters im eigenen Stammsalon geführt werden,
 und zwar für jede Rolle und Reichweite ausschließlich als abwesend maskiert; `scope` zusammen mit
 `salonId` ist 400. Mit gültigem `salonId` stammen die Feiertage aus diesem Salon, und die Bereichsform
-nennt den Salon in `salons` mit seinen Öffnungszeiten (Stammdaten, keine Personendaten).
+nennt den Salon in `salons` mit seinen Öffnungszeiten (Stammdaten, keine Personendaten). Die
+Datenminimierung gilt auch ohne Angabe: ein Aufrufer, dessen Reichweite `leave-request:read` leer ist
+(nur eigene Daten), und der weder `scope` noch `salonId` sendet, wird wie mit `scope=team` beantwortet;
+wer eine Reichweite hat, behält den mandantenweiten Kalender. Maskierte Zeiträume werden vor dem
+Zusammenführen auf das angefragte Fenster gekürzt (die gespeicherte Länge einer Abwesenheit ist nicht
+ablesbar).
 
 **`GET /leave/plans/:id` (Issue #840).** Auch der Planer hat keine gezählte Handler-Prüfung auf
 `leave-request:read` mehr (die Zeile ist entfallen): Er verwendet die Reichweite, die die Route ohnehin für
@@ -899,7 +904,9 @@ die Zulassung auflöst, und entscheidet je Person mit derselben Regel wie der Ka
 Zeilen von Personen außerhalb der Reichweite erscheinen nur als `MASKED` / „abwesend“ (ohne Art, Status und
 halben Tag), beantragte Zeilen solcher Personen entfallen, angrenzende Zeiträume werden zusammengeführt.
 Der Parameter `view=own` (keine neue Berechtigung) maskiert jede fremde Zeile unabhängig von der Reichweite
-(persönlicher Planer); eigene Zeilen und Wünsche bleiben vollständig. Die Antwort nennt den Planungssalon mit
+(persönlicher Planer) und gibt jedem fremden Wunsch nur den Zeitraum (nie bearbeitbar, kein Antragsstatus,
+keine Ablehnung, kein Konfliktkennzeichen, keine Prognose, keine Regeldaten im Tageswert); eigene Zeilen und
+eigene Wünsche bleiben vollständig. Maskierte Zeiträume werden auf das Planjahr gekürzt. Die Antwort nennt den Planungssalon mit
 seinen Öffnungszeiten (Stammdaten, keine Personendaten).
 
 ## Empfängersuchen

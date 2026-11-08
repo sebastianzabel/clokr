@@ -12889,6 +12889,310 @@
           ]
         }
       }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "EMPLOYEE | GET /api/v1/leave/calendar | june",
+      "reason": "Issue #840, Review-Befund WR-04 (Datensparsamkeit, Art. 5 Abs. 1 lit. c DSGVO): Ein Aufrufer ohne Reichweite leave-request:read, der kein scope angibt, wird wie mit scope=team beantwortet. Er erhält nur noch seine eigenen Zeilen und die als „abwesend“ maskierten Zeilen von Personen, deren Stammsalon einer seiner eigenen Stammsalons ist, statt der Zeilen aller Salons des Mandanten. Akteure mit Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "EMPLOYEE | GET /api/v1/leave/calendar | may",
+      "reason": "Issue #840, Review-Befund WR-04 (Datensparsamkeit, Art. 5 Abs. 1 lit. c DSGVO): Ein Aufrufer ohne Reichweite leave-request:read, der kein scope angibt, wird wie mit scope=team beantwortet. Er erhält nur noch seine eigenen Zeilen und die als „abwesend“ maskierten Zeilen von Personen, deren Stammsalon einer seiner eigenen Stammsalons ist, statt der Zeilen aller Salons des Mandanten. Akteure mit Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_ADMIN | GET /api/v1/leave/calendar | june",
+      "reason": "Issue #840, Review-Befund WR-04 (Datensparsamkeit, Art. 5 Abs. 1 lit. c DSGVO): Ein Aufrufer ohne Reichweite leave-request:read, der kein scope angibt, wird wie mit scope=team beantwortet. Er erhält nur noch seine eigenen Zeilen und die als „abwesend“ maskierten Zeilen von Personen, deren Stammsalon einer seiner eigenen Stammsalons ist, statt der Zeilen aller Salons des Mandanten. Akteure mit Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_ADMIN | GET /api/v1/leave/calendar | may",
+      "reason": "Issue #840, Review-Befund WR-04 (Datensparsamkeit, Art. 5 Abs. 1 lit. c DSGVO): Ein Aufrufer ohne Reichweite leave-request:read, der kein scope angibt, wird wie mit scope=team beantwortet. Er erhält nur noch seine eigenen Zeilen und die als „abwesend“ maskierten Zeilen von Personen, deren Stammsalon einer seiner eigenen Stammsalons ist, statt der Zeilen aller Salons des Mandanten. Akteure mit Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_EMPLOYEE | GET /api/v1/leave/calendar | june",
+      "reason": "Issue #840, Review-Befund WR-04 (Datensparsamkeit, Art. 5 Abs. 1 lit. c DSGVO): Ein Aufrufer ohne Reichweite leave-request:read, der kein scope angibt, wird wie mit scope=team beantwortet. Er erhält nur noch seine eigenen Zeilen und die als „abwesend“ maskierten Zeilen von Personen, deren Stammsalon einer seiner eigenen Stammsalons ist, statt der Zeilen aller Salons des Mandanten. Akteure mit Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_EMPLOYEE | GET /api/v1/leave/calendar | may",
+      "reason": "Issue #840, Review-Befund WR-04 (Datensparsamkeit, Art. 5 Abs. 1 lit. c DSGVO): Ein Aufrufer ohne Reichweite leave-request:read, der kein scope angibt, wird wie mit scope=team beantwortet. Er erhält nur noch seine eigenen Zeilen und die als „abwesend“ maskierten Zeilen von Personen, deren Stammsalon einer seiner eigenen Stammsalons ist, statt der Zeilen aller Salons des Mandanten. Akteure mit Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_MANAGER | GET /api/v1/leave/calendar | june",
+      "reason": "Issue #840, Review-Befund WR-04 (Datensparsamkeit, Art. 5 Abs. 1 lit. c DSGVO): Ein Aufrufer ohne Reichweite leave-request:read, der kein scope angibt, wird wie mit scope=team beantwortet. Er erhält nur noch seine eigenen Zeilen und die als „abwesend“ maskierten Zeilen von Personen, deren Stammsalon einer seiner eigenen Stammsalons ist, statt der Zeilen aller Salons des Mandanten. Akteure mit Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "own.employee",
+          "own.leaveRequest.approved"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "own.leaveRequest.approved:VACATION:named:s9=null"
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-08",
+      "from": {
+        "status": 200,
+        "ids": [
+          "foreign.employee",
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "<no id>:null:unnamed",
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      },
+      "issue": 840,
+      "key": "FALLBACK_MANAGER | GET /api/v1/leave/calendar | may",
+      "reason": "Issue #840, Review-Befund WR-04 (Datensparsamkeit, Art. 5 Abs. 1 lit. c DSGVO): Ein Aufrufer ohne Reichweite leave-request:read, der kein scope angibt, wird wie mit scope=team beantwortet. Er erhält nur noch seine eigenen Zeilen und die als „abwesend“ maskierten Zeilen von Personen, deren Stammsalon einer seiner eigenen Stammsalons ist, statt der Zeilen aller Salons des Mandanten. Akteure mit Reichweite sind unverändert. Gemessen in einem Verify-Lauf.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "own.employee",
+          "own.employee",
+          "own.leaveRequest.section9Vacation",
+          "own.leaveRequest.sick"
+        ],
+        "projections": {
+          "leaveTypeMask": [
+            "holiday-2026-05-01:HOLIDAY:named",
+            "holiday-2026-05-14:HOLIDAY:named",
+            "holiday-2026-05-25:HOLIDAY:named",
+            "own.leaveRequest.section9Vacation:VACATION:named:s9=null",
+            "own.leaveRequest.sick:SICK:named:s9=AU_PENDING"
+          ]
+        }
+      }
     }
   ]
 }

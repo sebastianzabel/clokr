@@ -420,6 +420,10 @@ describe("Issue #840 — AC-4 / AC-5 matrix of the calendar read", () => {
 
     const none = await person("empNone", salonA.id);
     token.empNone = await login(none.user.email);
+    // The same reach (none) homed in the other salon: with no `scope` a no-reach caller is answered
+    // as `scope=team` (WR-04), so a colleague of pS's salon reads pS masked.
+    const noneB = await person("empNoneB", salonB.id);
+    token.empNoneB = await login(noneB.user.email);
 
     // Subjects.
     await person("pA", salonA.id);
@@ -529,7 +533,7 @@ describe("Issue #840 — AC-4 / AC-5 matrix of the calendar read", () => {
     });
 
     it("AC-4 no reach: a foreign § 9 vacation row carries no section9 / section9Days / id / type", async () => {
-      const body = await range(token.empNone, RANGE);
+      const body = await range(token.empNoneB, RANGE);
       const rows = rowsOf(body, "pS");
       // vacation 23rd-26th and the sick spell inside it arrive as ONE masked range
       expect(rows).toHaveLength(1);
@@ -672,6 +676,49 @@ describe("Issue #840 — AC-4 / AC-5 matrix of the calendar read", () => {
         ["2026-06-15", "2026-06-16"],
         ["2026-06-18", "2026-06-19"],
       ]);
+    });
+  });
+
+  describe("WR-04 - a caller without a read reach is answered as scope=team", () => {
+    const names = (body: RangeBody) =>
+      new Set(body.entries.filter((e) => e.isHoliday !== true).map((e) => String(e.employeeId)));
+
+    it("an own-data caller without scope sees no person homed in another salon", async () => {
+      const body = await range(token.empNone, RANGE);
+      const seen = names(body);
+      // empNone is homed in salon A: itself and pA (A) only. pB, pM*, pS, pLong live in B.
+      expect(seen.has(emp.empNone)).toBe(true);
+      expect(seen.has(emp.pA)).toBe(true);
+      for (const label of ["pB", "pM1", "pM2", "pM3", "pS", "pLong"]) {
+        expect(seen.has(emp[label]), label).toBe(false);
+      }
+    });
+
+    it("it equals the answer to an explicit scope=team, for the range and the month form", async () => {
+      const implicit = await range(token.empNone, RANGE);
+      const explicit = await range(token.empNone, `${RANGE}&scope=team`);
+      expect(implicit).toEqual(explicit);
+      const monthImplicit = await get(token.empNone, "year=2026&month=6");
+      const monthExplicit = await get(token.empNone, "year=2026&month=6&scope=team");
+      expect(JSON.parse(monthImplicit.body)).toEqual(JSON.parse(monthExplicit.body));
+    });
+
+    it("the colleagues it still shows are masked, the caller's own rows complete", async () => {
+      const body = await range(token.empNone, RANGE);
+      for (const row of rowsOf(body, "pA")) expect(Object.keys(row).sort()).toEqual(MASKED_KEYS);
+      expect(rowsOf(body, "empNone").every((e) => e.masked === undefined)).toBe(true);
+    });
+
+    it("a caller with a reach keeps the tenant-wide calendar", async () => {
+      const seen = names(await range(token.mgrA, RANGE));
+      expect(seen.has(emp.pB)).toBe(true);
+      expect(seen.has(emp.pLong)).toBe(true);
+      expect(names(await range(data.adminToken, RANGE)).has(emp.pB)).toBe(true);
+    });
+
+    it("an explicit scope=own still narrows to the caller", async () => {
+      const seen = names(await range(token.empNone, `${RANGE}&scope=own`));
+      expect([...seen]).toEqual([emp.empNone]);
     });
   });
 

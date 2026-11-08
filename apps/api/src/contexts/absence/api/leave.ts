@@ -1838,7 +1838,7 @@ export async function leaveRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { year, month } = req.query as { year?: string; month?: string };
       const query = leaveCalendarQuerySchema.parse(req.query);
-      const { salonId, scope } = query;
+      const { salonId } = query;
       const rangeForm = query.from !== undefined && query.to !== undefined;
       const y = year ? parseInt(year) : new Date().getFullYear();
       const m = month ? parseInt(month) : new Date().getMonth() + 1;
@@ -1857,6 +1857,14 @@ export async function leaveRoutes(app: FastifyInstance) {
         if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
         chosenSalonId = salon.salonId;
       }
+      // Data minimisation is enforced here, not left to the client (Art. 5 Abs. 1 lit. c DSGVO,
+      // review WR-04): a caller whose `leave-request:read` reach is empty (own data only) who names
+      // no scope is answered as `scope=team` — their own rows and the masked colleagues of their
+      // own Stammsalon, never every salon of the tenant for a whole year. A caller with a reach
+      // keeps the tenant-wide calendar of the Team -> Uebersicht; an explicit scope always wins.
+      const reachIsEmpty =
+        reach.kind === "scoped" && reach.salonIds.length === 0 && reach.employeeIds.length === 0;
+      const scope = query.scope ?? (reachIsEmpty && salonId === undefined ? "team" : undefined);
 
       const tz = await getTenantTimezone(app.prisma, tenantId);
       // Issue #493: the leave overlap, the holiday window and the § 9 overlap all hit `@db.Date`
