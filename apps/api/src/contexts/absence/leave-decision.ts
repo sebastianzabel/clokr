@@ -609,7 +609,8 @@ export async function decidePendingLeaveRequest(
             type: "SECTION9_AU_PENDING_MANAGER",
             title: "§ 9 BUrlG — AU-Nachweis ausstehend",
             message: `Krankmeldung während genehmigten Urlaubs (${rangeLabel}). Sobald die AU vorliegt, bitte bestätigen.`,
-            link: `/team/leave?section9=${credit.id}`,
+            // Issue #840 (D-840-28): the § 9 cases live in the inbox section.
+            link: `/inbox?section9=${credit.id}`,
             tenantId: employeeUser.tenantId,
             relatedType: "Section9Credit",
             relatedId: credit.id,

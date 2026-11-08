@@ -187,7 +187,8 @@ export async function leavePlanRoutes(app: FastifyInstance) {
     try {
       const salon = await findSalon(app.prisma, tenantId, plan.salonId);
       const { persons } = await planPopulation(app.prisma, tenantId, plan.salonId, plan.year);
-      const link = `/leave/planung?salonId=${plan.salonId}&year=${plan.year}`;
+      // Issue #840 (D-840-28): the plan opens in the planner tab of the personal leave page.
+      const link = `/leave?tab=planung&salonId=${plan.salonId}&year=${plan.year}`;
       const frist = plan.deadline ? ` Frist: ${formatDateDe(plan.deadline)}.` : "";
       const message = `Die Urlaubsplanung ${plan.year} für ${salon?.name ?? "deinen Salon"} ist eröffnet. Trag deine Urlaubswünsche ein.${frist}`;
       const recipients = persons.filter((p) => p.userId !== null && p.userId !== req.user.sub);

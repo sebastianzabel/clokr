@@ -500,7 +500,8 @@ describe("Issue #835 - review fixes of the leave planner", () => {
     });
     expect(notice).toMatchObject({
       relatedType: "LeaveRequest",
-      link: `/team/leave?request=${requestId}`,
+      // #840 D-840-28: the approver link points to the inbox.
+      link: `/inbox?request=${requestId}`,
     });
 
     // A second run whose approval is refused again tells nobody a second time.
