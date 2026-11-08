@@ -2,6 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  emptyRequestsText,
   locateDeepLinkedRequest,
   overviewPersons,
   pageOfRequest,
@@ -116,5 +117,25 @@ describe("locateDeepLinkedRequest (WR-05)", () => {
   it("an unknown request, or one outside both lists, is missing", () => {
     expect(locateDeepLinkedRequest("zzz", year, open)).toEqual({ kind: "missing" });
     expect(locateDeepLinkedRequest("a", [], [])).toEqual({ kind: "missing" });
+  });
+});
+
+describe("emptyRequestsText (IN-03)", () => {
+  it("a filter that hides every row of a non-empty list is named as a filter", () => {
+    expect(emptyRequestsText(null, 2026, 4).title).toBe("Keine Anträge für diese Auswahl.");
+    expect(emptyRequestsText("PENDING", 2026, 1).title).toBe("Keine Anträge für diese Auswahl.");
+  });
+
+  it("the open filters read all years and never name the list year", () => {
+    expect(emptyRequestsText("PENDING", 2026, 0).title).toBe("Keine offenen Anträge.");
+    expect(emptyRequestsText("CANCELLATION_REQUESTED", 2026, 0).title).toBe(
+      "Keine Stornoanfragen.",
+    );
+    expect(JSON.stringify(emptyRequestsText("PENDING", 2026, 0))).not.toContain("2026");
+  });
+
+  it("an empty year list names the year", () => {
+    expect(emptyRequestsText(null, 2026, 0).title).toBe("Keine Anträge in 2026.");
+    expect(emptyRequestsText("APPROVED", 2025, 0).title).toBe("Keine Anträge in 2025.");
   });
 });

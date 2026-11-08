@@ -343,3 +343,11 @@ describe("review WR-05 - a /team/leave?request= link finds a request outside the
     expect(checker).toContain("/team/leave?request=");
   });
 });
+
+describe("review IN-03 - the Anträge empty state follows the filtered list", () => {
+  it("branches on the filtered rows and takes its words from the model", () => {
+    expect(PAGE).toContain("{#if filteredTeamRequests.length === 0}");
+    expect(PAGE).toContain("emptyRequestsText(urlState.status, listYear, requestSource.length)");
+    expect(PAGE).not.toContain("<h3>Keine Anträge in {listYear}.</h3>");
+  });
+});

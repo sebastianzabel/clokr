@@ -56,6 +56,7 @@
     type TeamLeaveTab,
   } from "$lib/leave/area-tabs"; // Issue #840 (D-840-01/02)
   import {
+    emptyRequestsText,
     locateDeepLinkedRequest,
     overviewPersons,
     pageOfRequest,
@@ -1142,11 +1143,12 @@
         <span class="filter-count">{filteredTeamRequests.length} Anträge</span>
       </div>
 
-      {#if requestSource.length === 0}
-        <div class="empty-state card card-body card-animate">
+      {#if filteredTeamRequests.length === 0}
+        {@const empty = emptyRequestsText(urlState.status, listYear, requestSource.length)}
+        <div class="empty-state card card-body card-animate" data-testid="leave-team-empty">
           <span class="empty-icon">🏖️</span>
-          <h3>Keine Anträge in {listYear}.</h3>
-          <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
+          <h3>{empty.title}</h3>
+          <p class="text-muted">{empty.hint}</p>
         </div>
       {:else}
         <div class="table-wrapper card card-animate">

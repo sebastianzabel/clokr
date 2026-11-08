@@ -108,3 +108,33 @@ export function locateDeepLinkedRequest<T extends { id: string; startDate: strin
   if (open) return { kind: "open", startDate: open.startDate.slice(0, 10) };
   return { kind: "missing" };
 }
+
+/**
+ * The empty state of the Anträge list (review IN-03). A filter that hides every row of a non-empty
+ * list is named as such, and the open filters read all years, so they never name the list year.
+ */
+export function emptyRequestsText(
+  status: LeaveStatusFilter | null,
+  listYear: number,
+  sourceCount: number,
+): { title: string; hint: string } {
+  if (sourceCount > 0) {
+    return { title: "Keine Anträge für diese Auswahl.", hint: "Passe die Filter an." };
+  }
+  if (status === "PENDING") {
+    return {
+      title: "Keine offenen Anträge.",
+      hint: "Es wartet gerade nichts auf eine Entscheidung.",
+    };
+  }
+  if (status === "CANCELLATION_REQUESTED") {
+    return {
+      title: "Keine Stornoanfragen.",
+      hint: "Es wartet gerade nichts auf eine Entscheidung.",
+    };
+  }
+  return {
+    title: `Keine Anträge in ${listYear}.`,
+    hint: "Wähle ein anderes Jahr oder lege einen neuen Antrag an.",
+  };
+}
