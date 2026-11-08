@@ -13,7 +13,7 @@ function row(
   startDate: string,
   endDate: string,
   status = "APPROVED",
-  extra: Partial<MaskableCalendarRow> = {},
+  extra: Partial<MaskableCalendarRow> & { halfDay?: boolean } = {},
 ) {
   return {
     id: `${employeeId}-${startDate}`,
