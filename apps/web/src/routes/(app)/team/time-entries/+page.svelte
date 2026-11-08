@@ -2804,8 +2804,8 @@
   /* bs-tage-in-calendar — Berufsschultag cell background. Uses --brand at the
      same 15% mix as the other .cal-abs-* recipes in app.css. Scoped to this
      page (mirrors the 260611-ly6 .row-bs scoped CSS pattern); a token-level
-     a token-level leave type for Berufsschule would be the long-term home if BS gets
-     promoted to a first-class leave type. */
+     leave type for Berufsschule would be the long-term home if BS gets promoted
+     to a first-class leave type. */
   :global(.cal-cell.cal-abs-vocational_school:not(.cal-selected)) {
     background: color-mix(in srgb, var(--brand) 15%, var(--bg-card)) !important;
     opacity: 1;
