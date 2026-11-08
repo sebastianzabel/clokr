@@ -34,8 +34,13 @@ const TEAM_NAV_ENTRIES: readonly TeamNavEntry[] = [
     href: "/inbox",
     label: "Anträge",
     icon: "inbox",
-    // The Postfach approves both leave requests and Zeitnachträge — either is enough to need it.
-    permission: ["leave-request:approve:ZUGEWIESEN", "retro-request:approve:ZUGEWIESEN"],
+    // The Postfach decides leave requests, Zeitnachträge and (since #840 D-840-29) § 9 cases —
+    // any one of the three is enough to need it.
+    permission: [
+      "leave-request:approve:ZUGEWIESEN",
+      "retro-request:approve:ZUGEWIESEN",
+      "section9:decide:ZUGEWIESEN",
+    ],
   },
   {
     href: "/team/time-entries",

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
+  import { onMount, tick } from "svelte";
+  import { goto, replaceState } from "$app/navigation";
+  import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { hasAnyPermission } from "$lib/permissions"; // Phase 378 (#378)
@@ -16,6 +17,7 @@
   import { LEAVE_TYPE_OPTIONS, type CalendarTypeCode } from "$lib/leave/team-calendar-visibility"; // Phase 262, Phase 255
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
+  import { parseInboxDeepLink, type InboxDeepLink } from "$lib/leave/inbox-deep-link"; // Issue #840 (D-840-05)
 
   // ── Types ────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -113,25 +115,42 @@
     hasAnyPermission($authStore.user, ["section9:read:ZUGEWIESEN", "section9:decide:ZUGEWIESEN"]),
   );
 
-  // ── Permission gate (Phase 378, #378) ─────────────────────────────────────
-  // Either approve permission is enough — this Postfach approves both leave requests and
-  // Zeitnachträge. A Salonmanager (Salon-Scope role assignment) holds both; an Ausbilder holds
-  // neither (read-only template, #76) and correctly never reaches this page.
+  // ── Permission gate (Phase 378, #378; § 9 since #840 D-840-29) ──────────────
+  // Any one of the three decide keys is enough — this Postfach decides leave requests, Zeitnachträge
+  // and § 9 cases. A Salonmanager (Salon-Scope role assignment) holds all three; an Ausbilder holds
+  // none (read-only template, #76) and correctly never reaches this page. A role holding only
+  // `section9:decide:ZUGEWIESEN` gets in too, so moving the § 9 cases here locks no decider out.
   onMount(() => {
-    const canApprove = hasAnyPermission($authStore.user, [
+    const canDecide = hasAnyPermission($authStore.user, [
       "leave-request:approve:ZUGEWIESEN",
       "retro-request:approve:ZUGEWIESEN",
+      "section9:decide:ZUGEWIESEN",
     ]);
-    if (!canApprove) {
+    if (!canDecide) {
       void goto("/dashboard");
       return;
     }
-    void loadRequests();
-    void loadRetroRequests();
-    // The § 9 section is only a UX hint: the API answers 403 without `section9:read` and decides
-    // every action by `section9:decide`.
-    if (canSection9) void loadSection9Cases();
-    else section9Loading = false;
+    // The deep link is read ONCE, here, and applied after the first completed loads (the rows do not
+    // exist before). Untrusted values are reduced by the pure parser (T-840-30).
+    const link = parseInboxDeepLink($page.url.searchParams, currentYear);
+    const hadLinkParams = DEEP_LINK_PARAMS.some((name) => $page.url.searchParams.has(name));
+    void (async () => {
+      const loads: Promise<unknown>[] = [loadRetroRequests()];
+      // The leave list is skipped for a role that only decides § 9 cases: it would answer 403 and
+      // show an error alert for a list that role never sees.
+      if (hasAnyPermission($authStore.user, ["leave-request:approve:ZUGEWIESEN"])) {
+        loads.push(loadRequests());
+      } else {
+        loading = false;
+      }
+      // The § 9 section is only a UX hint: the API answers 403 without `section9:read` and decides
+      // every action by `section9:decide`.
+      if (canSection9) loads.push(loadSection9Cases());
+      else section9Loading = false;
+      await Promise.all(loads);
+      await applyDeepLink(link);
+      if (hadLinkParams) stripDeepLinkParams();
+    })();
   });
 
   // ── Data loading ─────────────────────────────────────────────────────────
@@ -147,6 +166,62 @@
       requests = [];
     } finally {
       loading = false;
+    }
+  }
+
+  // ── Deep links (Issue #840, D-840-05) ─────────────────────────────────────
+  // `?request=<id>[&year=<YYYY>]` opens the shared review dialog for that request; `?section9=<id>`
+  // scrolls to and highlights that § 9 case. A request that cannot be found in the caller's list
+  // (decided meanwhile, or outside the reach) gives one calm toast - the dialog never opens for a row
+  // the API did not list for the caller (T-840-27), and no new endpoint is involved.
+  const DEEP_LINK_PARAMS = ["request", "year", "section9"] as const;
+
+  /** The list of another year, read once for the lookup only - the page keeps showing `currentYear`. */
+  async function findRequestInYear(id: string, year: number): Promise<LeaveRequest | null> {
+    try {
+      const list = await api.get<LeaveRequest[]>(`/leave/requests?year=${year}`);
+      return list.find((r) => r.id === id) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function applyDeepLink(link: InboxDeepLink) {
+    if (link.requestId) {
+      let found: LeaveRequest | null = requests.find((r) => r.id === link.requestId) ?? null;
+      if (!found && link.year !== null && link.year !== currentYear) {
+        found = await findRequestInYear(link.requestId, link.year);
+      }
+      if (found) openDetail(found);
+      else toasts.info("Dieser Antrag ist nicht mehr offen oder nicht in deiner Reichweite.");
+    }
+    if (link.section9Id) {
+      const id = link.section9Id;
+      if (!openSection9Cases.some((c) => c.id === id)) {
+        toasts.info("Dieser Vorgang ist nicht mehr offen oder nicht in deiner Reichweite.");
+        return;
+      }
+      highlightSection9Id = id;
+      await tick();
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`section9-${id}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      setTimeout(() => {
+        highlightSection9Id = null;
+      }, 3000);
+    }
+  }
+
+  /** Takes the deep-link parameters out of the address bar; other parameters stay. */
+  function stripDeepLinkParams() {
+    try {
+      const url = new URL($page.url);
+      for (const name of DEEP_LINK_PARAMS) url.searchParams.delete(name);
+      replaceState(url, {});
+    } catch {
+      // The router is not ready or the URL is unusable: the parameters just stay, harmless.
     }
   }
 

@@ -90,7 +90,9 @@ describe("Issue #840 D-840-05 - the § 9 cases wait in the inbox", () => {
   it("[hint] the section shows for holders of a § 9 key and the loader runs only then", () => {
     expect(INBOX).toContain('"section9:read:ZUGEWIESEN"');
     expect(INBOX).toContain("{#if canSection9}");
-    expect(onMountBody(INBOX)).toContain("if (canSection9) void loadSection9Cases();");
+    const mount = onMountBody(INBOX);
+    expect(mount).toContain("if (canSection9) loads.push(loadSection9Cases());");
+    expect(mount).toContain("else section9Loading = false;");
   });
 
   it("[gone] /team/leave no longer loads, renders or deep-links the § 9 cases", () => {
@@ -107,5 +109,73 @@ describe("Issue #840 D-840-29 - the gate admits § 9 deciders", () => {
     expect(INBOX).not.toContain("salonPageFilter");
     expect(INBOX).not.toContain("withSalonId(");
     expect(INBOX).not.toContain("SalonScopeLabel");
+  });
+});
+
+describe("Issue #840 D-840-29 - the gate admits § 9 deciders", () => {
+  it("[gate] the page gate in onMount lists all three decide keys", () => {
+    const mount = onMountBody(INBOX);
+    const gate = mount.slice(0, mount.indexOf('void goto("/dashboard")'));
+    expect(gate).toContain('"leave-request:approve:ZUGEWIESEN"');
+    expect(gate).toContain('"retro-request:approve:ZUGEWIESEN"');
+    expect(gate).toContain('"section9:decide:ZUGEWIESEN"');
+  });
+
+  it("[gate] a role that only decides § 9 cases does not load the leave list (no 403 alert)", () => {
+    const mount = onMountBody(INBOX);
+    expect(mount).toContain(
+      'hasAnyPermission($authStore.user, ["leave-request:approve:ZUGEWIESEN"])',
+    );
+    expect(mount).toContain("loads.push(loadRequests())");
+    expect(mount).toContain("loading = false;");
+  });
+});
+
+describe("Issue #840 D-840-05 - inbox deep links", () => {
+  it("[read once] the link is parsed once in onMount through the pure parser", () => {
+    expect(INBOX).toContain('from "$lib/leave/inbox-deep-link"');
+    expect(INBOX.split("parseInboxDeepLink(").length - 1).toBe(1);
+    expect(onMountBody(INBOX)).toContain("parseInboxDeepLink($page.url.searchParams, currentYear)");
+  });
+
+  it("[apply] it runs after the first completed loads, never before", () => {
+    const mount = onMountBody(INBOX);
+    const loaded = mount.indexOf("await Promise.all(loads)");
+    expect(loaded).toBeGreaterThan(-1);
+    expect(mount.indexOf("await applyDeepLink(link)")).toBeGreaterThan(loaded);
+  });
+
+  it("[request] opens the EXISTING review dialog for a row of the caller's own list", () => {
+    const body = functionBody(INBOX, "applyDeepLink");
+    expect(body).toContain("requests.find((r) => r.id === link.requestId)");
+    expect(body).toContain("openDetail(found)");
+    expect(INBOX).toContain("<LeaveReviewDialog");
+    expect(body).toContain("Dieser Antrag ist nicht mehr offen oder nicht in deiner Reichweite.");
+  });
+
+  it("[year] another year's list is read once for the lookup only, and only for a differing year", () => {
+    const body = functionBody(INBOX, "applyDeepLink");
+    expect(body).toContain("link.year !== null && link.year !== currentYear");
+    expect(body).toContain("findRequestInYear(link.requestId, link.year)");
+    const lookup = functionBody(INBOX, "findRequestInYear");
+    expect(lookup).toContain("`/leave/requests?year=${year}`");
+    // The lookup never replaces the page's own list.
+    expect(lookup).not.toContain("requests =");
+  });
+
+  it("[section9] scrolls to and highlights the case, then lets the highlight fade", () => {
+    const body = functionBody(INBOX, "applyDeepLink");
+    expect(body).toContain("highlightSection9Id = id");
+    expect(body).toContain("`section9-${id}`");
+    expect(body).toContain("scrollIntoView(");
+    expect(body).toContain("setTimeout(");
+  });
+
+  it("[strip] the parameters leave the address bar with replaceState after use", () => {
+    expect(INBOX).toContain('const DEEP_LINK_PARAMS = ["request", "year", "section9"] as const;');
+    const strip = functionBody(INBOX, "stripDeepLinkParams");
+    expect(strip).toContain("url.searchParams.delete(name)");
+    expect(strip).toContain("replaceState(url, {})");
+    expect(onMountBody(INBOX)).toContain("stripDeepLinkParams()");
   });
 });

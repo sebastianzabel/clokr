@@ -112,6 +112,18 @@ describe("visibleTeamNavItems", () => {
     expect(items.map((i) => i.href)).toEqual(["/inbox"]);
   });
 
+  it("Issue #840 (D-840-29): holding only section9:decide:ZUGEWIESEN unlocks Anträge and the page", () => {
+    const only = { permissions: ["section9:decide:ZUGEWIESEN"] };
+    expect(visibleTeamNavItems(only).map((i) => i.href)).toEqual(["/inbox"]);
+    expect(mayOpenTeamPage("/inbox", only)).toBe(true);
+  });
+
+  it("Issue #840 (D-840-29): none of the three inbox keys, no inbox (section9:read alone is not enough)", () => {
+    const none = { permissions: ["section9:read:ZUGEWIESEN", "leave-request:read:ZUGEWIESEN"] };
+    expect(visibleTeamNavItems(none).map((i) => i.href)).not.toContain("/inbox");
+    expect(mayOpenTeamPage("/inbox", none)).toBe(false);
+  });
+
   it("display order is fixed regardless of the permission array's own order", () => {
     const items = visibleTeamNavItems({
       permissions: [...SALONMANAGER_PERMISSIONS].reverse(),
