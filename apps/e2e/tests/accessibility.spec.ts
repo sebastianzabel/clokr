@@ -11,6 +11,9 @@ test.describe("Accessibility Audit (axe-core)", () => {
     { name: "Dashboard", url: "/dashboard" },
     { name: "Zeiterfassung", url: "/time-entries" },
     { name: "Abwesenheiten", url: "/leave" },
+    // Issue #840: the two absence areas (Team Übersicht, Mein Bereich Team) on the one timeline.
+    { name: "Team Abwesenheiten", url: "/team/leave" },
+    { name: "Abwesenheiten Team-Tab", url: "/leave?tab=team" },
     { name: "Profil", url: "/settings" },
     { name: "Admin Mitarbeiter", url: "/admin/employees" },
     { name: "Admin Urlaub & Zeiten", url: "/admin/vacation" },

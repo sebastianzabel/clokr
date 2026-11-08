@@ -8,7 +8,8 @@
  *
  * Proven here:
  *   AC1/AC3  EMPLOYEE gets `typeCode: null` and `typeName: null` — as PRESENT keys, not omitted.
- *   AC4      MANAGER gets the real type, in the inbox dialog and in the team review modal.
+ *   AC4      MANAGER gets the real type, in the inbox dialog and in the review dialog reached from the
+ *           team page's Anträge tab (since #840 the inbox is the one place requests are decided).
  *   AC5      The three overlap panels print what they receive; the neutral word only stands in
  *            for `null`.
  *   D-03     `employeeName` keeps the full name for every role — deliberately not masked.
@@ -109,7 +110,13 @@ async function login(page: Page, email: string) {
  */
 async function suppressWhatsNew(page: Page) {
   await page.route("**/api/v1/release-notes*", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      // The real handler answers `{ releases }`; a bare array left the release-notes store without
+      // a list and kept the salon context of /team/leave from ever loading (plan 840-13).
+      body: JSON.stringify({ releases: [] }),
+    }),
   );
 }
 
@@ -235,23 +242,26 @@ test.describe("Phase 262 — /leave/overlap masks the absence type over the wire
     await expect(chip).not.toHaveText("abwesend");
   });
 
-  test("MANAGER: the team review modal shows the real absence type", async ({ page }) => {
+  // Issue #840 (plan 840-13): the team page no longer decides requests. Its Anträge tab offers
+  // „Im Posteingang prüfen“, which opens the same shared review dialog in the inbox; the overlap
+  // answer and the type chip are the ones the former team review modal showed.
+  test("MANAGER: the Anträge tab's inbox action opens the review dialog with the real type", async ({
+    page,
+  }) => {
     await login(page, fx.manager.email);
-    await page.goto("/team/leave");
-    // The `leave-team-row-*-review` control lives in the LIST view (`+page.svelte:1459-1533`),
-    // not in the approvals cards — the two tabs render different markup for the same data.
-    await page.getByTestId("leave-team-view-list").click();
+    await page.goto("/team/leave?tab=antraege");
+    await expect(page.getByTestId(`leave-team-row-${fx.pendingId}`)).toBeVisible();
 
     const overlapBody = captureOverlap(page);
     await page.getByTestId(`leave-team-row-${fx.pendingId}-review`).click();
+    await page.waitForURL(/\/inbox\?/);
+    await expect(page.getByTestId("leave-approval-modal")).toBeVisible();
     const rows = (await overlapBody) as Array<Record<string, unknown>>;
 
     expect(rows.some((r) => r.typeCode === ABSENCE_TYPE)).toBe(true);
 
-    // Phase 255 (D-21): since both review strecken now render the same shared
-    // LeaveReviewDialog.svelte, the absence type uses the global .chip recipe on both — the
-    // former .overlap-type vs .chip divergence between /team/leave and /inbox is exactly the
-    // drift this phase removes.
+    // Phase 255 (D-21): the review dialog is the one shared LeaveReviewDialog.svelte, so the absence
+    // type uses the global .chip recipe.
     const type = page.locator(".overlap-row .chip").first();
     await expect(type).toHaveText(ABSENCE_LABEL);
     await expect(type).not.toHaveText("abwesend");

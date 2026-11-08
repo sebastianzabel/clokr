@@ -77,9 +77,20 @@ const SURFACES: Surface[] = [
     next: "Nächstes Jahr",
     today: false,
   },
-  // Issue #840 (plan 840-10): the page opens on the quarter; the month bar is the month zoom.
+  // Issue #840 (plan 840-10): the page opens on the quarter; the month bar is the month zoom. The
+  // old /teamcal surface is gone (plan 840-13): it redirects to this page, and the redirect itself
+  // is proven in leave-area-840.spec.ts. Plan 840-13 adds the other tabs that carry the period bar.
   { path: "/team/leave?tab=uebersicht&zoom=monat", ...MONTH, today: true },
-  { path: "/teamcal", ...MONTH, today: true },
+  { path: "/team/leave?tab=planung&zoom=monat", ...MONTH, today: true },
+  {
+    path: "/team/leave?tab=antraege",
+    label: "2026",
+    prev: "Vorheriges Jahr",
+    next: "Nächstes Jahr",
+    today: false,
+  },
+  { path: "/leave?tab=team&zoom=monat", ...MONTH, today: true },
+  { path: "/leave?tab=planung&zoom=monat", ...MONTH, today: true },
   // Issue #612: the period bar of /reports (MonthBar with the period label); no "Heute" (the preset
   // "Dieser Monat" covers it) and, in the current month the clock is fixed on, a disabled next arrow.
   { path: "/reports", ...MONTH, today: false, nextDisabled: true },
