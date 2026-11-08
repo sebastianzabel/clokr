@@ -16,6 +16,7 @@
   import EmptyState from "$components/ui/EmptyState.svelte";
   import { LEAVE_TYPE_OPTIONS, type CalendarTypeCode } from "$lib/leave/team-calendar-visibility"; // Phase 262, Phase 255
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"; // Issue #840 (G-3)
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
   import { parseInboxDeepLink, type InboxDeepLink } from "$lib/leave/inbox-deep-link"; // Issue #840 (D-840-05)
 
@@ -569,7 +570,7 @@
   <title>Inbox – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow="Manager" title="Inbox" accent="Inbox" />
+<PageHead eyebrow="Team" title="Inbox" />
 
 {#if error}
   <div class="callout error" role="alert" style="margin-bottom: 16px;">
@@ -709,7 +710,11 @@
         onPrimary={() => openDetail(req)}
       >
         {#snippet metaContent()}
-          <span class="chip chip-brand">{typeName(req.typeCode)}</span>
+          <LeaveTypeChip
+            code={req.typeCode}
+            label={typeName(req.typeCode)}
+            requested={req.status === "PENDING"}
+          />
           {#if req.status === "CANCELLATION_REQUESTED"}
             <span class="chip chip-warn">Stornierung beantragt</span>
           {:else if req.status === "PENDING"}
