@@ -2,7 +2,7 @@
  * Issue #840 — the Abwesenheiten areas, driven in a real browser on the real test stack.
  *
  * The API tests prove the masked calendar read and the component tests prove the bars; this spec
- * proves the promises only a browser can show. Eight tests, named after the steps of plan 840-13 (and 840-16, 840-17):
+ * proves the promises only a browser can show. Ten tests, named after the steps of plan 840-13 (and 840-16, 840-17, 840-18):
  *
  *   0. (slice 1, plan 840-02) the Übersicht draws an approved request solid and a pending one
  *      dashed, read from the computed border style, so the style is the one the browser really draws;
@@ -25,7 +25,10 @@
  *   7. (gap round, plan 840-17, G-1/G-3/G-8) the Anträge count is neutral and explained on every tab
  *      (also on a directly opened Planung) and leads to the „Offen“ filter, the type chips of the
  *      Anträge list and the inbox use the colours of the one mapping, the inbox header reads
- *      „Team“ / „Inbox“.
+ *      „Team“ / „Inbox“;
+ *   9. (gap round, plan 840-18, G-7) the primary buttons of the leave pages compute exactly the
+ *      colours of the reference primary (`/admin/employees`) and reach 4.5:1 in every skin, theme,
+ *      mode and state (rest and hover), read from the computed styles in the real browser.
  *
  * Setup goes through the API with the tenant admin's token (people, requests, plans, a manual
  * holiday, the salon's opening hours). No test depends on a fixed date: the Übersicht month is the
@@ -1094,5 +1097,153 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(inboxChip).toBeVisible();
     expect(await borderStyleOf(inboxChip)).toBe("dashed");
     expect(await inboxChip.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(vacation);
+  });
+
+  test("9. primary buttons: the same recipe as elsewhere, WCAG AA in every skin, theme, mode and state", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    test.setTimeout(180_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const person = await createEmployee(request, tenant, {
+      key: "prm",
+      firstName: "Knopf",
+      lastName: "Farbe",
+    });
+    await ensureEntitlement(request, tenant, person.id, PLAN_YEAR);
+    const salonId = await defaultSalonId(request, tenant);
+    await openPlanViaApi(request, tenant, salonId, PLAN_YEAR);
+    await loginAsTenantAdmin(page, tenant);
+
+    interface Look {
+      skin: "editorial" | "modern";
+      theme: "pflaume" | "nacht" | "wald";
+      mode: "light" | "dark";
+    }
+    interface Painted {
+      text: string;
+      stops: string[];
+    }
+
+    /** Sets the look on <html> in the page only (nothing is persisted) and switches transitions off. */
+    const applyLook = (look: Look) =>
+      page.evaluate((l) => {
+        if (!document.getElementById("e2e-no-motion")) {
+          const style = document.createElement("style");
+          style.id = "e2e-no-motion";
+          style.textContent =
+            "*, *::before, *::after { transition: none !important; animation: none !important; }";
+          document.head.appendChild(style);
+        }
+        const root = document.documentElement;
+        if (l.skin === "modern") root.setAttribute("data-skin", "modern");
+        else root.removeAttribute("data-skin");
+        root.setAttribute("data-theme", l.theme);
+        root.setAttribute("data-mode", l.mode);
+      }, look);
+
+    /** Computed text colour and every opaque background stop (a solid fill is its one stop). */
+    const paintOf = (button: Locator): Promise<Painted> =>
+      button.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        const image = cs.backgroundImage;
+        const stops = image === "none" ? [] : (image.match(/rgba?\([^)]*\)/g) ?? []);
+        return { text: cs.color, stops: stops.length > 0 ? stops : [cs.backgroundColor] };
+      });
+
+    const ratioOf = (painted: Painted) => {
+      const text = parseColor(painted.text);
+      return painted.stops.map((stop) => {
+        const bg = parseColor(stop);
+        expect(bg.a, `background stop ${stop} is opaque`).toBe(1);
+        const [hi, lo] = [luminance(text), luminance(bg)].sort((a, b) => b - a);
+        return (hi + 0.05) / (lo + 0.05);
+      });
+    };
+
+    const looks: Look[] = [];
+    for (const skin of ["editorial", "modern"] as const)
+      for (const theme of ["pflaume", "nacht", "wald"] as const)
+        for (const mode of ["light", "dark"] as const) looks.push({ skin, theme, mode });
+
+    const pages: Array<{
+      url: string;
+      buttons: Array<{ name: string; locate: () => Locator }>;
+    }> = [
+      {
+        url: "/team/leave?tab=uebersicht",
+        buttons: [
+          {
+            name: "team: + Neue Abwesenheit",
+            locate: () =>
+              page.locator(".page-head").getByRole("button", { name: /Neue Abwesenheit/ }),
+          },
+        ],
+      },
+      {
+        url: `/team/leave?tab=planung&zoom=monat&datum=${PLAN_YEAR}-03-01`,
+        buttons: [
+          { name: "team: Planung verwalten", locate: () => page.getByTestId("leave-plan-manage") },
+          {
+            name: "team: Wunsch hinzufügen",
+            locate: () => page.getByTestId("leave-plan-add-wish"),
+          },
+        ],
+      },
+      {
+        url: "/leave",
+        buttons: [
+          { name: "own: + Neue Abwesenheit", locate: () => page.getByTestId("leave-new-request") },
+        ],
+      },
+      {
+        url: "/admin/employees",
+        buttons: [{ name: "reference", locate: () => page.getByTestId("admin-employees-add") }],
+      },
+    ];
+
+    // reference[look][state]; filled from the last page, but the reference page is visited first.
+    const reference = new Map<string, Painted>();
+    const failures: string[] = [];
+    const table: string[] = [];
+    const order = [pages[3], pages[0], pages[1], pages[2]];
+    for (const entry of order) {
+      await page.goto(entry.url);
+      for (const spec of entry.buttons) {
+        const button = spec.locate();
+        await expect(button, spec.name).toBeVisible();
+        for (const look of looks) {
+          await applyLook(look);
+          for (const state of ["rest", "hover"] as const) {
+            if (state === "hover") await button.hover();
+            else await page.mouse.move(0, 0);
+            const painted = await paintOf(button);
+            const key = `${look.skin}/${look.theme}/${look.mode}/${state}`;
+            if (spec.name === "reference") reference.set(key, painted);
+            const ratios = ratioOf(painted);
+            const lowest = Math.min(...ratios);
+            const ref = reference.get(key);
+            table.push(
+              `${spec.name} | ${key} | text ${painted.text} on ${painted.stops.join(" -> ")} | min ${lowest.toFixed(2)}:1${
+                ref && spec.name !== "reference"
+                  ? ` | ref ${ref.text} on ${ref.stops.join(" -> ")}`
+                  : ""
+              }`,
+            );
+            if (lowest < 4.5) failures.push(`AA ${spec.name} ${key}: ${lowest.toFixed(2)}:1`);
+            if (ref && spec.name !== "reference") {
+              if (JSON.stringify(ref) !== JSON.stringify(painted)) {
+                failures.push(`differs from the reference ${spec.name} ${key}`);
+              }
+            }
+          }
+        }
+        await page.mouse.move(0, 0);
+      }
+    }
+    test.info().annotations.push({ type: "primary-buttons", description: table.join("\n") });
+    console.log(`PRIMARY-BUTTON TABLE\n${table.join("\n")}`);
+    expect(failures, failures.join("\n")).toEqual([]);
   });
 });
