@@ -55,7 +55,12 @@
     type TeamLeaveState,
     type TeamLeaveTab,
   } from "$lib/leave/area-tabs"; // Issue #840 (D-840-01/02)
-  import { overviewPersons, pageOfRequest, requestsForStatus } from "$lib/leave/team-leave-model"; // Issue #840 (E-06)
+  import {
+    locateDeepLinkedRequest,
+    overviewPersons,
+    pageOfRequest,
+    requestsForStatus,
+  } from "$lib/leave/team-leave-model"; // Issue #840 (E-06)
   import { closedDaysFor } from "$lib/shifts/closed-days"; // Issue #563 (D-03), #840 (D-840-14)
   import { teamSalonViewSalon } from "$lib/dashboard/team-view"; // Issue #82/#558, #840 (D-840-17)
   import { deepLinkSalon } from "$lib/leave-plan/deep-link"; // Issue #835 (WR-07)
@@ -430,10 +435,47 @@
     }, 3000);
   }
 
+  // A deep-linked request waiting for its list: the effect below highlights it as soon as the row
+  // exists (the year or the filter may have to change first, WR-05).
+  let pendingFocusId: string | null = $state(null);
+
+  /**
+   * Finds the request of a `?request=` link and shows it. The link carries no year, so a request
+   * outside the loaded year list is looked up in the open list of every year: found, the Anträge
+   * tab switches to the open filter and to the request's own year; not found (decided, in another
+   * salon, out of reach) the page says so calmly instead of highlighting nothing.
+   */
+  async function showLinkedRequest(requestId: string) {
+    const located = locateDeepLinkedRequest(requestId, allTeamRequests, pendingRequests);
+    if (located.kind === "year") {
+      focusRequest(requestId);
+      return;
+    }
+    if (located.kind === "open") {
+      pendingFocusId = requestId;
+      setTimeout(() => {
+        if (pendingFocusId === requestId) pendingFocusId = null;
+      }, 5000);
+      await navigate({ status: "PENDING", datum: located.startDate, requestId }, true);
+      return;
+    }
+    toasts.info("Dieser Antrag ist nicht in deiner aktuellen Auswahl.");
+  }
+
+  $effect(() => {
+    const id = pendingFocusId;
+    if (id === null || loading) return;
+    if (!filteredTeamRequests.some((req) => req.id === id)) return;
+    untrack(() => {
+      pendingFocusId = null;
+      focusRequest(id);
+    });
+  });
+
   function runDeepLink() {
     // Deep-link: highlight a specific request from a notification or a bar (Anträge tab only).
     const requestId = deepLinkRequestId;
-    if (requestId && activeTab === "antraege") focusRequest(requestId);
+    if (requestId && activeTab === "antraege") void showLinkedRequest(requestId);
 
     // Deep-link: create=1 (Issue #587) opens the EXISTING „Neue Abwesenheit“ dialog, prefilled, on
     // whatever tab is active (#840 D-840-03). Only with the create permission; the person is taken

@@ -173,9 +173,11 @@ describe("Issue #558 — Team-Anträge follow the header salon", () => {
     expect(mount).not.toContain("runDeepLink(");
     expect(mount).not.toContain("loadData()");
     // #840: the scroll and highlight live in focusRequest (also used by a bar click); runDeepLink
-    // calls it, and still only after the first completed load.
+    // reaches it through showLinkedRequest (review WR-05: the request may sit outside the year
+    // list), and still only after the first completed load.
     const run = functionBody("runDeepLink");
-    expect(run).toContain("focusRequest(requestId)");
+    expect(run).toContain("showLinkedRequest(requestId)");
+    expect(functionBody("showLinkedRequest")).toContain("focusRequest(requestId)");
     const focus = functionBody("focusRequest");
     expect(focus).toContain("requestAnimationFrame(");
     expect(focus).toContain("scrollIntoView(");

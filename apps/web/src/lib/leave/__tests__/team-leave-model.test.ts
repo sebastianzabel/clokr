@@ -1,7 +1,12 @@
 // Issue #840 (E-01, E-02, E-06) - the pure decisions of the Team → Abwesenheiten host page.
 
 import { describe, it, expect } from "vitest";
-import { overviewPersons, pageOfRequest, requestsForStatus } from "../team-leave-model";
+import {
+  locateDeepLinkedRequest,
+  overviewPersons,
+  pageOfRequest,
+  requestsForStatus,
+} from "../team-leave-model";
 import type { TimelinePerson } from "../timeline-model";
 
 const bar = { key: "b", start: "2026-11-02", end: "2026-11-03", style: "gesetzt" as const };
@@ -87,5 +92,29 @@ describe("pageOfRequest", () => {
   it("is null for an unknown id or a bad page size", () => {
     expect(pageOfRequest(ids, "nope", 10)).toBeNull();
     expect(pageOfRequest(ids, "r0", 0)).toBeNull();
+  });
+});
+
+describe("locateDeepLinkedRequest (WR-05)", () => {
+  const year = [{ id: "a", startDate: "2026-11-03" }];
+  const open = [
+    { id: "a", startDate: "2026-11-03" },
+    { id: "jan", startDate: "2027-01-12T00:00:00.000Z" },
+  ];
+
+  it("a request of the loaded year list is found there", () => {
+    expect(locateDeepLinkedRequest("a", year, open)).toEqual({ kind: "year" });
+  });
+
+  it("an open request of another year is found in the open list, with its own start day", () => {
+    expect(locateDeepLinkedRequest("jan", year, open)).toEqual({
+      kind: "open",
+      startDate: "2027-01-12",
+    });
+  });
+
+  it("an unknown request, or one outside both lists, is missing", () => {
+    expect(locateDeepLinkedRequest("zzz", year, open)).toEqual({ kind: "missing" });
+    expect(locateDeepLinkedRequest("a", [], [])).toEqual({ kind: "missing" });
   });
 });

@@ -87,3 +87,24 @@ export function pageOfRequest(ids: readonly string[], id: string, pageSize: numb
   if (index < 0 || pageSize < 1) return null;
   return Math.floor(index / pageSize) + 1;
 }
+
+/** Where a deep-linked request (`/team/leave?request=<id>`) sits among the lists the page has loaded. */
+export type DeepLinkedRequest =
+  { kind: "year" } | { kind: "open"; startDate: string } | { kind: "missing" };
+
+/**
+ * Finds the request of a `/team/leave?request=` link (review WR-05): in the year list the page shows,
+ * else in the open list of every year (the all-years PENDING read), else not at all. The link carries
+ * no year (the attendance reminders and the shift adjustments write it that way and are deduped by
+ * the link string), so an open request filed in November for January is found by id, not by year.
+ */
+export function locateDeepLinkedRequest<T extends { id: string; startDate: string }>(
+  id: string,
+  yearList: readonly T[],
+  openList: readonly T[],
+): DeepLinkedRequest {
+  if (yearList.some((row) => row.id === id)) return { kind: "year" };
+  const open = openList.find((row) => row.id === id);
+  if (open) return { kind: "open", startDate: open.startDate.slice(0, 10) };
+  return { kind: "missing" };
+}

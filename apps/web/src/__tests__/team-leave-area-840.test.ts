@@ -316,3 +316,30 @@ describe("Issue #840 D-840-17/03/31 - Planung tab, legacy links, create link on 
     expect(create).not.toContain("activeTab");
   });
 });
+
+describe("review WR-05 - a /team/leave?request= link finds a request outside the year list", () => {
+  it("the deep link resolves the request against the year list and the open list of every year", () => {
+    const run = functionBody("runDeepLink");
+    expect(run).toContain("showLinkedRequest(requestId)");
+    const show = functionBody("showLinkedRequest");
+    expect(show).toContain("locateDeepLinkedRequest(requestId, allTeamRequests, pendingRequests)");
+    // An open request of another year switches the filter and the year, then is highlighted.
+    expect(show).toContain('status: "PENDING"');
+    expect(show).toContain("datum: located.startDate");
+    // A request nobody can show gets a calm message, never silence.
+    expect(show).toContain("toasts.info(");
+  });
+
+  it("the highlight waits for the row instead of running on a list that does not hold it yet", () => {
+    expect(PAGE).toContain("pendingFocusId");
+    expect(PAGE).toMatch(/filteredTeamRequests\.some\(\(req\) => req\.id === id\)/);
+  });
+
+  it("the attendance reminder link string is unchanged (it dedupes by link)", () => {
+    const checker = readRouteFile(
+      "../../../api/src/contexts/time-tracking/plugins/attendance-checker.ts",
+      "../api/src/contexts/time-tracking/plugins/attendance-checker.ts",
+    );
+    expect(checker).toContain("/team/leave?request=");
+  });
+});
