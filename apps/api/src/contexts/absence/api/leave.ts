@@ -71,6 +71,9 @@ import {
   resolveSalonInReach, // Issue #558 (D-01) — the one validator of a chosen salon
   homeSalonsForDays, // Issue #840 (D-840-19) — Stammsalon per day, one call per calendar request
   findSalon, // Issue #840 (D-840-25) — the salon in view of the range form
+  holidaysForSalon, // Issue #840 (D-840-25) — the holidays of the salon in view
+  countActiveSalons, // Issue #840 (D-840-25) — a one-salon tenant always names its salon
+  findDefaultSalon, // Issue #840 (D-840-25) — the one active salon of such a tenant
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
 import { canSeeLeaveType } from "../leave-calendar-visibility"; // Issue #835 — moved out of this route (second caller)
@@ -332,10 +335,21 @@ const calendarDaySchema = z
 const leaveCalendarQuerySchema = z
   .object({
     salonId: z.string().uuid().optional(),
+    // Issue #840 (D-840-18/24): the personal areas ask for their own slice. `own` = the caller's
+    // own rows, `team` = the caller's Stammsalon colleagues, masked. Never together with `salonId`.
+    scope: z.enum(["own", "team"]).optional(),
     from: calendarDaySchema.optional(),
     to: calendarDaySchema.optional(),
   })
   .superRefine((q, ctx) => {
+    if (q.scope !== undefined && q.salonId !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "scope und salonId nicht gemeinsam",
+        path: ["scope"],
+      });
+      return;
+    }
     if ((q.from === undefined) !== (q.to === undefined)) {
       ctx.addIssue({ code: "custom", message: "from und to nur gemeinsam", path: ["from"] });
       return;
@@ -1818,7 +1832,7 @@ export async function leaveRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { year, month } = req.query as { year?: string; month?: string };
       const query = leaveCalendarQuerySchema.parse(req.query);
-      const { salonId } = query;
+      const { salonId, scope } = query;
       const rangeForm = query.from !== undefined && query.to !== undefined;
       const y = year ? parseInt(year) : new Date().getFullYear();
       const m = month ? parseInt(month) : new Date().getMonth() + 1;
@@ -1852,6 +1866,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const windowFromDay = firstDay.toISOString().slice(0, 10);
       const windowToDay = lastDay.toISOString().slice(0, 10);
 
+      const selfEmployeeId = req.user.employeeId ?? null;
       const [allRows, holidayMap] = await Promise.all([
         app.prisma.leaveRequest.findMany({
           where: {
@@ -1867,31 +1882,69 @@ export async function leaveRoutes(app: FastifyInstance) {
           },
           orderBy: { startDate: "asc" },
         }),
-        // Interim (Phase 71b, issue #71): a tenant-wide calendar has no single employee to
-        // resolve a work location for, so it shows the REQUESTER's own work-location holidays
-        // (or the tenant's default salon's, for a profile-less admin) until Block D (#82 ff.)
-        // designs a salon-aware calendar.
-        getHolidayMap(
-          app.prisma,
-          req.user.tenantId,
-          req.user.employeeId ?? null,
-          firstDay,
-          lastDay,
-        ),
+        // Issue #840 (D-840-25): a validated salon in view brings its OWN holidays (the one salon
+        // resolution of the Unterbau). Without one the interim below stays: a tenant-wide calendar
+        // has no single employee to resolve a work location for (Phase 71b, issue #71), so it
+        // shows the REQUESTER's own work-location holidays (or the tenant's default salon's, for a
+        // profile-less admin).
+        chosenSalonId !== null
+          ? holidaysForSalon(app.prisma, tenantId, chosenSalonId, windowFromDay, windowToDay).then(
+              (list) => new Map(list.map((h) => [h.date, h.name] as const)),
+            )
+          : getHolidayMap(app.prisma, req.user.tenantId, selfEmployeeId, firstDay, lastDay),
       ]);
+
+      // Issue #840 (D-840-18/23/24): the caller's own Stammsalons in the window, read ONCE and only
+      // when a personal scope or the `salons` field of the range form needs them. A foreign person's
+      // Stammsalon is never read here (that is the per-row decision below).
+      const ownHomeSalonIds: string[] = [];
+      if (scope !== undefined && selfEmployeeId !== null) {
+        const ownHome = (
+          await homeSalonsForDays(
+            app.prisma,
+            tenantId,
+            [selfEmployeeId],
+            windowFromDay,
+            windowToDay,
+          )
+        ).get(selfEmployeeId);
+        for (const home of ownHome?.values() ?? []) {
+          if (home !== null && !ownHomeSalonIds.includes(home)) ownHomeSalonIds.push(home);
+        }
+      }
 
       // Issue #558: the unfiltered calendar stays tenant-wide by design (type-masked below); a
       // chosen salon only narrows it. A row is kept by its range clipped to the SHOWN month
       // (calendar-day bounds, #493), so a request running into the next month is attributed by
-      // the Stammsalon of the days in view. The holiday entries stay the requester's
-      // work-location holidays (interim of #71) — the filter does not touch them.
-      const rows =
-        chosenSalonId === null
-          ? allRows
-          : await filterLeaveRowsToHomeSalon(app.prisma, tenantId, allRows, chosenSalonId, {
-              fromDay: windowFromDay,
-              toDay: windowToDay,
-            });
+      // the Stammsalon of the days in view. The holiday entries are not touched by the row filter
+      // (a chosen salon brings its own, see above; otherwise the requester's, interim of #71).
+      const isOwnRow = (r: (typeof allRows)[number]) => r.employee.userId === req.user.sub;
+      let rows = allRows;
+      if (chosenSalonId !== null) {
+        rows = await filterLeaveRowsToHomeSalon(app.prisma, tenantId, allRows, chosenSalonId, {
+          fromDay: windowFromDay,
+          toDay: windowToDay,
+        });
+      } else if (scope === "own") {
+        // Issue #840 (D-840-24): the personal calendar carries nothing of a colleague.
+        rows = allRows.filter(isOwnRow);
+      } else if (scope === "team") {
+        // Issue #840 (D-840-18/23, T-840-08): the persons homed in one of the caller's own
+        // Stammsalons on a window day, plus the caller; a caller without Stammsalon gets only
+        // their own rows. The input order is kept, a row reached through two salons appears once.
+        const teamIds = new Set<string>();
+        for (const ownSalonId of ownHomeSalonIds) {
+          const inSalon = await filterLeaveRowsToHomeSalon(
+            app.prisma,
+            tenantId,
+            allRows,
+            ownSalonId,
+            { fromDay: windowFromDay, toDay: windowToDay },
+          );
+          for (const r of inSalon) teamIds.add(r.id);
+        }
+        rows = allRows.filter((r) => isOwnRow(r) || teamIds.has(r.id));
+      }
 
       // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
       // query, scoped to the tenant, so the per-row masking below never needs a query inside
@@ -1955,8 +2008,12 @@ export async function leaveRoutes(app: FastifyInstance) {
         if (r.employee.userId === req.user.sub) continue;
         foreignIds.add(r.employeeId);
       }
+      // A personal scope forces every foreign row to "not visible" (E-03), so no day is looked at.
       const needHomeDays =
-        !visibility.wholeTenant && visibility.salonIds.size > 0 && foreignIds.size > 0;
+        scope === undefined &&
+        !visibility.wholeTenant &&
+        visibility.salonIds.size > 0 &&
+        foreignIds.size > 0;
       const homes = needHomeDays
         ? await homeSalonsForDays(
             app.prisma,
@@ -1985,13 +2042,16 @@ export async function leaveRoutes(app: FastifyInstance) {
         candidates,
         (row) =>
           row.isOwn ||
-          isPersonVisibleOnSomeDay(
-            visibility,
-            row.employeeId,
-            homes.get(row.employeeId),
-            row.startDate > windowFromDay ? row.startDate : windowFromDay,
-            row.endDate < windowToDay ? row.endDate : windowToDay,
-          ),
+          // Issue #840 (D-840-18, E-03): the personal areas are neutral for everyone, whatever the
+          // caller's reach — the scope only ever forces "not visible", it never widens.
+          (scope === undefined &&
+            isPersonVisibleOnSomeDay(
+              visibility,
+              row.employeeId,
+              homes.get(row.employeeId),
+              row.startDate > windowFromDay ? row.startDate : windowFromDay,
+              row.endDate < windowToDay ? row.endDate : windowToDay,
+            )),
         new Set<string>(EFFECTIVE_LEAVE_STATUSES),
       );
       // § 9 markers and days only for detailed rows: whoever may not learn the type must not read
@@ -2022,8 +2082,21 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // Issue #840 (D-840-25): the range form also names the salon in view (opening hours are
       // salon master data, not personal data) so the web can draw closed days from the one rule.
-      const salon =
-        chosenSalonId === null ? null : await findSalon(app.prisma, tenantId, chosenSalonId);
+      // The salon in view: the validated one; else the caller's single Stammsalon of a personal
+      // scope; else the only active salon of a one-salon tenant (it has no header selection, so
+      // without this its closed days would never show; same reading as `coverageSalonInView`).
+      let salonInView: string | null = chosenSalonId;
+      if (salonInView === null && scope !== undefined && ownHomeSalonIds.length === 1) {
+        salonInView = ownHomeSalonIds[0];
+      }
+      let salon = salonInView === null ? null : await findSalon(app.prisma, tenantId, salonInView);
+      if (
+        salon === null &&
+        salonInView === null &&
+        (await countActiveSalons(app.prisma, tenantId)) === 1
+      ) {
+        salon = await findDefaultSalon(app.prisma, tenantId);
+      }
       return {
         entries,
         salons:

@@ -886,7 +886,13 @@ entscheidet je Person nach Reichweite (Stammsalon je Tag, dieselbe Regel wie die
 #836): fremde Zeilen außerhalb der Reichweite erscheinen nur als abwesend (Name und Zeitraum, ohne Art,
 Status, halben Tag und § 9), fremde beantragte Zeilen entfallen, angrenzende Zeiträume einer Person
 werden zusammengeführt. Die Zeile der früheren Prüfung (`leave-request:read`, Art sichtbar für A, M) ist
-entfallen; ein `salonId` wird weiter mit `resolveSalonInReach` gegen dieselbe Reichweite geprüft (#558).
+entfallen; ein `salonId` wird weiter mit `resolveSalonInReach` gegen dieselbe Reichweite geprüft (#558). Der Parameter
+`scope=own|team` (keine neue Berechtigung) liefert den persönlichen Bereichen nur das Nötige
+(Datenminimierung, Art. 5 Abs. 1 lit. c DSGVO): `own` nur die eigenen Zeilen, `team` nur die eigenen
+Zeilen und die Personen, die an mindestens einem Tag des Fensters im eigenen Stammsalon geführt werden,
+und zwar für jede Rolle und Reichweite ausschließlich als abwesend maskiert; `scope` zusammen mit
+`salonId` ist 400. Mit gültigem `salonId` stammen die Feiertage aus diesem Salon, und die Bereichsform
+nennt den Salon in `salons` mit seinen Öffnungszeiten (Stammdaten, keine Personendaten).
 
 ## Empfängersuchen
 
