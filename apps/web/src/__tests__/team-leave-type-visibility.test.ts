@@ -39,7 +39,8 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
   it("Test 0: the page source actually loaded", () => {
     expect(PAGE.length).toBeGreaterThan(50_000); // the file is ~2900 lines / >100 KB
     expect(PAGE).toContain("cal-chip");
-    expect(PAGE).toContain("cal-legend");
+    // #840 D-840-10: the legend is the one <LeaveLegend> component, no longer a hand-written block.
+    expect(PAGE).toContain("<LeaveLegend");
   });
 
   describe("Group A — one decision, three render points (D-10, AC-1, AC-2)", () => {
@@ -98,8 +99,12 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
   });
 
   describe("Group B — the legend (D-05, D-06, AC-3, AC-4)", () => {
-    const lStart = PAGE.indexOf('<div class="cal-legend">');
-    const lEnd = PAGE.indexOf("</div>", PAGE.indexOf("gestrichelt = ausstehend"));
+    // #840 D-840-10: Group B pinned the hand-written legend block. The legend is now the one
+    // <LeaveLegend> component (rendering pinned in LeaveLegend.test.ts); what stays pinned HERE is
+    // the page's side of D-05: which codes it hands over, and that they are gated on the same
+    // predicate as the bars.
+    const lStart = PAGE.indexOf("<LeaveLegend");
+    const lEnd = PAGE.indexOf("/>", lStart);
     const LEGEND = lStart > -1 && lEnd > lStart ? PAGE.slice(lStart, lEnd) : "";
 
     it("legend markers were found", () => {
@@ -107,28 +112,22 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
       expect(lEnd).toBeGreaterThan(lStart);
     });
 
-    it("B1: the type dots are a loop over the shared table, not hand-written spans", () => {
-      expect(LEGEND).toContain("{#each LEAVE_TYPE_OPTIONS as t (t.code)}");
-      expect(LEGEND).toContain('style:background="var({t.colorVar})"');
-      expect(LEGEND).toContain("{t.label}");
+    it("B1: the type codes are derived from the shared table, not hand-written spans", () => {
+      expect(LEGEND).toContain("LEAVE_TYPE_OPTIONS.map((t) => t.code)");
+      expect(LEGEND).not.toContain("<span");
     });
 
-    it("B2: the loop is gated on the same predicate as the bars (D-05)", () => {
-      expect(LEGEND).toContain("{#if canSeeLeaveType(false, canSeeOthersLeaveType)}");
+    it("B2: the codes are gated on the same predicate as the bars (D-05)", () => {
+      expect(LEGEND).toContain("canSeeLeaveType(false, canSeeOthersLeaveType)");
     });
 
-    it("B3: no hand-written type dot survives — every --leave-type-* literal is gone except the neutral one", () => {
-      const literals = LEGEND.match(/--leave-type-[a-z-]+/g) ?? [];
-      expect(literals).toEqual(["--leave-type-absent"]);
+    it("B3: no --leave-type-* literal on the page's legend — the colours come from the mapping", () => {
+      expect(LEGEND.match(/--leave-type-[a-z-]+/g) ?? []).toEqual([]);
     });
 
-    it("B4: the three always-present items survive the role gate, outside the {#if}", () => {
-      const gateIdx = LEGEND.indexOf("{#if canSeeLeaveType");
-      const endIdx = LEGEND.indexOf("{/if}", gateIdx);
-      const afterGate = LEGEND.slice(endIdx);
-      expect(afterGate).toContain(">Abwesend<");
-      expect(afterGate).toContain('<span class="legend-holiday-dot"></span>Feiertag');
-      expect(afterGate).toContain("gestrichelt = ausstehend");
+    it("B4: the always-present items are passed outside the gate: pending style, absent style, holiday", () => {
+      expect(LEGEND).toContain('styles={["beantragt", "abwesend"]}');
+      expect(LEGEND).toContain("markings={{ holiday: true }}");
     });
 
     it("B5: Elternzeit and Mutterschutz are reachable — they are in the table the loop reads", () => {
@@ -149,8 +148,10 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
     // the fourth lives in the shared component — asserted below so the count invariant this
     // group protects (every type dropdown reachable from team/leave is fed from
     // LEAVE_TYPE_OPTIONS, never the HOLIDAY-including LEAVE_TYPES) still covers all four.
-    it("C1: exactly three LEAVE_TYPE_OPTIONS loops on the page — list-filter select, legend, Korrektur-modal select", () => {
-      expect((PAGE.match(/\{#each LEAVE_TYPE_OPTIONS as /g) ?? []).length).toBe(3);
+    // #840 D-840-10: the legend loop moved into <LeaveLegend> (the page hands over the codes), so
+    // two page loops remain: list-filter select and Korrektur-modal select.
+    it("C1: exactly two LEAVE_TYPE_OPTIONS loops on the page — list-filter select, Korrektur-modal select", () => {
+      expect((PAGE.match(/\{#each LEAVE_TYPE_OPTIONS as /g) ?? []).length).toBe(2);
     });
 
     it("C1b: the shared create/edit dialog carries the fourth loop", () => {

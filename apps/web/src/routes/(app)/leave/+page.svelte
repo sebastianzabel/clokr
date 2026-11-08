@@ -12,6 +12,7 @@
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
   import LeaveLimitNotice from "$lib/components/leave/LeaveLimitNotice.svelte";
+  import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
   import { warningSentences } from "$lib/leave-limits/sentences";
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // Phase 303-03 (#265's pattern)
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
@@ -39,6 +40,17 @@
   } from "$lib/leave/vacation-summary";
   import { resolveChipVisual, isDrawnInCalendar } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303, Issue #446 (D-04)
   import { leaveDaysLabel, calendarDaysUnit } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+
+  // The types the own calendar can paint, in legend order (#840, D-840-10). Which codes occur is
+  // decided here; the legend only names them.
+  const CALENDAR_LEGEND_TYPE_CODES = [
+    "VACATION",
+    "OVERTIME_COMP",
+    "SICK",
+    "SICK_CHILD",
+    "SPECIAL",
+    "EDUCATION",
+  ];
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -1231,38 +1243,13 @@
         </div>
       {/if}
 
-      <!-- Legende -->
-      <div class="cal-legend">
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-vacation)"
-          ></span>Urlaub</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-overtime)"
-          ></span>ÜSt-Ausgleich</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-sick)"></span>Krank</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-sick-child)"
-          ></span>Kinderkrank</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-special)"
-          ></span>Sonderurlaub</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-education)"
-          ></span>Bildungsurlaub</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-absent)"
-          ></span>Abwesend</span
-        >
-        <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
-        <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
-      </div>
+      <!-- Legend: the one component; the types are the ones this calendar paints (#840, D-840-10). -->
+      <LeaveLegend
+        typeCodes={CALENDAR_LEGEND_TYPE_CODES}
+        styles={["beantragt", "abwesend"]}
+        markings={{ holiday: true }}
+        holidayLook="calendar"
+      />
     </div>
 
     <!-- iCal-Download -->
@@ -2057,43 +2044,11 @@
   }
 
   /* Legende */
-  .cal-legend {
-    display: flex;
-    gap: 1rem;
-    padding: 0.875rem 1.25rem;
-    flex-wrap: wrap;
-  }
-  .legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
+  /* #840 D-840-10: the legend is LeaveLegend.svelte. */
   .badge-attest {
     margin-left: 0.25rem;
     font-size: 0.75rem;
   }
-  .legend-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    flex-shrink: 0;
-    display: inline-block;
-  }
-  .legend-holiday-dot {
-    width: 10px;
-    height: 10px;
-    background: var(--brand-soft);
-    border: 1.5px solid var(--brand);
-    border-radius: 2px;
-    flex-shrink: 0;
-    display: inline-block;
-  }
-  .legend-pending {
-    font-style: italic;
-  }
-
   /* ── iCal ────────────────────────────────────────────────────────── */
   .ical-section {
     display: flex;

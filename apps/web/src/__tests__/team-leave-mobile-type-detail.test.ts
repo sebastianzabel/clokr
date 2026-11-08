@@ -258,7 +258,9 @@ describe("#265 — CalendarDayDetail spells the type out", () => {
 describe("#265 — page wiring (source pins)", () => {
   function cellBlock(): string {
     const start = PAGE.indexOf("{@const entries = calMap.get(day.dateStr)");
-    const end = PAGE.indexOf('<div class="cal-legend">');
+    // #840 D-840-10: the hand-written legend block became the one <LeaveLegend> component; the
+    // cell block still ends where the legend starts.
+    const end = PAGE.indexOf("<LeaveLegend");
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     return PAGE.slice(start, end);

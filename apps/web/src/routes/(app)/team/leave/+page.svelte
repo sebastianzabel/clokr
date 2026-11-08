@@ -35,6 +35,7 @@
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import { parseLeaveCreateDeepLink, type LeaveCreateDeepLink } from "$lib/leave/create-deep-link"; // Issue #587
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // #265
+  import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
   import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte"; // Issue #840
   import {
     calendarRangeQuery,
@@ -1500,22 +1501,17 @@
     {/if}
 
     <!-- Legend — shows only what this viewer's calendar can actually contain (Phase 257, D-05).
-         An EMPLOYEE never sees a colleague's type, so the type dots would promise colours that
-         never appear for them. -->
-    <div class="cal-legend">
-      {#if canSeeLeaveType(false, canSeeOthersLeaveType)}
-        {#each LEAVE_TYPE_OPTIONS as t (t.code)}
-          <span class="legend-item"
-            ><span class="legend-dot" style:background="var({t.colorVar})"></span>{t.label}</span
-          >
-        {/each}
-      {/if}
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-absent)"></span>Abwesend</span
-      >
-      <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
-      <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
-    </div>
+         An EMPLOYEE never sees a colleague's type, so the type entries would promise colours that
+         never appear for them: the host passes no type codes then. One component for every
+         absence view (#840, D-840-10). -->
+    <LeaveLegend
+      typeCodes={canSeeLeaveType(false, canSeeOthersLeaveType)
+        ? LEAVE_TYPE_OPTIONS.map((t) => t.code)
+        : []}
+      styles={["beantragt", "abwesend"]}
+      markings={{ holiday: true }}
+      holidayLook="calendar"
+    />
   </div>
 
   <!-- iCal-Download -->
@@ -2723,19 +2719,7 @@
   }
 
   /* Legende */
-  .cal-legend {
-    display: flex;
-    gap: 1rem;
-    padding: 0.875rem 1.25rem;
-    flex-wrap: wrap;
-  }
-  .legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
+  /* #840 D-840-10: the legend is LeaveLegend.svelte. */
   .badge-attest {
     margin-left: 0.25rem;
     font-size: 0.75rem;
@@ -2745,26 +2729,6 @@
   .review-section {
     margin-top: 1.25rem;
   }
-  .legend-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    flex-shrink: 0;
-    display: inline-block;
-  }
-  .legend-holiday-dot {
-    width: 10px;
-    height: 10px;
-    background: var(--brand-soft);
-    border: 1.5px solid var(--brand);
-    border-radius: 2px;
-    flex-shrink: 0;
-    display: inline-block;
-  }
-  .legend-pending {
-    font-style: italic;
-  }
-
   /* ── iCal ────────────────────────────────────────────────────────── */
   .ical-section {
     display: flex;
