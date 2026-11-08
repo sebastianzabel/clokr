@@ -1418,7 +1418,7 @@ describe("display surface — Phase 104-10 Task 1", () => {
         isActive: true,
       },
     });
-    await app.prisma.employee.create({
+    const colleagueEmployee = await app.prisma.employee.create({
       data: {
         tenantId: data.tenant.id,
         userId: colleagueUser.id,
@@ -1433,6 +1433,23 @@ describe("display surface — Phase 104-10 Task 1", () => {
       userId: colleagueUser.id,
       role: "EMPLOYEE",
     });
+
+    // WR-04 (#840): a caller without a read reach and without a scope is answered as scope=team,
+    // i.e. only the colleagues of the caller's own Stammsalon. Both persons are therefore homed in
+    // the tenant's default salon, which is what "a colleague of the same salon" means.
+    for (const employeeId of [data.employee.id, colleagueEmployee.id]) {
+      await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: data.tenant.id,
+          employeeId,
+          salonId: data.salonId,
+          kind: "HOME",
+          validFrom: new Date("2024-01-01"),
+          validUntil: null,
+          weekdays: [],
+        },
+      });
+    }
     const loginRes = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",

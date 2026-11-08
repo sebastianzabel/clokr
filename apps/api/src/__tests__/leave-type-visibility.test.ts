@@ -104,6 +104,23 @@ describe("Leave type visibility — /overlap and /calendar answer the same quest
     });
     managerToken = JSON.parse(managerLoginRes.body).accessToken;
 
+    // WR-04 (#840): a caller without a read reach and without a scope is answered as scope=team,
+    // i.e. only the colleagues of the caller's own Stammsalon. Both persons are therefore homed in
+    // the tenant's default salon, which is what "a colleague of the same salon" means.
+    for (const employeeId of [data.employee.id, data.adminEmployee.id]) {
+      await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: data.tenant.id,
+          employeeId,
+          salonId: data.salonId,
+          kind: "HOME",
+          validFrom: new Date("2024-01-01"),
+          validUntil: null,
+          weekdays: [],
+        },
+      });
+    }
+
     // ── SICK LeaveType — find-or-create, mirroring ensureLeaveType()'s identity lookup shape
     // (leave.ts) without importing its module-private helper.
     let sickType = await app.prisma.leaveType.findFirst({
