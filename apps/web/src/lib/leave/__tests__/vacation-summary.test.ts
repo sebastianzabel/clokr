@@ -382,27 +382,39 @@ describe("loadVacationSummary fetches the SELECTED year (issue #122)", () => {
 });
 
 describe("every year-changing path reloads the figures (D-02, issue #122)", () => {
-  // The issue text names only prevYear/nextYear. These six are ALL the sites that assign
-  // `calYear`; fixing two of them would leave the identical defect on the rarer four.
-  const YEAR_CHANGING = [
-    "function prevMonth(",
-    "function nextMonth(",
-    "function gotoMonthYear(",
-    "function gotoToday(",
-    "function prevYear(",
-    "function nextYear(",
-  ];
+  // #840 (D-840-13, E-01): the six navigation functions this block used to pin (`prevMonth`,
+  // `nextMonth`, `gotoMonthYear`, `gotoToday`, `prevYear`, `nextYear`) went with the page's own
+  // month and year bars: the one toolbar writes the URL, and the viewed year is the year of the
+  // URL's anchor day. The invariant is the same - NO path changes the year without reloading the
+  // figures - and is now held structurally: `calYear` cannot be assigned (it is derived), and the
+  // one effect that reacts to it reloads the list, the sick days and the entitlement tiles.
+  it("calYear is derived from the URL anchor day and never assigned", () => {
+    expect(PAGE).toContain("const calYear = $derived(Number(urlState.datum.slice(0, 4)));");
+    expect(PAGE).not.toMatch(/(^|[^\w$.])calYear\s*(\+\+|--|\+=|-=)/m);
+    expect(PAGE).not.toMatch(/^\s*calYear\s*=[^=]/m);
+    // The old assigning navigation is gone.
+    for (const gone of ["function prevMonth(", "function nextYear(", "function gotoMonthYear("]) {
+      expect(PAGE).not.toContain(gone);
+    }
+  });
 
-  it.each(YEAR_CHANGING)("%s reloads the vacation summary for the new year", (marker) => {
-    expect(fnBody(marker)).toContain("loadVacationSummary(calYear)");
+  it("the one effect on calYear reloads the request list and the entitlement tiles", () => {
+    const at = PAGE.indexOf("void calYear;");
+    expect(at).toBeGreaterThan(-1);
+    const effect = PAGE.slice(at, PAGE.indexOf("\n  });", at));
+    expect(effect).toContain("await loadData();");
+    expect(effect).toContain("loadVacationSummary(calYear)");
+    // loadData() starts the sick-day read for the same year.
+    expect(fnBody("async function loadData(")).toContain("loadSickDaysYear(calYear)");
   });
 
   it("has no zero-argument call left anywhere on the page", () => {
     expect(PAGE).not.toContain("loadVacationSummary()");
   });
 
-  it("passes calYear at all nine call sites (six navigation + onMount + two reload paths)", () => {
-    expect((PAGE.match(/loadVacationSummary\(calYear\)/g) ?? []).length).toBe(9);
+  it("passes calYear at both call sites (the year effect and the post-write reload)", () => {
+    expect((PAGE.match(/loadVacationSummary\(calYear\)/g) ?? []).length).toBe(2);
+    expect(fnBody("async function reloadAll(")).toContain("loadVacationSummary(calYear)");
   });
 
   it("shows a loading state instead of the previous year's numbers while refetching (D-03)", () => {

@@ -72,7 +72,7 @@ export function karenzNudgeHref(summary: KarenzNudgeSummary): string {
 
 /** Tooltip on the dashboard "Offene Vorgänge" row. */
 export const KARENZ_NUDGE_TOOLTIP =
-  "Krankheitstage über die Karenzzeit hinaus ohne Attest (§ 5 EFZG). Unter „Urlaub & Abwesenheit“ steht, wie du das Attest einreichst.";
+  "Krankheitstage über die Karenzzeit hinaus ohne Attest (§ 5 EFZG). Unter „Abwesenheiten“ steht, wie du das Attest einreichst.";
 
 /**
  * The answer to "wohin gehört das Attest?". Claim 1 is a fact about Clokr (no upload path
