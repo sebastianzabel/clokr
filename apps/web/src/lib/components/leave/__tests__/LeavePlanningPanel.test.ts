@@ -419,6 +419,53 @@ describe("LeavePlanningPanel - own mode (E-03)", () => {
     expect(screen.getByTestId("plan-track-e2").classList.contains("tl-track--addable")).toBe(false);
   });
 
+  it("offers no drag, edit, status, forecast or rule data for a colleague's wish (WR-02)", async () => {
+    // An answer that still carries a colleague's editable wish, status, forecast and rule data (an
+    // older server): the personal planner narrows it on the display side.
+    getPlan.mockResolvedValue(
+      dto({
+        persons: [
+          person("e1", "Alex", "Muster", { wishes: [wish("w1")] }),
+          person("e2", "Bea", "Beispiel", {
+            wishes: [
+              wish("w2", {
+                editable: true,
+                leaveRequestStatus: "REJECTED",
+                refusalCode: "X",
+                refusalMessage: "Kein Resturlaub mehr",
+                conflict: true,
+              }),
+            ],
+            forecast: {
+              entitlementBasis: "STORED",
+              remainingDays: 3,
+              pendingDays: 0,
+              wishDays: 2,
+              forecastDays: 1,
+              forecastNegative: false,
+            },
+          }),
+        ],
+      }),
+    );
+    render({ mode: "own", period: FEB });
+    await screen.findByTestId("wish-bar-w1");
+    // The caller's own wish keeps its handles; the colleague's has neither a handle nor edit rights.
+    expect(screen.getByTestId("leave-plan-wish-handle-end-w1")).toBeTruthy();
+    expect(
+      screen.getByTestId("leave-plan-wish-w2").classList.contains("absence-wish--readonly"),
+    ).toBe(true);
+    expect(screen.queryByTestId("leave-plan-wish-handle-end-w2")).toBeNull();
+    expect(screen.queryByTestId("leave-plan-wish-handle-start-w2")).toBeNull();
+    expect(screen.getByTestId("wish-bar-w2").getAttribute("aria-label") ?? "").not.toContain(
+      "bearbeiten",
+    );
+    // No forecast column for a colleague, no exceeded-limit marker in the load row.
+    expect(screen.queryByTestId("plan-forecast-e2")).toBeNull();
+    expect(screen.getByTestId("day-load-2027-02-08").getAttribute("data-exceeded")).toBe("false");
+    expect(document.body.textContent).not.toContain("Kein Resturlaub mehr");
+  });
+
   it("team mode lets a manager choose the person", async () => {
     getPlan.mockResolvedValue(
       dto({

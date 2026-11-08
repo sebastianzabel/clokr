@@ -409,7 +409,7 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Read a leave plan (the planner)",
       description:
-        "Returns the planner of one plan: the persons with wishes inside the caller's admission. Readable with a leave-request:read reach over the salon or as a person homed in it. Rows of persons outside the caller's leave-request:read reach are masked (kind MASKED); view=own masks every foreign row.",
+        "Returns the planner of one plan: the persons with wishes inside the caller's admission. Readable with a leave-request:read reach over the salon or as a person homed in it. Rows of persons outside the caller's leave-request:read reach are masked (kind MASKED); view=own masks every foreign row and gives a colleague's wish the period only (no edit right, request status, refusal, forecast or rule data).",
     },
     preHandler: requireAuth,
     handler: async (req, reply) => {

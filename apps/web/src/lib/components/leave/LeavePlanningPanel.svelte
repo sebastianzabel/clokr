@@ -39,6 +39,7 @@
     type TimelineBar,
   } from "$lib/leave/timeline-model";
   import { closedDaysFor } from "$lib/shifts/closed-days";
+  import { neutralOwnPlanner } from "$lib/leave-plan/neutral";
   import { isSalonFilterRejected } from "$lib/salons/page-scope";
   import { createWish, getPlan, listPlans, removeWish, updateWish } from "$lib/leave-plan/api";
   import { planErrorMessage } from "$lib/leave-plan/errors";
@@ -114,9 +115,11 @@
       const plans = await listPlans(salon, forYear);
       const chosen = pickPlan(plans);
       // The personal planner always asks for the neutral reading (E-03, D-840-23).
+      // …and narrows the answer once more on the display side (WR-02): a colleague's wish is never
+      // editable, carries no request status or forecast, and the day load no rule data.
       const data = chosen
         ? mode === "own"
-          ? await getPlan(chosen.id, { view: "own" })
+          ? neutralOwnPlanner(await getPlan(chosen.id, { view: "own" }))
           : await getPlan(chosen.id)
         : null;
       if (mine !== loadSeq) return;

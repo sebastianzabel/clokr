@@ -49,8 +49,22 @@ type Dto = {
   persons: Array<{
     employeeId: string;
     rows: Row[];
-    wishes: Array<{ id: string; conflict: boolean; foreignPlan: boolean; editable: boolean }>;
+    forecast: unknown;
+    wishes: Array<{
+      id: string;
+      startDate: string;
+      endDate: string;
+      halfDay: boolean;
+      conflict: boolean;
+      foreignPlan: boolean;
+      editable: boolean;
+      leaveRequestId: string | null;
+      leaveRequestStatus: string | null;
+      refusalCode: string | null;
+      refusalMessage: string | null;
+    }>;
   }>;
+  dayLoad: Array<{ day: string; count: number; limits: unknown[] | null }>;
 };
 
 describe("Issue #840 - the planner masks foreign rows per person", () => {
@@ -318,16 +332,168 @@ describe("Issue #840 - the planner masks foreign rows per person", () => {
     ]);
   });
 
-  it("view=own leaves wishes as they are without the flag", async () => {
+  it("view=own keeps the caller's own wishes complete and gives a colleague's wish the period only (WR-02)", async () => {
     const plain = await read(managerToken);
     const own = await read(managerToken, "?view=own");
-    for (const person of plain.persons) {
-      const twin = own.persons.find((p) => p.employeeId === person.employeeId);
-      expect(twin?.wishes).toEqual(person.wishes);
-    }
-    expect(plain.persons.find((p) => p.employeeId === emp.c)?.wishes.map((w) => w.id)).toEqual([
-      wish.c,
-    ]);
+    // Without the flag the manager holds the manage reach over the colleague's wish.
+    const plainWish = plain.persons.find((p) => p.employeeId === emp.c)?.wishes ?? [];
+    expect(plainWish.map((w) => w.id)).toEqual([wish.c]);
+    expect(plainWish[0].editable).toBe(true);
+    expect(plainWish[0].conflict).toBe(true);
+    // With the flag the same wish is a period and nothing else.
+    const ownWish = own.persons.find((p) => p.employeeId === emp.c)?.wishes ?? [];
+    expect(ownWish).toHaveLength(1);
+    expect(ownWish[0]).toMatchObject({
+      id: wish.c,
+      startDate: "2027-06-07",
+      endDate: "2027-06-08",
+      editable: false,
+      conflict: false,
+      leaveRequestId: null,
+      leaveRequestStatus: null,
+      refusalCode: null,
+      refusalMessage: null,
+    });
+  });
+
+  describe("WR-02: view=own is neutral for every foreign person", () => {
+    const extra: { wishIds: string[]; ruleId: string | null } = { wishIds: [], ruleId: null };
+
+    beforeAll(async () => {
+      // A colleague's wish that was taken over and refused (status REJECTED, a refusal text), the
+      // manager's own open wish, and a limit rule the colleague's wish counts against.
+      const rejected = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: emp.c,
+          leaveTypeId: (
+            await app.prisma.leaveType.findFirstOrThrow({
+              where: { tenantId: data.tenant.id, code: "VACATION" },
+            })
+          ).id,
+          startDate: day("2027-07-05"),
+          endDate: day("2027-07-06"),
+          days: 2,
+          status: "REJECTED",
+        },
+      });
+      const linked = await app.prisma.leavePlanWish.create({
+        data: {
+          tenantId: data.tenant.id,
+          planId,
+          employeeId: emp.c,
+          startDate: day("2027-07-05"),
+          endDate: day("2027-07-06"),
+          createdByUserId: emp.mg,
+          leaveRequestId: rejected.id,
+          takenOverAt: new Date("2026-11-03T09:00:00Z"),
+        },
+      });
+      const refused = await app.prisma.leavePlanWish.create({
+        data: {
+          tenantId: data.tenant.id,
+          planId,
+          employeeId: emp.c,
+          startDate: day("2027-07-19"),
+          endDate: day("2027-07-20"),
+          createdByUserId: emp.mg,
+          refusalCode: "ENTITLEMENT_EXCEEDED",
+          refusalMessage: "Kein Resturlaub mehr",
+          refusedAt: new Date("2026-11-03T09:00:00Z"),
+        },
+      });
+      const mine = await app.prisma.leavePlanWish.create({
+        data: {
+          tenantId: data.tenant.id,
+          planId,
+          employeeId: emp.emp,
+          startDate: day("2027-08-02"),
+          endDate: day("2027-08-03"),
+          createdByUserId: emp.emp,
+        },
+      });
+      extra.wishIds = [linked.id, refused.id, mine.id];
+      extra.ruleId = (
+        await app.prisma.leaveLimitRule.create({
+          data: {
+            tenantId: data.tenant.id,
+            salonId: data.salonId,
+            groupKind: "ALL",
+            maxPersons: 1,
+            name: "Plm840 rule",
+          },
+        })
+      ).id;
+    });
+
+    afterAll(async () => {
+      await app.prisma.leavePlanWish.deleteMany({ where: { id: { in: extra.wishIds } } });
+      if (extra.ruleId) await app.prisma.leaveLimitRule.delete({ where: { id: extra.ruleId } });
+    });
+
+    const wishOf = (dto: Dto, employeeId: string, from: string) =>
+      dto.persons
+        .find((p) => p.employeeId === employeeId)
+        ?.wishes.find((w) => w.startDate === from);
+
+    it("control: without the flag the manager sees status, refusal, forecast and rule data", async () => {
+      const dto = await read(managerToken);
+      expect(wishOf(dto, emp.c, "2027-07-05")).toMatchObject({ leaveRequestStatus: "REJECTED" });
+      expect(wishOf(dto, emp.c, "2027-07-19")).toMatchObject({
+        refusalCode: "ENTITLEMENT_EXCEEDED",
+        refusalMessage: "Kein Resturlaub mehr",
+      });
+      expect(dto.persons.find((p) => p.employeeId === emp.c)?.forecast).not.toBeNull();
+      expect(dto.dayLoad.some((d) => d.limits !== null)).toBe(true);
+    });
+
+    it("a colleague's wish carries no request status, refusal or edit right", async () => {
+      const dto = await read(managerToken, "?view=own");
+      for (const person of dto.persons.filter((p) => p.employeeId !== emp.mg)) {
+        for (const w of person.wishes) {
+          expect(w.editable).toBe(false);
+          expect(w.leaveRequestStatus).toBeNull();
+          expect(w.leaveRequestId).toBeNull();
+          expect(w.refusalCode).toBeNull();
+          expect(w.refusalMessage).toBeNull();
+          expect(w.conflict).toBe(false);
+        }
+      }
+      expect(wishOf(dto, emp.c, "2027-07-05")).toMatchObject({
+        endDate: "2027-07-06",
+        editable: false,
+        leaveRequestStatus: null,
+      });
+      expect(wishOf(dto, emp.c, "2027-07-19")).toMatchObject({
+        endDate: "2027-07-20",
+        editable: false,
+        refusalMessage: null,
+      });
+      expect(JSON.stringify(dto)).not.toContain("Kein Resturlaub mehr");
+    });
+
+    it("no forecast for a colleague, the caller's own forecast stays", async () => {
+      const dto = await read(managerToken, "?view=own");
+      for (const person of dto.persons.filter((p) => p.employeeId !== emp.mg)) {
+        expect(person.forecast).toBeNull();
+      }
+      expect(dto.persons.find((p) => p.employeeId === emp.mg)?.forecast).not.toBeNull();
+    });
+
+    it("no limit rule data in the day load, the per-day count stays", async () => {
+      const dto = await read(managerToken, "?view=own");
+      expect(dto.dayLoad.length).toBeGreaterThan(0);
+      expect(dto.dayLoad.every((d) => d.limits === null)).toBe(true);
+      expect(JSON.stringify(dto)).not.toContain("Plm840 rule");
+    });
+
+    it("the caller's own wish stays complete and editable", async () => {
+      const dto = await read(data.empToken, "?view=own");
+      expect(wishOf(dto, emp.emp, "2027-08-02")).toMatchObject({
+        endDate: "2027-08-03",
+        editable: true,
+        foreignPlan: false,
+      });
+    });
   });
 
   it("an unknown view value answers 400", async () => {

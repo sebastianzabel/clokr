@@ -11,7 +11,9 @@
  * person the reader may read (`leave-request:read` reach, Stammsalon per day) gets detailed rows —
  * a sick type is shown only on the reader's own rows (Art. 9 DSGVO) — everybody else only a
  * merged `MASKED` / `ABWESEND` row, and a PENDING row of such a person is dropped. `forceNeutral`
- * (`?view=own`, the personal planner) masks every foreign row whatever the reach. No note, attest,
+ * (`?view=own`, the personal planner) masks every foreign row whatever the reach AND gives every
+ * foreign wish the period only (never editable, no request status, refusal, conflict flag or
+ * forecast, no limit rule data; E-03, review WR-02). No note, attest,
  * § 9 or document field is ever read into the planner.
  *
  * Everything is read live and nothing is copied: a wish never counts anywhere until it is a
@@ -310,6 +312,8 @@ export async function readPlanner(
   // rows always, a foreign row iff the reader's `leave-request:read` reach covers the person on at
   // least one day of the row (Stammsalon per day); `forceNeutral` takes the foreign branch away.
   const visibility = readerVisibilityFrom(viewer.readReach, viewer.employeeId);
+  const isForeign = (employeeId: string): boolean =>
+    viewer.employeeId === null || employeeId !== viewer.employeeId;
   const maskedByPerson = new Map<string, Array<{ startDate: string; endDate: string }>>();
   const detailedFor = (employeeId: string, startDate: string, endDate: string): boolean => {
     if (viewer.employeeId !== null && employeeId === viewer.employeeId) return true;
@@ -421,6 +425,8 @@ export async function readPlanner(
     if (planStatus !== "OPEN" || wish.leaveRequestId !== null || wish.planId !== plan.id) {
       return false;
     }
+    // The personal planner edits only the caller's own wishes, whatever the manage reach (E-03).
+    if (viewer.forceNeutral && isForeign(wish.employeeId)) return false;
     const covers = manageCoversFromHomeDays(
       viewer.manageReach,
       wish.employeeId,
@@ -444,16 +450,18 @@ export async function readPlanner(
   // served for the reader's own wishes and, for another person, only inside the reader's
   // `leave-request:read` reach over that person (the same per-day Stammsalon rule as `editable`).
   const requestDetailsVisible = (wish: StoredPlanWish): boolean =>
-    (viewer.employeeId !== null && wish.employeeId === viewer.employeeId) ||
-    manageCoversFromHomeDays(
-      viewer.readReach,
-      wish.employeeId,
-      population.homeByPerson.get(wish.employeeId),
-      dayOf(wish.startDate),
-      dayOf(wish.endDate),
-    );
+    !isForeign(wish.employeeId) ||
+    (!viewer.forceNeutral &&
+      manageCoversFromHomeDays(
+        viewer.readReach,
+        wish.employeeId,
+        population.homeByPerson.get(wish.employeeId),
+        dayOf(wish.startDate),
+        dayOf(wish.endDate),
+      ));
   const plannerWishOf = (wish: StoredPlanWish, foreignPlan: boolean): PlannerWish => {
     const visible = requestDetailsVisible(wish);
+    const neutralForeign = viewer.forceNeutral && isForeign(wish.employeeId);
     return {
       ...toPlannerWish(wish, {
         planStatus,
@@ -461,9 +469,13 @@ export async function readPlanner(
           visible && wish.leaveRequestId ? (statusOf.get(wish.leaveRequestId) ?? null) : null,
       }),
       ...(visible ? {} : { refusalCode: null, refusalMessage: null }),
+      // The personal planner shows a colleague's wish as a period only: no link to a request (its
+      // existence would tell a taken-over wish from an open one), no conflict flag (it reads the
+      // colleague's leave days, pending ones included), never editable.
+      ...(neutralForeign ? { leaveRequestId: null, halfDay: false } : {}),
       foreignPlan,
-      conflict: conflictOf(wish),
-      editable: foreignPlan ? false : editableOf(wish),
+      conflict: neutralForeign ? false : conflictOf(wish),
+      editable: foreignPlan || neutralForeign ? false : editableOf(wish),
     };
   };
 
@@ -497,13 +509,17 @@ export async function readPlanner(
       : []),
     ...otherWishes,
   ];
-  const showLimits = (
-    await Promise.all(
-      [viewer.manageReach, viewer.approveReach].map((reach) =>
-        resolveSalonInReach(db, tenantId, reach, plan.salonId),
-      ),
-    )
-  ).some((salon) => salon.ok && salon.salonId !== null);
+  // The personal planner (`view=own`) carries no rule data at all: a rule names groups and limits
+  // that describe other people (E-03); the plain per-day count stays.
+  const showLimits =
+    !viewer.forceNeutral &&
+    (
+      await Promise.all(
+        [viewer.manageReach, viewer.approveReach].map((reach) =>
+          resolveSalonInReach(db, tenantId, reach, plan.salonId),
+        ),
+      )
+    ).some((salon) => salon.ok && salon.salonId !== null);
   const dayLoad = await plannerDayLoad(db, {
     tenantId,
     salonId: plan.salonId,
@@ -526,6 +542,8 @@ export async function readPlanner(
     else wishesByPerson.set(w.employeeId, [w]);
   }
   for (const person of persons) {
+    // The personal planner states no forecast for a colleague, whatever the entitlement reach.
+    if (viewer.forceNeutral && isForeign(person.employeeId)) continue;
     if (!isPersonVisibleOn(entitlementVisibility, person.employeeId, plan.salonId)) continue;
     person.forecast = await plannerForecast(db, {
       tenantId,
