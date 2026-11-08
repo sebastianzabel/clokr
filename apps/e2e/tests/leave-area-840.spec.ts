@@ -2,7 +2,7 @@
  * Issue #840 — the Abwesenheiten areas, driven in a real browser on the real test stack.
  *
  * The API tests prove the masked calendar read and the component tests prove the bars; this spec
- * proves the promises only a browser can show. Six tests, named after the steps of plan 840-13:
+ * proves the promises only a browser can show. Seven tests, named after the steps of plan 840-13 (and 840-16):
  *
  *   0. (slice 1, plan 840-02) the Übersicht draws an approved request solid and a pending one
  *      dashed, read from the computed border style, so the style is the one the browser really draws;
@@ -17,7 +17,11 @@
  *      aria-label), a salon closed day and today;
  *   4. redirects of the old URLs on the built app (AC-1, assumption A5);
  *   5. axe (wcag2a/wcag2aa) on every tab of both areas, the open „Planung verwalten“ dialog and the
- *      inbox (AC-12).
+ *      inbox (AC-12);
+ *   6. (gap round, plan 840-16, G-5/G-6/G-2) Planung at 1440 x 900: the forecast column sits beside
+ *      the day grid and every day of the quarter can be scrolled into view, the „weiter →“ hint is
+ *      below the header, the planner's controls are in the toolbar, the planner is one card and the
+ *      weekend shade is visible.
  *
  * Setup goes through the API with the tenant admin's token (people, requests, plans, a manual
  * holiday, the salon's opening hours). No test depends on a fixed date: the Übersicht month is the
@@ -263,6 +267,49 @@ async function axeViolations(page: Page): Promise<string[]> {
 
 async function borderStyleOf(locator: Locator): Promise<string> {
   return locator.evaluate((el) => getComputedStyle(el).borderTopStyle);
+}
+
+/** Parses a computed colour (`rgb()`, `rgba()` or `color(srgb ...)`) to 0-255 channels and alpha. */
+function parseColor(value: string): { r: number; g: number; b: number; a: number } {
+  const srgb = value.match(/color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\)/);
+  if (srgb) {
+    const alpha =
+      srgb[4] === undefined
+        ? 1
+        : srgb[4].endsWith("%")
+          ? parseFloat(srgb[4]) / 100
+          : parseFloat(srgb[4]);
+    return { r: +srgb[1] * 255, g: +srgb[2] * 255, b: +srgb[3] * 255, a: alpha };
+  }
+  const rgb = value.match(
+    /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+%?))?\s*\)/,
+  );
+  if (!rgb) throw new Error(`cannot parse the colour "${value}"`);
+  const alpha =
+    rgb[4] === undefined ? 1 : rgb[4].endsWith("%") ? parseFloat(rgb[4]) / 100 : parseFloat(rgb[4]);
+  return { r: +rgb[1], g: +rgb[2], b: +rgb[3], a: alpha };
+}
+
+function luminance({ r, g, b }: { r: number; g: number; b: number }): number {
+  const lin = (c: number) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** WCAG contrast of `top` (with alpha) composited over the opaque `base`, against `base`. */
+function compositedContrast(
+  top: { r: number; g: number; b: number; a: number },
+  base: { r: number; g: number; b: number },
+): number {
+  const mixed = {
+    r: top.r * top.a + base.r * (1 - top.a),
+    g: top.g * top.a + base.g * (1 - top.a),
+    b: top.b * top.a + base.b * (1 - top.a),
+  };
+  const [hi, lo] = [luminance(mixed), luminance(base)].sort((a, b) => b - a);
+  return (hi + 0.05) / (lo + 0.05);
 }
 
 test.describe("Abwesenheiten area (Issue #840)", () => {
@@ -646,6 +693,98 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
       /absence-day--today/,
     );
     await expect(timeline.locator(".tl-today").first()).toBeAttached();
+  });
+
+  test("6. Planung at 1440 x 900: forecast beside the grid, controls in the toolbar", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    test.setTimeout(90_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const person = await createEmployee(request, tenant, {
+      key: "lay",
+      firstName: "Layout",
+      lastName: "Prognose",
+    });
+    await ensureEntitlement(request, tenant, person.id, PLAN_YEAR);
+    const salonId = await defaultSalonId(request, tenant);
+    const planId = await openPlanViaApi(request, tenant, salonId, PLAN_YEAR);
+    await addWishViaApi(
+      request,
+      tenant,
+      planId,
+      person.id,
+      marchMonday(2),
+      plusDays(marchMonday(2), 2),
+    );
+
+    await loginAsTenantAdmin(page, tenant);
+    await page.goto(`/team/leave?tab=planung&zoom=quartal&datum=${PLAN_YEAR}-02-15`);
+    const timeline = page.getByTestId("absence-timeline");
+    await expect(timeline).toBeVisible();
+    await expect(timeline).toHaveAttribute("data-zoom", "quartal");
+    const scroller = page.getByTestId("absence-timeline-scroll");
+    const forecastHead = page.getByTestId("plan-forecast-head");
+    await expect(forecastHead).toBeVisible();
+    await animationsSettled(page);
+
+    // (a) the forecast head starts at or right of the right edge of the day viewport.
+    const scrollBox = await scroller.boundingBox();
+    const headBox = await forecastHead.boundingBox();
+    expect(scrollBox, "the day viewport has a box").not.toBeNull();
+    expect(headBox, "the forecast head has a box").not.toBeNull();
+    const scrollRight = scrollBox!.x + scrollBox!.width;
+    expect(
+      headBox!.x,
+      `forecast head x ${headBox!.x} vs viewport right ${scrollRight}`,
+    ).toBeGreaterThanOrEqual(scrollRight - 1);
+
+    // (c) while the grid overflows, the hint lies below the header line, never on it.
+    const hint = page.getByTestId("timeline-overflow-hint");
+    if (await hint.isVisible()) {
+      const hintBox = await hint.boundingBox();
+      const headerBox = await timeline.locator(".tl-head").boundingBox();
+      expect(hintBox!.y, "the hint is below the header line").toBeGreaterThanOrEqual(
+        headerBox!.y + headerBox!.height - 1,
+      );
+    }
+
+    // (b) scrolled to its end, the last day of the quarter ends left of the forecast column.
+    await scroller.evaluate((el) => {
+      el.scrollLeft = el.scrollWidth;
+    });
+    const lastDay = page.getByTestId(`absence-day-${PLAN_YEAR}-03-31`);
+    await expect
+      .poll(async () => {
+        const box = await lastDay.boundingBox();
+        const head = await forecastHead.boundingBox();
+        return box && head ? head.x - (box.x + box.width) : null;
+      })
+      .toBeGreaterThanOrEqual(-1);
+    const lastBox = await lastDay.boundingBox();
+    const headAfter = await forecastHead.boundingBox();
+    test.info().annotations.push({
+      type: "boxes",
+      description: `forecast head x=${headBox!.x} (viewport right ${scrollRight}); 31.03. right=${lastBox!.x + lastBox!.width}, forecast left=${headAfter!.x}`,
+    });
+
+    // (d) the controls are in the toolbar; the planner is one card.
+    const toolbar = page.locator(".leave-toolbar");
+    await expect(toolbar.getByTestId("leave-plan-head")).toBeVisible();
+    await expect(toolbar.getByTestId("leave-plan-add-wish")).toBeVisible();
+    await expect(page.getByTestId("leave-plan-page").locator(".card")).toHaveCount(1);
+
+    // (e) the weekend shade is visible against the timeline's own background (G-2, real browser).
+    const shade = await timeline
+      .locator(".tl-weekend")
+      .first()
+      .evaluate((el) => getComputedStyle(el).backgroundColor);
+    const base = await timeline.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const baseColor = parseColor(base);
+    expect(baseColor.a, "the timeline background is opaque").toBe(1);
+    const contrast = compositedContrast(parseColor(shade), baseColor);
+    expect(contrast, `weekend shade ${shade} over ${base}`).toBeGreaterThanOrEqual(1.2);
   });
 
   test("4. old URLs land on their new homes in the built app", async ({
