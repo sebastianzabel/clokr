@@ -24,9 +24,11 @@ function readRepoFile(relativeFromHere: string, relativeFromCwd: string): string
 }
 
 const TOKENS_CSS = readRepoFile("../tokens.css", "src/tokens.css");
-const PAGE = readRepoFile(
-  "../routes/(app)/team/leave/+page.svelte",
-  "src/routes/(app)/team/leave/+page.svelte",
+// #840 (D-840-07/10): the month grid and its `.cal-chip` left the team page; a bar is drawn by the
+// one timeline component now, so Test 4 reads its bar CSS instead of the page's chip CSS.
+const TIMELINE = readRepoFile(
+  "../lib/components/leave/timeline/AbsenceTimeline.svelte",
+  "src/lib/components/leave/timeline/AbsenceTimeline.svelte",
 );
 
 // ── WCAG 2.x relative-luminance / contrast-ratio formula ────────────────────
@@ -179,18 +181,21 @@ describe("leave-chip-contrast — WCAG AA for every --leave-type-* fill/text pai
     expect(offenders).toEqual([]);
   });
 
-  it("Test 4: the chip renders the token and nothing dilutes it", () => {
-    expect(PAGE).toContain("style:color={_vis.textColor}");
-    const chipStart = PAGE.indexOf("  .cal-chip {");
-    const legendeIdx = PAGE.indexOf("  /* Legende */");
-    expect(chipStart).toBeGreaterThan(-1);
-    expect(legendeIdx).toBeGreaterThan(chipStart);
-    const CHIP_CSS = PAGE.slice(chipStart, legendeIdx);
-    expect(CHIP_CSS).toContain("outline: 1.5px dashed currentColor;");
-    expect(CHIP_CSS).not.toContain("opacity: 0.85");
-    expect(CHIP_CSS).not.toContain("opacity: 0.9");
-    expect(CHIP_CSS).not.toContain("rgba(255, 255, 255, 0.7)");
-    expect(CHIP_CSS.length).toBeGreaterThan(200); // the slice actually found the block
+  it("Test 4: the bar renders the token and nothing dilutes it", () => {
+    // #840: the invariant is unchanged - the bar text colour is the type's `-text` token and no
+    // opacity or white wash is laid over it - but it now lives in AbsenceTimeline's bar CSS.
+    expect(TIMELINE).toContain('style:--bar-text="var({color.text})"');
+    const barStart = TIMELINE.indexOf("  .absence-bar--gesetzt {");
+    const barEnd = TIMELINE.indexOf("  /* Wish: diagonal brand stripes with an outline. */");
+    expect(barStart).toBeGreaterThan(-1);
+    expect(barEnd).toBeGreaterThan(barStart);
+    const BAR_CSS = TIMELINE.slice(barStart, barEnd);
+    expect(BAR_CSS).toContain("color: var(--bar-text);");
+    expect(BAR_CSS).toContain("border: 2px dashed var(--bar-fill);");
+    expect(BAR_CSS).not.toContain("opacity: 0.85");
+    expect(BAR_CSS).not.toContain("opacity: 0.9");
+    expect(BAR_CSS).not.toContain("rgba(255, 255, 255, 0.7)");
+    expect(BAR_CSS.length).toBeGreaterThan(200); // the slice actually found the block
   });
 
   it("Test 5: no existing fill token changed value", () => {

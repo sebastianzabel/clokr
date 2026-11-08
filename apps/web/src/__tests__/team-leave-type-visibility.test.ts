@@ -36,73 +36,85 @@ const PAGE = readRouteFile(
 );
 
 describe("team leave page — one shared visibility decision (Phase 257)", () => {
-  it("Test 0: the page source actually loaded", () => {
-    expect(PAGE.length).toBeGreaterThan(50_000); // the file is ~2900 lines / >100 KB
-    expect(PAGE).toContain("cal-chip");
-    // #840 D-840-10: the legend is the one <LeaveLegend> component, no longer a hand-written block.
+  // #840 (D-840-07/10, plan 840-10): the month grid and its hand-written chip are gone from the page.
+  // A bar is drawn by `AbsenceTimeline` (and listed by `AbsenceList`) from the model of
+  // `timeline-model.ts`, whose rows the SERVER has already masked per person (D-840-19): a foreign
+  // absence outside the reader's reach arrives with no type, and the neutral word is the model's
+  // `NEUTRAL_CHIP_LABEL`. Groups A and B therefore pin the same invariants against the files that
+  // now carry them; Group C (the type dropdowns) is unchanged.
+  const TIMELINE = readRouteFile(
+    "../lib/components/leave/timeline/AbsenceTimeline.svelte",
+    "src/lib/components/leave/timeline/AbsenceTimeline.svelte",
+  );
+  const LIST = readRouteFile(
+    "../lib/components/leave/timeline/AbsenceList.svelte",
+    "src/lib/components/leave/timeline/AbsenceList.svelte",
+  );
+  const MODEL = readRouteFile("../lib/leave/timeline-model.ts", "src/lib/leave/timeline-model.ts");
+
+  it("Test 0: the page and the files that now carry the bars actually loaded", () => {
+    expect(PAGE.length).toBeGreaterThan(50_000);
+    expect(TIMELINE.length).toBeGreaterThan(10_000);
+    expect(LIST.length).toBeGreaterThan(1_000);
+    expect(MODEL.length).toBeGreaterThan(5_000);
+    // #840 D-840-10: the legend is the one <LeaveLegend> component.
     expect(PAGE).toContain("<LeaveLegend");
+    expect(PAGE).toContain("<AbsenceTimeline");
   });
 
-  describe("Group A — one decision, three render points (D-10, AC-1, AC-2)", () => {
-    it("A1: the module is imported from the page", () => {
-      expect(PAGE).toContain('from "$lib/leave/team-calendar-visibility"');
+  describe("Group A — one decision, no copy on the page (D-10, AC-1, AC-2)", () => {
+    it("A1: the page decides no chip visual and filters no colleague's bar itself", () => {
+      // Formerly: resolveChipVisual was called exactly once on the page. Now there is no call at
+      // all - the server masks the row, the model carries `typeCode: null`, the component draws it.
+      expect(PAGE).not.toContain("resolveChipVisual(");
+      expect(PAGE).not.toContain("isDrawnInCalendar(");
+      expect(PAGE).not.toContain("canSeeLeaveType(");
     });
 
-    it("A2: resolveChipVisual is called exactly once in the whole page", () => {
-      // Import statements do not contain "(", so the count is call sites only. A second call is
-      // a second decision and the beginning of the bug this phase fixes.
-      expect((PAGE.match(/resolveChipVisual\(/g) ?? []).length).toBe(1);
+    it("A2: a masked row becomes a bar with no type and the neutral label, in the model", () => {
+      expect(MODEL).toContain("typeCode: null");
+      expect(MODEL).toContain("NEUTRAL_CHIP_LABEL");
+      expect(MODEL).toContain('style: "abwesend"');
     });
 
-    it("A3: the one call is a {@const} inside the chip's {#if e} block, reading the permission-derived flag (Phase 378)", () => {
-      expect(PAGE).toContain("{@const _vis = resolveChipVisual(e, canSeeOthersLeaveType)}");
+    it("A3: the timeline colours a bar from the type table, a typeless bar from the neutral colour", () => {
+      expect(TIMELINE).toContain('if (bar.style === "abwesend") return ABSENT;');
+      expect(TIMELINE).toContain('style:--bar-text="var({color.text})"');
+      expect(TIMELINE).toContain('style:--bar-fill="var({color.fill})"');
     });
 
-    it("A4: all three render points read from _vis", () => {
-      expect(PAGE).toContain("style:background={_vis.background}");
-      expect(PAGE).toContain("style:color={_vis.textColor}");
-      expect(PAGE).toContain("_vis.typeLabel"); // in the title attribute
-      expect(PAGE).toContain("{_vis.chipLabel}"); // in the label span
+    it("A4: the list names the type by text and shows the model's label for a masked bar", () => {
+      expect(LIST).toContain("bar.label");
+      expect(LIST).not.toContain("typeName");
     });
 
     it("A5: the old machinery is gone", () => {
       expect(PAGE).not.toContain("function typeColor(");
       expect(PAGE).not.toContain("typeColor(");
       expect(PAGE).not.toContain("const TYPE_OPTIONS");
+      expect(PAGE).not.toContain("cal-chip");
     });
 
-    it("A6: no second isOwn check survives inside the chip", () => {
-      // Slice the chip element out of the source so the two legitimate `e.isOwn` uses at :898 and
-      // :1300 (which decide whether a bar is drawn at all) are not caught.
-      const start = PAGE.indexOf("{@const e = dayAbsences.find(");
-      const end = PAGE.indexOf('<div class="cal-chip-placeholder">');
-      expect(start).toBeGreaterThan(-1);
-      expect(end).toBeGreaterThan(start);
-      const CHIP = PAGE.slice(start, end);
-      // The ONLY permitted mention of ownership inside the chip is the presentational modifier
-      // class.
-      expect((CHIP.match(/e\.isOwn/g) ?? []).length).toBe(1);
-      expect(CHIP).toContain("class:cal-chip--own={e.isOwn}");
-      expect(CHIP).not.toContain("e.isOwn &&");
-      expect(CHIP).not.toContain("e.typeName"); // the type now reaches the chip only via _vis
-    });
-
-    it("A7: the neutral word is not hand-typed in the template", () => {
+    it("A6: the neutral word is not hand-typed on the page or in the bar components", () => {
       // It lives in the module as NEUTRAL_CHIP_LABEL, so a future author cannot reintroduce it
       // next to a coloured background.
-      const start = PAGE.indexOf("{@const e = dayAbsences.find(");
-      const end = PAGE.indexOf('<div class="cal-chip-placeholder">');
-      const CHIP = PAGE.slice(start, end);
-      expect(CHIP).not.toContain('"abwesend"');
-      expect(CHIP).not.toContain(">abwesend<");
+      for (const [name, src] of [
+        ["page", PAGE],
+        ["timeline", TIMELINE],
+        ["list", LIST],
+      ] as const) {
+        expect(src, name).not.toContain('"abwesend"\n');
+        expect(src.includes(">abwesend<"), name).toBe(false);
+      }
     });
   });
 
   describe("Group B — the legend (D-05, D-06, AC-3, AC-4)", () => {
-    // #840 D-840-10: Group B pinned the hand-written legend block. The legend is now the one
-    // <LeaveLegend> component (rendering pinned in LeaveLegend.test.ts); what stays pinned HERE is
-    // the page's side of D-05: which codes it hands over, and that they are gated on the same
-    // predicate as the bars.
+    // #840 D-840-10: the legend is the one <LeaveLegend> component (rendering pinned in
+    // LeaveLegend.test.ts). What stays pinned HERE is the page's side of D-05: which codes it hands
+    // over. Since 840-10 they are the types that actually OCCUR in the view (`legendFrom`), and a
+    // typeless (masked) bar contributes none - so the legend can never name a type the reader may
+    // not learn, which is what the former `canSeeLeaveType` gate guaranteed.
     const lStart = PAGE.indexOf("<LeaveLegend");
     const lEnd = PAGE.indexOf("/>", lStart);
     const LEGEND = lStart > -1 && lEnd > lStart ? PAGE.slice(lStart, lEnd) : "";
@@ -112,22 +124,27 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
       expect(lEnd).toBeGreaterThan(lStart);
     });
 
-    it("B1: the type codes are derived from the shared table, not hand-written spans", () => {
-      expect(LEGEND).toContain("LEAVE_TYPE_OPTIONS.map((t) => t.code)");
+    it("B1: the type codes come from the occurring bars, not from hand-written spans", () => {
+      expect(LEGEND).toContain("typeCodes={overviewLegend.typeCodes}");
       expect(LEGEND).not.toContain("<span");
+      expect(PAGE).toContain("legendFrom(overviewPeople)");
     });
 
-    it("B2: the codes are gated on the same predicate as the bars (D-05)", () => {
-      expect(LEGEND).toContain("canSeeLeaveType(false, canSeeOthersLeaveType)");
+    it("B2: legendFrom names a type only for a typed set/requested bar (a masked bar adds none)", () => {
+      const colors = readRouteFile("../lib/leave/leave-colors.ts", "src/lib/leave/leave-colors.ts");
+      expect(colors).toContain(
+        '(bar.style === "gesetzt" || bar.style === "beantragt") && bar.typeCode !== null',
+      );
     });
 
     it("B3: no --leave-type-* literal on the page's legend — the colours come from the mapping", () => {
       expect(LEGEND.match(/--leave-type-[a-z-]+/g) ?? []).toEqual([]);
     });
 
-    it("B4: the always-present items are passed outside the gate: pending style, absent style, holiday", () => {
-      expect(LEGEND).toContain("styles={CALENDAR_LEGEND_STYLES}");
-      expect(LEGEND).toContain("markings={{ holiday: true }}");
+    it("B4: styles and markings are the view's own answer, not a fixed always-on list", () => {
+      expect(LEGEND).toContain("styles={overviewLegend.styles}");
+      expect(LEGEND).toContain("markings={overviewLegend.markings}");
+      expect(LEGEND).toContain("closedHint={overviewLegend.closedHint}");
     });
 
     it("B5: Elternzeit and Mutterschutz are reachable — they are in the table the loop reads", () => {

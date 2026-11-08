@@ -18,6 +18,18 @@
 //    exactly why the sheet was extracted into a component.
 // 3. THAT THE PAGE IS WIRED TO BOTH — source-read pins, the established pattern for this page.
 
+// #840 amendments (plan 840-10, D-840-10/11, E-06): the month grid of `/team/leave` is gone, and with it
+// the `.cal-chip` bar, its sr-only type label and the 700 px whole-cell `.cal-day-tap` trigger. The
+// problem they solved - a type carried by COLOUR ALONE on a phone - is solved differently now and the
+// same invariants are restated against the files that carry them:
+//   - below 768 px the page shows `AbsenceList` INSTEAD of the timeline, and every line of it names the
+//     type by TEXT (a masked bar reads „abwesend“, never a type) - measured by mounting the list;
+//   - on desktop the timeline prints the label where the bar is wide enough and always keeps the type
+//     in `title`/`aria-label` - pinned at source;
+//   - nothing hides the information behind hover (the page's own style block has no `hover:` query);
+//   - `CalendarDayDetail` (Group C) is untouched: `/leave` still uses it (plan 840-11).
+// The measuring harness (Group 0) is kept and now reads the page's remaining `@media` block.
+//
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +39,8 @@ import { screen, fireEvent } from "@testing-library/svelte";
 
 import { renderWithTheme } from "$tests/test-utils";
 import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte";
+import AbsenceList from "$lib/components/leave/timeline/AbsenceList.svelte";
+import { periodOf, type TimelinePerson } from "$lib/leave/timeline-model";
 import { NEUTRAL_CHIP_LABEL, type DayDetailEntry } from "$lib/leave/team-calendar-visibility";
 import {
   cssForViewport,
@@ -94,19 +108,20 @@ describe("#265 — the measuring harness (anti-vacuity)", () => {
 
   it("flattening actually changes something — phone and desktop CSS differ", () => {
     const block = pageStyleBlock();
-    expect(block.length).toBeGreaterThan(10_000); // the style block really loaded
+    expect(block.length).toBeGreaterThan(3_000); // the style block really loaded
+    // #840: the one media rule left on the page is the review grid of the correction modal.
     expect(block).toContain(`@media (max-width: ${BREAKPOINT}px)`);
     const phone = cssForViewport(block, PHONE_WIDTH);
     const desktop = cssForViewport(block, DESKTOP_WIDTH);
     expect(phone).not.toBe(desktop);
     expect(phone.length).toBeGreaterThan(desktop.length);
-    expect(phone).toContain(".cal-day-tap");
+    expect(phone).toContain(".review-grid");
   });
 
   it("controls: the injected sheet is in effect, and an invented class is not styled by it", () => {
     const probe = probeAt(PHONE_WIDTH);
-    // POSITIVE control — `.cal-chip { display: flex }` is declared in the page's base block.
-    expect(probe.styles("cal-chip", "div").display).toBe("flex");
+    // POSITIVE control — `.emp-input-wrap { display: flex }` is declared in the page's base block.
+    expect(probe.styles("emp-input-wrap", "div").display).toBe("flex");
     // INVENTED control — the sheet never mentions this class, so it must compute exactly like a
     // class-less element of the same tag. Any non-baseline value asserted below is therefore
     // coming from the page's CSS and not from jsdom. (jsdom reports "" for properties no rule
@@ -121,61 +136,80 @@ describe("#265 — the measuring harness (anti-vacuity)", () => {
   });
 });
 
-// ── Group A: what a phone actually computes ─────────────────────────────────
-describe("#265 — below the 700px breakpoint (measured)", () => {
-  it("the type label is hidden from the EYES but stays in the accessibility tree", () => {
-    const probe = probeAt(PHONE_WIDTH);
-    const s = probe.styles("cal-chip-type");
-    // The defect's own mechanism is gone: `display: none` removes an element from the
-    // accessibility tree as well, which is what cost screen readers the type name.
-    expect(s.display).not.toBe("none");
-    // app.css's `.sr-only` geometry instead.
-    expect(s.position).toBe("absolute");
-    expect(s.width).toBe("1px");
-    expect(s.height).toBe("1px");
-    expect(s.clip).toBe("rect(0px, 0px, 0px, 0px)");
+// ── Group A: what a phone actually shows ────────────────────────────────────
+describe("#265 / #840 — on a phone the type is named by text (real mount of AbsenceList)", () => {
+  // The hardest pair in the ticket. No PII: initials only.
+  const bar = (
+    key: string,
+    typeCode: string | null,
+    label: string,
+    style: "gesetzt" | "abwesend",
+  ) => ({
+    key,
+    start: "2026-11-02",
+    end: "2026-11-03",
+    style,
+    typeCode,
+    label,
+    editable: false,
+  });
+  const rows: TimelinePerson[] = [
+    {
+      employeeId: "p1",
+      name: "A. A.",
+      isOwn: false,
+      bars: [
+        bar("k1", "SICK", "Krankmeldung", "gesetzt"),
+        bar("k2", "SICK_CHILD", "Kinderkrank", "gesetzt"),
+      ],
+    },
+    {
+      employeeId: "p2",
+      name: "B. B.",
+      isOwn: false,
+      bars: [bar("k3", null, NEUTRAL_CHIP_LABEL, "abwesend")],
+    },
+  ];
+
+  function mount() {
+    return renderWithTheme(AbsenceList, { rows, period: periodOf("monat", "2026-11-02") });
+  }
+
+  it("Krank and Kinderkrank are separated by WORDS, not by two similar oranges", () => {
+    mount();
+    const types = Array.from(document.querySelectorAll(".absence-list-type")).map(
+      (el) => el.textContent,
+    );
+    expect(types).toContain("Krankmeldung");
+    expect(types).toContain("Kinderkrank");
   });
 
-  it("the tap trigger EXISTS here — it is the non-colour carrier a finger can reach", () => {
-    const probe = probeAt(PHONE_WIDTH);
-    const s = probe.styles("cal-day-tap", "button");
-    expect(s.display).toBe("flex");
-    expect(s.position).toBe("absolute");
-    expect(s.cursor).toBe("pointer");
-    // Finger-sized in the direction the cell does not already guarantee. Height comes from the
-    // `.cal-cell` recipe in app.css (min-height: 86px); width is one calendar column.
-    expect(parseInt(s.minHeight, 10)).toBeGreaterThanOrEqual(44);
+  it("a masked colleague's bar reads „abwesend“ and the list names no sickness word for it (#257 unchanged)", () => {
+    mount();
+    const masked = screen.getByTestId("absence-list-line-k3").textContent ?? "";
+    expect(masked).toContain(NEUTRAL_CHIP_LABEL);
+    expect(masked).not.toContain("Krank");
+    expect(masked).not.toContain("Kinder");
   });
+});
 
-  it("the affordance is drawn, so the cell is recognisable as operable without hover", () => {
-    const probe = probeAt(PHONE_WIDTH);
-    const s = probe.styles("cal-day-tap-hint");
-    expect(s.display).toBe("inline-flex");
-    expect(parseInt(s.width, 10)).toBeGreaterThan(0);
+// ── Group B: the desktop path keeps the type reachable ──────────────────────
+describe("#265 / #840 — the timeline keeps the type in text for every bar width (source pins)", () => {
+  const TIMELINE = readRepoFile(
+    "../lib/components/leave/timeline/AbsenceTimeline.svelte",
+    "src/lib/components/leave/timeline/AbsenceTimeline.svelte",
+  );
+
+  it("a bar prints its label where there is room and carries the type in title and aria-label always", () => {
+    expect(TIMELINE).toContain("{#if placed.width >= LABEL_MIN_WIDTH}{bar.label}{/if}");
+    expect(TIMELINE).toContain("title={barTitle(bar)}");
+    expect(TIMELINE).toContain('aria-label="{person.name}: {barTitle(bar)}"');
   });
 
   it("nothing hides the information behind hover — no hover media query on this page", () => {
     // The finding was information reachable only by pointer. A `(hover: ...)` query would be the
     // same mistake in new clothes; it would also make cssForViewport throw.
     expect(pageStyleBlock()).not.toContain("hover:");
-  });
-});
-
-// ── Group B: the desktop path is untouched ──────────────────────────────────
-describe("#265 — above the breakpoint (measured)", () => {
-  it("the type label renders normally and the tap trigger does not exist", () => {
-    const probe = probeAt(DESKTOP_WIDTH);
-    const label = probe.styles("cal-chip-type");
-    const baseline = probe.styles("");
-    // Not visually hidden here: the bar prints the type itself at this width.
-    expect(label.position).toBe(baseline.position);
-    expect(label.position).not.toBe("absolute");
-    expect(label.width).not.toBe("1px");
-    // `display: none` also keeps the button out of the tab order, so its visibility and its
-    // keyboard reachability cannot drift apart.
-    expect(probe.styles("cal-day-tap", "button").display).toBe("none");
-    // Control: the sheet is applied at this width too, so the "none" above is a real result.
-    expect(probe.styles("cal-chip", "div").display).toBe("flex");
   });
 });
 
@@ -255,63 +289,33 @@ describe("#265 — CalendarDayDetail spells the type out", () => {
 });
 
 // ── Group D: the page is wired to both halves ───────────────────────────────
-describe("#265 — page wiring (source pins)", () => {
-  function cellBlock(): string {
-    const start = PAGE.indexOf("{@const entries = calMap.get(day.dateStr)");
-    // #840 D-840-10: the hand-written legend block became the one <LeaveLegend> component; the
-    // cell block still ends where the legend starts.
-    const end = PAGE.indexOf("<LeaveLegend");
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    return PAGE.slice(start, end);
-  }
+describe("#265 / #840 — page wiring (source pins)", () => {
+  it("below 768 px the list replaces the timeline, fed with the same rows", () => {
+    expect(PAGE).toContain('window.matchMedia("(max-width: 767px)")');
+    const list = PAGE.indexOf("<AbsenceList");
+    const timeline = PAGE.indexOf("<AbsenceTimeline");
+    expect(list).toBeGreaterThan(-1);
+    expect(timeline).toBeGreaterThan(list);
+    expect(PAGE.slice(PAGE.lastIndexOf("{:else if isMobile}", list), list)).toContain("isMobile");
+    // One row set for both - the list can never show what the timeline does not.
+    expect(PAGE.slice(list, timeline)).toContain("rows={overviewPeople}");
+    expect(PAGE.slice(timeline, timeline + 200)).toContain("rows={overviewPeople}");
+  });
 
-  it("the trigger is a REAL <button>, so Enter and Space come from the platform", () => {
-    const cell = cellBlock();
-    expect(cell).toContain(
-      '<button\n                type="button"\n                class="cal-day-tap"',
+  it("a tap on a line leads to the request, like a click on a bar", () => {
+    expect(PAGE.slice(PAGE.indexOf("<AbsenceList"), PAGE.indexOf("<AbsenceTimeline"))).toContain(
+      "onBarSelect={selectBar}",
     );
-    // Not a div pretending to be a button — that shape needs hand-written key handling and is how
-    // "keyboard reachable" quietly stops being true.
-    expect(cell).not.toContain('role="button"');
-    expect(cell).not.toContain("tabindex");
   });
 
-  it("the trigger is labelled and actually opens the sheet", () => {
-    const cell = cellBlock();
-    expect(cell).toContain('aria-label="Abwesenheiten am {fmtDate(day.dateStr)} anzeigen"');
-    expect(cell).toContain("onclick={() => openDayDetail(day.dateStr)}");
+  it("the day-detail sheet is no longer mounted on this page", () => {
+    // /leave still mounts it (plan 840-11); the team page has no month grid to open it from.
+    expect(PAGE).not.toContain("<CalendarDayDetail");
+    expect(PAGE).not.toContain("cal-day-tap");
   });
 
-  it("the trigger is rendered only where there is something to reveal", () => {
-    expect(cellBlock()).toContain("{#if dayAbsences.length > 0}");
-  });
-
-  it("the sheet is mounted with the permission-derived flag (Phase 378)", () => {
-    expect(PAGE).toContain("<CalendarDayDetail");
-    expect(PAGE).toContain("canSeeType={canSeeOthersLeaveType}");
-    expect(PAGE).toContain("entries={dayDetailEntries}");
-  });
-
-  it("the page adds no second role check of its own — the module stays the one decision (D-10)", () => {
-    // Phase 257's A2 pins resolveChipVisual to a single call site; the detail sheet must not
-    // become a second one, which is why it goes through resolveDayDetailRows in the component.
-    expect((PAGE.match(/resolveChipVisual\(/g) ?? []).length).toBe(1);
+  it("the page adds no second role check of its own — the model stays the one decision (D-10)", () => {
+    expect(PAGE).not.toContain("resolveChipVisual(");
     expect(PAGE).not.toContain("resolveDayDetailRows");
-  });
-
-  it("the detail sheet reads the same day filter the bars use", () => {
-    // If the sheet listed entries the bars do not draw, the tap would answer a question about a
-    // different day than the one the finger touched.
-    // Issue #446 (D-04): the colleague filter widened from APPROVED-only to the shared
-    // isDrawnInCalendar predicate (APPROVED + CANCELLATION_REQUESTED) — the three-call-site
-    // invariant below is unchanged.
-    expect(PAGE).toContain("(e) => isDrawnInCalendar(e)");
-    expect(PAGE).not.toContain('e.status === "APPROVED")');
-    // Three call sites, all the same predicate: the lane map, the cell's `dayAbsences`, and the
-    // detail sheet's `dayDetailEntries`. A fourth shape here would mean the sheet and the bars
-    // had started to disagree about what the day contains.
-    const occurrences = PAGE.match(/\(e\) => isDrawnInCalendar\(e\)/g) ?? [];
-    expect(occurrences).toHaveLength(3);
   });
 });

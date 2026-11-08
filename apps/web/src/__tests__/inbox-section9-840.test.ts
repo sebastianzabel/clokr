@@ -48,7 +48,7 @@ describe("Issue #840 D-840-05 - the § 9 cases wait in the inbox", () => {
     expect(INBOX.length).toBeGreaterThan(10_000);
     expect(INBOX).toContain("Inbox");
     expect(TEAM_LEAVE.length).toBeGreaterThan(60_000);
-    expect(TEAM_LEAVE).toContain("Team-Anträge");
+    expect(TEAM_LEAVE).toContain('title="Abwesenheiten"'); // #840 (E-01): the page is „Abwesenheiten“
   });
 
   it("[section] the inbox renders a section „§ 9-Fälle“ with the three actions", () => {
