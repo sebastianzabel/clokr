@@ -693,7 +693,7 @@
         avatar={initials(req.employee.firstName, req.employee.lastName)}
         name={`${req.employee.firstName} ${req.employee.lastName}`}
         dates={`${fmtDate(req.startDate)} – ${fmtDate(req.endDate)} · ${leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}`}
-        onclick={() => openDetail(req)}
+        onPrimary={() => openDetail(req)}
       >
         {#snippet metaContent()}
           <span class="chip chip-brand">{typeName(req.typeCode)}</span>
@@ -835,7 +835,7 @@
         avatar={initials(req.employee.firstName, req.employee.lastName)}
         name={`${req.employee.firstName} ${req.employee.lastName}`}
         dates={`Eintrag vom ${fmtDate(req.targetDate)}${req.startTime && req.endTime ? ` · ${req.startTime}–${req.endTime}` : ""} · Alter: ${req.entryAgeInDays ?? "?"} Tage`}
-        onclick={() => openRetroDetail(req)}
+        onPrimary={() => openRetroDetail(req)}
       >
         {#snippet metaContent()}
           <span class="chip chip-warn">Rückwirkend</span>

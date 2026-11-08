@@ -808,17 +808,10 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     expect(found).toEqual(Object.fromEntries(Object.keys(found).map((name) => [name, []])));
   });
 
-  // The inbox is the one place requests are decided (D-840-03). Its rows come from the shared
-  // `ApprovalRow` in `onclick` mode, which nests the „Prüfen“ button inside the row button: axe
-  // `nested-interactive` (serious). The component, the row markup and the rule predate this phase
-  // (unchanged on main), and the fix (`primaryHref` mode, the #612 pattern) changes the inbox
-  // interaction - a decision outside plan 840-13, reported in its SUMMARY. The scan stays here, ready
-  // to run: delete the `fixme` line once the rows are fixed.
+  // The inbox is the one place requests are decided (D-840-03). Its rows use the `onPrimary` mode of
+  // `ApprovalRow` (#840): the name is the one row button and the „Prüfen“ button is its sibling, so
+  // axe `nested-interactive` has nothing to report.
   test("5b. axe: the inbox with an open request", async ({ page, request, tenant }) => {
-    test.fixme(
-      true,
-      "pre-existing nested-interactive on the inbox ApprovalRow (see 840-13-SUMMARY)",
-    );
     const first = firstOfNextMonth();
     const employee = await createEmployee(request, tenant, {
       key: "inb",
@@ -839,5 +832,11 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.locator(".approval-row").first()).toBeVisible();
     expect(await axeViolations(page), "axe on the inbox").toEqual([]);
+
+    // Keyboard: Enter on the row's name button opens the review dialog (the `onPrimary` mode).
+    const nameButton = page.locator(".approval-row button.approval-primary").first();
+    await nameButton.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog").first()).toBeVisible();
   });
 });
