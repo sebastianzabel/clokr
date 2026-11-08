@@ -1046,7 +1046,11 @@ import { readFileSync } from "node:fs";
 // src/__tests__, `leave-decision-core-835` and `leave-request-create-core-835` under contexts/absence/__tests__,
 // `employee-ids-homed-in-salon-835` under contexts/platform/__tests__), counted from `git diff --diff-filter=A` against
 // the merge base and verified with a full API run (856 files); nothing removed, skipped or loosened; MIN_FILES 834 -> 856
-const MIN_FILES = 856;
+// Phase 840 (Issue #840): 5 new test files (leave-calendar-masking-840, leave-calendar-scope-840, leave-plan-masking-840,
+// leave-requests-pending-all-years-840 under src/__tests__ and the kernel test contexts/absence/__tests__/leave-calendar-masking),
+// counted from `git diff --diff-filter=A` against the merge base and verified with a full API run (863 files); nothing
+// removed, skipped or loosened; MIN_FILES 856 -> 861
+const MIN_FILES = 861;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1203,7 +1207,11 @@ const MIN_FILES = 856;
 // Phase 835 (Issue #835): the 22 new files carry 180 cases (per-file counts of the full run's default reporter); the full run
 // measured 12366 tests (12363 passed, 3 skipped), so the floor stays a lower bound (the other 13 come from existing files this
 // phase extended additively); nothing removed, skipped or loosened; MIN_TESTS 12173 -> 12353
-const MIN_TESTS = 12353;
+// Phase 840 (Issue #840): the 5 new files carry 73 cases (25 + 18 + 9 + 2 + 19, per-file counts of the full run's JSON
+// report) and `neutrality-amendments-from-run.test.ts` gains 3 (the `--retired` cases, 18 -> 21); every other API test
+// file the phase touched keeps its case count. The full run measured 12460 tests (12457 passed, 3 skipped), so the floor
+// stays a lower bound; nothing removed, skipped or loosened; MIN_TESTS 12353 -> 12429
+const MIN_TESTS = 12429;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
