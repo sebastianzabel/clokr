@@ -26,6 +26,8 @@
  *      (also on a directly opened Planung) and leads to the „Offen“ filter, the type chips of the
  *      Anträge list and the inbox use the colours of the one mapping, the inbox header reads
  *      „Team“ / „Inbox“;
+ *   8. (gap round, plan 840-18, G-9) „Neue Abwesenheit“ lays out as Mitarbeiter + Art, then
+ *      Von + Bis, with no select cut off and no type eyebrow, and stacks on a phone;
  *   9. (gap round, plan 840-18, G-7) the primary buttons of the leave pages compute exactly the
  *      colours of the reference primary (`/admin/employees`) and reach 4.5:1 in every skin, theme,
  *      mode and state (rest and hover), read from the computed styles in the real browser.
@@ -1097,6 +1099,65 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(inboxChip).toBeVisible();
     expect(await borderStyleOf(inboxChip)).toBe("dashed");
     expect(await inboxChip.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(vacation);
+  });
+
+  test("8. Neue Abwesenheit: Mitarbeiter + Art, then Von + Bis; stacked on a phone", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    test.setTimeout(90_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await createEmployee(request, tenant, { key: "frm", firstName: "Formular", lastName: "Zeile" });
+    await loginAsTenantAdmin(page, tenant);
+
+    // Team: „+ Neue Abwesenheit“ — row 1 Mitarbeiter + Art, row 2 Von + Bis, no eyebrow.
+    await page.goto("/team/leave?tab=uebersicht");
+    await page
+      .locator(".page-head")
+      .getByRole("button", { name: /Neue Abwesenheit/ })
+      .click();
+    const dialog = page.getByTestId("leave-form-modal");
+    await expect(dialog).toBeVisible();
+    await animationsSettled(page);
+    const topOf = async (selector: string) => (await page.locator(selector).boundingBox())!;
+    const emp = await topOf("#create-emp");
+    const type = await topOf("#f-type");
+    const from = await topOf("#f-start");
+    const to = await topOf("#f-end");
+    expect(Math.abs(emp.y - type.y), "Mitarbeiter and Art share their top").toBeLessThanOrEqual(2);
+    expect(emp.width, "the Mitarbeiter select is wide enough").toBeGreaterThanOrEqual(200);
+    expect(type.width, "the Art select is wide enough").toBeGreaterThanOrEqual(200);
+    expect(Math.abs(from.y - to.y), "Von and Bis share their top").toBeLessThanOrEqual(2);
+    expect(from.y, "the dates row is below the who row").toBeGreaterThan(emp.y + emp.height - 1);
+    await expect(page.locator(".modal-eyebrow")).toHaveCount(0);
+
+    // On a phone every field stacks.
+    await page.setViewportSize({ width: 420, height: 800 });
+    const phoneFrom = await topOf("#f-start");
+    const phoneTo = await topOf("#f-end");
+    expect(phoneTo.y, "Bis lies below Von on a phone").toBeGreaterThanOrEqual(
+      phoneFrom.y + phoneFrom.height - 1,
+    );
+    const phoneEmp = await topOf("#create-emp");
+    const phoneType = await topOf("#f-type");
+    expect(phoneType.y, "Art lies below Mitarbeiter on a phone").toBeGreaterThanOrEqual(
+      phoneEmp.y + phoneEmp.height - 1,
+    );
+
+    // Own area: Von and Bis share a row on a desktop.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/leave");
+    await page.getByTestId("leave-new-request").click();
+    await expect(page.getByTestId("leave-form-modal")).toBeVisible();
+    await animationsSettled(page);
+    const ownFrom = await topOf("#f-start");
+    const ownTo = await topOf("#f-end");
+    expect(
+      Math.abs(ownFrom.y - ownTo.y),
+      "Von and Bis share their top (own form)",
+    ).toBeLessThanOrEqual(2);
+    await expect(page.locator(".modal-eyebrow")).toHaveCount(0);
   });
 
   test("9. primary buttons: the same recipe as elsewhere, WCAG AA in every skin, theme, mode and state", async ({
