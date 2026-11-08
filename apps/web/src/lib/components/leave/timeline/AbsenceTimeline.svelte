@@ -1025,6 +1025,8 @@
   /* Issue 840 G-2: one visible weekend token for the header cell and the tracks (no opacity dilution). */
   .absence-day--weekend {
     background: var(--weekend-shade);
+    /* The muted header text is 4.48:1 on the shade; the body text colour clears 4.5:1 (axe). */
+    color: var(--text);
   }
 
   .absence-day--closed {

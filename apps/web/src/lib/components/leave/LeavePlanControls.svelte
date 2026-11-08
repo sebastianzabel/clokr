@@ -49,6 +49,11 @@
     flex-wrap: wrap;
     gap: var(--s-3);
   }
+  /* Issue 840 G-6: the shared blue badge text is 4.29:1 on its own tint; in the toolbar (an axe
+     checked surface) the status reads in the body text colour, the tint and border stay blue. */
+  .plan-controls .badge-blue {
+    color: var(--text);
+  }
   .plan-deadline {
     color: var(--text-muted);
     font-size: 0.875rem;
