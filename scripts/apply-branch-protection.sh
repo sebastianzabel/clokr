@@ -47,19 +47,25 @@ BRANCHES=(main)
 # Deliberately NOT included:
 #   lighthouse, axe-scan     — run with continue-on-error by design; promotion
 #                              to blocking is scheduled for Phase 73.
-#   visual-regression        — listed as required in the runbook's table but
-#                              absent from its payload. The job always reports
-#                              (only its steps are path-filtered), so it is
-#                              technically eligible; it is left advisory because
-#                              the baselines are arm64-local vs amd64-CI and it
-#                              fails for reasons unrelated to the change under
-#                              review. Add it here once the baselines are fixed.
+#
+# e2e-ci and visual-regression are required since 09.11.2026 (owner decision): the merge queue
+# only waits for required checks, so a PR with red end-to-end or screenshot tests would otherwise
+# merge. Both jobs always report (visual-regression path-filters only its steps). Baselines are
+# taken from the CI images (docs/visual-regression-workflow.md), so the old arm64/amd64 objection
+# no longer holds.
 REQUIRED_CHECKS=(
   test
   codeql
   secret-scan
   docker-gate
+  e2e-ci
+  visual-regression
 )
+
+# Since 09.11.2026 main merges through a merge queue (ruleset "main merge queue"): the queue tests
+# every PR on the combined state, so the branch-protection "require branches to be up to date"
+# flag (`strict`) is OFF on purpose — with it on, every merge would make all other PRs stale again.
+WANT_STRICT=false
 
 MODE="check"
 case "${1:-}" in
@@ -109,7 +115,7 @@ drift=0
 
 # Newline-delimited: check names contain spaces and commas (matrix legs).
 WANT_CHECKS="$(printf '%s\n' "${REQUIRED_CHECKS[@]}")"
-export WANT_CHECKS
+export WANT_CHECKS WANT_STRICT
 
 for branch in "${BRANCHES[@]}"; do
   current="$(fetch_protection "$branch")"
@@ -142,14 +148,15 @@ if missing:
     problems.append("missing required checks: " + ", ".join(missing))
 if extra:
     problems.append("unexpected required checks: " + ", ".join(extra))
-if strict is not True:
-    problems.append(f"strict is {strict!r}, expected True")
+want_strict = os.environ.get("WANT_STRICT", "false") == "true"
+if strict is not want_strict:
+    problems.append(f"strict is {strict!r}, expected {want_strict}")
 
 if problems:
     for p in problems:
         print(f"DRIFT\t{branch}\t{p}")
 else:
-    print(f"OK\t{branch}\t{len(have)} required checks, strict=True")
+    print(f"OK\t{branch}\t{len(have)} required checks, strict={strict}")
 '
   )" || true
 
@@ -247,7 +254,7 @@ else:
 
 body = {
     "required_status_checks": {
-        "strict": True,
+        "strict": os.environ.get("WANT_STRICT", "false") == "true",
         # app_id -1 = any GitHub App may post this context. Required because
         # these are Actions job names, not app-bound checks.
         "checks": [{"context": c, "app_id": -1} for c in want],
