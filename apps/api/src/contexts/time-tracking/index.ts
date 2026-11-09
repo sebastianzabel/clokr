@@ -34,6 +34,7 @@ export {
   getClaimedEntryDatesInRange,
   countLockedEntries,
   getInvalidEntries,
+  findMissingClockOutEntries, // Issue #853 (D-853-21a): open entries of past days for the Aufgaben work queue
   getEntryActivityFeed,
   revalidateLeaveCancellationEntries,
   lockEntriesForMonth,

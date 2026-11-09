@@ -67,6 +67,7 @@ import { supportAccessRoutes } from "./contexts/platform/api/support-accesses"; 
 import { activityRoutes } from "./composition/activity";
 import { companyShutdownRoutes } from "./contexts/absence/api/company-shutdowns";
 import { dashboardRoutes } from "./composition/dashboard";
+import { tasksOpenRoutes } from "./composition/tasks-open"; // Issue #853 (D-853-22)
 import { shiftRoutes } from "./contexts/scheduling/api/shifts";
 import {
   shiftPatternRoutes,
@@ -460,6 +461,8 @@ export async function buildApp() {
   await app.register(activityRoutes, { prefix: "/api/v1/activity" });
   await app.register(companyShutdownRoutes, { prefix: "/api/v1/company-shutdowns" });
   await app.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });
+  // Issue #853 (D-853-22): read-only work queue of the Aufgaben page (missing clock-outs in reach)
+  await app.register(tasksOpenRoutes, { prefix: "/api/v1/tasks/open" });
   await app.register(notificationRoutes, { prefix: "/api/v1/notifications" });
   await app.register(shiftRoutes, { prefix: "/api/v1/shifts" });
   // Phase 43 — recurring shift patterns live under the employees namespace
