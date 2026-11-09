@@ -12,6 +12,7 @@
     "lint:ui": "node scripts/lint-ui.mjs",
     "lint:ui-classes": "node scripts/lint-ui-classes.mjs",
     "lint:save-pattern": "node scripts/lint-save-pattern.mjs",
+    "lint:no-alert": "node scripts/lint-no-alert.mjs",
     "lint:ui-terms": "node scripts/lint-ui-terms.mjs",
     "brand:icons": "tsx scripts/generate-brand-icons.ts",
     "lint:role-checks": "node scripts/lint-role-checks.mjs",
