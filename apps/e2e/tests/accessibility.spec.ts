@@ -19,6 +19,10 @@ test.describe("Accessibility Audit (axe-core)", () => {
     { name: "Admin Urlaub & Zeiten", url: "/admin/vacation" },
     { name: "Admin System", url: "/admin/system" },
     { name: "Admin Sonderurlaub", url: "/admin/special-leave" },
+    // Issue #844: the pages created with the three areas
+    { name: "Heute im Salon", url: "/team/heute" },
+    { name: "Verwalten Übersicht", url: "/verwalten" },
+    { name: "Verwalten Regeln", url: "/verwalten/regeln" },
   ];
 
   for (const p of pages) {

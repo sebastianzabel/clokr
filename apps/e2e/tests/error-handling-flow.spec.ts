@@ -3,15 +3,15 @@ import { loginAsAdmin, loginAsTenantAdmin, screenshotPage, TEST_ADMIN } from "./
 
 const WRONG_CURRENT_PASSWORD = "wrongcurrentpassword";
 
-// Routes whose location the main navigation must mark (#515). The alternatives in `name` are the
-// two layouts' labels, not a branch: the sidebar says "Zeiterfassung" where the tab bar says
-// "Zeit", and on <=960px a page behind "Mehr" is held by the overflow trigger, whose accessible
-// name then reads "Mehr, aktuelle Seite: <Label>" instead of the sidebar link's plain label.
+// Routes whose location the main navigation must mark (#515, URLs of #844). The alternatives in `name`
+// are the two layouts' labels, not a branch: on <=960px a page that is no tab of the (team) tab bar is
+// held by the overflow trigger, whose accessible name then reads "Mehr, aktuelle Seite: <Label>"
+// instead of the sidebar link's plain label.
 const NAV_LOCATIONS: { route: string; name: RegExp }[] = [
-  { route: "/dashboard", name: /^Übersicht$/ },
-  { route: "/time-entries", name: /^Zeit(erfassung)?$/ },
-  { route: "/leave", name: /^Abwesenheiten$/ },
-  { route: "/admin/employees", name: /^(Mehr, aktuelle Seite: )?Mitarbeitende$/ },
+  { route: "/ich/tag", name: /^Mein Tag$/ },
+  { route: "/ich/zeiten", name: /^(Mehr, aktuelle Seite: )?Zeiten$/ },
+  { route: "/ich/abwesenheiten", name: /^(Mehr, aktuelle Seite: )?Abwesenheiten$/ },
+  { route: "/verwalten/personen", name: /^(Mehr, aktuelle Seite: )?Personen$/ },
 ];
 
 test.describe("Error Handling + UX Plausibility", () => {
@@ -227,10 +227,11 @@ test.describe("Error Handling + UX Plausibility", () => {
   // reason this exists; the redirect-only /admin/special-leave is in no navigation at all.
   test("navigation offers the same targets on every device profile", async ({ page }) => {
     const targets: { route: string; heading: string; name: string }[] = [
-      { route: "/availability", heading: "Mein Bereich", name: "Verfügbarkeit" },
-      { route: "/admin/availability", heading: "PLANUNG", name: "Verfügbarkeit" },
-      { route: "/admin/phorest", heading: "SYSTEM", name: "Phorest" },
-      { route: "/admin/audit", heading: "COMPLIANCE", name: "Protokoll" },
+      // #844: the three areas; Phorest and Protokoll are hub pages behind System and Daten
+      { route: "/ich/dienstplan", heading: "Ich", name: "Dienstplan" },
+      { route: "/team/verfuegbarkeit", heading: "Team", name: "Verfügbarkeit" },
+      { route: "/verwalten/system", heading: "Verwalten", name: "System" },
+      { route: "/verwalten/daten", heading: "Verwalten", name: "Daten" },
     ];
     for (const { route, heading, name } of targets) {
       await page.goto(route);

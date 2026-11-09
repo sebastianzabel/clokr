@@ -302,7 +302,7 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(xRow).toContainText(x.lastName);
 
     await xRow.getByRole("link", { name: new RegExp(x.lastName) }).click();
-    await expect(page).toHaveURL(new RegExp(`/admin/employees/${x.id}`));
+    await expect(page).toHaveURL(new RegExp(`/verwalten/personen/${x.id}`));
     await expect(
       page.getByRole("tabpanel").getByText("Persönliche Daten", { exact: true }),
     ).toBeVisible();
@@ -401,7 +401,7 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
 
     // ── 2. AC-86-2: change the contract from the next month-first ─────────────────────────────
     await page.getByTestId(`admin-employees-row-${x.id}`).getByRole("link").first().click();
-    await expect(page).toHaveURL(new RegExp(`/admin/employees/${x.id}`));
+    await expect(page).toHaveURL(new RegExp(`/verwalten/personen/${x.id}`));
     await page.getByRole("tab", { name: "Arbeitszeit" }).click();
     const contractHistory = page.getByTestId("contract-history");
     await expect(contractHistory.locator("tbody tr")).toHaveCount(1);
@@ -491,7 +491,7 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
       .getByRole("navigation", { name: "Team" })
       .getByRole("link", { name: "Berichte" })
       .click();
-    await expect(page).toHaveURL(/\/reports/);
+    await expect(page).toHaveURL(/\/verwalten\/berichte/);
     // Issue #612: the page is the period report - the HR principal gets the two period tabs and
     // the vacation overview on the second one, and still no export control of any kind.
     await expect(page.getByRole("tab", { name: "Zeiten & Konten" })).toHaveAttribute(

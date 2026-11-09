@@ -99,7 +99,7 @@ async function login(page: Page, email: string) {
   await page.getByLabel("E-Mail").fill(email);
   await page.getByLabel("Passwort", { exact: true }).fill(PW);
   await page.getByRole("button", { name: /anmelden/i }).click();
-  await page.waitForURL("**/dashboard", { timeout: 15_000 });
+  await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 15_000 }); // #844: the start page
 }
 
 /**
@@ -255,7 +255,7 @@ test.describe("Phase 262 — /leave/overlap masks the absence type over the wire
 
     const overlapBody = captureOverlap(page);
     await page.getByTestId(`leave-team-row-${fx.pendingId}-review`).click();
-    await page.waitForURL(/\/inbox\?/);
+    await page.waitForURL(/\/team\/aufgaben\?/);
     await expect(page.getByTestId("leave-approval-modal")).toBeVisible();
     const rows = (await overlapBody) as Array<Record<string, unknown>>;
 

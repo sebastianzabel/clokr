@@ -244,6 +244,12 @@ export default defineConfig({
       //     built app and the axe scans); tenant fixture plus API-created people, requests, plans,
       //     a holiday and opening hours, every date computed from the clock
       //
+      // Issue #844 added a fifteenth file:
+      //   - Navigation v2: the start page per role (Mitarbeiterin, Salonmanager, Inhaber,
+      //     Personalabteilung), old URLs and a notification deep link redirect (308 on the server),
+      //     the rail without scrolling at 1440 x 900 and 1024 x 768; tenant fixture plus API-created
+      //     people with their system role templates
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -264,6 +270,7 @@ export default defineConfig({
         /role-editor-visibility-710\.spec\.ts/,
         /push-pwa\.spec\.ts/,
         /leave-area-840\.spec\.ts/,
+        /navigation-v2\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

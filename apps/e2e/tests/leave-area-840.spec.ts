@@ -76,7 +76,7 @@ async function loginViaForm(page: Page, email: string, password: string): Promis
   await page.getByLabel("E-Mail").fill(email);
   await page.getByLabel("Passwort", { exact: true }).fill(password);
   await page.getByRole("button", { name: /anmelden/i }).click();
-  await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+  await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
 }
 
 async function loginAsTenantAdmin(page: Page, tenant: TestTenant): Promise<void> {
@@ -440,7 +440,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
 
     // ── „Im Posteingang prüfen“ lands on the inbox with the review mask open ────────────────
     await row.getByTestId(`leave-team-row-${pendingId}-review`).click();
-    await page.waitForURL(/\/inbox/);
+    await page.waitForURL(/\/team\/aufgaben/);
     await expect(page.getByTestId("leave-approval-modal")).toBeVisible();
     await expect(page.getByTestId("leave-approval-modal-approve")).toBeVisible();
     await page.keyboard.press("Escape");
@@ -825,13 +825,13 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await loginAsTenantAdmin(page, tenant);
 
     await page.goto("/teamcal");
-    await page.waitForURL(/\/team\/leave/);
+    await page.waitForURL(/\/team\/abwesenheiten/);
     let url = new URL(page.url());
     expect(url.searchParams.get("tab")).toBe("uebersicht");
     expect(url.searchParams.get("zoom")).toBe("monat");
 
     await page.goto(`/leave/planung?year=${year}`);
-    await page.waitForURL(/\/team\/leave/);
+    await page.waitForURL(/\/team\/abwesenheiten/);
     url = new URL(page.url());
     expect(url.searchParams.get("tab")).toBe("planung");
 
@@ -842,7 +842,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     expect(url.searchParams.get("status")).toBe("PENDING");
 
     await page.goto(`/team/leave?section9=${section9Id}`);
-    await page.waitForURL(/\/inbox/);
+    await page.waitForURL(/\/team\/aufgaben/);
     expect(new URL(page.url()).pathname).toBe("/inbox");
     expect(
       seen.some((u) => u.endsWith(`/inbox?section9=${section9Id}`)),
@@ -858,7 +858,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     });
     await loginViaForm(page, person.email, password);
     await page.goto(`/leave/planung?year=${year}`);
-    await page.waitForURL(/\/leave\?/);
+    await page.waitForURL(/\/ich\/abwesenheiten\?/);
     url = new URL(page.url());
     expect(url.pathname).toBe("/leave");
     expect(url.searchParams.get("tab")).toBe("planung");

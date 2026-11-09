@@ -40,7 +40,7 @@ async function loginAsTenantAdmin(page: Page, tenant: TestTenant): Promise<void>
   await page.getByLabel("E-Mail").fill(`admin@${tenant.tenantId}.test`);
   await page.getByLabel("Passwort", { exact: true }).fill(TEST_PASSWORD);
   await page.getByRole("button", { name: /anmelden/i }).click();
-  await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+  await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
 }
 
 test.describe("Functional — happy paths across primary surfaces", () => {
@@ -161,7 +161,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(box).not.toBeNull();
       await hoursCanvas.click({ position: { x: box!.width * 0.9, y: box!.height * 0.45 } });
 
-      await page.waitForURL(/\/reports\?from=(\d{4}-\d{2})&to=\1&tab=zeiten/);
+      await page.waitForURL(/\/verwalten\/berichte\?from=(\d{4}-\d{2})&to=\1&tab=zeiten/);
       expect(new URL(page.url()).searchParams.get("to")).toBe(lastMonth);
       const [year, month] = lastMonth.split("-").map(Number);
       await expect(page.getByTestId("reports-period-label")).toContainText(
@@ -184,7 +184,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(href).toMatch(/^\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub$/);
 
       await sickLink.click();
-      await page.waitForURL(/\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
+      await page.waitForURL(/\/verwalten\/berichte\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
       expect(page.url()).toContain(href);
     });
   });
