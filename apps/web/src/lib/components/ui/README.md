@@ -318,6 +318,10 @@ Sources: `$components/ui/FormField.svelte`, `SaveBar.svelte` (+ `save-bar.ts`), 
 - `SaveBar` (`changes`, `errors`, `saving?`, `saveLabel`, `onSave`, `onDiscard`): the section-button rule of `docs/ADMIN_STRUCTURE.md` §3.2.1 as code. Hidden at 0 changes; the save button is disabled while `errors > 0` or `saving`; `saveLabel` says what happens („Vertrag speichern“). The German phrase and the `canSave` rule live only in `save-bar.ts`. No page adopts it yet.
 - `DayGrid` (`value` bindable `{ mon … sun }` hours or `null`, `label`, `step?`, `disabled?`, `onchange?`): Mo…So fields, live sum in German notation („39,5 h“), a field error outside 0…24 (feedback only, the API validates).
 
+### Bulk change preview: `<BulkPreviewDialog>`
+
+Source: `$components/ui/BulkPreviewDialog.svelte` (Issue #843, D-843-01 block 7). The pattern helper for a write that touches many records: a wide `Dialog` with the count sentence („Betrifft 12 Personen“), the caller's `list` snippet, „Gilt ab 01.12.2026“ formatted from a caller-given ISO `effectiveDate` (the block computes no date; the server's preview decides, § 3 NachwG, #568) and a footer „Abbrechen“ + the confirm button (`confirmLabel` says what happens). Props: `open` (bindable), `title`, `eyebrow?`, `count`, `effectiveDate?`, `confirmLabel`, `pending?`, `loading?`, `onConfirm`, `onCancel?`, `list`, `intro?`, `extraActions?`. Confirm is disabled at `count` 0, while `pending` or while `loading`; `loading` shows the Skeleton instead of count and list. First adopter: `admin/BulkApplyDialog.svelte`.
+
 ### Pickers: `<Combobox>`, `<DatePicker>`
 
 Sources: `$components/ui/Combobox.svelte`, `DatePicker.svelte`, `$lib/table/search.ts` (Issue #843, D-843-01 block 7). Import them only where used, never through a barrel (bundle, D-843-17).
