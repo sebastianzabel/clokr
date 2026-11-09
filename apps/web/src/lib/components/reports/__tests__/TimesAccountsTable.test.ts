@@ -407,7 +407,7 @@ describe("TimesAccountsTable - search, count, paging", () => {
     expect(screen.getByText("Keine Personen im Zeitraum")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "In Ihrer Reichweite war im gewählten Zeitraum niemand beschäftigt. Wählen Sie oben einen anderen Zeitraum.",
+        "In deiner Reichweite war im gewählten Zeitraum niemand beschäftigt. Wähl oben einen anderen Zeitraum.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("table")).toBeNull();

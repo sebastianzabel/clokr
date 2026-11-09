@@ -1,5 +1,5 @@
 // Issue #482 (owner decision 2026-10-04) — DISPLAY mirror of which vacation-days Standard
-// (Mandanten-Standard or Azubi-Standard) applies to a given classification. The server's
+// (Unternehmensstandard or Azubi-Standard) applies to a given classification. The server's
 // resolveVacationBaseDays() (apps/api/src/contexts/absence/leave-days.ts) is the authoritative
 // resolver — this module computes no entitlement, it only decides which Standard to SHOW and
 // whether a typed value equals that Standard (so it can be collapsed to null before sending the
@@ -9,7 +9,7 @@ import type { EmployeeClassification } from "./employee-classification";
 
 /**
  * The Standard that applies to `classification`: AZUBI follows the Azubi-Standard
- * (`apprenticeDefault`), every other classification follows the Mandanten-Standard
+ * (`apprenticeDefault`), every other classification follows the Unternehmensstandard
  * (`tenantDefault`). A `null` input (Standard not loaded yet / tenant has no value) passes
  * through unchanged.
  */
@@ -50,7 +50,7 @@ export function vacationBaseDefaultPlaceholder(
   apprenticeDefault: number | null,
 ): string {
   const value = vacationBaseDefaultFor(classification, tenantDefault, apprenticeDefault);
-  const label = classification === "AZUBI" ? "Azubi-Standard" : "Mandanten-Standard";
+  const label = classification === "AZUBI" ? "Azubi-Standard" : "Unternehmensstandard";
   const formatted =
     value === null ? "unbekannt" : value.toLocaleString("de-DE", { maximumFractionDigits: 2 });
   return `${label} (${formatted})`;

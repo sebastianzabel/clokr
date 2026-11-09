@@ -87,7 +87,7 @@ describe("SalonTimeEntries — states", () => {
   it("prompts for a salon", () => {
     renderWithTheme(SalonTimeEntries, { ...base, status: "prompt" });
     expect(
-      screen.getByText("Wählen Sie in der Kopfleiste einen Salon, um seine Einträge zu sehen."),
+      screen.getByText("Wähl in der Kopfleiste einen Salon, um seine Einträge zu sehen."),
     ).toBeTruthy();
   });
 
@@ -95,7 +95,7 @@ describe("SalonTimeEntries — states", () => {
     renderWithTheme(SalonTimeEntries, { ...base, status: "rejected" });
     expect(
       screen.getByText(
-        "Für diesen Salon liegt keine Salonansicht vor. Wählen Sie in der Kopfleiste einen anderen Salon.",
+        "Für diesen Salon liegt keine Salonansicht vor. Wähl in der Kopfleiste einen anderen Salon.",
       ),
     ).toBeTruthy();
   });

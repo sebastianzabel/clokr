@@ -111,8 +111,9 @@ describe("isSalonFilterRejected — only the one 404 is a calm state", () => {
 });
 
 describe("shared texts", () => {
-  it("are German and address the reader with Sie", () => {
-    expect(SALON_VIEW_UNAVAILABLE_TEXT).toContain("Wählen Sie");
+  it("are German and address the reader with du (Issue #574)", () => {
+    expect(SALON_VIEW_UNAVAILABLE_TEXT).toContain("Wähl in der Kopfleiste");
+    expect(SALON_VIEW_UNAVAILABLE_TEXT).not.toMatch(/\bSie\b|\bIhr/);
     expect(SALON_SOLL_NOT_ATTRIBUTABLE_NOTE).toContain("Soll");
   });
 });
@@ -122,8 +123,8 @@ describe("Issue #542 — the reports page texts", () => {
     expect(SALON_HOME_PERSONS_NOTE).toBe("Personen nach Stammsalon");
     expect(SALON_EXPORT_PERSONS_NOTE).toBe("Personen nach Stammsalon am Monatsende");
     expect(PERSON_SALDO_NOT_SPLIT_LABEL).toBe("Personensaldo, nicht nach Salon aufgeteilt");
-    expect(ALL_SALONS_BLOCK_NOTE).toBe("Gilt für alle Salons Ihrer Reichweite");
-    expect(DATEV_ALL_SALONS_NOTE).toBe("DATEV gilt für alle Salons Ihrer Reichweite");
+    expect(ALL_SALONS_BLOCK_NOTE).toBe("Gilt für alle Salons deiner Reichweite");
+    expect(DATEV_ALL_SALONS_NOTE).toBe("DATEV gilt für alle Salons deiner Reichweite");
   });
 
   it("says that persons without a Stammsalon on their Stichtag are only in the unfiltered export", () => {

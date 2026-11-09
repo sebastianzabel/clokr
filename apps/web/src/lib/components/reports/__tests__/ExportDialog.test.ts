@@ -272,17 +272,17 @@ describe("ExportDialog - errors and busy state", () => {
     [
       "Monatsexport herunterladen",
       "onMonthlyExport",
-      "Der Monatsexport konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
+      "Der Monatsexport konnte nicht erstellt werden. Bitte versuch es noch einmal.",
     ],
     [
       "DATEV-Datei herunterladen",
       "onDatev",
-      "Der DATEV-Export konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
+      "Der DATEV-Export konnte nicht erstellt werden. Bitte versuch es noch einmal.",
     ],
     [
       "CSV-Datei herunterladen",
       "onCsv",
-      "Die CSV-Datei konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
+      "Die CSV-Datei konnte nicht erstellt werden. Bitte versuch es noch einmal.",
     ],
     [
       "Abwesenheiten-CSV herunterladen",

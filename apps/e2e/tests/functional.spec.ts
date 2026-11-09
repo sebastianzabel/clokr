@@ -92,7 +92,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await expect(card.getByText("Salden", { exact: true })).toBeInViewport();
       const firstFigure = card
         .getByTestId("team-saldo-median")
-        .or(card.getByText("Keine Salden in Ihrer Reichweite"));
+        .or(card.getByText("Keine Salden in deiner Reichweite"));
       // The figure arrives with the overview request, which starts after the team block loaded; the
       // wait is for that load under a busy full run (a single run needs about 3 s), the assertion
       // itself - the figure lies inside the viewport - is unchanged.

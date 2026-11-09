@@ -64,9 +64,9 @@
   }: Props = $props();
 
   const ERROR_TEXT = {
-    monthly: "Der Monatsexport konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
-    datev: "Der DATEV-Export konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
-    csv: "Die CSV-Datei konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
+    monthly: "Der Monatsexport konnte nicht erstellt werden. Bitte versuch es noch einmal.",
+    datev: "Der DATEV-Export konnte nicht erstellt werden. Bitte versuch es noch einmal.",
+    csv: "Die CSV-Datei konnte nicht erstellt werden. Bitte versuch es noch einmal.",
     // Issue #713: new text speaks to the reader as „du“.
     absences: "Die Abwesenheiten-CSV konnte nicht erstellt werden. Versuch es bitte noch einmal.",
   } as const;

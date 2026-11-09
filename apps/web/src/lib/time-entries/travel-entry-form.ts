@@ -42,10 +42,10 @@ export const TRAVEL_TEXTS = {
   from: "Von Salon",
   to: "Nach Salon",
   placeholder: "Bitte wählen",
-  hint: "Erfassen Sie die Fahrt ab dem Verlassen des ersten Salons. Der Weg von oder nach Hause ist keine Arbeitszeit.",
+  hint: "Erfasse die Fahrt ab dem Verlassen des ersten Salons. Der Weg von oder nach Hause ist keine Arbeitszeit.",
   editTitle: "Fahrzeit bearbeiten",
   badge: "Fahrzeit",
-  salonsRequired: "Bitte wählen Sie „Von Salon“ und „Nach Salon“.",
+  salonsRequired: "Bitte wähl „Von Salon“ und „Nach Salon“.",
   outsideWindow:
     "Eine Fahrzeit außerhalb des Bearbeitungsfensters kann nicht nachträglich beantragt werden.",
   offerHint:

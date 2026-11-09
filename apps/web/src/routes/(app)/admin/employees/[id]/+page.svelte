@@ -1464,7 +1464,7 @@
 
   let orphanNewTypeLabel = $derived(
     eType === "FIXED_SCHEDULE"
-      ? "Fester Stundenplan"
+      ? "Feste Arbeitszeit"
       : eType === "FLEXTIME"
         ? "Gleitzeit"
         : eType === "MONTHLY_HOURS"
@@ -2098,7 +2098,7 @@
                 )}
               />
               <p class="hint">
-                Leer = Azubi-Standard für Auszubildende, sonst Mandanten-Standard (beides unter
+                Leer = Azubi-Standard für Auszubildende, sonst Unternehmensstandard (beides unter
                 Urlaubsverwaltung → Standards). Gilt für künftige Urlaubsjahre; bestehende Ansprüche
                 ändern sich nur im Tab Urlaub (mit Protokoll).
               </p>
@@ -2140,7 +2140,7 @@
         <!-- ── Arbeitszeit ─────────────────────────────────────────────────── -->
         <Section
           title="Arbeitszeitmodell"
-          sub="Festzeit, Gleitzeit, Monatsstunden oder Schichtplan"
+          sub="Feste Arbeitszeit, Gleitzeit, Monatsstunden oder nach Schichtplan"
           dirty={scheduleDirty}
         >
           {#snippet footer()}
@@ -2162,7 +2162,7 @@
           <div class="form-group">
             <span class="form-label">Arbeitszeitmodell</span>
             <div class="schedule-type-picker" role="group" aria-label="Arbeitszeitmodell">
-              {#each [{ value: "FIXED_SCHEDULE", label: "Fester Stundenplan", tooltip: "Per-Tag-Stunden festgelegt — z.B. Mo–Fr je 8h." }, { value: "FLEXTIME", label: "Gleitzeit", tooltip: "Wochenstundensoll mit freier Tagesverteilung. Optional Kernarbeitszeit." }, { value: "MONTHLY_HOURS", label: "Monatsstunden (Minijob)", tooltip: "Monatsstunden-Budget — z.B. 15h/Monat für Minijobber." }, { value: "SHIFT_BASED", label: "Schichtplan", tooltip: "Schichtplan ist führend. Wochenstunden als Soll-Target." }] as seg (seg.value)}
+              {#each [{ value: "FIXED_SCHEDULE", label: "Feste Arbeitszeit", tooltip: "Per-Tag-Stunden festgelegt — z.B. Mo–Fr je 8h." }, { value: "FLEXTIME", label: "Gleitzeit", tooltip: "Wochenstundensoll mit freier Tagesverteilung. Optional Kernarbeitszeit." }, { value: "MONTHLY_HOURS", label: "Monatsstunden", tooltip: "Monatsstunden-Budget — z.B. 15h/Monat für Minijobber." }, { value: "SHIFT_BASED", label: "Nach Schichtplan", tooltip: "Die Arbeitstage ergeben sich aus dem Schichtplan; die Wochenstunden sind das Soll." }] as seg (seg.value)}
                 <button
                   type="button"
                   class="stp-btn"
@@ -3640,7 +3640,7 @@
                 maximumFractionDigits: 2,
               })} Tage</strong
             >
-            (Basiswert der Person bzw. Mandanten-Standard, umgerechnet auf die Vertragstage, im Eintrittsjahr
+            (Basiswert der Person bzw. Unternehmensstandard, umgerechnet auf die Vertragstage, im Eintrittsjahr
             ggf. anteilig). Gesetzlicher Mindesturlaub: {eVacMinimum.toLocaleString("de-DE", {
               maximumFractionDigits: 2,
             })} Tage.

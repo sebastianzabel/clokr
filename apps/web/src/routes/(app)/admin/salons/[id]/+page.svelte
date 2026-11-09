@@ -222,7 +222,7 @@
     if (!salon) return;
     hoursErrors = validateOpeningHours(form.openingHours);
     if (hasMessages(hoursErrors)) {
-      toasts.error("Bitte prüfen Sie die markierten Tage.");
+      toasts.error("Bitte prüf die markierten Tage.");
       return;
     }
     const patch = salonPatch(salon, form, ["openingHours"]);

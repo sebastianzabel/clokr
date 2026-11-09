@@ -166,7 +166,7 @@
   );
 
   // Issue #482 (G-7 display mirror) — proposes the classification's own Standard (Azubi-Standard
-  // or Mandanten-Standard), raised to the legal minimum (§ 19 JArbSchG with a birth date, else
+  // or Unternehmensstandard), raised to the legal minimum (§ 19 JArbSchG with a birth date, else
   // § 3 BUrlG); never overwrites a value the admin typed.
   function refreshVacationPrefill() {
     const base = vacationBaseDefaultFor(
@@ -463,7 +463,7 @@
         // Issue #435 (D-11/D-12) — optional, drives the statutory-minimum pre-fill/hint only.
         birthDate: cBirthDate ? new Date(cBirthDate).toISOString() : null,
         // Issue #482 (G-5, mirrors #435 D-13): a value equal to the classification's OWN
-        // Standard (AZUBI -> Azubi-Standard, everyone else -> Mandanten-Standard) is sent as
+        // Standard (AZUBI -> Azubi-Standard, everyone else -> Unternehmensstandard) is sent as
         // null, so the person keeps following later changes of that Standard instead of
         // freezing today's number as an explicit override. A floor-raised minor suggestion
         // stays explicit (unchanged #435 D-11 behaviour).
@@ -533,13 +533,13 @@
   function scheduleLabel(type: string | null | undefined): string {
     switch (type) {
       case "FIXED_SCHEDULE":
-        return "Fester Stundenplan";
+        return "Feste Arbeitszeit";
       case "FLEXTIME":
         return "Gleitzeit";
       case "MONTHLY_HOURS":
-        return "Monatsstunden (Minijob)";
+        return "Monatsstunden";
       case "SHIFT_BASED":
-        return "Schichtplan";
+        return "Nach Schichtplan";
       default:
         return "—";
     }
@@ -964,10 +964,10 @@
             )}
           class="select"
         >
-          <option value="FIXED_SCHEDULE">Fester Stundenplan</option>
+          <option value="FIXED_SCHEDULE">Feste Arbeitszeit</option>
           <option value="FLEXTIME">Gleitzeit</option>
-          <option value="MONTHLY_HOURS">Monatsstunden (Minijob)</option>
-          <option value="SHIFT_BASED">Schichtplan</option>
+          <option value="MONTHLY_HOURS">Monatsstunden</option>
+          <option value="SHIFT_BASED">Nach Schichtplan</option>
         </select>
       </div>
       {#if cScheduleType === "FIXED_SCHEDULE" || cScheduleType === "FLEXTIME" || cScheduleType === "SHIFT_BASED"}

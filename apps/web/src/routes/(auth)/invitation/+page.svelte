@@ -76,15 +76,15 @@
       <div class="state-box state-error">
         <span class="state-icon">⚠</span>
         <h2>Ungültiger Link</h2>
-        <p>Dieser Einladungslink ist ungültig. Bitte wenden Sie sich an Ihren Administrator.</p>
+        <p>Dieser Einladungslink ist ungültig. Bitte wende dich an deine Administration.</p>
       </div>
     {:else if pageState === "expired"}
       <div class="state-box state-error">
         <span class="state-icon">⏰</span>
         <h2>Link abgelaufen</h2>
         <p>
-          Dieser Einladungslink ist abgelaufen (gültig 24 Stunden). Bitte wenden Sie sich an Ihren
-          Administrator, um einen neuen Link zu erhalten.
+          Dieser Einladungslink ist abgelaufen (gültig 24 Stunden). Bitte wende dich an deine
+          Administration, um einen neuen Link zu bekommen.
         </p>
       </div>
     {:else if pageState === "used"}
@@ -92,22 +92,21 @@
         <span class="state-icon">✓</span>
         <h2>Bereits aktiviert</h2>
         <p>
-          Dieses Konto wurde bereits aktiviert. Sie können sich direkt <a href="/login">anmelden</a
-          >.
+          Dieses Konto ist schon aktiviert. Du kannst dich direkt <a href="/login">anmelden</a>.
         </p>
       </div>
     {:else if pageState === "success"}
       <div class="state-box state-success">
         <span class="state-icon">✓</span>
         <h2>Konto aktiviert!</h2>
-        <p>Ihr Passwort wurde gesetzt. Sie können sich jetzt anmelden.</p>
+        <p>Dein Passwort ist gesetzt. Du kannst dich jetzt anmelden.</p>
         <a href="/login" class="btn btn-primary" style="margin-top:1rem;display:inline-block"
           >Zur Anmeldung</a
         >
       </div>
     {:else}
       <p class="login-subtitle" style="text-align:center;margin-bottom:1.5rem">
-        Bitte setzen Sie ein Passwort für Ihr Konto.
+        Bitte leg ein Passwort für dein Konto fest.
       </p>
 
       <form

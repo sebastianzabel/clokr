@@ -36,13 +36,12 @@
     <p class="salon-view-note" role="status">Wird geladen …</p>
   {:else if status === "prompt"}
     <div class="callout brand" role="status">
-      <p>Wählen Sie in der Kopfleiste einen Salon, um seine Einträge zu sehen.</p>
+      <p>Wähl in der Kopfleiste einen Salon, um seine Einträge zu sehen.</p>
     </div>
   {:else if status === "rejected"}
     <div class="callout" role="status">
       <p>
-        Für diesen Salon liegt keine Salonansicht vor. Wählen Sie in der Kopfleiste einen anderen
-        Salon.
+        Für diesen Salon liegt keine Salonansicht vor. Wähl in der Kopfleiste einen anderen Salon.
       </p>
     </div>
   {:else if status === "empty"}

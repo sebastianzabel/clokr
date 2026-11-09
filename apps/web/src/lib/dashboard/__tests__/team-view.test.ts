@@ -172,7 +172,7 @@ describe("teamTrendView — SCOPE_ENTRIES (Issue #85 D-06)", () => {
   it("names the basis: recorded working time in the caller's reach, no Soll, no note", () => {
     const view = scoped("NO_PERMISSION");
     expect(view.workedSeriesLabel).toBe("Erfasste Arbeitszeit (h)");
-    expect(view.chartSub).toBe("Erfasste Arbeitszeit in Ihrer Reichweite · Letzte 6 Monate");
+    expect(view.chartSub).toBe("Erfasste Arbeitszeit in deiner Reichweite · Letzte 6 Monate");
     expect(view.workedHours).toEqual([1.5]);
     expect(view.shouldHours).toBeNull();
     expect(view.sollNote).toBeNull();
@@ -184,7 +184,7 @@ describe("teamTrendView — SCOPE_ENTRIES (Issue #85 D-06)", () => {
     expect(view.shouldHours).toBeNull();
     expect(view.sollNote).toBe(TEAM_SOLL_PARTIAL_SCOPE_NOTE);
     expect(view.sollNote).toBe(
-      "Das Soll fehlt, weil ein Teil der Arbeitszeit in Salons außerhalb Ihrer Reichweite erfasst ist.",
+      "Das Soll fehlt, weil ein Teil der Arbeitszeit in Salons außerhalb deiner Reichweite erfasst ist.",
     );
     expect(view.trendNote).toBeNull();
     expect(view.workedSeriesLabel).toBe("Erfasste Arbeitszeit (h)");
@@ -274,7 +274,7 @@ describe("isTeamSalonRejected — D-16: only a 404 is the calm empty state", () 
 
   it("the empty-state text is the agreed German sentence", () => {
     expect(TEAM_SALON_UNAVAILABLE_TEXT).toBe(
-      "Für diesen Salon liegt keine Teamansicht vor. Wählen Sie in der Kopfleiste „Alle Salons“ oder einen anderen Salon.",
+      "Für diesen Salon liegt keine Teamansicht vor. Wähl in der Kopfleiste „Alle Salons“ oder einen anderen Salon.",
     );
   });
 });

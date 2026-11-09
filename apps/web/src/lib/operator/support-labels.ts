@@ -6,10 +6,10 @@
 
 /** `ScheduleType` (packages/db/prisma/schema.prisma). */
 export const SCHEDULE_TYPE_LABELS = {
-  FIXED_SCHEDULE: "Feste Arbeitszeiten",
+  FIXED_SCHEDULE: "Feste Arbeitszeit",
   FLEXTIME: "Gleitzeit",
   MONTHLY_HOURS: "Monatsstunden",
-  SHIFT_BASED: "Schichtbasiert",
+  SHIFT_BASED: "Nach Schichtplan",
 } as const;
 
 /** `TimeEntryType`. */

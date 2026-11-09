@@ -27,10 +27,10 @@ export interface ContractHistoryDisplayRow {
 }
 
 const MODEL_LABELS: Record<string, string> = {
-  FIXED_SCHEDULE: "Fester Stundenplan",
+  FIXED_SCHEDULE: "Feste Arbeitszeit",
   FLEXTIME: "Gleitzeit",
   MONTHLY_HOURS: "Monatsstunden",
-  SHIFT_BASED: "Schichtplan",
+  SHIFT_BASED: "Nach Schichtplan",
 };
 
 function formatNumber(n: number): string {

@@ -135,7 +135,7 @@
       sourceCreateError =
         err instanceof ApiError && err.status === 409
           ? err.message
-          : "Schlüssel konnte nicht erstellt werden. Bitte versuchen Sie es erneut.";
+          : "Schlüssel konnte nicht erstellt werden. Bitte versuch es noch einmal.";
     } finally {
       sourceCreating = false;
     }

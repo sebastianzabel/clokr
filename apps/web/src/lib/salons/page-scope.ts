@@ -32,7 +32,7 @@ export const isSalonFilterRejected = isTeamSalonRejected;
 
 /** Shown instead of the filtered data when the server rejects the chosen salon (404). */
 export const SALON_VIEW_UNAVAILABLE_TEXT =
-  "Für diesen Salon liegen hier keine Daten vor. Wählen Sie in der Kopfleiste „Alle Salons“ oder einen anderen Salon.";
+  "Für diesen Salon liegen hier keine Daten vor. Wähl in der Kopfleiste „Alle Salons“ oder einen anderen Salon.";
 
 /** Why a Soll figure is missing under a salon filter (re-exported so pages share one wording). */
 export const SALON_SOLL_NOT_ATTRIBUTABLE_NOTE = TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE;
@@ -75,10 +75,10 @@ export const PERSON_SALDO_NOT_SPLIT_LABEL = "Personensaldo, nicht nach Salon auf
  * Issue #542 (P-08) — shown on a block that deliberately ignores the header salon (the vacation
  * overview and the carry-over warnings), so a chosen salon is never read as their filter.
  */
-export const ALL_SALONS_BLOCK_NOTE = "Gilt für alle Salons Ihrer Reichweite";
+export const ALL_SALONS_BLOCK_NOTE = "Gilt für alle Salons deiner Reichweite";
 
 /** Issue #542 (OD-2, P-08) — the DATEV card under a salon filter: the payroll file stays complete. */
-export const DATEV_ALL_SALONS_NOTE = "DATEV gilt für alle Salons Ihrer Reichweite";
+export const DATEV_ALL_SALONS_NOTE = "DATEV gilt für alle Salons deiner Reichweite";
 
 /**
  * Issue #542 (orchestrator amendment 5) — a person without a Stammsalon on their Stichtag belongs

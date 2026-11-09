@@ -56,7 +56,7 @@ export const CATEGORY_LABELS = {
 
 export const ENDED_BY_LABELS = {
   OPERATOR: "durch den Betreiber",
-  TENANT: "durch Ihre Verwaltung",
+  TENANT: "durch deine Verwaltung",
 } as const;
 
 /** The badge recipe (app.css) of a status; an unknown status gets the neutral one. */

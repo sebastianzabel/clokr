@@ -100,7 +100,7 @@
               <dt>Minus-Grenze</dt>
               <dd>
                 {contract.maxNegativeBalanceMinutes === null
-                  ? "Mandanten-Standard"
+                  ? "Unternehmensstandard"
                   : formatMinutes(contract.maxNegativeBalanceMinutes)}
               </dd>
             </div>

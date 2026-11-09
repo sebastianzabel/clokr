@@ -338,7 +338,7 @@
     <EmptyState
       icon="users"
       title="Keine Personen im Zeitraum"
-      description="In Ihrer Reichweite war im gewählten Zeitraum niemand beschäftigt. Wählen Sie oben einen anderen Zeitraum."
+      description="In deiner Reichweite war im gewählten Zeitraum niemand beschäftigt. Wähl oben einen anderen Zeitraum."
     />
   {:else}
     {#if anyAtRisk}

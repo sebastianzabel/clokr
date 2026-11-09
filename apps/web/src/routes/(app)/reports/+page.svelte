@@ -698,7 +698,7 @@
       );
     } catch {
       toasts.error(
-        "Der Stundennachweis konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
+        "Der Stundennachweis konnte nicht erstellt werden. Bitte versuch es noch einmal.",
       );
     }
   }
@@ -735,7 +735,7 @@
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch {
-      toasts.error("Die DATEV-Datei konnte nicht erstellt werden. Bitte versuchen Sie es erneut.");
+      toasts.error("Die DATEV-Datei konnte nicht erstellt werden. Bitte versuch es noch einmal.");
     }
   }
 

@@ -88,7 +88,7 @@ describe("SupportAccessList", () => {
     );
     const link = screen.getByRole("link", { name: /Support-Team/ });
     expect(link.textContent).toContain("Beendet");
-    expect(link.textContent).toContain("durch Ihre Verwaltung");
+    expect(link.textContent).toContain("durch deine Verwaltung");
     expect(link.textContent).toContain("1 Abruf");
     expect(link.textContent).not.toContain("1 Abrufe");
     // the end of an ended access is the instant it was ended, not the planned expiry

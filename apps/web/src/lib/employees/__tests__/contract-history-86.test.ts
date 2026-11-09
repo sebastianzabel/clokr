@@ -24,7 +24,11 @@ describe("contractHistoryRows (Issue #86, D-01)", () => {
 
   it("labels the model in German and formats the extent per type", () => {
     const out = contractHistoryRows(rows);
-    expect(out.map((r) => r.model)).toEqual(["Schichtplan", "Monatsstunden", "Fester Stundenplan"]);
+    expect(out.map((r) => r.model)).toEqual([
+      "Nach Schichtplan",
+      "Monatsstunden",
+      "Feste Arbeitszeit",
+    ]);
     expect(out.map((r) => r.extent)).toEqual(["5 Tage/Woche", "60 Std./Monat", "38,5 Std./Woche"]);
   });
 
