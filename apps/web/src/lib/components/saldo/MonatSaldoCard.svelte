@@ -185,8 +185,8 @@
     min-height: 220px;
   }
 
-  /* 320-360 px (Issue #564): the modern skin's 28px card padding left ~146 px for the month
-     label between the arrows, which needs ~158 px. 16px (the compact density value) fits it.
+  /* 320-360 px (Issue #564): the 28px card padding left ~146 px for the month
+     label between the arrows, which needs ~158 px. 16px fits it.
      Compound selector (0,2,0) because the v1.5 `.card { padding }` in app.css wins by source
      order otherwise. */
   @media (max-width: 360px) {
@@ -211,7 +211,7 @@
   }
 
   .msc-error-text {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 14px;
     margin: 0;
   }
@@ -221,7 +221,7 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
 
   .msc-figure-row {
@@ -233,14 +233,14 @@
   }
 
   .msc-figure {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 38px;
     font-variant-numeric: tabular-nums;
     line-height: 1;
   }
 
   .msc-figure--good {
-    color: var(--good);
+    color: var(--ok);
   }
   .msc-figure--bad {
     color: var(--bad);
@@ -253,7 +253,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13px;
   }
 
@@ -263,7 +263,7 @@
 
   .msc-nosoll {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: var(--s-2) 0 0;
   }
 
@@ -273,8 +273,8 @@
     align-items: center;
     gap: var(--s-3);
     font-size: 12px;
-    color: var(--text-muted);
-    border-top: 1px solid var(--border);
+    color: var(--text-2);
+    border-top: 1px solid var(--line);
     margin-top: var(--s-4);
     padding-top: var(--s-3);
     flex-wrap: wrap;
@@ -287,7 +287,7 @@
   }
 
   .msc-status-right {
-    color: var(--text-faint);
+    color: var(--text-3);
   }
 
   /* Loading skeletons — sized at the FINAL heights so nothing jumps between

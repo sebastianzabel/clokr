@@ -101,7 +101,7 @@
   const confirmedText = $derived(confirmedMin === null ? "—" : fmtBalance(confirmedMin));
   // Distinguishes "nothing confirmed because nothing was ever closed" (a brand-new hire) from
   // "confirmed and it happens to be zero". Per the coordinator's earlier fix this changes the
-  // LABEL only, never the colour tone; --text-faint stays reserved for day numbers without
+  // LABEL only, never the colour tone; --text-3 stays reserved for day numbers without
   // values, not for a real, just-not-yet-meaningful saldo figure.
   const isNewHireZero = $derived(isSplit && confirmedMin === 0 && !hasClosedMonth);
   const confirmedTone = $derived.by(() => {
@@ -120,7 +120,7 @@
   );
 </script>
 
-<Card class="ksc-card" style="background: var(--bg-subtle)">
+<Card class="ksc-card" style="background: var(--sunk)">
   <div data-testid="konto-saldo-card">
     <div class="ksc-kicker">Konto</div>
     {#if loading}
@@ -197,18 +197,18 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
     margin-bottom: var(--s-3);
   }
 
   .ksc-label {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .ksc-figure {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 38px;
     font-variant-numeric: tabular-nums;
     line-height: 1;
@@ -216,7 +216,7 @@
   }
 
   .ksc-figure--good {
-    color: var(--good);
+    color: var(--ok);
   }
   .ksc-figure--bad {
     color: var(--bad);
@@ -225,7 +225,7 @@
     color: var(--text);
   }
   .ksc-figure--muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* Phase 100 (OTC-03) — tolerance-exceeded badge. Holds only the global
@@ -242,7 +242,7 @@
      hint-text idiom (.balance-hint-muted, .form-hint). */
   .ksc-tolerance-warn-hint {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* Phase 100 Plan 06 (Q1, owner checkpoint 2026-08-21) — dark-mode contrast fallback.
@@ -275,7 +275,7 @@
 
   .ksc-missing-close-hint {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* Issue #291 — dark-mode contrast fallback, deliberately a SEPARATE rule from the
@@ -291,12 +291,12 @@
 
   .ksc-caption {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: 2px;
   }
 
   .ksc-divider {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     margin: var(--s-4) 0 var(--s-3);
   }
 
@@ -309,7 +309,7 @@
   }
 
   .ksc-row-label {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* 260820-elk follow-up (coordinator-measured deviation #2) — was 13px/uncoloured (same
@@ -321,13 +321,13 @@
     font-size: 17px;
   }
   .ksc-row-value--good {
-    color: var(--good);
+    color: var(--ok);
   }
   .ksc-row-value--bad {
     color: var(--bad);
   }
   .ksc-row-value--muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .ksc-skel-label {

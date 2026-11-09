@@ -77,10 +77,11 @@ function mountCard(props: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   charts.length = 0;
-  document.documentElement.style.setProperty("--good", "rgb(0, 128, 0)");
+  // #842 D-842-11: the chart theme reads the new token names (ok, text-2, line).
+  document.documentElement.style.setProperty("--ok", "rgb(0, 128, 0)");
   document.documentElement.style.setProperty("--bad", "rgb(200, 0, 0)");
-  document.documentElement.style.setProperty("--text-muted", "rgb(90, 90, 90)");
-  document.documentElement.style.setProperty("--border", "rgb(220, 220, 220)");
+  document.documentElement.style.setProperty("--text-2", "rgb(90, 90, 90)");
+  document.documentElement.style.setProperty("--line", "rgb(220, 220, 220)");
 });
 
 afterEach(() => {

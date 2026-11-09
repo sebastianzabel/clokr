@@ -143,7 +143,7 @@
 
   // Root sign class — mirrors the template's precedence chain exactly (97-UI-SPEC →
   // Component Contract): loading/error short-circuit everything, then exempt, then the
-  // explicit collapse flags, then confirmedMinutes in split mode (so --good/--bad stay
+  // explicit collapse flags, then confirmedMinutes in split mode (so --ok/--bad stay
   // reserved for the entitlement figure), then saldoMinutes in legacy mode (unchanged
   // behaviour — an explicit noSchedule=true and the implicit saldoMinutes===null path
   // both resolve to the SAME "no-schedule" sign, so .saldo--no-schedule keeps meaning
@@ -238,7 +238,7 @@
        the Monat-Saldo tile's "Monat-Saldo (Bestätigt)"/"Monat-Saldo (Prognose)"
        caption) — SALDO-DISP-03 requires that distinction to survive on dense
        surfaces (calendar headers, Berichte table rows) too, not just expanded tiles.
-       Already styled at the UI-SPEC "Label" size (12px/--text-muted); see the
+       Already styled at the UI-SPEC "Label" size (12px/--text-2); see the
        .saldo__label rule below for the accompanying 600-weight fix. -->
   <div class="saldo__label" data-testid="saldo-label">{label}</div>
 
@@ -430,7 +430,7 @@
     font-size: 12px;
     font-weight: 600;
     line-height: 1.3;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .saldo__value {
     font-weight: 600;
@@ -468,47 +468,47 @@
   .saldo__combined-label {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* Display-size hero value (expanded confirmed only) — matches the .kpi-value convention. */
   .saldo__confirmed-value {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 38px;
     font-weight: 400;
     line-height: 1;
     font-variant-numeric: tabular-nums;
   }
-  /* --good-text/--bad-text, not --good/--bad: those two are not redeclared in dark mode and
-     land at 2.70:1 / 2.62:1 on --bg-card. Same defect class Phase 97 fixed on the roster badge
+  /* --ok/--bad, not --ok/--bad: those two are not redeclared in dark mode and
+     land at 2.70:1 / 2.62:1 on --card. Same defect class Phase 97 fixed on the roster badge
      below. */
   .saldo__confirmed-value--good {
-    color: var(--good-text);
+    color: var(--ok);
   }
   .saldo__confirmed-value--bad {
-    color: var(--bad-text);
+    color: var(--bad);
   }
   .saldo__confirmed-value--neutral {
     color: var(--text);
   }
   .saldo__confirmed-value--faint {
-    color: var(--text-faint);
+    color: var(--text-3);
   }
 
   .saldo__confirmed-caption {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .saldo__confirmed-caption--faint {
-    color: var(--text-faint);
+    color: var(--text-3);
   }
 
   /* Forecast + combined values are ALWAYS muted, regardless of sign — a locked decision:
-     colour must never imply certainty the forecast doesn't have (never --good/--bad/--warn). */
+     colour must never imply certainty the forecast doesn't have (never --ok/--bad/--warn). */
   .saldo__forecast-value {
     font-size: 16px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
 
@@ -520,7 +520,7 @@
   .saldo__combined-value {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
 
@@ -569,7 +569,7 @@
     background: none;
     border: none;
     cursor: pointer;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .saldo-info-trigger:hover {
     color: var(--text);
@@ -582,10 +582,10 @@
     width: max-content;
     max-width: 280px;
     padding: var(--s-3) var(--s-4);
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-md);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    box-shadow: var(--shadow);
     font-size: 14px;
     line-height: 1.5;
     color: var(--text);
@@ -652,11 +652,11 @@
     display: flex;
     align-items: center;
     gap: var(--s-2);
-    color: var(--bad-text);
+    color: var(--bad);
     font-size: 14px;
   }
   .saldo__subline {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 </style>
