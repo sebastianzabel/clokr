@@ -109,6 +109,28 @@ describe("registered map on real schemas (Issue #573)", () => {
     ]);
   });
 
+  it("an integer field given a fraction asks for a whole number", () => {
+    expect(z.number().int().safeParse(1.5).error!.issues[0].message).toBe(
+      "Bitte gib eine ganze Zahl ein.",
+    );
+  });
+
+  it("keeps own messages in every form the repo uses", () => {
+    const viaError = z.string().min(3, { error: "Mindestens drei Zeichen, bitte" });
+    const viaRefine = z.string().refine(() => false, { message: "Eigene Prüfung" });
+    const viaSuper = z.string().superRefine((_v, ctx) => {
+      ctx.addIssue({ code: "custom", message: "Eigene Super-Prüfung" });
+    });
+    expect(viaError.safeParse("a").error!.issues[0].message).toBe("Mindestens drei Zeichen, bitte");
+    expect(viaRefine.safeParse("a").error!.issues[0].message).toBe("Eigene Prüfung");
+    expect(viaSuper.safeParse("a").error!.issues[0].message).toBe("Eigene Super-Prüfung");
+  });
+
+  it("an unknown key is named as such, not as a missing field", () => {
+    const result = z.object({ a: z.string() }).strict().safeParse({ a: "x", b: 1 });
+    expect(result.error!.issues[0].message).toBe("Unbekanntes Feld.");
+  });
+
   it("a refine without a message reads German", () => {
     const schema = z.string().refine(() => false);
     expect(schema.safeParse("x").error!.issues[0].message).toBe(GENERIC_INVALID);
@@ -125,9 +147,31 @@ describe("validationSummary (Issue #573, D-05)", () => {
       { path: ["firstName"], message: "Pflichtfeld." },
     ]);
     expect(summary).toBe(
-      "Vorname: Pflichtfeld.; Nachname: Pflichtfeld.; Bitte gib eine Zahl ein.; Beginn: Bitte gib eine gültige Uhrzeit an (HH:MM).",
+      "Vorname: Pflichtfeld.; Nachname: Pflichtfeld.; Beginn: Bitte gib eine gültige Uhrzeit an (HH:MM).; Bitte gib eine Zahl ein.",
     );
     expect(summary).not.toMatch(/firstName|lastName|holidayRules|startTime/);
+  });
+
+  it("counts unlabelled fields with the same text instead of collapsing them", () => {
+    expect(
+      validationSummary([
+        { path: ["a1"], message: "Pflichtfeld." },
+        { path: ["a2"], message: "Pflichtfeld." },
+        { path: ["a3"], message: "Pflichtfeld." },
+      ]),
+    ).toBe("Pflichtfeld. (3 Felder)");
+  });
+
+  it("a short label inside another word is no reason to drop it", () => {
+    expect(validationSummary([{ path: ["endDate"], message: "Bitte ein Datum wählen." }])).toBe(
+      "Bis: Bitte ein Datum wählen.",
+    );
+  });
+
+  it("a prototype key in a path never breaks the summary", () => {
+    expect(validationSummary([{ path: ["constructor"], message: "Pflichtfeld." }])).toBe(
+      "Pflichtfeld.",
+    );
   });
 
   it("does not repeat a label the message already names", () => {

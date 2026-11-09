@@ -66,7 +66,9 @@ function expectedKind(expected: string | undefined): string {
 }
 
 function sizeText(issue: ZodIssueLike, small: boolean): string {
-  const bound = small ? issue.minimum : issue.maximum;
+  const raw = small ? issue.minimum : issue.maximum;
+  // Zod reports a date bound as epoch milliseconds.
+  const bound = issue.origin === "date" && typeof raw === "number" ? new Date(raw) : raw;
   const b = num(bound);
   const inclusive = issue.inclusive !== false;
   switch (issue.origin) {
@@ -143,6 +145,14 @@ export function germanZodMessage(issue: ZodIssueLike): string {
     case "invalid_type":
       if (issue.input === undefined) return "Pflichtfeld.";
       if (issue.input === null) return "Dieses Feld darf nicht leer sein.";
+      // `.int()` on 1.5 is an invalid_type with expected "int": a number WAS entered.
+      if (
+        issue.expected === "int" &&
+        typeof issue.input === "number" &&
+        Number.isFinite(issue.input)
+      ) {
+        return "Bitte gib eine ganze Zahl ein.";
+      }
       return expectedKind(issue.expected);
     case "too_small":
       return sizeText(issue, true);
@@ -212,18 +222,36 @@ export interface ValidationIssue {
   message: string;
 }
 
+function labelOf(issue: ValidationIssue): string | undefined {
+  const last = [...issue.path].reverse().find((p) => typeof p === "string") as string | undefined;
+  // Own keys only: a path segment such as "constructor" must never reach Object.prototype.
+  return last !== undefined && Object.hasOwn(FIELD_LABELS, last) ? FIELD_LABELS[last] : undefined;
+}
+
+function namesLabel(message: string, label: string): boolean {
+  // A whole word, so a short label ("Bis", "Art") never matches inside another word.
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}])${escaped}([^\\p{L}]|$)`, "iu").test(message);
+}
+
 /** The human summary of a failed validation: German labels and texts only, no field keys. */
 export function validationSummary(issues: readonly ValidationIssue[]): string {
-  const parts: string[] = [];
+  const labelled: string[] = [];
+  const unlabelled = new Map<string, number>();
   for (const issue of issues) {
-    const last = [...issue.path].reverse().find((p) => typeof p === "string") as string | undefined;
-    const label = last ? FIELD_LABELS[last] : undefined;
+    const label = labelOf(issue);
+    if (label === undefined) {
+      unlabelled.set(issue.message, (unlabelled.get(issue.message) ?? 0) + 1);
+      continue;
+    }
     // A schema's own message often names its field already ("Begründung ist erforderlich"):
     // then the label would only repeat it.
-    const named = label !== undefined && issue.message.toLowerCase().includes(label.toLowerCase());
-    const text = label && !named ? `${label}: ${issue.message}` : issue.message;
-    if (!parts.includes(text)) parts.push(text);
+    const text = namesLabel(issue.message, label) ? issue.message : `${label}: ${issue.message}`;
+    if (!labelled.includes(text)) labelled.push(text);
   }
+  // Fields without a label are not named; several with the same text are counted, not collapsed.
+  const rest = [...unlabelled].map(([text, n]) => (n > 1 ? `${text} (${n} Felder)` : text));
+  const parts = [...labelled, ...rest];
   return parts.length > 0 ? parts.join("; ") : GENERIC_INVALID;
 }
 

@@ -8,7 +8,7 @@
  * metadata, never `err.message`, Issue #567) and named by KIND only — never a value of the
  * colliding row (no e-mail, no name).
  *
- * Every unique index of `schema.prisma` and every hand-written unique index has an entry: a text, or
+ * Every unique index the migrations leave in the database has exactly one entry: a text, or
  * `null` for the generic text (technical keys a person cannot collide on). The guard test
  * `duplicate-conflict-573.test.ts` fails when a new unique index has none.
  *
@@ -47,7 +47,8 @@ export const DUPLICATE_MESSAGES: Readonly<Record<string, string | null>> = {
     "Für dieses Jahr gibt es bereits eine Kürzung zu diesem Antrag.",
   Absence_employeeId_startDate_type_key: "Diese Abwesenheit ist für den Tag bereits erfasst.",
   PublicHoliday_salonId_date_key: "Für diesen Tag gibt es bereits einen Feiertag.",
-  SchoolHolidayPeriod_tenantId_federalState_startDate_endDate_source_key:
+  // The database name predates the `source` column and was never renamed (Postgres: max. 63 chars).
+  SchoolHolidayPeriod_tenantId_federalState_startDate_endDate_key:
     "Diese Ferienzeit gibt es bereits.",
   OperatorAccount_email_key: "Diese E-Mail-Adresse wird bereits verwendet.",
   TerminalApiKey_keyHash_key: null,

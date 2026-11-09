@@ -14,31 +14,14 @@ import {
 
 const DB = resolve(__dirname, "../../../../../packages/db/prisma");
 
-/** Index names Prisma derives from `@unique` / `@@unique` (default `<Model>_<fields>_key`, or `map:`). */
-function schemaUniqueIndexNames(): string[] {
-  const schema = readFileSync(join(DB, "schema.prisma"), "utf8");
-  const names: string[] = [];
-  for (const m of schema.matchAll(/^model (\w+) \{([\s\S]*?)^\}/gm)) {
-    const [, model, body] = m;
-    for (const raw of body.split("\n")) {
-      const line = raw.split("//")[0];
-      const compound = /@@unique\(\[([^\]]*)\](?:,\s*map:\s*"([^"]+)")?/.exec(line);
-      if (compound) {
-        const fields = compound[1].split(",").map((f) => f.trim().split("(")[0]);
-        names.push(compound[2] ?? `${model}_${fields.join("_")}_key`);
-        continue;
-      }
-      const field = /^\s+(\w+)\s+\S+.*@unique(?:\(map:\s*"([^"]+)"\))?/.exec(line);
-      if (field) names.push(field[2] ?? `${model}_${field[1]}_key`);
-    }
-  }
-  return names;
-}
-
-/** Hand-written partial unique indexes (`*_unique`) created by a migration and not dropped since. */
-function handWrittenUniqueIndexNames(): string[] {
+/**
+ * The unique indexes the database really has: every `CREATE UNIQUE INDEX` of the migrations (Prisma
+ * writes `@unique`/`@@unique` that way too, under the name Postgres keeps, at most 63 characters),
+ * minus every index a later migration dropped. Comments are stripped first.
+ */
+function migrationUniqueIndexNames(): string[] {
   const dir = join(DB, "migrations");
-  const created = new Set<string>();
+  const live = new Set<string>();
   for (const entry of readdirSync(dir).sort()) {
     let sql: string;
     try {
@@ -46,13 +29,17 @@ function handWrittenUniqueIndexNames(): string[] {
     } catch {
       continue;
     }
-    for (const m of sql.matchAll(/CREATE UNIQUE INDEX (?:IF NOT EXISTS )?"(\w+_unique)"/g)) {
-      created.add(m[1]);
+    sql = sql.replace(/--[^\n]*/g, "");
+    for (const m of sql.matchAll(/CREATE UNIQUE INDEX (?:IF NOT EXISTS )?"(\w+)"/g)) live.add(m[1]);
+    for (const m of sql.matchAll(/ADD CONSTRAINT "(\w+)" UNIQUE/g)) live.add(m[1]);
+    for (const m of sql.matchAll(/ALTER INDEX "(\w+)" RENAME TO "(\w+)"/g)) {
+      if (live.delete(m[1])) live.add(m[2]);
     }
-    for (const m of sql.matchAll(/DROP INDEX (?:IF EXISTS )?"?(\w+_unique)"?/g))
-      created.delete(m[1]);
+    for (const m of sql.matchAll(/DROP INDEX (?:IF EXISTS )?([^;]+)/g)) {
+      for (const name of m[1].matchAll(/"(\w+)"/g)) live.delete(name[1]);
+    }
   }
-  return [...created];
+  return [...live];
 }
 
 function p2002(index: string, extra: Record<string, unknown> = {}) {
@@ -72,15 +59,24 @@ function p2002(index: string, extra: Record<string, unknown> = {}) {
 }
 
 describe("duplicate conflict table (Issue #573)", () => {
-  it("names every unique index of schema.prisma and every hand-written one", () => {
-    const schemaNames = schemaUniqueIndexNames();
-    const handWritten = handWrittenUniqueIndexNames();
-    // Anti-vacuity: the walk found the indexes we know exist.
-    expect(schemaNames).toContain("SpecialLeaveRule_tenantId_name_key");
-    expect(schemaNames.length).toBeGreaterThan(30);
-    expect(handWritten).toContain("TimeEntry_employeeId_date_open_unique");
-    const missing = [...schemaNames, ...handWritten].filter((n) => !(n in DUPLICATE_MESSAGES));
-    expect(missing, "unique indexes without a 409 text in DUPLICATE_MESSAGES").toEqual([]);
+  it("names exactly the unique indexes the database has (no missing, no stale entry)", () => {
+    const live = migrationUniqueIndexNames();
+    // Anti-vacuity: the walk found indexes we know exist, and a dropped one is gone.
+    expect(live).toContain("SpecialLeaveRule_tenantId_name_key");
+    expect(live).toContain("TimeEntry_employeeId_date_open_unique");
+    expect(live).not.toContain("PublicHoliday_tenantId_date_key");
+    expect(live.length).toBeGreaterThan(30);
+    const keys = Object.keys(DUPLICATE_MESSAGES);
+    expect(
+      live.filter((n) => !keys.includes(n)),
+      "unique indexes without a 409 text in DUPLICATE_MESSAGES",
+    ).toEqual([]);
+    expect(
+      keys.filter((k) => !live.includes(k)),
+      "DUPLICATE_MESSAGES entries no live index has",
+    ).toEqual([]);
+    // Postgres keeps at most 63 characters of an identifier; a longer key could never match.
+    expect(keys.filter((k) => k.length > 63)).toEqual([]);
   });
 
   it("a duplicate special-leave occasion reads 'Diesen Anlass gibt es bereits.'", () => {
