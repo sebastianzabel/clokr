@@ -396,8 +396,8 @@ export async function getInvalidEntries(
  * T5 — the most recent `TimeEntry` rows for `employeeId` created since `since`, newest first,
  * capped at `limit`. Sole caller: `platform/api/activity.ts`'s "Aktivität" widget. Ordered by
  * `createdAt` — an essential difference from every other function in this file, which order (or
- * filter) by `date`: this feed renders "Einstempeln um HH:mm" / "Ausstempeln um HH:mm" as they
- * were RECORDED, not as they occurred.
+ * filter) by `date`: this feed lists entries as they were RECORDED, not as they occurred (the
+ * sentences themselves come from `composition/activity-sentences.ts`, Issue #849).
  */
 export async function getEntryActivityFeed(
   db: Prisma.TransactionClient,

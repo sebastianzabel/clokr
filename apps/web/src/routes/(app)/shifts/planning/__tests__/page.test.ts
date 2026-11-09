@@ -155,6 +155,14 @@ describe("Wochenübersicht Planungsbedarf (Phase 430, Issue #430)", () => {
     expect(diffDays).toBe(7);
   });
 
+  it("labels the server's Monday–Sunday week in German dates, never start = end (Issue #849)", async () => {
+    // The client asked for a Sunday (the old UTC slip); the server normalises to the Monday.
+    apiGet.mockResolvedValueOnce(response("2026-11-02", "2026-11-08", []));
+    renderWithTheme(PlanningOverviewPage, {});
+    await waitFor(() => expect(screen.getByText("Woche 02.11.2026 – 08.11.2026")).toBeTruthy());
+    expect(screen.queryByText(/2026-11-08/)).toBeNull();
+  });
+
   it("a single-salon context sends no salonId with the request (Issue #558)", async () => {
     apiGet.mockResolvedValueOnce(response("2031-02-03", "2031-02-09", []));
     renderWithTheme(PlanningOverviewPage, {});

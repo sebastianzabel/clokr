@@ -13,9 +13,9 @@ import {
   getTenantTimezone,
   todayInTz,
   addDaysUtc, // Issue #172
-  timeStrInTz,
 } from "../contexts/working-time-account"; // Phase 101B
 import { getEntryActivityFeed } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T5
+import { dedupeActivitySentences, entryActivityEvents } from "./activity-sentences"; // Issue #849
 import {
   getOwnLeaveActivity, // Phase 100B Plan 13 — A10a
   getReviewedLeaveActivity, // Phase 100B Plan 13 — A10b
@@ -145,18 +145,31 @@ export async function activityRoutes(app: FastifyInstance) {
           since,
           fetchLimit,
         );
+        // Issue #849 (4): sentences from the one text source; an entry someone else recorded
+        // names its author's first name (same tenant only).
+        const authorIds = [
+          ...new Set(
+            entries
+              .map((e) => e.createdBy)
+              .filter((id): id is string => id !== null && id !== userId),
+          ),
+        ];
+        const authors =
+          authorIds.length > 0
+            ? await app.prisma.user.findMany({
+                where: { id: { in: authorIds }, employee: { tenantId } },
+                select: { id: true, employee: { select: { firstName: true } } },
+              })
+            : [];
+        const authorFirstName = new Map(authors.map((a) => [a.id, a.employee?.firstName ?? null]));
         for (const e of entries) {
-          const startHHMM = timeStrInTz(e.startTime, tz);
-          items.push({
-            id: `te-${e.id}`,
-            icon: "clock",
-            who: "Du",
-            what: e.endTime
-              ? `Ausstempeln um ${timeStrInTz(e.endTime, tz)}`
-              : `Einstempeln um ${startHHMM}`,
-            when: e.createdAt.toISOString(),
-            category: "time",
-          });
+          for (const event of entryActivityEvents(e, {
+            tz,
+            ownUserId: userId,
+            authorFirstName: e.createdBy ? (authorFirstName.get(e.createdBy) ?? null) : null,
+          })) {
+            items.push({ ...event, icon: "clock", category: "time" });
+          }
         }
 
         // Own leave requests (recent status changes)
@@ -291,7 +304,7 @@ export async function activityRoutes(app: FastifyInstance) {
       items.sort((a, b) => b.when.localeCompare(a.when));
       const seen = new Set<string>();
       const deduped: ActivityItem[] = [];
-      for (const it of items) {
+      for (const it of dedupeActivitySentences(items)) {
         if (seen.has(it.id)) continue;
         seen.add(it.id);
         deduped.push(it);
