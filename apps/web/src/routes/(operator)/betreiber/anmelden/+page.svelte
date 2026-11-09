@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import SignInSteps from "$lib/components/operator/SignInSteps.svelte";
+  import LogoMark from "$lib/components/layout/LogoMark.svelte";
   import { operatorApi } from "$lib/operator/client";
   import { safeNext } from "$lib/operator/next-path";
   import { loadSession, setSession } from "$stores/operator-auth";
@@ -39,7 +40,10 @@
 
 <main id="main-content" class="op-signin-page" data-testid="op-signin-page">
   <div class="op-brand">
-    <img src="/clokr-wordmark.png" alt="Clokr" class="op-wordmark" height="32" />
+    <div class="op-wordmark">
+      <LogoMark size={28} />
+      <span>Clokr</span>
+    </div>
     <span class="badge badge-purple">Betreiber</span>
   </div>
 
@@ -73,7 +77,7 @@
     justify-content: center;
     gap: 24px;
     padding: 16px;
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 
   .op-brand {
@@ -84,18 +88,22 @@
   }
 
   .op-wordmark {
-    height: 32px;
-    width: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text);
   }
 
   .op-card {
     width: 100%;
     max-width: 420px;
     padding: 32px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    box-shadow: var(--shadow-pop);
   }
 
   .op-card-head {
@@ -104,7 +112,7 @@
 
   .op-card-title {
     margin: 0 0 4px;
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 22px;
     font-weight: 400;
     line-height: 1.2;
@@ -114,7 +122,7 @@
   .op-card-sub {
     margin: 0;
     font-size: 14px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   @media (max-width: 400px) {

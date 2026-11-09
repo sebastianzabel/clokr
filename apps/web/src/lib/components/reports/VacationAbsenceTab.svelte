@@ -540,7 +540,7 @@
   .vac-empty {
     margin: 0;
     font-size: 15px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .vac-table .num,
@@ -598,7 +598,7 @@
     display: block;
     font-size: 12px;
     line-height: 1.4;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .vac-verfall {
@@ -638,7 +638,7 @@
   .vac-status {
     margin: var(--s-1) 0 0;
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .type-dot {

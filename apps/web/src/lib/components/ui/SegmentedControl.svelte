@@ -90,9 +90,9 @@
     display: inline-flex;
     padding: 2px;
     gap: 0;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
   }
 
   .seg-control--disabled {
@@ -102,9 +102,9 @@
 
   .seg-btn {
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-2);
     border: 0;
-    border-radius: calc(var(--r-md) - 2px);
+    border-radius: calc(var(--r-control) - 2px);
     font-weight: 500;
     cursor: pointer;
     transition:
@@ -124,9 +124,9 @@
   }
 
   .seg-btn[aria-checked="true"] {
-    background: var(--bg-card);
+    background: var(--card);
     color: var(--text);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow);
     font-weight: 600;
   }
 

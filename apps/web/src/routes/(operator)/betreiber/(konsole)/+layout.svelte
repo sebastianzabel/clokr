@@ -112,7 +112,7 @@
   .op-loading {
     margin: 0;
     font-size: 16px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   @media (max-width: 640px) {

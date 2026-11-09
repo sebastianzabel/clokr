@@ -152,7 +152,7 @@
     width: 2.75rem;
     height: 1.5rem;
     border-radius: 9999px;
-    background: var(--border);
+    background: var(--line);
     cursor: pointer;
     position: relative;
     transition: background 0.2s;
@@ -166,7 +166,7 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--bg-card);
+    background: var(--card);
     transition: transform 0.2s;
   }
   .reminder-toggle-input:checked {

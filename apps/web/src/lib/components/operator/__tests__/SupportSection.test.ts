@@ -82,7 +82,7 @@ function mount(options: MountOptions = {}) {
       onEnd,
       onReload,
     },
-    "nacht",
+    "salz",
   );
   return { onRequest, onEnd, onReload };
 }

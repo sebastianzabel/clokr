@@ -171,7 +171,7 @@
     max-width: 320px;
   }
   .assignments-person {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding-top: 12px;
   }
   .assignments-name {

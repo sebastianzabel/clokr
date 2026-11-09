@@ -1472,8 +1472,8 @@
                     class:highlight-row={highlightRequestId === req.id}
                   >
                     <td>{typeName(req.typeCode)}</td>
-                    <td class="font-mono">{fmtDate(req.startDate)}</td>
-                    <td class="font-mono">{fmtDate(req.endDate)}</td>
+                    <td>{fmtDate(req.startDate)}</td>
+                    <td>{fmtDate(req.endDate)}</td>
                     <td class="text-center"
                       >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</td
                     >
@@ -1704,7 +1704,7 @@
   .section-header h2 {
     font-size: 1rem;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin: 0;
@@ -1743,8 +1743,8 @@
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 0.875rem 1rem;
   }
@@ -1753,7 +1753,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0 0 0.5rem;
   }
   .overlap-empty {
@@ -1776,11 +1776,11 @@
     font-weight: 600;
   }
   .overlap-type {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
   .overlap-dates {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 0.875rem;
     margin-left: auto;
   }
@@ -1833,7 +1833,7 @@
   /* ── Buttons ──────────────────────────────────────────────────────── */
   .btn-danger {
     background: var(--bad);
-    color: white;
+    color: var(--card);
     border: none;
     border-radius: 8px;
     padding: 0.5rem 1.25rem;
@@ -1853,13 +1853,13 @@
     padding: 0.25rem;
     border-radius: 4px;
     font-size: 1rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* ── Balance Box ──────────────────────────────────────────────────── */
   .balance-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 0.875rem 1rem;
     display: flex;
@@ -1874,27 +1874,27 @@
     font-size: 0.9375rem;
   }
   .balance-label {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-value {
     font-weight: 600;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .balance-meta {
     font-size: 0.8125rem;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-left: 0.25rem;
   }
   .balance-deduct {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-warn {
     color: var(--bad);
   }
   .balance-divider {
     height: 1px;
-    background: var(--border);
+    background: var(--line);
     margin: 0.125rem 0;
   }
   .balance-hint-warn {
@@ -1912,14 +1912,14 @@
     margin: 0.25rem 0 0;
   }
   /* Phase 97-06 (SALDO-DISP-04) — the forecast row: muted like
-     the forecast everywhere else in the app (never --good/--bad/--warn — colour
+     the forecast everywhere else in the app (never --ok/--bad/--warn — colour
      must never imply a certainty this figure doesn't have). */
   .balance-value--muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-hint-muted {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0.25rem 0 0;
   }
 
@@ -1946,7 +1946,7 @@
     margin: 0;
     padding: 1.5rem 1rem;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -1970,7 +1970,7 @@
   .vac-summary-skel-tile {
     width: 72px;
     height: 38px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
 
   .vac-stat {
@@ -1985,11 +1985,11 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
 
   .vac-stat-value {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 22px;
     font-weight: 400;
@@ -2000,7 +2000,7 @@
     gap: 4px;
   }
   .vac-stat-value.pos {
-    color: var(--good);
+    color: var(--ok);
   }
   .vac-stat-value.neg {
     color: var(--bad);
@@ -2013,11 +2013,11 @@
   }
 
   .vac-stat-unit {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-variant-numeric: normal;
     font-size: 12px;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .vac-stat--highlight .vac-stat-label {
@@ -2045,7 +2045,7 @@
     margin-left: 0.25rem;
   }
   .days-info-loading {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -2097,7 +2097,8 @@
     gap: 0.2rem;
     padding: 2px 0.4rem;
     border-radius: 4px;
-    color: white;
+    /* Fallback only: the chip sets the fill's own text partner inline (#842, D-842-08). */
+    color: var(--card);
     font-size: 0.75rem;
     line-height: 1.4;
     overflow: hidden;
@@ -2121,7 +2122,7 @@
     height: 22px;
   }
   .cal-chip--pending {
-    outline: 1.5px dashed rgba(255, 255, 255, 0.7);
+    outline: 1.5px dashed color-mix(in srgb, var(--card) 70%, transparent);
     outline-offset: -2px;
     opacity: 0.9;
   }
@@ -2171,7 +2172,7 @@
     font-size: 0.5625rem;
     font-weight: 700;
     line-height: 1.3;
-    background: rgba(255, 255, 255, 0.35);
+    background: color-mix(in srgb, var(--card) 35%, transparent);
   }
   .section9-chip-badge--pending {
     background: var(--warn-soft);
@@ -2192,7 +2193,7 @@
   }
   .section9-movement {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* Legende */
@@ -2207,8 +2208,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 10px;
     padding: 0.875rem 1.25rem;
     margin-bottom: 1.25rem;
@@ -2233,7 +2234,7 @@
   }
   .ical-desc {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0;
   }
   /* Wraps and may shrink to its widest button: at 320 px the two buttons side by side were
@@ -2292,7 +2293,7 @@
       padding: 4px;
       background: transparent;
       border: 0;
-      border-radius: var(--r-md);
+      border-radius: var(--r-control);
       cursor: pointer;
       appearance: none;
     }
@@ -2311,11 +2312,10 @@
       width: 15px;
       height: 15px;
       border-radius: 50%;
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-      font-family: var(--font-serif);
-      font-style: italic;
+      background: var(--card);
+      border: 1px solid var(--line);
+      color: var(--text-2);
+      font-family: var(--font-ui);
       font-size: 0.625rem;
       font-weight: 700;
       line-height: 1;

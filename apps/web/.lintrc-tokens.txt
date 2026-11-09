@@ -1,84 +1,126 @@
-# clokr v1.5 token lint — banned legacy CSS variable patterns
+# clokr design-system v2 token lint (Issue #842)
 #
-# These tokens were retired with the v1.5 design system rollout.
-# Use canonical tokens from `apps/web/src/tokens.css` instead.
+# One source for the deny list. `apps/web/scripts/lint-tokens.mjs` parses the MACHINE LINES below
+# (lines starting with BANNED-TOKEN / BANNED-PREFIX / BANNED-LITERAL); every line that starts with `#`
+# is for humans only and is ignored by the script.
 #
-# Run `pnpm --filter @clokr/web lint:tokens` (or grep manually) to verify.
-# CI fails if any of these patterns are introduced.
-
-# === BANNED ===
-var(--color-
-var(--glass-
-var(--radius-
-var(--gray-
-
-# === REPLACEMENTS (cheat sheet) ===
-# --color-brand          → --brand
-# --color-brand-dark     → --brand-dark
-# --color-brand-light    → --brand-light
-# --color-brand-tint     → --brand-soft
-# --color-surface        → --bg-card
-# --color-surface-raised → --bg-elevated
-# --color-bg             → --bg
-# --color-bg-subtle      → --bg-subtle
-# --color-bg-muted       → --bg-alt
-# --color-text           → --text
-# --color-text-muted     → --text-muted
-# --color-text-heading   → --text
-# --color-border         → --border
-# --color-green*         → --good* (good / good-soft)
-# --color-yellow*        → --warn* (warn / warn-soft)
-# --color-red*           → --bad*  (bad / bad-soft)
-# --color-purple*        → --brand*
-# --color-danger         → --bad
-# --color-blue*          → inline (#2563eb / rgba(37, 99, 235, X)) — no v1.5 token
-# --color-orange*        → inline (#c2410c / rgba(194, 65, 12, X)) — no v1.5 token
-# --glass-bg             → --bg-card
-# --glass-bg-subtle      → --bg-subtle
-# --glass-border         → --border
-# --glass-shadow         → --shadow-md
-# --glass-blur           → 0px (flat surfaces in v1.5, D-20)
-# --radius-sm            → --r-sm
-# --radius-md            → --r-md
-# --radius-lg            → --r-lg
-# --gray-50              → --bg-card
-# --gray-100             → --bg-subtle
-# --gray-200, --gray-300 → --border
-# --gray-400             → --text-faint
-# --gray-500, --gray-600 → --text-muted
-# --gray-700..900        → --text
-
-# === FOREGROUND vs FILL (Phase 258, D-05c) ===
-# --good / --bad are FILL colours (background, border, dot). They are deliberately NOT
-# redeclared under [data-mode="dark"], because they carry white text there
-# (.btn-danger, .tab-badge — app.css:400 / :999): white on #b42318 is 6.57:1, white on a
-# brightened #f87171 would be 2.77:1.
-# For TEXT use --good-text / --bad-text, which ARE dark-mode aware.
-#   color: var(--bad)        → color: var(--bad-text)
-#   background: var(--bad)   → unchanged
-
-# === DENSITY RULE (Phase 33-02, I18N-03) ===
-# Outer card padding MUST use `var(--pad-card)` so the density toggle affects it.
-# Interior spacing (gaps, header/body/foot padding INSIDE a card) uses `var(--s-*)`.
+# Run `pnpm --filter @clokr/web lint:tokens`. CI and the pre-commit hook fail when
+#   (a) a retired name below is referenced OR declared anywhere in apps/web/src
+#       (tests under __tests__ and *.test.ts are not scanned; the guard tests have their own walkers), or
+#   (b) a `var(--name)` has no declaration anywhere in apps/web/src (unknown names fail).
 #
-# This is enforced because [data-density="compact"] in tokens.css flips
-# --pad-card from 24px to 16px. A card that hardcodes `padding: 24px` will not
-# shrink in compact mode and breaks the global density affordance.
+# Machine line grammar:
+#   BANNED-TOKEN   <--name>    a custom property; identifier boundaries, so `--border` never hits `--border-strong`
+#   BANNED-PREFIX  <--prefix-> every custom property that starts with the prefix
+#   BANNED-LITERAL <text>      a literal string (font families, attribute names, attribute selectors); a literal
+#                              that starts or ends with a word character also gets identifier boundaries
 #
-# Canonical recipe (apps/web/src/app.css, COMP-01):
-#   .card {
-#     padding: var(--pad-card);
-#     ...
-#   }
-#
-# Modals, scrims, popovers, empty-state text and other non-card surfaces are
-# exempt — they are not part of the density-aware card surface system.
+# The canonical token set is `apps/web/src/tokens.css`: colour roles (D-05) for three themes
+# (pflaume | salz | petrol) x two modes (light | dark), selected by `data-theme` x `data-mode` on any
+# element. There is no skin axis and no density axis.
 
-# === FOREGROUND vs FILL: --leave-type-* (Phase 257, D-12) ===
-# `--leave-type-<x>` is a FILL. It is the background of an absence bar, a legend dot, and a
-# color-mix() calendar-cell tint (app.css .cal-abs-*). Never change one of those values to fix
-# text contrast — five other surfaces depend on them.
-# `--leave-type-<x>-text` is the FOREGROUND partner. Use it for `color:` only, never as a
-# background/border-color/fill. Every fill has exactly one partner, in both modes; adding a new
-# leave type means adding both.
-# Enforced by apps/web/src/__tests__/leave-chip-contrast.test.ts (>= 4.5:1, recomputed).
+# === Retired v1.5 token names (D-842-11) ===
+BANNED-TOKEN --bg-card
+BANNED-TOKEN --bg-elevated
+BANNED-TOKEN --bg-subtle
+BANNED-TOKEN --bg-alt
+BANNED-TOKEN --border
+BANNED-TOKEN --border-strong
+BANNED-TOKEN --text-muted
+BANNED-TOKEN --text-faint
+BANNED-TOKEN --text-on-brand
+BANNED-TOKEN --text-on-brand-modern
+BANNED-TOKEN --brand-dark
+BANNED-TOKEN --brand-light
+BANNED-TOKEN --brand-fg
+BANNED-TOKEN --good
+BANNED-TOKEN --good-soft
+BANNED-TOKEN --good-text
+BANNED-TOKEN --bad-text
+BANNED-TOKEN --star
+BANNED-TOKEN --font-sans
+BANNED-TOKEN --font-serif
+BANNED-TOKEN --font-mono
+BANNED-TOKEN --r-sm
+BANNED-TOKEN --r-md
+BANNED-TOKEN --r-lg
+BANNED-TOKEN --r-xl
+BANNED-TOKEN --shadow-xs
+BANNED-TOKEN --shadow-sm
+BANNED-TOKEN --shadow-md
+BANNED-TOKEN --shadow-lg
+BANNED-TOKEN --shadow-brand
+BANNED-TOKEN --shadow-brand-lg
+BANNED-TOKEN --pad-card
+BANNED-TOKEN --row-h
+BANNED-TOKEN --body-gradient
+
+# === Retired v1.2 prefixes ===
+BANNED-PREFIX --color-
+BANNED-PREFIX --glass-
+BANNED-PREFIX --radius-
+BANNED-PREFIX --gray-
+
+# === Retired font families (D-842-15) ===
+BANNED-LITERAL Jost
+BANNED-LITERAL Cormorant
+BANNED-LITERAL Inter Tight
+
+# === Retired skin and density axes (D-842-16) ===
+BANNED-LITERAL data-skin
+BANNED-LITERAL data-density
+BANNED-LITERAL dataset.skin
+BANNED-LITERAL dataset.density
+
+# === Retired theme ids in a data-theme attribute (selector or markup) ===
+BANNED-LITERAL data-theme="nacht"
+BANNED-LITERAL data-theme="wald"
+BANNED-LITERAL data-theme="schiefer"
+BANNED-LITERAL data-theme='nacht'
+BANNED-LITERAL data-theme='wald'
+BANNED-LITERAL data-theme='schiefer'
+
+# === REPLACEMENTS (cheat sheet, old -> new, D-842-11) ===
+# --bg-card, --bg-elevated     -> --card
+# --bg-subtle                  -> --sunk
+# --bg-alt                     -> --rail
+# --border                     -> --line
+# --border-strong              -> --line-2
+# --text-muted                 -> --text-2
+# --text-faint                 -> --text-3
+# --text-on-brand              -> --brand-ink
+# --brand-dark                 -> --brand-hover
+# --brand-light                -> --brand
+# --good, --good-soft          -> --ok, --ok-soft
+# --good-text, --bad-text      -> --ok, --bad (the roles are dark-capable, no separate text variant)
+# --star                       -> --accent (a fill, never a text colour)
+# --font-sans, --font-serif    -> --font-ui
+# --font-mono                  -> --font-code for code and raw data (ids, hashes, CSV), else --font-ui
+#                                 (numerals: tabular-nums is global)
+# --r-sm, --r-md               -> --r-control
+# --r-lg                       -> --r-card
+# --r-xl                       -> --r-stage
+# --shadow-xs/-sm/-md          -> --shadow
+# --shadow-brand(-lg)          -> --shadow
+# --shadow-lg                  -> --shadow-pop
+# --pad-card                   -> --s-6
+# --row-h                      -> --h-row
+# --color-*, --glass-*, --radius-*, --gray-*  (v1.2) -> the role names above; there is no 1:1 map
+# White text on a solid status fill -> color: var(--card)        (D-842-08)
+# White text on a brand fill        -> color: var(--brand-ink)   (D-842-08)
+
+# === Colour roles that stay (D-05, declared only in tokens.css, D-842-01) ===
+# surfaces   --bg --card --rail --sunk --hover
+# lines      --line --line-2
+# text       --text --text-2 --text-3
+# brand      --brand --brand-hover --brand-soft --brand-tint --brand-ink
+# accent     --accent        (fill / indicator only; never `color:`, never a surface carrying text, D-842-07)
+# status     --ok --warn --bad --info and their -soft partners
+# avatars    --a1 ... --a6 and the text partners --a1-t ... --a6-t
+# Every text/surface pair is proven >= 4.5:1 in six combinations by
+# apps/web/src/__tests__/token-contrast-842.test.ts (the cascade resolver is token-cascade.ts).
+#
+# Domain tokens that stay (D-842-10): --leave-type-* (fill + -text alias pairs, mapped by
+# lib/leave/leave-colors.ts), --shift-*, --bar-hatch-*, --weekend-shade.
+# Non-colour tokens (D-842-09): --font-ui --font-code --fs-* --h-* --r-card --r-control --r-stage --r-pill
+# --s-1 ... --s-16 --shadow --shadow-pop --ease --ease-out --sidebar-w --topbar-h.

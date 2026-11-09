@@ -29,8 +29,8 @@
  *   8. (gap round, plan 840-18, G-9) „Neue Abwesenheit“ lays out as Mitarbeiter + Art, then
  *      Von + Bis, with no select cut off and no type eyebrow, and stacks on a phone;
  *   9. (gap round, plan 840-18, G-7) the primary buttons of the leave pages compute exactly the
- *      colours of the reference primary (`/admin/employees`) and reach 4.5:1 in every skin, theme,
- *      mode and state (rest and hover), read from the computed styles in the real browser.
+ *      colours of the reference primary (`/admin/employees`) and reach 4.5:1 in every theme (pflaume,
+ *      salz, petrol; #842 D-842-16), mode and state (rest and hover), read from the computed styles in the real browser.
  *
  * #840 G-1 ... G-9 (gap round): tests 6 to 9 are additions; of the pre-existing text only this header
  * (the test count and the list of tests) was extended.
@@ -1163,7 +1163,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(page.locator(".modal-eyebrow")).toHaveCount(0);
   });
 
-  test("9. primary buttons: the same recipe as elsewhere, WCAG AA in every skin, theme, mode and state", async ({
+  test("9. primary buttons: the same recipe as elsewhere, WCAG AA in every theme, mode and state", async ({
     page,
     request,
     tenant,
@@ -1181,8 +1181,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await loginAsTenantAdmin(page, tenant);
 
     interface Look {
-      skin: "editorial" | "modern";
-      theme: "pflaume" | "nacht" | "wald";
+      theme: "pflaume" | "salz" | "petrol";
       mode: "light" | "dark";
     }
     interface Painted {
@@ -1201,8 +1200,6 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
           document.head.appendChild(style);
         }
         const root = document.documentElement;
-        if (l.skin === "modern") root.setAttribute("data-skin", "modern");
-        else root.removeAttribute("data-skin");
         root.setAttribute("data-theme", l.theme);
         root.setAttribute("data-mode", l.mode);
       }, look);
@@ -1227,9 +1224,8 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     };
 
     const looks: Look[] = [];
-    for (const skin of ["editorial", "modern"] as const)
-      for (const theme of ["pflaume", "nacht", "wald"] as const)
-        for (const mode of ["light", "dark"] as const) looks.push({ skin, theme, mode });
+    for (const theme of ["pflaume", "salz", "petrol"] as const)
+      for (const mode of ["light", "dark"] as const) looks.push({ theme, mode });
 
     const pages: Array<{
       url: string;
@@ -1283,7 +1279,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
             if (state === "hover") await button.hover();
             else await page.mouse.move(0, 0);
             const painted = await paintOf(button);
-            const key = `${look.skin}/${look.theme}/${look.mode}/${state}`;
+            const key = `${look.theme}/${look.mode}/${state}`;
             if (spec.name === "reference") reference.set(key, painted);
             const ratios = ratioOf(painted);
             const lowest = Math.min(...ratios);

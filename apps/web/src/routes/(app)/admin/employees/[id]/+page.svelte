@@ -3969,7 +3969,7 @@
   .page-loading,
   .page-error {
     padding: var(--s-6);
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 14px;
   }
 
@@ -3997,7 +3997,7 @@
   .form-label {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -4007,9 +4007,9 @@
   .form-input {
     height: 38px;
     padding: 0 var(--s-3);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
     color: var(--text);
     font-size: 14px;
   }
@@ -4032,21 +4032,21 @@
   .input:disabled,
   .select:disabled,
   .form-input:disabled {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
+    background: var(--sunk);
+    color: var(--text-2);
     cursor: not-allowed;
   }
 
   .hint,
   .form-hint {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: var(--s-1);
   }
 
   /* ── Subheadings in form ────────────────────────────────────────────────── */
   .form-subhead {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding-top: var(--s-3);
     margin-top: var(--s-2);
   }
@@ -4056,7 +4056,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--text-faint, var(--text-muted));
+    color: var(--text-3, var(--text-2));
     margin: 0;
   }
 
@@ -4072,7 +4072,7 @@
     display: inline-flex;
     align-items: center;
     padding: 2px 8px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     font-size: 11px;
     font-weight: 600;
   }
@@ -4101,10 +4101,10 @@
 
   .stp-btn {
     padding: var(--s-2) var(--s-3);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--bg-subtle);
-    color: var(--text-muted);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--sunk);
+    color: var(--text-2);
     font-size: 13px;
     cursor: pointer;
     transition:
@@ -4158,7 +4158,7 @@
     font-size: 14px;
     font-weight: 700;
     color: var(--text);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     padding: 8px 0;
   }
 
@@ -4172,10 +4172,10 @@
   .wd-chip {
     min-width: 40px;
     padding: var(--s-1) var(--s-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--bg-subtle);
-    color: var(--text-muted);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--sunk);
+    color: var(--text-2);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
@@ -4200,7 +4200,7 @@
 
   .input-suffix-wrap .form-input,
   .input-suffix-wrap .threshold-input {
-    border-radius: var(--r-sm) 0 0 var(--r-sm);
+    border-radius: var(--r-control) 0 0 var(--r-control);
     border-right: none;
   }
 
@@ -4208,10 +4208,10 @@
     display: flex;
     align-items: center;
     padding: 0 var(--s-3);
-    border: 1px solid var(--border);
-    border-radius: 0 var(--r-sm) var(--r-sm) 0;
-    background: var(--bg-subtle);
-    color: var(--text-muted);
+    border: 1px solid var(--line);
+    border-radius: 0 var(--r-control) var(--r-control) 0;
+    background: var(--sunk);
+    color: var(--text-2);
     font-size: 13px;
     white-space: nowrap;
   }
@@ -4243,16 +4243,16 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--text-faint, var(--text-muted));
+    color: var(--text-3, var(--text-2));
     margin: var(--s-5) 0 var(--s-2);
   }
 
   /* ── Callout ────────────────────────────────────────────────────────────── */
   .callout {
     padding: var(--s-3) var(--s-4);
-    border-radius: var(--r-sm);
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    border-radius: var(--r-control);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     font-size: 14px;
     color: var(--text);
     margin-bottom: var(--s-3);
@@ -4267,7 +4267,7 @@
   /* ── Saved hint ─────────────────────────────────────────────────────────── */
   .saved-hint {
     font-size: 13px;
-    color: var(--good);
+    color: var(--ok);
     font-weight: 500;
   }
 
@@ -4294,7 +4294,7 @@
     gap: var(--s-6);
     margin-top: var(--s-4);
     padding-top: var(--s-4);
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
 
   .vac-stat {
@@ -4307,14 +4307,14 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-weight: 600;
   }
 
   .vac-value {
     font-size: 24px;
     font-weight: 700;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     color: var(--text);
   }
 
@@ -4330,21 +4330,21 @@
     display: inline-flex;
     align-items: center;
     padding: 2px 10px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     font-size: 12px;
     font-weight: 600;
   }
 
   .badge-ok {
-    background: var(--good-soft);
-    color: var(--good);
-    border: 1px solid var(--good);
+    background: var(--ok-soft);
+    color: var(--ok);
+    border: 1px solid var(--ok);
   }
 
   .badge-muted {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    color: var(--text-2);
+    border: 1px solid var(--line);
   }
 
   /* ── Orphan shifts overlay (inline, not modal) ──────────────────────────── */
@@ -4359,13 +4359,13 @@
   }
 
   .orphan-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: var(--pad-card);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    padding: var(--s-6);
     max-width: 480px;
     width: 100%;
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow);
   }
 
   .orphan-title {
@@ -4385,8 +4385,8 @@
     list-style: none;
     padding: 0;
     margin: 0 0 var(--s-3);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     overflow: hidden;
   }
 
@@ -4394,7 +4394,7 @@
     display: flex;
     gap: var(--s-4);
     padding: var(--s-2) var(--s-3);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 13px;
     color: var(--text);
   }
@@ -4405,18 +4405,17 @@
 
   .orphan-date {
     font-weight: 600;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
 
   .orphan-time {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .orphan-more {
     padding: var(--s-2) var(--s-3);
     font-size: 12px;
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
 
   .orphan-question {
@@ -4444,9 +4443,9 @@
   }
 
   .bs-pattern-card {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: var(--s-4);
     display: flex;
     flex-direction: column;
@@ -4463,14 +4462,14 @@
   .bs-pattern-label {
     font-size: 0.8125rem;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     min-width: 9rem;
   }
 
   .bs-pattern-value {
     font-size: 0.9375rem;
     color: var(--text);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
 
   .bs-chip-row {
@@ -4505,7 +4504,7 @@
   /* Phase 67 Plan 02 — editor controls */
   .bs-pattern-head {
     justify-content: space-between;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     padding-bottom: var(--s-2);
   }
 
@@ -4513,7 +4512,7 @@
   .chip-button {
     cursor: pointer;
     border: 1px solid transparent;
-    background: var(--bg-card);
+    background: var(--card);
     color: var(--text);
     font: inherit;
   }
@@ -4554,7 +4553,7 @@
 
   .bs-pattern-hint {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .bs-state-select {
@@ -4566,7 +4565,6 @@
      within the Arbeitszeit tab. Only the help-text helper remains scoped. */
   .bs-mode-help {
     margin: 0 0 0 9rem;
-    font-style: italic;
   }
 
   @media (max-width: 640px) {
@@ -4593,18 +4591,18 @@
 
   .bs-slot-hint {
     font-size: 0.8125rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    color: var(--text-2);
+    font-family: var(--font-ui);
   }
 
   .bs-clear-btn {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     padding: 0.25rem 0.625rem;
     min-height: unset;
     height: 2rem;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     background: transparent;
     cursor: pointer;
     transition:
@@ -4624,7 +4622,7 @@
 
   /* ── Phase 76.37 — per-pattern bsSlot* section inside pattern card ── */
   .bs-slot-section {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     margin-top: 1rem;
     padding-top: 1rem;
   }

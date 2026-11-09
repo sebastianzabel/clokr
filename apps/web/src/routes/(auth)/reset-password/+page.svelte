@@ -141,7 +141,7 @@
 <style>
   .login-page {
     min-height: 100dvh;
-    background-color: var(--bg-subtle);
+    background-color: var(--sunk);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -149,10 +149,10 @@
   }
 
   .login-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    box-shadow: var(--shadow-pop);
     padding: 2.5rem;
     width: 100%;
     max-width: 420px;
@@ -176,7 +176,7 @@
   }
   .login-subtitle {
     font-size: 0.9375rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .login-form {
@@ -199,8 +199,8 @@
     display: inline-block;
     width: 1rem;
     height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-top-color: #fff;
+    border: 2px solid color-mix(in srgb, var(--brand-ink) 40%, transparent);
+    border-top-color: var(--brand-ink);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
@@ -213,7 +213,7 @@
 
   .field-error {
     font-size: 0.8125rem;
-    color: #dc2626;
+    color: var(--bad);
     margin-top: 0.25rem;
   }
 
@@ -224,7 +224,7 @@
 
   .back-link {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-decoration: underline;
   }
 
@@ -233,18 +233,18 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
-    border-radius: var(--r-md);
+    border-radius: var(--r-control);
     font-size: 0.875rem;
   }
 
   .alert-error {
-    background: #fef2f2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
+    background: var(--bad-soft);
+    color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent);
   }
   .alert-success {
-    background: #f0fdf4;
-    color: #166534;
-    border: 1px solid #bbf7d0;
+    background: var(--ok-soft);
+    color: var(--ok);
+    border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
   }
 </style>

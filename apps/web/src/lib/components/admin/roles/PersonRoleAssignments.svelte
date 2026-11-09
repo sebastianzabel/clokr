@@ -319,7 +319,7 @@
     color: var(--text);
   }
   .assignments-scope {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .assignments-actions {
     display: flex;

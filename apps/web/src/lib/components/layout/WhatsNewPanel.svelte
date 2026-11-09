@@ -115,9 +115,9 @@
        invoked from anywhere via keyboard shortcut -- keeps its own precedence too. Pinned by
        whats-new-stacking.test.ts. */
     z-index: 2000;
-    background: var(--bg-card);
-    border-left: 1px solid var(--border);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border-left: 1px solid var(--line);
+    box-shadow: var(--shadow-pop);
     display: flex;
     flex-direction: column;
     animation: fadeUp 200ms var(--ease-out);
@@ -129,20 +129,19 @@
     justify-content: space-between;
     gap: 14px;
     padding: 22px 26px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .whats-new-eyebrow {
-    font-family: var(--font-serif);
-    font-style: italic;
-    color: var(--brand-light, var(--brand));
+    font-family: var(--font-ui);
+    color: var(--brand);
     font-size: 13px;
     line-height: 1;
     margin-bottom: 4px;
   }
 
   .whats-new-hd h2 {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     font-size: 22px;
     line-height: 1.2;
@@ -153,10 +152,10 @@
   .whats-new-close {
     width: 32px;
     height: 32px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     background: transparent;
     border: 1px solid transparent;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
     display: grid;
     place-items: center;
@@ -166,7 +165,7 @@
   }
 
   .whats-new-close:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
 
@@ -210,7 +209,7 @@
   }
 
   .whats-new-release-hd h3 {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     font-size: 17px;
     margin: 0;
@@ -230,7 +229,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0 0 6px;
   }
 
@@ -245,14 +244,13 @@
 
   .whats-new-footnote {
     font-size: 12px;
-    font-style: italic;
-    color: var(--text-faint);
+    color: var(--text-3);
     margin-top: 10px;
   }
 
   .whats-new-divider {
     border: none;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     margin: 18px 0;
   }
 </style>

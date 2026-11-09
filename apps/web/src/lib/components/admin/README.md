@@ -319,7 +319,7 @@ report generation, batch operations, or any task with a clear start and end stat
 `<PageHead>` followed by an optional numbered step indicator, then the required `form` snippet,
 and optional `result` and `history` snippets below it. When both `steps` and `currentStep` are
 provided the step indicator shows above the form: active step uses `--brand` background, completed
-steps use `--good` with a checkmark SVG, upcoming steps use muted border and text.
+steps use `--ok` with a checkmark SVG, upcoming steps use muted border and text.
 
 ```ts
 interface Props {
@@ -435,9 +435,11 @@ specifies exact criteria, anti-patterns, and rationale for each template choice.
 
 ## Token compliance
 
-All components use v1.5 tokens only: `var(--bg-card)`, `var(--border)`, `var(--r-lg)`,
-`var(--text)`, `var(--text-muted)`, `var(--brand)`, `var(--bad)`, `var(--bad-soft)`,
-`var(--good)`, `var(--shadow-md)`, `var(--font-sans)`, `var(--font-serif)`, etc.
+All components use the v2 token roles of `apps/web/src/tokens.css` only: `var(--card)`, `var(--line)`,
+`var(--r-card)`, `var(--text)`, `var(--text-2)`, `var(--brand)`, `var(--bad)`, `var(--bad-soft)`,
+`var(--ok)`, `var(--shadow)`, `var(--font-ui)`, etc. Text on a solid status fill uses `var(--card)`,
+on a brand fill `var(--brand-ink)`.
 
-Legacy v1.2 token namespaces (`--color-*`, `--glass-*`, `--radius-*`, `--gray-*`) are
-absent from all admin component styles. Verified by `pnpm --filter @clokr/web lint:tokens`.
+Retired names (the v1.5 set and the v1.2 `--color-*`, `--glass-*`, `--radius-*`, `--gray-*` namespaces)
+and any `var()` that nothing declares are absent from all admin component styles. Verified by
+`pnpm --filter @clokr/web lint:tokens` (deny list: `apps/web/.lintrc-tokens.txt`).

@@ -500,7 +500,7 @@
     margin: 0;
     font-size: 12px;
     line-height: 1.4;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .drill-absence-list {
@@ -543,8 +543,8 @@
   }
 
   .drill-selected {
-    background: var(--bg-subtle);
-    box-shadow: inset 2px 0 0 var(--brand-light);
+    background: var(--sunk);
+    box-shadow: inset 2px 0 0 var(--brand);
   }
 
   .drill-month-btn {

@@ -31,7 +31,7 @@
      * Optional 4 px progress bar rendered between value and delta.
      * `value / max` drives the fill width (clamped 0..100 %).
      * `label` (optional) renders as a small caption above the bar.
-     * When `value >= max`, the fill uses `var(--good)` instead of `var(--brand)`.
+     * When `value >= max`, the fill uses `var(--ok)` instead of `var(--brand)`.
      */
     progress?: { value: number; max: number; label?: string };
   }
@@ -92,12 +92,12 @@
   .kpi-progress-label {
     font-size: 11px;
     line-height: 1.2;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: 6px;
   }
   .kpi-progress-track {
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     height: 4px;
     overflow: hidden;
     position: relative;
@@ -110,6 +110,6 @@
     transition: width 400ms var(--ease-out);
   }
   .kpi-progress-fill-full {
-    background: var(--good);
+    background: var(--ok);
   }
 </style>

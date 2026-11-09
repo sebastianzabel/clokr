@@ -56,7 +56,7 @@
     align-items: center;
     gap: 8px;
     padding: 24px 0;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .admin-shell {
@@ -75,6 +75,6 @@
     color: var(--text);
     margin: 0 0 1rem;
     padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 </style>

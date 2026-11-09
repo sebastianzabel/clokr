@@ -397,7 +397,7 @@
     margin: 0;
     font-size: 12px;
     line-height: 1.4;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .period-median {
@@ -426,7 +426,7 @@
   .period-table thead tr {
     top: calc(var(--topbar-h) + var(--period-bar-h, 0px));
     background: var(--bg);
-    box-shadow: inset 0 -1px 0 var(--border-strong);
+    box-shadow: inset 0 -1px 0 var(--line-2);
   }
 
   .period-table th {

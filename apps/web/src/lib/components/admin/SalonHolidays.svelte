@@ -284,7 +284,7 @@
   }
 
   .sh-note {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 14px;
   }
 
@@ -299,13 +299,13 @@
     align-items: center;
     gap: var(--s-4);
     padding: var(--s-2) 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 14px;
   }
 
   .sh-date {
     flex: 0 0 9.5rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
 

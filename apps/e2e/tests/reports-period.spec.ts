@@ -22,9 +22,9 @@
  *                   drill-down: whole-page geometry, clipped-content probe, and axe `nested-interactive`
  *                   on the two mobile lists (with a positive control, so the rule is proven to see).
  *   layout checks — the month picker is not clipped (`document.elementFromPoint` inside
- *                   `.month-picker`) in editorial/modern × light/dark at 1280 and 390 px; no KPI value
+ *                   `.month-picker`) in pflaume/salz/petrol × light/dark at 1280 and 390 px; no KPI value
  *                   overflows its tile at 961, 1280 and 1440 px; the sticky table header is never hidden
- *                   behind the period bar (editorial/modern × comfortable/compact).
+ *                   behind the period bar (pflaume/salz/petrol, #842 D-842-16: the former spacing axis is gone).
  *
  * A fourth describe (Issue #714) proves what the salon switch shows where a reader looks: after the
  * header is switched to a salon, the KPI tile "Im Salon gearbeitet", the Stammsalon hint, the row of
@@ -60,9 +60,8 @@ const PERSON_PASSWORD = `Rp-${randomUUID()}!`;
 test.use({ timezoneId: TENANT_TZ });
 
 type Json = Record<string, unknown>;
-type Skin = "editorial" | "modern";
+type Theme = "pflaume" | "salz" | "petrol";
 type Mode = "light" | "dark";
-type Density = "comfortable" | "compact";
 
 // ── Dates ───────────────────────────────────────────────────────────────────────────────────
 
@@ -173,14 +172,13 @@ async function loginAs(
 }
 
 interface UiPrefs {
-  skin?: Skin;
+  theme?: Theme;
   mode?: Mode;
-  density?: Density;
 }
 
 /**
  * Signs the tenant admin in and hydrates the browser. The server-side preference wins over
- * localStorage on hydration, so skin, mode and density are stored on the account first.
+ * localStorage on hydration, so theme and mode are stored on the account first.
  */
 async function signInAdmin(
   page: Page,
@@ -202,9 +200,8 @@ async function signInAdmin(
         localStorage.setItem("accessToken", accessToken);
         localStorage.setItem("refreshToken", refreshToken);
         localStorage.setItem("user", JSON.stringify(user));
-        if (ui.skin) localStorage.setItem("skin", ui.skin);
+        if (ui.theme) localStorage.setItem("theme", ui.theme);
         if (ui.mode) localStorage.setItem("mode", ui.mode);
-        if (ui.density) localStorage.setItem("density", ui.density);
       } catch {
         /* localStorage may be locked; the auth store then falls back to the login page */
       }
@@ -1093,14 +1090,15 @@ test.describe("Issue #612 — Sichtmatrix 390/360 px, hell/dunkel", () => {
 // layout checks
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-const SKINS: readonly Skin[] = ["editorial", "modern"];
+// #842 D-842-16: the three themes replace the former look axis.
+const THEMES: readonly Theme[] = ["pflaume", "salz", "petrol"];
 
 /** Opens /reports on the synthetic answer with the given UI preferences; asserts they are on screen. */
 async function openSynthetic(
   page: Page,
   request: APIRequestContext,
   tenant: TestTenant,
-  prefs: Required<Pick<UiPrefs, "skin" | "mode">> & Pick<UiPrefs, "density">,
+  prefs: Required<Pick<UiPrefs, "theme" | "mode">>,
 ) {
   const template = await realTemplate(request, tenant);
   const people = makePeople();
@@ -1110,31 +1108,24 @@ async function openSynthetic(
   await page.goto(`${tenant.baseUrl}/reports?from=${MATRIX_PERIOD}&to=${MATRIX_PERIOD}&tab=zeiten`);
   await waitKpisSettled(page);
   await expect(page.locator("html")).toHaveAttribute("data-mode", prefs.mode);
-  if (prefs.skin === "modern") {
-    await expect(page.locator("html")).toHaveAttribute("data-skin", "modern");
-  } else {
-    await expect(page.locator("html")).not.toHaveAttribute("data-skin", /.*/);
-  }
-  if (prefs.density) {
-    await expect(page.locator("html")).toHaveAttribute("data-density", prefs.density);
-  }
+  await expect(page.locator("html")).toHaveAttribute("data-theme", prefs.theme);
   return people;
 }
 
 test.describe("Issue #612 — Layoutprüfungen", () => {
-  for (const skin of SKINS) {
+  for (const theme of THEMES) {
     for (const mode of MODES) {
       for (const viewport of [
         { width: 1280, height: 800 },
         { width: 390, height: 844 },
       ]) {
-        test(`Monatsauswahl nicht beschnitten — ${skin}, ${mode}, ${viewport.width} px`, async ({
+        test(`Monatsauswahl nicht beschnitten — ${theme}, ${mode}, ${viewport.width} px`, async ({
           page,
           request,
           tenant,
         }) => {
           await page.setViewportSize(viewport);
-          await openSynthetic(page, request, tenant, { skin, mode });
+          await openSynthetic(page, request, tenant, { theme, mode });
           await page.getByTestId("reports-period-label").click();
           const picker = page.getByTestId("reports-period-picker");
           await expect(picker).toBeVisible();
@@ -1167,7 +1158,7 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
           });
           // eslint-disable-next-line no-console
           console.log(
-            `[reports-period picker] ${skin}/${mode}/${viewport.width}: ${JSON.stringify(hit)}`,
+            `[reports-period picker] ${theme}/${mode}/${viewport.width}: ${JSON.stringify(hit)}`,
           );
           expect(hit.out, `picker hit test (${JSON.stringify(hit.rect)})`).toEqual({
             centre: "inside",
@@ -1195,7 +1186,7 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
       tenant,
     }) => {
       await page.setViewportSize({ width, height: 900 });
-      await openSynthetic(page, request, tenant, { skin: "editorial", mode: "light" });
+      await openSynthetic(page, request, tenant, { theme: "pflaume", mode: "light" });
       await settle(page);
       const tiles = await page.locator("article.kpi").evaluateAll((els) =>
         els.map((el) => {
@@ -1241,59 +1232,57 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
     });
   }
 
-  for (const skin of SKINS) {
-    for (const density of ["comfortable", "compact"] as const) {
-      test(`Tabellenkopf bleibt unter der Zeitraumleiste — ${skin}, ${density}`, async ({
-        page,
-        request,
-        tenant,
-      }) => {
-        await page.setViewportSize({ width: 1280, height: 720 });
-        await openSynthetic(page, request, tenant, { skin, mode: "light", density });
-        await expect(page.locator("tr.period-row")).toHaveCount(25);
-        await settle(page);
+  for (const theme of THEMES) {
+    test(`Tabellenkopf bleibt unter der Zeitraumleiste — ${theme}`, async ({
+      page,
+      request,
+      tenant,
+    }) => {
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openSynthetic(page, request, tenant, { theme, mode: "light" });
+      await expect(page.locator("tr.period-row")).toHaveCount(25);
+      await settle(page);
 
-        // Scroll until the table header would have left the screen without the sticky rule.
-        await page.evaluate(() => {
-          const head = document.querySelector(".period-table thead tr") as HTMLElement;
-          window.scrollTo(0, head.getBoundingClientRect().top + window.scrollY + 500);
-        });
-        await expect
-          .poll(() => page.evaluate(() => Math.round(window.scrollY)), { message: "page scrolled" })
-          .toBeGreaterThan(300);
-
-        const geo = await page.evaluate(() => {
-          const bar = document.querySelector(".period-sticky") as HTMLElement;
-          const headRow = document.querySelector(".period-table thead tr") as HTMLElement;
-          const firstTh = headRow.querySelector("th") as HTMLElement;
-          const b = bar.getBoundingClientRect();
-          const h = headRow.getBoundingClientRect();
-          const t = firstTh.getBoundingClientRect();
-          const hit = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);
-          return {
-            scrollY: window.scrollY,
-            barTop: b.top,
-            barBottom: b.bottom,
-            headTop: h.top,
-            headBottom: h.bottom,
-            headHit: hit?.closest("thead") ? "thead" : hit ? hit.className || hit.tagName : "none",
-          };
-        });
-        // eslint-disable-next-line no-console
-        console.log(`[reports-period sticky] ${skin}/${density}: ${JSON.stringify(geo)}`);
-        // The bar itself stuck below the topbar (not scrolled away) ...
-        expect(geo.barTop, "the period bar is stuck near the top").toBeLessThan(120);
-        // ... and the header is stuck right under it: never above its bottom edge (hidden behind
-        // it), never far below it (not sticky at all).
-        expect(geo.headTop, "the header is not hidden behind the bar").toBeGreaterThanOrEqual(
-          geo.barBottom - TOLERANCE_PX,
-        );
-        expect(geo.headTop, "the header sticks right below the bar").toBeLessThanOrEqual(
-          geo.barBottom + 3,
-        );
-        expect(geo.headHit, "the header cell is what the pointer hits").toBe("thead");
+      // Scroll until the table header would have left the screen without the sticky rule.
+      await page.evaluate(() => {
+        const head = document.querySelector(".period-table thead tr") as HTMLElement;
+        window.scrollTo(0, head.getBoundingClientRect().top + window.scrollY + 500);
       });
-    }
+      await expect
+        .poll(() => page.evaluate(() => Math.round(window.scrollY)), { message: "page scrolled" })
+        .toBeGreaterThan(300);
+
+      const geo = await page.evaluate(() => {
+        const bar = document.querySelector(".period-sticky") as HTMLElement;
+        const headRow = document.querySelector(".period-table thead tr") as HTMLElement;
+        const firstTh = headRow.querySelector("th") as HTMLElement;
+        const b = bar.getBoundingClientRect();
+        const h = headRow.getBoundingClientRect();
+        const t = firstTh.getBoundingClientRect();
+        const hit = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);
+        return {
+          scrollY: window.scrollY,
+          barTop: b.top,
+          barBottom: b.bottom,
+          headTop: h.top,
+          headBottom: h.bottom,
+          headHit: hit?.closest("thead") ? "thead" : hit ? hit.className || hit.tagName : "none",
+        };
+      });
+      // eslint-disable-next-line no-console
+      console.log(`[reports-period sticky] ${theme}: ${JSON.stringify(geo)}`);
+      // The bar itself stuck below the topbar (not scrolled away) ...
+      expect(geo.barTop, "the period bar is stuck near the top").toBeLessThan(120);
+      // ... and the header is stuck right under it: never above its bottom edge (hidden behind
+      // it), never far below it (not sticky at all).
+      expect(geo.headTop, "the header is not hidden behind the bar").toBeGreaterThanOrEqual(
+        geo.barBottom - TOLERANCE_PX,
+      );
+      expect(geo.headTop, "the header sticks right below the bar").toBeLessThanOrEqual(
+        geo.barBottom + 3,
+      );
+      expect(geo.headHit, "the header cell is what the pointer hits").toBe("thead");
+    });
   }
 });
 
@@ -1736,7 +1725,7 @@ test.describe("Issue #726 — Suchfeld der Filterleiste", () => {
     ]) {
       test(`Suchfeld ${tab} — ${viewport.width} px`, async ({ page, request, tenant }) => {
         await page.setViewportSize(viewport);
-        await openSynthetic(page, request, tenant, { skin: "editorial", mode: "light" });
+        await openSynthetic(page, request, tenant, { theme: "pflaume", mode: "light" });
         if (tab !== "zeiten") {
           await page.goto(
             `${tenant.baseUrl}/reports?from=${MATRIX_PERIOD}&to=${MATRIX_PERIOD}&tab=${tab}`,

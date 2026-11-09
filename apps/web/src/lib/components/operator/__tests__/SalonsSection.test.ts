@@ -86,7 +86,7 @@ function mount(salons: OperatorSalon[] = TWO, overrides: Record<string, unknown>
       onReload,
       ...overrides,
     },
-    "nacht",
+    "salz",
   );
   return { onCreate, onUpdate, onDeactivate, onActivate, onReload };
 }
@@ -121,7 +121,7 @@ describe("SalonsSection", () => {
     mount();
     await fireEvent.click(el("op-salon-create"));
     await tick();
-    expect(el("op-salon-dialog")).toHaveAttribute("data-mode", "create");
+    expect(el("op-salon-dialog")).toHaveAttribute("data-dialog-mode", "create");
     expect(el<HTMLInputElement>("op-salon-name").value).toBe("");
     expect(el<HTMLSelectElement>("op-salon-federal-state").value).toBe("");
     expect(el<HTMLInputElement>("op-salon-hours-0-from").value).toBe("09:30");
@@ -134,7 +134,7 @@ describe("SalonsSection", () => {
     expect(edit).toHaveAttribute("aria-label", "Salon Zweitsalon bearbeiten");
     await fireEvent.click(edit);
     await tick();
-    expect(el("op-salon-dialog")).toHaveAttribute("data-mode", "edit");
+    expect(el("op-salon-dialog")).toHaveAttribute("data-dialog-mode", "edit");
     expect(el<HTMLInputElement>("op-salon-name").value).toBe("Zweitsalon");
   });
 
@@ -152,7 +152,7 @@ describe("SalonsSection", () => {
     mount([...ONE, salon({ id: "s9", name: "Altsalon", isActive: false })]);
     await fireEvent.click(el("op-salon-create"));
     await tick();
-    expect(el("op-salon-dialog")).toHaveAttribute("data-mode", "create");
+    expect(el("op-salon-dialog")).toHaveAttribute("data-dialog-mode", "create");
     expect(byId("op-salon-single-salon-hint")).toBeNull();
   });
 

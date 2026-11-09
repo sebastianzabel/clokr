@@ -83,9 +83,9 @@
     gap: 16px;
     min-height: var(--topbar-h);
     padding: 8px 24px;
-    background: var(--bg-card);
+    background: var(--card);
     border-top: 2px solid var(--brand);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .op-brand {
@@ -121,7 +121,7 @@
 
   .op-name {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
   }
 

@@ -994,7 +994,7 @@
         <span class="label">Alter (Tage)</span>
         <span
           class="value"
-          style="font-family: var(--font-mono); font-variant-numeric: tabular-nums;"
+          style="font-family: var(--font-ui); font-variant-numeric: tabular-nums;"
         >
           {retroDetail.entryAgeInDays ?? "?"}
         </span>
@@ -1129,7 +1129,7 @@
         </div>
         <div class="review-field">
           <span class="review-label">Überschneidung</span>
-          <span class="review-value font-mono"
+          <span class="review-value"
             >{fmtDate(section9ConfirmCase.overlapStart)} – {fmtDate(
               section9ConfirmCase.overlapEnd,
             )}</span
@@ -1281,7 +1281,7 @@
      sits at the top of a padding:0 list card. */
   .list-card-header {
     padding: 18px 18px 14px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .list-card-header :global(.card-hd) {
     margin-bottom: 0;
@@ -1290,7 +1290,7 @@
   .list-empty {
     padding: 32px 24px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13.5px;
   }
 
@@ -1302,9 +1302,9 @@
     grid-template-columns: repeat(3, 1fr);
     gap: 14px;
     padding: 14px 16px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-md);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border-radius: var(--r-control);
+    border: 1px solid var(--line);
   }
 
   @media (max-width: 560px) {
@@ -1316,9 +1316,9 @@
   /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
   /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
   .note-block {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 12px 14px;
   }
   .note-label {
@@ -1326,13 +1326,12 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
     margin-bottom: 6px;
   }
   .note-text {
     font-size: 13.5px;
     color: var(--text);
-    font-style: italic;
   }
 
   /* ── Retro editable proposed-times row (RETRO-16/D-10) ──────────────────
@@ -1362,21 +1361,21 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
   .review-note-input {
     width: 100%;
     padding: 9px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
     color: var(--text);
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13.5px;
     transition: border-color 160ms var(--ease);
   }
   .review-note-input:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
     border-color: var(--brand);
   }
@@ -1385,7 +1384,7 @@
   /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
   .footer-note {
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .spacer {
     flex: 1;
@@ -1404,7 +1403,7 @@
     gap: 1rem;
     flex-wrap: wrap;
     padding: 0.75rem 0;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
   .section9-case-row:first-child {
     border-top: none;
@@ -1478,9 +1477,9 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem 1.5rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 1rem 1.25rem;
   }
   .review-field {
@@ -1493,7 +1492,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .review-value {
     font-size: 0.9375rem;

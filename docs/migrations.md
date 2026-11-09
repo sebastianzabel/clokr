@@ -1865,3 +1865,35 @@ WHERE "id" IN (
   AND "tenantId" IS NULL
   AND 'leave-plan:manage:ZUGEWIESEN' = ANY("permissions");
 ```
+
+## Phase 842 — Designsystem: Themes und Präferenzen (Issue #842)
+
+**Hinweis für die Release Notes.** Das Oberflächendesign hat jetzt drei Themes (Pflaume, Salz, Petrol), jeweils hell und dunkel.
+Die Auswahl „Skin“ und „Dichte“ entfällt. Gespeicherte Einstellungen werden automatisch übertragen; niemand landet ohne Theme.
+
+**Was die Migration tut.** Ein Verzeichnis in `packages/db/prisma/migrations/`: `20261109120000_ui_preferences_v2_themes`, von Hand
+geschrieben und **rein datenbezogen** (keine Tabelle, Spalte, Index oder Constraint wird angelegt, geändert oder gelöscht; die
+CI-Driftprüfung bleibt leer). Ein einziges `UPDATE "User"` über `"uiPreferences"`:
+
+- `nacht` und `schiefer` werden zu `salz`, `wald` wird zu `petrol`; `pflaume` bleibt.
+- Die Schlüssel `skin` und `density` werden entfernt; alle anderen Schlüssel (`mode`, `language`) bleiben.
+- Nur Zeilen, deren `uiPreferences` ein JSON-Objekt ist und `skin`, `density` oder eine alte Theme-Id enthält, werden angefasst.
+  SQL-NULL, JSON-null, Arrays, Skalare und ein unbekannter Theme-Wert bleiben unverändert (die API liefert dann beim Lesen
+  `pflaume`). `updatedAt` wird nicht verändert.
+
+**Wiederholbar.** Nach dem ersten Lauf trifft kein Datensatz mehr das Prädikat; ein zweiter Lauf ändert keine Zeile.
+`prisma migrate deploy` wendet die Migration auf jeder Stufe (dev, int, prod) an; es gibt kein Skript und keinen manuellen Schritt.
+Bewiesen durch `apps/api/src/__tests__/ui-preferences-migration-842.test.ts` (führt die eingecheckte SQL-Datei in einer immer
+zurückgerollten Transaktion aus, zweimal).
+
+**Kein Audit-Eintrag.** Eine UI-Präferenz ist weder Arbeitszeit-, Urlaubs- noch Lohndatum; wie `PUT /api/v1/me/preferences` schreibt
+die Migration keine `AuditLog`-Zeile.
+
+**API.** `PUT /api/v1/me/preferences` akzeptiert `pflaume`, `salz`, `petrol` sowie die alten Ids (`nacht`/`schiefer` werden als
+`salz`, `wald` als `petrol` gespeichert und geliefert); eine unbekannte Id (z. B. `lila`) bleibt 400. Die entfernten Schlüssel `skin`
+und `density` eines veralteten Browser-Tabs werden ignoriert (200, nicht gespeichert). Die Abbildung steht nur in
+`apps/api/src/contexts/platform/ui-theme.ts`; `GET` normalisiert zusätzlich, falls eine Zeile noch eine alte Id trägt.
+
+**Rollback.** Ein Image-Rollback genügt nicht für die Daten: die Zeilen tragen dann `salz`/`petrol`, die der alte Code beim Lesen auf
+`pflaume` zurückfallen lässt (kein Fehler, keine Sperre). Der Verlust ist rein kosmetisch (die Wahl der Person muss neu getroffen
+werden); eine Rückabbildung ist nicht möglich, weil `nacht` und `schiefer` auf `salz` zusammenfallen.

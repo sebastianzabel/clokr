@@ -287,7 +287,7 @@
     margin-bottom: 1rem;
   }
   :global(.wifi-card) {
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow);
     margin-bottom: 1.5rem;
   }
   .wifi-gdpr-note {
@@ -315,7 +315,7 @@
     width: 2.75rem;
     height: 1.5rem;
     border-radius: 9999px;
-    background: var(--border);
+    background: var(--line);
     cursor: pointer;
     position: relative;
     transition: background 0.2s;
@@ -329,7 +329,7 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--bg-card);
+    background: var(--card);
     transition: transform 0.2s;
   }
   .wifi-toggle-input:checked {
@@ -369,11 +369,11 @@
   }
   .mac-code {
     padding: 0.5rem 0.75rem;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
-    font-family: var(--font-mono);
+    background: var(--sunk);
+    border-radius: var(--r-control);
+    font-family: var(--font-code);
     font-size: 0.8125rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
   }
   .mac-label-text {
     font-size: 0.8125rem;
@@ -410,7 +410,7 @@
     min-width: 180px;
   }
   .mac-input {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 0.9375rem;
   }
   .form-error {

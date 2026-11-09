@@ -8,6 +8,7 @@
   import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
+  import LogoMark from "$lib/components/layout/LogoMark.svelte";
   import { visibleNavSections } from "$lib/nav/app-nav";
   import { activeNavHref } from "$lib/nav/active-route";
   import { removeThisDevicePush } from "$lib/push/logout";
@@ -82,8 +83,14 @@
 </script>
 
 <aside class="sidebar" aria-label="Hauptnavigation" data-testid="sidebar">
-  <a href="/dashboard" class="sidebar-brand" data-testid="sidebar-brand">
-    <img class="mark" src="/clokr-wordmark.png" alt="Clokr Zeiterfassung" />
+  <a
+    href="/dashboard"
+    class="sidebar-brand"
+    data-testid="sidebar-brand"
+    aria-label="Clokr Zeiterfassung"
+  >
+    <LogoMark size={22} />
+    <span class="wordmark">Clokr</span>
   </a>
 
   <div class="sidebar-scroll">
@@ -157,7 +164,7 @@
 <style>
   .sidebar {
     grid-area: sidebar;
-    background: var(--bg-card);
+    background: var(--card);
     box-shadow: 1px 0 3px rgba(0, 0, 0, 0.04);
     position: relative;
     z-index: 10;
@@ -177,20 +184,19 @@
     padding: 44px 20px 22px;
     margin-bottom: 14px;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
+    gap: var(--s-2);
     text-decoration: none;
     border: 0;
-    color: var(--text);
+    color: var(--brand);
   }
 
-  .sidebar-brand .mark {
-    width: auto;
-    max-width: 190px;
-    height: auto;
-    object-fit: contain;
-    display: block;
+  .sidebar-brand .wordmark {
+    font-weight: 700;
+    font-size: 20px;
+    color: var(--text);
   }
 
   .sidebar-scroll {
@@ -198,17 +204,17 @@
     overflow-y: auto;
     min-height: 0;
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: var(--line) transparent;
   }
   .sidebar-scroll::-webkit-scrollbar {
     width: 6px;
   }
   .sidebar-scroll::-webkit-scrollbar-thumb {
-    background: var(--border);
+    background: var(--line);
     border-radius: 3px;
   }
   .sidebar-scroll::-webkit-scrollbar-thumb:hover {
-    background: var(--border-strong);
+    background: var(--line-2);
   }
 
   .sidebar-section-label {
@@ -216,7 +222,7 @@
     font-size: 10px;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
     font-weight: 600;
   }
 
@@ -227,7 +233,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-muted);
+    color: var(--text-2);
     padding: var(--s-4) var(--s-3) var(--s-1) 20px;
     user-select: none;
   }
@@ -244,8 +250,8 @@
     align-items: center;
     gap: 11px;
     padding: 9px 12px;
-    border-radius: var(--r-sm);
-    color: var(--text-muted);
+    border-radius: var(--r-control);
+    color: var(--text-2);
     font-weight: 500;
     font-size: 13.5px;
     text-decoration: none;
@@ -256,7 +262,7 @@
   }
 
   .nav-item:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
 
@@ -277,7 +283,7 @@
   }
 
   .nav-item:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
@@ -328,18 +334,18 @@
 
   .userinfo .role {
     font-size: 11.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .icon-btn {
     width: 30px;
     height: 30px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     background: transparent;
     display: grid;
     place-items: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
     transition:
       background 120ms var(--ease),
@@ -347,12 +353,12 @@
   }
 
   .icon-btn:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
 
   .icon-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
@@ -379,13 +385,13 @@
   }
 
   .version-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
   .version-label {
     font-size: 0.75rem;
-    color: var(--text-faint);
+    color: var(--text-3);
     font-feature-settings: "tnum";
     letter-spacing: 0.02em;
   }

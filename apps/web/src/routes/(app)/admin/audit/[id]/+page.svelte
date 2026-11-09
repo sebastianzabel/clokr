@@ -122,7 +122,7 @@
   .page-loading,
   .page-error {
     padding: var(--s-6);
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 14px;
   }
 
@@ -138,7 +138,7 @@
   }
 
   .entry-dl dt {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
@@ -150,14 +150,14 @@
   .entry-dl dd {
     margin: 0;
     color: var(--text);
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 13px;
     word-break: break-all;
   }
 
   .ua {
     font-size: 11.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
     word-break: break-word;
   }
 
@@ -167,18 +167,18 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .value-pre {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: var(--s-4);
     overflow-x: auto;
     overflow-y: auto;
     max-height: 320px;
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 0.8125rem;
     line-height: 1.5;
     color: var(--text);

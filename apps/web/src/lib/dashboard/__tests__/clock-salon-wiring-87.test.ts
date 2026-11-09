@@ -102,7 +102,11 @@ describe("clock salon wiring (Issue #87)", () => {
     // Found in the visual check: .card-foot sets a muted grey that is unreadable on the dark card.
     const rule = PAGE.match(/:global\(\.timer-card-wrap \.timer-foot\)\s*\{[^}]*\}/);
     expect(rule, "the .timer-foot rule must exist").not.toBeNull();
-    expect(rule![0]).toMatch(/\bcolor:\s*rgba\(255,\s*255,\s*255,/);
+    // #842 (D-842-08, P6): the card text is the ink role, so the footer colour is a tint of
+    // --brand-ink instead of a literal white (the brand turns light in dark mode).
+    expect(rule![0]).toMatch(
+      /\bcolor:\s*color-mix\(in srgb,\s*var\(--brand-ink\)\s+\d+%,\s*transparent\)/,
+    );
     // Positive control: the component really inherits instead of fixing its own colour.
     expect(COMPONENT).toMatch(/color:\s*inherit/);
   });

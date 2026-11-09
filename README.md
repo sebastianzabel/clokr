@@ -94,7 +94,7 @@ no leading `v`; `.env.example` ships `latest`).
 - **Notifications** — In-app bell with real-time updates on leave approvals and close reminders
 - **iCal Export** — Personal and team absence calendars
 - **2FA** — Optional email OTP
-- **Themes** — 4 built-in color themes (Pflaume, Nacht, Wald, Schiefer)
+- **Themes** — 3 built-in color themes (Pflaume, Salz, Petrol), each in light and dark mode
 - **NFC Terminal** — Desktop client for NFC card-based clock-in/out (Tauri, macOS/Windows)
 
 ---

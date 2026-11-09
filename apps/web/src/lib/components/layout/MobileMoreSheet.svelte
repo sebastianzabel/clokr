@@ -262,11 +262,11 @@
   .mehr-sheet {
     width: 100%;
     max-height: 80vh;
-    background: var(--bg-card);
-    border-top-left-radius: var(--r-lg);
-    border-top-right-radius: var(--r-lg);
-    border-top: 1px solid var(--border);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border-top-left-radius: var(--r-card);
+    border-top-right-radius: var(--r-card);
+    border-top: 1px solid var(--line);
+    box-shadow: var(--shadow-pop);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -280,7 +280,7 @@
     align-items: center;
     justify-content: center;
     padding: 16px 16px 12px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .mehr-sheet-grabber {
@@ -291,12 +291,12 @@
     width: 36px;
     height: 4px;
     border-radius: 2px;
-    background: var(--border-strong, var(--border));
+    background: var(--line-2, var(--line));
   }
 
   .mehr-sheet-title {
     margin: 0;
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 18px;
     font-weight: 400;
     color: var(--text);
@@ -309,12 +309,12 @@
     transform: translateY(-50%);
     width: 44px;
     height: 44px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     background: transparent;
     display: grid;
     place-items: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
     transition:
       background 120ms var(--ease),
@@ -322,12 +322,12 @@
   }
 
   .mehr-sheet-close:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
 
   .mehr-sheet-close:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
@@ -350,7 +350,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .mehr-item {
@@ -363,7 +363,7 @@
     padding: 10px 18px;
     color: var(--text);
     text-decoration: none;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 14.5px;
     font-weight: 500;
     transition:
@@ -373,11 +373,11 @@
 
   .mehr-item:hover,
   .mehr-item:focus-visible {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 
   .mehr-item:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: -2px;
   }
 
@@ -409,7 +409,7 @@
     place-items: center;
     width: 22px;
     height: 22px;
-    color: var(--text-muted);
+    color: var(--text-2);
     flex-shrink: 0;
   }
 
@@ -429,7 +429,7 @@
      (no --text-xs token exists in tokens.css). */
   .mehr-sheet-version {
     padding: var(--s-3) var(--s-3) var(--s-2);
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     text-align: center;
   }
 
@@ -449,13 +449,13 @@
   }
 
   .mehr-version-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
   .mehr-version-label {
     font-size: 0.75rem;
-    color: var(--text-faint);
+    color: var(--text-3);
     font-feature-settings: "tnum";
     letter-spacing: 0.02em;
   }

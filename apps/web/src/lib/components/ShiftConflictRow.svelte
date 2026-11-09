@@ -58,16 +58,16 @@
     align-items: center;
     gap: var(--s-3);
     padding: var(--s-3) var(--s-4);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     color: var(--text);
     font-size: 0.9375rem;
   }
 
   .conflict-date,
   .conflict-time {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     color: var(--text);
   }
 
@@ -77,13 +77,13 @@
   }
 
   .conflict-label {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
   .conflict-status {
     padding: var(--s-1) var(--s-2);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     font-size: 0.8125rem;
     font-weight: 600;
     text-align: center;

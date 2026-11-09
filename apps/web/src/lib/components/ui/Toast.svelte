@@ -20,15 +20,11 @@
   function toastColors(type: Toast["type"]): { color: string; bg: string; border: string } {
     switch (type) {
       case "success":
-        return { color: "var(--good)", bg: "var(--good-soft)", border: "var(--good-soft)" };
+        return { color: "var(--ok)", bg: "var(--ok-soft)", border: "var(--ok-soft)" };
       case "error":
         return { color: "var(--bad)", bg: "var(--bad-soft)", border: "var(--bad-soft)" };
       case "info":
-        return {
-          color: "#2563eb",
-          bg: "rgba(37, 99, 235, 0.1)",
-          border: "rgba(37, 99, 235, 0.2)",
-        };
+        return { color: "var(--info)", bg: "var(--info-soft)", border: "var(--info-soft)" };
       case "warning":
         return { color: "var(--warn)", bg: "var(--warn-soft)", border: "var(--warn-soft)" };
     }
@@ -140,12 +136,12 @@
     align-items: flex-start;
     gap: 0.625rem;
     padding: 0.875rem 1rem 0.875rem calc(1rem + 6px);
-    border-radius: var(--r-sm);
-    background: var(--bg-card);
+    border-radius: var(--r-control);
+    background: var(--card);
     backdrop-filter: blur(0px);
     -webkit-backdrop-filter: blur(0px);
     border: 1px solid var(--toast-border);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow);
     color: var(--text);
     font-size: 0.9375rem;
     line-height: 1.45;
@@ -178,7 +174,7 @@
     height: 24px;
     border: none;
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
     border-radius: 4px;
     padding: 10px;
@@ -189,7 +185,7 @@
   }
 
   .toast-close:hover {
-    background-color: var(--bg-alt);
+    background-color: var(--rail);
     color: var(--text);
   }
 
@@ -202,7 +198,7 @@
     bottom: 0;
     width: 3px;
     background: var(--toast-color);
-    border-radius: var(--r-sm) 0 0 var(--r-sm);
+    border-radius: var(--r-control) 0 0 var(--r-control);
   }
 
   /* Mobile adjustments */

@@ -535,7 +535,7 @@
   .page-loading,
   .page-error {
     padding: var(--s-6);
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 14px;
   }
 

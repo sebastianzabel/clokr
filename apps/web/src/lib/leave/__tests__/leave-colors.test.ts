@@ -3,9 +3,6 @@
 // The fill and the text token are asserted as separate strings: `leave-chip-contrast` Test 3 scans
 // test files too and reads a fill key followed by a `-text` token in one literal as a text token
 // used as a background.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -25,33 +22,16 @@ import {
   type ChipEntry,
 } from "../team-calendar-visibility";
 import type { TimelineBar, TimelinePerson } from "../timeline-model";
+import {
+  COMBINATION_NAMES,
+  readTokensCss,
+  resolveColor,
+  tokenIn,
+} from "../../../__tests__/token-css";
 
-// jsdom gives `import.meta.url` a non-file scheme, so the path is taken from the package cwd.
-const TOKENS_CSS = readFileSync(resolve(process.cwd(), "src/tokens.css"), "utf8");
-
-// `[data-mode="dark"] {` is a substring of `html[data-mode="dark"] {`, which holds only
-// `color-scheme` — reject a match preceded by an identifier character (leave-chip-contrast).
-function extractBlock(css: string, selector: string): string {
-  const idChar = /[A-Za-z0-9_-]/;
-  let from = 0;
-  for (;;) {
-    const idx = css.indexOf(selector, from);
-    if (idx === -1) throw new Error(`Selector not found in tokens.css: ${selector}`);
-    if (idx > 0 && idChar.test(css[idx - 1])) {
-      from = idx + selector.length;
-      continue;
-    }
-    const open = css.indexOf("{", idx);
-    return css.slice(open + 1, css.indexOf("}", open));
-  }
-}
-
-function declared(block: string): Set<string> {
-  return new Set([...block.matchAll(/(--[a-z-]+):/g)].map((m) => m[1]));
-}
-
-const LIGHT = declared(extractBlock(TOKENS_CSS, ":root"));
-const DARK = declared(extractBlock(TOKENS_CSS, '[data-mode="dark"]'));
+// #842 (D-842-02): a token is resolved through the one cascade resolver in all six theme x mode
+// combinations; the earlier first-block string parse (and its identifier-prefix trap) is gone.
+const TOKENS_CSS = readTokensCss();
 
 describe("leaveTypeColor", () => {
   it("returns a fill and its -text partner for every code of the calendar's table", () => {
@@ -87,26 +67,39 @@ describe("leaveTypeColor", () => {
 
   it("a wish is drawn in the brand colour and has no leave-type token of its own", () => {
     expect(WISH.fill).toBe("--brand");
-    expect(WISH.text).toBe("--text-on-brand");
+    // #842 D-842-11: the retired text-on-brand token became the brand ink.
+    expect(WISH.text).toBe("--brand-ink");
     expect(WISH.fill.startsWith("--leave-type-")).toBe(false);
   });
 });
 
-describe("the tokens the mapping names exist in both modes", () => {
-  it("both token blocks parsed (anti-vacuity)", () => {
-    expect(LIGHT.has("--leave-type-vacation")).toBe(true);
-    expect(DARK.has("--leave-type-vacation")).toBe(true);
-    expect(LIGHT.size).toBeGreaterThan(20);
-    expect(DARK.size).toBeGreaterThan(20);
+describe("the tokens the mapping names resolve in all six combinations", () => {
+  it("the cascade yields six combinations and a leave token resolves in each (anti-vacuity)", () => {
+    expect(COMBINATION_NAMES).toHaveLength(6);
+    for (const combination of COMBINATION_NAMES) {
+      expect(tokenIn(TOKENS_CSS, combination, "--leave-type-vacation"), combination).toBeTruthy();
+    }
   });
 
-  it("every fill and text name the mapping can return is declared in :root and in the dark block", () => {
-    const names = allLeaveColorTokens();
-    expect(names.length).toBeGreaterThanOrEqual(26);
-    for (const name of names) {
-      expect(LIGHT.has(name), `${name} missing in :root`).toBe(true);
-      expect(DARK.has(name), `${name} missing in the dark block`).toBe(true);
+  it("every fill and text name the mapping can return resolves to a colour in every combination", () => {
+    const names = [...allLeaveColorTokens(), WISH.fill, WISH.text];
+    expect(names.length).toBeGreaterThanOrEqual(28);
+    let checked = 0;
+    for (const combination of COMBINATION_NAMES) {
+      for (const name of names) {
+        // resolveColor throws on an undeclared token or an unresolvable value.
+        const color = resolveColor(TOKENS_CSS, combination, `var(${name})`);
+        expect(color.a, `${name} in ${combination} is opaque`).toBe(1);
+        checked++;
+      }
     }
+    expect(checked).toBe(names.length * 6);
+  });
+
+  it("a token the mapping does not name is reported as undeclared — the check can fail", () => {
+    expect(() =>
+      resolveColor(TOKENS_CSS, "pflaume-light", "var(--leave-type-nonexistent)"),
+    ).toThrow(/not defined/);
   });
 });
 

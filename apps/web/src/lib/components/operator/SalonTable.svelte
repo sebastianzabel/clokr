@@ -173,7 +173,7 @@
   .empty {
     margin: 0;
     font-size: 16px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .name {
@@ -198,7 +198,7 @@
   }
 
   .danger {
-    color: var(--bad-text);
+    color: var(--bad);
   }
 
   .btn[aria-disabled="true"] {
@@ -209,7 +209,7 @@
   .note {
     margin: 12px 0 0;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* The v1.5 .btn recipe resets min-height to 0; row actions keep the 44 px touch target. */
@@ -223,7 +223,7 @@
   }
 
   .muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* A Bundesland is a short fixed name: `overflow-wrap: anywhere` (above) lowers the column's
@@ -234,7 +234,7 @@
   }
 
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 13px;
     overflow-wrap: anywhere;
   }
@@ -273,7 +273,7 @@
     .salon-table tr {
       display: block;
       padding: 16px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--line);
     }
 
     .salon-table tbody tr:last-child {
@@ -306,7 +306,7 @@
     .salon-table td:not(.cell-name):not(.cell-actions)::before {
       content: attr(data-label) ": ";
       font-weight: 600;
-      color: var(--text-muted);
+      color: var(--text-2);
     }
   }
 </style>

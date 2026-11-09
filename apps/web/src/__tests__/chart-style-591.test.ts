@@ -207,9 +207,9 @@ function hasHandBuiltReportUrl(text: string): boolean {
 
 // ── Runtime table (G4) ─────────────────────────────────────────────────────────────────────────
 
+// #842 D-842-26: brandLight left the chart theme, so the fixture no longer carries it.
 const STUB_THEME: ChartTheme = {
   brand: "S-brand",
-  brandLight: "S-brandLight",
   brandTint: "S-brandTint",
   neutral: "S-neutral",
   sick: "S-sick",

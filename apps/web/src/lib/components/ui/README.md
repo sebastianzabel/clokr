@@ -7,6 +7,12 @@ This directory is the **enforceable contract** for Clokr UI. If a page builds a 
 
 Read [`/docs/design/README.md`](../../../../docs/design/README.md) for the visual language. This README documents the _components_ — what to import, how to call them, what props they accept.
 
+## Typography (Issue #842)
+
+Text is Figtree, upright, with tabular numerals everywhere; JetBrains Mono is for code and raw data only.
+There is no serif face and no italic. `<em>` renders upright (app.css reset), so an "accent" word is set
+apart by colour, not by slant. Colours and sizes come from `tokens.css` roles (`--text`, `--brand`, `--fs-*`).
+
 ## Rules
 
 - Every `(app)/` page MUST use `<PageHead>` from `$components/layout/PageHead.svelte`.
@@ -23,13 +29,13 @@ Source: `$components/layout/PageHead.svelte`
 
 ```ts
 interface Props {
-  /** Serif italic eyebrow line, e.g. "Mein Bereich". */
+  /** Eyebrow line (Figtree, upright), e.g. "Mein Bereich". */
   eyebrow: string;
   /** Main heading, e.g. "Guten Tag, Lena". */
   title: string;
   /**
    * Optional explicit accent word. When provided AND found in `title`,
-   * the first occurrence is wrapped in `<em>` (italic, --brand-light).
+   * the first occurrence is wrapped in `<em>` (upright, --brand).
    * Matching is case-sensitive; only the first occurrence is wrapped.
    */
   accent?: string;
@@ -40,15 +46,15 @@ interface Props {
 }
 ```
 
-**`autoAccent` behavior (D-01):** When no explicit `accent` prop is passed, `PageHead` automatically italicizes the LAST word of `title`, where words are split on whitespace or `-`. Single-word titles render WITHOUT an `<em>` wrapper. Explicit `accent="X"` always wins.
+**`autoAccent` behavior (D-01):** When no explicit `accent` prop is passed, `PageHead` automatically wraps the LAST word of `title` in `<em>` (rendered upright in the brand colour), where words are split on whitespace or `-`. Single-word titles render WITHOUT an `<em>` wrapper. Explicit `accent="X"` always wins.
 
-| `title`                | `accent` | Rendered                      |
-| ---------------------- | -------- | ----------------------------- |
-| `Team-Zeiten`          | (none)   | `Team-` + _`Zeiten`_          |
-| `Mein Profil`          | (none)   | `Mein ` + _`Profil`_          |
-| `Urlaub & Abwesenheit` | (none)   | `Urlaub & ` + _`Abwesenheit`_ |
-| `Zeiterfassung`        | (none)   | `Zeiterfassung` (plain)       |
-| `Mein Profil`          | `Mein`   | _`Mein`_ + ` Profil`          |
+| `title`                | `accent` | Rendered                           |
+| ---------------------- | -------- | ---------------------------------- |
+| `Team-Zeiten`          | (none)   | `Team-` + <em>Zeiten</em>          |
+| `Mein Profil`          | (none)   | `Mein ` + <em>Profil</em>          |
+| `Urlaub & Abwesenheit` | (none)   | `Urlaub & ` + <em>Abwesenheit</em> |
+| `Zeiterfassung`        | (none)   | `Zeiterfassung` (plain)            |
+| `Mein Profil`          | `Mein`   | <em>Mein</em> + ` Profil`          |
 
 Usage:
 
@@ -115,7 +121,7 @@ Source: `$components/ui/CardHeader.svelte`
 interface Props {
   /** Bold uppercase title row inside .card-hd. */
   title: string;
-  /** Optional italic eyebrow text rendered below the title. */
+  /** Optional eyebrow text rendered below the title (upright). */
   sub?: string;
   /** Optional right-aligned actions snippet inside .card-hd-actions. */
   actions?: Snippet;
@@ -142,9 +148,9 @@ Source: `$components/ui/Modal.svelte`
 interface Props {
   /** Bindable open state — two-way binding. Parent owns the boolean. */
   open: boolean;
-  /** Serif italic eyebrow above the title. */
+  /** Eyebrow above the title (upright). */
   eyebrow?: string;
-  /** Serif H3 title. */
+  /** H3 title (Figtree). */
   title: string;
   /** Overrides title for aria-label, if a richer accessible name is needed. */
   ariaLabel?: string;
@@ -200,7 +206,7 @@ Source: `$components/ui/MonthBar.svelte`
 type Stat = { label: string; value: string; unit?: string };
 
 interface Props {
-  /** Optional serif italic eyebrow above the bar. */
+  /** Optional eyebrow above the bar (upright). */
   eyebrow?: string;
   /** Cursor date — component derives the label "März 2026" via Intl.DateTimeFormat('de-DE'). */
   date: Date;
@@ -289,7 +295,7 @@ Source: `$components/ui/KPIStat.svelte`
 interface Props {
   /** 11px UPPERCASE faint label. */
   label: string;
-  /** Serif 38px value (formatted by caller — pass a string, not a number). */
+  /** Hero value, tabular Figtree numerals (formatted by caller — pass a string, not a number). */
   value: string;
   /** Sans muted 14px unit, rendered inline after value. */
   unit?: string;
@@ -487,7 +493,7 @@ Source: `$components/ui/ConfirmDialog.svelte`
 interface Props {
   /** Bindable open state. Parent owns the boolean. */
   open: boolean;
-  /** Serif H3 title (e.g. "Betriebsurlaub löschen?"). */
+  /** H3 title in Figtree (e.g. "Betriebsurlaub löschen?"). */
   title: string;
   /** Optional descriptive body text. */
   description?: string;

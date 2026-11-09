@@ -102,9 +102,9 @@
     flex-wrap: wrap;
     gap: 0.75rem;
     padding: 0.875rem 1.25rem;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .pag-range {
@@ -114,7 +114,7 @@
   }
 
   .pag-num {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     color: var(--text);
     font-weight: 500;
   }
@@ -128,7 +128,7 @@
 
   .pag-size-label {
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     white-space: nowrap;
   }
 
@@ -141,7 +141,7 @@
 
   .pag-page-indicator {
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     white-space: nowrap;
     padding: 0 0.25rem;
   }

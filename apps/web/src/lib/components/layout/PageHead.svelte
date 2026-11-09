@@ -15,7 +15,7 @@
      *   "Urlaub & Abwesenheit" → "Urlaub & *Abwesenheit*"
      *   "Zeiterfassung"        → "Zeiterfassung" (no accent)
      * When this string is provided AND appears as a substring of `title`, the
-     * first occurrence is wrapped in `<em>` (italic, --brand-light). Matching
+     * first occurrence is wrapped in `<em>` (italic, --brand). Matching
      * is case-sensitive; only the first occurrence is wrapped. The substring
      * is rendered as element text (never as HTML) — see threat register
      * T-27-01: no `{@html}` is used, so prop values are always escaped.
@@ -106,16 +106,15 @@
   }
 
   .eyebrow {
-    font-family: var(--font-serif);
-    font-style: italic;
+    font-family: var(--font-ui);
     font-size: 14px;
-    color: var(--brand-light);
+    color: var(--brand);
     letter-spacing: 0.02em;
     margin-bottom: 4px;
   }
 
   .page-head h1 {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     font-size: clamp(28px, 3.4vw, 40px);
     line-height: 1.05;
@@ -127,14 +126,14 @@
   }
 
   .page-head h1 :global(em) {
-    font-style: italic;
-    color: var(--brand-light);
+    font-style: normal;
+    color: var(--brand);
   }
 
   .page-head .sub {
     margin: 10px 0 0;
     max-width: 560px;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 14px;
     line-height: 1.55;
     overflow-wrap: anywhere;
@@ -156,26 +155,5 @@
       width: 100%;
       justify-content: flex-start;
     }
-  }
-
-  /* Modern skin layer override — Svelte scoping hashes only the local
-     `.eyebrow` token, so the `:global(...)` parent attribute selector
-     survives in the compiled CSS at higher specificity than the
-     editorial default above. This colocates the modern-skin pill recipe
-     with the component instead of relying on a global app.css rule that
-     loses the specificity race against the scoped editorial default. */
-  :global([data-skin="modern"]) .eyebrow {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: var(--r-pill);
-    background: var(--brand-soft);
-    color: var(--brand);
-    font-family: var(--font-sans);
-    font-style: normal;
-    font-weight: 600;
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-bottom: 4px;
   }
 </style>

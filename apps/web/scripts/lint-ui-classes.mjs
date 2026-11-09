@@ -15,7 +15,7 @@
  *
  * The goal is to catch primitives that emit a class name nothing has styled,
  * which is the failure mode tracked as UI-21: silent drift between the
- * primitive layer and the v1.5 design tokens.
+ * primitive layer and the v2 design tokens (tokens.css, Issue #842).
  *
  * Flags:
  *   (none — full sweep only; the script is fast)
@@ -52,14 +52,8 @@ const repoRoot = (() => {
   return execSync("git rev-parse --show-toplevel").toString().trim();
 })();
 
-const SCOPES = [
-  "apps/web/src/lib/components/ui",
-  "apps/web/src/lib/components/layout",
-];
-const GLOBAL_CSS = [
-  "apps/web/src/app.css",
-  "apps/web/src/tokens.css",
-];
+const SCOPES = ["apps/web/src/lib/components/ui", "apps/web/src/lib/components/layout"];
+const GLOBAL_CSS = ["apps/web/src/app.css", "apps/web/src/tokens.css"];
 
 /**
  * Class names that primitives emit by design but that are NOT styled by a

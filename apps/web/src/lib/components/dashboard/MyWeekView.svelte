@@ -304,7 +304,7 @@
     align-items: flex-start;
     gap: var(--s-3);
     padding-bottom: var(--s-3);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     margin-bottom: var(--s-3);
   }
   .header-left {
@@ -323,7 +323,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .section-title {
     font-size: 1rem;
@@ -335,16 +335,16 @@
     align-items: center;
     gap: 8px;
     font-size: 0.8125rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    color: var(--text-2);
+    font-family: var(--font-ui);
   }
   .model-pill {
     display: inline-block;
     padding: 2px 8px;
-    border-radius: var(--r-sm);
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    font-family: var(--font-sans, inherit);
+    border-radius: var(--r-control);
+    background: var(--sunk);
+    color: var(--text-2);
+    font-family: var(--font-ui, inherit);
     font-size: 0.6875rem;
     font-weight: 600;
     text-transform: uppercase;
@@ -354,7 +354,7 @@
     display: flex;
     align-items: baseline;
     gap: 4px;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .wt-value {
     font-size: 1.125rem;
@@ -363,7 +363,7 @@
   }
   .wt-target {
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .nav {
     display: flex;
@@ -380,7 +380,7 @@
     gap: 12px;
     align-items: center;
     padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .day-row:last-child {
     border-bottom: none;
@@ -389,7 +389,7 @@
     background: var(--brand-soft);
   }
   .day-row--weekend:not(.day-row--today) {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .day-label .dow {
     font-weight: 600;
@@ -397,8 +397,8 @@
   }
   .day-label .date {
     font-size: 0.8125rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    color: var(--text-2);
+    font-family: var(--font-ui);
   }
   .day-content {
     display: grid;
@@ -412,10 +412,10 @@
     justify-content: center;
     width: 24px;
     height: 24px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .status-icon.is-good {
-    color: var(--good);
+    color: var(--ok);
   }
   .status-icon.is-warn {
     color: var(--warn);
@@ -433,7 +433,7 @@
     color: var(--warn);
   }
   .status-icon.is-muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .status-icon.is-scheduled {
     color: var(--brand);
@@ -447,7 +447,7 @@
     font-size: 0.9375rem;
   }
   .hours {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-weight: 600;
     color: var(--text);
     font-size: 0.875rem;
@@ -456,7 +456,7 @@
 
   .alert {
     padding: var(--s-4);
-    border-radius: var(--r-md);
+    border-radius: var(--r-control);
     font-size: 0.9375rem;
   }
   .alert-error {
@@ -467,8 +467,8 @@
 
   .skeleton-card {
     height: 360px;
-    border-radius: var(--r-md);
-    background: var(--bg-subtle);
+    border-radius: var(--r-control);
+    background: var(--sunk);
     animation: pulse 1.5s ease-in-out infinite;
   }
   @keyframes pulse {
