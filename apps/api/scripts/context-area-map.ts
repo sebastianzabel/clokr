@@ -80,6 +80,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/middleware/auth.ts": "rahmen",
   "src/utils/test-database.ts": "rahmen", // sole source of the test-DB name pattern/marker/worker-count (CLAUDE.md) — test infra, not a business context
   "src/utils/with-advisory-lock.ts": "rahmen", // generic Postgres advisory-lock helper; imported by 8 plugins + integrations.ts across every context, owns no model
+  "src/utils/duplicate-conflict.ts": "rahmen", // Issue #573: unhandled P2002/P2034 -> 409 text table for the global error handler; owns no model
+  "src/utils/zod-german.ts": "rahmen", // Issue #573: German Zod error map and field labels for the global error handler; owns no model
   "src/utils/prisma-unique-violation.ts": "rahmen", // generic Prisma P2002 target reader; imported by the platform and scheduling contexts, owns no model
   "src/utils/crypto.ts": "rahmen", // generic crypto helper (hashing/encryption), no model, no single owning context
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
@@ -87,6 +89,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/client-log-url.ts": "rahmen", // strips query/fragment from client-reported URLs before logging (Issue #610 review WR-02); pure, no model
   "src/utils/code-unit-order.ts": "rahmen", // locale-independent code-unit comparator for stable sorts; pure, no model, imported by the platform and absence contexts
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
+  "src/__tests__/english-zod-fragments.ts": "rahmen", // Issue #573: test-only list of English Zod default fragments, no model
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
