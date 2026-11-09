@@ -2154,9 +2154,11 @@ for (const viewport of VIEWPORTS) {
   });
 }
 
-// ── Look: pinned theme / skin / density, axe in light and dark, restore on leaving (D-01) ────────
+// ── Look: pinned salz theme, device mode untouched, axe in light and dark, restore on leaving ────
+// #842 D-842-21: the console pins data-theme="salz" on <html> only; the colour mode follows the device
+// and the shell wrapper carries no theme attribute.
 
-type LookPrefs = Partial<Record<"theme" | "mode" | "skin" | "density", string>>;
+type LookPrefs = Partial<Record<"theme" | "mode", string>>;
 
 /** Store the device's look preferences before the page loads, exactly where the stores read them. */
 async function storeLookPrefs(page: Page, prefs: LookPrefs): Promise<void> {
@@ -2180,14 +2182,12 @@ async function animationsSettled(page: Page): Promise<void> {
   );
 }
 
-/** The look attributes of <html>. */
+/** The look attributes of <html>: the theme and the device mode (#842, D-842-16). */
 async function htmlLook(page: Page) {
   return page.evaluate(() => {
     const html = document.documentElement;
     return {
       theme: html.getAttribute("data-theme"),
-      density: html.getAttribute("data-density"),
-      skin: html.getAttribute("data-skin"),
       mode: html.getAttribute("data-mode"),
     };
   });
@@ -2229,7 +2229,7 @@ async function contrastOf(page: Page, testId: string): Promise<number> {
     }
     let background: [number, number, number] = [255, 255, 255];
     for (const layer of layers.reverse()) background = over(layer, background);
-    // A gradient fill (the modern skin's primary button): every colour stop is a possible
+    // A gradient fill (a primary button may draw one): every colour stop is a possible
     // background behind the text, the weakest one decides.
     const stops = [
       ...(getComputedStyle(el).backgroundImage.match(
@@ -2256,9 +2256,9 @@ async function contrastOf(page: Page, testId: string): Promise<number> {
 test.describe("operator console - fixed look", () => {
   const MODES = ["light", "dark"] as const;
 
-  // The supported pair: editorial x nacht, with a device that stores a tenant look.
+  // The supported look: the salz pin, with a device that stores a tenant look.
   for (const mode of MODES) {
-    test.describe(`editorial x nacht, ${mode} mode`, () => {
+    test.describe(`salz pin, ${mode} mode`, () => {
       async function scan(page: Page): Promise<string[]> {
         await animationsSettled(page);
         const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
@@ -2274,21 +2274,21 @@ test.describe("operator console - fixed look", () => {
       }
 
       test.beforeEach(async ({ page }) => {
-        await storeLookPrefs(page, { mode, theme: "pflaume", skin: "modern", density: "compact" });
+        await storeLookPrefs(page, { mode, theme: "petrol" });
       });
 
       test("sign-in has no WCAG 2 A/AA violations", async ({ page }) => {
         await mockOperatorApi(page);
         await page.goto("/betreiber/anmelden");
         await expect(page.getByTestId("op-signin-page")).toBeVisible();
-        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await htmlLook(page)).toEqual({ theme: "salz", mode });
         expect(await scan(page)).toEqual([]);
       });
 
       test("tenant list has no WCAG 2 A/AA violations", async ({ page }) => {
         await openTenantList(page);
         await expect(page.getByTestId("op-tenants-table")).toBeVisible();
-        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await htmlLook(page)).toEqual({ theme: "salz", mode });
         expect(await scan(page)).toEqual([]);
       });
 
@@ -2297,26 +2297,18 @@ test.describe("operator console - fixed look", () => {
         await seedOperatorSession(page);
         await page.goto(`/betreiber/mandanten/${TENANT_ID}`);
         await expect(page.getByTestId("op-salons-table")).toBeVisible();
-        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await htmlLook(page)).toEqual({ theme: "salz", mode });
         expect(await scan(page)).toEqual([]);
       });
     });
   }
 
-  // A device that stores a tenant look gets the operator look regardless (the pin), readable.
-  const STORED_LOOKS: Array<{ name: string; prefs: LookPrefs }> = [
-    {
-      name: "modern skin, light",
-      prefs: { skin: "modern", theme: "pflaume", density: "compact", mode: "light" },
-    },
-    {
-      name: "modern skin, dark",
-      prefs: { skin: "modern", theme: "pflaume", density: "compact", mode: "dark" },
-    },
-    {
-      name: "editorial skin and Pflaume, light",
-      prefs: { skin: "editorial", theme: "pflaume", density: "compact", mode: "light" },
-    },
+  // A device that stores a tenant look gets the operator look regardless (the pin), readable; the
+  // stored mode is kept (D-842-21).
+  const STORED_LOOKS: Array<{ name: string; prefs: LookPrefs & { mode: "light" | "dark" } }> = [
+    { name: "Petrol, light", prefs: { theme: "petrol", mode: "light" } },
+    { name: "Petrol, dark", prefs: { theme: "petrol", mode: "dark" } },
+    { name: "Pflaume, light", prefs: { theme: "pflaume", mode: "light" } },
   ];
   for (const { name, prefs } of STORED_LOOKS) {
     test.describe(`stored tenant look: ${name}`, () => {
@@ -2330,12 +2322,7 @@ test.describe("operator console - fixed look", () => {
         await expect(page.getByTestId("op-tenants-table")).toBeVisible();
         await animationsSettled(page);
 
-        expect(await htmlLook(page)).toEqual({
-          theme: "nacht",
-          density: "comfortable",
-          skin: null,
-          mode: prefs.mode,
-        });
+        expect(await htmlLook(page)).toEqual({ theme: "salz", mode: prefs.mode });
         expect(await pageOverflow(page)).toEqual([]);
         expect(await contrastOf(page, "op-tenants-create")).toBeGreaterThanOrEqual(4.5);
         expect(await contrastOf(page, "op-badge")).toBeGreaterThanOrEqual(4.5);
@@ -2344,18 +2331,15 @@ test.describe("operator console - fixed look", () => {
   }
 
   // The pin bypassed (a future store change): the console must stay legible and fit. The supported
-  // pair is editorial x nacht; modern x nacht (light, dark) and editorial x pflaume (light) are
-  // smoke-checked by forcing the attributes the pin would have replaced.
+  // look is salz; every theme in both modes is smoke-checked by forcing the attribute the pin would
+  // have replaced on <html> (the shell wrapper carries no theme attribute any more).
   const BYPASSED_LOOKS: Array<{
     name: string;
     mode: "light" | "dark";
-    skin: string | null;
-    theme: string;
-  }> = [
-    { name: "modern x nacht, light", mode: "light", skin: "modern", theme: "nacht" },
-    { name: "modern x nacht, dark", mode: "dark", skin: "modern", theme: "nacht" },
-    { name: "editorial x pflaume, light", mode: "light", skin: null, theme: "pflaume" },
-  ];
+    theme: "salz" | "petrol" | "pflaume";
+  }> = (["salz", "petrol", "pflaume"] as const).flatMap((theme) =>
+    (["light", "dark"] as const).map((mode) => ({ name: `${theme}, ${mode}`, mode, theme })),
+  );
   for (const look of BYPASSED_LOOKS) {
     test.describe(`pin bypassed: ${look.name}`, () => {
       test.use({ viewport: { width: 360, height: 800 } });
@@ -2364,15 +2348,12 @@ test.describe("operator console - fixed look", () => {
         await storeLookPrefs(page, { mode: look.mode });
         await openTenantList(page);
         await expect(page.getByTestId("op-tenants-table")).toBeVisible();
-        await page.evaluate(({ skin, theme }) => {
-          const html = document.documentElement;
-          if (skin) html.setAttribute("data-skin", skin);
-          else html.removeAttribute("data-skin");
-          html.setAttribute("data-theme", theme);
-          document.querySelector('[data-testid="op-shell"]')?.setAttribute("data-theme", theme);
-        }, look);
+        await page.evaluate((theme) => {
+          document.documentElement.setAttribute("data-theme", theme);
+        }, look.theme);
         await animationsSettled(page);
 
+        expect(await htmlLook(page)).toEqual({ theme: look.theme, mode: look.mode });
         expect(await pageOverflow(page)).toEqual([]);
         expect(await offendersOf(page, '[data-testid="op-bar"]')).toEqual([]);
         expect(await offendersOf(page, '[data-testid="op-tenants-table"]')).toEqual([]);
@@ -2382,18 +2363,24 @@ test.describe("operator console - fixed look", () => {
     });
   }
 
+  test("the shell wrapper carries no theme attribute (no light island, D-842-21)", async ({
+    page,
+  }) => {
+    await storeLookPrefs(page, { mode: "dark", theme: "petrol" });
+    await openTenantList(page);
+    const shell = page.getByTestId("op-shell");
+    await expect(shell).toBeVisible();
+    await expect(shell).not.toHaveAttribute("data-theme", /.*/);
+  });
+
   test("leaving /betreiber puts the device's look back on <html>", async ({ page }) => {
-    await storeLookPrefs(page, { theme: "pflaume", skin: "modern", density: "compact" });
+    await storeLookPrefs(page, { theme: "petrol", mode: "dark" });
     await mockOperatorApi(page);
     await page.goto("/betreiber/anmelden");
     await expect(page.getByTestId("op-signin-page")).toBeVisible();
 
-    // On the console: the operator look, whatever the device stored.
-    expect(await htmlLook(page)).toMatchObject({
-      theme: "nacht",
-      density: "comfortable",
-      skin: null,
-    });
+    // On the console: the salz pin, whatever theme the device stored; the device mode is untouched.
+    expect(await htmlLook(page)).toEqual({ theme: "salz", mode: "dark" });
 
     // A real client-side navigation: the router handles a click on any same-origin anchor. The
     // marker proves the document was not reloaded (a reload would restore the look by itself).
@@ -2411,13 +2398,7 @@ test.describe("operator console - fixed look", () => {
     expect(
       await page.evaluate(() => (window as unknown as { __opNavMarker?: number }).__opNavMarker),
     ).toBe(1);
-    await expect
-      .poll(() => htmlLook(page))
-      .toMatchObject({
-        theme: "pflaume",
-        density: "compact",
-        skin: "modern",
-      });
+    await expect.poll(() => htmlLook(page)).toEqual({ theme: "petrol", mode: "dark" });
   });
 });
 
@@ -3311,7 +3292,7 @@ test.describe("operator console - support access (#93)", () => {
   });
 
   for (const mode of ["light", "dark"] as const) {
-    test.describe(`accessibility, editorial x nacht, ${mode} mode`, () => {
+    test.describe(`accessibility, salz pin, ${mode} mode`, () => {
       async function violations(page: Page): Promise<string[]> {
         await animationsSettled(page);
         const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
@@ -3327,7 +3308,7 @@ test.describe("operator console - support access (#93)", () => {
       }
 
       test.beforeEach(async ({ page }) => {
-        await storeLookPrefs(page, { mode, theme: "pflaume", skin: "modern", density: "compact" });
+        await storeLookPrefs(page, { mode, theme: "petrol" });
       });
 
       test("the tenant page with a running access has no WCAG 2 A/AA violation", async ({
@@ -3335,7 +3316,7 @@ test.describe("operator console - support access (#93)", () => {
       }) => {
         await openSupport(page, { active: SUPPORT_REASON });
         await expect(page.getByTestId("op-support-active")).toBeVisible();
-        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await htmlLook(page)).toEqual({ theme: "salz", mode });
         expect(await violations(page)).toEqual([]);
       });
 
@@ -3360,7 +3341,7 @@ test.describe("operator console - support access (#93)", () => {
           path: `/support/mitarbeitende/${SUPPORT_EMPLOYEE_ID}?monat=2026-09`,
         });
         await expect(page.getByTestId("op-support-month")).toBeVisible();
-        expect((await htmlLook(page)).mode).toBe(mode);
+        expect(await htmlLook(page)).toEqual({ theme: "salz", mode });
         expect(await violations(page)).toEqual([]);
       });
 
