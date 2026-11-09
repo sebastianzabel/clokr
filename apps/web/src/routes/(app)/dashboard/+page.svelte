@@ -42,8 +42,6 @@
   import CardHeader from "$components/ui/CardHeader.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import MyShiftsWeek from "$lib/components/dashboard/MyShiftsWeek.svelte";
-  import MyWeekView from "$lib/components/dashboard/MyWeekView.svelte";
   import ClockSalonSelect from "$lib/components/dashboard/ClockSalonSelect.svelte"; // Issue #87
   import ClockOtherSalon from "$lib/components/dashboard/ClockOtherSalon.svelte"; // Issue #70
   import TodayEntriesList from "$lib/components/dashboard/TodayEntriesList.svelte"; // Issue #70
@@ -69,7 +67,6 @@
     entryWorkedMinutes,
     type ClockDayEntry,
   } from "$lib/dashboard/day-state";
-  import { weekProgressDelta } from "$lib/dashboard/week-progress"; // Issue #451 (D-06)
   import { interpretClockOut, type ClockOutResponse } from "$lib/dashboard/clock-out-result"; // Phase 307 Plan 02 (D-04)
   import { breakFindingSaveNotice } from "$lib/breaks/day-break-violation"; // Issue #80 (D-09a), #511 (D-10)
   import {
@@ -114,12 +111,18 @@
     saldoFigure,
     nextOwnShift,
     historySentences,
-    type MyWeekDay,
+    saldoMonthsLine,
+    nextPlannedDay,
+    plannedDaysCount,
+    weekStripText,
+    recentDays,
+    type MyWeekStripDay,
     type OvertimeAnswer,
     type MyShiftWeek,
     type NextShift,
   } from "$lib/dashboard/mein-tag"; // Issue #845
   import { isTravelRow } from "$lib/time-entries/travel-entry-form";
+  import { fmtBalance } from "$lib/utils/format-minutes";
   import { de } from "date-fns/locale";
   import { salonContext } from "$stores/salon-context"; // Issue #84 (D-01)
   import {
@@ -213,7 +216,7 @@
       unconfirmedMonths?: number | null;
       rosterIncomplete?: boolean;
     } | null;
-    vacation: { remaining: number; total: number; used: number } | null;
+    vacation: { remaining: number; total: number; used: number; pending?: number } | null; // #845: pending = undecided days
   }
 
   interface TeamDay {
@@ -360,20 +363,15 @@
   // narrowed to the caller server-side. The former `template: { name, color }` is gone — /my-week
   // returns `templateName`/`templateColor` flat, and the markup below renders only label,
   // startTime and endTime anyway.
-  let todayShift: {
+  let todayShift = $state<{
     startTime: string;
     endTime: string;
     label: string | null;
-  } | null = $state(null);
+  } | null>(null);
 
   // Next personal absence
   let myNextLeave: { startDate: string; endDate: string; days: number; type: string } | null =
     $state(null);
-
-  // Phase 49.4: MyWeekView (non-SHIFT_BASED) and MyShiftsWeek (SHIFT_BASED) each
-  // fetch their own data. shiftFallback flips to true when MyShiftsWeek reports 410,
-  // so a SHIFT_BASED-flagged employee with no actual shifts still gets the hours view.
-  let shiftFallback = $state(false);
 
   // Open items widget
   let openItems = $state<{
@@ -403,9 +401,6 @@
   // D-08 fail-safe: when the open-items fetch fails, `openItems` stays null, this derives to
   // BREAK_NUDGE_EMPTY and the whole card is skipped by the `{#if openItems}` below. The card
   // must render NOTHING rather than a "0" — a "0" is a factual claim the client cannot support.
-  let breakNudge = $derived(summarizeUnconfirmedBreakDays(openItems?.unconfirmedBreakDays));
-  // Kept as a separate name because hasNoOpenItems() and the {#if} below read it.
-  let unconfirmedBreakDays = $derived(breakNudge.count);
 
   // ── Karenztage-Hinweis (Phase 104, D-21) ────────────────────────────────────
   // § 5 EFZG: Krankheitstage über die tenant-konfigurierte Karenzzeit hinaus ohne Attest.
@@ -597,7 +592,7 @@
           // `GET /shifts/my-week` has answered exactly this question since Phase 49; `ownShifts`
           // is narrowed to the caller server-side, so there is nothing left to filter here.
           // `days[].date` is a plain ISO day, hence `===` and not `startsWith`.
-          // Note: MyShiftsWeek.svelte fetches the same endpoint for the week strip below, so the
+          // Note: the Mein-Tag loader reads the same endpoint for the week strip, so the
           // page requests it twice. Left as-is deliberately — merging the two is a restructuring
           // of the dashboard's data loading, not part of this fix.
           const myWeek = await api.get<{
@@ -624,7 +619,6 @@
       // Issue #845: the figures of Ich › Mein Tag (not needed on Heute im Salon).
       if (view === "me") await loadMeinTag(today);
 
-      // Phase 49.4: MyWeekView / MyShiftsWeek each fetch their own data — no prefetch here.
       try {
         openItems = await api.get<typeof openItems>("/dashboard/open-items");
       } catch {
@@ -676,7 +670,10 @@
   // ── Issue #845: Ich › Mein Tag ─────────────────────────────────────────────────────────────
   // Every figure comes from an existing endpoint; `$lib/dashboard/mein-tag` only selects and words it.
   let ownOvertime = $state<OvertimeAnswer | null>(null);
-  let myWeekDays = $state<MyWeekDay[]>([]);
+  let myWeekDays = $state<MyWeekStripDay[]>([]);
+  let nextWeekDays = $state<MyWeekStripDay[]>([]);
+  let ownShiftByDate = $state<Map<string, string>>(new Map());
+  let cumulativeByDate = $state<Map<string, number>>(new Map());
   let myWeekScheduleType = $state<string | null>(null);
   let nextShift = $state<NextShift | null>(null);
   let recentEntries = $state<ClockDayEntry[]>([]);
@@ -684,37 +681,70 @@
 
   async function loadMeinTag(today: string) {
     const employeeId = $authStore.user?.employeeId;
-    const weekAhead = format(addDays(new Date(today + "T12:00:00"), 7), "yyyy-MM-dd");
-    const twoWeeksBack = format(addDays(new Date(today + "T12:00:00"), -14), "yyyy-MM-dd");
-    const yesterday = format(addDays(new Date(today + "T12:00:00"), -1), "yyyy-MM-dd");
-    const [overtimeR, myWeekR, shiftsNowR, shiftsNextR, recentR] = await Promise.allSettled([
-      // D-845-03: the endpoint the Zeiten page shows — one figure, one source
-      employeeId && stats !== null && (stats as DashboardStats).overtime !== null
-        ? api.get<OvertimeAnswer>(`/overtime/${employeeId}`)
-        : Promise.resolve(null),
-      api.get<{ scheduleType: string | null; days: MyWeekDay[] }>(
-        `/dashboard/my-week?date=${today}`,
-      ),
-      api.get<MyShiftWeek>(`/shifts/my-week?date=${today}`),
-      api.get<MyShiftWeek>(`/shifts/my-week?date=${weekAhead}`),
-      api.get<ClockDayEntry[]>(`/time-entries?from=${twoWeeksBack}&to=${yesterday}`),
-    ]);
+    const base = new Date(today + "T12:00:00");
+    const weekAhead = format(addDays(base, 7), "yyyy-MM-dd");
+    const twoWeeksBack = format(addDays(base, -14), "yyyy-MM-dd");
+    const yesterday = format(addDays(base, -1), "yyyy-MM-dd");
+    // „Letzte Tage“ reach back two weeks: the day series of this and the previous month
+    const months = [base, addDays(base, -14)].map((d) => ({
+      y: d.getFullYear(),
+      m: d.getMonth() + 1,
+    }));
+    const monthKeys = [...new Map(months.map((x) => [`${x.y}-${x.m}`, x])).values()];
+    const canOvertime = employeeId && stats !== null && (stats as DashboardStats).overtime !== null;
+    const [overtimeR, myWeekR, myWeekNextR, shiftsNowR, shiftsNextR, recentR, ...saldoR] =
+      await Promise.allSettled([
+        // D-845-03: the endpoint the Zeiten page shows — one figure, one source
+        employeeId && stats !== null && (stats as DashboardStats).overtime !== null
+          ? api.get<OvertimeAnswer>(`/overtime/${employeeId}`)
+          : Promise.resolve(null),
+        api.get<{ scheduleType: string | null; days: MyWeekStripDay[] }>(
+          `/dashboard/my-week?date=${today}`,
+        ),
+        api.get<{ scheduleType: string | null; days: MyWeekStripDay[] }>(
+          `/dashboard/my-week?date=${weekAhead}`,
+        ),
+        api.get<MyShiftWeek>(`/shifts/my-week?date=${today}`),
+        api.get<MyShiftWeek>(`/shifts/my-week?date=${weekAhead}`),
+        api.get<ClockDayEntry[]>(`/time-entries?from=${twoWeeksBack}&to=${yesterday}`),
+        ...monthKeys.map((k) =>
+          canOvertime
+            ? api.get<{ days: { date: string; cumulativeSaldoMinutes: number }[] }>(
+                `/overtime/month-saldo/${employeeId}?year=${k.y}&month=${k.m}`,
+              )
+            : Promise.resolve({ days: [] }),
+        ),
+      ]);
     ownOvertime = overtimeR.status === "fulfilled" ? overtimeR.value : null;
     if (myWeekR.status === "fulfilled") {
       myWeekDays = myWeekR.value.days ?? [];
       myWeekScheduleType = myWeekR.value.scheduleType;
     }
+    nextWeekDays = myWeekNextR.status === "fulfilled" ? (myWeekNextR.value.days ?? []) : [];
     const weeks = [shiftsNowR, shiftsNextR]
       .filter((r): r is PromiseFulfilledResult<MyShiftWeek> => r.status === "fulfilled")
       .map((r) => r.value);
     nextShift = nextOwnShift(weeks, today, format(new Date(), "HH:mm"));
+    ownShiftByDate = new Map(
+      weeks.flatMap((w) =>
+        w.days
+          .filter((d) => d.ownShifts.length > 0)
+          .map((d) => [d.date, `${d.ownShifts[0].startTime}–${d.ownShifts[0].endTime}`] as const),
+      ),
+    );
     recentEntries =
       recentR.status === "fulfilled"
-        ? recentR.value
-            .filter((e) => e.endTime !== null && !isTravelRow(e))
-            .sort((a, b) => b.startTime.localeCompare(a.startTime))
-            .slice(0, 5)
+        ? recentR.value.filter((e) => e.endTime !== null && !isTravelRow(e))
         : [];
+    cumulativeByDate = new Map(
+      saldoR.flatMap((r) =>
+        r.status === "fulfilled"
+          ? (r.value as { days: { date: string; cumulativeSaldoMinutes: number }[] }).days.map(
+              (d) => [d.date, d.cumulativeSaldoMinutes] as const,
+            )
+          : [],
+      ),
+    );
     meinTagLoaded = true;
   }
 
@@ -1527,9 +1557,20 @@
           ? `Ausgestempelt um ${entryEndHHMM}`
           : "Noch nicht eingestempelt",
   );
+  // The place of the running / finished day belongs to the status line (owner acceptance, item 2).
+  let stageSalonName = $derived(
+    clockSalonViewState.kind === "fixed" && day.kind !== "idle"
+      ? clockSalonViewState.salon.name
+      : null,
+  );
+  // Today's own shift: SHIFT_BASED reads it from the roster read above, others from the week read.
+  let todayShiftText = $derived(
+    todayShift !== null
+      ? `${todayShift.startTime}–${todayShift.endTime}`
+      : (ownShiftByDate.get(todayIso) ?? null),
+  );
 
   let stageMeta = $derived.by((): { label: string; value: string }[] => {
-    const shift = todayShift ? `${todayShift.startTime}–${todayShift.endTime}` : null;
     if (stageState === "arbeitet") {
       const out = [{ label: "seit", value: clockStart ? format(clockStart, "HH:mm") : "—" }];
       // D-845-02: the break taken so far, never a § 4 budget computed here
@@ -1539,7 +1580,6 @@
           label: "bis Soll noch",
           value: fmtClock(Math.max(0, goalMin - stageWorkedMin)),
         });
-      else if (shift) out.push({ label: "Schicht", value: shift });
       return out;
     }
     if (stageState === "pause") {
@@ -1557,20 +1597,28 @@
       ];
     }
     const out: { label: string; value: string }[] = [];
-    if (shift) out.push({ label: "Schicht", value: shift });
+    if (todayShiftText) out.push({ label: "Schicht", value: todayShiftText });
     if (goalMin !== null) out.push({ label: "Soll", value: fmtClock(goalMin) });
+    if (out.length === 0) out.push({ label: "Heute", value: "kein Arbeitstag" });
     return out;
   });
 
-  // The day bar 06:00–22:00: one segment per entry of today, the running break on top.
-  const TL_START_MIN = 6 * 60;
-  const TL_SPAN_MIN = 16 * 60;
+  // The day bar 08:00–20:00 (prototype): the planned shift as a faint band, every entry of today
+  // as a segment, the running break on top.
+  const TL_START_MIN = 8 * 60;
+  const TL_SPAN_MIN = 12 * 60;
+  function tlPos(minutesOfDay: number): number {
+    return Math.min(100, Math.max(0, ((minutesOfDay - TL_START_MIN) / TL_SPAN_MIN) * 100));
+  }
+  let plannedBand = $derived.by(() => {
+    const m = /^(\d{2}):(\d{2})–(\d{2}):(\d{2})$/.exec(todayShiftText ?? "");
+    if (!m) return null;
+    const l = tlPos(Number(m[1]) * 60 + Number(m[2]));
+    const r = tlPos(Number(m[3]) * 60 + Number(m[4]));
+    return r > l ? { left: l, width: r - l } : null;
+  });
   let timelineSegments = $derived.by(() => {
-    const pos = (d: Date) =>
-      Math.min(
-        100,
-        Math.max(0, ((d.getHours() * 60 + d.getMinutes() - TL_START_MIN) / TL_SPAN_MIN) * 100),
-      );
+    const pos = (d: Date) => tlPos(d.getHours() * 60 + d.getMinutes());
     const segs: { kind: "work" | "break"; left: number; width: number }[] = [];
     for (const e of todayEntries) {
       const l = pos(new Date(e.startTime));
@@ -1578,13 +1626,39 @@
       segs.push({ kind: "work", left: l, width: Math.max(0.6, r - l) });
     }
     if (clockedIn && breakStartedAt) {
-      const l = pos(breakStartedAt);
+      const l = pos(breakStartedAt as Date);
       segs.push({ kind: "break", left: l, width: Math.max(0.6, pos(currentTime) - l) });
     }
     return segs;
   });
 
+  // „Montag, 9. November · Clokr Demo Nord · Soll heute 8:00 h“ (owner acceptance, item 1)
+  let homeSalonName = $derived(
+    $salonContext.salons.find((x) => x.id === $salonContext.homeSalonId)?.name ?? null,
+  );
+  let meinTagSub = $derived(
+    [
+      format(currentTime, "EEEE, d. MMMM", { locale: de }),
+      homeSalonName,
+      goalMin !== null ? `Soll heute ${fmtClock(goalMin)} h` : null,
+    ]
+      .filter((x): x is string => !!x)
+      .join(" · "),
+  );
+
   // ── Issue #845: the Kennzahlenleiste (D-01, D-04, D-845-03/07) ───────────────────────────────
+  /** „3 beantragt · 21.12.–23.12.“ — undecided days (server figure) and the next approved leave. */
+  function vacationLine(v: { total: number; pending?: number }): string {
+    const pending = v.pending ?? 0;
+    const next = myNextLeave
+      ? `${format(new Date(myNextLeave.startDate), "d.M.")}–${format(new Date(myNextLeave.endDate), "d.M.")}`
+      : null;
+    return (
+      [pending > 0 ? `${pending} beantragt` : null, next].filter(Boolean).join(" · ") ||
+      `von ${v.total}`
+    );
+  }
+
   let kpiItems = $derived.by((): KpiItem[] => {
     const items: KpiItem[] = [];
     // Phase 76b (Issue #76), CR-01: `stats.overtime === null` = no overtime:read:EIGENE — no cell at all.
@@ -1601,9 +1675,10 @@
       const f = saldoFigure(ownOvertime);
       items.push({
         label: "Stundenkonto",
+        badge: f.forecast ? "Prognose" : undefined,
         value: f.value,
         unit: "h",
-        explanation: f.explanation,
+        explanation: saldoMonthsLine(ownOvertime, todayIso) ?? undefined,
         derivationHref: "/ich/zeiten",
         testId: "kpi-saldo",
       });
@@ -1620,37 +1695,35 @@
         label: "Resturlaub",
         value: String(stats.vacation.remaining),
         unit: stats.vacation.remaining === 1 ? "Tag" : "Tage",
-        explanation: myNextLeave
-          ? `nächster ${myNextLeave.type} ab ${format(new Date(myNextLeave.startDate), "d.M.")}`
-          : `von ${stats.vacation.total}`,
-        derivationHref: "/ich/abwesenheiten",
-        derivationLabel: "Abwesenheiten →",
+        explanation: vacationLine(stats.vacation),
         testId: "kpi-vacation",
       });
     }
+    const planned = nextPlannedDay(
+      [...myWeekDays, ...nextWeekDays],
+      nextShift,
+      myWeekScheduleType ?? (stats as DashboardStats | null)?.scheduleType,
+      todayIso,
+    );
     items.push({
-      label: "Nächste Schicht",
-      value: nextShift
-        ? format(new Date(nextShift.date + "T12:00:00"), "EEEEEE d.M.", { locale: de })
+      label: nextShift ? "Nächste Schicht" : "Nächster Arbeitstag",
+      value: planned
+        ? format(new Date(planned.date + "T12:00:00"), "EEEEEE d.M.", { locale: de })
         : "—",
-      explanation: nextShift
-        ? `${nextShift.startTime}–${nextShift.endTime}${nextShift.name ? ` · ${nextShift.name}` : ""}`
-        : "Keine geplant",
+      explanation: planned ? planned.text : "Kein Arbeitstag geplant",
       testId: "kpi-next-shift",
     });
     if (stats?.week && stats.week.targetHours > 0) {
-      // Issue #451 (D-06): the delta compares the through-yesterday pair, never today's half day.
-      const weekDiff = weekProgressDelta(stats.week);
+      const n = plannedDaysCount(
+        myWeekDays,
+        myWeekScheduleType ?? (stats as DashboardStats | null)?.scheduleType,
+        new Set(ownShiftByDate.keys()),
+      );
       items.push({
         label: "Diese Woche",
         value: fmtClock(stats.week.workedHours * 60),
         unit: `/ ${fmtClock(stats.week.targetHours * 60)}`,
-        explanation: "erfasst / Soll der Woche",
-        delta:
-          weekDiff === 0
-            ? "bis gestern ausgeglichen"
-            : `bis gestern ${weekDiff > 0 ? "+" : "−"}${fmtClock(Math.abs(weekDiff) * 60)}`,
-        deltaTone: weekDiff === 0 ? "neutral" : weekDiff > 0 ? "good" : "warn",
+        explanation: n === 1 ? "1 Tag geplant" : `${n} Tage geplant`,
         testId: "kpi-week",
       });
     }
@@ -1674,16 +1747,17 @@
   }
   let forYou = $derived.by((): ForYouItem[] => {
     const out: ForYouItem[] = [];
-    if (unconfirmedBreakDays > 0) {
+    // one row per break finding of the server's day check, each with its own day link
+    for (const d of [...breakDaySet].sort()) {
       out.push({
-        key: "break",
-        title: breakNudge.label,
+        key: `break-${d}`,
+        title: `${dayShort(d)} ohne Pause`,
         subtitle: "Pause nachtragen oder Tag bestätigen.",
         chip: "Prüfen",
         tone: "warn",
-        href: breakNudgeHref(breakNudge),
+        href: breakNudgeHref(summarizeUnconfirmedBreakDays([d])),
         action: "Öffnen",
-        testId: "dashboard-break-nudge",
+        testId: out.length === 0 ? "dashboard-break-nudge" : undefined,
       });
     }
     for (const missDate of openItems?.missingDays ?? []) {
@@ -1702,6 +1776,7 @@
       out.push({
         key: "invalid",
         title: n === 1 ? "1 Eintrag zu korrigieren" : `${n} Einträge zu korrigieren`,
+        subtitle: "Bitte prüfen und korrigieren.",
         chip: "Prüfen",
         tone: "warn",
         href: "/ich/zeiten",
@@ -1712,20 +1787,20 @@
       out.push({
         key: "karenz",
         title: karenzNudge.label,
+        subtitle: KARENZ_NUDGE_TOOLTIP,
         chip: "Info",
         tone: "info",
         href: karenzNudgeHref(karenzNudge),
         action: "Öffnen",
         testId: "dashboard-karenz-nudge",
-        hint: KARENZ_NUDGE_TOOLTIP,
       });
     }
     if ((openItems?.pendingRequests ?? 0) > 0) {
       const n = openItems!.pendingRequests;
       out.push({
         key: "pending",
-        title:
-          n === 1 ? "1 Antrag wartet auf Entscheidung" : `${n} Anträge warten auf Entscheidung`,
+        title: n === 1 ? "Dein Antrag wartet" : `${n} Anträge warten`,
+        subtitle: "Du bekommst Bescheid, sobald entschieden ist.",
         chip: "Offen",
         tone: "neutral",
         href: "/ich/abwesenheiten?view=requests",
@@ -1735,31 +1810,23 @@
     return out;
   });
 
-  let history = $derived(historySentences(activityItems));
-
-  function relativeTime(iso: string): string {
-    const then = new Date(iso).getTime();
-    const now = currentTime.getTime();
-    const diffSec = Math.floor((now - then) / 1000);
-    if (diffSec < 60) return "gerade eben";
-    const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) return `vor ${diffMin} Min.`;
-    const sameDay = new Date(iso).toDateString() === new Date(now).toDateString();
-    if (sameDay) {
-      const d = new Date(iso);
-      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    }
-    const diffDays = Math.floor(diffSec / 86400);
-    if (diffDays === 1) return "gestern";
-    if (diffDays < 7) {
-      const d = new Date(iso);
-      return format(d, "EEE", { locale: de });
-    }
-    return new Date(iso).toLocaleDateString("de-DE", {
-      day: "2-digit",
-      month: "2-digit",
-    });
+  // Owner acceptance (item 5): only the person's own events in everyday language — no system lines
+  // (the month close, audit entries); the sentences come from the one API text source.
+  let history = $derived(
+    historySentences(activityItems.filter((i) => i.category === "time" || i.category === "leave")),
+  );
+  function historyWhen(iso: string): string {
+    const d = new Date(iso);
+    return format(d, "yyyy-MM-dd") === todayIso
+      ? format(d, "HH:mm")
+      : format(d, "EEEEEE", { locale: de });
   }
+  let breakDaySet = $derived(new Set(openItems?.unconfirmedBreakDays ?? []));
+  let recentDayRows = $derived(
+    recentDays(recentEntries, cumulativeByDate, breakDaySet, (rows) =>
+      dayTotals(rows as ClockDayEntry[], currentTime),
+    ),
+  );
 </script>
 
 <svelte:head>
@@ -1849,21 +1916,23 @@
   <!-- Page Header -->
   <PageHead
     eyebrow={view === "team" ? AREA_LABELS.team : AREA_LABELS.ich}
-    title={pageLabel(pageKey)}
-    sub={view === "me"
-      ? `${greeting()}, ${capitalizedName} · ${format(currentTime, "EEEE, d. MMMM", { locale: de })}`
-      : `${greeting()}, ${capitalizedName}`}
+    title={view === "me" ? `${greeting()}, ${capitalizedName}` : pageLabel(pageKey)}
+    compact={view === "me"}
+    sub={view === "me" ? meinTagSub : `${greeting()}, ${capitalizedName}`}
   >
     {#snippet actions()}
       {#if view === "me"}
-        <a class="btn btn-outline btn-sm" href="/ich/abwesenheiten">Urlaub beantragen</a>
+        <a class="btn btn-ghost btn-sm" href="/ich/abwesenheiten?antrag=krank">Krank melden</a>
+        <a class="btn btn-outline btn-sm" href="/ich/abwesenheiten?antrag=urlaub"
+          >Urlaub beantragen</a
+        >
       {/if}
     {/snippet}
   </PageHead>
 
   {#if view === "me"}
-    <!-- Issue #845 (D-01): Bühne → Kennzahlen → [Deine Woche | Für dich] / [Letzte Tage | Verlauf].
-       Every block is one of the #843 building blocks; the page only lays them out. -->
+    <!-- Issue #845 (prototype v5, owner acceptance 09.11.2026): Bühne → Kennzahlen →
+       [Deine Woche · Letzte Tage | Für dich · Verlauf]. The page lays out the #843 blocks. -->
     <div class="mein-tag">
       <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt users (Inhaber/Geschäftsführer/leitende
          Angestellte) see no clock at all — not a disabled button. -->
@@ -1875,37 +1944,42 @@
                 {fmtClock(stageWorkedMin)}<small>h</small>
               </div>
               <div class="clock-main">
-                <div class="clock-state" data-testid="clock-state">
+                <div class="clock-state">
                   <span class="clock-pulse" aria-hidden="true"></span>
-                  {stageTitle}
+                  <span data-testid="clock-state">{stageTitle}</span>
+                  {#if stageSalonName}<span class="clock-salon-name">· {stageSalonName}</span>{/if}
                 </div>
                 <div class="clock-meta">
                   {#each stageMeta as m (m.label)}
                     <span>{m.label} <b>{m.value}</b></span>
                   {/each}
                 </div>
-                {#if day.kind !== "idle"}
-                  <div class="clock-tl" aria-hidden="true">
-                    {#each timelineSegments as seg, i (i)}
-                      <i
-                        class:clock-tl-break={seg.kind === "break"}
-                        style="left: {seg.left}%; width: {seg.width}%;"
-                      ></i>
-                    {/each}
-                  </div>
-                  <div class="clock-tl-labels" aria-hidden="true">
-                    <span>06:00</span><span>10:00</span><span>14:00</span><span>18:00</span><span
-                      >22:00</span
-                    >
-                  </div>
+                <div class="clock-tl" aria-hidden="true">
+                  {#if plannedBand}
+                    <i
+                      class="clock-tl-plan"
+                      style="left: {plannedBand.left}%; width: {plannedBand.width}%;"
+                    ></i>
+                  {/if}
+                  {#each timelineSegments as seg, i (i)}
+                    <i
+                      class:clock-tl-break={seg.kind === "break"}
+                      style="left: {seg.left}%; width: {seg.width}%;"
+                    ></i>
+                  {/each}
+                </div>
+                <div class="clock-tl-labels" aria-hidden="true">
+                  <span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span>
+                </div>
+                {#if clockSalonViewState.kind === "select"}
+                  <ClockSalonSelect
+                    view={clockSalonViewState}
+                    value={clockSalonId}
+                    disabled={clockLoading}
+                    onselect={(id) => (clockSalonId = id)}
+                    noteLabel={fixedSalonNoteLabel(day.kind, todayEntries.length)}
+                  />
                 {/if}
-                <ClockSalonSelect
-                  view={clockSalonViewState}
-                  value={clockSalonId}
-                  disabled={clockLoading}
-                  onselect={(id) => (clockSalonId = id)}
-                  noteLabel={fixedSalonNoteLabel(day.kind, todayEntries.length)}
-                />
               </div>
             </div>
             {#snippet actions()}
@@ -1950,7 +2024,7 @@
                     Wieder einstempeln
                   </button>
                   <!-- Issue #70 (D-02/D-11): „In anderem Salon einstempeln“ starts a NEW entry in another
-                   salon; the component renders it only when the server offers one. -->
+                     salon; the component renders it only when the server offers one. -->
                   <ClockOtherSalon
                     salons={otherSalonOptions(clockSalonViewState)}
                     value={clockSalonId}
@@ -2007,95 +2081,131 @@
       </div>
 
       <div class="mt-grid">
-        <!-- The week component carries its own heading („Meine Woche · KW …“). -->
-        <section class="mt-sec card-animate" style="--card-idx: 2;" aria-label="Deine Woche">
-          <!-- Phase 49.4 — MyShiftsWeek for SHIFT_BASED, MyWeekView for everyone else -->
-          {#if stats?.scheduleType === "SHIFT_BASED" && !shiftFallback}
-            <MyShiftsWeek
-              onFallback={() => {
-                shiftFallback = true;
-              }}
-            />
-          {:else}
-            <MyWeekView />
-          {/if}
-        </section>
-
-        <section class="mt-sec card-animate" style="--card-idx: 3;" aria-labelledby="mt-for-you">
-          <h2 id="mt-for-you" class="mt-h2">Für dich</h2>
-          {#if openItems === null && !meinTagLoaded}
-            <Skeleton shape="row" count={2} />
-          {:else if forYou.length === 0}
-            <p class="mt-quiet">Nichts offen. Alles erledigt.</p>
-          {:else}
-            <List ariaLabel="Für dich">
-              {#each forYou as item (item.key)}
-                <ListRow title={item.title} subtitle={item.subtitle} avatar={false}>
-                  {#snippet trailing()}
-                    <span class="mt-row-end">
-                      <Chip tone={item.tone}>{item.chip}</Chip>
-                      <a
-                        class="btn btn-sm"
-                        href={item.href}
-                        data-testid={item.testId}
-                        title={item.hint}>{item.action}</a
-                      >
-                    </span>
-                  {/snippet}
-                </ListRow>
+        <div class="mt-col">
+          <section class="mt-sec card-animate" style="--card-idx: 2;" aria-labelledby="mt-week">
+            <h2 id="mt-week" class="mt-h2">
+              Deine Woche <span class="mt-h2-meta">KW {getWeekNumber(todayIso)}</span>
+            </h2>
+            <ol class="mt-week" data-testid="mein-tag-week">
+              {#each myWeekDays as d (d.date)}
+                {@const text = weekStripText(
+                  d,
+                  myWeekScheduleType,
+                  ownShiftByDate.get(d.date) ?? null,
+                )}
+                <li
+                  class="mt-day"
+                  class:mt-day--today={d.date === todayIso}
+                  class:mt-day--off={text === "Frei"}
+                  aria-current={d.date === todayIso ? "date" : undefined}
+                >
+                  <span class="mt-day-h"
+                    ><span>{format(new Date(d.date + "T12:00:00"), "EEEEEE", { locale: de })}</span
+                    ><b>{format(new Date(d.date + "T12:00:00"), "d")}</b></span
+                  >
+                  <span class="mt-day-s">{text}</span>
+                </li>
               {/each}
-            </List>
-          {/if}
-        </section>
+            </ol>
+          </section>
 
-        <section class="mt-sec card-animate" style="--card-idx: 4;" aria-labelledby="mt-recent">
-          <h2 id="mt-recent" class="mt-h2">
-            Letzte Tage <a class="mt-h2-link" href="/ich/zeiten">Alle Zeiten</a>
-          </h2>
-          {#if !meinTagLoaded}
-            <Skeleton shape="row" count={3} />
-          {:else if recentEntries.length === 0}
-            <p class="mt-quiet">In den letzten zwei Wochen ist nichts erfasst.</p>
-          {:else}
-            <div class="mt-table-wrap">
-              <table class="mt-table" data-testid="mein-tag-recent">
-                <thead>
-                  <tr>
-                    <th scope="col">Tag</th>
-                    <th scope="col">Zeiten</th>
-                    <th scope="col" class="r">Pause</th>
-                    <th scope="col" class="r">Netto</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each recentEntries as e (e.id)}
+          <section class="mt-sec card-animate" style="--card-idx: 4;" aria-labelledby="mt-recent">
+            <h2 id="mt-recent" class="mt-h2">
+              Letzte Tage <a class="mt-h2-link" href="/ich/zeiten">Alle Zeiten</a>
+            </h2>
+            {#if !meinTagLoaded}
+              <Skeleton shape="row" count={3} />
+            {:else if recentDayRows.length === 0}
+              <p class="mt-quiet">In den letzten zwei Wochen ist nichts erfasst.</p>
+            {:else}
+              <div class="mt-table-wrap">
+                <table class="mt-table" data-testid="mein-tag-recent">
+                  <thead>
                     <tr>
-                      <td>{format(new Date(e.startTime), "EEEEEE d.M.", { locale: de })}</td>
-                      <td>{hhmmOf(e.startTime)}–{e.endTime ? hhmmOf(e.endTime) : "—"}</td>
-                      <td class="r">{fmtClock(e.breakMinutes ?? 0)}</td>
-                      <td class="r">
-                        {typeof e.workingMinutes === "number" ? fmtClock(e.workingMinutes) : "—"}
-                      </td>
+                      <th scope="col">Tag</th>
+                      <th scope="col">Zeiten</th>
+                      <th scope="col" class="r">Pause</th>
+                      <th scope="col" class="r">Netto</th>
+                      <th scope="col" class="r"><span class="sr-only">Saldo</span></th>
                     </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {/if}
-        </section>
+                  </thead>
+                  <tbody>
+                    {#each recentDayRows as r (r.date)}
+                      <tr>
+                        <td
+                          >{format(new Date(r.date + "T12:00:00"), "EEEEEE d.M.", {
+                            locale: de,
+                          })}</td
+                        >
+                        <td>{r.start}–{r.end}</td>
+                        <td class="r">{r.breakMinutes > 0 ? fmtClock(r.breakMinutes) : "—"}</td>
+                        <td class="r">{fmtClock(r.workingMinutes)}</td>
+                        <td class="r">
+                          {#if r.breakMissing}
+                            <Chip tone="warn">Pause fehlt</Chip>
+                          {:else if r.saldoMinutes !== null}
+                            <Chip
+                              tone={r.saldoMinutes > 0
+                                ? "ok"
+                                : r.saldoMinutes < 0
+                                  ? "bad"
+                                  : "neutral"}
+                              >{r.saldoMinutes === 0 ? "±0" : fmtBalance(r.saldoMinutes)}</Chip
+                            >
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {/if}
+          </section>
+        </div>
 
-        <section class="mt-sec card-animate" style="--card-idx: 5;" aria-labelledby="mt-history">
-          <h2 id="mt-history" class="mt-h2">Verlauf</h2>
-          {#if history.length === 0}
-            <p class="mt-quiet">Noch keine Ereignisse.</p>
-          {:else}
-            <ul class="mt-history" data-testid="mein-tag-history">
-              {#each history as h (h.id)}
-                <li><span class="mt-when">{relativeTime(h.when)}</span><span>{h.text}</span></li>
-              {/each}
-            </ul>
-          {/if}
-        </section>
+        <div class="mt-col">
+          <section class="mt-sec card-animate" style="--card-idx: 3;" aria-labelledby="mt-for-you">
+            <h2 id="mt-for-you" class="mt-h2">Für dich</h2>
+            {#if openItems === null && !meinTagLoaded}
+              <Skeleton shape="row" count={2} />
+            {:else if forYou.length === 0}
+              <p class="mt-quiet">Nichts offen. Alles erledigt.</p>
+            {:else}
+              <List ariaLabel="Für dich">
+                {#each forYou as item (item.key)}
+                  <ListRow title={item.title} subtitle={item.subtitle} avatar={false}>
+                    {#snippet leading()}
+                      <Chip tone={item.tone}>{item.chip}</Chip>
+                    {/snippet}
+                    {#snippet trailing()}
+                      {#if item.href}
+                        <a
+                          class="btn btn-outline btn-sm"
+                          href={item.href}
+                          data-testid={item.testId}
+                          title={item.hint}>{item.action}</a
+                        >
+                      {/if}
+                    {/snippet}
+                  </ListRow>
+                {/each}
+              </List>
+            {/if}
+          </section>
+
+          <section class="mt-sec card-animate" style="--card-idx: 5;" aria-labelledby="mt-history">
+            <h2 id="mt-history" class="mt-h2">Verlauf</h2>
+            {#if history.length === 0}
+              <p class="mt-quiet">Noch keine Ereignisse.</p>
+            {:else}
+              <ul class="mt-history" data-testid="mein-tag-history">
+                {#each history as h (h.id)}
+                  <li><span class="mt-when">{historyWhen(h.when)}</span><span>{h.text}</span></li>
+                {/each}
+              </ul>
+            {/if}
+          </section>
+        </div>
       </div>
     </div>
   {/if}
@@ -3108,22 +3218,108 @@
     color: var(--text-3);
     font-variant-numeric: tabular-nums;
   }
-  /* Ab 1800 px (Designkonzept: more columns instead of wider) the four sections sit in one row. */
-  @media (min-width: 1800px) {
-    .mt-grid {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-    }
+  .mt-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    min-width: 0;
+  }
+  .mt-grid {
+    grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
+  }
+  .mt-h2-meta {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .clock-salon-name {
+    font-weight: 500;
+    color: var(--text-2);
+  }
+  :global(.stage[data-state="pause"]) .clock-salon-name {
+    color: inherit;
+  }
+  .clock-tl i.clock-tl-plan {
+    background: color-mix(in srgb, var(--brand) 22%, transparent);
+  }
+  /* „Deine Woche“: one row of seven days (prototype v5), today marked */
+  .mt-week {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    overflow: hidden;
+  }
+  .mt-day {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    min-width: 0;
+    padding: var(--s-2) var(--s-3);
+    background: var(--card);
+    font-size: var(--fs-sm);
+  }
+  .mt-day--off {
+    background: var(--sunk);
+  }
+  .mt-day--today {
+    box-shadow: inset 0 2px 0 var(--brand);
+  }
+  .mt-day-h {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-3);
+    font-size: var(--fs-th);
+    font-weight: 600;
+  }
+  .mt-day-h b {
+    color: var(--text);
+    font-size: var(--fs-base);
+    font-variant-numeric: tabular-nums;
+  }
+  .mt-day-s {
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
   }
   /* Phone: the stage stays compact so the Kennzahlen reach the first screen (D-01, AC 390×844). */
   @media (max-width: 759.98px) {
     .mt-grid {
       grid-template-columns: minmax(0, 1fr);
     }
+    /* prototype phone: number, status, meta and time bar stacked; the action spans the stage */
     .clock-stage {
+      flex-direction: column;
+      align-items: stretch;
       gap: var(--s-3);
+      width: 100%;
     }
-    .clock-tl-labels {
+    .mt-stage :global(.stage-actions) {
+      width: 100%;
+    }
+    .mt-stage :global(.stage-actions > *) {
+      flex: 1 1 0;
+    }
+    .mt-day-s {
       display: none;
+    }
+    .mt-day-h {
+      justify-content: center;
+      gap: var(--s-1);
+    }
+  }
+  /* after the base rules of the two-column grid: one column on narrow screens */
+  @media (max-width: 1099.98px) {
+    .mt-grid {
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 </style>

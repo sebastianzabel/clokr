@@ -37,6 +37,9 @@
     onTabChange?: (value: string) => void;
     /** Level of the title element; 2 for a header inside a page that has its own h1. */
     headingLevel?: 1 | 2;
+    /** Issue #845 (prototype v5): the plain start-page head — no brand rule, no eyebrow, no
+     *  accent word, the title at --fs-h1 (20 px / 600), the subtitle right under it. */
+    compact?: boolean;
   }
 
   let {
@@ -50,6 +53,7 @@
     panel,
     onTabChange,
     headingLevel = 1,
+    compact = false,
   }: Props = $props();
 
   // Derive a [pre, match, post] split for the heading.
@@ -61,6 +65,7 @@
   //
   // Both branches output element text only - never `{@html}` - so prop values remain escaped.
   const titleParts = $derived.by(() => {
+    if (compact) return { pre: title, match: "", post: "" };
     if (accent) {
       const idx = title.indexOf(accent);
       if (idx === -1) return { pre: title, match: "", post: "" };
@@ -91,10 +96,10 @@
 {/snippet}
 
 {#snippet head(withTabs: boolean)}
-  <header class="page-head" class:page-head--tabs={withTabs}>
+  <header class="page-head" class:page-head--tabs={withTabs} class:page-head--compact={compact}>
     <div class="page-head-text">
-      <div class="brand-rule" aria-hidden="true"></div>
-      {#if eyebrow}
+      {#if !compact}<div class="brand-rule" aria-hidden="true"></div>{/if}
+      {#if eyebrow && !compact}
         <div class="eyebrow" translate="no">{eyebrow}</div>
       {/if}
       {#if headingLevel === 2}
@@ -184,6 +189,22 @@
     font-size: 14px;
     line-height: 1.55;
     overflow-wrap: anywhere;
+  }
+
+  .page-head--compact {
+    align-items: center;
+    margin-bottom: var(--s-5);
+  }
+  .page-head--compact :is(h1, h2) {
+    font-size: var(--fs-h1);
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: 0;
+  }
+  .page-head--compact .sub {
+    margin-top: 2px;
+    max-width: none;
+    font-size: var(--fs-base);
   }
 
   .page-head-actions {

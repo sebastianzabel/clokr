@@ -27,9 +27,11 @@
     sub?: string;
     /** Optional right-aligned action cluster (buttons) on the same row as the heading. */
     actions?: Snippet;
+    /** Issue #845: the plain start-page head of the block (see PageHeader `compact`). */
+    compact?: boolean;
   }
 
-  let { eyebrow, title, accent, sub, actions }: Props = $props();
+  let { eyebrow, title, accent, sub, actions, compact = false }: Props = $props();
 </script>
 
-<PageHeader {eyebrow} {title} {accent} subtitle={sub} {actions} />
+<PageHeader {eyebrow} {title} {accent} subtitle={sub} {actions} {compact} />

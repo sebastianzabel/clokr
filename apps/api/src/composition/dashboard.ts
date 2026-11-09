@@ -569,7 +569,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // ── Resturlaub ────────────────────────────────────────────────────
       // WR-01: computed only when the caller holds leave-entitlement:read:EIGENE — Ausbilder
       // (D-08) holds no leave-entitlement permission at all.
-      let vacationResult: { remaining: number; total: number; used: number } | null = null;
+      let vacationResult: {
+        remaining: number;
+        total: number;
+        used: number;
+        pending?: number;
+      } | null = null;
 
       if (canReadOwnVacation) {
         // Issue #451 (D-07) — the ONE Resturlaub facade in contexts/absence/facade/vacation-balance.ts,
@@ -585,8 +590,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
               remaining: balance.remainingDays,
               total: balance.entitlementDays + balance.carriedOverEffectiveDays,
               used: balance.usedDays,
+              // Issue #845: requested, not yet decided days of the year (same facade, additive)
+              pending: balance.pendingDays,
             }
-          : { remaining: 0, total: 0, used: 0 };
+          : { remaining: 0, total: 0, used: 0, pending: 0 };
       }
 
       return {

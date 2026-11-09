@@ -16,6 +16,8 @@
     derivationHref?: string;
     /** Text of the derivation link (additive, #845); default „Herleitung →“. */
     derivationLabel?: string;
+    /** Additive (#845): a short status chip next to the label. */
+    badge?: string;
     delta?: string;
     deltaTone?: "good" | "bad" | "warn" | "neutral";
     progress?: KpiProgress;
@@ -49,6 +51,7 @@
         explanation={item.explanation}
         derivationHref={item.derivationHref}
         derivationLabel={item.derivationLabel}
+        badge={item.badge}
         delta={item.delta}
         deltaTone={item.deltaTone}
         progress={item.progress}

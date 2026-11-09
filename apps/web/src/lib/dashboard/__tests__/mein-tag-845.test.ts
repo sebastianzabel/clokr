@@ -130,3 +130,123 @@ describe("historySentences (D-05)", () => {
     ]);
   });
 });
+
+// ── Owner acceptance 09.11.2026 (prototype v5) ────────────────────────────────────────────────
+import {
+  saldoMonthsLine,
+  nextPlannedDay,
+  plannedDaysCount,
+  weekStripText,
+  recentDays,
+} from "../mein-tag";
+
+describe("saldoMonthsLine — one short line by month, no sentence", () => {
+  it("„Okt ±0:00 · Nov +1:55“ with one open month", () => {
+    expect(
+      saldoMonthsLine(
+        {
+          balanceHours: 0,
+          confirmedMinutes: 0,
+          openMonthMinutes: 115,
+          hasClosedMonth: true,
+          unconfirmedMonths: 1,
+        },
+        "2026-11-09",
+      ),
+    ).toBe("Okt ±0:00 · Nov +1:55");
+  });
+  it("several open months read „seitdem“; January wraps to December", () => {
+    expect(
+      saldoMonthsLine(
+        {
+          balanceHours: 0,
+          confirmedMinutes: -60,
+          openMonthMinutes: 30,
+          hasClosedMonth: true,
+          unconfirmedMonths: 2,
+        },
+        "2027-01-05",
+      ),
+    ).toBe("Nov −1:00 · seitdem +0:30");
+  });
+  it("without a closed month", () => {
+    expect(
+      saldoMonthsLine(
+        { balanceHours: 0, confirmedMinutes: 0, openMonthMinutes: 45, hasClosedMonth: false },
+        "2026-11-09",
+      ),
+    ).toBe("seit Eintritt +0:45");
+  });
+});
+
+describe("next planned day and the week strip (32 h Tue–Fri)", () => {
+  const week = [
+    day({ date: "2026-11-09", isWorkday: false, expectedHours: 0 }),
+    day({ date: "2026-11-10", expectedHours: 8 }),
+    day({ date: "2026-11-11", expectedHours: 8 }),
+    day({ date: "2026-11-14", isWorkday: false, expectedHours: 0 }),
+  ];
+  it("a fixed contract names the next contractual workday, never „keine geplant“", () => {
+    expect(nextPlannedDay(week, null, "FIXED_SCHEDULE", "2026-11-09")).toEqual({
+      date: "2026-11-10",
+      text: "8:00 geplant",
+    });
+  });
+  it("an own shift wins", () => {
+    expect(
+      nextPlannedDay(
+        week,
+        { date: "2026-11-12", startTime: "10:00", endTime: "18:30", name: null },
+        "SHIFT_BASED",
+        "2026-11-09",
+      ),
+    ).toEqual({ date: "2026-11-12", text: "10:00–18:30" });
+  });
+  it("counts planned days and words each strip cell", () => {
+    expect(plannedDaysCount(week, "FIXED_SCHEDULE", new Set())).toBe(2);
+    expect(weekStripText(week[0], "FIXED_SCHEDULE", null)).toBe("Frei");
+    expect(weekStripText(week[1], "FIXED_SCHEDULE", null)).toBe("8:00 h");
+    expect(weekStripText(week[1], "FIXED_SCHEDULE", "10:00–18:30")).toBe("10:00–18:30");
+    expect(weekStripText(day({ holidayName: "Neujahr" }), "FIXED_SCHEDULE", null)).toBe("Neujahr");
+  });
+});
+
+describe("recentDays — per day, the saldo as the step of the server's cumulative series", () => {
+  const at = (d: string, h: number, m = 0) =>
+    new Date(`${d}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`).toISOString();
+  const entries = [
+    {
+      id: "a",
+      startTime: at("2026-11-06", 9, 30),
+      endTime: at("2026-11-06", 20, 10),
+      breakMinutes: 45,
+      workingMinutes: 595,
+    },
+    {
+      id: "b",
+      startTime: at("2026-10-30", 9, 30),
+      endTime: at("2026-10-30", 18, 15),
+      breakMinutes: 0,
+      workingMinutes: 525,
+    },
+  ];
+  const cum = new Map([
+    ["2026-11-05", 0],
+    ["2026-11-06", 115],
+  ]);
+  const totals = (rows: { breakMinutes?: number | null; workingMinutes?: number | null }[]) => ({
+    breakMinutes: rows.reduce((s, r) => s + (r.breakMinutes ?? 0), 0),
+    workingMinutes: rows.reduce((s, r) => s + (r.workingMinutes ?? 0), 0),
+  });
+  it("newest first, saldo chip from the series, break finding from the day check", () => {
+    const rows = recentDays(entries, cum, new Set(["2026-10-30"]), totals);
+    expect(rows.map((r) => r.date)).toEqual(["2026-11-06", "2026-10-30"]);
+    expect(rows[0]).toMatchObject({
+      start: "09:30",
+      end: "20:10",
+      saldoMinutes: 115,
+      breakMissing: false,
+    });
+    expect(rows[1]).toMatchObject({ saldoMinutes: null, breakMissing: true });
+  });
+});

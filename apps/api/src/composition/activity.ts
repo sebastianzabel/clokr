@@ -15,7 +15,11 @@ import {
   addDaysUtc, // Issue #172
 } from "../contexts/working-time-account"; // Phase 101B
 import { getEntryActivityFeed } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T5
-import { dedupeActivitySentences, entryActivityEvents } from "./activity-sentences"; // Issue #849
+import {
+  dedupeActivitySentences,
+  entryActivityEvents,
+  leaveActivitySentence,
+} from "./activity-sentences"; // Issue #849, #845
 import {
   getOwnLeaveActivity, // Phase 100B Plan 13 — A10a
   getReviewedLeaveActivity, // Phase 100B Plan 13 — A10b
@@ -177,29 +181,19 @@ export async function activityRoutes(app: FastifyInstance) {
         const myLeaves = await getOwnLeaveActivity(app.prisma, employeeId, tenantId, fetchLimit);
         for (const lr of myLeaves) {
           const typeName = lr.leaveType?.name ?? "Urlaub";
-          let what: string;
-          let icon: ActivityItem["icon"];
-          if (lr.status === "APPROVED") {
-            what = `${typeName} genehmigt`;
-            icon = "check";
-          } else if (lr.status === "REJECTED") {
-            what = `${typeName} abgelehnt`;
-            icon = "x";
-          } else if (lr.status === "CANCELLED") {
-            what = `${typeName} storniert`;
-            icon = "x";
-          } else if (lr.status === "CANCELLATION_REQUESTED") {
-            what = `Stornierung beantragt (${typeName})`;
-            icon = "inbox";
-          } else {
-            what = `${typeName} eingereicht`;
-            icon = "inbox";
-          }
+          // Issue #845 (D-05): one complete sentence from the one text source
+          const sentence = leaveActivitySentence({ ...lr, typeName });
+          const icon: ActivityItem["icon"] =
+            lr.status === "APPROVED"
+              ? "check"
+              : lr.status === "REJECTED" || lr.status === "CANCELLED"
+                ? "x"
+                : "inbox";
           items.push({
             id: `lr-${lr.id}`,
             icon,
-            who: "Du",
-            what,
+            who: sentence.who,
+            what: sentence.what,
             when: lr.updatedAt.toISOString(),
             category: "leave",
           });
