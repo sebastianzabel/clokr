@@ -404,7 +404,7 @@
 <style>
   .topbar {
     grid-area: topbar;
-    background: var(--bg-card);
+    background: var(--card);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     position: relative;
     z-index: 10;
@@ -421,14 +421,13 @@
     min-height: 60px;
   }
   .topbar-crumb {
-    font-family: var(--font-serif);
-    font-style: italic;
+    font-family: var(--font-ui);
     font-size: 18px;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-weight: 400;
   }
   .topbar-crumb b {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-style: normal;
     font-size: 14px;
     font-weight: 600;
@@ -439,12 +438,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 6px 10px;
     width: 280px;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13px;
   }
   .topbar-search input {
@@ -454,16 +453,16 @@
     flex: 1;
     min-width: 0;
     color: var(--text);
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13px;
   }
   .topbar-search input::placeholder {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .topbar-search .kbd {
     font-size: 11px;
     letter-spacing: 0.05em;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
   .topbar-context {
     display: flex;
@@ -479,24 +478,24 @@
   .icon-btn {
     width: 36px;
     height: 36px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     background: transparent;
     display: grid;
     place-items: center;
     position: relative;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
     transition:
       background 120ms var(--ease),
       color 120ms var(--ease);
   }
   .icon-btn:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
   .icon-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
   /* Mobile touch target — WCAG 2.5.5 minimum 44×44 */
@@ -518,7 +517,7 @@
     height: 8px;
     border-radius: 50%;
     background: var(--brand);
-    border: 2px solid var(--bg-card);
+    border: 2px solid var(--card);
   }
   .bell-wrap {
     position: relative;
@@ -529,10 +528,10 @@
     right: 0;
     width: 340px;
     max-height: 420px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    box-shadow: var(--shadow-pop);
     z-index: 300;
     display: flex;
     flex-direction: column;
@@ -544,7 +543,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 13px;
     color: var(--text);
   }
@@ -556,7 +555,7 @@
     font-weight: 500;
     cursor: pointer;
     padding: 0;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
   }
   .link-btn:hover {
     text-decoration: underline;
@@ -569,7 +568,7 @@
     padding: 20px;
     text-align: center;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .notif-item {
     display: flex;
@@ -580,13 +579,13 @@
     padding: 12px 16px;
     background: transparent;
     border: 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     cursor: pointer;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     transition: background 120ms var(--ease);
   }
   .notif-item:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .notif-item.unread {
     background: var(--brand-soft);
@@ -616,12 +615,12 @@
   }
   .notif-msg {
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: 2px;
   }
   .notif-time {
     font-size: 11.5px;
-    color: var(--text-faint);
+    color: var(--text-3);
     margin-top: 2px;
   }
   .avatar {
@@ -657,10 +656,10 @@
       box-shadow 120ms var(--ease);
   }
   .avatar-btn:hover {
-    border-color: var(--brand-light);
+    border-color: var(--brand);
   }
   .avatar-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
   .avatar-btn[aria-expanded="true"] {
@@ -675,7 +674,7 @@
     gap: 12px;
     align-items: center;
     padding: 16px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .avatar-menu-pic {
     width: 44px;
@@ -688,7 +687,7 @@
     flex: 1;
   }
   .avatar-menu-name {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 16px;
     font-weight: 400;
     color: var(--text);
@@ -699,7 +698,7 @@
   }
   .avatar-menu-email {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: 2px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -710,7 +709,7 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--brand-light);
+    color: var(--brand);
     margin-top: 4px;
   }
   .avatar-menu-items {
@@ -719,7 +718,7 @@
     padding: 6px 0;
   }
   .avatar-menu-foot {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding: 6px 0;
   }
   .avatar-menu-item {
@@ -732,7 +731,7 @@
     border: 0;
     cursor: pointer;
     padding: 9px 16px;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13.5px;
     font-weight: 500;
     color: var(--text);
@@ -741,7 +740,7 @@
       color 120ms var(--ease);
   }
   .avatar-menu-item:hover:not(:disabled) {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--brand);
   }
   .avatar-menu-item:disabled {
@@ -749,7 +748,7 @@
     cursor: not-allowed;
   }
   .avatar-menu-item svg {
-    color: var(--text-muted);
+    color: var(--text-2);
     flex-shrink: 0;
   }
   .avatar-menu-item:hover:not(:disabled) svg {

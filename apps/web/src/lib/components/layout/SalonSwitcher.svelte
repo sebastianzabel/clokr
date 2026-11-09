@@ -37,9 +37,9 @@
     min-width: 0;
   }
   .salon-switcher-label {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     white-space: nowrap;
   }
   /* The global .select recipe draws no chevron; in the Topbar the label may be hidden, so the
@@ -56,8 +56,8 @@
     top: 50%;
     width: 6px;
     height: 6px;
-    border-right: 1.5px solid var(--text-muted);
-    border-bottom: 1.5px solid var(--text-muted);
+    border-right: 1.5px solid var(--text-2);
+    border-bottom: 1.5px solid var(--text-2);
     transform: translateY(-70%) rotate(45deg);
     pointer-events: none;
   }

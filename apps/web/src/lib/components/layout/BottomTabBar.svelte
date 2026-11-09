@@ -148,8 +148,8 @@
       bottom: 0;
       left: 0;
       right: 0;
-      background: var(--bg-card);
-      border-top: 1px solid var(--border);
+      background: var(--card);
+      border-top: 1px solid var(--line);
       z-index: 90;
       padding-bottom: env(safe-area-inset-bottom, 0);
     }
@@ -167,9 +167,9 @@
     padding: 6px 4px;
     background: transparent;
     border: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-decoration: none;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     cursor: pointer;
     transition:
       background 120ms var(--ease),
@@ -179,11 +179,11 @@
   .tab:hover,
   .tab:focus-visible {
     color: var(--text);
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 
   .tab:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: -2px;
   }
 
