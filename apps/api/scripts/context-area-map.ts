@@ -163,6 +163,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/facade/holiday-resolution.ts": "unterbau", // Phase 71b (issue #71) — builds holiday sets from Salon/PublicHoliday, Unterbau models; reads no TimeEntry
   "src/contexts/platform/salon-assignment-rules.ts": "unterbau", // Phase 67b (issue #67) — pure day/weekday/period rules for EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/salon-assignment-audit.ts": "unterbau", // Phase 67b (issue #67) — shared WR-01 audit helper for EmployeeSalonAssignment, an Unterbau model per ADR 0002
+  "src/contexts/platform/ui-theme.ts": "unterbau", // Phase 842 (Issue #842) — theme id mapping for User.uiPreferences (an Unterbau model); pure, no Prisma call
   "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/access-context.ts": "unterbau", // Phase 77b (Issue #77) — AccessContext + its two constructors + employeeScopeFor(); pure module, no Prisma call
   "src/contexts/platform/access-context-error.ts": "unterbau", // Phase 77b (Issue #77) — AccessContextError + requireTenantId(); zero-import leaf, pure module, no Prisma call
