@@ -336,14 +336,14 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
   }
 
   .csv-textarea {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 0.8125rem;
     resize: vertical;
     min-height: 120px;
   }
 
   .example-summary {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.8125rem;
     cursor: pointer;
   }
@@ -354,20 +354,20 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
   }
 
   .example-pre {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 0.75rem;
-    background-color: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background-color: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 0.75rem;
     overflow-x: auto;
     white-space: pre;
     margin-top: 0.5rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .foot-meta {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 12.5px;
   }
 
@@ -399,7 +399,7 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
 
   .row-num {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .cell-data {
@@ -409,6 +409,6 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
 
   .cell-detail {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 </style>

@@ -352,7 +352,7 @@
     gap: 10px;
     flex-wrap: wrap;
     padding-bottom: 10px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     margin-bottom: 6px;
   }
 
@@ -364,7 +364,7 @@
 
   .audit-filter-count {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-left: auto;
   }
 
@@ -391,11 +391,11 @@
   }
 
   .audit-row {
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     padding: 10px 0;
     cursor: pointer;
     transition: background-color 160ms var(--ease);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
 
   .audit-row:last-child {
@@ -404,7 +404,7 @@
 
   .audit-row:hover,
   .audit-row:focus-visible {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     padding-left: 8px;
     padding-right: 8px;
     outline: none;
@@ -422,9 +422,9 @@
   }
 
   .audit-time {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 12px;
-    color: var(--text-faint);
+    color: var(--text-3);
     white-space: nowrap;
   }
 
@@ -437,27 +437,26 @@
   }
 
   .audit-muted {
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
 
   .audit-entity {
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
     white-space: nowrap;
   }
 
   .audit-hash {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 11.5px;
-    color: var(--text-faint);
+    color: var(--text-3);
     white-space: nowrap;
   }
 
   .audit-ip {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 11.5px;
-    color: var(--text-faint);
+    color: var(--text-3);
     white-space: nowrap;
   }
 
@@ -504,12 +503,12 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
 
   .audit-field-hint {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     line-height: 1.5;
     margin-top: 4px;
   }
@@ -520,7 +519,7 @@
 
   .audit-body-text {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 4px 0 0;
     line-height: 1.55;
   }

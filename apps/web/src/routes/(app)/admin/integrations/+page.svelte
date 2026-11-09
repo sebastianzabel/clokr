@@ -622,11 +622,11 @@
   .key-value {
     flex: 1;
     padding: 0.5rem;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     word-break: break-all;
     font-size: 0.8125rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
   }
   .close-key-btn {
     margin-top: 0.5rem;
@@ -651,7 +651,7 @@
   .devices-skel,
   .optin-skel {
     height: 48px;
-    border-radius: var(--r-md);
+    border-radius: var(--r-control);
   }
   .devices-skel {
     height: 120px;
@@ -663,7 +663,7 @@
 
   .mono-sm {
     font-size: 0.8125rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
   }
 
   .cell-sm {
@@ -690,12 +690,12 @@
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
-    border-bottom: 2px solid var(--border);
+    color: var(--text-2);
+    border-bottom: 2px solid var(--line);
   }
   .data-table td {
     padding: 0.75rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     vertical-align: middle;
   }
 
@@ -731,11 +731,11 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--text-muted);
+    background: var(--text-2);
     flex-shrink: 0;
   }
   .status-dot--online {
-    background: var(--good);
+    background: var(--ok);
   }
 
   /* ── Block 3: Opt-in ──────────────────────────────────────────── */
@@ -753,8 +753,8 @@
     flex-direction: column;
     gap: 8px;
     padding: 12px 14px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border-radius: var(--r-control);
   }
   .meta-row {
     display: flex;
@@ -764,7 +764,7 @@
     font-size: 0.875rem;
   }
   .meta-label {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-weight: 500;
   }
 
@@ -775,23 +775,23 @@
   }
 
   .text-muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* ── Alert ───────────────────────────────────────────────────── */
   .alert {
     padding: 0.75rem 1rem;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     margin-bottom: 1rem;
     font-size: 0.875rem;
   }
   .alert-success {
-    background: var(--bg-subtle);
-    color: var(--good);
-    border: 1px solid var(--good);
+    background: var(--sunk);
+    color: var(--ok);
+    border: 1px solid var(--ok);
   }
   .alert-error {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--bad);
     border: 1px solid var(--bad);
   }

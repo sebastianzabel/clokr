@@ -474,9 +474,9 @@ Stringbegrenzer='
   }
   .format-tile {
     padding: 18px 14px;
-    border-radius: var(--r-md);
-    border: 1px solid var(--border);
-    background: var(--bg-card);
+    border-radius: var(--r-control);
+    border: 1px solid var(--line);
+    background: var(--card);
     text-align: left;
     cursor: pointer;
     display: flex;
@@ -488,7 +488,7 @@ Stringbegrenzer='
       transform 160ms var(--ease);
   }
   .format-tile.active {
-    border: 1.5px solid var(--brand-light);
+    border: 1.5px solid var(--brand);
     background: var(--brand-soft);
   }
   .format-tile.disabled {
@@ -505,7 +505,7 @@ Stringbegrenzer='
   }
   .format-meta {
     font-size: 11.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .format-tile .chip {
     align-self: flex-start;
@@ -529,11 +529,11 @@ Stringbegrenzer='
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .foot-meta {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 12.5px;
   }
 
@@ -542,12 +542,12 @@ Stringbegrenzer='
   }
 
   .csv-preview {
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     padding: 12px 14px;
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 11.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
     line-height: 1.7;
     overflow-x: auto;
     margin: 8px 0 0;
@@ -555,7 +555,7 @@ Stringbegrenzer='
   }
 
   .csv-section {
-    color: var(--brand-light);
+    color: var(--brand);
   }
 
   @media (max-width: 900px) {
