@@ -48,8 +48,10 @@ describe("global error handler — 5xx bodies carry no internal text (Issue #330
   }
 
   it("a Prisma error thrown from a route → 500 with the fixed body, original text only in the log", async () => {
+    // Issue #573: a P2002 is a duplicate and answers 409 (next test); any other Prisma failure
+    // stays an internal error with the fixed body.
     const prismaError = new Prisma.PrismaClientKnownRequestError(PRISMA_MESSAGE, {
-      code: "P2002",
+      code: "P2010",
       clientVersion: Prisma.prismaVersion.client,
       meta: { modelName: "Employee", target: ["tenantId", "employeeNumber"] },
     });
@@ -76,6 +78,27 @@ describe("global error handler — 5xx bodies carry no internal text (Issue #330
     expect(ctx.method).toBe("GET");
     expect(typeof ctx.reqId).toBe("string");
     expect(ctx.reqId!.length).toBeGreaterThan(0);
+  });
+
+  it("an unhandled P2002 from a route → 409 DUPLICATE with plain German text, no internal text (Issue #573)", async () => {
+    const prismaError = new Prisma.PrismaClientKnownRequestError(PRISMA_MESSAGE, {
+      code: "P2002",
+      clientVersion: Prisma.prismaVersion.client,
+      meta: { modelName: "Employee", target: ["tenantId", "employeeNumber"] },
+    });
+    vi.spyOn(app.prisma.employee, "findMany").mockRejectedValueOnce(prismaError as never);
+
+    const res = await listEmployees();
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body)).toEqual({
+      error: "Diesen Eintrag gibt es bereits.",
+      code: "DUPLICATE",
+    });
+    const lower = res.body.toLowerCase();
+    for (const leak of ["prisma", "employee", "findmany", "p2002", "tenantid", "constraint"]) {
+      expect(lower, `response body leaks "${leak}"`).not.toContain(leak);
+    }
   });
 
   it("an error carrying statusCode 503 and an internal message → fixed body as well", async () => {

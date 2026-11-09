@@ -1907,7 +1907,10 @@ describe("ensureLeaveType (Phase 97)", () => {
 
     try {
       const res = await getEntitlements(d);
-      expect(res.statusCode).toBe(500);
+      // Rethrown, not resolved: since Issue #573 the unhandled P2002 reaches the global handler
+      // as a 409 DUPLICATE instead of a 500.
+      expect(res.statusCode).toBe(409);
+      expect((JSON.parse(res.body) as { code: string }).code).toBe("DUPLICATE");
 
       const rows = await app.prisma.leaveType.findMany({ where: { tenantId: d.tenant.id } });
       expect(rows).toHaveLength(0);

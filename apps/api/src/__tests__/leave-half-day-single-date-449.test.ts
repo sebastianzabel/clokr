@@ -62,7 +62,7 @@ describe("Half day = single date only (Issue #449, D-1/D-2)", () => {
     expect(res.statusCode).toBe(400);
     const body = JSON.parse(res.body);
     expect(body.error).toBe("Validierungsfehler");
-    expect(body.message).toContain(`endDate: ${HALF_DAY_SINGLE_DATE_MESSAGE}`);
+    expect(body.message).toContain(`Bis: ${HALF_DAY_SINGLE_DATE_MESSAGE}`);
     expect(body.details).toContainEqual(
       expect.objectContaining({ path: ["endDate"], message: HALF_DAY_SINGLE_DATE_MESSAGE }),
     );
@@ -93,7 +93,7 @@ describe("Half day = single date only (Issue #449, D-1/D-2)", () => {
     expect(res.statusCode).toBe(400);
     const body = JSON.parse(res.body);
     expect(body.error).toBe("Validierungsfehler");
-    expect(body.message).toContain(`endDate: ${HALF_DAY_SINGLE_DATE_MESSAGE}`);
+    expect(body.message).toContain(`Bis: ${HALF_DAY_SINGLE_DATE_MESSAGE}`);
 
     const row = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id } });
     expect(row.startDate.toISOString().slice(0, 10)).toBe(original);
@@ -136,7 +136,7 @@ describe("Half day = single date only (Issue #449, D-1/D-2)", () => {
     expect(res.statusCode).toBe(400);
     const body = JSON.parse(res.body);
     expect(body.error).toBe("Validierungsfehler");
-    expect(body.message).toContain(`endDate: ${HALF_DAY_SINGLE_DATE_MESSAGE}`);
+    expect(body.message).toContain(`Bis: ${HALF_DAY_SINGLE_DATE_MESSAGE}`);
 
     const row = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: req.id } });
     expect(row.startDate.toISOString().slice(0, 10)).toBe(original);
