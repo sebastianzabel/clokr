@@ -280,6 +280,7 @@ export default defineConfig({
         /narrow-648-843\.spec\.ts/,
         /startpage-feedback-843\.spec\.ts/,
         /bausteine-843\.spec\.ts/,
+        /all-routes-overflow-843\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

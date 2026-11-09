@@ -195,6 +195,11 @@
       "file": "apps/e2e/tests/bausteine-843.spec.ts",
       "category": "in-ci",
       "reason": "AC-4 / AC-7 / D-843-10 / D-843-12 (Phase 843) keyboard, axe and #636 proofs on the example page /admin/bausteine: the Dialog traps Tab and Shift+Tab, ignores a press released on the overlay, closes on Escape and returns focus to its trigger; the Combobox opens on ArrowDown and selects the highlighted item with Enter; the page tabs move with ArrowRight and ArrowLeft; the DatePicker opens and a picked day shows in the segments; the toolbar's + Filter popover turns a chosen option into a removable chip; axe (WCAG 2 A/AA, colour contrast enabled) is clean in each of the six theme x mode frames; at 1440 px an open ConfirmDialog is what elementFromPoint returns over the topbar, the page behind it is inert and Tab stays inside the dialog. Needs the running stack with the tenant fixture and no seed; CI (the e2e-ci project, plan 843-34) is the arbiter, not a local run."
+    },
+    {
+      "file": "apps/e2e/tests/all-routes-overflow-843.spec.ts",
+      "category": "in-ci",
+      "reason": "AC-5 / #575 / D-843-09 (Phase 843) proof that no route of the app scrolls horizontally on a phone: it reads apps/e2e/fixtures/route-register-843.json (one entry per +page.svelte, kept complete by the web vitest routes-overflow-register-843) and visits every non-skipped route at 360, 390, 1024 and 1440 px, tenant routes as the fixture tenant admin (dynamic ones with an employee, salon, shutdown or audit entry created through the API, the support-access detail through a page.route mock of its one GET), the /betreiber console through the shared operator API mock of helpers/operator-api-mock.ts. Per route and width it asserts that the page head (or the registered anchor) is visible on the requested path, that document.documentElement.scrollWidth <= innerWidth and that measurePageOverflow() names no unclipped element beyond the viewport, and it prints route, width and offenders on failure. Redirect-only pages are skipped with a registered reason. Needs the running stack with the tenant fixture and no seed; CI (the e2e-ci project, plan 843-34) is the arbiter, not a local run."
     }
   ]
 }
