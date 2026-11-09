@@ -124,7 +124,7 @@
   }
   .salon-view-note {
     margin: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 </style>

@@ -29,11 +29,11 @@
   .salon-scope-label {
     /* Own bottom spacing: the label is a stand-alone line and must not touch the next block. */
     margin: 0 0 var(--s-3);
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
     overflow-wrap: anywhere;
   }
-  /* The brand variant keeps the informational tint; its own text colour is --brand-light in dark
+  /* The brand variant keeps the informational tint; its own text colour is --brand in dark
      mode, 3.66:1 on the tint (measured, 558-06), so the text takes the body colour instead. The
      selector out-ranks the global `[data-mode="dark"] .callout.brand` rule on purpose. */
   .callout.salon-scope-calm {

@@ -229,7 +229,7 @@
   }
 
   .av-empty {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.9375rem;
     margin: 0;
   }
@@ -244,21 +244,21 @@
   .av-oneoff-table td {
     text-align: left;
     padding: var(--s-2) var(--s-3);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     vertical-align: middle;
   }
 
   .av-oneoff-table th {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 600;
     color: var(--text);

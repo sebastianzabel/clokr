@@ -335,7 +335,7 @@
   .assign-form {
     margin-top: var(--s-4);
     padding-top: var(--s-4);
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
 
   .assign-form-title {
@@ -361,10 +361,10 @@
   .wd-chip {
     min-width: 40px;
     padding: var(--s-1) var(--s-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--bg-subtle);
-    color: var(--text-muted);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--sunk);
+    color: var(--text-2);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
@@ -378,7 +378,7 @@
 
   .hint {
     margin: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 </style>

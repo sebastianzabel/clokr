@@ -328,7 +328,7 @@
     align-items: center;
     gap: 0.5rem 0.75rem;
     min-height: 44px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .push-device-label {
     font-size: 0.9375rem;

@@ -133,7 +133,7 @@
   }
 
   function borderColor(status: Status | undefined): string {
-    if (status === "AVAILABLE") return "var(--good)";
+    if (status === "AVAILABLE") return "var(--ok)";
     if (status === "UNAVAILABLE") return "var(--bad)";
     if (status === "PREFERRED") return "var(--brand)";
     return "transparent";
@@ -214,7 +214,7 @@
 
 <style>
   .av-empty {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.9375rem;
     margin: 0 0 var(--s-3);
   }
@@ -230,16 +230,16 @@
     grid-template-columns: 48px 1fr auto;
     align-items: center;
     gap: var(--s-3);
-    min-height: var(--row-h);
+    min-height: var(--h-row);
     padding: var(--s-2) var(--s-3);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--card);
+    border: 1px solid var(--line);
     border-left: 3px solid transparent;
-    border-radius: var(--r-md);
+    border-radius: var(--r-control);
   }
 
   .av-dow {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -281,7 +281,7 @@
     }
   }
 
-  /* Touch devices: force 44px min hit target regardless of density (WCAG 2.5.5) */
+  /* Touch devices: force 44px min hit target (WCAG 2.5.5) */
   @media (pointer: coarse) {
     .av-recurring-row {
       min-height: 44px;
