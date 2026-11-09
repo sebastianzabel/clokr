@@ -228,6 +228,11 @@
       "auth": "tenant-admin"
     },
     {
+      "page": "(app)/team/personen/+page.svelte",
+      "path": "/team/personen",
+      "auth": "tenant-admin"
+    },
+    {
       "page": "(app)/team/time-entries/+page.svelte",
       "path": "/team/time-entries",
       "auth": "tenant-admin"

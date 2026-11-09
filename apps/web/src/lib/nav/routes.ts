@@ -47,9 +47,25 @@ export interface AppRoute {
   /** An internal tool page (#843): reachable by URL behind its guard, never in a navigation, a hub, the
    *  command palette or as a start page. */
   internal?: true;
+  /**
+   * Issue #853 (D-853-15 revised) — NAVIGATION visibility only: the entry is shown in a navigation only
+   * when one of these alternatives is held (in addition to `requires`). `mayOpenRoute` / `mayOpenPath` /
+   * `homeHref` never read it, so a guard and a direct URL behave exactly as `requires` says.
+   */
+  navRequires?: PermissionAlternatives;
+  /** Issue #853 (D-853-15 revised) — NAVIGATION visibility only: the entry is hidden from a navigation
+   *  when one of these alternatives is held. Guards and direct URLs are unaffected (see `navRequires`). */
+  navHiddenWhen?: PermissionAlternatives;
 }
 
 const Z = (resourceAction: string) => `${resourceAction}:ZUGEWIESEN`;
+
+/** Who works with persons (creates or edits them) and therefore sees Verwalten › Personen in the navigation
+ *  instead of Team › Personen (#853, D-853-15 revised). One constant so the two entries cannot drift. */
+const PERSON_MANAGE_ALTERNATIVES: PermissionAlternatives = [
+  [Z("employee:create")],
+  [Z("employee:update")],
+];
 
 export const AREA_LABELS: Readonly<Record<Area, string>> = Object.freeze({
   ich: "Ich",
@@ -214,6 +230,19 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inNav: true,
     feature: "availability",
   },
+  // #853 (D-853-14, D-853-15 revised): the read-only team directory for leaders. A page created by #853 (no
+  // `file`). GET /employees (reach narrowing #547). Hidden from the navigation of whoever sees Verwalten ›
+  // Personen instead; the URL stays openable for everyone with employee:read.
+  {
+    href: "/team/personen",
+    area: "team",
+    label: "Personen",
+    icon: "users",
+    width: "full",
+    requires: [[Z("employee:read")]],
+    inNav: true,
+    navHiddenWhen: PERSON_MANAGE_ALTERNATIVES,
+  },
 
   // ── Verwalten ──────────────────────────────────────────────────────────────────────────────────────
   {
@@ -237,6 +266,9 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inNav: true,
     parent: "/verwalten",
     description: "Personen, Verträge, Rollen und Zugänge",
+    // #853 (D-853-15): exactly one „Personen“ per person. Whoever creates or edits persons sees this entry;
+    // everyone else with employee:read gets the read-only Team › Personen (navHiddenWhen of that entry).
+    navRequires: PERSON_MANAGE_ALTERNATIVES,
   },
   // GET /salons (writes: salon:manage, decided by the API)
   {
@@ -582,13 +614,22 @@ export function mayOpenRoute(user: PermissionHolder | null | undefined, route: A
   return holdsAlternatives(user, route.requires);
 }
 
-/** Shown to `user` in a navigation: may open it, and its tenant feature (if any) is on. */
+/** Shown to `user` in a navigation: may open it, its tenant feature (if any) is on, and the navigation-only
+ *  fields `navRequires` / `navHiddenWhen` (#853) allow it. A hub is shown only when one of its children is
+ *  (the guard still opens a hub through any openable child, see `mayOpenRoute`). */
 export function visibleRoute(
   user: PermissionHolder | null | undefined,
   route: AppRoute,
   options: RouteOptions,
 ): boolean {
   if (route.feature === "availability" && !options.availabilityEnabled) return false;
+  if (route.navRequires !== undefined && !holdsAlternatives(user, route.navRequires)) return false;
+  if (route.navHiddenWhen !== undefined && holdsAlternatives(user, route.navHiddenWhen)) {
+    return false;
+  }
+  if (route.requires === "children") {
+    return childrenOf(route.href).some((child) => visibleRoute(user, child, options));
+  }
   return mayOpenRoute(user, route);
 }
 

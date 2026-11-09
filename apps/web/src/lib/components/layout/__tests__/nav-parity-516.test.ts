@@ -47,9 +47,14 @@ describe("visibleNavSections — the one definition (#516, since #844 three area
       expect(hrefs).toContain(href);
     }
     // Every rail entry of the route table is offered, a hub child or an alias never.
+    // #853 (D-853-15): the one exception is Team › Personen, which an administration persona sees as
+    // Verwalten › Personen instead (exactly one „Personen“).
     for (const route of APP_ROUTES.filter((r) => r.area !== "ich" || r.inNav)) {
+      if (route.href === "/team/personen") continue;
       expect(hrefs.includes(route.href), route.href).toBe(route.inNav);
     }
+    expect(hrefs).toContain("/verwalten/personen");
+    expect(hrefs).not.toContain("/team/personen");
     expect(hrefs).not.toContain("/admin/special-leave");
     expect(hrefs).not.toContain("/verwalten/system/phorest");
   });

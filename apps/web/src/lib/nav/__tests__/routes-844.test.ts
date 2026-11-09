@@ -255,6 +255,99 @@ describe("navigation (Z-01, AC: kein Eintrag doppelt)", () => {
   });
 });
 
+describe("Personen: exactly one entry per person (#853, D-853-15 revised)", () => {
+  const teamEntry = APP_ROUTES.find((r) => r.href === "/team/personen")!;
+  const verwaltenEntry = APP_ROUTES.find((r) => r.href === "/verwalten/personen")!;
+  const holders = Object.keys(P).filter((persona) =>
+    P[persona].includes("employee:read:ZUGEWIESEN"),
+  );
+
+  it("covers the six personas holding employee:read (non-vacuity)", () => {
+    expect(holders.sort()).toEqual(["ADMIN", "HR", "MANAGER", "OWNER", "SALON_MANAGER", "TRAINER"]);
+  });
+
+  it("the Team entry hides for exactly the alternatives that show the Verwalten entry (they cannot drift)", () => {
+    expect(teamEntry.navHiddenWhen).toBeDefined();
+    expect(teamEntry.navHiddenWhen).toEqual(verwaltenEntry.navRequires);
+    expect(teamEntry.requires).toEqual(verwaltenEntry.requires);
+  });
+
+  for (const persona of holders) {
+    it(`${persona}: exactly one of Team › Personen and Verwalten › Personen is in the navigation, both stay openable`, () => {
+      const hrefs = visibleNavSections(user(persona), ALL).flatMap((s) =>
+        s.items.map((i) => i.href),
+      );
+      const inTeam = hrefs.includes("/team/personen");
+      const inVerwalten = hrefs.includes("/verwalten/personen");
+      expect(Number(inTeam) + Number(inVerwalten), `${persona}: ${hrefs.join(" ")}`).toBe(1);
+      // navigation visibility only: the guard and the URL are unchanged
+      expect(mayOpenPath(user(persona), "/team/personen"), persona).toBe(true);
+      expect(mayOpenPath(user(persona), "/verwalten/personen"), persona).toBe(true);
+      expect(mayOpenPath(user(persona), "/verwalten/personen/abc"), persona).toBe(true);
+    });
+  }
+
+  it("Admin, Inhaber and Personalabteilung get Verwalten › Personen", () => {
+    for (const persona of ["ADMIN", "OWNER", "HR"]) {
+      const hrefs = visibleNavSections(user(persona), ALL).flatMap((s) =>
+        s.items.map((i) => i.href),
+      );
+      expect(hrefs, persona).toContain("/verwalten/personen");
+      expect(hrefs, persona).not.toContain("/team/personen");
+    }
+  });
+
+  it("Manager, Salonmanager and Ausbilder get Team › Personen", () => {
+    for (const persona of ["MANAGER", "SALON_MANAGER", "TRAINER"]) {
+      const hrefs = visibleNavSections(user(persona), ALL).flatMap((s) =>
+        s.items.map((i) => i.href),
+      );
+      expect(hrefs, persona).toContain("/team/personen");
+      expect(hrefs, persona).not.toContain("/verwalten/personen");
+    }
+  });
+
+  it("a plain employee gets neither entry and cannot open the Team page", () => {
+    const hrefs = visibleNavSections(user("EMPLOYEE"), ALL).flatMap((s) =>
+      s.items.map((i) => i.href),
+    );
+    expect(hrefs).not.toContain("/team/personen");
+    expect(hrefs).not.toContain("/verwalten/personen");
+    expect(mayOpenPath(user("EMPLOYEE"), "/team/personen")).toBe(false);
+  });
+
+  it("the Team page is a page of its own: no route file, an exact path only", () => {
+    expect(teamEntry.file).toBeUndefined();
+    expect(rerouteTarget("/team/personen")).toBeNull();
+    expect(mayOpenPath(user("SALON_MANAGER"), "/team/personen/x")).toBe(false);
+  });
+
+  it("navigation-only fields never reach the guard: a person holding only employee:update cannot open the page", () => {
+    // navRequires alone grants nothing; `requires` (employee:read) is still the gate.
+    const updateOnly = { permissions: ["employee:update:ZUGEWIESEN"] };
+    expect(mayOpenPath(updateOnly, "/verwalten/personen")).toBe(false);
+    expect(mayOpenPath(updateOnly, "/team/personen")).toBe(false);
+  });
+});
+
+describe("hub entries follow their children in the navigation (#853)", () => {
+  it("Verwalten › Übersicht is not shown when the only openable child is hidden from the navigation", () => {
+    // employee:read alone opens only Verwalten › Personen, which a reader without create/update does not
+    // see in the rail; the hub must not be an empty „Übersicht“.
+    const reader = { permissions: ["employee:read:ZUGEWIESEN"] };
+    const hrefs = visibleNavSections(reader, ALL).flatMap((s) => s.items.map((i) => i.href));
+    expect(hrefs).toContain("/team/personen");
+    expect(hrefs).not.toContain("/verwalten");
+    // the guard still opens the hub through that child (URL, start page logic unchanged)
+    expect(mayOpenPath(reader, "/verwalten")).toBe(true);
+  });
+
+  it("the hub shows as soon as one child is visible", () => {
+    const hrefs = visibleNavSections(user("HR"), ALL).flatMap((s) => s.items.map((i) => i.href));
+    expect(hrefs).toContain("/verwalten");
+  });
+});
+
 describe("phone tabs (D-844-13)", () => {
   it("team reach: Salon · Aufgaben · Mein Tag · Abwesend", () => {
     expect(mobileTabs(user("ADMIN"), ALL).map((t) => t.href)).toEqual([

@@ -89,9 +89,11 @@ describe("admin route permissions (Issue #83)", () => {
 
   it("the old index redirects to Verwalten › Übersicht, which opens only through a visible entry", () => {
     expect(legacyRedirectTarget("/admin")).toBe("/verwalten");
-    expect(firstAccessibleAdminHref(user(["employee:read:ZUGEWIESEN"]))).toBe(
-      "/verwalten/personen",
-    );
+    // #853 (D-853-15): the Verwalten entry shows for whoever edits persons; a reader gets Team › Personen
+    expect(
+      firstAccessibleAdminHref(user(["employee:read:ZUGEWIESEN", "employee:update:ZUGEWIESEN"])),
+    ).toBe("/verwalten/personen");
+    expect(firstAccessibleAdminHref(user(["employee:read:ZUGEWIESEN"]))).toBeNull();
     expect(firstAccessibleAdminHref(user(["role:read:ZUGEWIESEN"]))).toBe("/verwalten/system");
     expect(firstAccessibleAdminHref(user([]))).toBeNull();
     expect(canAccessAdminPath(user([]), "/verwalten")).toBe(false);

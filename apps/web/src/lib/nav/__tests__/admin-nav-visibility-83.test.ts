@@ -91,10 +91,10 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
       "/verwalten/berichte",
     ]);
     // Issue #836: SALON_MANAGER holds leave-request:approve, so Regeln (Urlaubsgrenzen & Sperren) joins;
-    // the team availability moved to the Team area (D-05).
+    // the team availability moved to the Team area (D-05). #853 (D-853-15): she creates and edits no
+    // persons, so her „Personen“ is Team › Personen and the Verwalten rail does not list it.
     expect(visibleAdminNavItems({ permissions: p.SALON_MANAGER }, on).map((i) => i.href)).toEqual([
       "/verwalten",
-      "/verwalten/personen",
       "/verwalten/regeln",
     ]);
     expect(
