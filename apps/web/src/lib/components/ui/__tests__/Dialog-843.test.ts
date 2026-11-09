@@ -6,6 +6,7 @@ import { cleanup, fireEvent, screen, waitFor } from "@testing-library/svelte";
 import { createRawSnippet } from "svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import Dialog from "../Dialog.svelte";
+import dialogSource from "../Dialog.svelte?raw";
 
 const children = createRawSnippet(() => ({ render: () => "<p>Inhalt</p>" }));
 const footer = createRawSnippet(() => ({
@@ -109,5 +110,47 @@ describe("Dialog - closing and focus", () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByRole("button", { name: "Speichern" })),
     );
+  });
+});
+
+// The CSS shapes are pinned on the source: jsdom computes no layout. They are the shapes
+// Modal.size-612.test.ts applies to Modal.svelte today (the Modal becomes a Dialog wrapper later).
+describe("Dialog - sizes and the sheet (CSS shapes)", () => {
+  const style = dialogSource.slice(dialogSource.lastIndexOf("<style>"));
+
+  it("declares the wide size with the 880 px width, capped to the viewport", () => {
+    expect(style).toMatch(/\.modal--wide\s*\{[^}]*width:\s*min\(880px,\s*calc\(100vw - 32px\)\)/);
+  });
+
+  it("lets the footer of the wide dialog wrap, and sets no bare .modal-foot rule", () => {
+    expect(style).toMatch(/\.modal--wide\s+\.modal-foot\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(style).not.toMatch(/(^|\n)\s*\.modal-foot\s*\{/);
+  });
+
+  it("centres the 520 px dialog without a transform (#570)", () => {
+    const rule = /\n\s*\.modal\s*\{([^}]*)\}/.exec(style)?.[1] ?? "";
+    expect(rule).toMatch(/width:\s*min\(520px,\s*calc\(100vw - 32px\)\)/);
+    expect(rule).toMatch(/position:\s*fixed/);
+    expect(rule).toMatch(/margin:\s*auto/);
+    expect(style).not.toMatch(/transform\s*:/);
+  });
+
+  it("becomes a bottom sheet below a 760 px viewport", () => {
+    const sheet = /@media\s*\(max-width:\s*759\.98px\)\s*\{([\s\S]*)\}\s*$/.exec(
+      style.replace("</style>", "").trimEnd(),
+    )?.[1];
+    expect(sheet, "the sheet media query").toBeTruthy();
+    expect(sheet).toMatch(/width:\s*100%/);
+    expect(sheet).toMatch(/inset:\s*auto 0 0 0/);
+    expect(sheet).toMatch(/max-height:\s*85vh/);
+    expect(sheet).toMatch(/border-radius:\s*var\(--r-card\) var\(--r-card\) 0 0/);
+    expect(sheet).toMatch(/overflow-y:\s*auto/);
+    expect(sheet).toMatch(/\.btn[^{]*\{[^}]*width:\s*100%/);
+  });
+
+  it("is the only viewport media query besides reduced motion", () => {
+    const queries = [...style.matchAll(/@media\s*([^{]+)\{/g)].map((m) => m[1].trim());
+    expect(queries.length).toBeGreaterThanOrEqual(1);
+    for (const q of queries) expect(q).toMatch(/max-width:\s*759\.98px|prefers-reduced-motion/);
   });
 });

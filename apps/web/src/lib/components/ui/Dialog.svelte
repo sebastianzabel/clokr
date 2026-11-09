@@ -142,6 +142,14 @@
     width: min(880px, calc(100vw - 32px));
   }
 
+  /* The wide dialog carries the drill-down's footer buttons ("Schließen", "DATEV (Person)",
+     "Stundennachweis (PDF)"): in one row they end beyond a phone and the dialog clips them (found
+     by the 390/360 px matrix of reports-period.spec.ts). They wrap instead; a footer that fits
+     renders exactly as before. */
+  .modal--wide .modal-foot {
+    flex-wrap: wrap;
+  }
+
   .modal--static {
     position: static;
     inset: auto;
@@ -161,5 +169,36 @@
     font-size: 13px;
     line-height: 1;
     margin-bottom: 4px;
+  }
+
+  /* Below a 760 px viewport the dialog is a bottom sheet (D-843-03: the one viewport query of the
+     blocks besides reduced motion): full width, anchored to the bottom edge, rounded on top,
+     scrolling inside itself, footer buttons stacked at full width. The static panel of the example
+     frames stays a panel. */
+  @media (max-width: 759.98px) {
+    .modal {
+      inset: auto 0 0 0;
+      width: 100%;
+      margin: 0;
+      max-height: 85vh;
+      border-radius: var(--r-card) var(--r-card) 0 0;
+      overflow-y: auto;
+    }
+
+    .modal--static {
+      inset: auto;
+      max-height: none;
+      border-radius: var(--r-card);
+      overflow-y: visible;
+    }
+
+    .modal .modal-foot {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .modal-foot :global(.btn) {
+      width: 100%;
+    }
   }
 </style>
