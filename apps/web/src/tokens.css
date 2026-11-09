@@ -334,13 +334,15 @@
   --leave-type-special: var(--a5-t);
   --leave-type-overtime: var(--a4-t);
   --leave-type-education: var(--info);
-  --leave-type-unpaid: var(--a3-t);
+  /* The neutral looks (Abwesend, Unbezahlt, Andere Abwesenheit) take three roles far apart in
+     luminance so #840 G-4 (one look, one meaning) holds in all six combinations. */
+  --leave-type-unpaid: var(--text);
   --leave-type-holiday: var(--brand);
   --leave-type-maternity: var(--a6-t);
   --leave-type-parental: var(--a1-t);
   --leave-type-absent: var(--text-2);
   --leave-type-absent-muted: var(--text-3);
-  --leave-type-default: var(--text-2);
+  --leave-type-default: var(--line-2);
 
   --leave-type-vacation-text: var(--card);
   --leave-type-sick-text: var(--card);
@@ -354,7 +356,7 @@
   --leave-type-parental-text: var(--card);
   --leave-type-absent-text: var(--card);
   --leave-type-absent-muted-text: var(--card);
-  --leave-type-default-text: var(--card);
+  --leave-type-default-text: var(--text);
 }
 
 @media (max-width: 639px) {

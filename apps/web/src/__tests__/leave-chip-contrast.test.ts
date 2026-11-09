@@ -68,13 +68,13 @@ const EXPECTED_FILL_ALIASES: Record<string, string> = {
   "--leave-type-special": "var(--a5-t)",
   "--leave-type-overtime": "var(--a4-t)",
   "--leave-type-education": "var(--info)",
-  "--leave-type-unpaid": "var(--a3-t)",
+  "--leave-type-unpaid": "var(--text)",
   "--leave-type-holiday": "var(--brand)",
   "--leave-type-maternity": "var(--a6-t)",
   "--leave-type-parental": "var(--a1-t)",
   "--leave-type-absent": "var(--text-2)",
   "--leave-type-absent-muted": "var(--text-3)",
-  "--leave-type-default": "var(--text-2)",
+  "--leave-type-default": "var(--line-2)",
 };
 
 describe("leave-chip-contrast — WCAG AA for every --leave-type-* fill/text pair (Phase 257, D-12; #842 D-842-10)", () => {
@@ -197,7 +197,12 @@ describe("leave-chip-contrast — WCAG AA for every --leave-type-* fill/text pai
     // contrast by writing a hex value into the alias block.
     for (const [fill, alias] of Object.entries(EXPECTED_FILL_ALIASES)) {
       expect(ALIAS_DECLS.get(fill), fill).toBe(alias);
-      const expectedText = fill === "--leave-type-holiday" ? "var(--brand-ink)" : "var(--card)";
+      const expectedText =
+        fill === "--leave-type-holiday"
+          ? "var(--brand-ink)"
+          : fill === "--leave-type-default"
+            ? "var(--text)" // light neutral fill (#840 G-4) carries the ink colour
+            : "var(--card)";
       expect(ALIAS_DECLS.get(`${fill}-text`), `${fill} text partner`).toBe(expectedText);
     }
     for (const rule of ALIAS_RULES) {
