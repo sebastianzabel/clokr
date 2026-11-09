@@ -114,7 +114,7 @@ test.describe("Heute im Salon (#846)", () => {
     ] as const) {
       await page.getByTestId(id).getByRole("link").click();
       await expect(page).toHaveURL(new RegExp(`/team/heute\\?status=${status}#jetzt$`));
-      await expect(page.getByRole("radio", { checked: true })).toBeVisible();
+      await expect(page.getByTestId("attendance-filter")).toBeVisible();
     }
     await page.getByTestId("kpi-tasks").getByRole("link").click();
     await expect(page).toHaveURL(/\/team\/aufgaben/);

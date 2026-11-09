@@ -215,16 +215,22 @@
     font-size: var(--fs-base);
   }
 
+  /* Table mode: a value stays on one line (a name is never broken, D-03) and the table scrolls
+     inside .dt-scroll only when its single-line width genuinely exceeds the container. A head may
+     still wrap at a space ("Letzter Login"), it carries no value. The card layout below is the
+     only place that lets a value wrap. */
   .dt-table :global(th) {
     height: var(--h-th);
-    padding: 0 var(--s-4);
+    padding: 0 var(--s-3);
     font-size: var(--fs-th);
     vertical-align: middle;
+    white-space: normal;
   }
 
   .dt-table td {
     height: var(--h-row);
-    padding: 0 var(--s-4);
+    padding: 0 var(--s-3);
+    white-space: nowrap;
   }
 
   .dt-table :global(tbody tr:nth-child(even)) {
@@ -297,11 +303,17 @@
       background: var(--card);
     }
 
+    /* A card is as wide as its container, never wider: a cell with several parts (a status and
+       its chip) wraps them onto another line, and a long name breaks inside the card instead of
+       forcing it open (found by the 390/360 px matrix of hr-view-86, #648). */
     .dt-table td {
       display: flex;
+      flex-wrap: wrap;
+      white-space: normal;
       align-items: baseline;
       justify-content: space-between;
-      gap: var(--s-3);
+      gap: var(--s-1) var(--s-3);
+      min-width: 0;
       height: auto;
       min-height: var(--h-control);
       padding: var(--s-1) 0;
@@ -327,6 +339,17 @@
 
     .dt-table td.dt-primary-cell::before {
       display: none;
+    }
+
+    .dt-table td.dt-primary-cell,
+    .dt-primary {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .dt-primary {
+      min-width: 0;
+      max-width: 100%;
     }
   }
 </style>

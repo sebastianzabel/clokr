@@ -161,3 +161,175 @@ export function historySentences(items: ActivityLine[]): HistorySentence[] {
   }
   return out;
 }
+
+// ── Owner acceptance 09.11.2026 (prototype v5) ─────────────────────────────────────────────────
+
+const MONTH_SHORT = [
+  "Jan",
+  "Feb",
+  "Mär",
+  "Apr",
+  "Mai",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Okt",
+  "Nov",
+  "Dez",
+];
+
+/**
+ * The one short line under the Stundenkonto figure, by month: „Okt ±0:00 · Nov +1:55“ — the confirmed
+ * carry as of the last closed month, then the open period. `today` = YYYY-MM-DD. No sentence, no
+ * forecast label (the chip „Prognose“ says that).
+ */
+export function saldoMonthsLine(answer: OvertimeAnswer, today: string): string | null {
+  const confirmed = answer.confirmedMinutes;
+  const open = answer.openMonthMinutes;
+  const n = answer.unconfirmedMonths;
+  if (confirmed === undefined || open === undefined || open === null) return null;
+  if (answer.hasClosedMonth !== true || n === null || n === undefined || n < 1) {
+    return `seit Eintritt ${fmtBalance(open)}`;
+  }
+  const m = Number(today.slice(5, 7)) - 1;
+  const last = (((m - n) % 12) + 12) % 12;
+  const openName = n === 1 ? MONTH_SHORT[m] : "seitdem";
+  return `${MONTH_SHORT[last]} ${fmtBalance(confirmed)} · ${openName} ${fmtBalance(open)}`;
+}
+
+/** One `GET /dashboard/my-week` day with the fields of the week strip. */
+export interface MyWeekStripDay extends MyWeekDay {
+  status?: string;
+  shift?: { startTime: string; endTime: string } | null;
+}
+
+export interface PlannedDay {
+  date: string;
+  /** „10:00–18:30“ for a shift, else the contract hours „8:00 geplant“. */
+  text: string;
+}
+
+function hm(minutes: number): string {
+  const t = Math.max(0, Math.round(minutes));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+}
+
+/**
+ * The next planned working day after today (owner: never „— keine geplant“ while there are
+ * workdays): an own shift first, else a contractual workday with hours (FIXED_SCHEDULE only — other
+ * contracts carry placeholder day hours), never a holiday or an absence day.
+ */
+export function nextPlannedDay(
+  days: MyWeekStripDay[],
+  shift: NextShift | null,
+  scheduleType: string | null | undefined,
+  today: string,
+): PlannedDay | null {
+  if (shift) return { date: shift.date, text: `${shift.startTime}–${shift.endTime}` };
+  if (scheduleType !== "FIXED_SCHEDULE") return null;
+  const next = days
+    .filter((d) => d.date > today)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .find((d) => dayGoalMinutes(scheduleType, d) !== null);
+  return next ? { date: next.date, text: `${hm(next.expectedHours * 60)} geplant` } : null;
+}
+
+/** How many days of the week are planned: own shifts, or contractual workdays with hours. */
+export function plannedDaysCount(
+  days: MyWeekStripDay[],
+  scheduleType: string | null | undefined,
+  shiftDates: ReadonlySet<string>,
+): number {
+  return days.filter((d) => shiftDates.has(d.date) || dayGoalMinutes(scheduleType, d) !== null)
+    .length;
+}
+
+/** The second line of a week-strip day: shift, holiday, absence, contract hours or „Frei“. */
+export function weekStripText(
+  d: MyWeekStripDay,
+  scheduleType: string | null | undefined,
+  shiftText: string | null,
+): string {
+  if (d.holidayName) return d.holidayName;
+  if (d.leaveType) return d.leaveType;
+  if (d.absenceType === "VOCATIONAL_SCHOOL") return "Berufsschule";
+  if (shiftText) return shiftText;
+  if (dayGoalMinutes(scheduleType, d) !== null) return `${hm(d.expectedHours * 60)} h`;
+  return "Frei";
+}
+
+/** One closed entry of `GET /time-entries` as „Letzte Tage“ reads it. */
+export interface RecentEntry {
+  id: string;
+  startTime: string;
+  endTime: string | null;
+  breakMinutes?: number | null;
+  workingMinutes?: number | null;
+}
+
+export interface RecentDay {
+  date: string;
+  start: string;
+  end: string;
+  breakMinutes: number;
+  workingMinutes: number;
+  /** The day's saldo from the server's cumulative series, or null when it cannot be read. */
+  saldoMinutes: number | null;
+  breakMissing: boolean;
+}
+
+function localDay(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function localHm(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function previousDay(day: string): string {
+  const d = new Date(`${day}T12:00:00`);
+  d.setDate(d.getDate() - 1);
+  return localDay(d.toISOString());
+}
+
+/**
+ * The last worked days, newest first: span, break, net (the per-day totals of `dayTotals`, passed in
+ * as `totalsOf`), the day's saldo as the step of the server's cumulative series
+ * (`GET /overtime/month-saldo` days: cumulative(d) − cumulative(d−1)) and the break finding of the
+ * server's day check (`unconfirmedBreakDays`).
+ */
+export function recentDays(
+  entries: RecentEntry[],
+  cumulativeByDate: ReadonlyMap<string, number>,
+  breakDays: ReadonlySet<string>,
+  totalsOf: (rows: RecentEntry[]) => { breakMinutes: number; workingMinutes: number },
+  limit = 4,
+): RecentDay[] {
+  const byDay = new Map<string, RecentEntry[]>();
+  for (const e of entries) {
+    if (!e.endTime) continue;
+    const day = localDay(e.startTime);
+    byDay.set(day, [...(byDay.get(day) ?? []), e]);
+  }
+  return [...byDay.keys()]
+    .sort((a, b) => b.localeCompare(a))
+    .slice(0, limit)
+    .map((day) => {
+      const rows = byDay.get(day)!;
+      const starts = rows.map((r) => r.startTime).sort();
+      const ends = rows.map((r) => r.endTime as string).sort();
+      const totals = totalsOf(rows);
+      const cum = cumulativeByDate.get(day);
+      const prev = cumulativeByDate.get(previousDay(day));
+      return {
+        date: day,
+        start: localHm(starts[0]),
+        end: localHm(ends[ends.length - 1]),
+        breakMinutes: totals.breakMinutes,
+        workingMinutes: totals.workingMinutes,
+        saldoMinutes: cum !== undefined && prev !== undefined ? cum - prev : null,
+        breakMissing: breakDays.has(day),
+      };
+    });
+}

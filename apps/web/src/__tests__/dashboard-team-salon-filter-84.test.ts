@@ -143,7 +143,8 @@ describe("Issue #84 — the Team block follows the salon context through team-vi
   });
 
   it("D-01/D-15/D-16: the markup shows the divider label, the other-salon badge and the empty state", () => {
-    expect(DASHBOARD).toContain('<p class="ts-scope">{teamLabel}</p>');
+    // #846 (prototype v5): the selected salon is the first part of the page head's sub line
+    expect(DASHBOARD).toMatch(/let teamSub = \$derived\(\s*\[\s*teamLabel \?\?/);
     expect(DASHBOARD).toContain("{TEAM_SALON_UNAVAILABLE_TEXT}");
     expect(DASHBOARD).toContain("anderer Salon");
     expect(DASHBOARD).toContain("In einem anderen Salon gearbeitet");

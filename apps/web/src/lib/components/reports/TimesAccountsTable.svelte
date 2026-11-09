@@ -1,7 +1,7 @@
 <script lang="ts">
   // Issue #612 (D-612-4, UI-SPEC "Tab Zeiten & Konten") - one row per person for the period:
   // Soll, Ist and the three saldo figures of the server's answer, searchable, sortable and paged,
-  // a card list instead of the table at 960 px and below. Pattern 3: every figure is the server's
+  // a card list instead of the table at 1220 px and below. Pattern 3: every figure is the server's
   // (minutes, formatted here); the team median comes from `$lib/reports/team-saldo` (#588 rule),
   // never from a sum of this component. It owns no URL and no navigation: the page hands in the
   // person link and decides what a click does.
@@ -66,10 +66,16 @@
   let pageSize = $state(25);
   let narrow = $state(false);
 
-  // The list replaces the table at the app's chrome breakpoint (ADD-6).
+  // The list replaces the table below TABLE_MIN_VIEWPORT_PX, not at the app's chrome breakpoint
+  // (960 px): the table with the saldo columns is about 920 px wide at its widest (name column at
+  // its 240 px cap), the sidebar and the page padding take about 300 px of the viewport, and
+  // between 961 and 1220 px the table therefore left the page sideways (found by the 1024 px
+  // route matrix of all-routes-overflow-843.spec.ts). The wrapper cannot scroll instead: it
+  // stays `overflow: visible` so the sticky header keeps its reference.
+  const TABLE_MIN_VIEWPORT_PX = 1220;
   $effect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 960px)");
+    const query = window.matchMedia(`(max-width: ${TABLE_MIN_VIEWPORT_PX}px)`);
     narrow = query.matches;
     const onChange = (e: { matches: boolean }) => {
       narrow = e.matches;

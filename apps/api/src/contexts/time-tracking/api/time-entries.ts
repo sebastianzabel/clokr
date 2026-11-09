@@ -46,7 +46,7 @@ import {
   activitySharesCreate,
 } from "../activity-shares"; // Issue #81 (D-05/D-06/D-20) — the one share validator and the nested-write builders
 import { getValidWorkedEntriesInRange } from "../facade/time-entries"; // Phase 79 (#79), D-07 — T1, the saldo's own entry set
-import { resolveClockEvent } from "../../../services/clock/resolver";
+import { resolveClockEvent, resolveBreakEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
 import {
@@ -1010,6 +1010,88 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     startTime: z.string().datetime(),
     endTime: z.string().datetime(),
   });
+  /**
+   * The write guard of a break on an entry — the ONE place for POST /:id/breaks and (Issue #596)
+   * POST /:id/break: the identical 404 for an unknown or foreign id (T-100-09, with the nested
+   * CROSS_TENANT_ACCESS_DENIED audit), owner or `time-entry:update:ZUGEWIESEN` with its scope, no
+   * locked entry, no travel entry. Sends the refusal itself and answers null.
+   */
+  async function loadEntryForBreakWrite(req: FastifyRequest, reply: FastifyReply, id: string) {
+    const user = req.user;
+    const entry = await app.prisma.timeEntry.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        employee: { select: { tenantId: true } },
+        // Issue #81 (D-05): the stored breaks and shares, for the check before the append.
+        breaks: { select: { startTime: true, endTime: true } },
+        activityShares: { select: { kind: true, minutes: true } },
+      },
+    });
+    // T-100-09 cross-tenant existence oracle (Issue #310): folded into one condition so an
+    // unknown id and a real id in a foreign tenant answer with the identical 404 — the previous
+    // two-branch shape (404 for unknown, 403 "Kein Zugriff" for foreign-tenant) let any
+    // authenticated user of any tenant probe whether an arbitrary id exists anywhere. The audit
+    // is nested so it fires ONLY when the row exists: an unknown id must write no AuditLog row,
+    // or the row count itself would reopen the oracle this guard just closed. This is a write
+    // route, and #310 names the missing audit as part of the finding — sibling `/break-status`
+    // already audits this same defect class, `PUT /:id` does not (mixed precedent in this file);
+    // structure copied from `avatars.ts`'s folded-condition + nested-audit pattern.
+    if (!entry || entry.employee.tenantId !== user.tenantId) {
+      if (entry) {
+        await app.audit({
+          userId: user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "TimeEntry",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+      }
+      void reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      return null;
+    }
+
+    // Only the entry's owner or a caller holding time-entry:update:ZUGEWIESEN may append breaks.
+    const breaksUpdateReach = await permissionReach(req, "time-entry:update");
+    if (breaksUpdateReach !== "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+      void reply.code(403).send({ error: "Kein Zugriff" });
+      return null;
+    }
+    if (breaksUpdateReach === null) {
+      void reply.code(403).send({ error: "Kein Zugriff" });
+      return null;
+    }
+    // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+    // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+    // entry already fetched above.
+    if (breaksUpdateReach === "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+      if (
+        !(await enforceTimeEntryScope(
+          app,
+          req,
+          reply,
+          entry,
+          "time-entry:update:ZUGEWIESEN",
+          "Eintrag nicht gefunden",
+        ))
+      ) {
+        return null;
+      }
+    }
+
+    // Locked months are immutable (audit-proof, see CLAUDE.md).
+    if (entry.isLocked) {
+      void reply.code(409).send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      return null;
+    }
+
+    // Issue #92 (D-06): a travel entry has no break.
+    if (entry.activityKind === "TRAVEL") {
+      void reply.code(400).send({ error: TRAVEL_SHAPE_MESSAGE, code: TRAVEL_SHAPE_CODE });
+      return null;
+    }
+    return entry;
+  }
+
   app.post("/:id/breaks", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
@@ -1018,74 +1100,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const body = appendBreakSchema.parse(req.body);
       const user = req.user;
 
-      const entry = await app.prisma.timeEntry.findFirst({
-        where: { id, deletedAt: null },
-        include: {
-          employee: { select: { tenantId: true } },
-          // Issue #81 (D-05): the stored breaks and shares, for the check before the append.
-          breaks: { select: { startTime: true, endTime: true } },
-          activityShares: { select: { kind: true, minutes: true } },
-        },
-      });
-      // T-100-09 cross-tenant existence oracle (Issue #310): folded into one condition so an
-      // unknown id and a real id in a foreign tenant answer with the identical 404 — the previous
-      // two-branch shape (404 for unknown, 403 "Kein Zugriff" for foreign-tenant) let any
-      // authenticated user of any tenant probe whether an arbitrary id exists anywhere. The audit
-      // is nested so it fires ONLY when the row exists: an unknown id must write no AuditLog row,
-      // or the row count itself would reopen the oracle this guard just closed. This is a write
-      // route, and #310 names the missing audit as part of the finding — sibling `/break-status`
-      // already audits this same defect class, `PUT /:id` does not (mixed precedent in this file);
-      // structure copied from `avatars.ts`'s folded-condition + nested-audit pattern.
-      if (!entry || entry.employee.tenantId !== user.tenantId) {
-        if (entry) {
-          await app.audit({
-            userId: user.sub,
-            action: "CROSS_TENANT_ACCESS_DENIED",
-            entity: "TimeEntry",
-            entityId: id,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
-        }
-        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
-      }
-
-      // Only the entry's owner or a caller holding time-entry:update:ZUGEWIESEN may append breaks.
-      const breaksUpdateReach = await permissionReach(req, "time-entry:update");
-      if (breaksUpdateReach !== "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
-        return reply.code(403).send({ error: "Kein Zugriff" });
-      }
-      if (breaksUpdateReach === null) {
-        return reply.code(403).send({ error: "Kein Zugriff" });
-      }
-      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
-      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
-      // entry already fetched above.
-      if (breaksUpdateReach === "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
-        if (
-          !(await enforceTimeEntryScope(
-            app,
-            req,
-            reply,
-            entry,
-            "time-entry:update:ZUGEWIESEN",
-            "Eintrag nicht gefunden",
-          ))
-        ) {
-          return;
-        }
-      }
-
-      // Locked months are immutable (audit-proof, see CLAUDE.md).
-      if (entry.isLocked) {
-        return reply
-          .code(409)
-          .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
-      }
-
-      // Issue #92 (D-06): a travel entry has no break.
-      if (entry.activityKind === "TRAVEL") {
-        return reply.code(400).send({ error: TRAVEL_SHAPE_MESSAGE, code: TRAVEL_SHAPE_CODE });
-      }
+      const entry = await loadEntryForBreakWrite(req, reply, id);
+      if (!entry) return;
 
       // Phase 380 (issue #380), owner decision Variante (b), 2026-09-28: an entry that already
       // carries a positive breakMinutes SUM but has no individual Break rows (legacy data or a
@@ -1158,7 +1174,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const allBreaks = await app.prisma.break.findMany({ where: { timeEntryId: id } });
       const totalBreakMin = Math.round(calcBreakMinutes(allBreaks));
       await app.prisma.timeEntry.update({
-        where: { id },
+        // tenant-scoped inline: the guard's fetch-then-compare lives in loadEntryForBreakWrite (#596)
+        where: { id, employee: { tenantId: user.tenantId } },
         // Phase 91 (BREAK-01): human appended a break -> CONFIRMED (runs after the isLocked
         // gate above, so locked entries never reach this point).
         data: { breakMinutes: totalBreakMin, breakStatus: "CONFIRMED" },
@@ -1190,6 +1207,55 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       });
 
       return { success: true, break: created, breakMinutes: totalBreakMin };
+    },
+  });
+
+  // POST /api/v1/time-entries/:id/break — Issue #596 (#845): start or end the RUNNING break of an
+  // open entry. The state lives on the server (`TimeEntry.breakStartedAt`), so a break started on
+  // one device is seen and ended on every other; the decision is the clock resolver's
+  // (`resolveBreakEvent`), the guard the one of POST /:id/breaks. The ended break is a Break row.
+  const breakActionSchema = z.object({ action: z.enum(["start", "end"]) });
+  const BREAK_CONFLICT_MESSAGES: Record<string, string> = {
+    NOT_CLOCKED_IN: "Für eine Pause musst du eingestempelt sein.",
+    ALREADY_ON_BREAK: "Die Pause läuft bereits.",
+    NOT_ON_BREAK: "Es läuft keine Pause.",
+    MONTH_LOCKED: "Eintrag ist gesperrt und kann nicht bearbeitet werden",
+    ACTIVITY_SHARES_EXCEED:
+      "Die Pause passt nicht zur Aufteilung der Tätigkeiten. Bitte den Eintrag bearbeiten.",
+  };
+  app.post("/:id/break", {
+    schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = breakActionSchema.parse(req.body);
+      const entry = await loadEntryForBreakWrite(req, reply, id);
+      if (!entry) return;
+      const resolution = await resolveBreakEvent(
+        app,
+        {
+          tenantId: req.user.tenantId,
+          employeeId: entry.employeeId,
+          entryId: entry.id,
+          action: body.action === "start" ? "START" : "END",
+          timestamp: new Date(),
+          actor: { type: "USER", userId: req.user.sub },
+        },
+        req,
+      );
+      if (resolution.kind === "CONFLICT") {
+        return reply.code(409).send({
+          error:
+            BREAK_CONFLICT_MESSAGES[resolution.reason] ??
+            "Die Pause konnte nicht gespeichert werden.",
+          code: resolution.reason,
+        });
+      }
+      return {
+        breakStartedAt: resolution.entry.breakStartedAt,
+        breakMinutes: resolution.entry.breakMinutes,
+        ...(resolution.kind === "BREAK_ENDED" ? { breakId: resolution.breakId } : {}),
+      };
     },
   });
 

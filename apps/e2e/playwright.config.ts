@@ -308,6 +308,7 @@ export default defineConfig({
         /mein-tag-845\.spec\.ts/,
         /heute-im-salon-846\.spec\.ts/,
         /verwalten-uebersicht-847\.spec\.ts/,
+        /shift-notices-850\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

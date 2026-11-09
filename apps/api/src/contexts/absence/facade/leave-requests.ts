@@ -504,6 +504,8 @@ export interface OwnLeaveActivityItem {
   id: string;
   status: LeaveRequestStatus;
   updatedAt: Date;
+  startDate: Date;
+  endDate: Date;
   leaveType: { name: string } | null;
 }
 
@@ -527,6 +529,9 @@ export async function getOwnLeaveActivity(
       id: true,
       status: true,
       updatedAt: true,
+      // Issue #845 (D-05): the period names the request in the history sentence
+      startDate: true,
+      endDate: true,
       leaveType: { select: { name: true } },
     },
   });

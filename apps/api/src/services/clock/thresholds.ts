@@ -40,3 +40,9 @@ export const MIN_MERGE_PREDECESSOR_DURATION_MS = 60_000;
 // forgotten clock-out must never silently close it with a fabricated, wrong `endTime` — exactly
 // what issue #376's "Vorgehen" section warns against.
 export const CROSS_DAY_OPEN_ENTRY_FALLBACK_HOURS = 24;
+
+/**
+ * Issue #596 (#845): a running break shorter than this leaves no Break row when it ends (a double
+ * tap on „Pause“ is no Ruhepause). A different concept from the clock-out debounce above.
+ */
+export const MIN_RUNNING_BREAK_MS = 60_000;
