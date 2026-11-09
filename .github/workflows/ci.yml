@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Every PR gets CI, whatever its base: redesign work stacks PRs on feature branches
+  # (e.g. a page PR on the navigation PR), and without this they ran no checks at all until
+  # retargeted to main. Branch protection and the merge queue still apply to main only.
   pull_request:
-    branches: [main, "release/**"]
   # The merge queue on main (since 09.11.2026, repo in the getclokr organisation) runs this
   # workflow on the queued merge commit. Every required check (test, codeql, secret-scan,
   # docker-gate) must therefore report for this event too, or a queued PR waits forever.
@@ -1290,6 +1292,10 @@ jobs:
   # Validates Dockerfiles compile and warms the GHA cache for faster builds on main.
   docker:
     needs: test
+    # Explicit, not the implicit `success()`: that one also looks at `test`'s own skipped needs. On a PR
+    # that cannot affect the API suite, `api-tests` and `api-coverage` are skipped by design and `test`
+    # passes — but `success()` then skipped this job and turned `docker-gate` red (Issue #884 follow-up).
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout (the gha build cache uses the runtime token)
