@@ -1927,6 +1927,10 @@ export async function settingsRoutes(app: FastifyInstance) {
         smtpFromEmail: cfg?.smtpFromEmail ?? null,
         smtpFromName: cfg?.smtpFromName ?? null,
         smtpSecure: cfg?.smtpSecure ?? false,
+        // Issue #847: whether mail can actually be delivered — the tenant's own SMTP OR the server's
+        // fallback, decided by the mailer's one rule (`getSmtpConfig`). A boolean only: no fallback
+        // value ever leaves the server.
+        deliveryReady: (await app.mailer.getSmtpConfig(tenantId)) !== null,
       };
     },
   });

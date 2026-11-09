@@ -1,5 +1,7 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
+  import Note from "$components/ui/Note.svelte";
+  import { mailWithoutDelivery, MAIL_WITHOUT_DELIVERY_TEXT } from "$lib/admin/setup-checks"; // Issue #847
   import { onMount } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
@@ -257,6 +259,8 @@
   let smtpFromName = $state("");
   let smtpSecure = $state(false);
   let smtpPasswordSet = $state(false);
+  // Issue #847: the server's answer whether mail can be delivered (tenant SMTP or server fallback)
+  let smtpDeliveryReady = $state<boolean | null>(null);
   let smtpSaving = $state(false);
   let smtpSaved = $state(false);
   let smtpError = $state("");
@@ -598,7 +602,9 @@
           smtpFromEmail: string | null;
           smtpFromName: string | null;
           smtpSecure: boolean;
+          deliveryReady?: boolean;
         }>("/settings/smtp");
+        smtpDeliveryReady = smtp.deliveryReady ?? null;
         smtpHost = smtp.smtpHost ?? "";
         smtpPort = smtp.smtpPort ?? 587;
         smtpUser = smtp.smtpUser ?? "";
@@ -1146,6 +1152,10 @@
       smtpPassword = "";
       smtpPasswordSet = true;
       smtpSaved = true;
+      // Issue #847: re-read whether mail can be delivered now (the warning follows the server)
+      smtpDeliveryReady =
+        (await api.get<{ deliveryReady?: boolean }>("/settings/smtp").catch(() => null))
+          ?.deliveryReady ?? smtpDeliveryReady;
       // Phase 109 — taken AFTER the smtpPassword reset above, so the cleared field is the
       // new baseline; the snapshot itself stores only whether a password was typed (T-109-22).
       smtpSnapshot = snap(
@@ -2476,6 +2486,11 @@
               <span class="switch-slider"></span>
             </label>
           </div>
+          {#if mailWithoutDelivery(emailFlags, smtpDeliveryReady === null ? null : { deliveryReady: smtpDeliveryReady })}
+            <div class="mail-warning" data-testid="mail-warning">
+              <Note tone="bad">{MAIL_WITHOUT_DELIVERY_TEXT}</Note>
+            </div>
+          {/if}
           {#if emailFlags.emailNotificationsEnabled}
             <h4 class="sys-subtitle" style="margin-top: 1rem;">Benachrichtigungstypen</h4>
             <div class="toggle-row">
@@ -2616,6 +2631,11 @@
 
         <!-- ── E-Mail / SMTP ────────────────────────────────────────────────── -->
         <Section title="E-Mail / SMTP" sub="Postausgangsserver konfigurieren" dirty={smtpDirty}>
+          {#if mailWithoutDelivery(emailFlags, smtpDeliveryReady === null ? null : { deliveryReady: smtpDeliveryReady })}
+            <div class="mail-warning" data-testid="mail-warning-smtp">
+              <Note tone="bad">{MAIL_WITHOUT_DELIVERY_TEXT}</Note>
+            </div>
+          {/if}
           {#if smtpError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{smtpError}</span>
@@ -3475,5 +3495,8 @@
   .bs-revision-alert {
     margin-top: 0.75rem;
     width: 100%;
+  }
+  .mail-warning {
+    margin: var(--s-3) 0;
   }
 </style>
