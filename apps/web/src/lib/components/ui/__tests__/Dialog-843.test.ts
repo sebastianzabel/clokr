@@ -181,6 +181,39 @@ describe("Dialog - inert page", () => {
     expect(portal.hasAttribute("inert")).toBe(false);
   });
 
+  it("never makes its own overlay inert (an inert overlay passes clicks through to the page)", async () => {
+    const app = fixture("app-root");
+    open();
+    await waitFor(() => expect(app.hasAttribute("inert")).toBe(true));
+    const scrim = document.querySelector(".scrim");
+    expect(scrim).toBeTruthy();
+    expect(scrim!.closest("[inert]")).toBeNull();
+    expect(screen.getByRole("dialog").closest("[inert]")).toBeNull();
+  });
+
+  // The e2e-ci finding of 843-35: bits-ui returns the focus to the opener while the dialog is torn
+  // down, which happens before the effect cleanup. jsdom does not enforce `inert` for focus(), so
+  // the opener's focus() call records whether the opener was still inert at that moment.
+  it("makes the page focusable again before the focus returns to the opener", async () => {
+    const app = fixture("app-root");
+    const opener = document.createElement("button");
+    app.appendChild(opener);
+    opener.focus();
+    const inertAtFocus: boolean[] = [];
+    const nativeFocus = opener.focus.bind(opener);
+    opener.focus = (options?: FocusOptions) => {
+      inertAtFocus.push(opener.closest("[inert]") !== null);
+      nativeFocus(options);
+    };
+    open();
+    await waitFor(() => expect(app.hasAttribute("inert")).toBe(true));
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(inertAtFocus.length).toBeGreaterThan(0));
+    expect(inertAtFocus).not.toContain(true);
+    expect(document.activeElement).toBe(opener);
+  });
+
   it("removes exactly what it set on close and keeps a node that was inert before", async () => {
     const app = fixture("app-root");
     const pre = fixture("pre-inert", { inert: "" });

@@ -75,13 +75,13 @@ function props(rows: PeriodRow[] | null, overrides: Record<string, unknown> = {}
   };
 }
 
-/** Stub `matchMedia` so the component sees a narrow (≤ 960 px) or a wide viewport. */
+/** Stub `matchMedia` so the component sees a narrow (≤ 1220 px, the table breakpoint) or a wide viewport. */
 function viewport(narrow: boolean) {
   const listeners: Array<(e: { matches: boolean }) => void> = [];
   vi.stubGlobal(
     "matchMedia",
     vi.fn().mockImplementation((query: string) => ({
-      matches: narrow && query.includes("960"),
+      matches: narrow && query.includes("1220"),
       media: query,
       addEventListener: (_: string, cb: (e: { matches: boolean }) => void) => listeners.push(cb),
       removeEventListener: (_: string, cb: (e: { matches: boolean }) => void) => {
@@ -511,7 +511,7 @@ describe("TimesAccountsTable - opening a person", () => {
   });
 });
 
-describe("TimesAccountsTable - narrow viewport (≤ 960 px): a list, no table", () => {
+describe("TimesAccountsTable - narrow viewport (≤ 1220 px): a list, no table", () => {
   it("renders no table, a sort select with the five options, and one ApprovalRow per person", () => {
     viewport(true);
     renderWithTheme(TimesAccountsTable, props([row("A"), row("B")]));
