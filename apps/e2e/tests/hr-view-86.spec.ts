@@ -488,7 +488,7 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
 
     // ── 6. AC-86-3: „Berichte“ is in the navigation and the reports open without exports ─────
     await page
-      .getByRole("navigation", { name: "Team" })
+      .getByRole("navigation", { name: "Verwalten" }) // #844 (Z-03): Berichte live under Verwalten
       .getByRole("link", { name: "Berichte" })
       .click();
     await expect(page).toHaveURL(/\/verwalten\/berichte/);

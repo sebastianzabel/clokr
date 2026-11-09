@@ -173,7 +173,8 @@
 <style>
   .app {
     display: grid;
-    grid-template-columns: var(--sidebar-w) 1fr;
+    /* #844: minmax(0, 1fr) — the header's crumb never widens the column past the viewport */
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
     grid-template-rows: var(--topbar-h) 1fr;
     grid-template-areas:
       "sidebar topbar"
@@ -229,7 +230,7 @@
 
   @media (max-width: 960px) {
     .app {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: var(--topbar-h) 1fr;
       grid-template-areas:
         "topbar"

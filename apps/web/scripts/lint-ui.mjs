@@ -82,7 +82,13 @@ const violations = [];
 // +layout.svelte is exempt. Redirect stubs (script body is only an
 // onMount(() => goto(...)) call with no template markup) are exempt.
 const REDIRECT_STUB_RE = /onMount\(\s*\(\s*\)\s*=>\s*goto\(/;
-const HEAD_PROVIDER_RE = /<(?:PageHead|ListDetail|SectionStack|ToolPage)\b/;
+// HubPage (#844) renders <PageHead> internally, like the admin templates.
+const HEAD_PROVIDER_RE = /<(?:PageHead|ListDetail|SectionStack|ToolPage|HubPage)\b/;
+// A page that renders another route's page component, whose <PageHead> names it (#844: Heute im Salon is the
+// dashboard file read at /team/heute until #846). The target must itself pass this rule.
+const RENDERS_ROUTE_PAGE = {
+  "apps/web/src/routes/(app)/team/heute/+page.svelte": "apps/web/src/routes/(app)/dashboard/+page.svelte",
+};
 function isRedirectStub(content) {
   const tplPart = content.replace(/<script[\s\S]*?<\/script>/g, "").trim();
   return tplPart === "" && REDIRECT_STUB_RE.test(content);
@@ -91,6 +97,8 @@ for (const file of listFiles(APP_ROUTES)) {
   if (!file.endsWith("+page.svelte")) continue;
   const content = readFileSync(file, "utf8");
   if (isRedirectStub(content)) continue;
+  const target = RENDERS_ROUTE_PAGE[relative(repoRoot, file)];
+  if (target !== undefined && HEAD_PROVIDER_RE.test(readFileSync(resolve(repoRoot, target), "utf8"))) continue;
   if (!HEAD_PROVIDER_RE.test(content)) {
     violations.push({
       rule: "page-head-required",

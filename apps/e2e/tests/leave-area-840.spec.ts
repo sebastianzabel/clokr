@@ -838,14 +838,14 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await page.goto("/team/leave?view=approvals");
     await page.waitForURL((u) => u.searchParams.get("tab") === "antraege");
     url = new URL(page.url());
-    expect(url.pathname).toBe("/team/leave");
+    expect(url.pathname).toBe("/team/abwesenheiten"); // #844: the new URL of /team/leave
     expect(url.searchParams.get("status")).toBe("PENDING");
 
     await page.goto(`/team/leave?section9=${section9Id}`);
     await page.waitForURL(/\/team\/aufgaben/);
-    expect(new URL(page.url()).pathname).toBe("/inbox");
+    expect(new URL(page.url()).pathname).toBe("/team/aufgaben"); // #844: the new URL of /inbox
     expect(
-      seen.some((u) => u.endsWith(`/inbox?section9=${section9Id}`)),
+      seen.some((u) => u.endsWith(`/team/aufgaben?section9=${section9Id}`)),
       `the redirect carried the case id (${seen.slice(-4).join(" | ")})`,
     ).toBe(true);
 
@@ -860,7 +860,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await page.goto(`/leave/planung?year=${year}`);
     await page.waitForURL(/\/ich\/abwesenheiten\?/);
     url = new URL(page.url());
-    expect(url.pathname).toBe("/leave");
+    expect(url.pathname).toBe("/ich/abwesenheiten"); // #844: the new URL of /leave
     expect(url.searchParams.get("tab")).toBe("planung");
   });
 

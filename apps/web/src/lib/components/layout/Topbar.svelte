@@ -434,6 +434,7 @@
     z-index: 1000;
     height: var(--topbar-h);
     min-height: var(--topbar-h);
+    min-width: 0;
   }
   .topbar-crumb {
     color: var(--text-3);
