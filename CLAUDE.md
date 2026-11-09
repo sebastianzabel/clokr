@@ -1161,6 +1161,14 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 ## Error Handling
 
 - Global error handler in `apps/api/src/app.ts` catches ZodErrors and converts them to `{ error: string, message: string, details: [] }` with HTTP 400
+- **Validation and duplicate answers are German, centrally (Issue #573).** Zod's DEFAULT texts come only from
+  `apps/api/src/utils/zod-german.ts` (`z.config({ customError })`, registered in `buildApp`; a schema's own message keeps
+  precedence). A 400 carries `details[]` = `{ path, field, code, message }` and a `message` summary that names fields by
+  German label (`FIELD_LABELS`) and NEVER by key; the keys go to `details[].path` and the info log. An unhandled Prisma
+  `P2002` answers 409 `{ error, code: "DUPLICATE" }` with the text of `DUPLICATE_MESSAGES`
+  (`apps/api/src/utils/duplicate-conflict.ts`, keyed by the unique index, never echoing a value), a `P2034` 409
+  `WRITE_CONFLICT`. A new unique index needs its entry (`duplicate-conflict-573.test.ts` fails otherwise); a response
+  with an English Zod default fails `api-error-messages-573.test.ts`. Never add a per-route Zod text mapping.
 - All other errors return `{ error: string }` with appropriate status code
 - German error messages for user-facing responses: `"Validierungsfehler"`, `"Interner Serverfehler"`
 - Return early with `reply.code(XXX).send({ error: "German message" })` — no `throw`
