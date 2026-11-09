@@ -105,6 +105,8 @@ Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `doc
 - UI labels and user-facing text: **German**
 - Code, comments, commit messages, docs: **English**
 - API descriptions (Swagger): English
+- User-facing texts address the reader with **du**; the binding vocabulary is `docs/glossar.md`, checked by
+  `pnpm --filter @clokr/web lint:ui-terms` (Issue #574)
 
 ## Context Boundaries (ADR 0001, ADR 0002)
 
@@ -935,6 +937,7 @@ Read these before modifying any page in `apps/web` — they are checked in, unli
 | `apps/web/scripts/lint-ui-classes.mjs`  | Which class names are allowed in the scoped primitive directories, and where that scope ends                                                      |
 | `docs/ADMIN_STRUCTURE.md §3.2.1`        | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02)                                                    |
 | `apps/web/src/lib/utils/chart-theme.ts` | The one chart style source — colours from tokens, tension 0, unit axis titles, zero line, chart kinds and their aria-labels (Issue #591)          |
+| `docs/glossar.md` | The binding vocabulary and the address form „du“ for every web-app text (Issue #574) |
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
 
