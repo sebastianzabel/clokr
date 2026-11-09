@@ -3,6 +3,8 @@
   the whole tenant, selected salons, or selected people. Rejections show the server's German text
   inside the dialog (D-08). A role holding tenant-only rights gets an explanation for a salon or
   person scope (D-03) — a hint, never a block; the API stays the authority.
+  Draft mode (Issue #580, D-580-03): with `onDraft` the dialog stores nothing — it hands the chosen
+  role and scope back (the create dialog posts them once the person exists).
 -->
 <script lang="ts">
   import Modal from "$components/ui/Modal.svelte";
@@ -33,6 +35,10 @@
     salonsLoaded: boolean;
     people: AssignablePerson[];
     onSaved: () => void;
+    /** Draft mode: receives the choice instead of saving it. */
+    onDraft?: (choice: { accessRoleId: string; scope: AssignmentScope }) => void;
+    /** Draft mode: the draft being edited, or null for a new one. */
+    draft?: { accessRoleId: string; scope: AssignmentScope } | null;
   }
 
   let {
@@ -46,7 +52,12 @@
     salonsLoaded,
     people,
     onSaved,
+    onDraft,
+    draft = null,
   }: Props = $props();
+
+  let draftMode = $derived(onDraft !== undefined);
+  let prefill = $derived(draftMode ? draft : assignment);
 
   type ScopeType = AssignmentScope["type"];
 
@@ -61,10 +72,11 @@
   // Reset the form each time the dialog opens, from the assignment being edited (if any).
   $effect(() => {
     if (!open) return;
-    roleId = assignment?.accessRoleId ?? "";
-    scopeType = assignment?.scope.type ?? "TENANT";
-    salonIds = assignment?.scope.type === "SALONS" ? [...assignment.scope.salonIds] : [];
-    employeeIds = assignment?.scope.type === "PERSONS" ? [...assignment.scope.employeeIds] : [];
+    const source = prefill;
+    roleId = source?.accessRoleId ?? "";
+    scopeType = source?.scope.type ?? "TENANT";
+    salonIds = source?.scope.type === "SALONS" ? [...source.scope.salonIds] : [];
+    employeeIds = source?.scope.type === "PERSONS" ? [...source.scope.employeeIds] : [];
     personFilter = "";
     errorText = null;
   });
@@ -105,6 +117,11 @@
 
   async function save() {
     if (!canSave) return;
+    if (onDraft) {
+      onDraft({ accessRoleId: roleId, scope: scope() });
+      open = false;
+      return;
+    }
     saving = true;
     errorText = null;
     try {
@@ -128,7 +145,7 @@
   }
 </script>
 
-<Modal bind:open eyebrow={personName} title={assignment ? "Zuweisung ändern" : "Rolle zuweisen"}>
+<Modal bind:open eyebrow={personName} title={prefill ? "Zuweisung ändern" : "Rolle zuweisen"}>
   <div class="assignment-form">
     {#if errorText}
       <div class="callout error" role="alert">{errorText}</div>
@@ -239,7 +256,7 @@
   {#snippet footer()}
     <button type="button" class="btn btn-ghost" onclick={() => (open = false)}>Abbrechen</button>
     <button type="button" class="btn btn-primary" disabled={!canSave} onclick={save}>
-      Speichern
+      {draftMode ? "Übernehmen" : "Speichern"}
     </button>
   {/snippet}
 </Modal>

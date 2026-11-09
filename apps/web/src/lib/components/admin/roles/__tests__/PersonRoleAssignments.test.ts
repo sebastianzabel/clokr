@@ -3,6 +3,7 @@
 // from assignment-label.ts. No person names in fixtures.
 vi.mock("$stores/auth", () => ({ authStore: { subscribe: () => () => {} } }));
 
+const apiGet = vi.fn();
 const apiPost = vi.fn();
 const apiPatch = vi.fn();
 const apiDelete = vi.fn();
@@ -19,7 +20,7 @@ vi.mock("$api/client", () => {
   return {
     ApiError,
     api: {
-      get: vi.fn(),
+      get: (...args: unknown[]) => apiGet(...args),
       post: (...args: unknown[]) => apiPost(...args),
       patch: (...args: unknown[]) => apiPatch(...args),
       delete: (...args: unknown[]) => apiDelete(...args),
@@ -180,5 +181,77 @@ describe("PersonRoleAssignments (Issue #580)", () => {
     const { container } = mount({ items: [item("a1")], allowGrant: false });
     expect(screen.queryByRole("button", { name: "Rolle zuweisen" })).toBeNull();
     expect(container.textContent ?? "").not.toMatch(/TENANT|SALONS|PERSONS|:ZUGEWIESEN/);
+  });
+});
+
+describe("PersonRoleAssignments — draft mode (create dialog, Issue #580 D-580-03)", () => {
+  const FIXED = [{ roleName: "Mitarbeiter", scope: { type: "TENANT" } }];
+
+  function mountDraft(props: Record<string, unknown> = {}) {
+    return renderWithTheme(PersonRoleAssignments, {
+      personName: "Neue Person",
+      drafts: [],
+      fixedRows: FIXED,
+      roles: [ROLE, SYSTEM],
+      mandantRoleIds: [],
+      salons: SALONS,
+      salonsLoaded: true,
+      people: PEOPLE,
+      canManage: true,
+      canReadRoles: true,
+      ...props,
+    });
+  }
+
+  function expectNoRequest() {
+    expect(apiGet).not.toHaveBeenCalled();
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(apiPatch).not.toHaveBeenCalled();
+    expect(apiDelete).not.toHaveBeenCalled();
+  }
+
+  it("shows the fixed row without buttons", () => {
+    apiGet.mockReset();
+    mountDraft();
+    const row = screen.getByText("Mitarbeiter").closest("li") as HTMLElement;
+    expect(within(row).getByText("Ganzes Unternehmen")).toBeInTheDocument();
+    expect(within(row).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("drafts, changes and removes a role without any request", async () => {
+    apiGet.mockReset();
+    mountDraft();
+    await fireEvent.click(screen.getByRole("button", { name: "Rolle zuweisen" }));
+    let dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByRole("button", { name: "Speichern" })).toBeNull();
+    await fireEvent.change(within(dialog).getByLabelText("Rolle"), {
+      target: { value: "r-probe" },
+    });
+    await fireEvent.click(within(dialog).getByRole("radio", { name: "Ausgewählte Salons" }));
+    await fireEvent.click(within(dialog).getByRole("checkbox", { name: "Salon Nord" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Übernehmen" }));
+    const draftRow = (await screen.findByText("Salons: Salon Nord")).closest("li") as HTMLElement;
+    expect(within(draftRow).getByText(/Probe-Rolle/)).toBeInTheDocument();
+
+    await fireEvent.click(within(draftRow).getByRole("button", { name: "Ändern" }));
+    dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("Rolle")).toHaveValue("r-probe");
+    expect(within(dialog).getByRole("radio", { name: "Ausgewählte Salons" })).toBeChecked();
+    await fireEvent.click(within(dialog).getByRole("radio", { name: "Ganzes Unternehmen" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Übernehmen" }));
+    await waitFor(() => expect(screen.queryByText("Salons: Salon Nord")).toBeNull());
+    expect(screen.getAllByText("Ganzes Unternehmen")).toHaveLength(2);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Entfernen" }));
+    await waitFor(() => expect(screen.getAllByText("Ganzes Unternehmen")).toHaveLength(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expectNoRequest();
+  });
+
+  it("without role-assignment:manage: fixed row visible, drafting disabled, the note shown", () => {
+    mountDraft({ canManage: false });
+    expect(screen.getByText("Mitarbeiter")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rolle zuweisen" })).toBeDisabled();
+    expect(screen.getByText(ASSIGN_RIGHT_REQUIRED_NOTE)).toBeInTheDocument();
   });
 });

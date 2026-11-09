@@ -4,6 +4,8 @@
   „Berechtigungen“ and the employee create dialog. Lists the assignments, grants, changes and revokes
   them through AssignmentDialog and a ConfirmDialog. Every label comes from $lib/roles/assignment-label.
   The API stays the authority; disabled buttons only mirror the caller's permissions.
+  Draft mode (`drafts` bound): the person does not exist yet (create dialog, D-580-03) — rows are
+  fixed rows plus local drafts; nothing is requested and onChanged is never called.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
@@ -13,6 +15,8 @@
   import {
     deleteRoleAssignment,
     type AccessRole,
+    type AssignmentDraft,
+    type AssignmentScope,
     type AssignablePerson,
     type RoleAssignment,
   } from "$lib/api/roles";
@@ -46,6 +50,10 @@
     permissionNote?: boolean;
     /** Rendered at the start of the head row (e.g. the person's name). */
     head?: Snippet;
+    /** Draft mode: the chosen-but-not-yet-stored assignments (bindable). */
+    drafts?: AssignmentDraft[];
+    /** Draft mode: rows shown first and never editable (the role the create API grants). */
+    fixedRows?: { roleName: string; scope: AssignmentScope }[];
   }
 
   let {
@@ -63,7 +71,34 @@
     allowGrant = true,
     permissionNote = true,
     head,
+    drafts = $bindable(),
+    fixedRows = [],
   }: Props = $props();
+
+  let draftMode = $derived(drafts !== undefined);
+  let editedDraft = $state<AssignmentDraft | null>(null);
+
+  function roleOf(id: string): AccessRole | undefined {
+    return roles.find((r) => r.id === id);
+  }
+
+  function openDraft(draft: AssignmentDraft | null) {
+    editedDraft = draft;
+    dialogAssignment = null;
+    dialogOpen = true;
+  }
+
+  function takeDraft(choice: { accessRoleId: string; scope: AssignmentScope }) {
+    const current = drafts ?? [];
+    const edited = editedDraft;
+    drafts = edited
+      ? current.map((d) => (d.key === edited.key ? { ...d, ...choice } : d))
+      : [...current, { key: crypto.randomUUID(), ...choice }];
+  }
+
+  function removeDraft(key: string) {
+    drafts = (drafts ?? []).filter((d) => d.key !== key);
+  }
 
   let dialogOpen = $state(false);
   let dialogAssignment = $state<RoleAssignment | null>(null);
@@ -122,7 +157,7 @@
         type="button"
         class="btn btn-ghost btn-sm person-roles-grant"
         disabled={!canEdit}
-        onclick={() => openDialog(null)}
+        onclick={() => (draftMode ? openDraft(null) : openDialog(null))}
       >
         Rolle zuweisen
       </button>
@@ -138,7 +173,50 @@
     <div class="callout error" role="alert">{errorText}</div>
   {/if}
 
-  {#if items.length === 0}
+  {#if draftMode}
+    {#if fixedRows.length === 0 && (drafts ?? []).length === 0}
+      <p class="form-hint person-roles-empty">{NO_ASSIGNMENT_LABEL}</p>
+    {:else}
+      <ul class="assignments-list">
+        {#each fixedRows as row, i (i)}
+          <li class="assignments-item">
+            <span class="assignments-role">{row.roleName}</span>
+            <span class="assignments-scope">{scopeLabel(row.scope, ctx)}</span>
+            <span class="assignments-actions"></span>
+          </li>
+        {/each}
+        {#each drafts ?? [] as draft (draft.key)}
+          <li class="assignments-item">
+            <span class="assignments-role">
+              {roleOf(draft.accessRoleId)?.name ?? ""}
+              {#if roleOf(draft.accessRoleId)?.isSystem}
+                <span class="chip chip-brand">{SYSTEM_ROLE_CHIP_LABEL}</span>
+              {/if}
+            </span>
+            <span class="assignments-scope">{scopeLabel(draft.scope, ctx)}</span>
+            <span class="assignments-actions">
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                disabled={!canEdit}
+                onclick={() => openDraft(draft)}
+              >
+                Ändern
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                disabled={!canManage}
+                onclick={() => removeDraft(draft.key)}
+              >
+                Entfernen
+              </button>
+            </span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  {:else if items.length === 0}
     <p class="form-hint person-roles-empty">{NO_ASSIGNMENT_LABEL}</p>
   {:else}
     <ul class="assignments-list">
@@ -186,6 +264,8 @@
   {salonsLoaded}
   {people}
   onSaved={notifyChanged}
+  onDraft={draftMode ? takeDraft : undefined}
+  draft={editedDraft}
 />
 
 <ConfirmDialog

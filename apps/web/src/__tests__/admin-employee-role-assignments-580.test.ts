@@ -84,3 +84,34 @@ describe("/admin/employees — the Rolle column (#580)", () => {
     expect(LIST).not.toContain("/role-assignments/role-names");
   });
 });
+
+describe("/admin/employees — create dialog (#580)", () => {
+  it("sends no role with the new person and has no role select", () => {
+    const payload = LIST.slice(
+      LIST.indexOf("const payload"),
+      LIST.indexOf("Object.assign(payload"),
+    );
+    expect(payload.length).toBeGreaterThan(200);
+    expect(payload).not.toMatch(/\brole:/);
+    expect(LIST).not.toMatch(/\bcRole\b|id="c-role"/);
+    expect(LIST).not.toContain("Administrator");
+  });
+
+  it("drafts further roles in the shared block, after the fixed default role", () => {
+    expect(LIST).toContain("bind:drafts={cDrafts}");
+    expect(LIST).toContain("fixedRows={CREATE_FIXED_ROWS}");
+    expect(LIST).toMatch(/roleName: CREATE_DEFAULT_ROLE_NAME, scope: \{ type: "TENANT" \}/);
+  });
+
+  it("posts the drafts for the created user and hands a refusal over to the tab", () => {
+    expect(LIST).toContain("postAssignmentDrafts(res.userId, drafts)");
+    expect(LIST).toContain("goto(berechtigungenTabHref(res.id))");
+  });
+
+  it("loads the role choices only with role-assignment:manage", () => {
+    const body = fnBody(LIST, "loadCreateRoleChoices");
+    const guard = body.indexOf("if (!canAssignRoles)");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(body.indexOf("listAssignablePeople("));
+  });
+});
