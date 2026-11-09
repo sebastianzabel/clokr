@@ -101,6 +101,16 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inNav: true,
     feature: "availability",
   },
+  // #594 (Phase 851): the own hours and vacation account with its derivation and the monthly records
+  {
+    href: "/ich/konto",
+    area: "ich",
+    label: "Konto",
+    icon: "chart",
+    width: "full",
+    requires: null,
+    inNav: true,
+  },
   // In the avatar menu (and the phone „Mehr“ sheet), not in the rail
   {
     href: "/ich/profil",

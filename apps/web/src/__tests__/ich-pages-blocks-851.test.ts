@@ -21,10 +21,11 @@ function webRoot(): string {
 }
 
 const ROOT = webRoot();
-const ich = APP_ROUTES.filter((r) => r.area === "ich" && r.file && r.file !== "/dashboard");
+const ich = APP_ROUTES.filter((r) => r.area === "ich" && r.file !== "/dashboard");
+// A page created after #844 has no `file`: it lives at its own URL.
 const pages = ich.map((r) => ({
   href: r.href,
-  file: `src/routes/(app)${r.file}/+page.svelte`,
+  file: `src/routes/(app)${r.file ?? r.href}/+page.svelte`,
 }));
 
 describe("Ich pages on the blocks (#851)", () => {
@@ -66,7 +67,8 @@ describe("Ich pages on the blocks (#851)", () => {
     expect(register).not.toContain('"#851"');
   });
 
-  it("has no Konto entry until its page exists (#594)", () => {
-    expect(APP_ROUTES.some((r) => r.href === "/ich/konto")).toBe(false);
+  it("Konto is in the rail of every signed-in person (#594, owner decision 09.11.2026)", () => {
+    const konto = APP_ROUTES.find((r) => r.href === "/ich/konto");
+    expect(konto).toMatchObject({ area: "ich", label: "Konto", requires: null, inNav: true });
   });
 });

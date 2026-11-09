@@ -70,6 +70,7 @@ describe("visibleNavSections — the one definition (#516, since #844 three area
       "/ich/zeiten",
       "/ich/abwesenheiten",
       "/ich/dienstplan",
+      "/ich/konto", // #594 (Phase 851)
     ]);
     const salon = hrefsOf(visibleNavSections({ permissions: p.SALON_MANAGER }, on));
     expect(salon).toContain("/team/verfuegbarkeit");

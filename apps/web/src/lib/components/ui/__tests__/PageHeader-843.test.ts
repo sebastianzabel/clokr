@@ -26,13 +26,14 @@ function normalise(html: string): string {
     .replace(/ class=""/g, "");
 }
 
-// Captured from the pre-delegate PageHead (see the file header).
+// Captured from the pre-delegate PageHead (see the file header); since Phase 851 (owner acceptance
+// 09.11.2026) without the accent rule and the eyebrow line.
 const LEGACY_PLAIN =
-  '<header class="page-head"><div class="page-head-text"><div class="brand-rule" aria-hidden="true"></div> <div class="eyebrow" translate="no">Mein Bereich</div> <h1 translate="no">Team-<em>Zeiten</em></h1> </div> </header>';
+  '<header class="page-head"><div class="page-head-text"><h1 translate="no">Team-<em>Zeiten</em></h1> </div> </header>';
 const LEGACY_ACCENT =
-  '<header class="page-head"><div class="page-head-text"><div class="brand-rule" aria-hidden="true"></div> <div class="eyebrow" translate="no">Mein Bereich</div> <h1 translate="no"><em>Urlaub</em> &amp; Abwesenheit</h1> </div> </header>';
+  '<header class="page-head"><div class="page-head-text"><h1 translate="no"><em>Urlaub</em> &amp; Abwesenheit</h1> </div> </header>';
 const LEGACY_SUB_ACTIONS =
-  '<header class="page-head"><div class="page-head-text"><div class="brand-rule" aria-hidden="true"></div> <div class="eyebrow" translate="no">E</div> <h1 translate="no">Zeiterfassung</h1> <p class="sub">Unterzeile</p></div> <div class="page-head-actions"><button>Neu</button></div></header>';
+  '<header class="page-head"><div class="page-head-text"><h1 translate="no">Zeiterfassung</h1> <p class="sub">Unterzeile</p></div> <div class="page-head-actions"><button>Neu</button></div></header>';
 
 describe("PageHeader - byte-compatible with the legacy PageHead", () => {
   it("plain title: autoAccent on the last token", () => {

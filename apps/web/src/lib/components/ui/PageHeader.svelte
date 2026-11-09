@@ -92,11 +92,10 @@
 
 {#snippet head(withTabs: boolean)}
   <header class="page-head" class:page-head--tabs={withTabs}>
+    <!-- Phase 851 (owner acceptance 09.11.2026, design concept § 3): no accent rule and no eyebrow
+         above the title; the title is 20 px / 600 and the accent word is no longer coloured. The
+         `eyebrow` and `accent` props stay accepted, so no caller changes. -->
     <div class="page-head-text">
-      <div class="brand-rule" aria-hidden="true"></div>
-      {#if eyebrow}
-        <div class="eyebrow" translate="no">{eyebrow}</div>
-      {/if}
       {#if headingLevel === 2}
         <h2 translate="no">{@render titleText()}</h2>
       {:else}
@@ -144,29 +143,12 @@
     min-width: 0;
   }
 
-  .brand-rule {
-    width: 42px;
-    height: 2px;
-    background: var(--brand);
-    margin-bottom: 14px;
-    border-radius: 1px;
-  }
-
-  .eyebrow {
-    font-family: var(--font-ui);
-    font-size: 14px;
-    color: var(--brand);
-    letter-spacing: 0.02em;
-    margin-bottom: 4px;
-  }
-
   .page-head :is(h1, h2) {
     font-family: var(--font-ui);
-    font-weight: 400;
-    font-size: clamp(28px, 3.4vw, 40px);
-    line-height: 1.05;
+    font-weight: 600;
+    font-size: var(--fs-h1);
+    line-height: 1.3;
     margin: 0;
-    letter-spacing: 0.005em;
     color: var(--text);
     /* A page title that is a user-entered name (a 200-character tenant name) wraps, it never widens the page. */
     overflow-wrap: anywhere;
@@ -174,15 +156,15 @@
 
   .page-head :is(h1, h2) :global(em) {
     font-style: normal;
-    color: var(--brand);
+    color: inherit;
   }
 
   .page-head .sub {
-    margin: 10px 0 0;
-    max-width: 560px;
+    margin: 4px 0 0;
+    max-width: 640px;
     color: var(--text-2);
-    font-size: 14px;
-    line-height: 1.55;
+    font-size: var(--fs-base);
+    line-height: 1.5;
     overflow-wrap: anywhere;
   }
 

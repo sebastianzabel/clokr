@@ -193,11 +193,7 @@ const RECIPES: Recipe[] = [
   })),
 
   // Eyebrows: brand-coloured lines on the page or the card they are placed on.
-  {
-    name: ".eyebrow (PageHeader)",
-    rules: [{ file: PAGE_HEADER, selector: ".eyebrow" }],
-    surfaces: ["bg", "card"],
-  },
+  // Phase 851: the PageHeader eyebrow is gone (owner acceptance 09.11.2026); its title is measured below.
   {
     name: ".serif-eyebrow",
     rules: [{ file: APP, selector: ".serif-eyebrow" }],
@@ -221,8 +217,9 @@ const RECIPES: Recipe[] = [
     surfaces: ["bg", "card"],
   },
   {
-    name: ".page-head em",
-    rules: [{ file: PAGE_HEADER, selector: ".page-head :is(h1, h2) :global(em)" }],
+    // Phase 851: the accent word inherits the title colour, so the title itself is the pair.
+    name: ".page-head title",
+    rules: [{ file: PAGE_HEADER, selector: ".page-head :is(h1, h2)" }],
     surfaces: ["bg", "card"],
   },
 
