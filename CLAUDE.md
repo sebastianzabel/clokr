@@ -832,7 +832,8 @@ FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()
 - **FIXED_SCHEDULE: `weeklyHours` = Σ `{day}Hours` on every write (Issue #848).**
   `contexts/platform/fixed-schedule-hours.ts` is the ONE place: `POST /employees` (which takes no
   day hours) derives them from `weeklyHours` over the resolved `workDays` (hundredths, remainder on
-  the last workday of the week; no `weeklyHours` = 8 h per workday, the old default);
+  the last workday of the week; no `weeklyHours` = 8 h per workday, the old default), and so does
+  the CSV import (over the column-default Mo–Fr);
   `PUT /settings/work/:employeeId` (an omitted `weeklyHours` takes the day sum) and the bulk apply
   (preview and apply) refuse a mismatch with 400 `WEEKLY_HOURS_MISMATCH` before any write. A
   write-path guard only — no reader changes, other types are never compared, and divergent rows

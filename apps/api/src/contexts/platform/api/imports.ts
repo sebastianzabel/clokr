@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { deriveFixedScheduleDayHours } from "../fixed-schedule-hours";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -34,6 +35,8 @@ import {
 import { auditRoleAssignmentChange, createdAssignmentAuditEntry } from "../role-assignment-audit";
 import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 
+/** Issue #848: the CSV carries no workdays; a row keeps the WorkSchedule column default. */
+const IMPORT_WORK_DAYS = [1, 2, 3, 4, 5] as const;
 const employeeRowSchema = z.object({
   email: z.string().email(),
   firstName: z.string().min(1),
@@ -272,6 +275,11 @@ export async function importRoutes(app: FastifyInstance) {
                 employeeId: emp.id,
                 type: data.scheduleType,
                 weeklyHours: data.weeklyHours,
+                // Issue #848: a FIXED_SCHEDULE row's day hours follow weeklyHours over the
+                // column-default workDays (Mo–Fr, the CSV carries none) instead of staying at Mo–Fr 8 h.
+                ...(data.scheduleType === "FIXED_SCHEDULE"
+                  ? deriveFixedScheduleDayHours(data.weeklyHours, IMPORT_WORK_DAYS)
+                  : {}),
                 monthlyHours: data.monthlyHours ?? null,
                 validFrom: new Date(data.hireDate),
               },

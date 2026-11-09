@@ -60,7 +60,7 @@ describe("Issue #848 — derivation and guard (pure)", () => {
   });
 });
 
-describe("Issue #848 — the three write paths and the Soll parity", () => {
+describe("Issue #848 — the write paths and the Soll parity", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
   let employeeId: string;
@@ -166,6 +166,30 @@ describe("Issue #848 — the three write paths and the Soll parity", () => {
       Number((JSON.parse(live.body) as { balanceHours: number }).balanceHours) * 60,
     );
     expect(liveMinutes).toBe(-sollSinceHire);
+  });
+
+  it("the CSV import writes day hours that add up to the imported weekly hours", async () => {
+    const uid = Date.now().toString(36);
+    const csv = `email;vorname;nachname;nr;eintrittsdatum;rolle;wochenstunden;passwort
+imp848-${uid}@test.de;Import;Teilzeit;IMP848-${uid};01.10.2026;EMPLOYEE;38.5;test1234`;
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/imports/employees",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { csv },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((JSON.parse(res.body) as { imported: number }).imported).toBe(1);
+    const ws = await app.prisma.workSchedule.findFirstOrThrow({
+      where: { employee: { employeeNumber: `IMP848-${uid}` } },
+    });
+    expect(Number(ws.weeklyHours)).toBe(38.5);
+    expect(
+      [ws.mondayHours, ws.tuesdayHours, ws.wednesdayHours, ws.thursdayHours, ws.fridayHours].map(
+        Number,
+      ),
+    ).toEqual([7.7, 7.7, 7.7, 7.7, 7.7]);
+    expect([ws.saturdayHours, ws.sundayHours].map(Number)).toEqual([0, 0]);
   });
 
   it("PUT /settings/work/:id refuses weeklyHours ≠ Σ day hours with a German 400", async () => {
