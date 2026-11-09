@@ -19,7 +19,7 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
   import { startVisiblePoll } from "$lib/dashboard/visible-poll";
-  import { AREA_LABELS } from "$lib/nav/routes";
+  import { AREA_LABELS, mayOpenPath } from "$lib/nav/routes";
   import { matchesRoute } from "$lib/nav/active-route";
 
   // Issue #844 (D-844-06/07): "me" = Ich › Mein Tag (the personal blocks), "team" = Team › Heute im Salon
@@ -1560,6 +1560,10 @@
     );
   }
 
+  const kontoHref = $derived(
+    mayOpenPath($authStore.user, "/ich/konto") ? "/ich/konto" : "/ich/zeiten",
+  );
+
   let kpiItems = $derived.by((): KpiItem[] => {
     const items: KpiItem[] = [];
     // Phase 76b (Issue #76), CR-01: `stats.overtime === null` = no overtime:read:EIGENE — no cell at all.
@@ -1580,7 +1584,8 @@
         value: f.value,
         unit: "h",
         explanation: saldoMonthsLine(ownOvertime, todayIso) ?? undefined,
-        derivationHref: "/ich/zeiten",
+        // The derivation lives on Ich › Konto (#851); until that page exists, the Zeiten page.
+        derivationHref: kontoHref,
         testId: "kpi-saldo",
       });
     } else {
@@ -2393,21 +2398,6 @@
      Each .card-animate carries a style="--card-idx: N" inline. */
   .dashboard :global(.card-animate) {
     animation-delay: calc(var(--card-idx, 0) * 60ms);
-  }
-  .weekly-total-wrap {
-    text-align: right;
-  }
-  .weekly-total {
-    font-size: 26px;
-    line-height: 1;
-    font-family: var(--font-ui);
-    font-weight: 400;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-  }
-  .weekly-total-target {
-    font-size: 11px;
-    color: var(--text-3);
   }
   .weekly-chart {
     display: grid;
