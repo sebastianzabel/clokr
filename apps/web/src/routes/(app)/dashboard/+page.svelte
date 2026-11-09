@@ -107,7 +107,6 @@
   import Chip from "$components/ui/Chip.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import {
-    dayGoalMinutes,
     saldoFigure,
     nextOwnShift,
     historySentences,
@@ -185,7 +184,8 @@
 
   // ── Types ──────────────────────────────────────────────────────────────────
   interface DashboardStats {
-    today: { workedHours: number; entries: number };
+    // Issue #596 (#845): sollMinutes = today's Soll from the account core (the day goal)
+    today: { workedHours: number; entries: number; sollMinutes?: number | null };
     // Issue #451 (D-06) — additive, through-yesterday pair (issue #438: today never counts);
     // absent on an older cached response, in which case the tile degrades to the previous
     // whole-week delta (see weekProgressDelta()'s own docblock).
@@ -341,15 +341,11 @@
   let breakMinutes = $state(0);
   let currentTime = $state(new Date());
 
-  // ── Open break (dashboard pause toggle) ──────────────────────────────────
-  // Open breaks are not persisted on the server (Break records are always
-  // closed segments — see CLAUDE.md "Break model"). We track the active
-  // break-start time in localStorage keyed by the active TimeEntry id so it
-  // survives page reloads. On "Pause beenden" we POST a complete Break
-  // segment (start + end) to /api/v1/time-entries/:id/breaks.
-  let breakStartedAt: Date | null = $state(null);
+  // ── Running break (Issue #596, #845) ─────────────────────────────────────
+  // The running break is a server state of the open entry (`breakStartedAt`, set and cleared by
+  // the clock resolver through POST /time-entries/:id/break), so it is the same on every device.
+  // A finished break is a Break row as before. Nothing is kept in the browser.
   let breakLoading = $state(false);
-  const OPEN_BREAK_STORAGE_KEY = "clokr.dashboard.openBreak";
 
   let stats: DashboardStats | null = $state(null);
   let teamWeek = $state<TeamWeek | null>(null);
@@ -417,6 +413,10 @@
   // The "Heutiger Eintrag" card reads the SAME entry the hero card describes
   // (Phase 115, issue #118 — the two used to be derived independently and disagreed).
   let todayEntry = $derived(day.entry);
+  let breakStartedAt = $derived.by((): Date | null => {
+    const raw = day.kind === "running" ? day.entry?.breakStartedAt : null;
+    return raw ? new Date(raw) : null;
+  });
   // Issue #70 (D-07, D-12): the entry count and the compact list exist only for a multi-salon tenant
   // (the clock-salon answer names a salon only there) with two or more entries today.
   let showEntryList = $derived(clockSalon?.fixedSalon != null && todayEntries.length >= 2);
@@ -1120,17 +1120,7 @@
       if (!clockedIn) {
         await performClockIn();
       } else if (activeEntryId) {
-        // If a break is open, close it first so the time gets recorded before
-        // we ask the server to clock out (otherwise the time would silently
-        // be lost when activeEntryId is cleared).
-        if (breakStartedAt) {
-          try {
-            await endOpenBreak();
-          } catch (err) {
-            toasts.error(err instanceof Error ? err.message : "Pause konnte nicht beendet werden");
-            return; // abort clock-out — user can retry
-          }
-        }
+        // Issue #596: a running break is closed by the server with the clock-out (resolver STOP).
         // Phase 76.2 D-03 — explicit generic; CONFLICT branches (and, since Phase 307 Plan 02,
         // DEBOUNCE_NOOP too) surface as thrown ApiError (HTTP 409), caught below.
         // Phase 129: no breakMinutes in the body — the server derives it from Break rows only.
@@ -1153,13 +1143,9 @@
           const breakFindingNotice = breakFindingSaveNotice(clockOutResponse.warnings);
           if (breakFindingNotice) toasts.warning(breakFindingNotice);
           // Phase 115 (issue #118): clockedIn / activeEntryId / clockStart are $derived now.
-          // They resolve to the closed state on their own once loadData() returns the closed
-          // row, and the open-break $effect then clears breakStartedAt.
+          // They resolve to the closed state on their own once loadData() returns the closed row.
           breakMinutes = 0;
         }
-        // Independent of the outcome above: this mirrors the break `endOpenBreak()` already
-        // closed server-side a few lines up, not whether the clock-out itself succeeded.
-        clearStoredOpenBreak();
       }
       await loadData();
     } catch (err) {
@@ -1312,127 +1298,43 @@
     }
   }
 
-  // ── Break toggle (Pause starten / Pause beenden) ─────────────────────────
-  // Toggle semantics: starting just records a local timestamp; ending POSTs
-  // the closed segment to the server. Disabled while not clocked in.
+  // ── Break toggle (Pause / Weiterarbeiten) — Issue #596 ───────────────────
+  // Start and end go to the server (POST /time-entries/:id/break); the state then comes back with
+  // the entry, so another device sees the same break. Acknowledged only after the server answered.
   async function handleBreakToggle() {
     if (!clockedIn || !activeEntryId || clockLoading) return;
     breakLoading = true;
+    const action = breakStartedAt ? "end" : "start";
     try {
-      if (breakStartedAt) {
-        // #843 (D-843-19): said after the break POST succeeded (endOpenBreak throws otherwise).
-        const endedAt = await endOpenBreak();
-        if (endedAt) toasts.success(breakEnded(clockTime(endedAt)));
-      } else {
-        const startedAt = startOpenBreak();
-        // #843 (D-843-19): local acknowledgement, the server-side pause is #596.
-        toasts.success(breakStarted(clockTime(startedAt)));
-      }
+      const res = await api.post<{ breakStartedAt: string | null; breakMinutes: number }>(
+        `/time-entries/${activeEntryId}/break`,
+        { action },
+      );
+      breakMinutes = res.breakMinutes;
+      const now = new Date();
+      toasts.success(
+        action === "start"
+          ? breakStarted(clockTime(res.breakStartedAt ?? now))
+          : breakEnded(clockTime(now)),
+      );
+      todayEntries = await api.get<ClockDayEntry[]>(
+        `/time-entries?from=${format(now, "yyyy-MM-dd")}&to=${format(now, "yyyy-MM-dd")}`,
+      );
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Pause fehlgeschlagen");
+      // another device may have changed the state: re-read it
+      try {
+        const now = new Date();
+        todayEntries = await api.get<ClockDayEntry[]>(
+          `/time-entries?from=${format(now, "yyyy-MM-dd")}&to=${format(now, "yyyy-MM-dd")}`,
+        );
+      } catch {
+        /* keep the shown state */
+      }
     } finally {
       breakLoading = false;
     }
   }
-
-  function startOpenBreak(): Date {
-    const startedAt = new Date();
-    breakStartedAt = startedAt;
-    persistOpenBreak();
-    return startedAt;
-  }
-
-  /** Returns the instant the break ended at, `null` when there was nothing to end. */
-  async function endOpenBreak(): Promise<Date | null> {
-    if (!breakStartedAt || !activeEntryId) return null;
-    const startedAt = breakStartedAt;
-    const endedAt = new Date();
-    // Guard against zero-length breaks (double-click): ensure the Break record
-    // is at least 60s long by anchoring on endedAt and shifting the START into
-    // the PAST when needed. We must never shift the END into the future — the
-    // server rejects future-end timestamps ("Pausenende darf nicht in der
-    // Zukunft liegen") and the local "now" is already at or after the server's
-    // "now" once the request round-trips.
-    //
-    // The shifted start is also clamped to clockStart so the break never lies
-    // before the entry's startTime (server validates that too).
-    let effectiveStart = startedAt;
-    if (endedAt.getTime() - startedAt.getTime() < 60_000) {
-      effectiveStart = new Date(endedAt.getTime() - 60_000);
-      if (clockStart && effectiveStart < clockStart) {
-        effectiveStart = clockStart;
-      }
-    }
-    const res = await api.post<{ breakMinutes: number }>(`/time-entries/${activeEntryId}/breaks`, {
-      startTime: effectiveStart.toISOString(),
-      endTime: endedAt.toISOString(),
-    });
-    breakMinutes = res.breakMinutes;
-    breakStartedAt = null;
-    clearStoredOpenBreak();
-    return endedAt;
-  }
-
-  function persistOpenBreak() {
-    if (typeof window === "undefined") return;
-    if (!activeEntryId || !breakStartedAt) return;
-    try {
-      localStorage.setItem(
-        OPEN_BREAK_STORAGE_KEY,
-        JSON.stringify({ entryId: activeEntryId, startedAt: breakStartedAt.toISOString() }),
-      );
-    } catch {
-      /* localStorage may be unavailable; ignore */
-    }
-  }
-
-  function clearStoredOpenBreak() {
-    if (typeof window === "undefined") return;
-    try {
-      localStorage.removeItem(OPEN_BREAK_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function restoreOpenBreak() {
-    if (typeof window === "undefined") return;
-    if (!activeEntryId) return;
-    try {
-      const raw = localStorage.getItem(OPEN_BREAK_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { entryId: string; startedAt: string };
-      if (parsed.entryId !== activeEntryId) {
-        // Stale entry from a previous clock-in cycle.
-        clearStoredOpenBreak();
-        return;
-      }
-      const startedAt = new Date(parsed.startedAt);
-      if (Number.isNaN(startedAt.getTime())) {
-        clearStoredOpenBreak();
-        return;
-      }
-      breakStartedAt = startedAt;
-    } catch {
-      clearStoredOpenBreak();
-    }
-  }
-
-  // Phase 115 (issue #118): activeEntryId is derived now, so the open-break restore that
-  // used to sit inside loadData()/pollDashboard() reacts to the id instead. `lastSeenEntryId`
-  // is a PLAIN let on purpose — making it $state would make this effect re-trigger itself.
-  let lastSeenEntryId: string | null = null;
-  $effect(() => {
-    const id = activeEntryId;
-    if (id === lastSeenEntryId) return;
-    lastSeenEntryId = id;
-    if (id) {
-      restoreOpenBreak();
-    } else {
-      breakStartedAt = null;
-      clearStoredOpenBreak();
-    }
-  });
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function fmtHours(hours: number): string {
@@ -1519,13 +1421,12 @@
 
   // ── Issue #845: the stage view model (D-02, D-03, D-845-01/02/08) ─────────────────────────────
   let todayIso = $derived(format(currentTime, "yyyy-MM-dd"));
-  let todayMyWeek = $derived(myWeekDays.find((d) => d.date === todayIso) ?? null);
-  let goalMin = $derived(
-    dayGoalMinutes(
-      myWeekScheduleType ?? (stats as DashboardStats | null)?.scheduleType,
-      todayMyWeek,
-    ),
-  );
+  // Issue #596 (#845): the day goal is today's Soll of the working-time account (its core, served by
+  // GET /dashboard), never a fixed 8 h; 0 or no answer = no goal today.
+  let goalMin = $derived.by((): number | null => {
+    const soll = (stats as DashboardStats | null)?.today.sollMinutes;
+    return typeof soll === "number" && soll > 0 ? soll : null;
+  });
   let pauseRunningMin = $derived(
     clockedIn && breakStartedAt
       ? Math.max(0, (currentTime.getTime() - (breakStartedAt as Date).getTime()) / 60_000)

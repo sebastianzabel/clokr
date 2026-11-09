@@ -572,6 +572,20 @@
       "validatedAt": null
     },
     {
+      "route": "POST /api/v1/time-entries/:id/break",
+      "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
+      "category": "probe",
+      "params": {
+        "id": "timeEntry"
+      },
+      "minimalBody": {
+        "action": "start"
+      },
+      "reason": "Issue #596 (#845): starts or ends the running break of an open entry. It shares the guard of POST /:id/breaks (`loadEntryForBreakWrite`): an unknown id and a real id in a foreign tenant answer the identical 404 {\"error\":\"Eintrag nicht gefunden\"}, the CROSS_TENANT_ACCESS_DENIED audit nested so it fires only when the row exists. minimalBody is required because breakActionSchema.parse(req.body) runs before the lookup.",
+      "ticket": null,
+      "validatedAt": null
+    },
+    {
       "route": "POST /api/v1/time-entries/:id/breaks",
       "file": "apps/api/src/contexts/time-tracking/api/time-entries.ts",
       "category": "probe",

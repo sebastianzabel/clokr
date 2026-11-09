@@ -653,6 +653,10 @@ model TimeEntry {
   startTime         DateTime           @db.Timestamptz
   endTime           DateTime?          @db.Timestamptz
   breakMinutes      Int                @default(0)
+  // Issue #596 (#845): start of the RUNNING break of an open entry, null otherwise. Set and cleared
+  // only by the clock resolver (services/clock); a finished break is a Break row as before, so the
+  // saldo and the § 4 evaluation never read this column.
+  breakStartedAt    DateTime?          @db.Timestamptz
   type              TimeEntryType      @default(WORK)
   source            TimeEntrySource    @default(MANUAL)
   note              String?

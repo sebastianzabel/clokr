@@ -404,6 +404,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // ── Soll-Stunden ──────────────────────────────────────────────────
 
       let weekSollMinutes = 0;
+      let todaySollMinutes: number | null = null;
       let monthSollMinutes = 0;
       // Issue #451 (D-06) — the to-date Soll/Ist pair (through yesterday, issue #438); stays
       // undefined (never a fabricated 0) for MONTHLY_HOURS and for a null computeWeekProgress
@@ -476,6 +477,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const weekProgress = await computeWeekProgress(app, employeeId, now);
         if (weekProgress) {
           weekSollMinutes = weekProgress.weekSollMinutes;
+          todaySollMinutes = weekProgress.todaySollMinutes;
           weekWorkedToDateHours = round(weekProgress.toDateWorkedMinutes / 60);
           weekTargetToDateHours = round(weekProgress.toDateSollMinutes / 60);
         }
@@ -597,7 +599,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
       }
 
       return {
-        today: { workedHours: round(todayMinutes / 60), entries: todayEntries.length },
+        // Issue #596 (#845): `sollMinutes` = today's Soll from the account core (the clock's day
+        // goal); null where the account answers no day question (MONTHLY_HOURS, exempt)
+        today: {
+          workedHours: round(todayMinutes / 60),
+          entries: todayEntries.length,
+          sollMinutes: todaySollMinutes,
+        },
         week: {
           workedHours: round(weekMinutes / 60),
           targetHours: round(weekSollMinutes / 60),
