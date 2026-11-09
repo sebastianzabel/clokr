@@ -1486,8 +1486,10 @@ async function scrimProblems(page: Page): Promise<string[]> {
     ),
   );
   return page.evaluate(() => {
+    // Since #843 the overlay is a SIBLING of the dialog content (both portaled into <body>), no
+    // longer its parent, so it is found by its own marker.
     const dialog = document.querySelector('[role="dialog"]');
-    const scrim = dialog?.parentElement;
+    const scrim = document.querySelector("[data-dialog-overlay]");
     if (!dialog || !scrim) return ["no open dialog"];
     const box = scrim.getBoundingClientRect();
     const problems: string[] = [];
