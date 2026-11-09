@@ -28,9 +28,10 @@ test.describe("Error Handling + UX Plausibility", () => {
     // is stubbed away by the `page` override of the `../fixtures` test.
     await page.goto("/settings");
 
-    const curPw = page.locator("#cur-pw");
-    const newPw = page.locator("#new-pw");
-    const confirmPw = page.locator("#confirm-pw");
+    // #851: the fields come from the FormField block (generated ids); found by their labels.
+    const curPw = page.getByLabel("Aktuelles Passwort", { exact: true });
+    const newPw = page.getByLabel("Neues Passwort", { exact: true });
+    const confirmPw = page.getByLabel("Passwort bestätigen", { exact: true });
 
     // A missing form must fail the test, never skip its body.
     await expect(curPw).toBeVisible();

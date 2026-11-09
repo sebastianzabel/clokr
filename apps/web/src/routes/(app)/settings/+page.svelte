@@ -6,8 +6,11 @@
   import { salonContext, roleNamesLabel } from "$stores/salon-context";
   import { toasts } from "$stores/toast";
   import { avatarVersion, bumpAvatarVersion } from "$stores/avatar";
-  import PageHead from "$components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
+  import AppearanceSettings from "$components/settings/AppearanceSettings.svelte";
   import PasswordStrength from "$components/ui/PasswordStrength.svelte";
   import PushSettings from "$components/settings/PushSettings.svelte";
   import ReminderSettings from "$components/settings/ReminderSettings.svelte";
@@ -26,6 +29,11 @@
     passwordRequireDigit: true,
     passwordRequireSpecial: true,
   });
+
+  // Issue #851 (D-851-02): who is signed in, as the page subtitle (formerly a row under the sections).
+  const profileSubtitle = $derived(
+    [$authStore.user?.email, roleNamesLabel($salonContext)].filter(Boolean).join(" · "),
+  );
 
   let passwordMismatch = $derived(confirmPassword.length > 0 && newPassword !== confirmPassword);
 
@@ -78,7 +86,7 @@
 
   async function changePassword() {
     if (newPassword !== confirmPassword) {
-      toasts.error("Passwörter stimmen nicht überein");
+      toasts.error("Die Passwörter stimmen nicht überein.");
       return;
     }
     saving = true;
@@ -87,7 +95,11 @@
       toasts.success("Passwort geändert");
       currentPassword = newPassword = confirmPassword = "";
     } catch (e: unknown) {
-      toasts.error(e instanceof Error ? e.message : "Fehler");
+      toasts.error(
+        e instanceof Error
+          ? e.message
+          : "Das Passwort ließ sich nicht ändern. Bitte versuche es noch einmal.",
+      );
     } finally {
       saving = false;
     }
@@ -109,9 +121,13 @@
       // the upload retried instead of surfacing as "Upload fehlgeschlagen (401)".
       await api.upload(`/avatars/${employeeId}`, formData);
       bumpAvatarVersion();
-      toasts.success("Avatar aktualisiert");
+      toasts.success("Profilbild aktualisiert");
     } catch (e: unknown) {
-      toasts.error(e instanceof Error ? e.message : "Upload fehlgeschlagen");
+      toasts.error(
+        e instanceof Error
+          ? e.message
+          : "Das Bild ließ sich nicht hochladen. Bitte versuche es noch einmal.",
+      );
     } finally {
       avatarUploading = false;
       // Reset the input so picking the same file again still triggers onchange
@@ -122,170 +138,180 @@
 
 <svelte:head><title>{pageLabel("/settings")} – Clokr</title></svelte:head>
 
-<div class="settings-page">
-  <PageHead
-    eyebrow="Ich"
-    title={pageLabel("/settings")}
-    accent="Profil"
-    sub="Profilbild und Passwort verwalten"
-  />
+<PageHeader title={pageLabel("/settings")} subtitle={profileSubtitle} />
 
-  <div class="settings-grid">
-    <!-- Avatar -->
-    <Card class="settings-card">
-      <h3 class="section-title">Profilbild</h3>
-      <div class="avatar-section">
-        <button
-          type="button"
-          class="avatar-wrapper"
-          onclick={openAvatarPicker}
-          disabled={avatarUploading}
-          aria-label="Profilbild ändern"
-          title="Profilbild ändern"
+<div class="profile-wrap">
+  <div class="profile-grid">
+    <div class="profile-col">
+      <Section title="Profilbild" sub="JPG, PNG oder WebP. Tippe auf das Bild, um es zu ändern.">
+        <div class="avatar-section">
+          <button
+            type="button"
+            class="avatar-wrapper"
+            onclick={openAvatarPicker}
+            disabled={avatarUploading}
+            aria-label="Profilbild ändern"
+            title="Profilbild ändern"
+          >
+            {#if avatarSrc}
+              <img src={avatarSrc} alt="" class="avatar-preview" width="96" height="96" />
+            {:else}
+              <span class="avatar-initials" aria-hidden="true">
+                {($authStore.user?.firstName ?? $authStore.user?.email?.[0] ?? "?")
+                  .charAt(0)
+                  .toUpperCase()}
+              </span>
+            {/if}
+            <span class="avatar-overlay" aria-hidden="true">
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><path
+                  d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+                /><circle cx="12" cy="13" r="4" /></svg
+              >
+            </span>
+          </button>
+          <input
+            bind:this={avatarFileInput}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onchange={uploadAvatar}
+            class="avatar-file-input"
+            aria-label="Profilbild hochladen"
+          />
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            onclick={openAvatarPicker}
+            disabled={avatarUploading}
+          >
+            {#if avatarUploading}<Spinner size={14} label="Bild wird hochgeladen" />{/if}
+            Foto ändern
+          </button>
+        </div>
+      </Section>
+
+      <Section title="Sicherheit" sub="Ändere hier dein Passwort.">
+        <form
+          onsubmit={(e) => {
+            e.preventDefault();
+            changePassword();
+          }}
+          class="pw-form"
         >
-          {#if avatarSrc}
-            <img src={avatarSrc} alt="Avatar" class="avatar-preview" width="120" height="120" />
-          {:else}
-            <div class="avatar-initials">
-              {($authStore.user?.firstName ?? $authStore.user?.email?.[0] ?? "?")
-                .charAt(0)
-                .toUpperCase()}
-            </div>
-          {/if}
-          <span class="avatar-overlay" aria-hidden="true">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              ><path
-                d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
-              /><circle cx="12" cy="13" r="4" /></svg
+          <FormField label="Aktuelles Passwort">
+            {#snippet field({ id, describedBy, invalid })}
+              <input
+                {id}
+                type="password"
+                bind:value={currentPassword}
+                required
+                class="form-input"
+                autocomplete="current-password"
+                aria-describedby={describedBy}
+                aria-invalid={invalid || undefined}
+              />
+            {/snippet}
+          </FormField>
+          <FormField label="Neues Passwort">
+            {#snippet field({ id, describedBy, invalid })}
+              <input
+                {id}
+                type="password"
+                bind:value={newPassword}
+                required
+                minlength={pwPolicy.passwordMinLength}
+                class="form-input"
+                autocomplete="new-password"
+                aria-describedby={describedBy}
+                aria-invalid={invalid || undefined}
+              />
+              <PasswordStrength password={newPassword} policy={pwPolicy} />
+            {/snippet}
+          </FormField>
+          <FormField
+            label="Passwort bestätigen"
+            error={passwordMismatch ? "Die Passwörter stimmen nicht überein." : undefined}
+          >
+            {#snippet field({ id, describedBy, invalid })}
+              <input
+                {id}
+                type="password"
+                bind:value={confirmPassword}
+                required
+                class="form-input"
+                autocomplete="new-password"
+                aria-describedby={describedBy}
+                aria-invalid={invalid || undefined}
+              />
+            {/snippet}
+          </FormField>
+          <div>
+            <button
+              type="submit"
+              class="btn btn-primary"
+              disabled={saving || !currentPassword || !newPassword || passwordMismatch}
             >
-          </span>
-        </button>
-        <input
-          bind:this={avatarFileInput}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          onchange={uploadAvatar}
-          class="avatar-file-input"
-        />
-        <p class="avatar-hint text-muted">
-          {avatarUploading ? "Hochladen…" : "Klicken zum Ändern"}
-        </p>
-      </div>
-    </Card>
+              {#if saving}<Spinner size={14} label="Passwort wird gespeichert" />{/if}
+              Passwort ändern
+            </button>
+          </div>
+        </form>
+      </Section>
 
-    <!-- Password -->
-    <Card class="settings-card">
-      <h3 class="section-title">Passwort ändern</h3>
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          changePassword();
-        }}
-        class="pw-form"
-      >
-        <div class="form-group">
-          <label class="form-label" for="cur-pw">Aktuelles Passwort</label>
-          <input
-            id="cur-pw"
-            type="password"
-            bind:value={currentPassword}
-            required
-            class="form-input"
-            autocomplete="current-password"
-          />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="new-pw">Neues Passwort</label>
-          <input
-            id="new-pw"
-            type="password"
-            bind:value={newPassword}
-            required
-            minlength={pwPolicy.passwordMinLength}
-            class="form-input"
-            autocomplete="new-password"
-          />
-          <PasswordStrength password={newPassword} policy={pwPolicy} />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="confirm-pw">Passwort bestätigen</label>
-          <input
-            id="confirm-pw"
-            type="password"
-            bind:value={confirmPassword}
-            required
-            class="form-input"
-            autocomplete="new-password"
-          />
-          {#if passwordMismatch}
-            <p class="field-error">Passwörter stimmen nicht überein</p>
-          {/if}
-        </div>
-        <button
-          type="submit"
-          class="btn btn-primary"
-          disabled={saving || !currentPassword || !newPassword || passwordMismatch}
-        >
-          {saving ? "Speichern…" : "Passwort ändern"}
-        </button>
-      </form>
-    </Card>
-  </div>
+      <AppearanceSettings />
+    </div>
 
-  <!-- WiFi presence: Meine Geräte (consent, coupled phones) -->
-  <WifiPresenceSettings />
+    <div class="profile-col">
+      <!-- Push notifications: per device, only offered when the instance has VAPID keys -->
+      <PushSettings />
 
-  <!-- Push notifications: per device, only offered when the instance has VAPID keys -->
-  <PushSettings />
+      <!-- Shift reminders (Issue #609): one switch per occasion the tenant enabled -->
+      <ReminderSettings />
 
-  <!-- Shift reminders (Issue #609): one switch per occasion the tenant enabled -->
-  <ReminderSettings />
-
-  <div class="settings-info">
-    <p class="text-muted"><strong>E-Mail:</strong> {$authStore.user?.email}</p>
-    <p class="text-muted">
-      <strong>Rolle:</strong>
-      {roleNamesLabel($salonContext) || "–"}
-    </p>
+      <!-- WiFi presence: Meine Geräte (consent, coupled phones) -->
+      <WifiPresenceSettings />
+    </div>
   </div>
 </div>
 
 <style>
-  .settings-page {
-    max-width: 800px;
+  /* Issue #851 (D-851-02): two columns from the 760 px container breakpoint; the route width decides the rest. */
+  .profile-wrap {
+    container-type: inline-size;
   }
-  .settings-grid {
+  .profile-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
-    margin-bottom: 1.5rem;
+    grid-template-columns: 1fr;
+    gap: var(--s-6);
   }
-  :global(.settings-card) {
-    padding: 1.5rem;
+  @container (min-width: 760px) {
+    .profile-grid {
+      grid-template-columns: 1fr 1fr;
+    }
   }
-  .section-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
+  .profile-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    min-width: 0;
   }
   .avatar-section {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--s-4);
   }
   .avatar-wrapper {
     position: relative;
-    width: 120px;
-    height: 120px;
+    width: 96px;
+    height: 96px;
     border-radius: 50%;
     cursor: pointer;
     padding: 0;
@@ -293,6 +319,7 @@
     border: 0;
     overflow: hidden;
     display: block;
+    flex-shrink: 0;
   }
   .avatar-wrapper:disabled {
     cursor: wait;
@@ -302,40 +329,37 @@
     outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
-  .avatar-preview {
-    width: 120px;
-    height: 120px;
+  .avatar-preview,
+  .avatar-initials {
+    width: 96px;
+    height: 96px;
     border-radius: 50%;
-    object-fit: cover;
-    border: 3px solid var(--line);
+    border: 1px solid var(--line);
     box-sizing: border-box;
-    display: block;
+    display: flex;
+  }
+  .avatar-preview {
+    object-fit: cover;
   }
   .avatar-initials {
-    width: 120px;
-    height: 120px;
-    border-radius: 50%;
     background: var(--brand-soft);
     color: var(--brand);
-    font-size: 2.5rem;
-    font-weight: 700;
-    display: flex;
+    font-size: 32px;
+    font-weight: 600;
     align-items: center;
     justify-content: center;
-    border: 3px solid var(--line);
-    box-sizing: border-box;
   }
   .avatar-overlay {
     position: absolute;
     inset: 0;
     border-radius: 50%;
-    background: rgba(0, 0, 0, 0.4);
+    background: color-mix(in srgb, var(--text) 45%, transparent);
     display: flex;
     align-items: center;
     justify-content: center;
     opacity: 0;
     transition: opacity 0.2s;
-    color: white;
+    color: var(--card);
     pointer-events: none;
   }
   .avatar-wrapper:hover .avatar-overlay,
@@ -345,28 +369,9 @@
   .avatar-file-input {
     display: none;
   }
-  .avatar-hint {
-    font-size: 0.8125rem;
-  }
   .pw-form {
     display: flex;
     flex-direction: column;
-    gap: 0.875rem;
-  }
-  .field-error {
-    color: var(--bad);
-    font-size: 0.8125rem;
-    margin-top: 0.25rem;
-  }
-  .settings-info {
-    display: flex;
-    gap: 2rem;
-    font-size: 0.875rem;
-  }
-
-  @media (max-width: 640px) {
-    .settings-grid {
-      grid-template-columns: 1fr;
-    }
+    gap: var(--s-4);
   }
 </style>
