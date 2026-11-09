@@ -1837,7 +1837,7 @@ textarea.form-input {
 
 /* ─── v1.5 component recipes ─────────────────────────────────────────
    Canonical class-level styles for the v1.5 design system. Consume tokens
-   from tokens.css directly (no --color-* prefix). Legacy v1.2 button/card
+   from tokens.css directly (no retired v1.2 prefixes). Legacy v1.2 button/card
    rules earlier in this file are SUPERSEDED by these recipes (later cascade
    wins). Sweeping legacy classes is the job of phases 29-32. */
 

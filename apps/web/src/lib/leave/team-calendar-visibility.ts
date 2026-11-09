@@ -144,12 +144,12 @@ function entryFor(code: CalendarTypeCode): LeaveTypeEntry | undefined {
   return LEAVE_TYPES.find((t) => t.code === code);
 }
 
-/** `var(--x)` for the bar background. */
+/** `var(<fill token>)` for the bar background. */
 function background(color: LeaveColor): string {
   return `var(${color.fill})`;
 }
 
-/** `var(--x-text, #ffffff)` for the bar text. The `#ffffff` fallback is today's hardcoded
+/** `var(<text token>, #ffffff)` for the bar text. The `#ffffff` fallback is today's hardcoded
  *  `.cal-chip { color: white }` — it keeps rendering unchanged until Plan 257-03 declares the
  *  foreground tokens, so no intermediate state is broken. */
 function textColor(color: LeaveColor): string {
