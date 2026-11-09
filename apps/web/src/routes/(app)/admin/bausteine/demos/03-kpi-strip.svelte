@@ -34,13 +34,13 @@
   ];
 </script>
 
-<div data-block="3" class="kpi-demo">
+<div data-block="3" class="strips-demo">
   <KpiStrip items={PLAIN} ariaLabel="Zeitkonto" />
   <KpiStrip items={BAND} band ariaLabel="Urlaub" />
 </div>
 
 <style>
-  .kpi-demo {
+  .strips-demo {
     display: flex;
     flex-direction: column;
     gap: var(--s-4);
