@@ -18,6 +18,8 @@
     withSalonId,
   } from "$lib/salons/page-scope"; // Issue #558 (D-02/D-03/D-04/D-13)
   import Card from "$components/ui/Card.svelte";
+  import PeriodPicker from "$components/ui/PeriodPicker.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
@@ -1497,47 +1499,19 @@
          (Buchungsmonat-Header auf /leave, /team/leave, /teamcal,
          /time-entries, /team/time-entries). -->
     <div class="week-header">
-      <div class="week-header-nav">
-        <button
-          type="button"
-          class="nav-btn"
-          aria-label="Vorherige Woche"
-          title="Vorherige Woche"
-          onclick={prevWeek}
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-          >
-        </button>
-        <div class="week-header-center">
-          <div class="serif-eyebrow week-header-eyebrow">Schichtwoche</div>
-          <div class="week-header-title">{fmtRange()}</div>
-        </div>
-        <button
-          type="button"
-          class="nav-btn"
-          aria-label="Nächste Woche"
-          title="Nächste Woche"
-          onclick={nextWeek}
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-          >
-        </button>
-        <button type="button" class="btn btn-ghost btn-sm week-header-today" onclick={goToToday}
-          >Heute</button
-        >
-      </div>
+      <!-- #843 D-843-11 (#648): the week header is the PeriodPicker block; the page owns no period arrows. -->
+      <PeriodPicker
+        label={fmtRange()}
+        eyebrow="Schichtwoche"
+        onPrev={prevWeek}
+        onNext={nextWeek}
+        onToday={goToToday}
+        zooms={["woche"]}
+        zoom="woche"
+        prevLabel="Vorherige Woche"
+        nextLabel="Nächste Woche"
+        testIdPrefix="shifts-week"
+      />
       <div class="week-header-actions">
         <!-- Phase 43-05: "Letzte Woche kopieren" is the primary action;
              "Aus Mustern generieren" stays as a secondary/ghost button for
@@ -1553,7 +1527,7 @@
 
     <div class="week-body">
       {#if loading}
-        <div class="state-msg">Lade Woche…</div>
+        <Skeleton shape="block" height="360px" />
       {:else if !week}
         {#if !weekRejected}
           <div class="state-msg">Keine Daten</div>
@@ -2142,48 +2116,20 @@
   :global(.week-card) {
     padding: 0;
   }
+  /* The PeriodPicker owns the inner spacing of the period part (18px 24px); the header only lays
+     the picker and the actions side by side. */
   .week-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
-    padding: 18px 24px;
+    padding: 0 24px 0 0;
     border-bottom: 1px solid var(--line);
     flex-wrap: wrap;
   }
-  .week-header-nav {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: nowrap;
-  }
-  .week-header-center {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 200px;
-    text-align: center;
-  }
-  .week-header-eyebrow {
-    font-size: 13px;
-    line-height: 1;
-    margin-bottom: 4px;
-  }
-  .week-header-title {
-    font-family: var(--font-ui);
-    font-weight: 400;
-    font-size: 26px;
-    line-height: 1.1;
-    letter-spacing: 0.005em;
-    color: var(--text);
-    text-transform: capitalize;
-    white-space: nowrap;
-  }
-  .week-header-today {
-    margin-left: 4px;
-  }
   .week-header-actions {
     display: flex;
+    margin-left: auto;
+    padding: 9px 0 9px 24px;
     gap: 8px;
     align-items: center;
     flex-wrap: wrap;
