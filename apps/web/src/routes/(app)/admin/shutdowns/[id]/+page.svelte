@@ -428,7 +428,7 @@
   .page-loading,
   .page-error {
     padding: var(--s-6);
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 14px;
   }
 
@@ -458,7 +458,7 @@
 
   .form-hint {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0.25rem 0 0;
   }
 
@@ -479,7 +479,7 @@
 
   .meta-dates {
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* ── Badges ── */
@@ -492,9 +492,9 @@
   }
 
   .badge-neutral {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    color: var(--text-2);
+    border: 1px solid var(--line);
   }
 
   /* ── Table ── */
@@ -516,13 +516,13 @@
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
-    border-bottom: 2px solid var(--border);
+    color: var(--text-2);
+    border-bottom: 2px solid var(--line);
   }
 
   .data-table td {
     padding: 0.75rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     vertical-align: middle;
   }
 
@@ -532,25 +532,25 @@
   }
 
   :global(.btn-danger:hover) {
-    background: var(--bg-subtle) !important;
+    background: var(--sunk) !important;
   }
 
   /* ── Alert ── */
   .alert {
     padding: 0.75rem 1rem;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     margin-bottom: 1rem;
     font-size: 0.875rem;
   }
 
   .alert-error {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--bad);
     border: 1px solid var(--bad);
   }
 
   .text-muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   @media (max-width: 640px) {

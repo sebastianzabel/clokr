@@ -94,7 +94,7 @@
 <style>
   .sa-detail-skeleton {
     height: 160px;
-    border-radius: var(--r-lg);
+    border-radius: var(--r-card);
   }
 
   .sa-back {
