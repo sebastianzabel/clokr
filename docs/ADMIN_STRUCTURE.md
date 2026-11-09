@@ -795,6 +795,15 @@ considered and rejected.
   is additionally only legal on the 1st of a month (`MONTH_FIRST_ERROR`,
   `apps/api/src/contexts/platform/month-first-date.ts`).
 
+**Dialog actions (Issue #580).** Granting, changing and revoking a role assignment happens in the
+assignment's own dialog (`AssignmentDialog`, the revoke `ConfirmDialog` of
+`PersonRoleAssignments`) and saves on that dialog's confirm — an operation, neither an instant
+control nor a field of a form group. The Section that hosts `PersonRoleAssignments` therefore has
+no footer and no dirty marker (`admin/employees/[id]` „Rollen“, `/admin/roles` „Zuweisungen“).
+The create dialog collects further assignments as drafts and posts them through the same API
+once the person exists; drafts are modal state like every other field of that dialog, so the
+employee list stays outside the unsaved registry.
+
 **Instant-save handler shape.** `toggleWifi()`
 (`apps/web/src/routes/(app)/settings/+page.svelte:113-125`) is the reference: `await` the
 request, write back the _server's_ value, then `toasts.success(...)`; in `catch`, revert the

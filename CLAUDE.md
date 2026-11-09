@@ -1815,7 +1815,7 @@ to new leave audit rows. Since Release B (#641) the column `User.role` and the P
 longer exist (migration `*_drop_user_role`; the rollback to an image below v1.18.0 is data-preserving and rehearsed —
 recreate type and column with the default, delete the `_prisma_migrations` row, see
 `docs/migrations.md` „Phase 641“, step 5; a `pg_dump` restore is only the fallback): the role lives only in stored role assignments. The requested role
-of the employee form, `POST /employees` and the CSV import (the API contract stays
+of `POST /employees` and the CSV import (the web form sends no role since #580; the API contract stays
 `"ADMIN" | "MANAGER" | "EMPLOYEE"`) is the type `SystemRoleName` of
 `apps/api/src/contexts/platform/system-role-assignment.ts` and only ever becomes a stored TENANT
 assignment; the employee responses serve the DERIVED `user.role` (`deriveFormRole()`, `null` without an
@@ -1857,6 +1857,16 @@ a hit is converted, never excepted.
 
 ### Role management UI and the admin area (Issue #83)
 
+- **Roles are assigned in one way (Issue #580).** The building block
+  `lib/components/admin/roles/PersonRoleAssignments.svelte` (role + scope, several assignments) is used by
+  `/admin/roles` „Zuweisungen“, the employee tab „Berechtigungen“ and the create dialog (draft mode). The
+  wording lives only in `apps/web/src/lib/roles/assignment-label.ts` (guard
+  `role-assignment-wording-one-place-580.test.ts`); role names come only from the stored roles (the
+  administrator role reads „Admin“ everywhere). The create dialog sends no `role` (API default „Mitarbeiter“
+  for the whole company; the API field stays for the CSV import and API clients); its drafts go through
+  `POST /role-assignments` after the 201 (`lib/roles/assignment-drafts.ts`), a refusal keeps the person and
+  opens `/admin/employees/<id>#berechtigungen`. Without `role-assignment:manage` nothing is requested (no read
+  path exists without it). Escape closes only the top-most Modal.
 - **Permission labels live once, on the server.** `contexts/platform/permission-labels.ts` holds the
   German heading per resource (the `docs/permissions.md` headings) and the German label per catalog
   key; `GET /api/v1/roles/permission-catalog` (`role:read`) serves them. `permission-labels.test.ts`
