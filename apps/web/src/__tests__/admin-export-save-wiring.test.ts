@@ -7,10 +7,11 @@
 //
 // What this pins (T-109-38):
 // - D-01: `saveDatev` (the DATEV configuration section) writes only via its section button.
-// - The `_gOtherFields` spread plus the exact `datev*` payload keys is the known N-09
-//   lost-update spread, deliberately NOT touched by this phase — the test pins it so a later
-//   plan neither widens nor removes it accidentally.
-// - `saveDatev` is a provable no-op after a failed `loadDatev` (`if (!_gOtherFields) return;`) —
+// - The payload carries exactly the `datev*` keys and no spread of the loaded settings. The
+//   former `_gOtherFields` spread was the known N-09 lost-update race (every save wrote the whole
+//   configuration back from the load-time copy); Issue #878 removed it, and this file now pins
+//   its absence (`settings-own-fields-878.test.ts` pins the exact key set of every save).
+// - `saveDatev` is a provable no-op after a failed `loadDatev` (`if (!datevLoaded) return;`) —
 //   this is the WR-01 shape plan 109-13 must gate `snapshotsReady` around.
 // - `taxOffice` is never persisted — it is a download parameter, not a setting — so no
 //   `dirty=` marker belongs on that Section.
@@ -99,9 +100,9 @@ describe("D-01 — the DATEV Lohnarten form saves only on its section button", (
 });
 
 describe("saveDatev payload census", () => {
-  it("spreads _gOtherFields and carries exactly the four datev* keys", () => {
+  it("carries exactly the six datev* keys and spreads nothing (Issue #878)", () => {
     const body = fnBody("async function saveDatev");
-    expect(body).toContain("..._gOtherFields");
+    expect(body).not.toContain("...");
     // Isolate the api.put(...) payload object literal itself — a naive `datev[A-Za-z]+` scan
     // over the whole function body also matches `datevSaving`/`datevError`/`datevSaved`
     // (the function's own local $state flags), which are not payload keys.
@@ -139,12 +140,13 @@ describe("saveDatev payload census", () => {
 });
 
 describe("saveDatev is a no-op after a failed load", () => {
-  it("saveDatev bails out when _gOtherFields is still null", () => {
-    expect(fnBody("async function saveDatev")).toContain("if (!_gOtherFields) return;");
+  it("saveDatev bails out while the settings are not loaded", () => {
+    expect(fnBody("async function saveDatev")).toContain("if (!datevLoaded) return;");
   });
 
-  it("loadDatev is the only place _gOtherFields is populated", () => {
-    expect(fnBody("async function loadDatev")).toContain("_gOtherFields = cfg");
+  it("loadDatev is the only place datevLoaded is set", () => {
+    expect(fnBody("async function loadDatev")).toContain("datevLoaded = true");
+    expect(PAGE.match(/datevLoaded = true/g)).toHaveLength(1);
   });
 
   // With the load failed, the four number inputs still show their defaults but the button
@@ -225,10 +227,11 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/export", 
     expect(PAGE).not.toContain('markUnsaved("admin-export", datevDirty)');
   });
 
-  it("snapshotsReady = true sits inside loadDatev's try, after _gOtherFields = cfg, never in finally", () => {
+  it("snapshotsReady = true sits inside loadDatev's try, after datevLoaded = true, never in finally", () => {
     const body = fnBody("async function loadDatev");
-    const gOtherPoint = body.indexOf("_gOtherFields = cfg");
+    const gOtherPoint = body.indexOf("datevLoaded = true");
     const readyPoint = body.indexOf("snapshotsReady = true");
+    expect(gOtherPoint).toBeGreaterThan(-1);
     expect(readyPoint).toBeGreaterThan(gOtherPoint);
     expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
   });
@@ -253,9 +256,10 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/export", 
     expect(exportKonfigSlice).not.toContain("unsaved-hint");
   });
 
-  it("the _gOtherFields spread is untouched", () => {
+  it("no copy of the loaded settings is sent (Issue #878, N-09)", () => {
     const body = fnBody("async function saveDatev");
-    expect(body).toContain("..._gOtherFields");
+    expect(body).not.toContain("...");
+    expect(PAGE).not.toContain("_gOtherFields");
     const datevKeys = new Set(body.match(/datev[A-Za-z]+/g) ?? []);
     expect(
       [...datevKeys].filter((k) =>

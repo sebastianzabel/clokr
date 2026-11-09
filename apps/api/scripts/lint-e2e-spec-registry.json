@@ -200,6 +200,11 @@
       "file": "apps/e2e/tests/all-routes-overflow-843.spec.ts",
       "category": "in-ci",
       "reason": "AC-5 / #575 / D-843-09 (Phase 843) proof that no route of the app scrolls horizontally on a phone: it reads apps/e2e/fixtures/route-register-843.json (one entry per +page.svelte, kept complete by the web vitest routes-overflow-register-843) and visits every non-skipped route at 360, 390, 1024 and 1440 px, tenant routes as the fixture tenant admin (dynamic ones with an employee, salon, shutdown or audit entry created through the API, the support-access detail through a page.route mock of its one GET), the /betreiber console through the shared operator API mock of helpers/operator-api-mock.ts. Per route and width it asserts that the page head (or the registered anchor) is visible on the requested path, that document.documentElement.scrollWidth <= innerWidth and that measurePageOverflow() names no unclipped element beyond the viewport, and it prints route, width and offenders on failure. Redirect-only pages are skipped with a registered reason. Needs the running stack with the tenant fixture and no seed; CI (the e2e-ci project, plan 843-34) is the arbiter, not a local run."
+    },
+    {
+      "file": "apps/e2e/tests/shift-notices-850.spec.ts",
+      "category": "in-ci",
+      "reason": "Issue #850 browser proof of the shift planning wording: test 1 plans a shift for a fresh person and approves a vacation over that day through the API (the approval marks the shift, Phase 43-04), then /shifts/conflicts shows ONE notice row with the German date, the person, the reason and the action „Schicht behalten“, no ISO date and no developer word in the list, the explanation opens behind (i), and the action clears the mark (POST /shifts/:id/restore) so the row leaves the list. Test 2: the Planungsbedarf week label reads „KW n · …“. Plus two Sichtbarkeits-Durchläufe (Issue #710: notice row with action and opened explanation; the Planungsbedarf week label) at 1280/390/360 px light and dark (12 tests). Tenant fixture only, no seed; no date dependency beyond the clock: the day is the second Wednesday of March next year (no public holiday in any Bundesland) and the page range is set to that month."
     }
   ]
 }

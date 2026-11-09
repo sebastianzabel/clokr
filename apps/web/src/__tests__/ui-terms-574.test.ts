@@ -18,6 +18,7 @@ type Finding = { file: string; line: number; term: string; text: string };
 const ROUTE = "src/routes/(app)/dashboard/+page.svelte";
 const LEAVE_COMPONENT = "src/lib/components/leave/Example.svelte";
 const MODULE = "src/lib/example/labels.ts";
+const SHIFTS = "src/routes/(app)/shifts/conflicts/+page.svelte";
 
 const termsOf = (file: string, source: string): string[] =>
   (scanSource(file, source) as Finding[]).map((f) => f.term);
@@ -37,6 +38,10 @@ const POSITIVE: Record<string, { file?: string; source: string }> = {
   mandant: { source: `<p>Einstellungen des Mandanten</p>` },
   phorest: { file: LEAVE_COMPONENT, source: `<a href="/x">In Phorest öffnen</a>` },
   "sie-form": { source: `<p>Bitte prüfen Sie die Angaben.</p>` },
+  // Issue #850 — shift-planning jargon, checked only in the shift planning area
+  flag: { file: SHIFTS, source: `<p>Schichten mit Konflikt-Flag</p>` },
+  generator: { file: SHIFTS, source: `<p>Der Generator hat sie entfernt.</p>` },
+  "audit-spur": { file: SHIFTS, source: `<p>Eine SHIFT-Audit-Spur wird erzeugt.</p>` },
 };
 
 describe("lint-ui-terms: every forbidden term is detected", () => {
@@ -137,6 +142,18 @@ describe("lint-ui-terms: area scoping", () => {
   });
   it("allows Mandant on the DATEV export page", () => {
     expect(termsOf("src/routes/(app)/admin/export/+page.svelte", mandant)).toEqual([]);
+  });
+  it("checks the shift-planning terms only in the shift planning area (Issue #850)", () => {
+    const text = `<p>Generator setzt ein Flag und eine Audit-Spur.</p>`;
+    expect(termsOf("src/routes/(app)/admin/system/+page.svelte", text)).toEqual([]);
+    expect(
+      termsOf("src/lib/shifts/planning-week.ts", `export const a = "Flag gesetzt hier";`),
+    ).toContain("flag");
+    expect(termsOf("src/routes/(app)/shifts/+page.svelte", text).sort()).toEqual([
+      "audit-spur",
+      "flag",
+      "generator",
+    ]);
   });
   it("reports Mandant in any other admin route", () => {
     expect(termsOf("src/routes/(app)/admin/system/+page.svelte", mandant)).toContain("mandant");

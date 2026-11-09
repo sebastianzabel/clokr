@@ -45,7 +45,10 @@
   let datevSaved = $state(false);
   let datevError = $state("");
   // Hold the full /settings/work payload so we don't partial-overwrite on save.
-  let _gOtherFields: Record<string, unknown> | null = $state(null);
+  // Issue #878: the DATEV save sends only its own fields. This flag only says that the settings
+  // were loaded; the former copy of the whole configuration was written back on every save and
+  // overwrote changes saved in the meantime (another tab, another person) with the old values.
+  let datevLoaded = $state(false);
 
   // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
   function snap(...values: unknown[]): string {
@@ -66,7 +69,7 @@
 
   // Gate the registration on "the baseline has been taken" (WR-01). loadDatev swallows its error
   // ("non-blocking: keep defaults"), and saveDatev then provably cannot write at all
-  // (`if (!_gOtherFields) return;`) — a "Nicht gespeichert" marker on a page whose save button is
+  // (`if (!datevLoaded) return;`) — a "Nicht gespeichert" marker on a page whose save button is
   // a no-op would be a lie, and the guard would trap the user on it.
   let snapshotsReady = $state(false);
 
@@ -92,7 +95,7 @@
       // unusable placeholder Issue #256 removed.
       datevBeraterNr = typeof cfg.datevBeraterNr === "number" ? cfg.datevBeraterNr : null;
       datevMandantenNr = typeof cfg.datevMandantenNr === "number" ? cfg.datevMandantenNr : null;
-      _gOtherFields = cfg as Record<string, unknown>;
+      datevLoaded = true;
       datevSnapshot = snap(
         datevBeraterNr,
         datevMandantenNr,
@@ -108,13 +111,12 @@
   }
 
   async function saveDatev() {
-    if (!_gOtherFields) return;
+    if (!datevLoaded) return;
     datevSaving = true;
     datevError = "";
     datevSaved = false;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
         datevNormalstundenNr,
         datevUrlaubNr,
         datevKrankNr,
@@ -339,7 +341,7 @@
           <button
             class="btn btn-primary"
             onclick={saveDatev}
-            disabled={datevSaving || !_gOtherFields}
+            disabled={datevSaving || !datevLoaded}
           >
             {datevSaving ? "Speichert…" : "Speichern"}
           </button>
