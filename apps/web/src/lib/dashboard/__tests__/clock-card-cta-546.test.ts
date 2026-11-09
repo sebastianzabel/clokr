@@ -85,7 +85,8 @@ const BUTTONISH = /(^|[\s>+~(,])(button|\.btn(-primary)?|\.stage-actions)\b/;
 
 describe("clock buttons (Issue #546) - markup", () => {
   it("parses real CSS and finds the stage buttons (anti-vacuity)", () => {
-    expect(PAGE_DECLS.length).toBeGreaterThan(200);
+    // floor: ~180 declarations after #846 removed the chart and saldo-card CSS (layout only now)
+    expect(PAGE_DECLS.length).toBeGreaterThan(120);
     expect(STAGE_DECLS.length).toBeGreaterThan(5);
     expect(BUTTONS.length).toBeGreaterThanOrEqual(3);
   });

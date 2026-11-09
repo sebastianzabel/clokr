@@ -28,12 +28,6 @@ const DASHBOARD = readRouteFile(
   "src/routes/(app)/dashboard/+page.svelte",
 );
 
-// Issue #591: the chart series are built here, no longer inline in the page.
-const TEAM_CHARTS = readRouteFile(
-  "../lib/dashboard/team-charts.ts",
-  "src/lib/dashboard/team-charts.ts",
-);
-
 /** The body of `function <name>(` up to the next top-level function or section comment. */
 function functionBody(name: string): string {
   const start = DASHBOARD.indexOf(`function ${name}(`);
@@ -58,8 +52,15 @@ describe("Issue #84 — the Team block follows the salon context through team-vi
   });
 
   it("D-07/D-08: the three team figures are requested from the new endpoints with the filter", () => {
-    expect(functionBody("loadTeamCharts")).toContain(
-      'withSalonId("/dashboard/team-trend?months=6", filter)',
+    // Issue #846: the team trend feeds the band cell „Monat bis gestern“ (no chart, D-04)
+    expect(functionBody("loadTeamMonth")).toContain(
+      'withSalonId("/dashboard/team-trend?months=1", filter)',
+    );
+    expect(functionBody("loadTodayAttendance")).toContain(
+      'withSalonId("/dashboard/today-attendance", filter)',
+    );
+    expect(functionBody("loadTeamTasks")).toContain(
+      'withSalonId("/leave/requests?status=PENDING", filter)',
     );
     expect(functionBody("loadUpcomingLeaves")).toContain(
       'withSalonId("/dashboard/team-upcoming-leave", filter)',
@@ -88,12 +89,13 @@ describe("Issue #84 — the Team block follows the salon context through team-vi
   it("D-01: a reload invalidates every loader still in flight", () => {
     const reload = functionBody("reloadTeam");
     expect(reload).toContain("teamGeneration++;");
-    // Issue #588: the saldo card's loader follows the same generation idiom.
+    // Issue #846: every loader of Heute im Salon follows the same generation idiom.
     for (const loader of [
       "loadTeamWeek",
-      "loadTeamCharts",
+      "loadTodayAttendance",
+      "loadTeamMonth",
       "loadUpcomingLeaves",
-      "loadTeamSaldo",
+      "loadTeamTasks",
     ]) {
       const body = functionBody(loader);
       expect(body, `${loader} captures the generation`).toContain(
@@ -129,35 +131,23 @@ describe("Issue #84 — the Team block follows the salon context through team-vi
     expect(functionBody("reloadTeam")).toContain("teamUnavailable = false;");
   });
 
-  it("D-05: the overtime trend is requested only without a salon filter", () => {
-    const body = functionBody("loadTeamCharts");
-    const guardIdx = body.indexOf("if (filter === null) {");
-    expect(guardIdx, "unfiltered guard not found").toBeGreaterThan(-1);
-    const fetchIdx = body.indexOf('api.get<OvertimeTrendResponse>("/dashboard/overtime-trend")');
-    expect(fetchIdx).toBeGreaterThan(guardIdx);
-    // The filtered branch destroys the chart and hides the card.
-    expect(body.slice(0, guardIdx)).toContain("overtimeTrendAvailable = false;");
+  it("D-05: the saldo is never split by salon — Heute im Salon requests no saldo figure at all (#846 D-04)", () => {
+    expect(DASHBOARD).not.toContain("/dashboard/overtime-trend");
+    expect(DASHBOARD).not.toContain("/dashboard/overtime-overview");
   });
 
-  it("D-05/D-12: the Soll series is drawn only when the server delivered one, the notes come from the view", () => {
-    // Issue #591: the series are built by the chart builder; the page hands it the view as it is.
-    expect(DASHBOARD).toContain("teamHoursChartConfig(drawn");
-    expect(TEAM_CHARTS).toContain("view.shouldHours !== null");
-    expect(TEAM_CHARTS).toContain("label: view.workedSeriesLabel");
-    expect(DASHBOARD).toContain("trendView.sollNote");
-    expect(DASHBOARD).toContain("trendView.trendNote");
-    expect(DASHBOARD).toContain("trendView?.chartSub");
+  it("D-05/D-12: the Soll is shown only when the server delivered one", () => {
+    expect(DASHBOARD).toMatch(/teamMonth\.shouldMinutes !== null\s*\?/);
+    // without a Soll the cell names what the hours cover, from the server's worked basis
+    expect(DASHBOARD).toContain('teamMonthBasis === "SCOPE_ENTRIES"');
   });
 
   it("D-01/D-15/D-16: the markup shows the divider label, the other-salon badge and the empty state", () => {
-    expect(DASHBOARD).toContain("`Team · ${teamLabel}`");
+    expect(DASHBOARD).toContain('<p class="ts-scope">{teamLabel}</p>');
     expect(DASHBOARD).toContain("{TEAM_SALON_UNAVAILABLE_TEXT}");
     expect(DASHBOARD).toContain("anderer Salon");
     expect(DASHBOARD).toContain("In einem anderen Salon gearbeitet");
-    // The legend explains the badge under a filter. Issue #85 D-04/D-05 (amended): scoped callers
-    // get workedElsewhere unfiltered, so the legend also follows the data.
-    expect(DASHBOARD).toContain(
-      "{#if teamFilter !== null || teamWeekHasElsewhere(teamWeek?.team ?? [])}",
-    );
+    // Issue #846 (D-02): every cell carries its status as text, so no legend is needed any more.
+    expect(DASHBOARD).not.toContain('class="legend"');
   });
 });

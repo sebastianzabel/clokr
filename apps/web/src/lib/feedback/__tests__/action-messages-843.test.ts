@@ -55,3 +55,15 @@ describe("action-messages (D-843-19)", () => {
     expect(clockTime(new Date(2026, 10, 9, 18, 1))).toBe("18:01");
   });
 });
+
+describe("leaveDecided (#846 D-03)", () => {
+  it("names the type, the decision and the period", async () => {
+    const { leaveDecided } = await import("../action-messages");
+    expect(leaveDecided("Urlaub", "2026-12-14", "2026-12-18", "APPROVED")).toBe(
+      "Urlaub genehmigt · 14.12.–18.12.2026",
+    );
+    expect(leaveDecided("Urlaub", "2026-12-14", "2026-12-14", "REJECTED")).toBe(
+      "Urlaub abgelehnt · 14.12.2026",
+    );
+  });
+});

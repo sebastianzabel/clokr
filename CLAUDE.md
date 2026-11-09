@@ -244,9 +244,9 @@ Current: recalculated from hire date on every request (does not scale). Target a
   `apps/web/src/lib/reports/team-saldo.ts` is the ONLY place the team median, the Top 5 plus/minus and the outlier
   rule live: a person counts only if employed today with a live saldo, a contract that is not track-only (#494) and
   recorded time since hire; the others are listed as „ohne Erfassung“ / „nur Zeiterfassung“ / „Saldo nicht
-  verfügbar“, never dropped silently, and exited persons keep their own section (#613). `/reports` and the dashboard
-  card „Salden“ read it behind the same two gates as `GET /dashboard/overtime-overview` (`team-overview:read` AND
-  `overtime:read`). `apps/web/src/lib/saldo/forecast-label.ts` is the ONLY place the forecast wording is chosen, from
+  verfügbar“, never dropped silently, and exited persons keep their own section (#613). `/reports` and the card
+  „Salden“ (`TeamSaldoCard`; off the start page since #846 D-04, its new place under Berichte is #895) read it behind
+  the same two gates as `GET /dashboard/overtime-overview` (`team-overview:read` AND `overtime:read`). `apps/web/src/lib/saldo/forecast-label.ts` is the ONLY place the forecast wording is chosen, from
   `unconfirmedMonths` and `hasClosedMonth` (computed in `computeOvertimeBalanceBreakdown`, which computes no figure
   differently; additive on the `/dashboard/overtime-overview` rows, `GET /dashboard`, `GET /overtime/:employeeId` and
   the visible branches of `GET /leave/overtime-balance`): „Laufender Monat“ only for exactly one unclosed month. Every

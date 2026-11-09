@@ -268,6 +268,12 @@ export default defineConfig({
       //     standing working-time figure during a break, the 390 x 844 first screen and 360 px
       //     without overflow on Ich › Mein Tag); tenant fixture only, no seed
       //
+      // Issue #846 added a further file:
+      //   - heute-im-salon-846.spec.ts (Team › Heute im Salon: every Kennzahl links to its list,
+      //     the four on the first screen at 1440 x 900 and 390 x 844, a Salonmanager sees only the
+      //     own salon, a decision through the dialog of Aufgaben with its toast); tenant fixture plus
+      //     API-created people, a second salon and a sick request
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -294,6 +300,7 @@ export default defineConfig({
         /bausteine-843\.spec\.ts/,
         /all-routes-overflow-843\.spec\.ts/,
         /mein-tag-845\.spec\.ts/,
+        /heute-im-salon-846\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
