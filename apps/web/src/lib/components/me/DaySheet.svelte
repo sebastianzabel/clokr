@@ -13,8 +13,7 @@
   // Issue #599 (Phase 851, prototype „Tagesdialog“): a day is read first, then edited. The sheet shows
   // Soll, Ist, Differenz and the day's entries without focusing any field; its one primary action is
   // handed in by the page (edit, add a time, or - in a closed month - ask for a correction). A closed
-  // month is explained before anything is filled in; the correction request is wired once its API
-  // (Arbeitszeitkonto, #599) exists, until then the button says so and does nothing.
+  // month is explained before anything is filled in, and a request already filed shows its status.
   import Dialog from "$components/ui/Dialog.svelte";
   import Note from "$components/ui/Note.svelte";
   import { fmtBalance, fmtMin } from "$lib/utils/format-minutes";
@@ -34,6 +33,8 @@
     /** False while the action has no target yet (the correction request before its API). */
     primaryEnabled?: boolean;
     onPrimary: () => void;
+    /** Issue #599: the status of the person's correction request for this day, if any. */
+    requestStatus?: { label: string; tone: "info" | "ok" | "bad"; note?: string | null } | null;
   }
 
   let {
@@ -49,6 +50,7 @@
     primaryLabel,
     primaryEnabled = true,
     onPrimary,
+    requestStatus = null,
   }: Props = $props();
 
   const diff = $derived(sollMin === null ? null : istMin - sollMin);
@@ -99,7 +101,14 @@
     {:else}
       <p class="day-sub">Dieser Tag liegt in der Zukunft. Gestempelt wird am Tag selbst.</p>
     {/if}
-    {#if locked}
+    {#if requestStatus}
+      <div data-testid="day-sheet-request-status">
+        <Note tone={requestStatus.tone}
+          >{requestStatus.label}{#if requestStatus.note}: {requestStatus.note}{/if}</Note
+        >
+      </div>
+    {/if}
+    {#if locked && !requestStatus}
       <Note tone="info"
         >Dieser Monat ist abgeschlossen. Eine Änderung geht als Korrekturanfrage an deine Leitung
         und wird als neuer Eintrag im laufenden Monat gebucht; der abgeschlossene Monat bleibt, wie
@@ -116,7 +125,6 @@
         class="btn btn-primary"
         data-testid="day-sheet-primary"
         disabled={!primaryEnabled}
-        title={primaryEnabled ? undefined : "Korrekturanfragen sind bald hier möglich."}
         onclick={() => {
           open = false;
           onPrimary();

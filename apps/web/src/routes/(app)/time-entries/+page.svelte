@@ -64,6 +64,13 @@
   import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import DaySheet from "$lib/components/me/DaySheet.svelte";
+  import MonthCorrectionDialog from "$lib/components/me/MonthCorrectionDialog.svelte";
+  import {
+    correctionForDay,
+    listOwnMonthCorrections,
+    MONTH_CORRECTION_STATUS_LABEL,
+    type MonthCorrection,
+  } from "$lib/me/month-corrections";
   import PageHeader from "$components/ui/PageHeader.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import { downloadStundennachweis } from "$lib/me/stundennachweis";
@@ -1195,10 +1202,55 @@
   });
   const sheetPrimary = $derived.by((): { label: string | null; enabled: boolean } => {
     if (!sheetDay || isExempt || sheetDay.isBeforeHire) return { label: null, enabled: false };
-    if (sheetLocked) return { label: "Korrektur anfragen", enabled: false };
+    if (sheetLocked)
+      // Issue #599: one open request per day; a decided one may be followed by a new request.
+      return sheetRequest?.status === "PENDING"
+        ? { label: null, enabled: false }
+        : { label: "Korrektur anfragen", enabled: true };
     if (sheetDay.isFuture) return { label: null, enabled: false };
     return { label: sheetRows.length > 0 ? "Bearbeiten" : "Zeit nachtragen", enabled: true };
   });
+
+  // Issue #599 (Phase 851): the own correction requests of closed months, read when a locked day is
+  // opened; the sheet shows the day's request status and the dialog files a new one (API #902).
+  let ownCorrections = $state<MonthCorrection[]>([]);
+  let correctionsLoaded = false;
+  let correctionOpen = $state(false);
+  const sheetRequest = $derived(
+    sheetDay ? correctionForDay(ownCorrections, sheetDay.dateStr) : null,
+  );
+  const sheetRequestStatus = $derived(
+    sheetRequest
+      ? {
+          label: MONTH_CORRECTION_STATUS_LABEL[sheetRequest.status],
+          tone:
+            sheetRequest.status === "APPROVED"
+              ? ("ok" as const)
+              : sheetRequest.status === "REJECTED"
+                ? ("bad" as const)
+                : ("info" as const),
+          note: sheetRequest.reviewNote,
+        }
+      : null,
+  );
+
+  $effect(() => {
+    if (sheetOpen && sheetLocked && !correctionsLoaded) {
+      correctionsLoaded = true;
+      void listOwnMonthCorrections()
+        .then((list) => (ownCorrections = list))
+        .catch(() => {});
+    }
+  });
+
+  function onSheetPrimary() {
+    if (!sheetDay) return;
+    if (sheetLocked) {
+      correctionOpen = true;
+      return;
+    }
+    void runCellAction(sheetDay.dateStr);
+  }
 
   async function runCellAction(day: string) {
     const action = cellClickAction(rowsOfDay(day));
@@ -2520,8 +2572,22 @@
     future={sheetDay?.isFuture ?? false}
     primaryLabel={sheetPrimary.label}
     primaryEnabled={sheetPrimary.enabled}
-    onPrimary={() => sheetDay && runCellAction(sheetDay.dateStr)}
+    onPrimary={onSheetPrimary}
+    requestStatus={sheetRequestStatus}
   />
+
+  {#if sheetDay}
+    <MonthCorrectionDialog
+      bind:open={correctionOpen}
+      day={sheetDay.dateStr}
+      dayLabel={sheetTitle}
+      initialStart={sheetRows[0] ? fmtTime(sheetRows[0].startTime) : ""}
+      initialEnd={sheetRows.at(-1)?.endTime ? fmtTime(sheetRows.at(-1)?.endTime ?? null) : ""}
+      initialBreak={sheetRows.reduce((sum, e) => sum + (e.breakMinutes ?? 0), 0) || undefined}
+      onCreated={(created) => (ownCorrections = [...ownCorrections, created])}
+      onMonthOpen={() => sheetDay && runCellAction(sheetDay.dateStr)}
+    />
+  {/if}
 
   <!-- ── Modal (Modal primitive — owns backdrop/escape/focus-trap) ────────── -->
   <Modal

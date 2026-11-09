@@ -1,5 +1,5 @@
 // Issue #599 (Phase 851) - a day is read first: no input field, the figures and entries, the closed
-// month explained before anything is filled in, and a correction button without a target until its API.
+// month explained before anything is filled in, and the status of a correction request (API #902).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
@@ -36,15 +36,32 @@ describe("DaySheet", () => {
     expect(onPrimary).toHaveBeenCalledTimes(1);
   });
 
-  it("explains a closed month before anything is filled in; the request has no target yet", () => {
+  it("explains a closed month before anything is filled in and offers the request", async () => {
+    const onPrimary = vi.fn();
     renderWithTheme(DaySheet, {
       ...base,
       locked: true,
       primaryLabel: "Korrektur anfragen",
-      primaryEnabled: false,
+      onPrimary,
     });
     expect(screen.getByTestId("day-sheet").textContent).toContain("Dieser Monat ist abgeschlossen");
-    expect(screen.getByTestId("day-sheet-primary")).toBeDisabled();
+    await fireEvent.click(screen.getByTestId("day-sheet-primary"));
+    expect(onPrimary).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a request's status with the review note instead of the lock note", () => {
+    renderWithTheme(DaySheet, {
+      ...base,
+      locked: true,
+      primaryLabel: null,
+      requestStatus: { label: "Korrektur abgelehnt", tone: "bad", note: "Bitte Beleg nachreichen" },
+    });
+    const status = screen.getByTestId("day-sheet-request-status");
+    expect(status.textContent).toContain("Korrektur abgelehnt");
+    expect(status.textContent).toContain("Bitte Beleg nachreichen");
+    expect(screen.getByTestId("day-sheet").textContent).not.toContain(
+      "Dieser Monat ist abgeschlossen",
+    );
   });
 
   it("a future day shows no figures and no action", () => {
