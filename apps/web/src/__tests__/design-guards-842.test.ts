@@ -8,6 +8,7 @@
 //   D-842-07  --accent is a fill, never a text colour
 //   D-842-08  no white text on a brand, status or text fill (use --card / --brand-ink)
 //   D-842-01  tokens.css is the only file that declares a colour role (D-05)
+//   IN-02     data-mode is the colour-mode attribute: a component names its own modes differently
 //   WR-02     app.css holds no colour literal outside a short, reasoned allow-list
 //   WR-01     the live dot of the timer card is drawn from a role that reads on the brand gradient
 
@@ -359,6 +360,24 @@ describe("Issue #842 design guards", () => {
           `${entry.prop} ${entry.literal} is no longer used - remove it from the allow-list`,
         ).toBe(true);
       }
+    });
+  });
+
+  describe("IN-02 - data-mode is reserved for the colour mode", () => {
+    const MODE_ATTR_RE = /<[A-Za-z][^<>]*\sdata-mode\s*=/g;
+
+    it("matcher fires (positive control)", () => {
+      expect("<div data-mode={mode}>".match(MODE_ATTR_RE)).toHaveLength(1);
+      expect('<div data-mode="edit">'.match(MODE_ATTR_RE)).toHaveLength(1);
+      expect("<div data-dialog-mode={mode}>".match(MODE_ATTR_RE)).toBeNull();
+      expect('[data-mode="dark"] .a {}'.match(MODE_ATTR_RE)).toBeNull();
+    });
+
+    it("only the theme preview sets a data-mode attribute in markup", () => {
+      const hits = SOURCES.filter(
+        (f) => f.rel.endsWith(".svelte") && f.text.match(MODE_ATTR_RE) !== null,
+      ).map((f) => f.rel);
+      expect(hits).toEqual(["routes/(app)/admin/themes/+page.svelte"]);
     });
   });
 
