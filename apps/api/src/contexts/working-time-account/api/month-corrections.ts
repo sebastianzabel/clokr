@@ -719,7 +719,7 @@ export async function monthCorrectionRoutes(app: FastifyInstance) {
         type: "MONTH_CORRECTION_DECIDED",
         title: `Korrekturanfrage ${word}`,
         message: `Deine Korrekturanfrage für den ${day(row.targetDate)} wurde ${word}.`,
-        link: "/time-entries",
+        link: "/ich/zeiten",
         tenantId: row.employee.tenantId,
         relatedType: "MonthCorrectionRequest",
         relatedId: row.id,

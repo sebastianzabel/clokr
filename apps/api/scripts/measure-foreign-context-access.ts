@@ -118,6 +118,7 @@ export type PrismaModelName =
   | "overtimeAccount"
   | "overtimeTransaction"
   | "overtimePlan"
+  | "monthCorrectionRequest" // Issue #599 — correction request for a closed month
   | "leaveType"
   | "leaveEntitlement"
   | "specialLeaveRule"
