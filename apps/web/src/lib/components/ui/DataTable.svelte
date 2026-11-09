@@ -12,6 +12,8 @@
     align?: "start" | "end";
     /** Any CSS width for the head cell. */
     width?: string;
+    /** Issue #851 (additive): an explanation of the column on its head cell (title attribute). */
+    title?: string;
   }
 
   export interface DataTableSort {
@@ -66,6 +68,8 @@
     rowId?: (row: Row) => string | undefined;
     /** Issue #851 (additive): marks a row as the one a deep link points at (tinted background). */
     rowHighlight?: (row: Row) => boolean;
+    /** Issue #851 (additive): extra class names of a row the page styles itself (`:global`). */
+    rowClass?: (row: Row) => string | undefined;
     /** Accessible table caption (visually hidden). */
     caption: string;
     loading?: boolean;
@@ -85,6 +89,7 @@
     rowTestId,
     rowId,
     rowHighlight,
+    rowClass,
     caption,
     loading = false,
   }: Props = $props();
@@ -141,6 +146,7 @@
               {:else}
                 <th
                   scope="col"
+                  title={column.title}
                   class:dt-end={column.align === "end"}
                   style={column.width ? `width: ${column.width}` : undefined}>{column.label}</th
                 >
@@ -155,7 +161,7 @@
                    convenience of the same action, so the row itself needs no role or tabindex. -->
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
               <tr
-                class="dt-row--click"
+                class="dt-row--click {rowClass?.(row) ?? ''}"
                 class:dt-row--highlight={rowHighlight?.(row) ?? false}
                 id={rowId?.(row)}
                 data-testid={rowTestId?.(row)}
@@ -186,6 +192,7 @@
             {:else}
               <tr
                 id={rowId?.(row)}
+                class={rowClass?.(row)}
                 class:dt-row--highlight={rowHighlight?.(row) ?? false}
                 data-testid={rowTestId?.(row)}
               >

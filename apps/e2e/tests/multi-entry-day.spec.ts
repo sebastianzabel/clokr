@@ -232,7 +232,7 @@ test.describe("several entries on one day (Issue #70)", () => {
 
     // b. The list names the salon of each row.
     await expect(page.getByRole("columnheader", { name: "Salon", exact: true })).toBeVisible();
-    const salonCells = page.locator("tr.row-day-focus td[data-testid$='-salon']");
+    const salonCells = page.locator("tr.row-day-focus [data-testid$='-salon']");
     await expect(salonCells).toHaveCount(2);
     const names = (await salonCells.allTextContents()).map((t) => t.trim());
     expect([...names].sort()).toEqual([first.name, second.name].sort());

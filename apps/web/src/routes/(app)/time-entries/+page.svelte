@@ -62,6 +62,8 @@
   import { correctionSaved } from "$lib/feedback/action-messages"; // #843 (D-843-08)
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
   import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-elk
   import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-elk
   import Modal from "$components/ui/Modal.svelte";
@@ -1876,6 +1878,41 @@
   // 260611-ly6 — merges TimeEntries (kind="TE") with own BS-Absences (kind="BS")
   // for the list view. BS rows are read-only synthetic rows; lifecycle stays on
   // /shifts. Self-scope is enforced server-side from req.user.employeeId.
+  // Issue #851 (D-851-05): the list columns. „Salon“ only with salon choice (#70 gate), the
+  // SHIFT_BASED day column only with a month saldo (#291: its name and tooltip say what it holds).
+  let listColumns = $derived<DataTableColumn[]>([
+    { key: "date", label: "Datum", primary: true },
+    ...(multiEntryUi ? [{ key: "salon", label: "Salon" }] : []),
+    { key: "from", label: "Von" },
+    { key: "to", label: "Bis" },
+    { key: "break", label: "Pause" },
+    { key: "net", label: "Netto" },
+    ...(isShiftBased && monthSaldo
+      ? [
+          {
+            key: "saldo",
+            label: "Saldo seit Abschluss",
+            title:
+              "Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kachel „Konto“.",
+          },
+        ]
+      : []),
+    { key: "source", label: "Quelle" },
+    { key: "note", label: "Notiz" },
+    { key: "actions", label: "Aktionen", align: "end" as const },
+  ]);
+
+  /** The row marks of the list: invalid entry, focused entry, focused day, Berufsschule row. */
+  function listRowClass(slot: ListRow): string | undefined {
+    if (slot.kind !== "TE") return "row-bs";
+    const slotDate = (slot.date ?? slot.startTime).split("T")[0];
+    const marks: string[] = [];
+    if (slot.isInvalid) marks.push("row-invalid");
+    if (slot.id === focusedEntryId) marks.push("row-focus");
+    else if (slotDate === selectedDate) marks.push("row-day-focus");
+    return marks.join(" ") || undefined;
+  }
+
   let allEntries = $derived.by<ListRow[]>(() => {
     const teRows: ListRow[] = entries.map((e) => ({ ...e, kind: "TE" as const }));
     const bsRows: ListRow[] = bsAbsences.map((b) => ({
@@ -2201,227 +2238,195 @@
             </div>
           {/if}
         {/if}
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Datum</th>
-                {#if multiEntryUi}<th>Salon</th>{/if}
-                <th>Von</th>
-                <th>Bis</th>
-                <th>Pause</th>
-                <th>Netto</th>
-                {#if isShiftBased && monthSaldo}
-                  <th
-                    title="Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kachel „Konto“."
-                    >Saldo seit Abschluss</th
-                  >
-                {/if}
-                <th>Quelle</th>
-                <th>Notiz</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each allEntries as slot (slot.id)}
-                {#if slot.kind === "TE"}
-                  {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-                  {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                  <tr
-                    class:row-invalid={slot.isInvalid}
-                    class:row-focus={slot.id === focusedEntryId}
-                    class:row-day-focus={slotDate === selectedDate && slot.id !== focusedEntryId}
-                    data-testid={`time-entry-row-${slot.id}`}
-                  >
-                    <td
-                      >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })}{#if slotArbzg}
-                        <span class="list-arbzg-hint"
-                          >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                            class="arbzg-tooltip"
-                            >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                                />{/if}{/each}</span
-                          ></span
-                        >
-                      {/if}</td
+        <!-- Issue #851 (D-851-05): the list is the DataTable block. Row kinds, test ids, row marks (invalid,
+             focused entry, focused day, Berufsschule) and actions are unchanged; the marks are page classes on
+             the block's rows (`rowClass`), styled below through :global. -->
+        {#if allEntries.length > 0}
+          <DataTable
+            caption="Zeiteinträge {format(calMonth, 'MMMM yyyy', { locale: de })}"
+            columns={listColumns}
+            rows={allEntries}
+            rowKey={(slot) => slot.id}
+            rowTestId={(slot) =>
+              slot.kind === "TE" ? `time-entry-row-${slot.id}` : `bs-row-${slot.id}`}
+            rowClass={listRowClass}
+          >
+            {#snippet cell(slot, column)}
+              {#if slot.kind === "TE"}
+                {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+                {@const slotArbzg = arbzgDayMap.get(slotDate)}
+                {#if column.key === "date"}
+                  {new Date(slot.startTime).toLocaleDateString("de-DE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  })}{#if slotArbzg}
+                    <span class="list-arbzg-hint"
+                      >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                        class="arbzg-tooltip"
+                        >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
+                            />{/if}{/each}</span
+                      ></span
                     >
-                    {#if multiEntryUi}<td data-testid={`time-entry-row-${slot.id}-salon`}
-                        >{#if isTravelRow(slot)}<span
-                            class="badge badge-gray"
-                            data-testid={`time-entry-row-${slot.id}-travel-badge`}
-                            >{TRAVEL_TEXTS.badge}</span
-                          >
-                          <span
-                            class="travel-route"
-                            data-testid={`time-entry-row-${slot.id}-travel-route`}
-                            >{travelRouteLabel(slot)}</span
-                          >{:else}{slot.salonName ?? "—"}{/if}</td
-                      >{/if}
-                    <td>{fmtTime(slot.startTime)}</td>
-                    <td>
-                      {#if slot.endTime}{fmtTime(slot.endTime)}
-                      {:else}<span class="badge badge-green">Aktiv</span>{/if}
-                    </td>
-                    <td>
-                      {fmtBreaks(slot)}
-                      {#if enforceBreakConfirmation && isUnconfirmedBreak(slot)}
-                        <!-- Phase 112 — only AUTO is badged here. breakStatus is @default(CONFIRMED)
+                  {/if}
+                {:else if column.key === "salon"}
+                  <!-- #70 gate: the column exists only with salon choice; the gate stays visible here too. -->
+                  {#if multiEntryUi}
+                    <span data-testid={`time-entry-row-${slot.id}-salon`}
+                      >{#if isTravelRow(slot)}<span
+                          class="badge badge-gray"
+                          data-testid={`time-entry-row-${slot.id}-travel-badge`}
+                          >{TRAVEL_TEXTS.badge}</span
+                        >
+                        <span
+                          class="travel-route"
+                          data-testid={`time-entry-row-${slot.id}-travel-route`}
+                          >{travelRouteLabel(slot)}</span
+                        >{:else}{slot.salonName ?? "—"}{/if}</span
+                    >
+                  {/if}
+                {:else if column.key === "from"}
+                  {fmtTime(slot.startTime)}
+                {:else if column.key === "to"}
+                  {#if slot.endTime}{fmtTime(slot.endTime)}
+                  {:else}<span class="badge badge-green">Aktiv</span>{/if}
+                {:else if column.key === "break"}
+                  {fmtBreaks(slot)}
+                  {#if enforceBreakConfirmation && isUnconfirmedBreak(slot)}
+                    <!-- Phase 112 — only AUTO is badged here. breakStatus is @default(CONFIRMED)
                              in the schema, so badging every state would put a pill on every row of
                              every month and destroy the signal. The modal still shows all three. -->
-                        <span
-                          class="badge {breakBadgeClass(slot.breakStatus)} break-cell-badge"
-                          data-testid={`time-entry-row-${slot.id}-break-badge`}
-                          title="Automatisch eingetragene Pflichtpause nach § 4 ArbZG — bitte bestätigen"
-                          >{breakBadgeLabel(slot.breakStatus)}</span
-                        >
-                      {/if}
-                    </td>
-                    <td class="font-medium">{slotNet(slot)}</td>
-                    {#if isShiftBased && monthSaldo}
-                      {@const cum = monthSaldoDayMap.get(slotDate)}
-                      <td class={cum != null ? balClass(cum) : ""}>
-                        {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
-                      </td>
-                    {/if}
-                    <td
-                      ><span class="badge {sourceBadge(slot.source)}"
-                        >{sourceLabel(slot.source)}</span
-                      ></td
+                    <span
+                      class="badge {breakBadgeClass(slot.breakStatus)} break-cell-badge"
+                      data-testid={`time-entry-row-${slot.id}-break-badge`}
+                      title="Automatisch eingetragene Pflichtpause nach § 4 ArbZG — bitte bestätigen"
+                      >{breakBadgeLabel(slot.breakStatus)}</span
                     >
-                    <td class="note-cell text-muted">
-                      {#if slot.isInvalid && slot.invalidReason}
-                        <span class="invalid-reason">{slot.invalidReason}</span>
-                      {:else}
-                        {slot.note ?? "---"}
-                      {/if}
-                    </td>
-                    <td class="action-cell">
-                      {#if slot.isLocked}
-                        <!-- Locked entries are read-only (D-08). Per Phase 73-03 +
+                  {/if}
+                {:else if column.key === "net"}
+                  <span class="font-medium">{slotNet(slot)}</span>
+                {:else if column.key === "saldo"}
+                  <!-- #291/#433: the SHIFT_BASED day column, gated exactly like its column declaration. -->
+                  {#if isShiftBased && monthSaldo}
+                    {@const cum = monthSaldoDayMap.get(slotDate)}
+                    <span class={cum != null ? balClass(cum) : ""}>
+                      {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
+                    </span>
+                  {/if}
+                {:else if column.key === "source"}
+                  <span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span>
+                {:else if column.key === "note"}
+                  <span class="note-cell text-muted">
+                    {#if slot.isInvalid && slot.invalidReason}
+                      <span class="invalid-reason">{slot.invalidReason}</span>
+                    {:else}
+                      {slot.note ?? "---"}
+                    {/if}
+                  </span>
+                {:else if slot.isLocked}
+                  <!-- Locked entries are read-only (D-08). Per Phase 73-03 +
                            74-01: render the buttons as disabled instead of
                            hiding so the row testids stay queryable for the
                            locked-month spec — matches the
                            `getByTestId(...-edit).toBeDisabled()` contract. -->
-                        <span class="row-actions row-actions--visible">
-                          <span
-                            class="badge badge-locked"
-                            title="Monat ist abgeschlossen"
-                            data-testid={`time-entry-row-${slot.id}-locked-badge`}>🔒 Gesperrt</span
-                          >
-                          <button
-                            class="btn-icon"
-                            disabled
-                            title="Eintrag gesperrt"
-                            data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
-                          >
-                          <button
-                            class="btn-icon btn-icon-danger"
-                            disabled
-                            title="Eintrag gesperrt"
-                            data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
-                          >
-                        </span>
-                      {:else if withdrawConfirmId === slot.id}
-                        <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
+                  <span class="row-actions row-actions--visible">
+                    <span
+                      class="badge badge-locked"
+                      title="Monat ist abgeschlossen"
+                      data-testid={`time-entry-row-${slot.id}-locked-badge`}>🔒 Gesperrt</span
+                    >
+                    <button
+                      class="btn-icon"
+                      disabled
+                      title="Eintrag gesperrt"
+                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
+                    >
+                    <button
+                      class="btn-icon btn-icon-danger"
+                      disabled
+                      title="Eintrag gesperrt"
+                      data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                    >
+                  </span>
+                {:else if withdrawConfirmId === slot.id}
+                  <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
                              delete-confirm pattern above with its own label/testids. -->
-                        <span class="del-confirm">
-                          <span class="text-muted" style="font-size:0.8rem;">Zurückziehen?</span>
-                          <button
-                            class="btn btn-sm btn-danger"
-                            onclick={() => withdrawRetroRequest(slot)}
-                            data-testid={`time-entry-row-${slot.id}-confirm-withdraw`}>Ja</button
-                          >
-                          <button
-                            class="btn btn-sm btn-ghost"
-                            onclick={() => (withdrawConfirmId = "")}
-                            data-testid={`time-entry-row-${slot.id}-cancel-withdraw`}>Nein</button
-                          >
-                        </span>
-                      {:else}
-                        <span class="row-actions row-actions--visible">
-                          <button
-                            class="btn-icon"
-                            onclick={() => openEdit(slot)}
-                            title="Bearbeiten"
-                            data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
-                          >
-                          {#if isPendingNachtrag(slot)}
-                            <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is
+                  <span class="del-confirm">
+                    <span class="text-muted" style="font-size:0.8rem;">Zurückziehen?</span>
+                    <button
+                      class="btn btn-sm btn-danger"
+                      onclick={() => withdrawRetroRequest(slot)}
+                      data-testid={`time-entry-row-${slot.id}-confirm-withdraw`}>Ja</button
+                    >
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      onclick={() => (withdrawConfirmId = "")}
+                      data-testid={`time-entry-row-${slot.id}-cancel-withdraw`}>Nein</button
+                    >
+                  </span>
+                {:else}
+                  <span class="row-actions row-actions--visible">
+                    <button
+                      class="btn-icon"
+                      onclick={() => openEdit(slot)}
+                      title="Bearbeiten"
+                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
+                    >
+                    {#if isPendingNachtrag(slot)}
+                      <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is
                                  withdrawn via DELETE /retro-entry-requests/:id
                                  (soft-deletes request + coupled entry), not the
                                  plain DELETE /time-entries/:id (which would
                                  re-run the retro-window guard and 403). -->
-                            <button
-                              class="btn-icon btn-icon-danger"
-                              onclick={() => (withdrawConfirmId = slot.id)}
-                              title="Zurückziehen"
-                              data-testid={`time-entry-row-${slot.id}-withdraw`}>↩️</button
-                            >
-                          {:else}
-                            <button
-                              class="btn-icon btn-icon-danger"
-                              onclick={() => openDeleteDialog(slot.id)}
-                              title="Löschen"
-                              data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
-                            >
-                          {/if}
-                        </span>
-                      {/if}
-                    </td>
-                  </tr>
-                {:else}
-                  <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions.
-                       Distinct data-testid namespace (`bs-row-*`) so it never collides with the
-                       existing `time-entry-row-*` testids used by E2E specs. -->
-                  <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
-                    <td
-                      >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })}</td
-                    >
-                    {#if multiEntryUi}<td class="text-muted">—</td>{/if}
-                    <td class="text-muted">—</td>
-                    <td class="text-muted">—</td>
-                    <td class="text-muted">—</td>
-                    <td class="font-medium text-muted">—</td>
-                    <td><span class="badge badge-blue">Berufsschule</span></td>
-                    <td class="note-cell text-muted"
-                      >{slot.source === "PATTERN"
-                        ? "Automatisch (Muster)"
-                        : "Manuell eingefügt"}</td
-                    >
-                    <td class="action-cell">
-                      <span
-                        class="text-muted"
-                        style="font-size: 0.75rem;"
-                        title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
+                      <button
+                        class="btn-icon btn-icon-danger"
+                        onclick={() => (withdrawConfirmId = slot.id)}
+                        title="Zurückziehen"
+                        data-testid={`time-entry-row-${slot.id}-withdraw`}>↩️</button
                       >
-                    </td>
-                  </tr>
+                    {:else}
+                      <button
+                        class="btn-icon btn-icon-danger"
+                        onclick={() => openDeleteDialog(slot.id)}
+                        title="Löschen"
+                        data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                      >
+                    {/if}
+                  </span>
                 {/if}
-              {/each}
-            </tbody>
-          </table>
-        </div>
+              {:else if column.key === "date"}
+                {new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                })}
+              {:else if column.key === "source"}
+                <span class="badge badge-blue">Berufsschule</span>
+              {:else if column.key === "note"}
+                <span class="note-cell text-muted"
+                  >{slot.source === "PATTERN" ? "Automatisch (Muster)" : "Manuell eingefügt"}</span
+                >
+              {:else if column.key === "actions"}
+                <span
+                  class="text-muted bs-hint"
+                  title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
+                >
+              {:else}
+                <span class="text-muted">—</span>
+              {/if}
+            {/snippet}
+          </DataTable>
+        {/if}
         {#if listState === "no-employee"}
-          <div class="empty-state" data-testid="time-entries-list-no-employee">
-            <span class="empty-icon">👤</span>
-            <h3>Kein Mitarbeiterprofil</h3>
-            <p class="text-muted">
-              Ohne verknüpftes Mitarbeiterprofil können keine Zeiteinträge angezeigt werden.
-            </p>
+          <div data-testid="time-entries-list-no-employee">
+            <EmptyState
+              icon="users"
+              title="Kein Mitarbeiterprofil"
+              description="Ohne verknüpftes Mitarbeiterprofil können keine Zeiteinträge angezeigt werden."
+            />
           </div>
         {:else if listState === "empty"}
-          <div class="empty-state">
-            <span class="empty-icon">📋</span>
-            <h3>Keine Einträge</h3>
-            <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
-          </div>
+          <EmptyState title="Keine Einträge" description="Keine Zeiteinträge in diesem Monat." />
         {/if}
       {/if}
     </div>
@@ -3097,28 +3102,6 @@
     height: 2.25rem;
     border-radius: var(--r-control);
   }
-  .list-card .empty-state {
-    padding: 48px 24px;
-    text-align: center;
-    color: var(--text-2);
-  }
-  .list-card .empty-state .empty-icon {
-    font-size: 32px;
-    display: block;
-    margin-bottom: 8px;
-    opacity: 0.6;
-  }
-  .list-card .empty-state h3 {
-    font-family: var(--font-ui);
-    font-weight: 400;
-    font-size: 18px;
-    margin: 0 0 4px;
-    color: var(--text);
-  }
-  .list-card .empty-state p {
-    margin: 0;
-    font-size: 13px;
-  }
 
   /* ── List view actions always visible ────────────────── */
   .row-actions--visible {
@@ -3430,7 +3413,8 @@
     opacity: 0;
     transition: opacity 0.15s;
   }
-  tr:hover .row-actions {
+  /* #851: the rows belong to the DataTable block; the page marks reach them through :global. */
+  .list-card :global(tr:hover .row-actions) {
     opacity: 1;
   }
   .del-confirm {
@@ -3450,26 +3434,26 @@
 
   /* Phase 112 — the row an arriving deep link points at. Ring, not a background swap, so it
      composes with .row-invalid instead of fighting it. */
-  .data-table tbody tr.row-focus {
+  .list-card :global(tbody tr.row-focus) {
     outline: 2px solid var(--brand);
     outline-offset: -2px;
     background: var(--brand-soft);
   }
-  .data-table tbody tr.row-day-focus {
+  .list-card :global(tbody tr.row-day-focus) {
     background: var(--sunk);
   }
 
-  .row-invalid {
+  .list-card :global(tr.row-invalid) {
     opacity: 0.5;
   }
-  .row-invalid td {
+  .list-card :global(tr.row-invalid td) {
     text-decoration: line-through;
     background: var(--bad-soft);
   }
-  .row-invalid td:last-child {
+  .list-card :global(tr.row-invalid td:last-child) {
     text-decoration: none;
   }
-  .row-invalid .invalid-reason {
+  .list-card :global(tr.row-invalid .invalid-reason) {
     color: var(--bad);
     font-size: 0.8rem;
     font-weight: 500;
@@ -3477,7 +3461,7 @@
   }
 
   /* 260611-ly6 — Berufsschultag list-row tint. UI Style Guide v1.5: only var(--brand) via color-mix; no legacy tokens. */
-  .row-bs td {
+  .list-card :global(tr.row-bs td) {
     background: color-mix(in srgb, var(--brand) 6%, transparent);
   }
 
