@@ -13,6 +13,7 @@
   import Section from "$lib/components/admin/Section.svelte";
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import OpeningHoursEditor from "$lib/components/admin/OpeningHoursEditor.svelte";
   import SalonHolidays from "$lib/components/admin/SalonHolidays.svelte";
   import { FEDERAL_STATE_OPTIONS } from "$lib/salons/federal-states";
@@ -287,7 +288,7 @@
 </script>
 
 {#if loading}
-  <div class="page-loading" role="status">Laden…</div>
+  <div class="page-loading"><Skeleton shape="card" lines={3} /></div>
 {:else if isCreate && !rights.canManage}
   <div class="page-loading">Für das Anlegen von Salons fehlt dir die Berechtigung.</div>
 {:else if forbidden}

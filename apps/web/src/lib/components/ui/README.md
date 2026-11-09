@@ -1,7 +1,7 @@
 # UI Primitives — Canonical Spec
 
-> **Status: FROZEN (post-Phase 34, production).**
-> Adding a new primitive or breaking-changing one of the existing six requires a follow-up phase plan + justification. Bug-fixes and additive props are permitted without a phase plan.
+> **Status: the twelve blocks of Issue #843 are built (design system v2).**
+> Each block of the Designkonzept exists exactly once in this directory, with one public entry component (see "The twelve blocks" below). Adding a thirteenth block, a second implementation of one, or a breaking change of a block's props requires a follow-up phase plan and justification. Bug-fixes and additive props are permitted without a phase plan.
 
 This directory is the **enforceable contract** for Clokr UI. If a page builds a raw card / modal / KPI / month-bar / approval-row by hand, it bypasses this spec and lint rules will block the PR.
 
@@ -16,28 +16,91 @@ apart by colour, not by slant. Colours and sizes come from `tokens.css` roles (`
 ## Rules
 
 - Every `(app)/` page MUST use `<PageHead>` from `$components/layout/PageHead.svelte`.
-- No raw `<h1>` outside `PageHead.svelte`.
+- No raw `<h1>` outside `ui/PageHeader.svelte` (`layout/PageHead.svelte` delegates to it, #843).
 - No inline `style="color: …; background: …; background-color: …; border: …"` declarations — use theme tokens via class names. CSS custom property passthrough (`style="--card-idx: 3;"`) is allowed.
 - No raw `.scrim`, `.modal`, `.modal-hd`, `.modal-body`, `.modal-foot`, `.card-hd`, `.card-title`, `.card-sub`, `.month-bar`, `.month-bar-stats`, `.mstat`, `.approval-row` class usage in route files. Go through the primitive. (Note: the Modal primitive emits `.scrim` + `.modal` + `.modal-hd` + `.modal-body` + `.modal-foot` to match the canonical app.css recipe.)
 - Escape-hatch: `<!-- eslint-disable-next-line clokr/ui-no-raw-class -->` with a justification comment. PR review will scrutinize.
+
+## The twelve blocks (Issue #843)
+
+Every block is a Svelte 5 component built on bits-ui (the only primitive library, exact pin in `apps/web/package.json`) and styled with scoped CSS on the `tokens.css` roles. Pages use the entry component; the sub-parts are listed so nobody builds them again. The example page `/admin/bausteine` renders every block in all six theme × mode frames and is the visual and keyboard proof.
+
+| #   | Block             | Entry component                              | Sub-parts                                                                                             | Legacy delegates (props kept)                                          |
+| --- | ----------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 1   | Seitenkopf        | `PageHeader`                                 | `PageTabs` (page tabs, bits-ui Tabs)                                                                  | `layout/PageHead` (markup-free, same props, D-843-14)                  |
+| 2   | Periodenwahl      | `PeriodPicker`                               | zoom `SegmentedControl`                                                                               | `MonthBar`, `PeriodSwitcher`                                           |
+| 3   | Kennzahlenleiste  | `KpiStrip`                                   | `KpiCell` (label · value · explanation · „Herleitung →“)                                              | `KPIStat` (renders a `KpiCell`)                                        |
+| 4   | Bühne             | `Stage`                                      | `actions` snippet                                                                                     | —                                                                      |
+| 5   | Liste             | `List`                                       | `ListRow` (`default` and `task` variant)                                                              | —                                                                      |
+| 6   | Tabelle + Toolbar | `DataTable`                                  | `TableToolbar`, `SortHeader`, `$lib/table/url-state.ts`, `$lib/table/search.ts`                       | —                                                                      |
+| 7   | Formular-Satz     | `FormField`                                  | `SaveBar`, `SegmentedControl` (the Segment), `Combobox`, `DatePicker`, `DayGrid`, `BulkPreviewDialog` | —                                                                      |
+| 8   | Chips & Hinweise  | `Chip`                                       | `Note`                                                                                                | the `.badge-*` recipes in `app.css` stay as written                    |
+| 9   | Rückmeldung       | `Toast` (mounted once in the root layout)    | `ToastItem`, the `toasts` store (`success` / `error` / `info`), `$lib/feedback/action-messages.ts`    | —                                                                      |
+| 10  | Zustände          | `Skeleton`                                   | `EmptyState` (`noData` / `noMatches`), `ErrorState`                                                   | —                                                                      |
+| 11  | Dialog / Sheet    | `Dialog`                                     | `DialogPanel` (the bare panel for the example page)                                                   | `Modal`, `ConfirmDialog`, `ReasonDialog` (wrappers, callers untouched) |
+| 12  | Bewegung          | `$lib/motion` (`fade`, `countUp`, `stagger`) | `reducedMotion` store                                                                                 | `.card-animate` reveal (steps 35 ms)                                   |
+
+### Block rules
+
+- **One block, one implementation.** A page never builds its own filter bar, period arrows, KPI card, data table toolbar, scrim or modal. `lint:ui-classes` scans routes and area components for exactly these patterns against the falling-only ratchet register `apps/web/scripts/lint-ui-classes-route-ratchet.json` (every entry names the page ticket #845–#854 that migrates it; a new occurrence fails). Raw `.scrim` / `.modal` markup has no register.
+- **Container breakpoints are 760 and 1100 px, nothing else** (`ui/breakpoints.ts`). Blocks change layout through `@container`, written as `max-width: 759.98px` / `min-width: 760px`. Viewport media queries exist only for the Dialog → bottom-sheet switch and, as the one named exception, `PeriodPicker`, which keeps the narrow-viewport rules of the old `MonthBar` (D-843-21; a container on its root would collapse inside content-sized flex parents).
+- **Ids come from `$props.id()`** (`FormField`, `DayGrid`, `TableToolbar`; `Combobox` and `DatePicker` take the id `FormField` passes in); never a module counter or a literal id.
+- **Skeleton is the only loading state.** No visible „Laden…“ text anywhere (`no-loading-text-843.test.ts`). `Skeleton` renders `role="status"`, `aria-busy` and one visually hidden „Wird geladen“; shapes `line`, `block`, `row`, `card`, plus `inline` inside a sentence. `Spinner` stays only inside a button that runs an action (keep the label, prefix the spinner).
+- **Every write acknowledges its result through `toasts`.** Success: `toasts.success(...)` after the server answered, 2.6 s, text from `action-messages.ts` for the start pages; error: `toasts.error(...)` names what happened and what to do, stays 6 s with a close button. The live regions are mounted empty at app start (`data-toast-root`): success and info `role="status"`, errors `role="alert"`.
+- **No native browser dialogs** (`lint:no-alert`): a confirmation is a `ConfirmDialog`, a message a toast or a `Note`.
+- **Dialogs portal to `body`** above the topbar (overlay 1500, content 1501, toast 9999), the rest of the page becomes `inert` while one is open, focus is trapped and returned by bits-ui. Escape is a document-level key event. A dialog below 760 px viewport width is a bottom sheet.
+- **Colours only from `tokens.css` roles.** `--accent` is a fill, text on a solid status fill uses `--card`, on a brand fill `--brand-ink`. No italics, no uppercase, no letter-spacing in new block CSS. Every text pair of a chip, badge, note, eyebrow, toast, KPI band and Stage is pinned at 4.5:1 in all six combinations (`recipe-contrast-843.test.ts`).
+- **Motion is off under `prefers-reduced-motion`** (one `reducedMotion` store; `app.css` has one reduced-motion block). `countUp` writes only the first text node of its element.
+- **Tailwind is a token pipeline only.** Utilities are permitted inside `lib/components/ui`, but the blocks are scoped CSS by default; a route with a utility class fails `no-route-utilities-843.test.ts`. The mapping lives in `src/tailwind-theme.css`.
+- **No `{@html}`.** Block text is rendered as text (guarded by source tests).
+
+### `<PageHeader>` and `<PageTabs>`
+
+Source: `$components/ui/PageHeader.svelte`, `PageTabs.svelte`. Props: `title`, `subtitle?`, `eyebrow?` and `accent?` (both inert since D-843-22: accepted so `PageHead` callers compile, never rendered), `actions?` (one or two buttons, at most one primary), `tabs?` + `tab` (bindable) + `panel?` + `onTabChange?` (bits-ui Tabs, arrow keys loop, every trigger controls a rendered panel), `headingLevel?` (1 or 2). The `<PageHead>` section below documents the legacy props and the look; `layout/PageHead.svelte` has no markup of its own.
+
+### `<Dialog>`
+
+Source: `$components/ui/Dialog.svelte`. Props: `open` (bindable), `title`, `eyebrow?`, `ariaLabel?`, `size?` (`"md"` 520 px, `"wide"` 880 px), `children`, `footer?` (secondary first, primary last), `onOpenChange?`. The legacy class names (`scrim`, `modal`, `modal-hd`, `modal-body`, `modal-foot`, `modal--wide`) are still emitted. A parent binding that refuses a closing (`ConfirmDialog` while a confirm is pending) keeps the dialog open. `Modal`, `ConfirmDialog` and `ReasonDialog` render it; their props, the Phase 89 refusal behaviour of `ConfirmDialog` and all callers are unchanged.
+
+### `<KpiStrip>`, `<KpiCell>`, `<Stage>`
+
+Sources: `KpiStrip.svelte` (`items`, `band?`, `ariaLabel?`), `KpiCell.svelte` (`label`, `value` string or number — a number counts up —, `format?`, `unit?`, `explanation?`, `derivationHref?`, `delta?` + `deltaTone?`, `progress?`), `Stage.svelte` (`state` `ruhig | arbeitet | pause | fertig` on card / brand-soft / warn-soft / card with a 350 ms transition, `children`, `actions?`, `ariaLabel?`). `KPIStat` keeps its 38 px look and strings and renders a `KpiCell`.
+
+### `<List>`, `<ListRow>`
+
+Sources: `List.svelte` (`ariaLabel`, `children`), `ListRow.svelte` (`title`, `subtitle?`, `avatar?` + `avatarKey?`, `variant` `default | task`, `href?`, `trailing?`, `actions?`). 44 px rows with a stable avatar colour; the `task` variant puts the buttons under the text.
+
+### `<DataTable>`, `<TableToolbar>`, `<SortHeader>`
+
+Sources: `DataTable.svelte` (`columns`, `rows`, `rowKey`, `cell?`, `sort` + `onSort` with the exported `nextSortState` cycle none → asc → desc → none, `filtered` + `onResetFilters` for „keine Treffer“, `onRowClick?`, `rowTestId?`, `toolbar?`, `caption`, `loading?`), `TableToolbar.svelte` (`query` bindable, `count`, `total`, `filters?`, `onFilterChange?`, `onReset?`), `SortHeader.svelte` (`aria-sort`, button „Nach <Spalte> sortieren“). One table DOM with a horizontal scroll container; below 760 px container width the rows render as cards. State lives in the URL through `urlState(schema)` of `$lib/table/url-state.ts` (allow-list parsers `text`, `oneOf`, `pattern`, `int`; unknown keys are dropped, other keys of the URL are kept). The search text is normalised in one place, `matchesSearch()` of `$lib/table/search.ts`. Loading shows the Skeleton in place of the table; an empty result says „keine Daten“ or „keine Treffer“ with „Filter zurücksetzen“. First adopter: `/admin/employees`.
+
+### `<Chip>`, `<Note>`
+
+Sources: `Chip.svelte` (`tone` `ok | warn | bad | info | brand | neutral`, `title?`, `children`; 22 px pill with a dot) and `Note.svelte` (`tone` `ok | warn | bad | info | brand`, `icon?`, `children`; soft-colour hint line). The `.badge-*` recipes stay as written in `app.css`; the chip tones declare their own proven pairs.
+
+### `<Toast>`, `<Skeleton>`, `<EmptyState>`, `<ErrorState>`
+
+Sources: `Toast.svelte` (the container with the two persistent live regions, mounted once; items are `ToastItem`), `Skeleton.svelte` (`shape`, `count?`, `lines?`, `height?`, `inline?`, `width?`), `EmptyState.svelte` (`title?`, `description?`, `actionLabel?` + `onaction?`, `variant?` `noData | noMatches`), `ErrorState.svelte` (`message?`, `hint?`, `onRetry`, `retrying?`; a bad `Note` with „Erneut versuchen“).
+
+### `$lib/motion`
+
+`fade` (350 ms crossfade for state changes), `countUp` (500 ms ease-out action), `stagger` (35 ms offset, folded into the `.card-animate` reveal), `reducedMotion` (store). All of them do nothing under `prefers-reduced-motion` or without `matchMedia`.
 
 ## Primitives
 
 ### `<PageHead>`
 
-Source: `$components/layout/PageHead.svelte`
+Source: `$components/layout/PageHead.svelte` — since Issue #843 a delegate without markup of its own: it renders `ui/PageHeader.svelte` with the same props (D-843-14). New code may import `PageHeader` directly.
+
+**Look (D-843-22, owner request 10.11., design concept 3/4):** title (H1, `--fs-h1` = 20 px, weight 600, plain text) and an optional subtitle (`--fs-base` = 13.5 px, `--text-2`) on the left, one or two actions on the right, below the text on a phone (the block's 760 px container query). There is NO accent rule, NO eyebrow line and NO colour-set accent word. `eyebrow` and `accent` stay in the props only so the 50+ callers and the tests that pin `<PageHead eyebrow=… title=…>` compile and pass unchanged; they are inert and render nothing.
 
 ```ts
 interface Props {
-  /** Eyebrow line (Figtree, upright), e.g. "Mein Bereich". */
-  eyebrow: string;
-  /** Main heading, e.g. "Guten Tag, Lena". */
+  /** Inert (D-843-22): accepted, never rendered. */
+  eyebrow?: string;
+  /** Main heading, e.g. "Guten Tag, Lena". Plain text. */
   title: string;
-  /**
-   * Optional explicit accent word. When provided AND found in `title`,
-   * the first occurrence is wrapped in `<em>` (upright, --brand).
-   * Matching is case-sensitive; only the first occurrence is wrapped.
-   */
+  /** Inert (D-843-22): accepted, never rendered; the title has no accent word. */
   accent?: string;
   /** Optional muted sub-paragraph, max-width 560 px, below the H1. */
   sub?: string;
@@ -45,16 +108,6 @@ interface Props {
   actions?: Snippet;
 }
 ```
-
-**`autoAccent` behavior (D-01):** When no explicit `accent` prop is passed, `PageHead` automatically wraps the LAST word of `title` in `<em>` (rendered upright in the brand colour), where words are split on whitespace or `-`. Single-word titles render WITHOUT an `<em>` wrapper. Explicit `accent="X"` always wins.
-
-| `title`                | `accent` | Rendered                           |
-| ---------------------- | -------- | ---------------------------------- |
-| `Team-Zeiten`          | (none)   | `Team-` + <em>Zeiten</em>          |
-| `Mein Profil`          | (none)   | `Mein ` + <em>Profil</em>          |
-| `Urlaub & Abwesenheit` | (none)   | `Urlaub & ` + <em>Abwesenheit</em> |
-| `Zeiterfassung`        | (none)   | `Zeiterfassung` (plain)            |
-| `Mein Profil`          | `Mein`   | <em>Mein</em> + ` Profil`          |
 
 Usage:
 
@@ -163,13 +216,13 @@ interface Props {
 }
 ```
 
-Modal owns:
+Modal renders `<Dialog>` (Issue #843, D-843-16) and keeps its props. The block owns:
 
-- **Escape key** → sets `open=false`
-- **Backdrop click** → sets `open=false`
-- **Focus trap** on `.modal-card` while open (via `use:focusTrap` from `$lib/utils/focus-trap.ts`)
-- **Body scroll lock** while open (toggles `document.body.style.overflow`)
-- **Initial focus** (Issue #612, additive): `focusTrap` focuses the first element inside the dialog that carries `data-autofocus` (and is not disabled); a modal without the attribute focuses its first focusable element as before.
+- **Escape key** (a document-level key event) → sets `open=false`
+- **Backdrop click** → sets `open=false` (press inside the dialog and release on the overlay does not close)
+- **Focus trap and focus return** (bits-ui), and **`inert` on the rest of the page** while open
+- **Portal to `body`** above the topbar, so no ancestor transform (#570) can trap it
+- **Initial focus** (Issue #612, additive): the first element inside the dialog that carries `data-autofocus` (and is not disabled); a modal without the attribute focuses its first focusable element as before.
 
 Parent surface area is intentionally minimal: bind a boolean + write the body content. Use Svelte 5 `$state(false)` in the caller.
 
@@ -264,11 +317,34 @@ Usage:
 </MonthBar>
 ```
 
+### `<PeriodPicker>`
+
+Source: `$components/ui/PeriodPicker.svelte`
+
+Issue #843 (D-843-01 block 2): the one period control. Controlled: prev / label / next with 44 px targets, optional „Heute“, optional zoom Segment (`zooms` in display order from `jahr`, `quartal`, `monat`, `woche`; shown from two levels on, `zoom` bindable, `onZoom`). It emits the legacy `.month-bar` DOM and the `{prefix}`, `{prefix}-prev|next|today|label` test ids; `MonthBar` and `PeriodSwitcher` render it and keep their props. `aside` takes content that is not the period (MonthBar's stats), `extra` trailing actions of the nav row, `onLabelClick` + `labelOverlay` turn the label into a button with an overlay (MonthBar's month grid).
+
+```ts
+interface Props {
+  label: string;
+  onPrev: () => void;
+  onNext: () => void;
+  onToday?: () => void;
+  prevLabel?: string; // default "Vorheriger Zeitraum"
+  nextLabel?: string; // default "Nächster Zeitraum"
+  nextDisabled?: boolean;
+  testIdPrefix?: string; // default "month-bar"
+  eyebrow?: string;
+  zooms?: ("jahr" | "quartal" | "monat" | "woche")[];
+  zoom?: "jahr" | "quartal" | "monat" | "woche"; // bindable
+  onZoom?: (zoom) => void;
+}
+```
+
 ### `<PeriodSwitcher>`
 
 Source: `$components/ui/PeriodSwitcher.svelte`
 
-Phase 840 (Issue #840, D-840-13): one period control for all leave views; a wrapper around MonthBar, no new recipe. It renders ‹ label › Heute for a year, a quarter or a month and emits no markup or class of its own, so every `.month-bar` rule and the narrow-viewport proofs (Issue #553/#564) apply unchanged.
+Phase 840 (Issue #840, D-840-13): one period control for all leave views; a wrapper around PeriodPicker (Issue #843), no new recipe. It renders ‹ label › Heute for a year, a quarter or a month and emits no markup or class of its own, so every `.month-bar` rule and the narrow-viewport proofs (Issue #553/#564) apply unchanged.
 
 ```ts
 interface Props {
@@ -278,14 +354,33 @@ interface Props {
   onShift: (step: -1 | 1) => void;
   /** "Heute" jump-to-today handler. */
   onToday: () => void;
-  /** Real disabled next arrow (MonthBar `nextDisabled`). */
+  /** Real disabled next arrow (PeriodPicker `nextDisabled`). */
   nextDisabled?: boolean;
-  /** MonthBar test-id prefix (default "month-bar"). */
+  /** PeriodPicker test-id prefix (default "month-bar"). */
   testIdPrefix?: string;
 }
 ```
 
 Labels: „2026“ / „Q4 2026 · Okt–Dez“ / „November 2026“; arrow names „Vorheriges/Nächstes Jahr|Quartal“, „Vorheriger/Nächster Monat“.
+
+### Formular-Satz: `<FormField>`, `<SaveBar>`, `<DayGrid>`
+
+Sources: `$components/ui/FormField.svelte`, `SaveBar.svelte` (+ `save-bar.ts`), `DayGrid.svelte` (Issue #843, D-843-01 block 7; `SegmentedControl` is the Segment of this set).
+
+- `FormField` (`label`, `help?`, `error?`, `required?`, `field` snippet): the snippet receives `{ id, describedBy, invalid }` and puts them on the page's own control (`aria-describedby={describedBy}`, `aria-invalid={invalid ? "true" : undefined}`). Ids come from `$props.id()`.
+- `SaveBar` (`changes`, `errors`, `saving?`, `saveLabel`, `onSave`, `onDiscard`): the section-button rule of `docs/ADMIN_STRUCTURE.md` §3.2.1 as code. Hidden at 0 changes; the save button is disabled while `errors > 0` or `saving`; `saveLabel` says what happens („Vertrag speichern“). The German phrase and the `canSave` rule live only in `save-bar.ts`. No page adopts it yet.
+- `DayGrid` (`value` bindable `{ mon … sun }` hours or `null`, `label`, `step?`, `disabled?`, `onchange?`): Mo…So fields, live sum in German notation („39,5 h“), a field error outside 0…24 (feedback only, the API validates).
+
+### Bulk change preview: `<BulkPreviewDialog>`
+
+Source: `$components/ui/BulkPreviewDialog.svelte` (Issue #843, D-843-01 block 7). The pattern helper for a write that touches many records: a wide `Dialog` with the count sentence („Betrifft 12 Personen“), the caller's `list` snippet, „Gilt ab 01.12.2026“ formatted from a caller-given ISO `effectiveDate` (the block computes no date; the server's preview decides, § 3 NachwG, #568) and a footer „Abbrechen“ + the confirm button (`confirmLabel` says what happens). Props: `open` (bindable), `title`, `eyebrow?`, `count`, `effectiveDate?`, `confirmLabel`, `pending?`, `loading?`, `onConfirm`, `onCancel?`, `list`, `intro?`, `extraActions?`. Confirm is disabled at `count` 0, while `pending` or while `loading`; `loading` shows the Skeleton instead of count and list. First adopter: `admin/BulkApplyDialog.svelte`.
+
+### Pickers: `<Combobox>`, `<DatePicker>`
+
+Sources: `$components/ui/Combobox.svelte`, `DatePicker.svelte`, `$lib/table/search.ts` (Issue #843, D-843-01 block 7). Import them only where used, never through a barrel (bundle, D-843-17).
+
+- `Combobox` (`items: { value, label }[]`, `value` bindable string, `label?`, `placeholder?`, `disabled?`, FormField attrs `id`, `describedBy`, `invalid`): the first ArrowDown opens the list (it does not select), arrows move, Enter selects. The list is filtered by `matchesSearch()` of `lib/table/search.ts`, the one search normaliser (trim + `toLocaleLowerCase("de")`), also used by the table toolbar. No match says „Keine Treffer“.
+- `DatePicker` (`value` bindable ISO `YYYY-MM-DD` or `null`, `label`, `min?`, `max?`, `disabled?`, FormField attrs, `open?`): German segments, weeks start on Monday, weekday heads keyed by index. `@internationalized/date` is used inside only; the page sees ISO strings. An unparsable string reads as empty. The popover cannot be opened by a synthetic click in jsdom; unit tests pass `open`, the real opening is proven in the e2e.
 
 ### `<KPIStat>`
 
@@ -591,6 +686,9 @@ import ApprovalRow from "$components/ui/ApprovalRow.svelte";
 import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
 import Spinner from "$components/ui/Spinner.svelte";
 import PageHead from "$components/layout/PageHead.svelte";
+import Dialog from "$components/ui/Dialog.svelte";
+import DataTable from "$components/ui/DataTable.svelte";
+import Skeleton from "$components/ui/Skeleton.svelte";
 ```
 
 ## Lint gates
@@ -605,6 +703,12 @@ The script blocks PRs that:
 - Use any of the banned raw classes (`.modal-backdrop`, `.modal-card`, `.modal-header`, `.modal-body`, `.modal-footer`, `.card-hd`, `.card-title`, `.card-sub`, `.month-bar`, `.month-bar-stats`, `.mstat`, `.approval-row`) outside the corresponding primitive component.
 
 Escape-hatch: prefix the offending line with `<!-- eslint-disable-next-line clokr/ui-no-raw-class -->` and a justification comment. Anything escape-hatched will be scrutinized in code review.
+
+Further gates since Issue #843:
+
+- `pnpm --filter @clokr/web lint:ui-classes` also scans `src/routes` and the area components under `lib/components` (outside `ui/` and `layout/`) for page-own filter bars, period controls, KPI cards and data tables against `apps/web/scripts/lint-ui-classes-route-ratchet.json`; the counts may only fall.
+- `pnpm --filter @clokr/web lint:no-alert` fails on `alert(`, `confirm(` and `prompt(` in `apps/web/src` outside tests.
+- `lint:tokens` carves out exactly `src/tailwind-theme.css` from the `--color-` / `--radius-` prefix rule.
 
 ## Migration history
 

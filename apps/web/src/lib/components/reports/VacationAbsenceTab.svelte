@@ -10,6 +10,7 @@
   import CardHeader from "$components/ui/CardHeader.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import { leaveTypeColor } from "$lib/leave/leave-colors";
@@ -316,8 +317,9 @@
     {/snippet}
   </CardHeader>
 
-  {#if loading}
-    <span class="sr-only">Lade Urlaubsübersicht…</span>
+  <!-- #843 D-843-07: a refresh over an existing answer announces itself through the Skeleton, not text -->
+  {#if loading && vacation !== null}
+    <Skeleton inline width={8} />
   {/if}
 
   {#if filterActive}
@@ -328,10 +330,8 @@
 
   {#if vacation === null}
     {#if loading}
-      <div class="vac-skeleton" data-testid="vacation-skeleton" aria-busy="true">
-        {#each Array.from({ length: 5 }, (_, i) => i) as i (i)}
-          <div class="skeleton skeleton-text"></div>
-        {/each}
+      <div data-testid="vacation-skeleton">
+        <Skeleton shape="row" count={3} />
       </div>
     {/if}
   {:else if yearRows.length === 0}
@@ -493,11 +493,7 @@
 
   {#if absences === null}
     {#if loading}
-      <div class="vac-skeleton" aria-busy="true">
-        {#each Array.from({ length: 3 }, (_, i) => i) as i (i)}
-          <div class="skeleton skeleton-text"></div>
-        {/each}
-      </div>
+      <Skeleton shape="row" count={3} />
     {/if}
   {:else if shownAbsences.length === 0}
     <p class="vac-empty">Keine Abwesenheiten im Zeitraum.</p>
@@ -531,12 +527,6 @@
 </Card>
 
 <style>
-  .vac-skeleton {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-3);
-  }
-
   .vac-empty {
     margin: 0;
     font-size: 15px;

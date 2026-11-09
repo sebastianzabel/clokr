@@ -17,6 +17,7 @@
   import { toasts } from "$stores/toast";
   import Section from "$lib/components/admin/Section.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   /** One item of `GET /holidays`; `isManual` separates the two lists, the id is real only if manual. */
   export interface SalonHolidayDto {
@@ -167,7 +168,7 @@
   </div>
 
   {#if loading}
-    <p class="sh-note" role="status">Laden…</p>
+    <Skeleton shape="row" count={3} />
   {:else if loadError}
     <div class="callout error" role="alert">{loadError}</div>
   {:else}

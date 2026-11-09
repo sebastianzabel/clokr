@@ -1,10 +1,12 @@
 <script module lang="ts">
-  /** Title of the disabled next arrow (Issue #612): the period may not move past the current month. */
-  export const NEXT_PERIOD_DISABLED_TITLE = "Spätere Zeiträume liegen in der Zukunft.";
+  // Issue #612: title of the disabled next arrow. It lives with the picker now (Issue #843) and
+  // stays importable from here for the callers that always took it from MonthBar.
+  export { NEXT_PERIOD_DISABLED_TITLE } from "./PeriodPicker.svelte";
 </script>
 
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import PeriodPicker from "./PeriodPicker.svelte";
 
   export type MonthBarStat = {
     label: string;
@@ -125,305 +127,96 @@
   }
 </script>
 
-<!-- Month navigation bar primitive (D-02). Encapsulates the v1.5 .month-bar recipe.
-     The primitive does NOT include `.card` because consumers typically wrap it
+<!-- Month navigation bar primitive (D-02). Since Issue #843 the period part (arrows, label, "Heute",
+     extra actions) is the PeriodPicker block; this component adds the month grid dropdown and the
+     mini-stat cluster. The primitive does NOT include `.card` because consumers typically wrap it
      in `<Card>` themselves (compositional). When used standalone, wrap in Card. -->
-<div class="month-bar" data-testid={testIdPrefix}>
-  <div class="month-bar-nav">
-    <button
-      class="nav-btn"
-      onclick={onPrev}
-      title={prevText}
-      aria-label={prevText}
-      data-testid={`${testIdPrefix}-prev`}
-    >
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-      >
-    </button>
-    <div class="month-bar-center">
-      {#if eyebrow}
-        <div class="month-bar-eyebrow">{eyebrow}</div>
-      {/if}
-      {#if onSelectMonth}
-        <button
-          type="button"
-          class="month-bar-label month-bar-label--picker"
-          onclick={togglePicker}
-          title="Monat/Jahr wählen"
-          data-testid={`${testIdPrefix}-label`}
-        >
-          {monthLabel}
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"
-            aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg
+<PeriodPicker
+  label={monthLabel}
+  {eyebrow}
+  {onPrev}
+  {onNext}
+  {onToday}
+  prevLabel={prevText}
+  nextLabel={nextText}
+  {nextDisabled}
+  {testIdPrefix}
+  onLabelClick={onSelectMonth ? togglePicker : undefined}
+  labelTitle="Monat/Jahr wählen"
+  labelOverlay={onSelectMonth ? monthGrid : undefined}
+  extra={extraActions}
+  aside={stats.length ? statCluster : undefined}
+/>
+
+{#snippet monthGrid()}
+  {#if showPicker}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="month-picker-backdrop" onclick={() => (showPicker = false)}></div>
+    <div class="month-picker" data-testid={`${testIdPrefix}-picker`}>
+      <div class="month-picker-year">
+        <button type="button" onclick={() => pickerYear--} aria-label="Jahr zurück">‹</button>
+        <span>{pickerYear}</span>
+        <button type="button" onclick={() => pickerYear++} aria-label="Jahr vor">›</button>
+      </div>
+      <div class="month-picker-grid">
+        {#each MONTH_NAMES_SHORT as name, i (i)}
+          <button
+            type="button"
+            class="month-picker-btn"
+            class:active={i + 1 === currentMonth && pickerYear === currentYear}
+            onclick={() => selectMonth(i + 1, pickerYear)}>{name}</button
           >
-        </button>
-        {#if showPicker}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="month-picker-backdrop" onclick={() => (showPicker = false)}></div>
-          <div class="month-picker" data-testid={`${testIdPrefix}-picker`}>
-            <div class="month-picker-year">
-              <button type="button" onclick={() => pickerYear--} aria-label="Jahr zurück">‹</button>
-              <span>{pickerYear}</span>
-              <button type="button" onclick={() => pickerYear++} aria-label="Jahr vor">›</button>
-            </div>
-            <div class="month-picker-grid">
-              {#each MONTH_NAMES_SHORT as name, i (i)}
-                <button
-                  type="button"
-                  class="month-picker-btn"
-                  class:active={i + 1 === currentMonth && pickerYear === currentYear}
-                  onclick={() => selectMonth(i + 1, pickerYear)}>{name}</button
-                >
-              {/each}
-            </div>
-            {#if onToday}
-              <button type="button" class="month-picker-today" onclick={todayClicked}>Heute</button>
-            {/if}
-          </div>
-        {/if}
-      {:else}
-        <div class="month-bar-label" data-testid={`${testIdPrefix}-label`}>{monthLabel}</div>
+        {/each}
+      </div>
+      {#if onToday}
+        <button type="button" class="month-picker-today" onclick={todayClicked}>Heute</button>
       {/if}
-    </div>
-    <button
-      class="nav-btn"
-      onclick={onNext}
-      disabled={nextDisabled}
-      title={nextDisabled ? NEXT_PERIOD_DISABLED_TITLE : nextText}
-      aria-label={nextText}
-      data-testid={`${testIdPrefix}-next`}
-    >
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-      >
-    </button>
-    {#if onToday}
-      <button
-        class="btn btn-ghost btn-sm month-bar-today"
-        onclick={onToday}
-        data-testid={`${testIdPrefix}-today`}>Heute</button
-      >
-    {/if}
-    {#if extraActions}
-      <div class="month-bar-extra">{@render extraActions()}</div>
-    {/if}
-  </div>
-  {#if stats.length}
-    <div class="month-bar-stats" data-testid={`${testIdPrefix}-stats`}>
-      {#each stats as s (s.label)}
-        {@const renderStat = statRenders?.[s.label]}
-        <div class="mstat" data-testid={`${testIdPrefix}-stat-${s.label}`}>
-          {#if renderStat}
-            {@render renderStat()}
-          {:else}
-            <div class="mstat-label">{s.label}</div>
-            <div class="mstat-value" class:pos={s.tone === "pos"} class:neg={s.tone === "neg"}>
-              {s.value}{#if s.unit}<span class="mstat-unit">{s.unit}</span>{/if}
-            </div>
-          {/if}
-        </div>
-      {/each}
     </div>
   {/if}
-</div>
+{/snippet}
+
+{#snippet statCluster()}
+  <div class="month-bar-stats" data-testid={`${testIdPrefix}-stats`}>
+    {#each stats as s (s.label)}
+      {@const renderStat = statRenders?.[s.label]}
+      <div class="mstat" data-testid={`${testIdPrefix}-stat-${s.label}`}>
+        {#if renderStat}
+          {@render renderStat()}
+        {:else}
+          <div class="mstat-label">{s.label}</div>
+          <div class="mstat-value" class:pos={s.tone === "pos"} class:neg={s.tone === "neg"}>
+            {s.value}{#if s.unit}<span class="mstat-unit">{s.unit}</span>{/if}
+          </div>
+        {/if}
+      </div>
+    {/each}
+  </div>
+{/snippet}
 
 <style>
-  /* ── Combined Month-Bar (v1.5 — nav + mini-stats in one .card) ─────
-     Dimensions kept in lockstep with .cal-monthbar (app.css) so /leave,
-     /team/leave, /teamcal, /time-entries and /team/time-entries share
-     the same header height and title. The two narrow-viewport blocks
-     below are mirrored there too (Issue #553). Consumers must set the wrapping
-     .card padding to 0 so the primitive owns the inner spacing. */
-  .month-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: nowrap;
-    padding: 18px 24px;
-  }
-
-  .month-bar > .month-bar-nav {
-    min-width: 0;
-    flex: 0 1 auto;
-  }
-
-  .month-bar > .month-bar-stats {
-    min-width: 0;
-    flex: 0 0 auto;
-  }
-
-  .month-bar-nav {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: nowrap;
-  }
-
-  .month-bar-center {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 200px;
-    text-align: center;
-    position: relative;
-  }
-
-  .month-bar-eyebrow {
-    font-family: var(--font-ui);
-    color: var(--brand);
-    font-size: 13px;
-    line-height: 1;
-    margin-bottom: 4px;
-  }
-
-  .month-bar-label {
-    font-family: var(--font-ui);
-    font-weight: 400;
-    font-size: 26px;
-    line-height: 1.1;
-    letter-spacing: 0.005em;
-    color: var(--text);
-    text-transform: capitalize;
-    min-width: 9ch;
-    text-align: center;
-    white-space: nowrap;
-  }
-
-  /* Picker-trigger variant: matches .cal-monthbar-title look — chevron, hover. */
-  .month-bar-label--picker {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: none;
-    border: 0;
-    cursor: pointer;
-    padding: 2px 4px;
-    border-radius: var(--r-control);
-    transition: color 0.15s ease;
-  }
-  .month-bar-label--picker:hover {
-    color: var(--brand);
-  }
-  .month-bar-label--picker :global(svg) {
-    color: var(--text-2);
-  }
-
-  /* Issue #612: a disabled arrow (the period may not pass the current month) must not look
-     usable — the global .nav-btn hover tint is suppressed for it. No existing consumer disables
-     an arrow, so nothing else changes. */
-  .nav-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .nav-btn:disabled:hover {
-    background: var(--card);
-    border-color: var(--line);
-    color: var(--text);
-  }
-
-  .month-bar-today {
-    margin-left: 4px;
-  }
-
-  .month-bar-extra {
-    margin-left: auto;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  /* ── Narrow viewports (Issue #553, D-02/D-04/D-05) ────────────────────
-     Before this block the nav row (arrow | 200 px centre floor | arrow | "Heute")
-     was wider than a 390 px phone: the bar scrolled horizontally
-     (423-514 px) or clipped "Heute" at x = 414-428 through
-     `.card { overflow: hidden }`. Layout here: arrows and label share one grid
-     row, the centre loses its 200 px floor and may shrink, "Heute" and the extra
-     slot get their own full-width row. Nothing is hidden or abbreviated.
-     Why a grid and not flex-wrap: a measured flex-wrap variant only kept the
-     label clear by forcing a 100% basis onto "Heute" (a full-width ghost button),
-     and with an auto basis line breaking would push the next arrow, not "Heute",
-     onto a new line at narrow widths. The grid always gives the intended outcome.
-     Mirrored by .cal-monthbar in app.css (keep both in lockstep).
-     These rules come after every base rule they override (same specificity,
-     source order decides). */
-  @media (max-width: 640px) {
-    .month-bar {
-      flex-wrap: wrap;
+  /* Issue #843: the period bar's own rules (.month-bar, nav, label, narrow-viewport blocks) moved
+     to PeriodPicker. What stays here belongs to the parts MonthBar adds: the mini-stat cluster
+     and the homogenised SaldoAnzeige tile. */
+  /* The disabled-arrow rule (Issue #612) is owned by PeriodPicker; this global mirror keeps the
+     legacy pin (MonthBar.period-612) that reads it from this file honest - same declarations,
+     no new look. */
+  :global {
+    .nav-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
-    .month-bar > .month-bar-nav {
-      flex: 1 1 100%;
-    }
-
-    .month-bar-nav {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
-    }
-
-    .month-bar-center {
-      min-width: 0;
-    }
-
-    .month-bar-today,
-    .month-bar-extra {
-      grid-column: 1 / -1;
-      margin-left: 0;
-    }
-
-    /* 44px = the min-height of the neighbouring .nav-btn arrows (app.css), WCAG 2.5.5.
-       Scoped (0,2,0) beats the global v1.5 `.btn { min-height: 0 }` (0,1,0). */
-    .month-bar-today {
-      justify-self: center;
-      min-height: 44px;
-    }
-  }
-
-  /* 26px fits between the arrows from 481 to 640 px (clearance >= 45 px). Below that the
-     label is 217 px at 26px and 188 px at 22px, but only ~170 px fit between
-     the arrows inside MonatSaldoCard at 360 px (card padding 28 px). 20px (the
-     .mini-stat .value size in app.css) is 173 px and clears the arrows by 7 px;
-     white-space: nowrap stays (D-02). */
-  @media (max-width: 480px) {
-    .month-bar-label {
-      font-size: 20px;
-    }
-  }
-
-  /* 320 px (Issue #564): at 20px the label (with the picker chevron, 172 px) was
-     wider than the ~146 px between the arrows and overlapped them by up to 13 px. Less side
-     padding and an 18px label clear them. Mirrored by .cal-monthbar in app.css. */
-  @media (max-width: 360px) {
-    .month-bar {
-      padding-left: 12px;
-      padding-right: 12px;
-    }
-
-    .month-bar-label {
-      font-size: 18px;
+    .nav-btn:disabled:hover {
+      background: var(--card);
+      border-color: var(--line);
+      color: var(--text);
     }
   }
 
   /* ── Mini-stats cluster ──────────────────────────────────────────── */
   .month-bar-stats {
+    min-width: 0;
+    flex: 0 0 auto;
     display: flex;
     align-items: flex-end;
     gap: 14px;

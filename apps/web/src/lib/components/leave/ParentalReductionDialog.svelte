@@ -16,6 +16,7 @@
   import ReasonDialog from "$components/ui/ReasonDialog.svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import {
     PARENTAL_REDUCTION_HINT,
     formatDays,
@@ -147,7 +148,7 @@
   >
     <div data-testid="parental-reduction-dialog" style="display: contents">
       {#if loading}
-        <p class="text-muted">Lädt…</p>
+        <Skeleton shape="line" />
       {:else if preview}
         <div class="table-wrap">
           <table class="data-table">

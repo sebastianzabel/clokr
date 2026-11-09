@@ -7,6 +7,7 @@
   // the period end, with the owner's hint; the hours worked in the salon are a separate tile in
   // its own row with no saldo beside it, so they never meet Soll.
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import type { PeriodKpis } from "$lib/reports/period-report";
   import { fmtDateDe, fmtDaysDe, fmtHoursDe } from "$lib/reports/period-format";
   import {
@@ -77,12 +78,9 @@
 
 <div class="period-kpis" data-testid="period-kpis" aria-busy={loading}>
   {#if showSkeleton}
-    <div class="kpi-grid" data-testid="period-kpis-skeleton">
-      {#each Array.from({ length: 8 }, (_, i) => i) as i (i)}
-        <div class="skeleton skeleton-text kpi-skeleton"></div>
-      {/each}
+    <div class="kpi-skeleton" data-testid="period-kpis-skeleton">
+      <Skeleton shape="block" count={8} height="3rem" />
     </div>
-    <span class="sr-only">Bericht wird geladen…</span>
   {:else if kpis}
     <div class="kpi-grid kpi-grid--first">
       <KPIStat
@@ -196,8 +194,12 @@
     row-gap: var(--s-4);
   }
 
-  .kpi-skeleton {
-    height: 3rem;
+  /* The Skeleton region lays its eight tiles out in the grid of the real KPI rows. */
+  .kpi-skeleton :global(.skeleton-region) {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    column-gap: var(--s-6);
+    row-gap: var(--s-4);
   }
 
   /* The recipe's 38 px value does not fit four tiles next to the sidebar: 20 px below 1440 px and
@@ -216,7 +218,8 @@
   }
 
   @media (max-width: 960px) {
-    .kpi-grid {
+    .kpi-grid,
+    .kpi-skeleton :global(.skeleton-region) {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }

@@ -1,14 +1,9 @@
-<script module lang="ts">
-  // Issue #580: open Modals in opening order. A dialog opened from inside another dialog (the
-  // role draft dialog over the employee create dialog) must close alone on Escape. Within one
-  // keydown dispatch the closing instance's token is still in this list, so the outer instance
-  // ignores that same key event whatever the listener order.
-  const openStack: symbol[] = [];
-</script>
-
 <script lang="ts">
+  // Issue #843 (D-843-01 block 11, D-843-16): Modal keeps its public API and renders through the
+  // Dialog block, the one overlay implementation (portal to body, inert page, focus scope, scroll
+  // lock, Escape layer, z-scale). Its callers stay untouched.
   import type { Snippet } from "svelte";
-  import { focusTrap } from "$lib/utils/focus-trap";
+  import Dialog from "./Dialog.svelte";
 
   interface Props {
     /** Two-way bindable open state. Parent holds `let modalOpen = $state(false)`. */
@@ -24,7 +19,7 @@
     /** Optional footer snippet (e.g. button row). */
     footer?: Snippet;
     /**
-     * Issue #612 — additive. "md" (default) is the global `.modal` width; "wide" adds
+     * Issue #612 - additive. "md" (default) is the global `.modal` width; "wide" adds
      * `modal--wide` (880 px, capped to the viewport) for the person drill-down.
      */
     size?: "md" | "wide";
@@ -39,108 +34,6 @@
     footer,
     size = "md",
   }: Props = $props();
-
-  // Bound to the .scrim element so the inert effect can exclude it by reference.
-  let scrimEl: HTMLDivElement | undefined = $state();
-
-  const stackToken = Symbol("modal");
-
-  $effect(() => {
-    if (!open) return;
-    openStack.push(stackToken);
-    return () => {
-      const at = openStack.lastIndexOf(stackToken);
-      if (at !== -1) openStack.splice(at, 1);
-    };
-  });
-
-  function onKeyDown(e: KeyboardEvent) {
-    if (e.key === "Escape" && open && openStack[openStack.length - 1] === stackToken) {
-      e.preventDefault();
-      open = false;
-    }
-  }
-
-  function onBackdropClick(e: MouseEvent) {
-    if (e.target === e.currentTarget) open = false;
-  }
-
-  // Lock body scroll + mark background siblings inert while open; restore on close/unmount.
-  $effect(() => {
-    if (!open || !scrimEl) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    // Apply `inert` to every top-level body child that does NOT contain the
-    // .scrim element. We exclude by reference (el.contains(scrimEl)) rather
-    // than by class name because the .scrim is never a direct body child —
-    // SvelteKit wraps the entire app in a <div style="display:contents"> and
-    // the modal renders inline inside the page tree, not teleported to <body>.
-    const toRestore: Element[] = [];
-    for (const child of Array.from(document.body.children)) {
-      if (child.contains(scrimEl)) continue;
-      if (child.hasAttribute("inert")) continue;
-      child.setAttribute("inert", "");
-      toRestore.push(child);
-    }
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      for (const el of toRestore) el.removeAttribute("inert");
-    };
-  });
 </script>
 
-<svelte:window onkeydown={onKeyDown} />
-
-{#if open}
-  <div class="scrim" role="presentation" onclick={onBackdropClick} bind:this={scrimEl}>
-    <div
-      class="modal"
-      class:modal--wide={size === "wide"}
-      role="dialog"
-      aria-modal="true"
-      aria-label={ariaLabel ?? title}
-      use:focusTrap
-    >
-      <header class="modal-hd">
-        <div>
-          {#if eyebrow}<div class="modal-eyebrow">{eyebrow}</div>{/if}
-          <h3>{title}</h3>
-        </div>
-      </header>
-      <div class="modal-body">
-        {@render children()}
-      </div>
-      {#if footer}
-        <footer class="modal-foot">
-          {@render footer()}
-        </footer>
-      {/if}
-    </div>
-  </div>
-{/if}
-
-<style>
-  /* Issue #612: the scoped selector (the component hash class makes it 0,2,0) outranks the
-     global `.modal` width recipe. */
-  .modal--wide {
-    width: min(880px, calc(100vw - 32px));
-  }
-
-  /* The wide modal carries the drill-down's footer buttons ("Schliessen", "DATEV (Person)",
-     "Stundennachweis (PDF)"): in one row they end beyond a phone and the modal clips them (found
-     by the 390/360 px matrix of reports-period.spec.ts). They wrap instead; a footer that fits
-     renders exactly as before. */
-  .modal--wide .modal-foot {
-    flex-wrap: wrap;
-  }
-
-  .modal-eyebrow {
-    font-family: var(--font-ui);
-    color: var(--brand);
-    font-size: 13px;
-    line-height: 1;
-    margin-bottom: 4px;
-  }
-</style>
+<Dialog bind:open {eyebrow} {title} {ariaLabel} {size} {children} {footer} />

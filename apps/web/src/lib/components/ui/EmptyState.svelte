@@ -1,13 +1,38 @@
 <script lang="ts">
+  // Issue #843 (D-843-01 block 10): `variant` is additive. noData / noMatches supply a default title,
+  // sentence and action label; every explicit prop still wins and the output without a variant is unchanged.
   interface Props {
     icon?: string;
-    title: string;
+    title?: string;
     description?: string;
     actionLabel?: string;
     onaction?: () => void;
+    variant?: "noData" | "noMatches";
   }
 
-  let { icon = "inbox", title, description, actionLabel, onaction }: Props = $props();
+  const VARIANT_DEFAULTS = {
+    noData: { title: "Noch keine Einträge", description: undefined, actionLabel: undefined },
+    noMatches: {
+      title: "Keine Treffer",
+      description: "Passe die Suche oder die Filter an.",
+      actionLabel: "Filter zurücksetzen",
+    },
+  } as const;
+
+  let {
+    icon: iconProp,
+    title: titleProp,
+    description: descriptionProp,
+    actionLabel: actionLabelProp,
+    onaction,
+    variant,
+  }: Props = $props();
+
+  const defaults = $derived(variant ? VARIANT_DEFAULTS[variant] : undefined);
+  const icon = $derived(iconProp ?? (variant === "noMatches" ? "search" : "inbox"));
+  const title = $derived(titleProp ?? defaults?.title ?? "");
+  const description = $derived(descriptionProp ?? defaults?.description);
+  const actionLabel = $derived(actionLabelProp ?? defaults?.actionLabel);
 </script>
 
 <!-- Render an empty state with an SVG icon, title, optional description and CTA -->

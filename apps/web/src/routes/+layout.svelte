@@ -1,6 +1,8 @@
 <script lang="ts">
   import "../tokens.css";
   import "../app.css";
+  // Tailwind token pipeline (Issue #843): utilities layer only, after the real stylesheets.
+  import "../tailwind-theme.css";
   // Stores apply data-theme / data-mode to <html> at
   // module init via their own module-scope subscribe() calls
   // (see theme.ts / mode.ts).

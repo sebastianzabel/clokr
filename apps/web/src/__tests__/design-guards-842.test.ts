@@ -373,11 +373,15 @@ describe("Issue #842 design guards", () => {
       expect('[data-mode="dark"] .a {}'.match(MODE_ATTR_RE)).toBeNull();
     });
 
-    it("only the theme preview sets a data-mode attribute in markup", () => {
+    it("only the theme preview and the building-block example page set a data-mode attribute", () => {
       const hits = SOURCES.filter(
         (f) => f.rel.endsWith(".svelte") && f.text.match(MODE_ATTR_RE) !== null,
       ).map((f) => f.rel);
-      expect(hits).toEqual(["routes/(app)/admin/themes/+page.svelte"]);
+      // #843 D-843-04: the example page renders every block in nested theme x mode frames.
+      expect(hits).toEqual([
+        "routes/(app)/admin/bausteine/+page.svelte",
+        "routes/(app)/admin/themes/+page.svelte",
+      ]);
     });
   });
 

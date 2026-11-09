@@ -5,6 +5,7 @@
   import { onMount } from "svelte";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
 
@@ -62,7 +63,7 @@
 </svelte:head>
 
 {#if loading}
-  <div class="page-loading">Laden…</div>
+  <div class="page-loading"><Skeleton shape="card" lines={3} /></div>
 {:else if loadError || !entry}
   <div class="page-error">{loadError || "Audit-Eintrag nicht gefunden."}</div>
 {:else}

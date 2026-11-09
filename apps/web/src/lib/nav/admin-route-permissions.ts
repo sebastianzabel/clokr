@@ -16,8 +16,11 @@ export type PermissionAlternatives = readonly (readonly string[])[];
 export interface AdminRoutePermission {
   href: string;
   requires: PermissionAlternatives;
-  /** False for alias routes that only redirect (not shown in any navigation). */
+  /** False for alias routes that only redirect and for internal tool pages (not shown in any navigation). */
   inNav: boolean;
+  /** An internal tool page (#843): reachable by URL behind its guard, never listed in a navigation,
+   *  the command palette or the admin start-page redirect. */
+  internal?: true;
   /** Group, label and icon of a navigable route (docs/ADMIN_STRUCTURE.md §1). */
   nav?: { group: string; label: string; icon: string };
 }
@@ -33,6 +36,12 @@ function navRoute(
   ...requires: string[][]
 ): AdminRoutePermission {
   return { href, requires, inNav: true, nav: { group, label: pageLabel(href), icon } };
+}
+
+/** An internal tool page: kept behind its guard so e2e, axe and visual run against it, but never
+ *  listed in the sidebar, the „Mehr“ sheet, the command palette or as the admin start page. */
+function internalRoute(href: PageHref, ...requires: string[][]): AdminRoutePermission {
+  return { href, requires, inNav: false, internal: true };
 }
 
 /** An alias route that only redirects; never shown in a navigation. */
@@ -115,6 +124,9 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   // aliases that redirect to a route above
   aliasRoute("/admin/special-leave", [Z("tenant-settings:update")], [Z("leave-config:manage")]),
   aliasRoute("/admin/wifi-presence", [Z("presence-source:manage")]),
+  // #843 D-843-04: the design-system example page - internal, never in a navigation. It reads no
+  // API data, so this is a UX gate only (the same read key the themes page accepts).
+  internalRoute("/admin/bausteine", [Z("tenant-settings:read")]),
 ];
 
 const HREFS = ADMIN_ROUTE_PERMISSIONS.map((entry) => entry.href);

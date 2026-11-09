@@ -24,6 +24,22 @@ import { pathToFileURL } from "node:url";
 
 const SCAN_EXTENSIONS = [".css", ".svelte", ".ts", ".js"];
 
+/**
+ * The ONE file exempt from the retired Tailwind namespace prefixes (Issue #843, D-843-13). Tailwind 4
+ * reads its theme from `--color-*` / `--radius-*`, which are banned names everywhere else; the
+ * token pipeline maps them onto the real roles in exactly this file. Repo-relative, POSIX
+ * separators, compared for equality (a nested copy of the path is not exempt). The exemption covers
+ * only the two prefix rules below - the undeclared-var rule and every other deny rule still apply.
+ */
+export const TAILWIND_THEME_FILE = "apps/web/src/tailwind-theme.css";
+const CARVED_OUT_PREFIXES = new Set(["--color-", "--radius-"]);
+
+/** @param {string} path @param {{ kind: string; value: string }} d */
+const isCarvedOut = (path, d) =>
+  d.kind === "prefix" &&
+  CARVED_OUT_PREFIXES.has(d.value) &&
+  path.replace(/\\/g, "/") === TAILWIND_THEME_FILE;
+
 // Identifier characters of a custom property or class name. A banned name only matches when it is
 // not embedded in a longer identifier, so `.ksc-figure--good` and `--border-strong` (while looking
 // for `--border`) are left alone.
@@ -86,7 +102,8 @@ function declaredNames(text) {
 }
 
 /**
- * @param {Array<{ path: string; text: string }>} files
+ * @param {Array<{ path: string; text: string; repoPath?: string }>} files `repoPath` is the repo-relative
+ *   path the carve-out is judged on; it defaults to `path`
  * @param {Array<{ kind: string; value: string }>} deny
  * @param {{ declared?: Iterable<string> }} [options] extra declared names (besides the files')
  * @returns {Array<{ path: string; line: number; rule: string; match: string }>}
@@ -102,6 +119,7 @@ export function findTokenViolations(files, deny, options = {}) {
 
   for (const f of files) {
     for (const { d, re } of matchers) {
+      if (isCarvedOut(f.repoPath ?? f.path, d)) continue;
       for (const m of f.text.matchAll(re)) {
         violations.push({
           path: f.path,
@@ -179,8 +197,11 @@ export function runLint({ srcDir, denyText, root }) {
   if (paths.length === 0) {
     throw new Error(`[lint:tokens] ABORT — scanned zero files below ${srcDir}.`);
   }
+  // The carve-out is judged on the repo-relative path even when the caller asked for absolute ones.
+  const repoRoot = root ?? resolveRepoRoot();
   const files = paths.map((p) => ({
     path: root ? relative(root, p) : p,
+    repoPath: relative(repoRoot, p),
     text: readFileSync(p, "utf8"),
   }));
   const violations = findTokenViolations(files, deny);

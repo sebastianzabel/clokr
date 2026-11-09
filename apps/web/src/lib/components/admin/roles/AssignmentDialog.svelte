@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
   import Modal from "$components/ui/Modal.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { toasts } from "$stores/toast";
   import { ApiError } from "$api/client";
   import {
@@ -182,7 +183,7 @@
       <fieldset class="assignment-list">
         <legend class="form-label">Salons</legend>
         {#if !salonsLoaded}
-          <p class="form-hint">Salons werden geladen …</p>
+          <Skeleton shape="row" count={2} />
         {:else}
           {#each salons as salon (salon.id)}
             <label class="assignment-choice">

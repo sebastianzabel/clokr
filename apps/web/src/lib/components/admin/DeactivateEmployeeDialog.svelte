@@ -10,6 +10,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import Modal from "$components/ui/Modal.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { ApiError } from "$api/client";
   import {
     deactivateEmployee,
@@ -211,7 +212,7 @@
     {/if}
 
     {#if loading}
-      <p class="form-hint" role="status">Vorschau wird geladen …</p>
+      <Skeleton shape="block" />
     {/if}
 
     {#if view !== null && !loginOnly}

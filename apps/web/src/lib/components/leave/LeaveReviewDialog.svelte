@@ -51,6 +51,7 @@
     type LeaveReviewRequest,
     type LeaveOverlapEntry,
   } from "$lib/leave/leave-review";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   interface Props {
     /** Bindable open state. The page owns the boolean, exactly like Modal/ConfirmDialog. */
@@ -312,7 +313,7 @@
       <div class="overlap-box review-section">
         <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
         {#if loadingOverlap}
-          <p class="text-muted overlap-empty">Lädt…</p>
+          <Skeleton shape="line" />
         {:else if approvedOverlap.length === 0}
           <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
         {:else}

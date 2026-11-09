@@ -7,6 +7,7 @@
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte"; // Issue #542
   import { DAY_STATUS_LABEL, attendanceStatusText } from "$lib/dashboard/day-status-label"; // Issue #587
   import { teamDayHref, teamLeaveCreateHref } from "$lib/dashboard/team-day-links"; // Issue #587
@@ -58,7 +59,7 @@
   </CardHeader>
 
   {#if loading}
-    <p class="section-placeholder">Lade Anwesenheit…</p>
+    <Skeleton shape="row" count={4} />
   {:else if rejected}
     <SalonScopeLabel label={null} rejected={true} />
   {:else if error}
@@ -150,7 +151,6 @@
     font-size: 0.875rem;
   }
 
-  .section-placeholder,
   .section-error {
     color: var(--text-2);
     font-size: 0.9375rem;

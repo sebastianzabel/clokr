@@ -14,6 +14,7 @@
   import Section from "$lib/components/admin/Section.svelte";
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import RetroactiveBSWizard from "$lib/components/vocational-school/RetroactiveBSWizard.svelte";
   import OvertimeModeField from "$lib/components/schedule/OvertimeModeField.svelte";
   import SalonAssignmentsSection from "$lib/components/employees/SalonAssignmentsSection.svelte";
@@ -1987,7 +1988,7 @@
 </script>
 
 {#if loading}
-  <div class="page-loading">Laden…</div>
+  <div class="page-loading"><Skeleton shape="card" lines={3} /></div>
 {:else if loadError || !employee}
   <div class="page-error">{loadError || "Mitarbeiter nicht gefunden."}</div>
 {:else}
@@ -3805,7 +3806,7 @@
             {#if roleDataState === "error"}
               <div class="callout error" role="alert">{roleDataError}</div>
             {:else if roleDataState !== "ready"}
-              <p class="form-hint">Rollen werden geladen …</p>
+              <Skeleton shape="row" count={2} />
             {:else if employee}
               <PersonRoleAssignments
                 personName={displayName || "Person"}
