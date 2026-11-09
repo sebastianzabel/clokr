@@ -65,6 +65,12 @@
   // clickable. The effect remembers exactly the nodes it changed and restores them on close and on
   // destroy; a node that is inert already (page state before opening, or an outer dialog's work
   // for a nested one) is left alone.
+  //
+  // The restore also runs from `onCloseAutoFocus` (below): bits-ui's focus scope returns the focus
+  // to the opener while it is torn down, and that happens BEFORE this effect's cleanup runs. A
+  // still-inert opener cannot take the focus, so the cleanup alone left the focus on <body>.
+  let releaseInert: (() => void) | null = null;
+
   $effect(() => {
     if (staticPanel || !open || !contentEl) return;
     const content = contentEl;
@@ -77,10 +83,18 @@
       child.setAttribute("inert", "");
       changed.push(child);
     }
-    return () => {
-      for (const el of changed) el.removeAttribute("inert");
+    const release = () => {
+      for (const el of changed.splice(0)) el.removeAttribute("inert");
+      if (releaseInert === release) releaseInert = null;
     };
+    releaseInert = release;
+    return release;
   });
+
+  /** Make the page focusable again before bits-ui returns the focus to the opener. */
+  function onCloseAutoFocus() {
+    releaseInert?.();
+  }
 
   /** Focus the first [data-autofocus] element instead of bits-ui's first tabbable. */
   function onOpenAutoFocus(e: Event) {
@@ -135,7 +149,12 @@
             <div {...props} class="scrim" role="presentation" onclick={onScrimClick}></div>
           {/snippet}
         </Dialog.Overlay>
-        <Dialog.Content bind:ref={contentEl} interactOutsideBehavior="ignore" {onOpenAutoFocus}>
+        <Dialog.Content
+          bind:ref={contentEl}
+          interactOutsideBehavior="ignore"
+          {onOpenAutoFocus}
+          {onCloseAutoFocus}
+        >
           {#snippet child({ props })}
             <!-- The accessible name is the aria-label (legacy contract); bits-ui's labelledby and
                  describedby are dropped because there is no description element to point at. -->
