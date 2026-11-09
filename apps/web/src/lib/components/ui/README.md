@@ -310,6 +310,14 @@ interface Props {
 
 Labels: „2026“ / „Q4 2026 · Okt–Dez“ / „November 2026“; arrow names „Vorheriges/Nächstes Jahr|Quartal“, „Vorheriger/Nächster Monat“.
 
+### Formular-Satz: `<FormField>`, `<SaveBar>`, `<DayGrid>`
+
+Sources: `$components/ui/FormField.svelte`, `SaveBar.svelte` (+ `save-bar.ts`), `DayGrid.svelte` (Issue #843, D-843-01 block 7; `SegmentedControl` is the Segment of this set).
+
+- `FormField` (`label`, `help?`, `error?`, `required?`, `field` snippet): the snippet receives `{ id, describedBy, invalid }` and puts them on the page's own control (`aria-describedby={describedBy}`, `aria-invalid={invalid ? "true" : undefined}`). Ids come from `$props.id()`.
+- `SaveBar` (`changes`, `errors`, `saving?`, `saveLabel`, `onSave`, `onDiscard`): the section-button rule of `docs/ADMIN_STRUCTURE.md` §3.2.1 as code. Hidden at 0 changes; the save button is disabled while `errors > 0` or `saving`; `saveLabel` says what happens („Vertrag speichern“). The German phrase and the `canSave` rule live only in `save-bar.ts`. No page adopts it yet.
+- `DayGrid` (`value` bindable `{ mon … sun }` hours or `null`, `label`, `step?`, `disabled?`, `onchange?`): Mo…So fields, live sum in German notation („39,5 h“), a field error outside 0…24 (feedback only, the API validates).
+
 ### `<KPIStat>`
 
 Source: `$components/ui/KPIStat.svelte`
