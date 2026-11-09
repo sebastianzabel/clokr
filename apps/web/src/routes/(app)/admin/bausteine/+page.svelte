@@ -50,6 +50,8 @@
 
 <svelte:head>
   <title>{pageLabel("/admin/bausteine")} – Clokr</title>
+  <!-- Internal tool page (#843): not for search engines. -->
+  <meta name="robots" content="noindex" />
 </svelte:head>
 
 <div class="bausteine" data-testid="bausteine-page">
