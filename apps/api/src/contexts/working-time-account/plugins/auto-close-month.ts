@@ -1,3 +1,4 @@
+import { getBookedMonthCorrections } from "../booked-month-corrections"; // Issue #599
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../timezone";
@@ -560,6 +561,14 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
                 })),
                 holidayDateStrings: closeHolidayDateStrings,
+                // Issue #599 — booked corrections of closed months, an account movement.
+                accountCorrections: await getBookedMonthCorrections(
+                  app.prisma,
+                  emp.id,
+                  tenant.id,
+                  monthFirstDay,
+                  monthLastDay,
+                ),
                 tenantConfig: tenant.config
                   ? {
                       defaultBreakOver6h: tenant.config.defaultBreakOver6h,

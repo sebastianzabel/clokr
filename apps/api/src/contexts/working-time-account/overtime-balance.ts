@@ -17,6 +17,11 @@
 // `foreign-context-access-exceptions.json` entry needed. (Issue #438 removed this file's OWN
 // "has today's entries" cutoff check — see the cutoff block below.)
 
+import {
+  getBookedMonthCorrections,
+  getBookedMonthCorrectionsForMany,
+  type BookedMonthCorrection,
+} from "./booked-month-corrections"; // Issue #599
 import { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import {
@@ -439,6 +444,14 @@ async function computeAccountChain(
   // Phase 100B Plan 12 — A4, contexts/absence facade.
   const allAbsences = await src.absences(employee?.tenantId ?? "", rangeStart, shiftRangeLastDay);
 
+  // Issue #599 — booked corrections of closed months over the chain window; the core keeps only
+  // the rows of each month's own window, so the whole range is passed to every call below.
+  const allAccountCorrections = await src.accountCorrections(
+    employee?.tenantId ?? "",
+    rangeFirstDay,
+    rangeLastDay,
+  );
+
   // Build a full-range holidayDateStrings Set covering all years in [rangeStart, effectiveEnd].
   // (Already computed above as holidayDateStrSet — reuse it directly for closeEmployeeMonth calls.)
 
@@ -541,6 +554,7 @@ async function computeAccountChain(
         unterrichtsMinutes: ab.unterrichtsMinutes ?? undefined,
       })),
       holidayDateStrings: monthHolidaySet,
+      accountCorrections: allAccountCorrections, // Issue #599
       tenantConfig: tenantConfig
         ? {
             defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
@@ -792,6 +806,7 @@ async function computeAccountChain(
         unterrichtsMinutes: ab.unterrichtsMinutes ?? undefined,
       })),
       holidayDateStrings: partialHolidayExclude,
+      accountCorrections: allAccountCorrections, // Issue #599
       tenantConfig: tenantConfig
         ? {
             defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
@@ -1119,6 +1134,8 @@ export interface ChainSource {
   shifts(tenantId: string, from: Date, to: Date): Promise<ChainShift[]>;
   leave(tenantId: string, from: Date, to: Date): Promise<ChainLeave[]>;
   absences(tenantId: string, from: Date, to: Date): Promise<ChainAbsence[]>;
+  /** Issue #599: booked corrections of closed months with `from <= bookingDate <= to`. */
+  accountCorrections(tenantId: string, from: Date, to: Date): Promise<BookedMonthCorrection[]>;
   /** The chain head (`getCarryOverBase`): the last close's carry, else the OpeningBalance. */
   carryOverBase(prevSnapshot: { carryOver: number } | null): Promise<number>;
   bsSlotOverrides(referenceDate: Date): Promise<ChainBsOverrides>;
@@ -1221,6 +1238,8 @@ export function querySource(app: FastifyInstance, employeeId: string): ChainSour
     shifts: (tenantId, from, to) => getShiftsInRange(app.prisma, scope(tenantId), from, to),
     leave: (tenantId, from, to) => getActiveLeaveOverlapping(app.prisma, scope(tenantId), from, to),
     absences: (tenantId, from, to) => getAbsencesOverlapping(app.prisma, scope(tenantId), from, to),
+    accountCorrections: (tenantId, from, to) =>
+      getBookedMonthCorrections(app.prisma, employeeId, tenantId, from, to),
     carryOverBase: (prev) => getCarryOverBase(app.prisma, employeeId, prev),
     bsSlotOverrides: (referenceDate) => loadBsSlotOverrides(app.prisma, employeeId, referenceDate),
   };
@@ -1356,21 +1375,24 @@ export async function loadChainSources(
   // horizon above covers them.
   const scopeAll = { kind: "employees" as const, employeeIds: bulkIds, tenantId };
 
-  const [validEntries, workEntries, leave, absences, shifts, bsResolvers] = await Promise.all([
-    getValidWorkedEntriesInRange(app.prisma, scopeAll, from, horizonDay),
-    // The work-location rows start at Jan 1 of the window's first year, like the single chain's.
-    getWorkedEntriesInRange(
-      app.prisma,
-      scopeAll,
-      new Date(`${from.getUTCFullYear()}-01-01T00:00:00Z`),
-      horizonDay,
-    ),
-    getActiveLeaveOverlapping(app.prisma, scopeAll, from, horizonDay),
-    getAbsencesOverlapping(app.prisma, scopeAll, from, horizonDay),
-    // Every bulk person: the month core reads shifts whatever the schedule type is.
-    getShiftsInRange(app.prisma, scopeAll, from, horizonDay),
-    loadBsSlotOverridesForMany(app.prisma, bulkIds),
-  ]);
+  const [validEntries, workEntries, leave, absences, shifts, bsResolvers, corrections] =
+    await Promise.all([
+      getValidWorkedEntriesInRange(app.prisma, scopeAll, from, horizonDay),
+      // The work-location rows start at Jan 1 of the window's first year, like the single chain's.
+      getWorkedEntriesInRange(
+        app.prisma,
+        scopeAll,
+        new Date(`${from.getUTCFullYear()}-01-01T00:00:00Z`),
+        horizonDay,
+      ),
+      getActiveLeaveOverlapping(app.prisma, scopeAll, from, horizonDay),
+      getAbsencesOverlapping(app.prisma, scopeAll, from, horizonDay),
+      // Every bulk person: the month core reads shifts whatever the schedule type is.
+      getShiftsInRange(app.prisma, scopeAll, from, horizonDay),
+      loadBsSlotOverridesForMany(app.prisma, bulkIds),
+      // Issue #599 — booked corrections of closed months, the same rows the single read returns.
+      getBookedMonthCorrectionsForMany(app.prisma, tenantId, bulkIds, from, horizonDay),
+    ]);
 
   // Holidays at the work location of every day, ONE batched resolver call over the full calendar
   // years of the window (the chain filters to its own months).
@@ -1445,6 +1467,8 @@ export async function loadChainSources(
         myLeave.filter((l) => l.startDate <= dayOf(t) && l.endDate >= dayOf(f)),
       absences: async (_tenant, f, t) =>
         myAbsences.filter((a) => a.startDate <= dayOf(t) && a.endDate >= dayOf(f)),
+      accountCorrections: async (_tenant, f, t) =>
+        (corrections.get(id) ?? []).filter((c) => c.date >= dayOf(f) && c.date <= dayOf(t)),
       carryOverBase: async (prev) => (prev ? prev.carryOver : opening),
       bsSlotOverrides: async (ref) =>
         bs
