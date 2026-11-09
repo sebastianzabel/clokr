@@ -203,7 +203,7 @@
   }
 
   .sidebar-section-label {
-    padding: 10px 18px 3px;
+    padding: 6px 18px 2px;
     font-size: var(--fs-th);
     color: var(--text-3);
     font-weight: 600;
@@ -271,7 +271,7 @@
 
   .sidebar-foot {
     margin-top: auto;
-    padding: 14px;
+    padding: 8px 14px;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -338,7 +338,7 @@
   /* Phase 69 — runtime version display.
      Literal font-size 0.75rem per D-07 (no --text-xs token exists in tokens.css). */
   .sidebar-version {
-    padding: var(--s-2) var(--s-3) var(--s-3);
+    padding: 0 var(--s-3) var(--s-2);
     text-align: center;
   }
 
