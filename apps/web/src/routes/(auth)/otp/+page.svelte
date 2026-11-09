@@ -1,4 +1,5 @@
 <script lang="ts">
+  import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
   import { preventDefault } from "svelte/legacy";
 
   import { onMount } from "svelte";
@@ -85,14 +86,7 @@
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
-      <img
-        src="/clokr-icon.png"
-        alt="Clokr"
-        class="login-logo-img"
-        width="64"
-        height="64"
-        style="max-width: 64px;"
-      />
+      <BrandLogo size={48} wordmark={false} />
       <h1 class="login-title">Zwei-Faktor-Authentifizierung</h1>
       <p class="login-subtitle">Wir haben dir einen Code an deine E-Mail-Adresse geschickt.</p>
     </div>

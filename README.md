@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/clokr-logo.png" alt="Clokr" width="200" />
+  <img src="images/clokr-logo.svg" alt="Clokr" width="200" />
 </p>
 
 <p align="center"><strong>Open-source time tracking & leave management for small businesses.</strong></p>

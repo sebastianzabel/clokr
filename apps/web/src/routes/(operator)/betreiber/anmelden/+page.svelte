@@ -1,9 +1,9 @@
 <script lang="ts">
+  import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import SignInSteps from "$lib/components/operator/SignInSteps.svelte";
-  import LogoMark from "$lib/components/layout/LogoMark.svelte";
   import { operatorApi } from "$lib/operator/client";
   import { safeNext } from "$lib/operator/next-path";
   import { loadSession, setSession } from "$stores/operator-auth";
@@ -40,10 +40,7 @@
 
 <main id="main-content" class="op-signin-page" data-testid="op-signin-page">
   <div class="op-brand">
-    <div class="op-wordmark">
-      <LogoMark size={28} />
-      <span>Clokr</span>
-    </div>
+    <BrandLogo size={30} />
     <span class="badge badge-purple">Betreiber</span>
   </div>
 
@@ -85,15 +82,6 @@
     flex-direction: column;
     align-items: center;
     gap: 12px;
-  }
-
-  .op-wordmark {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--text);
   }
 
   .op-card {
