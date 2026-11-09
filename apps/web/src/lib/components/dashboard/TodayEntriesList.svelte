@@ -42,11 +42,11 @@
     list-style: none;
     margin: 0 0 12px;
     padding: 0;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
   .today-entries-row {
     padding: 8px 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 14px;
     font-variant-numeric: tabular-nums;
     color: var(--text);

@@ -210,7 +210,7 @@
     align-items: center;
     gap: var(--s-3);
     padding-bottom: var(--s-3);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     margin-bottom: var(--s-4);
   }
   .header-left {
@@ -223,7 +223,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .section-title {
     font-size: 1rem;
@@ -232,8 +232,8 @@
   }
   .week-range {
     font-size: 0.8125rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    color: var(--text-2);
+    font-family: var(--font-ui);
   }
   .nav {
     display: flex;
@@ -250,7 +250,7 @@
     grid-template-columns: 60px 1fr;
     gap: 12px;
     padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .day-row:last-child {
     border-bottom: none;
@@ -264,8 +264,8 @@
   }
   .day-label .date {
     font-size: 0.8125rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    color: var(--text-2);
+    font-family: var(--font-ui);
   }
   .day-content {
     display: flex;
@@ -273,8 +273,7 @@
     gap: 8px;
   }
   .own-empty {
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
     font-size: 0.9375rem;
   }
   .own-pill {
@@ -284,17 +283,17 @@
     padding: 8px 12px;
     background: var(--brand-soft);
     border: 1px solid var(--brand);
-    border-radius: var(--r-md);
+    border-radius: var(--r-control);
     color: var(--text);
   }
   .own-pill .time {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-weight: 700;
     color: var(--brand);
   }
   .own-pill .tpl {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .colleagues {
     display: flex;
@@ -304,27 +303,27 @@
     font-size: 0.875rem;
   }
   .colleagues-label {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .colleague-chip {
     display: inline-flex;
     align-items: baseline;
     gap: 4px;
     padding: 2px 8px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     color: var(--text);
   }
   .chip-time {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* ── Error state ─────────────────────────────────────────────── */
   .alert {
     padding: var(--s-4);
-    border-radius: var(--r-md);
+    border-radius: var(--r-control);
     font-size: 0.9375rem;
   }
   .alert-error {
@@ -336,8 +335,8 @@
   /* ── Skeleton ────────────────────────────────────────────────── */
   .skeleton-card {
     height: 320px;
-    border-radius: var(--r-md);
-    background: var(--bg-subtle);
+    border-radius: var(--r-control);
+    background: var(--sunk);
     animation: pulse 1.5s ease-in-out infinite;
   }
   @keyframes pulse {
