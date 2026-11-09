@@ -1146,7 +1146,7 @@
 
   .period-note {
     margin: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.9375rem;
   }
 
@@ -1176,13 +1176,13 @@
     font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--text-muted);
+    color: var(--text-2);
     padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .emp-closes-table td {
     padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 13.5px;
     vertical-align: middle;
   }
@@ -1190,7 +1190,7 @@
     border-bottom: 0;
   }
   .emp-closes-table tbody tr:hover td {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .emp-closes-table .num {
     font-variant-numeric: tabular-nums;
@@ -1206,13 +1206,13 @@
      provided, keyed off the primitive's own semantic sign class, scoped to this table's
      Saldo column only. :global() is required to reach past the child component boundary. */
   .emp-closes-table .num :global(.saldo--positive .saldo__value) {
-    color: var(--good);
+    color: var(--ok);
   }
   .emp-closes-table .num :global(.saldo--negative .saldo__value) {
     color: var(--bad);
   }
   .emp-closes-table .num :global(.saldo--zero .saldo__value) {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .emp-pdf-cell {
     text-align: right;
@@ -1221,17 +1221,17 @@
   .emp-closes-loading {
     padding: 32px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .emp-closes-error {
     padding: 16px 24px;
     color: var(--bad);
     background: var(--bad-soft);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .emp-closes-empty {
     text-align: center;
     padding: 32px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 </style>

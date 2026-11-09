@@ -265,16 +265,16 @@
     left: 8px;
     padding: 8px 12px;
     background: var(--brand);
-    color: white;
+    color: var(--brand-ink);
     text-decoration: none;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     z-index: 1000;
     transition: top 120ms var(--ease);
   }
 
   .skip-to-content:focus {
     top: 8px;
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 

@@ -298,7 +298,7 @@
     opacity: 0.7;
   }
   .avatar-wrapper:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
   .avatar-preview {
@@ -306,7 +306,7 @@
     height: 120px;
     border-radius: 50%;
     object-fit: cover;
-    border: 3px solid var(--border);
+    border: 3px solid var(--line);
     box-sizing: border-box;
     display: block;
   }
@@ -321,7 +321,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 3px solid var(--border);
+    border: 3px solid var(--line);
     box-sizing: border-box;
   }
   .avatar-overlay {
