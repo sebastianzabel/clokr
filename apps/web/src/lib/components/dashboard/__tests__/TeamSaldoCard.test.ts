@@ -217,7 +217,7 @@ describe("TeamSaldoCard (Issue #588)", () => {
 
   it("shows an empty text and no chart when no row is in reach", () => {
     mountCard({ rows: [] });
-    expect(screen.getByText("Keine Salden in Ihrer Reichweite")).toBeInTheDocument();
+    expect(screen.getByText("Keine Salden in deiner Reichweite")).toBeInTheDocument();
     expect(charts).toHaveLength(0);
     expect(screen.queryByTestId("team-saldo-values")).toBeNull();
   });
@@ -234,7 +234,7 @@ describe("TeamSaldoCard (Issue #588)", () => {
     expect(container.querySelector(".saldo-skeleton")).not.toBeNull();
     expect(screen.getByText("Salden")).toBeInTheDocument();
     expect(charts).toHaveLength(0);
-    expect(screen.queryByText("Keine Salden in Ihrer Reichweite")).toBeNull();
+    expect(screen.queryByText("Keine Salden in deiner Reichweite")).toBeNull();
   });
 
   it("destroys the chart on unmount and replaces it when the rows change", async () => {

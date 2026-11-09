@@ -6,7 +6,7 @@
 // still holds its create markup (the hint replaces the row at runtime, never in the source).
 // (c): no file outside the admin set-up areas mentions the hint, "Zusatzmodul" or "Ihr Anbieter
 // schaltet".
-// (d)-(g) (Plan 566-10): the other three spots — API-Keys (/admin/system), Presence-Quellen
+// (d)-(g) (Plan 566-10): the other three spots — API-Keys (/admin/system), Präsenz-Quellen
 // (/admin/integrations) and the Branch-ID field (/admin/phorest) — plus the total.
 // (i) (Issue #563, D-18): the fifth spot — the salon create action on /admin/salons.
 // (j) (Issue #624): the sixth spot — the create action of /admin/roles.
@@ -157,9 +157,9 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     expect(body).not.toMatch(/\balert\(/);
   });
 
-  it("(e) Presence-Quellen: one HARDWARE_CLOCK hint, the create row only in the {:else}, list and revoke stay", () => {
+  it("(e) Präsenz-Quellen: one HARDWARE_CLOCK hint, the create row only in the {:else}, list and revoke stay", () => {
     expect(integrations.match(/<ModuleHint\s+module="HARDWARE_CLOCK"/g)).toHaveLength(1);
-    const sources = sectionOf(integrations, "Presence-Quellen");
+    const sources = sectionOf(integrations, "Präsenz-Quellen");
     expect(sources).toContain("{#if hardwareBooked === false}");
     const branches = sources.split("{:else}");
     expect(branches[0]).toContain("<ModuleHint");

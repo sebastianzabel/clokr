@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
@@ -165,7 +166,7 @@
   );
 
   // Issue #482 (G-7 display mirror) — proposes the classification's own Standard (Azubi-Standard
-  // or Mandanten-Standard), raised to the legal minimum (§ 19 JArbSchG with a birth date, else
+  // or Unternehmensstandard), raised to the legal minimum (§ 19 JArbSchG with a birth date, else
   // § 3 BUrlG); never overwrites a value the admin typed.
   function refreshVacationPrefill() {
     const base = vacationBaseDefaultFor(
@@ -462,7 +463,7 @@
         // Issue #435 (D-11/D-12) — optional, drives the statutory-minimum pre-fill/hint only.
         birthDate: cBirthDate ? new Date(cBirthDate).toISOString() : null,
         // Issue #482 (G-5, mirrors #435 D-13): a value equal to the classification's OWN
-        // Standard (AZUBI -> Azubi-Standard, everyone else -> Mandanten-Standard) is sent as
+        // Standard (AZUBI -> Azubi-Standard, everyone else -> Unternehmensstandard) is sent as
         // null, so the person keeps following later changes of that Standard instead of
         // freezing today's number as an explicit override. A floor-raised minor suggestion
         // stays explicit (unchanged #435 D-11 behaviour).
@@ -532,13 +533,13 @@
   function scheduleLabel(type: string | null | undefined): string {
     switch (type) {
       case "FIXED_SCHEDULE":
-        return "Fester Stundenplan";
+        return "Feste Arbeitszeit";
       case "FLEXTIME":
         return "Gleitzeit";
       case "MONTHLY_HOURS":
-        return "Monatsstunden (Minijob)";
+        return "Monatsstunden";
       case "SHIFT_BASED":
-        return "Schichtplan";
+        return "Nach Schichtplan";
       default:
         return "—";
     }
@@ -560,7 +561,7 @@
 </script>
 
 <svelte:head>
-  <title>Mitarbeitende – Clokr</title>
+  <title>{pageLabel("/admin/employees")} – Clokr</title>
 </svelte:head>
 
 <!-- Phase 73-05 (D-05): data-testid surface for admin-employees flows.
@@ -570,8 +571,8 @@
   <ListDetail
     view="list"
     eyebrow="Personal"
-    title="Mitarbeitende"
-    sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
+    title={pageLabel("/admin/employees")}
+    sub="Lege Personen an, lade sie ein und verwalte ihre Daten."
   >
     {#snippet actions()}
       {#if canCreate}
@@ -936,10 +937,10 @@
           data-testid="admin-employees-create-annual-vacation-days"
         />
         <p class="form-hint">
-          Vorschlag aus den Mandanten-Einstellungen (Azubis: „Urlaubstage Azubis"). Entspricht der
-          Wert dem Standard, wird kein eigener Wert gespeichert – die Person folgt dann auch
-          späteren Änderungen des Standards. Wird auf die vertraglichen Arbeitstage umgerechnet und
-          im Eintrittsjahr anteilig berechnet.
+          Vorschlag aus den Einstellungen des Unternehmens (Azubis: „Urlaubstage Azubis").
+          Entspricht der Wert dem Standard, wird kein eigener Wert gespeichert – die Person folgt
+          dann auch späteren Änderungen des Standards. Wird auf die vertraglichen Arbeitstage
+          umgerechnet und im Eintrittsjahr anteilig berechnet.
         </p>
         {#if cBirthMinimum && cAnnualVacationDays !== null && cAnnualVacationDays < cBirthMinimum.days}
           <div class="callout error">
@@ -963,10 +964,10 @@
             )}
           class="select"
         >
-          <option value="FIXED_SCHEDULE">Fester Stundenplan</option>
+          <option value="FIXED_SCHEDULE">Feste Arbeitszeit</option>
           <option value="FLEXTIME">Gleitzeit</option>
-          <option value="MONTHLY_HOURS">Monatsstunden (Minijob)</option>
-          <option value="SHIFT_BASED">Schichtplan</option>
+          <option value="MONTHLY_HOURS">Monatsstunden</option>
+          <option value="SHIFT_BASED">Nach Schichtplan</option>
         </select>
       </div>
       {#if cScheduleType === "FIXED_SCHEDULE" || cScheduleType === "FLEXTIME" || cScheduleType === "SHIFT_BASED"}

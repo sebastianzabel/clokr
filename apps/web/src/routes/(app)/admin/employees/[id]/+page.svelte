@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
@@ -471,7 +472,7 @@
   let canUpdateEmployee = $derived(rights.canUpdate);
   let eNfcCardId = $state<string>("");
   let eExitDate = $state<string>("");
-  let eBirthDate = $state<string>(""); // Phase 65 — JArbSchG §9 needs DOB for AZUBI <18 check
+  let eBirthDate = $state<string>(""); // § 11 JArbSchG needs the birth date for the under-18 check
   // Issue #435 (D-13) — per-person vacation base value; null = tenant default.
   let eAnnualVacationDays = $state<number | null>(null);
   let eClassification = $state<EmployeeClassification>("VOLLZEIT");
@@ -644,16 +645,16 @@
     return age;
   }
 
-  // Phase 65 — JArbSchG §9 trigger: AZUBI + under 18 → 30/60 Min suggestion (BREAK-07, D-06)
-  // Read from local state (eBirthDate / eClassification) so the pill + suggestion update
-  // live as the admin edits Stammdaten — no need to save first.
-  let isAzubiUnder18 = $derived(
-    eClassification === "AZUBI" &&
-      Number.isFinite(ageAtDate(eBirthDate || null, new Date())) &&
+  // Issue #574 (D-574-12) — § 11 JArbSchG applies to ANY person under 18, whatever the
+  // classification (the API decides the break regime per work date the same way): 30/60 Min
+  // suggestion. Read from local state (eBirthDate) so the pill and the suggestion update live as
+  // the admin edits Stammdaten — no need to save first.
+  let isUnder18 = $derived(
+    Number.isFinite(ageAtDate(eBirthDate || null, new Date())) &&
       ageAtDate(eBirthDate || null, new Date()) < 18,
   );
   let bothOverridesEmpty = $derived(eBreakOver6hOverride === "" && eBreakOver9hOverride === "");
-  let showAzubiSuggestionButton = $derived(isAzubiUnder18 && bothOverridesEmpty);
+  let showUnder18SuggestionButton = $derived(isUnder18 && bothOverridesEmpty);
 
   // Issue #435 (D-12) — AZUBI with no birth date on file: the legal minimum cannot be checked.
   let azubiMissingBirthDate = $derived(eClassification === "AZUBI" && !eBirthDate);
@@ -954,9 +955,11 @@
     }
   }
 
-  // Phase 65 — One-click JArbSchG-Vorschlag (D-06)
-  function applyAzubiSuggestion() {
-    eBreakOver6hOverride = "30";
+  // Phase 65 / Issue #574 — one-click § 11 JArbSchG suggestion for a person under 18
+  function applyUnder18Suggestion() {
+    // § 11 Abs. 1 JArbSchG: 30 Min above 4.5 h, 60 Min above 6 h — so both the ">6h" and the
+    // ">9h" field carry 60; the 4.5 h band is enforced by the API's break regime for minors.
+    eBreakOver6hOverride = "60";
     eBreakOver9hOverride = "60";
   }
 
@@ -1464,7 +1467,7 @@
 
   let orphanNewTypeLabel = $derived(
     eType === "FIXED_SCHEDULE"
-      ? "Fester Stundenplan"
+      ? "Feste Arbeitszeit"
       : eType === "FLEXTIME"
         ? "Gleitzeit"
         : eType === "MONTHLY_HOURS"
@@ -1933,7 +1936,7 @@
   // ON→OFF (`intendedExempt === false`) = "unterstellen" (re-subjecting to tracking)
   let exemptActionVerb = $derived(intendedExempt ? "befreien" : "unterstellen");
   let exemptDialogDescription = $derived(
-    `Sie sind im Begriff, die Zeiterfassungs-Pflicht für ${employee?.firstName ?? ""} ${employee?.lastName ?? ""} zu ${exemptActionVerb}. Diese Änderung wird im Audit-Log protokolliert. Hinweis: Urlaubsanspruch nach BUrlG bleibt unverändert.`,
+    `Du bist dabei, die Zeiterfassungs-Pflicht für ${employee?.firstName ?? ""} ${employee?.lastName ?? ""} zu ${exemptActionVerb}. Diese Änderung wird im Audit-Log protokolliert. Hinweis: Urlaubsanspruch nach BUrlG bleibt unverändert.`,
   );
 </script>
 
@@ -1949,7 +1952,7 @@
     sub={eEmployeeNumber ? `Personalnummer: ${eEmployeeNumber}` : undefined}
     crumbs={[
       { label: "Personal" },
-      { label: "Mitarbeitende", href: "/admin/employees" },
+      { label: pageLabel("/admin/employees"), href: "/admin/employees" },
       { label: displayName || "Mitarbeiter" },
     ]}
     {tabs}
@@ -2071,8 +2074,8 @@
               <label class="form-label" for="e-birthdate">Geburtsdatum (optional)</label>
               <input id="e-birthdate" type="date" bind:value={eBirthDate} class="input" />
               <p class="hint">
-                Für Azubis unter 18 Jahren werden bei der Pausendauer JArbSchG §9 Schutzregeln
-                vorgeschlagen (30 / 60 Min).
+                Für Personen unter 18 Jahren gelten bei den Pausen die Regeln nach § 11 JArbSchG:
+                mehr als 4,5 Stunden 30 Min, mehr als 6 Stunden 60 Min.
               </p>
               {#if azubiMissingBirthDate}
                 <div class="callout">{MISSING_BIRTH_DATE_HINT}</div>
@@ -2098,7 +2101,7 @@
                 )}
               />
               <p class="hint">
-                Leer = Azubi-Standard für Auszubildende, sonst Mandanten-Standard (beides unter
+                Leer = Azubi-Standard für Auszubildende, sonst Unternehmensstandard (beides unter
                 Urlaubsverwaltung → Standards). Gilt für künftige Urlaubsjahre; bestehende Ansprüche
                 ändern sich nur im Tab Urlaub (mit Protokoll).
               </p>
@@ -2140,7 +2143,7 @@
         <!-- ── Arbeitszeit ─────────────────────────────────────────────────── -->
         <Section
           title="Arbeitszeitmodell"
-          sub="Festzeit, Gleitzeit, Monatsstunden oder Schichtplan"
+          sub="Feste Arbeitszeit, Gleitzeit, Monatsstunden oder nach Schichtplan"
           dirty={scheduleDirty}
         >
           {#snippet footer()}
@@ -2162,7 +2165,7 @@
           <div class="form-group">
             <span class="form-label">Arbeitszeitmodell</span>
             <div class="schedule-type-picker" role="group" aria-label="Arbeitszeitmodell">
-              {#each [{ value: "FIXED_SCHEDULE", label: "Fester Stundenplan", tooltip: "Per-Tag-Stunden festgelegt — z.B. Mo–Fr je 8h." }, { value: "FLEXTIME", label: "Gleitzeit", tooltip: "Wochenstundensoll mit freier Tagesverteilung. Optional Kernarbeitszeit." }, { value: "MONTHLY_HOURS", label: "Monatsstunden (Minijob)", tooltip: "Monatsstunden-Budget — z.B. 15h/Monat für Minijobber." }, { value: "SHIFT_BASED", label: "Schichtplan", tooltip: "Schichtplan ist führend. Wochenstunden als Soll-Target." }] as seg (seg.value)}
+              {#each [{ value: "FIXED_SCHEDULE", label: "Feste Arbeitszeit", tooltip: "Per-Tag-Stunden festgelegt — z.B. Mo–Fr je 8h." }, { value: "FLEXTIME", label: "Gleitzeit", tooltip: "Wochenstundensoll mit freier Tagesverteilung. Optional Kernarbeitszeit." }, { value: "MONTHLY_HOURS", label: "Monatsstunden", tooltip: "Monatsstunden-Budget — z.B. 15h/Monat für Minijobber." }, { value: "SHIFT_BASED", label: "Nach Schichtplan", tooltip: "Die Arbeitstage ergeben sich aus dem Schichtplan; die Wochenstunden sind das Soll." }] as seg (seg.value)}
                 <button
                   type="button"
                   class="stp-btn"
@@ -2265,7 +2268,7 @@
                 />
               </div>
               <div class="day-input total-col">
-                <span class="day-label form-label">Sigma</span>
+                <span class="day-label form-label">Summe</span>
                 <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
               </div>
             </div>
@@ -2697,7 +2700,7 @@
         <div data-testid="pausendauer-editor" style="display: contents;">
           <Section
             title="Pausendauer (Optional)"
-            sub="Überschreibt Tenant-Standard für diesen Mitarbeiter. Leer = Standard verwenden."
+            sub="Überschreibt den Unternehmensstandard für diese Person. Leer = Standard verwenden."
             dirty={pausendauerDirty}
           >
             {#snippet footer()}
@@ -2716,31 +2719,31 @@
               <div class="callout error" data-testid="pausendauer-error">{pausendauerError}</div>
             {/if}
 
-            {#if isAzubiUnder18}
-              <!-- JArbSchG §9 info pill (recommendation, not violation — uses .alert-info per app.css) -->
+            {#if isUnder18}
+              <!-- § 11 JArbSchG info pill (recommendation, not violation — uses .alert-info per app.css) -->
               <div
                 class="alert alert-info"
                 role="status"
                 style="margin-bottom: 1rem;"
                 data-testid="pausendauer-azubi-pill"
               >
-                <span>ℹ️</span><span>Azubi unter 18 — JArbSchG §9 Empfehlung</span>
+                <span>ℹ️</span><span>Unter 18 — Pausen nach § 11 JArbSchG</span>
               </div>
-              {#if showAzubiSuggestionButton}
+              {#if showUnder18SuggestionButton}
                 <div style="margin-bottom: 1rem;">
                   <button
                     type="button"
                     class="btn btn-secondary"
-                    onclick={applyAzubiSuggestion}
+                    onclick={applyUnder18Suggestion}
                     data-testid="pausendauer-azubi-apply"
-                    >Azubi-Vorschlag übernehmen (30 / 60 Min)</button
+                    >Vorschlag nach § 11 JArbSchG übernehmen (60 Min ab 6 h)</button
                   >
                 </div>
               {/if}
             {/if}
 
             <p class="form-hint text-muted" style="margin-bottom: 1rem;">
-              Leer = Tenant-Standard nutzen ({tenantBreakConfig?.defaultBreakOver6h ??
+              Leer = Unternehmensstandard ({tenantBreakConfig?.defaultBreakOver6h ??
                 30}/{tenantBreakConfig?.defaultBreakOver9h ?? 45} Min)
             </p>
 
@@ -2753,8 +2756,8 @@
                 max="120"
                 step="1"
                 bind:value={eBreakOver6hOverride}
-                placeholder={isAzubiUnder18
-                  ? "30 Min — JArbSchG-Empfehlung"
+                placeholder={isUnder18
+                  ? "60 Min — nach § 11 JArbSchG"
                   : `Standard: ${tenantBreakConfig?.defaultBreakOver6h ?? 30} Min`}
                 class="form-input"
                 disabled={pausendauerSaving}
@@ -2772,8 +2775,8 @@
                 max="180"
                 step="1"
                 bind:value={eBreakOver9hOverride}
-                placeholder={isAzubiUnder18
-                  ? "60 Min — JArbSchG-Empfehlung"
+                placeholder={isUnder18
+                  ? "60 Min — nach § 11 JArbSchG"
                   : `Standard: ${tenantBreakConfig?.defaultBreakOver9h ?? 45} Min`}
                 class="form-input"
                 disabled={pausendauerSaving}
@@ -2789,7 +2792,7 @@
         <div data-testid="phorest-puffer-editor" style="display: contents;">
           <Section
             title="Phorest Vor-/Nachbereitungszeit (Optional)"
-            sub="Überschreibt Tenant-Standard für diesen Mitarbeiter. Leer = Standard verwenden."
+            sub="Überschreibt den Unternehmensstandard für diese Person. Leer = Standard verwenden."
             dirty={phorestPufferDirty}
           >
             {#snippet footer()}
@@ -3079,7 +3082,7 @@
                         }}
                         disabled={bsPatternsSaving}
                       >
-                        <option value="">Wie Mandant (Standard)</option>
+                        <option value="">Wie Unternehmen (Standard)</option>
                         {#each BS_FEDERAL_STATE_OPTIONS as opt (opt.value)}
                           <option value={opt.value}>{opt.label}</option>
                         {/each}
@@ -3100,9 +3103,9 @@
                         Zeitgutschrift-Slots (optional)
                       </p>
                       <p class="bs-pattern-hint" style="margin-bottom: 0.75rem;">
-                        Leer = Wert wird aus Mandant-Konfiguration bzw. Tages-Soll geerbt.
-                        Tages-Slots: 240–600 Min (4–10 h). Blockunterricht-Woche: 1200–3000 Min
-                        (20–50 h).
+                        Leer = Wert kommt aus den Einstellungen des Unternehmens bzw. dem
+                        Tages-Soll. Tages-Slots: 240–600 Min (4–10 h). Blockunterricht-Woche:
+                        1200–3000 Min (20–50 h).
                       </p>
 
                       <!-- 1. Berufsschul-Langtag -->
@@ -3312,7 +3315,7 @@
                Clearing a field sends null → re-enables inheritance for that slot. -->
           <Section
             title="Zeitgutschrift Berufsschule (Mitarbeiter-Override)"
-            sub="Überschreibt Pattern- und Mandanten-Vorgabe für diesen Azubi. Leer = von tieferer Schicht erben."
+            sub="Überschreibt Muster- und Unternehmensvorgabe für diese Person. Leer = Wert aus der nächsten Ebene."
             dirty={bsSlotEmpDirty}
           >
             {#snippet footer()}
@@ -3323,7 +3326,7 @@
             {/snippet}
 
             <p class="form-hint text-muted" style="margin-bottom: 1.25rem;">
-              Mitarbeiter-Overrides haben höchste Priorität (Employee &gt; Pattern &gt; Mandant &gt;
+              Werte für die Person haben Vorrang (Person &gt; Muster &gt; Unternehmen &gt;
               Tages-Soll). Tages-Slots: {EMP_BS_DAILY_MIN}–{EMP_BS_DAILY_MAX} Min ({EMP_BS_DAILY_MIN /
                 60}–{EMP_BS_DAILY_MAX / 60} h). Blockunterricht-Woche:
               {EMP_BS_BLOCK_MIN}–{EMP_BS_BLOCK_MAX} Min ({EMP_BS_BLOCK_MIN / 60}–{EMP_BS_BLOCK_MAX /
@@ -3382,7 +3385,7 @@
                       firstPatternBsFirst / 60
                     ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
                   {:else if tenantBreakConfig?.bsSlotFirstLongDayMinutes != null}
-                    Erbt aus: Mandant = {tenantBreakConfig.bsSlotFirstLongDayMinutes} Min ({(
+                    Erbt aus: Unternehmen = {tenantBreakConfig.bsSlotFirstLongDayMinutes} Min ({(
                       tenantBreakConfig.bsSlotFirstLongDayMinutes / 60
                     ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
                   {:else if empDailySollMin != null}
@@ -3436,7 +3439,7 @@
                       firstPatternBsSecond / 60
                     ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
                   {:else if tenantBreakConfig?.bsSlotSecondLongDayMinutes != null}
-                    Erbt aus: Mandant = {tenantBreakConfig.bsSlotSecondLongDayMinutes} Min ({(
+                    Erbt aus: Unternehmen = {tenantBreakConfig.bsSlotSecondLongDayMinutes} Min ({(
                       tenantBreakConfig.bsSlotSecondLongDayMinutes / 60
                     ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
                   {:else if empDailySollMin != null}
@@ -3490,7 +3493,7 @@
                       firstPatternBsShort / 60
                     ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
                   {:else if tenantBreakConfig?.bsSlotShortDayMinutes != null}
-                    Erbt aus: Mandant = {tenantBreakConfig.bsSlotShortDayMinutes} Min ({(
+                    Erbt aus: Unternehmen = {tenantBreakConfig.bsSlotShortDayMinutes} Min ({(
                       tenantBreakConfig.bsSlotShortDayMinutes / 60
                     ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
                   {:else if empDailySollMin != null}
@@ -3544,7 +3547,7 @@
                       firstPatternBsBlock / 60
                     ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
                   {:else if tenantBreakConfig?.bsSlotBlockWeekMinutes != null}
-                    Erbt aus: Mandant = {tenantBreakConfig.bsSlotBlockWeekMinutes} Min ({(
+                    Erbt aus: Unternehmen = {tenantBreakConfig.bsSlotBlockWeekMinutes} Min ({(
                       tenantBreakConfig.bsSlotBlockWeekMinutes / 60
                     ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
                   {:else}
@@ -3640,7 +3643,7 @@
                 maximumFractionDigits: 2,
               })} Tage</strong
             >
-            (Basiswert der Person bzw. Mandanten-Standard, umgerechnet auf die Vertragstage, im Eintrittsjahr
+            (Basiswert der Person bzw. Unternehmensstandard, umgerechnet auf die Vertragstage, im Eintrittsjahr
             ggf. anteilig). Gesetzlicher Mindesturlaub: {eVacMinimum.toLocaleString("de-DE", {
               maximumFractionDigits: 2,
             })} Tage.
@@ -3877,7 +3880,7 @@
   <ConfirmDialog
     bind:open={anonConfirmOpen}
     title="Mitarbeiter anonymisieren?"
-    description="Möchten Sie diesen Mitarbeiter wirklich anonymisieren? Persönliche Daten (Name, E-Mail, Notizen) werden gemäß DSGVO gelöscht; die Personalnummer bleibt erhalten. Ein leeres Austrittsdatum wird auf heute gesetzt, Abwesenheiten nach dem Austritt werden storniert. Zeiteinträge, Urlaubsanträge und Salden bleiben erhalten."
+    description="Möchtest du diese Person wirklich anonymisieren? Persönliche Daten (Name, E-Mail, Notizen) werden gemäß DSGVO gelöscht; die Personalnummer bleibt erhalten. Ein leeres Austrittsdatum wird auf heute gesetzt, Abwesenheiten nach dem Austritt werden storniert. Zeiteinträge, Urlaubsanträge und Salden bleiben erhalten."
     confirmLabel="Anonymisieren"
     danger
     onConfirm={anonymize}

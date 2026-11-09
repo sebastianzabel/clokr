@@ -89,7 +89,7 @@
 
   function scopeSummary(assignment: RoleAssignment): string {
     const scope = assignment.scope;
-    if (scope.type === "TENANT") return "Ganzer Mandant";
+    if (scope.type === "TENANT") return "Ganzes Unternehmen";
     if (scope.type === "SALONS") return `Salons: ${scope.salonIds.map(salonName).join(", ")}`;
     return `Personen: ${scope.employeeIds.map(personName).join(", ")}`;
   }
@@ -202,7 +202,7 @@
       </div>
       {#if !canReadRoles}
         <div class="callout brand" role="note">
-          Zum Zuweisen und Ändern brauchen Sie zusätzlich das Recht, Rollen zu lesen.
+          Zum Zuweisen und Ändern brauchst du zusätzlich das Recht, Rollen zu lesen.
         </div>
       {/if}
       {#if errorText}

@@ -144,7 +144,7 @@
       <legend class="form-label">Geltungsbereich</legend>
       <label class="assignment-choice">
         <input type="radio" name="assignment-scope" value="TENANT" bind:group={scopeType} />
-        <span>Ganzer Mandant</span>
+        <span>Ganzes Unternehmen</span>
       </label>
       <label class="assignment-choice">
         <input type="radio" name="assignment-scope" value="SALONS" bind:group={scopeType} />
@@ -225,8 +225,8 @@
 
     {#if showMandantHint}
       <div class="callout brand" role="note">
-        Diese Rolle enthält Rechte, die nur bei einer Zuweisung für den ganzen Mandanten wirken. Für
-        Salons oder Personen gelten diese Rechte nicht.
+        Diese Rolle enthält Rechte, die nur bei einer Zuweisung für das ganze Unternehmen wirken.
+        Für Salons oder Personen gelten diese Rechte nicht.
       </div>
     {/if}
   </div>
