@@ -264,6 +264,7 @@ export default defineConfig({
         /role-editor-visibility-710\.spec\.ts/,
         /push-pwa\.spec\.ts/,
         /leave-area-840\.spec\.ts/,
+        /shift-notices-850\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
