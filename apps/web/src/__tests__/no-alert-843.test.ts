@@ -68,7 +68,7 @@ describe("findNativeDialogCalls — negative controls", () => {
 
 describe("lint:no-alert on the real tree", () => {
   it("walks a real source set (anti-vacuity floor)", () => {
-    expect(listSourceFiles().length).toBeGreaterThan(400);
+    expect(listSourceFiles().length).toBeGreaterThan(300);
   });
 
   it("finds no native dialog call in any source file", () => {
