@@ -8,7 +8,9 @@
   import { onMount } from "svelte";
   import { api, ApiError } from "$api/client";
   import { toasts } from "$stores/toast";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
+  import SaveBar from "$components/ui/SaveBar.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import Card from "$components/ui/Card.svelte";
   import AvailabilityWeekGrid, {
     type RecurringEntry,
@@ -41,7 +43,7 @@
     return new Date().toISOString().slice(0, 10);
   }
 
-  let view = $state<"recurring" | "oneoff">("recurring");
+  let view = $state<string>("recurring");
   let recurringEntries = $state<RecurringEntry[]>([]);
   let oneOffEntries = $state<OneOffEntry[]>([]);
   let loading = $state(true);
@@ -54,6 +56,35 @@
   const currentSnapshot = $derived(JSON.stringify({ r: recurringEntries, o: oneOffEntries }));
 
   const dirty = $derived(!loading && currentSnapshot !== lastSnapshot);
+
+  // Issue #851 (D-851-03): the number of unsaved changes for the save bar. An entry is compared as a
+  // whole; a changed entry counts once (added and removed pair up), an added or removed entry once.
+  function countChanges(current: string, saved: string): number {
+    if (current === saved || saved === "") return 0;
+    const parse = (raw: string) => {
+      const v = JSON.parse(raw) as { r: unknown[]; o: unknown[] };
+      return [...v.r, ...v.o].map((e) => JSON.stringify(e));
+    };
+    const now = parse(current);
+    const before = parse(saved);
+    const added = now.filter((e) => !before.includes(e)).length;
+    const removed = before.filter((e) => !now.includes(e)).length;
+    return Math.max(added, removed, 1);
+  }
+
+  const changes = $derived(dirty ? countChanges(currentSnapshot, lastSnapshot) : 0);
+
+  const TABS = [
+    { value: "recurring", label: "Wochenraster" },
+    { value: "oneoff", label: "Einmaltermine" },
+  ];
+
+  /** Verwerfen: back to the last saved state. */
+  function discard(): void {
+    const saved = JSON.parse(lastSnapshot) as { r: RecurringEntry[]; o: OneOffEntry[] };
+    recurringEntries = saved.r;
+    oneOffEntries = saved.o;
+  }
 
   function applyEntries(api_entries: ApiAvailabilityEntry[]): void {
     const recurring: RecurringEntry[] = [];
@@ -124,9 +155,10 @@
     try {
       const res = await api.put<AvailabilityListResponse>("/me/availability", buildPayload());
       applyEntries(res.entries ?? []);
-      toasts.success("Verfügbarkeit gespeichert.");
+      toasts.success("Verfügbarkeit gespeichert");
     } catch (err) {
-      const fallback = "Die Verfügbarkeit konnte nicht gespeichert werden. Bitte erneut versuchen.";
+      const fallback =
+        "Die Verfügbarkeit ließ sich nicht speichern. Bitte versuche es noch einmal.";
       const msg = err instanceof ApiError && err.status < 500 ? err.message : fallback;
       toasts.error(msg);
     } finally {
@@ -137,45 +169,32 @@
   onMount(load);
 </script>
 
-<PageHead
-  eyebrow="Ich"
+<PageHeader
   title={pageLabel("/availability")}
-  sub="Trage ein, wann du arbeiten kannst, nicht kannst oder bevorzugst zu arbeiten."
+  subtitle="Sag deiner Salonleitung, wann du arbeiten kannst, wann nicht und wann du lieber arbeitest. Deine Angaben siehst du hier, die Salonleitung bei der Planung."
+  tabs={TABS}
+  bind:tab={view}
 >
-  {#snippet actions()}
-    <button class="btn btn-primary btn-sm" disabled={!dirty || saving} onclick={save}>
-      {saving ? "Speichert…" : "Speichern"}
-    </button>
+  {#snippet panel(value)}
+    {#if loading}
+      <Skeleton shape="card" />
+    {:else if value === "recurring"}
+      <Card animate class="card-animate availability-card">
+        <AvailabilityWeekGrid bind:entries={recurringEntries} />
+      </Card>
+    {:else}
+      <Card animate class="card-animate availability-card">
+        <AvailabilityOneOffList bind:entries={oneOffEntries} />
+      </Card>
+    {/if}
   {/snippet}
-</PageHead>
+</PageHeader>
 
-<section class="page">
-  <div class="view-tabs">
-    <button
-      type="button"
-      class="view-tab"
-      class:view-tab--active={view === "recurring"}
-      onclick={() => (view = "recurring")}
-    >
-      Wochenraster
-    </button>
-    <button
-      type="button"
-      class="view-tab"
-      class:view-tab--active={view === "oneoff"}
-      onclick={() => (view = "oneoff")}
-    >
-      Einmaltermine
-    </button>
-  </div>
-
-  {#if view === "recurring"}
-    <Card animate class="card-animate">
-      <AvailabilityWeekGrid bind:entries={recurringEntries} />
-    </Card>
-  {:else}
-    <Card animate class="card-animate">
-      <AvailabilityOneOffList bind:entries={oneOffEntries} />
-    </Card>
-  {/if}
-</section>
+<SaveBar
+  {changes}
+  errors={0}
+  {saving}
+  saveLabel="Verfügbarkeit speichern"
+  onSave={save}
+  onDiscard={discard}
+/>
