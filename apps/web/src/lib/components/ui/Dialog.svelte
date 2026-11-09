@@ -45,6 +45,7 @@
   }: Props = $props();
 
   let contentEl: HTMLElement | null = $state(null);
+  let overlayEl: HTMLElement | null = $state(null);
 
   /** One path for every change, so `onOpenChange` fires for the overlay click as well. */
   function setOpen(next: boolean) {
@@ -58,16 +59,20 @@
   }
 
   // D-843-16 (#636): bits-ui sets aria-modal but makes nothing inert. While open, every direct child
-  // of <body> that neither contains the dialog content (the portal container holds overlay and
-  // content) nor is a toast region gets `inert`. The effect remembers exactly the nodes it changed
-  // and restores them on close and on destroy; a node that is inert already (page state before
-  // opening, or an outer dialog's work for a nested one) is left alone.
+  // of <body> that is neither the dialog content, nor this dialog's own overlay, nor a toast region
+  // gets `inert`. bits-ui portals the overlay and the content as two separate children of <body>,
+  // and an inert overlay receives no pointer events, so inerting it would leave the page behind
+  // clickable. The effect remembers exactly the nodes it changed and restores them on close and on
+  // destroy; a node that is inert already (page state before opening, or an outer dialog's work
+  // for a nested one) is left alone.
   $effect(() => {
     if (staticPanel || !open || !contentEl) return;
     const content = contentEl;
+    const overlay = overlayEl;
     const changed: Element[] = [];
     for (const child of Array.from(document.body.children)) {
-      if (child.contains(content) || child.matches("[data-toast-root]")) continue;
+      if (child.contains(content) || (overlay && child.contains(overlay))) continue;
+      if (child.matches("[data-toast-root]")) continue;
       if (child.hasAttribute("inert")) continue;
       child.setAttribute("inert", "");
       changed.push(child);
@@ -125,7 +130,7 @@
          no exit animation exists. Mounted open, so bits-ui's presence starts present. -->
     {#if open}
       <Dialog.Portal>
-        <Dialog.Overlay>
+        <Dialog.Overlay bind:ref={overlayEl}>
           {#snippet child({ props })}
             <div {...props} class="scrim" role="presentation" onclick={onScrimClick}></div>
           {/snippet}

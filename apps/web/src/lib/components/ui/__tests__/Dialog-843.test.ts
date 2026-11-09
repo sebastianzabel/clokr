@@ -181,6 +181,16 @@ describe("Dialog - inert page", () => {
     expect(portal.hasAttribute("inert")).toBe(false);
   });
 
+  it("never makes its own overlay inert (an inert overlay passes clicks through to the page)", async () => {
+    const app = fixture("app-root");
+    open();
+    await waitFor(() => expect(app.hasAttribute("inert")).toBe(true));
+    const scrim = document.querySelector(".scrim");
+    expect(scrim).toBeTruthy();
+    expect(scrim!.closest("[inert]")).toBeNull();
+    expect(screen.getByRole("dialog").closest("[inert]")).toBeNull();
+  });
+
   it("removes exactly what it set on close and keeps a node that was inert before", async () => {
     const app = fixture("app-root");
     const pre = fixture("pre-inert", { inert: "" });
