@@ -215,7 +215,7 @@ button {
   background-color: color-mix(in srgb, var(--bad) 85%, var(--text));
   border-color: color-mix(in srgb, var(--bad) 85%, var(--text));
   color: var(--card);
-  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--bad) 30%, transparent);
   transform: translateY(-1px);
 }
 
@@ -318,9 +318,9 @@ button {
 }
 
 .badge-blue {
-  background-color: rgba(37, 99, 235, 0.1);
-  color: #2563eb;
-  border: 1px solid rgba(37, 99, 235, 0.2);
+  background-color: var(--info-soft);
+  color: var(--info);
+  border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
 }
 
 .badge-purple {
@@ -634,13 +634,13 @@ select.form-input {
 }
 
 .alert-info {
-  background-color: rgba(37, 99, 235, 0.1);
-  color: #2563eb;
-  border-color: rgba(37, 99, 235, 0.2);
+  background-color: var(--info-soft);
+  color: var(--info);
+  border-color: var(--info-soft);
 }
 .alert-warning {
   background-color: var(--warn-soft);
-  color: #92400e;
+  color: var(--warn);
   border-color: var(--warn-soft);
 }
 .alert-error {
@@ -2090,18 +2090,6 @@ textarea.form-input {
   background: var(--brand-soft);
   border-color: transparent;
 }
-[data-mode="dark"] .chip-brand {
-  color: var(--brand);
-}
-[data-mode="dark"] .chip-good {
-  color: #6bd49a;
-}
-[data-mode="dark"] .chip-warn {
-  color: #fbbf24;
-}
-[data-mode="dark"] .chip-bad {
-  color: #f87171;
-}
 
 /* ─── Focus ring (COMP-06) — universal accessible focus indicator ─── */
 /* Reset default browser outline only for elements that explicitly opt in to a custom
@@ -2349,18 +2337,9 @@ textarea.form-input {
   background: var(--brand-soft);
   color: var(--brand);
 }
-[data-mode="dark"] .callout.brand {
-  color: var(--brand);
-}
-[data-mode="dark"] .callout {
-  color: #fbbf24;
-}
 .callout.error {
   background: var(--bad-soft);
   color: var(--bad);
-}
-[data-mode="dark"] .callout.error {
-  color: #f87171;
 }
 .callout .ico {
   flex-shrink: 0;

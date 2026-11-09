@@ -2898,7 +2898,7 @@
     background: var(--warn);
   }
   .oi-dot--fix {
-    background: #2563eb;
+    background: var(--info);
   }
   .oi-dot--approval {
     background: var(--brand);
@@ -3260,9 +3260,9 @@
   }
 
   .cell-badge--active {
-    background: rgba(37, 99, 235, 0.1);
-    color: #2563eb;
-    border: 1px solid rgba(37, 99, 235, 0.2);
+    background: var(--info-soft);
+    color: var(--info);
+    border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
     animation: pulse-badge 2s ease-in-out infinite;
   }
 

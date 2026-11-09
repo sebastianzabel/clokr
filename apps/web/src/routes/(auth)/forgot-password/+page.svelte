@@ -177,13 +177,13 @@
   }
 
   .alert-error {
-    background: #fef2f2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
+    background: var(--bad-soft);
+    color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent);
   }
   .alert-success {
-    background: #f0fdf4;
-    color: #166534;
-    border: 1px solid #bbf7d0;
+    background: var(--ok-soft);
+    color: var(--ok);
+    border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
   }
 </style>

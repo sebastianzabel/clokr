@@ -253,16 +253,16 @@
   }
 
   .state-error {
-    background: #fef2f2;
-    color: #991b1b;
+    background: var(--bad-soft);
+    color: var(--bad);
   }
   .state-warning {
-    background: #fffbeb;
-    color: #92400e;
+    background: var(--warn-soft);
+    color: var(--warn);
   }
   .state-success {
-    background: #f0fdf4;
-    color: #166534;
+    background: var(--ok-soft);
+    color: var(--ok);
   }
 
   .alert {
@@ -272,8 +272,8 @@
     padding: 0.75rem 1rem;
     border-radius: var(--r-control);
     font-size: 0.875rem;
-    background: #fef2f2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
+    background: var(--bad-soft);
+    color: var(--bad);
+    border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent);
   }
 </style>
