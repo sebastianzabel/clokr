@@ -1249,8 +1249,8 @@
                       data-testid={`leave-team-row-${req.id}-type-chip`}
                     />
                   </td>
-                  <td class="font-mono">{fmtDate(req.startDate)}</td>
-                  <td class="font-mono">{fmtDate(req.endDate)}</td>
+                  <td>{fmtDate(req.startDate)}</td>
+                  <td>{fmtDate(req.endDate)}</td>
                   <td class="text-center"
                     >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</td
                   >
@@ -1635,7 +1635,7 @@
     margin: 0;
     padding: 1.5rem 1rem;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -1656,10 +1656,10 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 0.875rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-md);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    box-shadow: var(--shadow);
     cursor: pointer;
     min-height: 2.5rem;
   }
@@ -1680,12 +1680,12 @@
   }
 
   .emp-search-input::placeholder {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .emp-chevron {
     flex-shrink: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     transition: transform 0.15s;
   }
 
@@ -1704,10 +1704,10 @@
     top: calc(100% + 4px);
     left: 0;
     right: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    box-shadow: var(--shadow-pop);
     list-style: none;
     margin: 0;
     padding: 0.25rem 0;
@@ -1726,7 +1726,7 @@
 
   .emp-dropdown-item:hover,
   .emp-dropdown-item:focus {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     outline: none;
   }
 
@@ -1738,7 +1738,7 @@
   .emp-dropdown-empty {
     padding: 0.75rem 0.875rem;
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* ── Highlight from notification deep-link ────────────────────────── */
@@ -1763,7 +1763,7 @@
   .section-header h2 {
     font-size: 1rem;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin: 0;
@@ -1858,13 +1858,13 @@
     padding: 0.5rem 0.75rem;
     background: var(--bad-soft);
     border: 1px solid var(--bad);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     color: var(--bad);
     font-size: 0.8125rem;
   }
   .form-hint {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0;
   }
   .attest-date-input {
@@ -1889,9 +1889,9 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem 1.5rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 1rem 1.25rem;
   }
   .review-field {
@@ -1904,7 +1904,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .review-value {
     font-size: 0.9375rem;
@@ -1937,9 +1937,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 0.875rem 1.25rem;
     margin-bottom: 1.25rem;
     flex-wrap: wrap;
@@ -1963,7 +1963,7 @@
   }
   .ical-desc {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0;
   }
   /* Wraps and may shrink to its widest button: at 320 px the two buttons side by side were
