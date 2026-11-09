@@ -52,6 +52,7 @@
   } from "$lib/leave/team-calendar-visibility";
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588
+  import { leaveRequested } from "$lib/feedback/action-messages"; // #843 (D-843-08)
   import type { EditableLeaveRequest } from "$lib/leave/leave-request-form";
   import type { LeaveLimitWarning } from "$lib/leave-limits/types";
   import Skeleton from "$components/ui/Skeleton.svelte";
@@ -563,6 +564,9 @@
           },
         );
         leaveLimitWarnings = created?.leaveLimitWarnings ?? [];
+        // #843 (D-843-08): acknowledge only after the server answered, only on create. The type
+        // label is the display name of the chosen type, never a server-side name.
+        toasts.success(leaveRequested(typeName(src.type), src.startDate, src.endDate, src.halfDay));
       }
       open = false;
       pendingCreate = null;
