@@ -178,9 +178,10 @@ function tsLiterals(code, lineBase, push) {
       return;
     }
     if (ts.isTemplateExpression(node)) {
-      // the literal parts read together, with a placeholder where an expression is spliced in
+      // the literal parts read together; "…" (no whitespace) marks a spliced expression, so a URL
+      // template such as `/tenants/${id}` stays a path and never becomes prose
       const text = [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join(
-        " … ",
+        "…",
       );
       if (looksLikeProse(text)) push(lineOfNode(node), text);
       node.templateSpans.forEach((span) => visit(span.expression));
@@ -205,7 +206,7 @@ function estreeLiterals(node, push, lineOf) {
     return;
   }
   if (node.type === "TemplateLiteral") {
-    const text = node.quasis.map((q) => q.value?.cooked ?? q.value?.raw ?? "").join(" … ");
+    const text = node.quasis.map((q) => q.value?.cooked ?? q.value?.raw ?? "").join("…");
     if (looksLikeProse(text)) push(lineOf(node.start), text);
     estreeLiterals(node.expressions, push, lineOf);
     return;
