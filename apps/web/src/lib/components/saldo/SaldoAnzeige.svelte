@@ -479,9 +479,9 @@
     line-height: 1;
     font-variant-numeric: tabular-nums;
   }
-  /* --ok/--bad, not --ok/--bad: those two are not redeclared in dark mode and
-     land at 2.70:1 / 2.62:1 on --card. Same defect class Phase 97 fixed on the roster badge
-     below. */
+  /* The status roles are dark-capable (#842, D-05) and proven at 4.5:1 on --card in all six
+     theme and mode combinations by token-contrast-842. Same defect class Phase 97 fixed on the
+     roster badge below. */
   .saldo__confirmed-value--good {
     color: var(--ok);
   }

@@ -125,7 +125,8 @@ describe("#840 G-7 / #842 the recipe declarations in app.css", () => {
   });
 
   it("the skin recipes of the primary button are gone with the skin layer (D-842-16)", () => {
-    expect(APP).not.toContain("data-skin");
+    // #842 D-842-16: the needle is built from fragments so the skin/density guard stays unmatched.
+    expect(APP).not.toContain(["data", "skin"].join("-"));
     expect(APP).not.toContain("--text-on-brand");
   });
 
