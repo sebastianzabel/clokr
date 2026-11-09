@@ -207,6 +207,37 @@ describe.each(COMBINATIONS.map((c) => [label(c), c] as const))("%s", (_name, com
   });
 });
 
+describe("token-contrast-842 — nested previews are complete (D-842-02, WR-03)", () => {
+  // A preview element that carries both attributes but is not the document element does not match
+  // `:root`. If a role is declared only there - or only in a block that does not match the
+  // combination - the element inherits it from its ancestor: a Petrol preview inside a Salz page
+  // got the Salz honey accent. The nested cascade therefore has to define every colour role.
+  it.each(COMBINATIONS.map((c) => [label(c), c] as const))(
+    "%s declares every colour role without :root",
+    (_name, combo) => {
+      const nested = cascadeCombination(css, combo.theme, combo.mode, true);
+      expect(COLOR_ROLES.filter((role) => !nested.has(`--${role}`))).toEqual([]);
+      expect(nested.get("color-scheme")).toBe(combo.mode);
+    },
+  );
+
+  it("resolves the accent of the previewed theme, not an ancestor's", () => {
+    for (const mode of ["light", "dark"] as const) {
+      const accent = (theme: "pflaume" | "salz" | "petrol") =>
+        resolveCombination(css, theme, mode, true).get("--accent");
+      expect(accent("pflaume"), `pflaume/${mode}`).toBe("#d9a441");
+      expect(accent("salz"), `salz/${mode}`).toBe("#c98a3a");
+      expect(accent("petrol"), `petrol/${mode}`).toBe("#d9a441");
+    }
+  });
+
+  it("negative control: without the Petrol accent declaration the nested cascade has a gap", () => {
+    const stripped = css.replace(/\n\s*--accent: #d9a441;(?=[^}]*\}\s*\/\* ─── Shared dark)/, "");
+    expect(stripped).not.toBe(css);
+    expect(cascadeCombination(stripped, "petrol", "dark", true).has("--accent")).toBe(false);
+  });
+});
+
 describe("token-contrast-842 — leave-type aliases (D-842-10)", () => {
   it("declares every leave-type token as a var() alias in every combination, never a literal", () => {
     for (const combo of COMBINATIONS) {

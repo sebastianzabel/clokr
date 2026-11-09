@@ -86,8 +86,8 @@ export function parseTokenRules(css: string): TokenRule[] {
  * the root pseudo-class (matches always) or a compound of theme/mode attribute parts, each either
  * bare (matches always) or carrying a value that has to equal the combination's.
  */
-function matchSpecificity(selector: string, combo: Combination): number | null {
-  if (selector === ":root") return 1;
+function matchSpecificity(selector: string, combo: Combination, nested: boolean): number | null {
+  if (selector === ":root") return nested ? null : 1;
   if (!/^(\[data-(?:theme|mode)(?:="[a-z]+")?\])+$/.test(selector)) return null;
   const parts = [...selector.matchAll(/\[data-(theme|mode)(?:="([a-z]+)")?\]/g)];
   for (const [, key, value] of parts) {
@@ -100,15 +100,24 @@ function matchSpecificity(selector: string, combo: Combination): number | null {
 /**
  * Every property (custom properties and `color-scheme`) the cascade yields for the combination,
  * with its value as written — `var()` references are NOT followed here (see `resolveCombination`).
+ *
+ * `nested` models a preview element that is NOT the document element: the `:root` rule does not
+ * match it, so a property that no attribute rule declares for the combination is missing from the
+ * result - in a browser such an element would inherit it from its ancestor (WR-03).
  */
-export function cascadeCombination(css: string, theme: Theme, mode: Mode): Map<string, string> {
+export function cascadeCombination(
+  css: string,
+  theme: Theme,
+  mode: Mode,
+  nested = false,
+): Map<string, string> {
   const combo = { theme, mode };
   const winners = new Map<string, { specificity: number; order: number; value: string }>();
   // A rule with several matching selectors counts with its most specific one.
   const bestSpecificity = new Map<number, number>();
   const byOrder = new Map<number, TokenRule>();
   for (const rule of parseTokenRules(css)) {
-    const specificity = matchSpecificity(rule.selector, combo);
+    const specificity = matchSpecificity(rule.selector, combo, nested);
     if (specificity === null) continue;
     byOrder.set(rule.order, rule);
     bestSpecificity.set(rule.order, Math.max(bestSpecificity.get(rule.order) ?? 0, specificity));
@@ -150,8 +159,13 @@ function substituteVars(map: Map<string, string>, value: string, depth = 0): str
  * The fully resolved value of every property for one combination: the cascade of
  * `cascadeCombination` with every `var()` chain followed against the SAME combination.
  */
-export function resolveCombination(css: string, theme: Theme, mode: Mode): Map<string, string> {
-  const raw = cascadeCombination(css, theme, mode);
+export function resolveCombination(
+  css: string,
+  theme: Theme,
+  mode: Mode,
+  nested = false,
+): Map<string, string> {
+  const raw = cascadeCombination(css, theme, mode, nested);
   const out = new Map<string, string>();
   for (const [prop, value] of raw) out.set(prop, substituteVars(raw, value));
   return out;

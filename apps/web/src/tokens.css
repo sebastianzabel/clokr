@@ -212,6 +212,9 @@
   --brand-hover: #165557;
   --brand-soft: #dcecea;
   --brand-tint: #f0f6f5;
+  /* Declared on purpose although it equals the Pflaume honey: a Petrol preview nested in a Salz
+     page would otherwise inherit the Salz accent (WR-03). */
+  --accent: #d9a441;
   --bg: #f8faf9;
   --card: #ffffff;
   --rail: #eef4f2;
