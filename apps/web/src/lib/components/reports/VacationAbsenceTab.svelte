@@ -317,8 +317,9 @@
     {/snippet}
   </CardHeader>
 
-  {#if loading}
-    <span class="sr-only">Lade Urlaubsübersicht…</span>
+  <!-- #843 D-843-07: a refresh over an existing answer announces itself through the Skeleton, not text -->
+  {#if loading && vacation !== null}
+    <Skeleton inline width={8} />
   {/if}
 
   {#if filterActive}
