@@ -2428,11 +2428,11 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
 
   .today-stat-value {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 28px;
     font-weight: 400;
@@ -2457,7 +2457,7 @@
     right: 0;
     top: 50%;
     height: 2px;
-    background: var(--bg-subtle);
+    background: var(--sunk);
     border-radius: var(--r-pill, 99px);
     transform: translateY(-50%);
   }
@@ -2479,13 +2479,13 @@
     justify-content: space-between;
     padding: 0 4px;
     font-size: 11px;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
 
   .today-timeline-mark {
-    background: var(--bg-card);
+    background: var(--card);
     padding: 4px 6px;
-    border-radius: var(--r-sm, 4px);
+    border-radius: var(--r-control, 4px);
     font-variant-numeric: tabular-nums;
   }
 
@@ -2502,7 +2502,7 @@
   .activity-empty {
     padding: 24px 8px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13px;
   }
 
@@ -2510,7 +2510,7 @@
     display: flex;
     gap: 11px;
     padding: 10px 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     align-items: center;
   }
 
@@ -2521,7 +2521,7 @@
   .activity-icon {
     width: 30px;
     height: 30px;
-    border-radius: var(--r-md, 8px);
+    border-radius: var(--r-control, 8px);
     background: var(--brand-soft);
     color: var(--brand);
     display: grid;
@@ -2547,12 +2547,12 @@
   }
 
   .activity-what {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .activity-when {
     font-size: 11px;
-    color: var(--text-faint);
+    color: var(--text-3);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
   }
@@ -2579,14 +2579,14 @@
   .weekly-total {
     font-size: 26px;
     line-height: 1;
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     color: var(--text);
     font-variant-numeric: tabular-nums;
   }
   .weekly-total-target {
     font-size: 11px;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
   .weekly-chart {
     display: grid;
@@ -2607,7 +2607,7 @@
   .weekly-bar-track {
     position: relative;
     width: 70%;
-    background: var(--bg-subtle);
+    background: var(--sunk);
     border-radius: 4px 4px 0 0;
     height: 100%;
     display: flex;
@@ -2616,7 +2616,7 @@
   }
   .weekly-bar-fill {
     width: 100%;
-    background: var(--brand-light);
+    background: var(--brand);
     border-radius: 4px 4px 0 0;
     transition: height 500ms var(--ease-out);
   }
@@ -2627,12 +2627,12 @@
     position: absolute;
     left: 0;
     right: 0;
-    border-top: 1px dashed var(--border-strong);
+    border-top: 1px dashed var(--line-2);
   }
   .weekly-bar-label {
     font-size: 10.5px;
     font-weight: 600;
-    color: var(--text-faint);
+    color: var(--text-3);
     letter-spacing: 0.08em;
   }
   .weekly-bar-label.weekly-bar-label-today {
@@ -2663,7 +2663,7 @@
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.7);
+    color: color-mix(in srgb, var(--brand-ink) 70%, transparent);
   }
   :global(.timer-card-wrap .timer-status-idle) {
     opacity: 0.7;
@@ -2672,7 +2672,7 @@
     text-align: right;
   }
   :global(.timer-card-wrap .timer-hd-date) {
-    color: rgba(255, 255, 255, 0.6);
+    color: color-mix(in srgb, var(--brand-ink) 60%, transparent);
   }
   :global(.timer-card-wrap .timer-status) {
     display: flex;
@@ -2683,8 +2683,7 @@
     opacity: 0.88;
   }
   :global(.timer-card-wrap .timer-now) {
-    font-family: var(--font-serif);
-    font-style: italic;
+    font-family: var(--font-ui);
     font-size: 14px;
     margin-top: 4px;
     opacity: 0.85;
@@ -2704,13 +2703,13 @@
   }
   :global(.timer-card-wrap .timer-progress-track) {
     height: 6px;
-    background: rgba(255, 255, 255, 0.18);
+    background: color-mix(in srgb, var(--brand-ink) 18%, transparent);
     border-radius: 99px;
     overflow: hidden;
   }
   :global(.timer-card-wrap .timer-progress-fill) {
     height: 100%;
-    background: rgba(255, 255, 255, 0.92);
+    background: color-mix(in srgb, var(--brand-ink) 92%, transparent);
     border-radius: 99px;
     transition: width 400ms var(--ease-out);
   }
@@ -2730,48 +2729,48 @@
     padding-top: 18px;
     /* .card-foot sets a muted grey for light cards; the salon label and the booked-day note
        inherit this colour and must stay readable on the dark clock card (Issue #87). */
-    color: rgba(255, 255, 255, 0.9);
+    color: color-mix(in srgb, var(--brand-ink) 90%, transparent);
   }
   /* The card's primary button is an inverted variant: fill = the card's foreground token, text and
      spinner arc = its dark gradient stop. It deliberately does not compose the global primary
-     variant, whose hover and modern-skin rules out-specify the card and turned the label white on
-     white (Issue #546). The page-wide white spinner would vanish on this fill too, and the focus
+     variant, whose hover rules out-specify the card and turned the label light on
+     light (Issue #546, tokens #842 D-842-08). The page-wide white spinner would vanish on this fill too, and the focus
      ring carries a dark band so it stays visible on the gradient. */
   :global(.timer-card-wrap .timer-cta-primary) {
-    background: var(--text-on-brand);
-    color: var(--brand-dark);
-    box-shadow: var(--shadow-md);
+    background: var(--brand-ink);
+    color: var(--brand-hover);
+    box-shadow: var(--shadow);
     border-color: transparent;
   }
   :global(.timer-card-wrap .timer-cta-primary:hover:not(:disabled)) {
-    background: color-mix(in srgb, var(--text-on-brand) 92%, var(--brand-dark));
-    color: var(--brand-dark);
+    background: color-mix(in srgb, var(--brand-ink) 92%, var(--brand-hover));
+    color: var(--brand-hover);
     transform: translateY(-1px);
   }
   :global(.timer-card-wrap .timer-cta-primary .btn-spinner) {
-    border-color: color-mix(in srgb, var(--brand-dark) 25%, var(--text-on-brand));
-    border-top-color: var(--brand-dark);
+    border-color: color-mix(in srgb, var(--brand-hover) 25%, var(--brand-ink));
+    border-top-color: var(--brand-hover);
   }
   :global(.timer-card-wrap .timer-cta-ghost) {
-    color: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: color-mix(in srgb, var(--brand-ink) 90%, transparent);
+    border: 1px solid color-mix(in srgb, var(--brand-ink) 20%, transparent);
     background: transparent;
   }
   :global(.timer-card-wrap .timer-cta-ghost:hover:not(:disabled)) {
-    background: rgba(255, 255, 255, 0.08);
-    color: white;
+    background: color-mix(in srgb, var(--brand-ink) 8%, transparent);
+    color: var(--brand-ink);
   }
   :global(.timer-card-wrap .timer-cta-primary:focus-visible),
   :global(.timer-card-wrap .timer-cta-ghost:focus-visible) {
-    outline: 2px solid var(--text-on-brand);
+    outline: 2px solid var(--brand-ink);
     outline-offset: 2px;
-    box-shadow: 0 0 0 4px var(--brand-dark);
+    box-shadow: 0 0 0 4px var(--brand-hover);
   }
   /* Open-break state: emphasises that clicking now ENDS the break. */
   :global(.timer-card-wrap .timer-cta-ghost--active) {
-    background: rgba(255, 255, 255, 0.16);
-    border-color: rgba(255, 255, 255, 0.4);
-    color: white;
+    background: color-mix(in srgb, var(--brand-ink) 16%, transparent);
+    border-color: color-mix(in srgb, var(--brand-ink) 40%, transparent);
+    color: var(--brand-ink);
   }
   :global(.timer-card-wrap .timer-shift) {
     position: relative;
@@ -2783,19 +2782,14 @@
   :global(.timer-card-wrap .timer-shift-label) {
     padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: color-mix(in srgb, var(--brand-ink) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--brand-ink) 16%, transparent);
   }
 
   /* ── Skeleton loader ────────────────────────────── */
   .skeleton-block,
   .skeleton-text {
-    background: linear-gradient(
-      90deg,
-      var(--bg-subtle) 25%,
-      var(--border) 50%,
-      var(--bg-subtle) 75%
-    );
+    background: linear-gradient(90deg, var(--sunk) 25%, var(--line) 50%, var(--sunk) 75%);
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
     border-radius: 4px;
@@ -2840,7 +2834,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-bottom: 0;
   }
   .widget-badge {
@@ -2852,7 +2846,7 @@
     padding: 0 0.375rem;
     border-radius: 999px;
     background: var(--bad);
-    color: #fff;
+    color: var(--card);
     font-size: 0.6875rem;
     font-weight: 700;
     margin-left: 0.375rem;
@@ -2915,9 +2909,9 @@
     justify-content: space-between;
     padding: 0.25rem 0 0.25rem 1.25rem;
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-decoration: none;
-    border-left: 2px solid var(--border);
+    border-left: 2px solid var(--line);
     transition:
       color 0.12s ease,
       border-left-color 0.12s ease;
@@ -2948,7 +2942,7 @@
   }
   .oi-empty {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0;
     padding: 0.25rem 0;
   }
@@ -2963,14 +2957,14 @@
     content: "";
     flex: 1;
     height: 1px;
-    background: var(--border);
+    background: var(--line);
   }
   .team-divider-label {
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .info-bar {
@@ -2978,10 +2972,10 @@
     gap: 1.5rem;
     flex-wrap: wrap;
     padding: 0.625rem 1rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-left: 3px solid var(--brand);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     margin-bottom: 1.5rem;
     font-size: 0.875rem;
     color: var(--text);
@@ -2999,8 +2993,8 @@
     display: inline-block;
     width: 1rem;
     height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-top-color: #fff;
+    border: 2px solid color-mix(in srgb, var(--brand-ink) 40%, transparent);
+    border-top-color: var(--brand-ink);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
@@ -3018,7 +3012,7 @@
     padding: 0.625rem 1rem;
     background: var(--warn-soft);
     border: 1px solid var(--warn-soft);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     margin-bottom: 1rem;
     text-decoration: none;
     color: var(--text);
@@ -3028,7 +3022,7 @@
   }
   .pending-banner:hover {
     background: var(--warn-soft);
-    box-shadow: var(--shadow-xs);
+    box-shadow: var(--shadow);
   }
   .pending-banner-badge {
     display: inline-flex;
@@ -3039,7 +3033,7 @@
     padding: 0 0.375rem;
     border-radius: 9999px;
     background: var(--warn);
-    color: #fff;
+    color: var(--card);
     font-size: 0.75rem;
     font-weight: 700;
     line-height: 1;
@@ -3050,7 +3044,7 @@
     font-weight: 500;
   }
   .pending-banner svg {
-    color: var(--text-muted);
+    color: var(--text-2);
     flex-shrink: 0;
   }
 
@@ -3079,19 +3073,14 @@
   .chart-note {
     margin: 0.5rem 0 0;
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .chart-skeleton {
     width: 100%;
     height: 100%;
-    border-radius: var(--r-sm);
-    background: linear-gradient(
-      90deg,
-      var(--bg-subtle) 25%,
-      var(--bg-alt) 50%,
-      var(--bg-subtle) 75%
-    );
+    border-radius: var(--r-control);
+    background: linear-gradient(90deg, var(--sunk) 25%, var(--rail) 50%, var(--sunk) 75%);
     background-size: 200% 100%;
     animation: skeleton-shimmer 1.4s ease-in-out infinite;
   }
@@ -3123,7 +3112,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 0.875rem;
     min-width: 0;
   }
@@ -3142,12 +3131,12 @@
   }
 
   .upcoming-dates {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
 
   .upcoming-days {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.8125rem;
   }
 
@@ -3167,7 +3156,7 @@
   /* ── Team Section (v1.5 .card recipe; no border-left accent, no backdrop-filter) ── */
   :global(.team-section) {
     margin-bottom: 1.5rem;
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow);
   }
 
   .team-grid-wrap {
@@ -3194,7 +3183,7 @@
   .team-grid td {
     padding: 0.5rem 0.375rem;
     text-align: center;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .team-grid__name {
@@ -3218,7 +3207,7 @@
     font-weight: 600;
     font-size: 0.75rem;
     text-transform: uppercase;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .day-num {
@@ -3265,9 +3254,9 @@
   }
 
   .cell-badge--present {
-    background: var(--good-soft);
-    color: var(--good);
-    border: 1px solid var(--good-soft);
+    background: var(--ok-soft);
+    color: var(--ok);
+    border: 1px solid var(--ok-soft);
   }
 
   .cell-badge--active {
@@ -3298,9 +3287,9 @@
      "operationally planned school day" rather than "leave/sick". Slightly
      lighter surface + neutral border to differentiate from vacation. */
   .cell-badge--bs {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
   }
 
   .bs-emoji {
@@ -3317,18 +3306,18 @@
 
   /* Issue #84: worked in another salon only (salon filter) — not an absence, not a missing day. */
   .cell-badge--elsewhere {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    border: 1px dashed var(--border);
+    background: var(--sunk);
+    color: var(--text-2);
+    border: 1px dashed var(--line);
     font-size: 0.6875rem;
     font-weight: 500;
     white-space: nowrap;
   }
 
   .cell-badge--scheduled {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    border: 1px dashed var(--border);
+    background: var(--sunk);
+    color: var(--text-2);
+    border: 1px dashed var(--line);
     font-size: 0.6875rem;
   }
 
@@ -3342,7 +3331,7 @@
   }
 
   .cell-badge--none {
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.4;
   }
 
@@ -3366,9 +3355,9 @@
     flex-wrap: wrap;
     margin-top: 1rem;
     padding-top: 0.75rem;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .legend-item {
