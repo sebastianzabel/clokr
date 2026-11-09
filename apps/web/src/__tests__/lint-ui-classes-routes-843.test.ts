@@ -4,12 +4,18 @@
 // control here and the walked scopes carry a non-empty floor (T-843-30).
 
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { describe, it, expect } from "vitest";
 
 import {
   PATTERN_RULES,
+  RATCHET_RULES,
+  TICKET_RE,
+  collectPatternCounts,
+  compareWithRegister,
   detectPagePatterns,
+  registerFromCounts,
   walkPatternScopes,
 } from "../../scripts/lint-ui-classes.mjs";
 
@@ -172,5 +178,136 @@ describe("walkPatternScopes (anti-vacuity floor)", () => {
     expect(toolbar).toBeDefined();
     const counts = detectPagePatterns(readFileSync(toolbar as string, "utf8"));
     expect(counts["own-filter-bar"]).toBeGreaterThan(0);
+  });
+});
+
+// ── The ratchet semantics (D-843-05, T-843-31) ─────────────────────────────────────────────
+
+const FILTER = "own-filter-bar";
+const FILE_A = "apps/web/src/routes/(app)/fixture-a/+page.svelte";
+const FILE_B = "apps/web/src/routes/(app)/fixture-b/+page.svelte";
+
+function register(
+  rules: Record<string, Record<string, { count: number; ticket: string | null; reason?: string }>>,
+) {
+  return { registerSource: "fixture", rules };
+}
+
+describe("compareWithRegister (falling-only ratchet)", () => {
+  const base = register({ [FILTER]: { [FILE_A]: { count: 2, ticket: "#853" } } });
+
+  it("passes when the found counts equal the register", () => {
+    expect(compareWithRegister({ [FILTER]: { [FILE_A]: 2 } }, base)).toEqual([]);
+  });
+
+  it("fails a higher count (neues Seitenmuster)", () => {
+    const problems = compareWithRegister({ [FILTER]: { [FILE_A]: 3 } }, base);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("neues Seitenmuster");
+  });
+
+  it("fails a file that is not registered (neues Seitenmuster)", () => {
+    const problems = compareWithRegister({ [FILTER]: { [FILE_A]: 2, [FILE_B]: 1 } }, base);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("neues Seitenmuster");
+    expect(problems[0]).toContain(FILE_B);
+  });
+
+  it("fails a rule that has no register entry at all", () => {
+    const problems = compareWithRegister(
+      { [FILTER]: { [FILE_A]: 2 }, "own-kpi-card": { [FILE_A]: 1 } },
+      base,
+    );
+    expect(problems.join("\n")).toContain("neues Seitenmuster");
+  });
+
+  it("fails a lower count until the register is lowered (Register senken)", () => {
+    const problems = compareWithRegister({ [FILTER]: { [FILE_A]: 1 } }, base);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("Register senken");
+  });
+
+  it("fails a registered file that has no occurrence any more (Register senken)", () => {
+    const problems = compareWithRegister({}, base);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("Register senken");
+  });
+
+  it("fails raw scrim/modal markup whatever the register says", () => {
+    const withEntry = register({
+      "raw-scrim-modal": { [FILE_A]: { count: 1, ticket: "#854" } },
+    });
+    const problems = compareWithRegister({ "raw-scrim-modal": { [FILE_A]: 1 } }, withEntry);
+    expect(problems.length).toBeGreaterThanOrEqual(2);
+    expect(compareWithRegister({ "raw-scrim-modal": { [FILE_A]: 1 } }, register({})).length).toBe(
+      1,
+    );
+  });
+
+  it("needs a ticket in #845 to #854, or a null ticket with a reason", () => {
+    const noReason = register({ [FILTER]: { [FILE_A]: { count: 1, ticket: null } } });
+    expect(compareWithRegister({ [FILTER]: { [FILE_A]: 1 } }, noReason).join("\n")).toContain(
+      "no ticket and no reason",
+    );
+    const reasoned = register({
+      [FILTER]: { [FILE_A]: { count: 1, ticket: null, reason: "Betreiberkonsole" } },
+    });
+    expect(compareWithRegister({ [FILTER]: { [FILE_A]: 1 } }, reasoned)).toEqual([]);
+    const outOfRange = register({ [FILTER]: { [FILE_A]: { count: 1, ticket: "#855" } } });
+    expect(compareWithRegister({ [FILTER]: { [FILE_A]: 1 } }, outOfRange).join("\n")).toContain(
+      "expected #845 to #854",
+    );
+    for (const ok of ["#845", "#847", "#851", "#854"]) expect(TICKET_RE.test(ok)).toBe(true);
+    for (const bad of ["#844", "#855", "845", "#8450"]) expect(TICKET_RE.test(bad)).toBe(false);
+  });
+
+  it("rejects an unknown rule in the register", () => {
+    const problems = compareWithRegister({}, register({ "own-badge": {} }));
+    expect(problems.join("\n")).toContain("unknown rule");
+  });
+});
+
+describe("the checked-in ratchet register", () => {
+  const registerPath = resolve(__dirname, "../../scripts/lint-ui-classes-route-ratchet.json");
+  const checkedIn = JSON.parse(readFileSync(registerPath, "utf8"));
+  const { found } = collectPatternCounts(resolve(__dirname, "../../../.."));
+
+  it("matches the tree exactly: nothing new, nothing stale", () => {
+    expect(compareWithRegister(found, checkedIn)).toEqual([]);
+  });
+
+  it("is not empty (the ratchet is not vacuous) and `--print` reproduces it", () => {
+    const entries = RATCHET_RULES.flatMap((rule) => Object.keys(checkedIn.rules[rule]));
+    expect(entries.length).toBeGreaterThan(40);
+    expect(registerFromCounts(found, checkedIn)).toEqual(checkedIn);
+  });
+
+  it("keeps the migrated pages out: /shifts has no period control, the employee list no table", () => {
+    const period = Object.keys(checkedIn.rules["own-period-control"]);
+    const tables = Object.keys(checkedIn.rules["own-data-table"]);
+    expect(period.some((f) => f.endsWith("(app)/shifts/+page.svelte"))).toBe(false);
+    expect(tables.some((f) => f.endsWith("(app)/admin/employees/+page.svelte"))).toBe(false);
+  });
+
+  it("registers the employee list toolbar against #854 (it stays until the Verwalten rebuild)", () => {
+    const entry = checkedIn.rules[FILTER]["apps/web/src/routes/(app)/admin/employees/+page.svelte"];
+    expect(entry).toMatchObject({ ticket: "#854" });
+  });
+
+  it("names the operator console with a null ticket and the D-843-15 reason", () => {
+    const operator = RATCHET_RULES.flatMap((rule) =>
+      Object.entries(
+        checkedIn.rules[rule] as Record<string, { ticket: string | null; reason?: string }>,
+      ),
+    ).filter(([file]) => file.includes("(operator)") || file.includes("components/operator/"));
+    expect(operator.length).toBeGreaterThan(0);
+    for (const [, entry] of operator) {
+      expect(entry.ticket).toBeNull();
+      expect(entry.reason).toBe("Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket");
+    }
+  });
+
+  it("has no scrim/modal entries", () => {
+    expect(Object.keys(checkedIn.rules["raw-scrim-modal"] ?? {})).toEqual([]);
   });
 });

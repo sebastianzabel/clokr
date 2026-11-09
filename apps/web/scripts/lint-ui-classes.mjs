@@ -17,11 +17,20 @@
  * which is the failure mode tracked as UI-21: silent drift between the
  * primitive layer and the v2 design tokens (tokens.css, Issue #842).
  *
+ * Routes mode (Issue #843, D-843-05, D-843-18) runs after that sweep: it scans every `.svelte`
+ * file under `src/routes` and under `lib/components` outside `ui/` and `layout/` for page-own
+ * markup — an own filter bar, period control, KPI card or data table — and compares the counts
+ * with the falling-only register `lint-ui-classes-route-ratchet.json`. A new occurrence, a
+ * rising count or an unregistered file fails; so does a register count above the found count.
+ * Raw scrim/modal markup is a hard failure with no register.
+ *
  * Flags:
- *   (none — full sweep only; the script is fast)
+ *   --print   write the current page-own counts in register shape (tickets and reasons of
+ *             existing entries are kept) instead of checking; use it to lower the register
  *
  * Env:
- *   LINT_UI_CLASSES_SOFT=1   Soft-mode: exit 0 even on misses (migration window).
+ *   LINT_UI_CLASSES_SOFT=1   Soft-mode: exit 0 even on primitive misses (migration window).
+ *                            The routes mode is never softened.
  *
  * Exit codes:
  *   0 — no misses OR LINT_UI_CLASSES_SOFT=1
@@ -334,6 +343,108 @@ export function compareWithRegister(found, register) {
   return problems;
 }
 
+const REGISTER_PATH = "apps/web/scripts/lint-ui-classes-route-ratchet.json";
+const REGISTER_SOURCE =
+  "Issue #843, D-843-05: every page-own filter bar, period control, KPI card and data table that existed when the routes mode started, with the follow-up ticket that migrates it (D-843-18: area components included). Counts may only fall.";
+
+/**
+ * Count the page-own patterns of every file in both scopes.
+ *
+ * @param {string} [root] repository root
+ * @returns {{ found: Record<string, Record<string, number>>, routeFiles: number, componentFiles: number }}
+ *   `found`: rule -> repo-relative posix path -> count (> 0 only)
+ */
+export function collectPatternCounts(root = repoRoot) {
+  const { routes, components } = walkPatternScopes(root);
+  /** @type {Record<string, Record<string, number>>} */
+  const found = Object.fromEntries(PATTERN_RULES.map((rule) => [rule, {}]));
+  for (const file of [...routes, ...components]) {
+    const counts = detectPagePatterns(readFileSync(file, "utf8"));
+    const rel = relative(root, file).split(sep).join("/");
+    for (const rule of PATTERN_RULES) {
+      if (counts[rule] > 0) found[rule][rel] = counts[rule];
+    }
+  }
+  return { found, routeFiles: routes.length, componentFiles: components.length };
+}
+
+/**
+ * The register shape for the counts found now. Ticket and reason of an entry that already exists
+ * are kept, so lowering a count never loses them; a new entry gets `ticket: null` and fails the
+ * check until a ticket or a reason is written.
+ *
+ * @param {Record<string, Record<string, number>>} found
+ * @param {{ rules?: Record<string, Record<string, { ticket: string | null, reason?: string }>> }} [previous]
+ */
+export function registerFromCounts(found, previous = {}) {
+  /** @type {Record<string, Record<string, object>>} */
+  const rules = {};
+  for (const rule of RATCHET_RULES) {
+    rules[rule] = {};
+    for (const path of Object.keys(found[rule] ?? {}).sort()) {
+      const old = previous.rules?.[rule]?.[path];
+      rules[rule][path] = {
+        count: found[rule][path],
+        ticket: old ? old.ticket : null,
+        ...(old?.reason ? { reason: old.reason } : {}),
+      };
+    }
+  }
+  // Raw scrim/modal markup has no register: the key stays, always empty.
+  rules[HARD_RULE] = {};
+  return { registerSource: REGISTER_SOURCE, rules };
+}
+
+/**
+ * The routes mode: compare the page-own patterns on the tree with the ratchet register (D-843-05).
+ * Aborts when a scope is empty, so a moved directory can never read as a clean tree.
+ *
+ * @param {{ print?: boolean }} [options] `print`: write the current counts in register shape
+ * @returns {boolean} true when the tree conforms
+ */
+function runRoutesMode({ print = false } = {}) {
+  const { found, routeFiles, componentFiles } = collectPatternCounts();
+  if (routeFiles === 0 || componentFiles === 0) {
+    console.error(
+      `[lint:ui-classes] routes mode scanned ${routeFiles} route file(s) and ${componentFiles} area ` +
+        `component file(s) — a scope is empty, the scan root moved. This is a failure, not a clean result.`,
+    );
+    return false;
+  }
+  const registerFile = resolve(repoRoot, REGISTER_PATH);
+  const register = existsSync(registerFile) ? JSON.parse(readFileSync(registerFile, "utf8")) : null;
+  if (print) {
+    console.log(JSON.stringify(registerFromCounts(found, register ?? {}), null, 2));
+    return true;
+  }
+  if (!register) {
+    console.error(`[lint:ui-classes] ${REGISTER_PATH} is missing — run with --print to seed it.`);
+    return false;
+  }
+  const problems = compareWithRegister(found, register);
+  if (problems.length > 0) {
+    console.error(`\n[lint:ui-classes] routes mode: ${problems.length} problem(s):\n`);
+    for (const problem of problems) console.error(`  ${problem}`);
+    console.error(
+      `\nA page builds its filter bar, period control, KPI row and table from the blocks ` +
+        `(PeriodPicker, KpiStrip, TableToolbar, DataTable, Dialog). The register ` +
+        `${REGISTER_PATH} lists the old occurrences and only falls; lower an entry with ` +
+        `\`node scripts/lint-ui-classes.mjs --print\` when a page is migrated.\n`,
+    );
+    return false;
+  }
+  const entries = RATCHET_RULES.reduce((n, rule) => n + Object.keys(found[rule]).length, 0);
+  const occurrences = RATCHET_RULES.reduce(
+    (n, rule) => n + Object.values(found[rule]).reduce((a, b) => a + b, 0),
+    0,
+  );
+  console.log(
+    `[lint:ui-classes] routes OK — ${routeFiles} route and ${componentFiles} area component file(s) scanned, ` +
+      `${occurrences} registered page-own occurrence(s) in ${entries} register entr${entries === 1 ? "y" : "ies"}, none new.`,
+  );
+  return true;
+}
+
 /**
  * Combined global recipe registry from app.css + tokens.css.
  * Returns a Set of class names that are mentioned (anywhere — selectors,
@@ -401,7 +512,7 @@ function runPrimitiveAlignment() {
       console.error(
         "[lint:ui-classes] LINT_UI_CLASSES_SOFT=1 — exiting 0 despite misses (migration mode).\n",
       );
-      process.exit(0);
+      return;
     }
     process.exit(1);
   }
@@ -414,5 +525,12 @@ function runPrimitiveAlignment() {
 // Run the sweep only when the script is invoked directly, so importing the detectors in a test
 // does not lint.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv.includes("--print")) {
+    // Seed or refresh the ratchet register: the sweep itself stays out of the output.
+    process.exit(runRoutesMode({ print: true }) ? 0 : 1);
+  }
   runPrimitiveAlignment();
+  // The routes mode is not softened by LINT_UI_CLASSES_SOFT: that switch is the primitive
+  // migration window only (Issue #843, D-843-05).
+  if (!runRoutesMode()) process.exit(1);
 }

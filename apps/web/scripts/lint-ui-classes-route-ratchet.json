@@ -1,0 +1,257 @@
+{
+  "registerSource": "Issue #843, D-843-05: every page-own filter bar, period control, KPI card and data table that existed when the routes mode started, with the follow-up ticket that migrates it (D-843-18: area components included). Counts may only fall.",
+  "rules": {
+    "own-filter-bar": {
+      "apps/web/src/lib/components/dashboard/ClockSalonSelect.svelte": {
+        "count": 1,
+        "ticket": "#845",
+        "reason": "Salon choice select styled with the filter recipe; folds into the Stage block"
+      },
+      "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte": {
+        "count": 1,
+        "ticket": "#854",
+        "reason": "Action row of the assignment section matched by the toolbar rule"
+      },
+      "apps/web/src/lib/components/leave/LeaveToolbar.svelte": {
+        "count": 2,
+        "ticket": "#851",
+        "reason": "Shared with /team/leave (#853); migrate with the first of the two pages"
+      },
+      "apps/web/src/lib/components/operator/SupportAuditLog.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/reports/AbsencesByPersonTable.svelte": {
+        "count": 3,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/reports/TimesAccountsTable.svelte": {
+        "count": 3,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/reports/VacationAbsenceTab.svelte": {
+        "count": 3,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/audit/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/availability/+page.svelte": {
+        "count": 1,
+        "ticket": "#853"
+      },
+      "apps/web/src/routes/(app)/admin/employees/+page.svelte": {
+        "count": 7,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/integrations/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/shutdowns/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/leave/+page.svelte": {
+        "count": 4,
+        "ticket": "#851"
+      },
+      "apps/web/src/routes/(app)/team/leave/+page.svelte": {
+        "count": 4,
+        "ticket": "#853"
+      }
+    },
+    "own-period-control": {
+      "apps/web/src/lib/components/dashboard/MyShiftsWeek.svelte": {
+        "count": 2,
+        "ticket": "#845"
+      },
+      "apps/web/src/lib/components/dashboard/MyWeekView.svelte": {
+        "count": 2,
+        "ticket": "#845"
+      },
+      "apps/web/src/routes/(app)/dashboard/+page.svelte": {
+        "count": 2,
+        "ticket": "#846",
+        "reason": "Team-Wochenübersicht (Heute im Salon)"
+      },
+      "apps/web/src/routes/(operator)/betreiber/(konsole)/mandanten/[id]/support/mitarbeitende/[employeeId]/+page.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      }
+    },
+    "own-kpi-card": {
+      "apps/web/src/lib/components/reports/PeriodKpis.svelte": {
+        "count": 8,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/reports/PersonDrilldown.svelte": {
+        "count": 4,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/employees/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte": {
+        "count": 2,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/phorest/+page.svelte": {
+        "count": 2,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/vacation/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/dashboard/+page.svelte": {
+        "count": 13,
+        "ticket": "#845"
+      },
+      "apps/web/src/routes/(app)/inbox/+page.svelte": {
+        "count": 5,
+        "ticket": "#853"
+      },
+      "apps/web/src/routes/(app)/leave/+page.svelte": {
+        "count": 7,
+        "ticket": "#851"
+      },
+      "apps/web/src/routes/(app)/reports/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      }
+    },
+    "own-data-table": {
+      "apps/web/src/lib/components/admin/roles/RolesTab.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/leave/ParentalReductionDialog.svelte": {
+        "count": 1,
+        "ticket": "#853"
+      },
+      "apps/web/src/lib/components/operator/SalonTable.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/operator/SupportEmployeeTable.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/operator/SupportMonthView.svelte": {
+        "count": 4,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/operator/SupportSection.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/operator/TenantTable.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/reports/AbsencesByPersonTable.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/reports/ExitedFinalSaldoSection.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/reports/PersonDrilldown.svelte": {
+        "count": 2,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/reports/SalonWorkedSection.svelte": {
+        "count": 2,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/reports/TimesAccountsTable.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/reports/VacationAbsenceTab.svelte": {
+        "count": 2,
+        "ticket": "#854"
+      },
+      "apps/web/src/lib/components/team/SalonTimeEntries.svelte": {
+        "count": 1,
+        "ticket": "#853"
+      },
+      "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/import/+page.svelte": {
+        "count": 2,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/integrations/+page.svelte": {
+        "count": 3,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/leave-limits/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/month-close/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/phorest/+page.svelte": {
+        "count": 2,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/salons/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/shutdowns/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/shutdowns/[id]/+page.svelte": {
+        "count": 1,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/admin/system/+page.svelte": {
+        "count": 2,
+        "ticket": "#854"
+      },
+      "apps/web/src/routes/(app)/leave/+page.svelte": {
+        "count": 1,
+        "ticket": "#851"
+      },
+      "apps/web/src/routes/(app)/shifts/planning/+page.svelte": {
+        "count": 1,
+        "ticket": "#853"
+      },
+      "apps/web/src/routes/(app)/team/leave/+page.svelte": {
+        "count": 1,
+        "ticket": "#853"
+      },
+      "apps/web/src/routes/(app)/team/time-entries/+page.svelte": {
+        "count": 1,
+        "ticket": "#853"
+      },
+      "apps/web/src/routes/(app)/time-entries/+page.svelte": {
+        "count": 1,
+        "ticket": "#851"
+      }
+    },
+    "raw-scrim-modal": {}
+  }
+}
