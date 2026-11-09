@@ -2399,7 +2399,10 @@ export async function shiftRoutes(app: FastifyInstance) {
           // narrowing, byte-identical to today.
           ...(shiftRangeScopeReach ? shiftScopeWhere(shiftRangeScopeReach) : {}),
         },
-        select: { date: true, startTime: true, endTime: true },
+        // Issue #597 (Phase 851): the salon of each shift for „Mein Dienstplan“ (additive field; the
+        // shift's own salon, never the Stammsalon - a Springer sees where each shift takes place). The
+        // web names it from the caller's own salon context (GET /me/context).
+        select: { date: true, startTime: true, endTime: true, salonId: true },
         orderBy: [{ date: "asc" }, { startTime: "asc" }],
       });
 
@@ -2423,6 +2426,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           endTime: s.endTime,
           durationMin: brutto, // unchanged — brutto for TeamCalendar weekly-overview consumers
           durationMinNetto: Math.max(0, brutto - breakMin), // v1.8.9: netto for saldo Soll comparison
+          salonId: s.salonId,
         };
       });
     },

@@ -11,6 +11,9 @@
   import PageHeader from "$components/ui/PageHeader.svelte";
   import SaveBar from "$components/ui/SaveBar.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import MyShiftAgenda from "$lib/components/me/MyShiftAgenda.svelte";
+  import { tenantFeatures } from "$stores/tenant-features";
   import Card from "$components/ui/Card.svelte";
   import AvailabilityWeekGrid, {
     type RecurringEntry,
@@ -43,7 +46,7 @@
     return new Date().toISOString().slice(0, 10);
   }
 
-  let view = $state<string>("recurring");
+  let view = $state<string>("plan");
   let recurringEntries = $state<RecurringEntry[]>([]);
   let oneOffEntries = $state<OneOffEntry[]>([]);
   let loading = $state(true);
@@ -74,10 +77,15 @@
 
   const changes = $derived(dirty ? countChanges(currentSnapshot, lastSnapshot) : 0);
 
-  const TABS = [
-    { value: "recurring", label: "Wochenraster" },
-    { value: "oneoff", label: "Einmaltermine" },
-  ];
+  // Issue #597 (Phase 851, prototype): „Nächste 14 Tage“ first; the own availability is the second
+  // tab, offered only while the tenant uses the availability system.
+  const TABS = $derived([
+    { value: "plan", label: "Nächste 14 Tage" },
+    ...($tenantFeatures.availabilityEnabled
+      ? [{ value: "verfuegbarkeit", label: "Meine Verfügbarkeit" }]
+      : []),
+  ]);
+  let availabilityView = $state<"recurring" | "oneoff">("recurring");
 
   /** Verwerfen: back to the last saved state. */
   function discard(): void {
@@ -171,21 +179,42 @@
 
 <PageHeader
   title={pageLabel("/availability")}
-  subtitle="Sag deiner Salonleitung, wann du arbeiten kannst, wann nicht und wann du lieber arbeitest. Deine Angaben siehst du hier, die Salonleitung bei der Planung."
+  subtitle="Wann und wo du arbeitest"
   tabs={TABS}
   bind:tab={view}
 >
   {#snippet panel(value)}
-    {#if loading}
+    {#if value === "plan"}
+      <MyShiftAgenda />
+    {:else if loading}
       <Skeleton shape="card" />
-    {:else if value === "recurring"}
-      <Card animate class="card-animate availability-card">
-        <AvailabilityWeekGrid bind:entries={recurringEntries} />
-      </Card>
     {:else}
-      <Card animate class="card-animate availability-card">
-        <AvailabilityOneOffList bind:entries={oneOffEntries} />
-      </Card>
+      <p class="availability-hint">
+        Sag deiner Salonleitung, wann du arbeiten kannst, wann nicht und wann du lieber arbeitest.
+        Deine Angaben siehst du hier, die Salonleitung bei der Planung.
+      </p>
+      <div class="availability-switch">
+        <SegmentedControl
+          options={[
+            { value: "recurring", label: "Jede Woche" },
+            { value: "oneoff", label: "Einzelne Tage" },
+          ]}
+          value={availabilityView}
+          name="availability-view"
+          ariaLabel="Art der Angabe"
+          size="sm"
+          onchange={(v) => (availabilityView = v === "oneoff" ? "oneoff" : "recurring")}
+        />
+      </div>
+      {#if availabilityView === "recurring"}
+        <Card animate class="card-animate availability-card">
+          <AvailabilityWeekGrid bind:entries={recurringEntries} />
+        </Card>
+      {:else}
+        <Card animate class="card-animate availability-card">
+          <AvailabilityOneOffList bind:entries={oneOffEntries} />
+        </Card>
+      {/if}
     {/if}
   {/snippet}
 </PageHeader>
@@ -198,3 +227,13 @@
   onSave={save}
   onDiscard={discard}
 />
+
+<style>
+  .availability-hint {
+    margin: 0 0 var(--s-3);
+    color: var(--text-2);
+  }
+  .availability-switch {
+    margin-bottom: var(--s-3);
+  }
+</style>
