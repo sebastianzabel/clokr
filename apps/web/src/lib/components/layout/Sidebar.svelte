@@ -16,6 +16,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import { visibleNavSections } from "$lib/nav/app-nav";
   import { activeNavHref } from "$lib/nav/active-route";
+  import { homeHref } from "$lib/nav/routes";
   import { removeThisDevicePush } from "$lib/push/logout";
   import { onMount } from "svelte";
 
@@ -58,15 +59,6 @@
     ),
   );
 
-  // Phase 73-05 (D-05) — derive a stable, predictable test-id slug from a
-  // route href so every nav link is addressable as `nav-{slug}`.
-  // Examples: `/dashboard` → `dashboard`, `/admin/employees` → `admin-employees`,
-  // `/team/time-entries` → `team-time-entries`. Used by every E2E spec going
-  // forward to navigate without coupling to visible German labels.
-  function navSlug(href: string): string {
-    return href.replace(/^\//, "").replace(/\//g, "-");
-  }
-
   async function handleLogout() {
     try {
       // Issue #608 (D-18): stop this device's pushes while the token is still valid, so a shared
@@ -88,17 +80,15 @@
 </script>
 
 <aside class="sidebar" aria-label="Hauptnavigation" data-testid="sidebar">
-  <a href="/dashboard" class="sidebar-brand" data-testid="sidebar-brand">
+  <!-- #844 (D-844-11): the rail head is exactly as tall as the header, mark 32 px (owner, #852) -->
+  <a href={homeHref($authStore.user)} class="sidebar-brand" data-testid="sidebar-brand">
     <BrandLogo size={32} label="Clokr Zeiterfassung" />
   </a>
 
   <div class="sidebar-scroll">
-    {#each sections as section (section.label)}
-      {#if section.isAdminGroup}
-        <div class="nav-section-label" aria-hidden="true" translate="no">{section.label}</div>
-      {:else}
-        <div class="sidebar-section-label" translate="no">{section.label}</div>
-      {/if}
+    <!-- #844 (Z-01): one heading per area — Ich · Team · Verwalten -->
+    {#each sections as section (section.area)}
+      <div class="sidebar-section-label" translate="no">{section.label}</div>
       <nav class="sidebar-nav" aria-label={section.label}>
         {#each section.items as item (item.href)}
           {@const active = item.href === currentHref}
@@ -107,7 +97,7 @@
             class="nav-item"
             class:active
             aria-current={active ? "page" : undefined}
-            data-testid={`nav-${navSlug(item.href)}`}
+            data-testid={item.testId}
           >
             <span class="ico" aria-hidden="true"><Icon name={item.icon} size={17} /></span>
             <span class="label" translate="no">{item.label}</span>
@@ -161,32 +151,30 @@
 </aside>
 
 <style>
+  /* #844 (D-844-11): the rail of design concept § 2 — 220 px, tinted, one heading per area */
   .sidebar {
     grid-area: sidebar;
-    background: var(--card);
-    box-shadow: 1px 0 3px rgba(0, 0, 0, 0.04);
-    position: relative;
-    z-index: 10;
+    background: var(--rail);
+    border-right: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     position: sticky;
     top: 0;
     height: 100vh;
-    width: 232px;
-    min-width: 232px;
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
     z-index: 100;
   }
 
   .sidebar-brand,
   .sidebar-brand:hover,
   .sidebar-brand:focus {
-    /* Issue #852: the brand row is exactly as tall as the Topbar (60px), so mark and wordmark sit
-       centred on the same line as the Topbar content. */
+    /* #852/#844: the brand row is exactly as tall as the header, so mark and wordmark sit centred on
+       the same line as the header content. */
     box-sizing: border-box;
-    height: 60px;
-    min-height: 60px;
-    padding: 0 20px;
-    margin-bottom: 22px;
+    height: var(--topbar-h);
+    min-height: var(--topbar-h);
+    padding: 0 18px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -215,42 +203,30 @@
   }
 
   .sidebar-section-label {
-    padding: 18px 20px 6px;
-    font-size: 10px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    padding: 10px 18px 3px;
+    font-size: var(--fs-th);
     color: var(--text-3);
     font-weight: 600;
-  }
-
-  /* Admin sub-group labels (PERSONAL, PLANUNG, COMPLIANCE, DATEN, SYSTEM).
-     Smaller + slightly indented to nest visually within the admin section. */
-  .nav-section-label {
-    font-size: 0.6875rem; /* ~11px */
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-2);
-    padding: var(--s-4) var(--s-3) var(--s-1) 20px;
-    user-select: none;
   }
 
   .sidebar-nav {
     display: flex;
     flex-direction: column;
-    padding: 4px 10px;
+    padding: 0 10px;
     gap: 1px;
   }
 
+  /* #844: 30 px rows (prototype), so every entry of a role fits without scrolling at 1024×768 */
   .nav-item {
     display: flex;
     align-items: center;
-    gap: 11px;
-    padding: 9px 12px;
+    gap: 9px;
+    height: 30px;
+    padding: 0 8px;
     border-radius: var(--r-control);
     color: var(--text-2);
     font-weight: 500;
-    font-size: 13.5px;
+    font-size: 13px;
     text-decoration: none;
     position: relative;
     transition:

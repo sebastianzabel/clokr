@@ -166,9 +166,12 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Layout (kept until the navigation rework) */
-  --sidebar-w: 232px;
-  --topbar-h: 60px;
+  /* Layout (#844: rail 220 px, header 48 px, design concept § 2) */
+  --sidebar-w: 220px;
+  --topbar-h: 48px;
+  /* #844: the two page widths, chosen per route in $lib/nav/routes (never a page's own max-width) */
+  --page-read: 1120px;
+  --page-full: 2400px;
 
   /* Shift template palette - fixed across themes (chosen per template, stored in the database) */
   --shift-blue: #3b82f6;

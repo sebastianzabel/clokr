@@ -1912,7 +1912,7 @@
   }}
 />
 
-<PageHead eyebrow="Mein Bereich" title={pageLabel("/time-entries")}>
+<PageHead eyebrow="Ich" title={pageLabel("/time-entries")}>
   {#snippet actions()}
     <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt users see no
          "+ Neuer Eintrag" CTA. Full HIDE, NOT disabled — don't teach

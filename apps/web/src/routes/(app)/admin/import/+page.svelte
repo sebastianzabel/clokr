@@ -125,7 +125,7 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
 </svelte:head>
 
 <ToolPage
-  eyebrow="Daten"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/import")}
   sub="Mitarbeiter und Zeiteinträge importieren"
   steps={["Datei wählen", "Vorschau", "Übernehmen"]}

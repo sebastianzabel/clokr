@@ -1,5 +1,6 @@
 <script lang="ts">
   import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
+  import { homeHref } from "$lib/nav/routes";
   import { preventDefault } from "svelte/legacy";
 
   import { goto } from "$app/navigation";
@@ -53,7 +54,7 @@
             String(res.sessionConfig.sessionTimeoutMinutes),
           );
         }
-        goto(next ?? "/dashboard");
+        goto(next ?? homeHref(res.user)); // #844 (Z-02): the start page of the person
       }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Anmeldung fehlgeschlagen";

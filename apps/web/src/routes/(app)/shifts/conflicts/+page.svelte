@@ -13,6 +13,7 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import { pageLabel } from "$lib/nav/page-labels";
   import ShiftConflictRow from "$components/ShiftConflictRow.svelte";
 
   interface ConflictShift {
@@ -106,10 +107,10 @@
 </script>
 
 <svelte:head>
-  <title>Schicht-Konflikte – Clokr</title>
+  <title>{pageLabel("/shifts/conflicts")} – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow="Schichtplanung" title="Schicht-Konflikte" />
+<PageHead eyebrow={pageLabel("/shifts")} title={pageLabel("/shifts/conflicts")} />
 
 <section class="page">
   <!-- Date-range filters -->

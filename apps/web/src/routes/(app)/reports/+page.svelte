@@ -764,7 +764,7 @@
 </svelte:head>
 
 <PageHead
-  eyebrow={showTeamArea ? "Team" : "Mein Bereich"}
+  eyebrow={showTeamArea ? "Verwalten" : "Ich"}
   title={pageLabel("/reports")}
   sub={showTeamArea
     ? "Zeiten, Konten und Urlaub für einen Zeitraum – bis zu 12 Monate."

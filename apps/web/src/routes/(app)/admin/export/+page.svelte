@@ -221,7 +221,7 @@
 <svelte:head><title>{pageLabel("/admin/export")} – Clokr</title></svelte:head>
 
 <ToolPage
-  eyebrow="Daten"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/export")}
   sub="Lohnabrechnungs-Daten für DATEV exportieren"
   tabs={TABS}

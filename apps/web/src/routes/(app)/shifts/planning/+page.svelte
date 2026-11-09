@@ -10,6 +10,7 @@
   import { api } from "$api/client";
   import { salonContext } from "$stores/salon-context";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import { pageLabel } from "$lib/nav/page-labels";
   import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
   import {
     isSalonFilterRejected,
@@ -115,10 +116,14 @@
 </script>
 
 <svelte:head>
-  <title>Planungsbedarf – Clokr</title>
+  <title>{pageLabel("/shifts/planning")} – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow="Schichtplanung" title="Planungsbedarf" accent="Planungsbedarf" />
+<PageHead
+  eyebrow={pageLabel("/shifts")}
+  title={pageLabel("/shifts/planning")}
+  accent={pageLabel("/shifts/planning")}
+/>
 <SalonScopeLabel label={scopeLabel} rejected={salonRejected} />
 
 <section class="page">

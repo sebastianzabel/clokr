@@ -473,7 +473,7 @@
 <svelte:head><title>{pageLabel("/admin/phorest")} – Clokr</title></svelte:head>
 
 <SectionStack
-  eyebrow="System"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/phorest")}
   sub="Schichten aus Salon-Software importieren"
   animate

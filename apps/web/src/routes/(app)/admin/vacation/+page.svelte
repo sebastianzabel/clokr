@@ -694,7 +694,7 @@
 </svelte:head>
 
 <SectionStack
-  eyebrow="Personal"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/vacation")}
   sub="Einstellungen, Sonderurlaubsregeln und Übersicht für das ganze Unternehmen"
   tabs={TABS}

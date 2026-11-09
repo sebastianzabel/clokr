@@ -53,7 +53,7 @@
 
 <ListDetail
   view="list"
-  eyebrow="Planung"
+  eyebrow="Team"
   title={pageLabel("/admin/availability")}
   sub="Wer kann wann arbeiten?"
 >

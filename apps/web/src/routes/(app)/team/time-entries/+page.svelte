@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { homeHref } from "$lib/nav/routes";
   import { pageLabel } from "$lib/nav/page-labels";
   import { leaveTypeColor, FALLBACK } from "$lib/leave/leave-colors"; // Issue #840 (D-840-12)
   import { onDestroy, onMount, tick, untrack } from "svelte";
@@ -476,7 +477,11 @@
     // only holds the team leave read (e.g. the Personalabteilung) is sent to the leave page; the
     // team layout's OR-guard lets them in, the API would answer 403 to every time read. UX only.
     if (!mayOpenTeamPage("/team/time-entries", $authStore.user)) {
-      await goto(mayOpenTeamPage("/team/leave", $authStore.user) ? "/team/leave" : "/dashboard");
+      await goto(
+        mayOpenTeamPage("/team/leave", $authStore.user)
+          ? "/team/abwesenheiten"
+          : homeHref($authStore.user),
+      );
       return;
     }
     // Read URL params

@@ -68,58 +68,68 @@ function currentElements(nav: HTMLElement): Element[] {
 
 describe("BottomTabBar — current location (#515)", () => {
   beforeEach(() => {
-    // Since #83 the admin items behind „Mehr“ are permission-gated (admin-route-permissions.ts),
-    // so the admin fixture also holds the right its /admin/employees page needs.
+    // Since #83 the admin items behind „Mehr“ are permission-gated (since #844 by the route table), so the
+    // fixture also holds the right its Personen page needs. Without team-overview:read the Salon tab is skipped,
+    // so the team variant shows Aufgaben · Mein Tag · Abwesend · Mehr (#844, D-844-13).
     signInAs([...ALL_TEAM_PERMISSIONS, "employee:read:ZUGEWIESEN"]);
   });
 
   it("marks a primary route as the page and leaves Mehr unmarked, named exactly Mehr", () => {
-    renderWithTheme(BottomTabBar, { currentPath: "/time-entries" });
+    renderWithTheme(BottomTabBar, { currentPath: "/team/aufgaben" });
     const nav = mobileNav();
 
     const current = currentElements(nav);
     expect(current).toHaveLength(1);
-    const zeit = within(nav).getByRole("link", { name: "Zeit", hidden: true });
-    expect(current[0]).toBe(zeit);
-    expect(zeit).toHaveAttribute("aria-current", "page");
+    const tasks = within(nav).getByRole("link", { name: "Aufgaben", hidden: true });
+    expect(current[0]).toBe(tasks);
+    expect(tasks).toHaveAttribute("aria-current", "page");
 
     const mehr = within(nav).getByRole("button", { name: "Mehr", hidden: true });
     expect(mehr).not.toHaveAttribute("aria-current");
     expect(mehr).toHaveAccessibleName("Mehr");
   });
 
-  it("marks the Mehr trigger when the page lives behind Mehr (admin route)", () => {
-    renderWithTheme(BottomTabBar, { currentPath: "/admin/employees" });
+  it("marks the Mehr trigger when the page lives behind Mehr (Verwalten route)", () => {
+    renderWithTheme(BottomTabBar, { currentPath: "/verwalten/personen" });
     const nav = mobileNav();
 
     expect(within(nav).queryAllByRole("link", { hidden: true }).filter(isCurrent)).toHaveLength(0);
     const mehr = within(nav).getByRole("button", { hidden: true });
     expect(mehr).toHaveAttribute("aria-current", "true");
     expect(mehr).toHaveClass("tab-active");
-    expect(mehr).toHaveAccessibleName("Mehr, aktuelle Seite: Mitarbeitende");
+    expect(mehr).toHaveAccessibleName("Mehr, aktuelle Seite: Personen");
     expect(currentElements(nav)).toHaveLength(1);
   });
 
-  it("does not mark the personal Zeit tab on the team variant, marks Mehr instead", () => {
-    renderWithTheme(BottomTabBar, { currentPath: "/team/time-entries" });
+  it("on the team variant the own times live behind Mehr, and no tab is marked for them", () => {
+    renderWithTheme(BottomTabBar, { currentPath: "/ich/zeiten" });
     const nav = mobileNav();
 
-    const zeit = within(nav).getByRole("link", { name: "Zeit", hidden: true });
-    expect(zeit).not.toHaveAttribute("aria-current");
+    expect(within(nav).queryByRole("link", { name: "Zeiten", hidden: true })).toBeNull();
     const mehr = within(nav).getByRole("button", { hidden: true });
     expect(mehr).toHaveAttribute("aria-current", "true");
-    expect(mehr).toHaveAccessibleName("Mehr, aktuelle Seite: Team-Zeiten");
+    expect(mehr).toHaveAccessibleName("Mehr, aktuelle Seite: Zeiten");
     expect(currentElements(nav)).toHaveLength(1);
+  });
+
+  it("a plain employee has the personal tabs, and the profile behind Mehr", () => {
+    signInAs([]);
+    renderWithTheme(BottomTabBar, { currentPath: "/ich/zeiten" });
+    const nav = mobileNav();
+    expect(within(nav).getByRole("link", { name: "Zeiten", hidden: true })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("names the page behind Mehr for a plain employee too", () => {
     signInAs([]);
-    renderWithTheme(BottomTabBar, { currentPath: "/settings" });
+    renderWithTheme(BottomTabBar, { currentPath: "/ich/profil" });
     const nav = mobileNav();
 
     const mehr = within(nav).getByRole("button", { hidden: true });
     expect(mehr).toHaveAttribute("aria-current", "true");
-    expect(mehr).toHaveAccessibleName("Mehr, aktuelle Seite: Mein Profil");
+    expect(mehr).toHaveAccessibleName("Mehr, aktuelle Seite: Profil");
   });
 
   it("marks nothing on an unknown route and keeps the plain Mehr name", () => {
@@ -138,11 +148,21 @@ function isCurrent(el: Element): boolean {
 describe("MobileMoreSheet — current page (#515)", () => {
   const sections = [
     {
-      label: "PERSONAL",
-      isAdminGroup: true,
+      area: "verwalten" as const,
+      label: "Verwalten",
       items: [
-        { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
-        { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
+        {
+          href: "/verwalten/personen",
+          label: "Mitarbeitende",
+          icon: "users",
+          testId: "nav-admin-employees",
+        },
+        {
+          href: "/verwalten/regeln/urlaub",
+          label: "Urlaubsverwaltung",
+          icon: "umbrella",
+          testId: "nav-admin-vacation",
+        },
       ],
     },
   ];
@@ -155,7 +175,7 @@ describe("MobileMoreSheet — current page (#515)", () => {
     renderWithTheme(MobileMoreSheet, {
       open: true,
       sections,
-      currentPath: "/admin/employees/abc",
+      currentPath: "/verwalten/personen/abc",
     });
     const dialog = sheetDialog();
 
@@ -170,7 +190,11 @@ describe("MobileMoreSheet — current page (#515)", () => {
   });
 
   it("follows the current path to the other item", () => {
-    renderWithTheme(MobileMoreSheet, { open: true, sections, currentPath: "/admin/vacation" });
+    renderWithTheme(MobileMoreSheet, {
+      open: true,
+      sections,
+      currentPath: "/verwalten/regeln/urlaub",
+    });
     const dialog = sheetDialog();
 
     expect(within(dialog).getByRole("link", { name: "Urlaubsverwaltung" })).toHaveAttribute(
@@ -183,7 +207,7 @@ describe("MobileMoreSheet — current page (#515)", () => {
   });
 
   it("marks nothing when the path is none of the items", () => {
-    renderWithTheme(MobileMoreSheet, { open: true, sections, currentPath: "/dashboard" });
+    renderWithTheme(MobileMoreSheet, { open: true, sections, currentPath: "/ich/tag" });
 
     expect(sheetDialog().querySelectorAll("[aria-current]")).toHaveLength(0);
   });

@@ -19,6 +19,17 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
   import { startVisiblePoll } from "$lib/dashboard/visible-poll";
+  import { AREA_LABELS } from "$lib/nav/routes";
+  import { matchesRoute } from "$lib/nav/active-route";
+
+  // Issue #844 (D-844-06/07): "me" = Ich › Mein Tag (the personal blocks), "team" = Team › Heute im Salon
+  // (`routes/(app)/team/heute` renders this file, the team block only). Until #845 / #846 build the two start
+  // pages, both render from this one file, each showing and loading only its own part; the URL decides (a
+  // route component takes no props of its own).
+  const view = $derived<"me" | "team">(
+    matchesRoute("/team/heute", $page.url.pathname) ? "team" : "me",
+  );
+  const pageKey = $derived(view === "team" ? "/team/heute" : "/dashboard");
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { goto, afterNavigate, replaceState } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person; #609: reminder arrival
   import { page } from "$app/stores"; // Issue #609: the ?clock=1 reminder parameter
@@ -463,8 +474,9 @@
   // `overtime:read` gracefully (see `loadTeamCharts()`'s `overtimeTrendAvailable` below, Phase 76b
   // D-15) — opening this gate to `team-overview:read` therefore satisfies AK-378-1's "keine
   // Saldo-Karten" via that EXISTING fail-safe, not a new one.
+  // #844: the team block lives on Team › Heute im Salon only (view "team").
   const canSeeTeamBereich = $derived(
-    hasPermission($authStore.user, "team-overview:read:ZUGEWIESEN"),
+    view === "team" && hasPermission($authStore.user, "team-overview:read:ZUGEWIESEN"),
   );
   // Issue #588 (P-10): the saldo card needs the two permissions of its endpoint.
   const canSeeTeamSaldo = $derived(mayReadTeamSaldo($authStore.user));
@@ -1511,7 +1523,7 @@
 </script>
 
 <svelte:head>
-  <title>{pageLabel("/dashboard")} – Clokr</title>
+  <title>{pageLabel(pageKey)} – Clokr</title>
 </svelte:head>
 
 {#snippet teamCellContent(day: TeamDay)}
@@ -1596,502 +1608,504 @@
 <div class="dashboard" data-testid="dashboard-page">
   <!-- Page Header -->
   <PageHead
-    eyebrow="Mein Bereich"
-    title={pageLabel("/dashboard")}
+    eyebrow={view === "team" ? AREA_LABELS.team : AREA_LABELS.ich}
+    title={pageLabel(pageKey)}
     sub={`${greeting()}, ${capitalizedName}`}
   />
 
-  <!-- Phase 49.4 (rearrange): two-column stack — LEFT (Timer → Heutiger Eintrag → Aktivität),
+  {#if view === "me"}
+    <!-- Phase 49.4 (rearrange): two-column stack — LEFT (Timer → Heutiger Eintrag → Aktivität),
        RIGHT (KPI-pair → MyShifts/MyWeekView → Offene Vorgänge). Eliminates row-bound gaps
        where Timer-Card and Aktivität were short while MyShiftsWeek on the right was tall. -->
-  <div class="dashboard-stacks">
-    <!-- LEFT column (col-7) -->
-    <div class="dashboard-stack dashboard-stack--left">
-      <!-- Timer Card Hero (EMP-01) -->
-      <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt users (Inhaber/
+    <div class="dashboard-stacks">
+      <!-- LEFT column (col-7) -->
+      <div class="dashboard-stack dashboard-stack--left">
+        <!-- Timer Card Hero (EMP-01) -->
+        <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt users (Inhaber/
            Geschäftsführer/leitende Angestellte) MUST NOT see the Stempeluhr
            CTA. Full HIDE the entire Timer-Card hero — not a disabled button.
            Rationale: don't teach exempt users to interact with disabled
            controls. -->
-      {#if !isExempt}
-        <Card animate class="timer-card col-7 timer-card-wrap" style="--card-idx: 0;">
-          <div class="timer-hd" data-day-state={day.kind}>
-            <div>
-              <div class="timer-hd-title">
-                {#if day.kind === "running"}
-                  Du arbeitest gerade
-                {:else if day.kind === "finished"}
-                  Tag abgeschlossen
-                {:else}
-                  Noch nicht eingestempelt
-                {/if}
+        {#if !isExempt}
+          <Card animate class="timer-card col-7 timer-card-wrap" style="--card-idx: 0;">
+            <div class="timer-hd" data-day-state={day.kind}>
+              <div>
+                <div class="timer-hd-title">
+                  {#if day.kind === "running"}
+                    Du arbeitest gerade
+                  {:else if day.kind === "finished"}
+                    Tag abgeschlossen
+                  {:else}
+                    Noch nicht eingestempelt
+                  {/if}
+                </div>
+                <div class="timer-status">
+                  {#if day.kind === "running" && clockStart}
+                    <span class="live-dot" aria-hidden="true"></span>
+                    <span>gestartet um {format(clockStart, "HH:mm")}</span>
+                  {:else if day.kind === "finished"}
+                    <span class="timer-status-idle">
+                      {entryStartHHMM} – {entryEndHHMM} · {entryNetLabel} erfasst
+                    </span>
+                  {:else}
+                    <span class="timer-status-idle">Bereit zum Einstempeln</span>
+                  {/if}
+                </div>
               </div>
-              <div class="timer-status">
-                {#if day.kind === "running" && clockStart}
-                  <span class="live-dot" aria-hidden="true"></span>
-                  <span>gestartet um {format(clockStart, "HH:mm")}</span>
-                {:else if day.kind === "finished"}
-                  <span class="timer-status-idle">
-                    {entryStartHHMM} – {entryEndHHMM} · {entryNetLabel} erfasst
-                  </span>
-                {:else}
-                  <span class="timer-status-idle">Bereit zum Einstempeln</span>
-                {/if}
+              <div class="timer-hd-right">
+                <div class="timer-hd-title timer-hd-date">
+                  {format(currentTime, "EEEE, d. MMMM", { locale: de })}
+                </div>
+                <div class="timer-now">
+                  {format(currentTime, "HH:mm")}
+                </div>
               </div>
             </div>
-            <div class="timer-hd-right">
-              <div class="timer-hd-title timer-hd-date">
-                {format(currentTime, "EEEE, d. MMMM", { locale: de })}
-              </div>
-              <div class="timer-now">
-                {format(currentTime, "HH:mm")}
-              </div>
-            </div>
-          </div>
 
-          <div class="clock timer-display">
-            {#if day.kind === "running" && clockStart}
-              {formatElapsed(clockStart, currentTime)}
-            {:else if day.kind === "finished"}
-              {finishedNetClock}
-            {:else}
-              00:00:00
-            {/if}
-          </div>
-          {#if day.kind === "finished"}
-            <!-- No Tagesziel bar on a finished day: pctTarget derives from elapsedMs, which is 0
+            <div class="clock timer-display">
+              {#if day.kind === "running" && clockStart}
+                {formatElapsed(clockStart, currentTime)}
+              {:else if day.kind === "finished"}
+                {finishedNetClock}
+              {:else}
+                00:00:00
+              {/if}
+            </div>
+            {#if day.kind === "finished"}
+              <!-- No Tagesziel bar on a finished day: pctTarget derives from elapsedMs, which is 0
                  when not clocked in, so a FIXED_SCHEDULE employee would see a 0 % bar on a
                  completed 8:21 h day — the same lie this phase removes, one size smaller. -->
-            <div class="timer-sub">Erfasste Arbeitszeit heute</div>
-          {:else if stats?.scheduleType === "FIXED_SCHEDULE"}
-            <div class="timer-sub">
-              {clockedIn
-                ? `Noch ${fmtHours(remainingTargetHours)} bis zum Tagesziel`
-                : "Bereit für deinen Tag"}
-            </div>
-
-            <div class="timer-progress">
-              <div class="timer-progress-track">
-                <div class="timer-progress-fill" style="width: {pctTarget}%;"></div>
+              <div class="timer-sub">Erfasste Arbeitszeit heute</div>
+            {:else if stats?.scheduleType === "FIXED_SCHEDULE"}
+              <div class="timer-sub">
+                {clockedIn
+                  ? `Noch ${fmtHours(remainingTargetHours)} bis zum Tagesziel`
+                  : "Bereit für deinen Tag"}
               </div>
-              <div class="timer-progress-labels">
-                <span>{fmtHours(workedHoursLive)} gearbeitet</span>
-                <span>Tagesziel 8:00</span>
-              </div>
-            </div>
-          {:else}
-            <div class="timer-sub">
-              {clockedIn ? "Zeiterfassung läuft" : "Bereit für deinen Tag"}
-            </div>
-          {/if}
 
-          <div class="card-foot timer-foot">
-            <ClockSalonSelect
-              view={clockSalonViewState}
-              value={clockSalonId}
-              disabled={clockLoading}
-              onselect={(id) => (clockSalonId = id)}
-              noteLabel={fixedSalonNoteLabel(day.kind, todayEntries.length)}
-            />
-            {#if primaryLabel}
-              <button
-                onclick={handleClock}
-                disabled={clockLoading || clockInBlocked(clockSalonViewState, clockSalonId)}
-                class="btn timer-cta-primary"
-                type="button"
-              >
-                {#if clockLoading}<span class="btn-spinner"></span>{/if}
-                {primaryLabel}
-              </button>
+              <div class="timer-progress">
+                <div class="timer-progress-track">
+                  <div class="timer-progress-fill" style="width: {pctTarget}%;"></div>
+                </div>
+                <div class="timer-progress-labels">
+                  <span>{fmtHours(workedHoursLive)} gearbeitet</span>
+                  <span>Tagesziel 8:00</span>
+                </div>
+              </div>
+            {:else}
+              <div class="timer-sub">
+                {clockedIn ? "Zeiterfassung läuft" : "Bereit für deinen Tag"}
+              </div>
             {/if}
-            {#if clockedIn}
-              <button
-                type="button"
-                class="btn btn-ghost timer-cta-ghost"
-                class:timer-cta-ghost--active={breakStartedAt}
-                disabled={clockLoading || breakLoading}
-                onclick={handleBreakToggle}
-                title={breakStartedAt
-                  ? "Aktive Pause beenden — die Zeit wird als Pause vom Eintrag abgezogen"
-                  : "Pause starten — die Zeit wird als Pause vom Eintrag abgezogen"}
-              >
-                {#if breakLoading}<span class="btn-spinner"></span>{/if}
-                {breakStartedAt ? "Pause beenden" : "Pause starten"}
-              </button>
-            {/if}
-            {#if day.kind === "finished"}
-              {#if canReopenFinishedDay(day) && reopenGapLabel}
+
+            <div class="card-foot timer-foot">
+              <ClockSalonSelect
+                view={clockSalonViewState}
+                value={clockSalonId}
+                disabled={clockLoading}
+                onselect={(id) => (clockSalonId = id)}
+                noteLabel={fixedSalonNoteLabel(day.kind, todayEntries.length)}
+              />
+              {#if primaryLabel}
+                <button
+                  onclick={handleClock}
+                  disabled={clockLoading || clockInBlocked(clockSalonViewState, clockSalonId)}
+                  class="btn timer-cta-primary"
+                  type="button"
+                >
+                  {#if clockLoading}<span class="btn-spinner"></span>{/if}
+                  {primaryLabel}
+                </button>
+              {/if}
+              {#if clockedIn}
                 <button
                   type="button"
                   class="btn btn-ghost timer-cta-ghost"
-                  disabled={clockLoading}
-                  onclick={openReopenDialog}
-                  title="Wieder einstempeln — der Zeitraum seit dem Ausstempeln wird als Pause erfasst"
+                  class:timer-cta-ghost--active={breakStartedAt}
+                  disabled={clockLoading || breakLoading}
+                  onclick={handleBreakToggle}
+                  title={breakStartedAt
+                    ? "Aktive Pause beenden — die Zeit wird als Pause vom Eintrag abgezogen"
+                    : "Pause starten — die Zeit wird als Pause vom Eintrag abgezogen"}
                 >
-                  {#if clockLoading}<span class="btn-spinner"></span>{/if}
-                  Erneut einstempeln
+                  {#if breakLoading}<span class="btn-spinner"></span>{/if}
+                  {breakStartedAt ? "Pause beenden" : "Pause starten"}
                 </button>
-                <!-- Issue #70 (D-02/D-11): the finished-day action „In anderem Salon einstempeln“ starts a
-                     NEW entry in another salon; the component renders it only when the server offers one. -->
-                <ClockOtherSalon
-                  salons={otherSalonOptions(clockSalonViewState)}
-                  value={clockSalonId}
-                  disabled={clockLoading}
-                  loading={clockLoading}
-                  blocked={otherSalonBlocked(clockSalonViewState, clockSalonId)}
-                  onselect={(id) => (clockSalonId = id)}
-                  onstart={handleOtherSalonClockIn}
-                />
-              {:else}
-                <span class="timer-status-idle">
-                  Monat abgeschlossen — der Eintrag kann nicht mehr geändert werden.
-                </span>
               {/if}
-            {/if}
-          </div>
-
-          {#if todayShift}
-            <div class="timer-shift">
-              <span class="timer-shift-label">
-                {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
-              </span>
+              {#if day.kind === "finished"}
+                {#if canReopenFinishedDay(day) && reopenGapLabel}
+                  <button
+                    type="button"
+                    class="btn btn-ghost timer-cta-ghost"
+                    disabled={clockLoading}
+                    onclick={openReopenDialog}
+                    title="Wieder einstempeln — der Zeitraum seit dem Ausstempeln wird als Pause erfasst"
+                  >
+                    {#if clockLoading}<span class="btn-spinner"></span>{/if}
+                    Erneut einstempeln
+                  </button>
+                  <!-- Issue #70 (D-02/D-11): the finished-day action „In anderem Salon einstempeln“ starts a
+                     NEW entry in another salon; the component renders it only when the server offers one. -->
+                  <ClockOtherSalon
+                    salons={otherSalonOptions(clockSalonViewState)}
+                    value={clockSalonId}
+                    disabled={clockLoading}
+                    loading={clockLoading}
+                    blocked={otherSalonBlocked(clockSalonViewState, clockSalonId)}
+                    onselect={(id) => (clockSalonId = id)}
+                    onstart={handleOtherSalonClockIn}
+                  />
+                {:else}
+                  <span class="timer-status-idle">
+                    Monat abgeschlossen — der Eintrag kann nicht mehr geändert werden.
+                  </span>
+                {/if}
+              {/if}
             </div>
-          {/if}
-        </Card>
-        <!-- Phase 115 (issue #118): the ONLY route from the hero card back into a REOPEN.
+
+            {#if todayShift}
+              <div class="timer-shift">
+                <span class="timer-shift-label">
+                  {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
+                </span>
+              </div>
+            {/if}
+          </Card>
+          <!-- Phase 115 (issue #118): the ONLY route from the hero card back into a REOPEN.
              Inside {#if !isExempt} on purpose — a § 18 ArbZG-exempt user has no clock card
              and must not gain one through this dialog either (Phase 76.7, D-15). -->
-        <ConfirmDialog
-          bind:open={reopenDialogOpen}
-          title="Erneut einstempeln?"
-          description={reopenDialogText}
-          confirmLabel="Erneut einstempeln"
-          cancelLabel="Abbrechen"
-          onConfirm={confirmReopen}
-        />
-        <!-- Issue #609 (AC-4): the confirmation behind a shift reminder tap. Inside {#if !isExempt} for
+          <ConfirmDialog
+            bind:open={reopenDialogOpen}
+            title="Erneut einstempeln?"
+            description={reopenDialogText}
+            confirmLabel="Erneut einstempeln"
+            cancelLabel="Abbrechen"
+            onConfirm={confirmReopen}
+          />
+          <!-- Issue #609 (AC-4): the confirmation behind a shift reminder tap. Inside {#if !isExempt} for
              the same reason as the reopen dialog; it stamps only through the unchanged handleClock(). -->
-        <ConfirmDialog
-          bind:open={clockReminderOpen}
-          title={clockReminderTexts?.title ?? ""}
-          description={clockReminderTexts?.description}
-          confirmLabel={clockReminderTexts?.confirmLabel ?? "Bestätigen"}
-          cancelLabel="Abbrechen"
-          onConfirm={confirmClockReminder}
-        />
-      {/if}
-      <!-- /timer-card (Phase 76.7: wrapped in {#if !isExempt}) -->
-
-      <!-- Heutiger Eintrag (moved into left stack — Phase 49.4 rearrange) -->
-      <Card animate class="today-entry-card" style="--card-idx: 3;">
-        <CardHeader
-          title="Heutiger Eintrag"
-          sub={entryCount
-            ? `${format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })} · ${entryCount.replaceAll(" ", "\u00A0")}`
-            : format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })}
-        >
-          {#snippet actions()}
-            <a
-              href="/time-entries?view=list&date={format(currentTime, 'yyyy-MM-dd')}"
-              class="btn btn-ghost btn-sm today-entry-edit"
-              aria-label="Heutigen Eintrag bearbeiten"
-            >
-              ✎ Bearbeiten
-            </a>
-          {/snippet}
-        </CardHeader>
-
-        <div class="today-stats">
-          <div class="today-stat">
-            <div class="today-stat-label">Start</div>
-            <div class="today-stat-value">{entryStartHHMM}</div>
-          </div>
-          <div class="today-stat">
-            <div class="today-stat-label">Ende</div>
-            <div class="today-stat-value">{entryEndHHMM}</div>
-          </div>
-          <div class="today-stat">
-            <div class="today-stat-label">Pausen</div>
-            <div class="today-stat-value">{entryBreakLabel}</div>
-          </div>
-          <div class="today-stat">
-            <div class="today-stat-label">Netto</div>
-            <div class="today-stat-value today-stat-accent">{entryNetLabel}</div>
-          </div>
-        </div>
-
-        {#if showEntryList}
-          <TodayEntriesList entries={todayEntries} />
+          <ConfirmDialog
+            bind:open={clockReminderOpen}
+            title={clockReminderTexts?.title ?? ""}
+            description={clockReminderTexts?.description}
+            confirmLabel={clockReminderTexts?.confirmLabel ?? "Bestätigen"}
+            cancelLabel="Abbrechen"
+            onConfirm={confirmClockReminder}
+          />
         {/if}
+        <!-- /timer-card (Phase 76.7: wrapped in {#if !isExempt}) -->
 
-        <div class="today-timeline">
-          <div class="today-timeline-track"></div>
-          <div class="today-timeline-fill" style="width: {entryProgressPct}%;"></div>
-          <div class="today-timeline-marks">
-            {#each ["07:00", "09:00", "11:00", "13:00", "15:00", "17:00", "19:00"] as h (h)}
-              <span class="today-timeline-mark">{h}</span>
-            {/each}
+        <!-- Heutiger Eintrag (moved into left stack — Phase 49.4 rearrange) -->
+        <Card animate class="today-entry-card" style="--card-idx: 3;">
+          <CardHeader
+            title="Heutiger Eintrag"
+            sub={entryCount
+              ? `${format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })} · ${entryCount.replaceAll(" ", "\u00A0")}`
+              : format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })}
+          >
+            {#snippet actions()}
+              <a
+                href="/time-entries?view=list&date={format(currentTime, 'yyyy-MM-dd')}"
+                class="btn btn-ghost btn-sm today-entry-edit"
+                aria-label="Heutigen Eintrag bearbeiten"
+              >
+                ✎ Bearbeiten
+              </a>
+            {/snippet}
+          </CardHeader>
+
+          <div class="today-stats">
+            <div class="today-stat">
+              <div class="today-stat-label">Start</div>
+              <div class="today-stat-value">{entryStartHHMM}</div>
+            </div>
+            <div class="today-stat">
+              <div class="today-stat-label">Ende</div>
+              <div class="today-stat-value">{entryEndHHMM}</div>
+            </div>
+            <div class="today-stat">
+              <div class="today-stat-label">Pausen</div>
+              <div class="today-stat-value">{entryBreakLabel}</div>
+            </div>
+            <div class="today-stat">
+              <div class="today-stat-label">Netto</div>
+              <div class="today-stat-value today-stat-accent">{entryNetLabel}</div>
+            </div>
           </div>
-        </div>
 
-        <div class="callout brand today-arbzg">
-          <span class="ico" aria-hidden="true">ℹ️</span>
-          <div>
-            <b>{arbzgCallout.title}</b>
-            <span> {arbzgCallout.body}</span>
+          {#if showEntryList}
+            <TodayEntriesList entries={todayEntries} />
+          {/if}
+
+          <div class="today-timeline">
+            <div class="today-timeline-track"></div>
+            <div class="today-timeline-fill" style="width: {entryProgressPct}%;"></div>
+            <div class="today-timeline-marks">
+              {#each ["07:00", "09:00", "11:00", "13:00", "15:00", "17:00", "19:00"] as h (h)}
+                <span class="today-timeline-mark">{h}</span>
+              {/each}
+            </div>
           </div>
-        </div>
-      </Card>
-      <!-- /today-entry-card -->
 
-      <!-- Aktivität (moved into left stack — Phase 49.4 rearrange) -->
-      <Card animate class="activity-card" style="--card-idx: 4;">
-        <CardHeader title="Aktivität" sub="Letzte Ereignisse" />
+          <div class="callout brand today-arbzg">
+            <span class="ico" aria-hidden="true">ℹ️</span>
+            <div>
+              <b>{arbzgCallout.title}</b>
+              <span> {arbzgCallout.body}</span>
+            </div>
+          </div>
+        </Card>
+        <!-- /today-entry-card -->
 
-        <div class="activity-list">
-          {#if activityItems.length === 0}
-            <div class="activity-empty">Keine Ereignisse in der letzten Zeit.</div>
-          {:else}
-            {#each activityItems as item, i (item.id)}
-              <div class="activity-row" class:activity-row--last={i === activityItems.length - 1}>
-                <div class="activity-icon" aria-hidden="true">
-                  {#if item.icon === "check"}
-                    ✓
-                  {:else if item.icon === "x"}
-                    ✕
-                  {:else if item.icon === "clock"}
-                    ⏱
-                  {:else if item.icon === "inbox"}
-                    ✉
-                  {:else if item.icon === "edit"}
-                    ✎
-                  {:else if item.icon === "lock"}
-                    🔒
-                  {:else}
-                    •
-                  {/if}
+        <!-- Aktivität (moved into left stack — Phase 49.4 rearrange) -->
+        <Card animate class="activity-card" style="--card-idx: 4;">
+          <CardHeader title="Aktivität" sub="Letzte Ereignisse" />
+
+          <div class="activity-list">
+            {#if activityItems.length === 0}
+              <div class="activity-empty">Keine Ereignisse in der letzten Zeit.</div>
+            {:else}
+              {#each activityItems as item, i (item.id)}
+                <div class="activity-row" class:activity-row--last={i === activityItems.length - 1}>
+                  <div class="activity-icon" aria-hidden="true">
+                    {#if item.icon === "check"}
+                      ✓
+                    {:else if item.icon === "x"}
+                      ✕
+                    {:else if item.icon === "clock"}
+                      ⏱
+                    {:else if item.icon === "inbox"}
+                      ✉
+                    {:else if item.icon === "edit"}
+                      ✎
+                    {:else if item.icon === "lock"}
+                      🔒
+                    {:else}
+                      •
+                    {/if}
+                  </div>
+                  <div class="activity-text">
+                    <b class="activity-who">{item.who}</b>
+                    <span class="activity-what"> {item.what}</span>
+                  </div>
+                  <div class="activity-when">{relativeTime(item.when)}</div>
                 </div>
-                <div class="activity-text">
-                  <b class="activity-who">{item.who}</b>
-                  <span class="activity-what"> {item.what}</span>
-                </div>
-                <div class="activity-when">{relativeTime(item.when)}</div>
-              </div>
-            {/each}
-          {/if}
-        </div>
-      </Card>
-      <!-- /activity-card -->
-    </div>
-    <!-- /dashboard-stack--left -->
+              {/each}
+            {/if}
+          </div>
+        </Card>
+        <!-- /activity-card -->
+      </div>
+      <!-- /dashboard-stack--left -->
 
-    <!-- RIGHT column (col-5) -->
-    <div class="dashboard-stack dashboard-stack--right">
-      <!-- KPI pair -->
-      <Card animate class="kpi-pair" style="--card-idx: 1;">
-        {#if stats}
-          {#if stats.vacation}
-            <KPIStat
-              label="Urlaubstage"
-              value={String(stats.vacation.remaining)}
-              unit={`/ ${stats.vacation.total}`}
-              delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
-            />
-          {/if}
-          <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt employees see
+      <!-- RIGHT column (col-5) -->
+      <div class="dashboard-stack dashboard-stack--right">
+        <!-- KPI pair -->
+        <Card animate class="kpi-pair" style="--card-idx: 1;">
+          {#if stats}
+            {#if stats.vacation}
+              <KPIStat
+                label="Urlaubstage"
+                value={String(stats.vacation.remaining)}
+                unit={`/ ${stats.vacation.total}`}
+                delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
+              />
+            {/if}
+            <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt employees see
                an em-dash "—" instead of a numeric saldo + no delta cue. Unchanged by
                Phase 97-04 — an exempt employee has no confirmed/forecast split to show. -->
-          <!-- Phase 76b (Issue #76), CR-01 (code review): `stats.overtime === null` means the
+            <!-- Phase 76b (Issue #76), CR-01 (code review): `stats.overtime === null` means the
                caller holds no overtime:read:EIGENE permission (e.g. a bare Salonmanager/Ausbilder
                template holder without the Mitarbeiter role) — hide the card, no error/toast. -->
-          {#if stats.overtime === null}
-            <!-- intentionally empty: no saldo card for this caller -->
-          {:else if isExempt}
-            <KPIStat label="Überstundenkonto" value="—" delta="§ 18 ArbZG" deltaTone="neutral" />
-          {:else if stats.overtime.confirmedMinutes !== undefined}
-            <!-- Phase 97-04 (SALDO-DISP-02) — the split primitive replaces the inline KPIStat
+            {#if stats.overtime === null}
+              <!-- intentionally empty: no saldo card for this caller -->
+            {:else if isExempt}
+              <KPIStat label="Überstundenkonto" value="—" delta="§ 18 ArbZG" deltaTone="neutral" />
+            {:else if stats.overtime.confirmedMinutes !== undefined}
+              <!-- Phase 97-04 (SALDO-DISP-02) — the split primitive replaces the inline KPIStat
                  markup outright (not wrapped): KPIStat's pure-props string contract cannot
                  express a two-figure tile. Leads with "Bestätigt", subordinates the forecast,
                  worded from the data by forecastLabel() (Issue #588) — the deliberate hierarchy
                  flip this phase exists to ship. -->
-            <SaldoAnzeige
-              variant="expanded"
-              label="Überstundenkonto"
-              confirmedMinutes={stats.overtime.confirmedMinutes}
-              openMonthMinutes={stats.overtime.openMonthMinutes ?? null}
-              hasClosedMonth={stats.overtime.hasClosedMonth ?? false}
-              unconfirmedMonths={stats.overtime.unconfirmedMonths ?? null}
-              rosterIncomplete={stats.overtime.rosterIncomplete}
-            />
-          {:else}
-            <!-- Fallback: an older cached /dashboard response without the split fields —
+              <SaldoAnzeige
+                variant="expanded"
+                label="Überstundenkonto"
+                confirmedMinutes={stats.overtime.confirmedMinutes}
+                openMonthMinutes={stats.overtime.openMonthMinutes ?? null}
+                hasClosedMonth={stats.overtime.hasClosedMonth ?? false}
+                unconfirmedMonths={stats.overtime.unconfirmedMonths ?? null}
+                rosterIncomplete={stats.overtime.rosterIncomplete}
+              />
+            {:else}
+              <!-- Fallback: an older cached /dashboard response without the split fields —
                  degrade to the primitive's single-value rendering instead of blanking. This
                  also drops the page-local fmtBalanceHours "±0:00" zero convention in favour of
                  the primitive's own formatter (SALDO-DISP-05 — one presentation, not three). -->
-            <SaldoAnzeige
-              variant="expanded"
-              label="Überstundenkonto"
-              saldoMinutes={Math.round(stats.overtime.balanceHours * 60)}
-            />
-          {/if}
-          {#if stats.scheduleType === "FLEXTIME"}
-            {@const weekDiff = weekProgressDelta(stats.week)}
-            <KPIStat
-              label="Diese Woche Soll"
-              value={fmtHours(stats.week.workedHours)}
-              unit={`/ ${fmtHours(stats.week.targetHours)}`}
-              delta={weekDiff === 0
-                ? "ausgeglichen"
-                : weekDiff > 0
-                  ? `↗ +${fmtHours(weekDiff)}`
-                  : `↘ ${fmtHours(weekDiff)}`}
-              deltaTone={weekDiff === 0 ? "neutral" : weekDiff > 0 ? "good" : "warn"}
-            />
-          {/if}
-        {:else}
-          <KPIStat label="Urlaubstage" value="–" />
-          <!-- IN-01 (code review) — SaldoAnzeige's loading/error props were built, tested, and
+              <SaldoAnzeige
+                variant="expanded"
+                label="Überstundenkonto"
+                saldoMinutes={Math.round(stats.overtime.balanceHours * 60)}
+              />
+            {/if}
+            {#if stats.scheduleType === "FLEXTIME"}
+              {@const weekDiff = weekProgressDelta(stats.week)}
+              <KPIStat
+                label="Diese Woche Soll"
+                value={fmtHours(stats.week.workedHours)}
+                unit={`/ ${fmtHours(stats.week.targetHours)}`}
+                delta={weekDiff === 0
+                  ? "ausgeglichen"
+                  : weekDiff > 0
+                    ? `↗ +${fmtHours(weekDiff)}`
+                    : `↘ ${fmtHours(weekDiff)}`}
+                deltaTone={weekDiff === 0 ? "neutral" : weekDiff > 0 ? "good" : "warn"}
+              />
+            {/if}
+          {:else}
+            <KPIStat label="Urlaubstage" value="–" />
+            <!-- IN-01 (code review) — SaldoAnzeige's loading/error props were built, tested, and
                never actually reached by any consuming page. This IS a real loading/error
                boundary: `loading` (declared above) brackets the exact same /dashboard fetch that
                populates `stats`, so while it's true the request is still in flight, and once it
                flips false with `stats` still null the request failed (see loadData()'s
                Promise.allSettled — a rejected statsResult never reassigns `stats`). -->
-          <SaldoAnzeige variant="expanded" label="Überstundenkonto" {loading} error={!loading} />
+            <SaldoAnzeige variant="expanded" label="Überstundenkonto" {loading} error={!loading} />
+          {/if}
+        </Card>
+
+        <!-- Phase 49.4 — Weekly view: MyShiftsWeek for SHIFT_BASED, MyWeekView for everyone else -->
+        {#if stats?.scheduleType === "SHIFT_BASED" && !shiftFallback}
+          <MyShiftsWeek
+            onFallback={() => {
+              shiftFallback = true;
+            }}
+          />
+        {:else}
+          <MyWeekView />
         {/if}
-      </Card>
 
-      <!-- Phase 49.4 — Weekly view: MyShiftsWeek for SHIFT_BASED, MyWeekView for everyone else -->
-      {#if stats?.scheduleType === "SHIFT_BASED" && !shiftFallback}
-        <MyShiftsWeek
-          onFallback={() => {
-            shiftFallback = true;
-          }}
-        />
-      {:else}
-        <MyWeekView />
-      {/if}
-
-      <!-- Offene Vorgänge (moved into right stack — Phase 49.4 rearrange) -->
-      {#if openItems}
-        <Card animate class="open-items" style="--card-idx: 6;">
-          <CardHeader title="Offene Vorgänge" sub="Letzte Übersicht">
-            {#snippet actions()}
-              <a href="/inbox" class="btn btn-ghost btn-sm">Alle anzeigen →</a>
-            {/snippet}
-          </CardHeader>
-          <div class="open-items-list">
-            {#if showEmptyOpenItems}
-              <p class="oi-empty">Keine offenen Vorgänge</p>
-            {:else}
-              {#if openItems.missingDays.length > 0}
-                <div class="oi-group">
-                  <div class="oi-group-header">
-                    <span class="oi-dot oi-dot--warn"></span>
-                    <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
+        <!-- Offene Vorgänge (moved into right stack — Phase 49.4 rearrange) -->
+        {#if openItems}
+          <Card animate class="open-items" style="--card-idx: 6;">
+            <CardHeader title="Offene Vorgänge" sub="Letzte Übersicht">
+              {#snippet actions()}
+                <a href="/inbox" class="btn btn-ghost btn-sm">Alle anzeigen →</a>
+              {/snippet}
+            </CardHeader>
+            <div class="open-items-list">
+              {#if showEmptyOpenItems}
+                <p class="oi-empty">Keine offenen Vorgänge</p>
+              {:else}
+                {#if openItems.missingDays.length > 0}
+                  <div class="oi-group">
+                    <div class="oi-group-header">
+                      <span class="oi-dot oi-dot--warn"></span>
+                      <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
+                    </div>
+                    {#each openItems.missingDays as missDate (missDate)}
+                      {@const d = new Date(missDate + "T12:00:00")}
+                      {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
+                      <a href="/time-entries?view=list&date={missDate}" class="oi-item">
+                        <span
+                          >{dayName}. {d.toLocaleDateString("de-DE", {
+                            day: "2-digit",
+                            month: "2-digit",
+                          })}</span
+                        >
+                        <span class="oi-link">Nachtragen →</span>
+                      </a>
+                    {/each}
                   </div>
-                  {#each openItems.missingDays as missDate (missDate)}
-                    {@const d = new Date(missDate + "T12:00:00")}
-                    {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
-                    <a href="/time-entries?view=list&date={missDate}" class="oi-item">
-                      <span
-                        >{dayName}. {d.toLocaleDateString("de-DE", {
-                          day: "2-digit",
-                          month: "2-digit",
-                        })}</span
-                      >
-                      <span class="oi-link">Nachtragen →</span>
-                    </a>
-                  {/each}
-                </div>
-              {/if}
-              {#if openItems.pendingRequests > 0}
-                <a href="/leave?view=requests" class="oi-row">
-                  <span class="oi-dot oi-dot--pending"></span>
-                  <span
-                    >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
-                      ? "r Antrag"
-                      : " Anträge"}</span
+                {/if}
+                {#if openItems.pendingRequests > 0}
+                  <a href="/leave?view=requests" class="oi-row">
+                    <span class="oi-dot oi-dot--pending"></span>
+                    <span
+                      >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
+                        ? "r Antrag"
+                        : " Anträge"}</span
+                    >
+                    <span class="oi-link">→</span>
+                  </a>
+                {/if}
+                {#if openItems.invalidEntries > 0}
+                  <a href="/time-entries" class="oi-row">
+                    <span class="oi-dot oi-dot--fix"></span>
+                    <span>{openItems.invalidEntries} zu korrigieren</span>
+                    <span class="oi-link">→</span>
+                  </a>
+                {/if}
+                {#if unconfirmedBreakDays > 0}
+                  <a
+                    href={breakNudgeHref(breakNudge)}
+                    class="oi-row"
+                    data-testid="dashboard-break-nudge"
                   >
-                  <span class="oi-link">→</span>
-                </a>
-              {/if}
-              {#if openItems.invalidEntries > 0}
-                <a href="/time-entries" class="oi-row">
-                  <span class="oi-dot oi-dot--fix"></span>
-                  <span>{openItems.invalidEntries} zu korrigieren</span>
-                  <span class="oi-link">→</span>
-                </a>
-              {/if}
-              {#if unconfirmedBreakDays > 0}
-                <a
-                  href={breakNudgeHref(breakNudge)}
-                  class="oi-row"
-                  data-testid="dashboard-break-nudge"
-                >
-                  <span class="oi-dot oi-dot--warn"></span>
-                  <span>{breakNudge.label}</span>
-                  <span class="oi-link">→</span>
-                </a>
-              {/if}
-              {#if karenzNudge.count > 0}
-                <a
-                  href={karenzNudgeHref(karenzNudge)}
-                  class="oi-row"
-                  data-testid="dashboard-karenz-nudge"
-                  title={KARENZ_NUDGE_TOOLTIP}
-                >
-                  <span class="oi-dot oi-dot--warn"></span>
-                  <span>{karenzNudge.label}</span>
-                  <span class="oi-link">→</span>
-                </a>
-              {/if}
-              {#if openItems.pendingApprovals > 0}
-                <!-- Phase 378 (#378): was "/leave?view=approvals" — /leave (the personal page)
+                    <span class="oi-dot oi-dot--warn"></span>
+                    <span>{breakNudge.label}</span>
+                    <span class="oi-link">→</span>
+                  </a>
+                {/if}
+                {#if karenzNudge.count > 0}
+                  <a
+                    href={karenzNudgeHref(karenzNudge)}
+                    class="oi-row"
+                    data-testid="dashboard-karenz-nudge"
+                    title={KARENZ_NUDGE_TOOLTIP}
+                  >
+                    <span class="oi-dot oi-dot--warn"></span>
+                    <span>{karenzNudge.label}</span>
+                    <span class="oi-link">→</span>
+                  </a>
+                {/if}
+                {#if openItems.pendingApprovals > 0}
+                  <!-- Phase 378 (#378): was "/leave?view=approvals" — /leave (the personal page)
                      has no approvals view at all and never did; the working "Genehmigungen" tab
                      lives on /team/leave. -->
-                <a href="/team/leave?view=approvals" class="oi-row">
-                  <span class="oi-dot oi-dot--approval"></span>
-                  <span
-                    >{openItems.pendingApprovals} zu genehmigende{openItems.pendingApprovals === 1
-                      ? "r Antrag"
-                      : " Anträge"}</span
-                  >
-                  <span class="oi-link">→</span>
-                </a>
+                  <a href="/team/leave?view=approvals" class="oi-row">
+                    <span class="oi-dot oi-dot--approval"></span>
+                    <span
+                      >{openItems.pendingApprovals} zu genehmigende{openItems.pendingApprovals === 1
+                        ? "r Antrag"
+                        : " Anträge"}</span
+                    >
+                    <span class="oi-link">→</span>
+                  </a>
+                {/if}
               {/if}
-            {/if}
-          </div>
-        </Card>
-      {/if}
-    </div>
-    <!-- /dashboard-stack--right -->
-  </div>
-  <!-- /dashboard-stacks -->
-
-  <!-- Phase 49.4 — Nächster Urlaub (Schicht-Pille entfernt: Info ist bereits in Timer-Card sichtbar) -->
-  {#if myNextLeave}
-    <div class="info-bar card-animate" style="--card-idx: 5;">
-      <div class="info-bar-item">
-        <span class="info-bar-icon"><Icon name="umbrella" size={16} /></span>
-        <span
-          >Nächster {myNextLeave.type}:
-          <strong
-            >{new Date(myNextLeave.startDate).toLocaleDateString("de-DE", {
-              day: "2-digit",
-              month: "2-digit",
-            })}–{new Date(myNextLeave.endDate).toLocaleDateString("de-DE", {
-              day: "2-digit",
-              month: "2-digit",
-            })}</strong
-          >
-          ({myNextLeave.days}
-          {myNextLeave.days === 1 ? "Tag" : "Tage"})</span
-        >
+            </div>
+          </Card>
+        {/if}
       </div>
+      <!-- /dashboard-stack--right -->
     </div>
+    <!-- /dashboard-stacks -->
+
+    <!-- Phase 49.4 — Nächster Urlaub (Schicht-Pille entfernt: Info ist bereits in Timer-Card sichtbar) -->
+    {#if myNextLeave}
+      <div class="info-bar card-animate" style="--card-idx: 5;">
+        <div class="info-bar-item">
+          <span class="info-bar-icon"><Icon name="umbrella" size={16} /></span>
+          <span
+            >Nächster {myNextLeave.type}:
+            <strong
+              >{new Date(myNextLeave.startDate).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+              })}–{new Date(myNextLeave.endDate).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+              })}</strong
+            >
+            ({myNextLeave.days}
+            {myNextLeave.days === 1 ? "Tag" : "Tage"})</span
+          >
+        </div>
+      </div>
+    {/if}
   {/if}
 
-  <!-- ═══ Team-Bereich (permission-gated, Phase 378 / #378) ═══ -->
+  <!-- ═══ Team-Bereich (permission-gated, Phase 378 / #378; since #844 only on Heute im Salon) ═══ -->
   <!-- Single gate on team-overview:read:ZUGEWIESEN: employees, and any holder without it, never
        see team charts, upcoming leaves, or team-week table. -->
   {#if canSeeTeamBereich}

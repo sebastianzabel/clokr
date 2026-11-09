@@ -186,7 +186,7 @@
 </svelte:head>
 
 <SectionStack
-  eyebrow="Compliance"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/audit")}
   sub="Audit-Trail, Aufbewahrung und DSGVO"
   tabs={TABS}

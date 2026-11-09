@@ -99,14 +99,14 @@ describe("wiring (source pins)", () => {
     const login = read("routes/(auth)/login/+page.svelte");
     expect(login).toContain("safeAppNext(");
     expect(login).toContain('authPathWithNext("/otp", next)');
-    expect(login).toContain('goto(next ?? "/dashboard")');
+    expect(login).toContain("goto(next ?? homeHref(res.user))"); // #844: the start page of the person
     expect(login).not.toContain('goto("/dashboard")');
   });
 
   it("the OTP page validates the target and uses it after a verified code", () => {
     const otp = read("routes/(auth)/otp/+page.svelte");
     expect(otp).toContain("safeAppNext(");
-    expect(otp).toContain('goto(next ?? "/dashboard")');
+    expect(otp).toContain("goto(next ?? homeHref(res.user))"); // #844: the start page of the person
     expect(otp).not.toContain('goto("/dashboard")');
   });
 

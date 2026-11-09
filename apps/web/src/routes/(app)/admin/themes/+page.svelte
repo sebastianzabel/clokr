@@ -36,7 +36,7 @@
 </svelte:head>
 
 <SectionStack
-  eyebrow="System"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/themes")}
   sub="Dein Erscheinungsbild: Es wird für dein Konto gespeichert und gilt auf all deinen Geräten."
   animate

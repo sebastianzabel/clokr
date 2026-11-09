@@ -259,7 +259,7 @@
 <svelte:head><title>{pageLabel("/admin/integrations")} – Clokr</title></svelte:head>
 
 <SectionStack
-  eyebrow="System"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/integrations")}
   sub="WLAN-Präsenz und externe Dienste"
   animate

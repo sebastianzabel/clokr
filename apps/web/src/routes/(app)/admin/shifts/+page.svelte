@@ -421,7 +421,7 @@
 </svelte:head>
 
 <SectionStack
-  eyebrow="Planung"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/shifts")}
   sub="Vorlagen, Bedarfsregeln und Schicht-Muster"
   tabs={TABS}

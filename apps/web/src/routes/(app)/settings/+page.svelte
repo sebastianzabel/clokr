@@ -124,7 +124,7 @@
 
 <div class="settings-page">
   <PageHead
-    eyebrow="Mein Bereich"
+    eyebrow="Ich"
     title={pageLabel("/settings")}
     accent="Profil"
     sub="Profilbild und Passwort verwalten"

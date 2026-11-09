@@ -11,16 +11,20 @@
   import LanguageToggle from "$lib/components/ui/LanguageToggle.svelte";
   import SalonSwitcher from "./SalonSwitcher.svelte";
   import { removeThisDevicePush } from "$lib/push/logout";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import { openPalette } from "$lib/nav/palette-event";
 
   interface Props {
     currentPath: string;
     currentPageLabel: string;
+    /** #844: the area of the current page („Ich“, „Team“, „Verwalten“), "" outside the route table. */
+    currentAreaLabel?: string;
   }
 
-  // currentPath is part of the public API for symmetry with Sidebar; the
-  // crumb itself only displays `currentPageLabel` per the design handoff.
+  // currentPath is part of the public API for symmetry with Sidebar; the crumb shows
+  // `<area> / <page>` from the route table (#844, D-844-11).
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  let { currentPath, currentPageLabel }: Props = $props();
+  let { currentPath, currentPageLabel, currentAreaLabel = "" }: Props = $props();
 
   // ── Avatar dropdown ────────────────────────────────────────────
   let avatarMenuOpen = $state(false);
@@ -78,7 +82,7 @@
 
   function gotoProfile() {
     avatarMenuOpen = false;
-    goto("/settings");
+    goto("/ich/profil");
   }
 
   // Names of the assigned roles (Issue #538), from GET /me/context; empty until loaded.
@@ -260,6 +264,18 @@
 {/snippet}
 
 <header class="topbar">
+  {#if currentPageLabel}
+    <span class="topbar-crumb" data-testid="topbar-crumb">
+      {#if currentAreaLabel}<span>{currentAreaLabel}</span><span
+          class="topbar-sep"
+          aria-hidden="true">/</span
+        >{/if}<b>{currentPageLabel}</b>
+    </span>
+  {/if}
+  <div class="topbar-grow"></div>
+  <button type="button" class="topbar-search" onclick={openPalette} data-testid="topbar-search">
+    <span>Suchen …</span><kbd>⌘K</kbd>
+  </button>
   <div class="topbar-context"><SalonSwitcher /></div>
   <div class="topbar-actions">
     <button
@@ -368,7 +384,7 @@
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                 <circle cx="12" cy="7" r="4" />
               </svg>
-              <span>Mein Profil</span>
+              <span>{pageLabel("/ich/profil")}</span>
             </button>
           </div>
           <div class="avatar-menu-foot">
@@ -402,67 +418,71 @@
 </header>
 
 <style>
+  /* #844 (D-844-11): the 48 px header of design concept § 2 — crumb, search ⌘K, salon pill, bell, avatar */
   .topbar {
     grid-area: topbar;
-    background: var(--card);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    position: relative;
-    z-index: 10;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
     display: flex;
     align-items: center;
-    padding: 0 24px;
-    gap: 18px;
+    padding: 0 16px 0 24px;
+    gap: 8px;
     position: sticky;
     top: 0;
     /* 1000 beats card-animate transform stacking contexts (those sit at default z-index
        within the page flow; 1000 ensures both bell and avatar popovers paint above them) */
     z-index: 1000;
-    height: 60px;
-    min-height: 60px;
+    height: var(--topbar-h);
+    min-height: var(--topbar-h);
   }
   .topbar-crumb {
-    font-family: var(--font-ui);
-    font-size: 18px;
-    color: var(--text-2);
-    font-weight: 400;
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
   }
   .topbar-crumb b {
-    font-family: var(--font-ui);
-    font-style: normal;
-    font-size: 14px;
-    font-weight: 600;
     color: var(--text);
-    margin-left: 10px;
+    font-weight: 600;
+    font-size: var(--fs-base);
+  }
+  .topbar-sep {
+    color: var(--line-2);
+    margin: 0 4px;
+  }
+  .topbar-grow {
+    flex: 1;
+    min-width: 0;
   }
   .topbar-search {
     display: flex;
     align-items: center;
     gap: 8px;
+    height: 32px;
+    padding: 0 10px 0 12px;
+    width: 220px;
     background: var(--sunk);
     border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    padding: 6px 10px;
-    width: 280px;
-    color: var(--text-2);
-    font-size: 13px;
-  }
-  .topbar-search input {
-    background: transparent;
-    border: 0;
-    outline: 0;
-    flex: 1;
-    min-width: 0;
-    color: var(--text);
-    font-family: var(--font-ui);
-    font-size: 13px;
-  }
-  .topbar-search input::placeholder {
-    color: var(--text-2);
-  }
-  .topbar-search .kbd {
-    font-size: 11px;
-    letter-spacing: 0.05em;
+    border-radius: var(--r-pill);
     color: var(--text-3);
+    font: inherit;
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .topbar-search span {
+    flex: 1;
+    text-align: left;
+  }
+  .topbar-search kbd {
+    font-family: var(--font-ui);
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+  }
+  .topbar-search:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 1px;
   }
   .topbar-context {
     display: flex;
@@ -470,7 +490,6 @@
     min-width: 0;
   }
   .topbar-actions {
-    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -769,9 +788,6 @@
   @media (max-width: 960px) {
     .topbar-search {
       display: none;
-    }
-    .topbar-crumb {
-      font-size: 16px;
     }
   }
   @media (max-width: 720px) {

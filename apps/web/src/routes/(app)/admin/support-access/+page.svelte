@@ -43,7 +43,7 @@
 </svelte:head>
 
 <SectionStack
-  eyebrow="Compliance"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/support-access")}
   sub="Zugriffe des Betreibers auf die Daten deines Unternehmens"
   animate

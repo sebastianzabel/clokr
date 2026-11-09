@@ -1,9 +1,4 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
-  import { onMount } from "svelte";
-  import { authStore } from "$stores/auth";
-  import { firstAccessibleAdminHref } from "$lib/nav/admin-route-permissions";
-  onMount(() =>
-    goto(firstAccessibleAdminHref($authStore.user) ?? "/dashboard", { replaceState: true }),
-  );
+  // The old admin landing page: since #844 its URL redirects to Verwalten › Übersicht (routes/(app)/+layout.ts);
+  // this file only remains so the route exists for that redirect.
 </script>

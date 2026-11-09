@@ -224,7 +224,7 @@
 </script>
 
 <ListDetail
-  eyebrow="Personal"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/shutdowns")}
   sub="Verwaltung von Betriebsurlaubs-Perioden"
   view="list"
