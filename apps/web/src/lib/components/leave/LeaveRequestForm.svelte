@@ -54,6 +54,7 @@
   import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588
   import type { EditableLeaveRequest } from "$lib/leave/leave-request-form";
   import type { LeaveLimitWarning } from "$lib/leave-limits/types";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   // ── Types ────────────────────────────────────────────────────────────────
   interface OverlapEntry {
@@ -827,7 +828,7 @@
       {#if employeeId && formType === "VACATION"}
         <div class="form-group form-group--full">
           {#if vacationBalanceLoading}
-            <div class="balance-box"><span class="text-muted">Lädt…</span></div>
+            <div class="balance-box"><Skeleton shape="block" height="56px" /></div>
           {:else if vacationBalance === null}
             <!-- Phase 415 (D-10): explicit instead of empty/zero — root-cause fix is #416. -->
             <p class="balance-hint-warn" data-testid="leave-form-no-entitlement">
@@ -951,7 +952,7 @@
           <div class="overlap-box">
             <p class="overlap-title">
               Kolleg:innen im gleichen Zeitraum
-              {#if overlapLoading}<span class="text-muted"> laden…</span>{/if}
+              {#if overlapLoading}<Skeleton inline width={6} />{/if}
             </p>
             {#if !overlapLoading && overlapEntries.filter((o) => o.status === "APPROVED").length === 0}
               <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
