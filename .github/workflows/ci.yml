@@ -423,8 +423,12 @@ jobs:
           version: v0.71.0
 
       - name: Upload Trivy FS scan to GitHub Security
+        # Not in the merge queue: the queue's temporary ref (refs/heads/gh-readonly-queue/…) is gone
+        # once the entry leaves the queue, and code scanning then refuses the upload with "ref not
+        # found", which turned `test` red. The scan above still runs and still blocks there; the
+        # upload happens on the pull_request run of the same change.
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && github.event_name != 'merge_group'
         with:
           sarif_file: trivy-fs-results.sarif
           category: trivy-fs
@@ -914,6 +918,9 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:javascript-typescript"
+          # Analysis runs in the merge queue too; only the upload is skipped there, for the same
+          # reason as the Trivy SARIF upload (the queue ref is gone once the entry leaves the queue).
+          upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}
 
   # ── Secret scan (DEVOPS-V8-04) ───────────────────────────────────────
   # gitleaks/gitleaks-action handles only push, pull_request, workflow_dispatch and schedule
