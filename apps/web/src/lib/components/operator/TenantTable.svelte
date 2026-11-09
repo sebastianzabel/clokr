@@ -138,7 +138,7 @@
 
 <style>
   .name {
-    color: var(--op-brand-text, var(--brand));
+    color: var(--brand);
     font-weight: 600;
     overflow-wrap: anywhere;
     min-width: 0;
@@ -158,7 +158,7 @@
 
   .slug {
     min-width: 128px;
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 13px;
   }
 
@@ -190,7 +190,7 @@
     margin-top: 4px;
     font-size: 13px;
     line-height: 1.5;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
   }
 
@@ -257,7 +257,7 @@
       column-gap: 8px;
       row-gap: 4px;
       padding: 16px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--line);
     }
 
     .tenant-table tbody tr:last-child {
@@ -276,7 +276,7 @@
       border: 0;
       font-size: 13px;
       line-height: 1.5;
-      color: var(--text-muted);
+      color: var(--text-2);
     }
 
     .tenant-table td.cell-name {

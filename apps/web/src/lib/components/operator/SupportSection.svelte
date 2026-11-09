@@ -436,7 +436,7 @@
   .counter {
     margin: 4px 0 0;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
@@ -477,7 +477,7 @@
   .facts dt {
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .facts dd {
@@ -504,7 +504,7 @@
   }
 
   .danger {
-    color: var(--bad-text);
+    color: var(--bad);
   }
 
   .frozen-link {
@@ -521,19 +521,19 @@
     margin: 0 0 8px;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .empty {
     margin: 0;
     font-size: 16px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .ended {
     display: block;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .clamp {
@@ -581,7 +581,7 @@
     .history-table tr {
       display: block;
       padding: 16px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--line);
     }
 
     .history-table tbody tr:last-child {
@@ -603,7 +603,7 @@
     .history-table td::before {
       content: attr(data-label) ": ";
       font-weight: 600;
-      color: var(--text-muted);
+      color: var(--text-2);
     }
   }
 </style>

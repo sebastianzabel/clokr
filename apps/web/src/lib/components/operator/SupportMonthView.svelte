@@ -315,15 +315,15 @@
   }
 
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .empty {
     margin: 0;
     font-size: 16px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .facts {
@@ -334,7 +334,7 @@
   }
 
   .facts dt {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .facts dd {
@@ -346,7 +346,7 @@
   .closed {
     margin: 16px 0 0;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .text {
@@ -366,7 +366,7 @@
   }
 
   .minutes {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13px;
   }
 
@@ -391,7 +391,7 @@
 
   /* A deleted entry stays in the list but reads as no longer valid. */
   tr.deleted td {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   @media (min-width: 640px) and (max-width: 1023px) {
@@ -422,7 +422,7 @@
     .stack-table tr {
       display: block;
       padding: 16px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--line);
     }
 
     .stack-table tbody tr:last-child {
@@ -450,7 +450,7 @@
     .stack-table td:not(.cell-primary):not(.cell-marks)::before {
       content: attr(data-label) ": ";
       font-weight: 600;
-      color: var(--text-muted);
+      color: var(--text-2);
     }
 
     .cell-marks {
