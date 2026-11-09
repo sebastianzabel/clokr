@@ -738,6 +738,12 @@ describe("Issue #86 (Phase 86b), D-02 — day lists only within time-entry:read 
           endTime: `${day0}T13:15:00.000Z`,
         },
       },
+      // Issue #596: the running break — X's open entry, guarded like POST /:id/breaks
+      "POST /api/v1/time-entries/:id/break": {
+        method: "POST",
+        url: `/api/v1/time-entries/${xOpenEntryId}/break`,
+        payload: { action: "start" },
+      },
       "POST /api/v1/time-entries/:id/clock-out": {
         method: "POST",
         url: `/api/v1/time-entries/${xOpenEntryId}/clock-out`,

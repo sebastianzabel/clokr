@@ -12,7 +12,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import { fromZonedTime } from "date-fns-tz";
-import { getTestApp, seedTestData, cleanupTestData } from "./setup";
+import { getTestApp, seedTestData, cleanupTestData, soleAuditRow } from "./setup";
 import { addDaysStr, mondayOfWeekStr, TEST_TZ } from "./test-dates";
 
 function instant(dayStr: string, hhmm: string): Date {
@@ -128,6 +128,51 @@ describe("Issue #596 — the running break lives on the server", () => {
     const late = await breakCall(entryId, "start");
     expect(late.statusCode).toBe(409);
     expect(late.json().code).toBe("NOT_CLOCKED_IN");
+  });
+
+  it("POST /:id/break writes BREAK_START and BREAK_APPEND audit rows with actor and before/after", async () => {
+    const at2 = (hhmm: string) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(instant(addDaysStr(day, 1), hhmm));
+    };
+    at2("09:00");
+    let entryId: string;
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/clock-in",
+        headers: auth(),
+        payload: { source: "MOBILE" },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      entryId = (res.json() as { resolution: { entry: { id: string } } }).resolution.entry.id;
+    } finally {
+      vi.useRealTimers();
+    }
+    at2("11:00");
+    try {
+      expect((await breakCall(entryId, "start")).statusCode).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+    at2("11:20");
+    try {
+      expect((await breakCall(entryId, "end")).statusCode).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+    const startRow = await soleAuditRow(app.prisma, {
+      where: { action: "BREAK_START", entity: "TimeEntry", entityId: entryId },
+    });
+    expect(startRow.userId).toBe(seed.empUser.id);
+    expect(startRow.oldValue).toMatchObject({ breakStartedAt: null });
+    expect((startRow.newValue as { breakStartedAt: string }).breakStartedAt).toBeTruthy();
+    const endRow = await soleAuditRow(app.prisma, {
+      where: { action: "BREAK_APPEND", entity: "TimeEntry", entityId: entryId },
+    });
+    expect(endRow.userId).toBe(seed.empUser.id);
+    expect(endRow.oldValue).toMatchObject({ breakMinutes: 0 });
+    expect(endRow.newValue).toMatchObject({ breakMinutes: 20, breakStatus: "CONFIRMED" });
   });
 
   it("an unknown id and a foreign tenant's id answer the identical 404", async () => {
