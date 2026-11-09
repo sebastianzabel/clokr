@@ -656,21 +656,29 @@ export async function createEmployeeInTransaction(
   // Issue #482: the ONE base-value resolution — the classification-aware base value from
   // resolveVacationBaseDays() — on `tx` since `emp` already exists inside this transaction.
   const vacationBaseDays = await resolveVacationBaseDays(tx, emp.id, tenantId);
-  await ensureVacationEntitlementForYear(
-    tx,
-    emp.id,
-    tenantId,
-    emp.hireDate.getFullYear(),
-    emp.hireDate,
-    emp.birthDate,
-    // Issue #447 (D-05): the create schema has no exitDate field, so this is always null at
-    // hire time — passed anyway, truthfully, now that the parameter is required.
-    emp.exitDate,
-    workDaysPerWeek,
-    vacationBaseDays,
-    "Automatisch angelegt bei Mitarbeiteranlage",
-    (entry) => audit.vacationEntitlement(entry, tx),
-  );
+  // Issue #849 (1): a person entered with a hire date in an earlier year also gets the CURRENT
+  // year's entitlement at creation — before, only the hire year existed, so the dashboard read
+  // "Resturlaub 0 / 0" until the first leave request created the current year on the fly.
+  const hireYear = emp.hireDate.getFullYear();
+  const currentYear = Number(tenantLocalDay(new Date(), tz).slice(0, 4));
+  const entitlementYears = currentYear > hireYear ? [hireYear, currentYear] : [hireYear];
+  for (const year of entitlementYears) {
+    await ensureVacationEntitlementForYear(
+      tx,
+      emp.id,
+      tenantId,
+      year,
+      emp.hireDate,
+      emp.birthDate,
+      // Issue #447 (D-05): the create schema has no exitDate field, so this is always null at
+      // hire time — passed anyway, truthfully, now that the parameter is required.
+      emp.exitDate,
+      workDaysPerWeek,
+      vacationBaseDays,
+      "Automatisch angelegt bei Mitarbeiteranlage",
+      (entry) => audit.vacationEntitlement(entry, tx),
+    );
+  }
 
   // Phase 75b (D-15): the new user's system-role assignment and its audit row, in this same
   // transaction. A grant cannot lower any holder count, so it takes the tenant lock (which
