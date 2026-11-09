@@ -335,10 +335,12 @@ button {
   border: 1px solid var(--line);
 }
 
+/* Conflict / overbooked marker. Same warn roles as .badge-yellow (the literal orange pair it used
+   measured ~3:1 on the dark card); the border is the one difference, so it stays a stronger hint. */
 .badge-orange {
-  background-color: rgba(194, 65, 12, 0.1);
-  color: #c2410c;
-  border: 1px solid rgba(194, 65, 12, 0.2);
+  background-color: var(--warn-soft);
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
 }
 
 /* Phase 109 (D-11) — "this section has unsaved changes" marker. Global because the
@@ -936,13 +938,13 @@ select.form-input {
 /* ─── Pulse animation for active clock-in ───────────────────────────── */
 @keyframes pulse-ring {
   0% {
-    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 40%, transparent);
   }
   70% {
-    box-shadow: 0 0 0 10px rgba(22, 163, 74, 0);
+    box-shadow: 0 0 0 10px transparent;
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0);
+    box-shadow: 0 0 0 0 transparent;
   }
 }
 
@@ -2027,7 +2029,7 @@ textarea.form-input {
   /* --bad is identical to --bad in light mode and brightened in dark mode: the label of an outline
      danger button measured 2.62:1 (below WCAG AA) with --bad on the dark card surface. */
   color: var(--bad);
-  border-color: rgba(180, 35, 24, 0.3);
+  border-color: color-mix(in srgb, var(--bad) 30%, transparent);
   border-radius: var(--r-control);
 }
 .btn-danger:hover:not(:disabled) {
