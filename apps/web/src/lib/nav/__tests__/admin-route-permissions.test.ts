@@ -172,7 +172,8 @@ describe("admin route permissions (Issue #83)", () => {
     expect(allow).toBeGreaterThan(-1);
     expect(render).toBeGreaterThan(allow);
     expect(render).toBeLessThan(wait);
-    expect(layout.slice(wait)).toContain('role="status"');
+    // #843 D-843-07: the wait state is a Skeleton, which carries role="status" itself.
+    expect(layout.slice(wait)).toContain("<Skeleton");
     expect(layout).toContain("loadPermissionsIfMissing");
     expect(layout).toContain('goto("/dashboard"');
     expect(layout).not.toMatch(/\.role\b|"ADMIN"|"MANAGER"/);
