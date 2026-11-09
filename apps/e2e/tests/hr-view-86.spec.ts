@@ -500,7 +500,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     );
     await page.getByRole("tab", { name: "Urlaub & Abwesenheit" }).click();
     await expect(page.getByText("Urlaubsübersicht", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Lade Urlaubsübersicht…")).toHaveCount(0);
+    // #843 D-843-07: the tab loads through Skeleton; waiting for its status to vanish keeps this a real wait.
+    await expect(page.getByRole("status", { name: "Wird geladen" })).toHaveCount(0);
     await expect(page.getByText("DATEV-Export", { exact: true })).toHaveCount(0);
     // Issue #617: the Monatsexport card replaces the removed vacation-PDF card as the export control
     // the Personalabteilung (report:read, no report:export) must not see.
