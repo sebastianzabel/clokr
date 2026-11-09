@@ -15,7 +15,7 @@
   };
 
   interface Props {
-    /** Optional serif italic eyebrow above the month label (e.g. "Buchungsmonat"). */
+    /** Optional eyebrow above the month label (e.g. "Buchungsmonat"). */
     eyebrow?: string;
     /** Cursor date — component derives "März 2026" label via Intl.DateTimeFormat('de-DE'). */
     date: Date;
@@ -248,7 +248,7 @@
   /* ── Combined Month-Bar (v1.5 — nav + mini-stats in one .card) ─────
      Dimensions kept in lockstep with .cal-monthbar (app.css) so /leave,
      /team/leave, /teamcal, /time-entries and /team/time-entries share
-     the same header height + serif title. The two narrow-viewport blocks
+     the same header height and title. The two narrow-viewport blocks
      below are mirrored there too (Issue #553). Consumers must set the wrapping
      .card padding to 0 so the primitive owns the inner spacing. */
   .month-bar {
@@ -287,16 +287,15 @@
   }
 
   .month-bar-eyebrow {
-    font-family: var(--font-serif);
-    font-style: italic;
-    color: var(--brand-light, var(--brand));
+    font-family: var(--font-ui);
+    color: var(--brand);
     font-size: 13px;
     line-height: 1;
     margin-bottom: 4px;
   }
 
   .month-bar-label {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     font-size: 26px;
     line-height: 1.1;
@@ -317,14 +316,14 @@
     border: 0;
     cursor: pointer;
     padding: 2px 4px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     transition: color 0.15s ease;
   }
   .month-bar-label--picker:hover {
-    color: var(--brand-light, var(--brand));
+    color: var(--brand);
   }
   .month-bar-label--picker :global(svg) {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* Issue #612: a disabled arrow (the period may not pass the current month) must not look
@@ -336,8 +335,8 @@
   }
 
   .nav-btn:disabled:hover {
-    background: var(--bg-card);
-    border-color: var(--border);
+    background: var(--card);
+    border-color: var(--line);
     color: var(--text);
   }
 
@@ -354,8 +353,8 @@
 
   /* ── Narrow viewports (Issue #553, D-02/D-04/D-05) ────────────────────
      Before this block the nav row (arrow | 200 px centre floor | arrow | "Heute")
-     was wider than a 390 px phone: the editorial skin scrolled horizontally
-     (423-514 px) and the modern skin clipped "Heute" at x = 414-428 through
+     was wider than a 390 px phone: the bar scrolled horizontally
+     (423-514 px) or clipped "Heute" at x = 414-428 through
      `.card { overflow: hidden }`. Layout here: arrows and label share one grid
      row, the centre loses its 200 px floor and may shrink, "Heute" and the extra
      slot get their own full-width row. Nothing is hidden or abbreviated.
@@ -399,8 +398,8 @@
   }
 
   /* 26px fits between the arrows from 481 to 640 px (clearance >= 45 px). Below that the
-     modern skin's label is 217 px at 26px and 188 px at 22px, but only ~170 px fit between
-     the arrows inside MonatSaldoCard at 360 px (card padding 28 px). 20px (the serif
+     label is 217 px at 26px and 188 px at 22px, but only ~170 px fit between
+     the arrows inside MonatSaldoCard at 360 px (card padding 28 px). 20px (the
      .mini-stat .value size in app.css) is 173 px and clears the arrows by 7 px;
      white-space: nowrap stays (D-02). */
   @media (max-width: 480px) {
@@ -409,9 +408,9 @@
     }
   }
 
-  /* 320 px (Issue #564): at 20px the modern skin's label (with the picker chevron, 172 px) was
+  /* 320 px (Issue #564): at 20px the label (with the picker chevron, 172 px) was
      wider than the ~146 px between the arrows and overlapped them by up to 13 px. Less side
-     padding and an 18px label clear them in both skins. Mirrored by .cal-monthbar in app.css. */
+     padding and an 18px label clear them. Mirrored by .cal-monthbar in app.css. */
   @media (max-width: 360px) {
     .month-bar {
       padding-left: 12px;
@@ -444,12 +443,12 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
     white-space: nowrap;
   }
 
   .mstat-value {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 19px;
     font-weight: 400;
@@ -462,7 +461,7 @@
   }
 
   .mstat-value.pos {
-    color: var(--good);
+    color: var(--ok);
   }
 
   .mstat-value.neg {
@@ -470,11 +469,11 @@
   }
 
   .mstat-unit {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-variant-numeric: normal;
     font-size: 12px;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* quick 260820-cy5 (D-03) — homogenise a stat tile that a consumer renders through
@@ -486,7 +485,7 @@
      unreachable by these rules; /shifts doesn't import MonthBar at all. Measured
      divergence (before this fix): SaldoAnzeige's own .saldo root is
      `inline-flex; align-items: baseline` (label BESIDE value) with `.saldo__label`
-     at 12px/600/normal-case/--text-muted and `.saldo--compact .saldo__value` at
+     at 12px/600/normal-case/--text-2 and `.saldo--compact .saldo__value` at
      14px/600 sans — visibly different from .mstat-label/.mstat-value below. Values
      copied verbatim from the .mstat-label / .mstat-value rules above, not reinvented.
      Deliberately NOT touched: sign/tone colouring (.saldo has none today — no
@@ -507,13 +506,13 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
     white-space: nowrap;
   }
 
   .mstat :global(.saldo__value),
   .mstat :global(.saldo--compact .saldo__value) {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 19px;
     font-weight: 400;

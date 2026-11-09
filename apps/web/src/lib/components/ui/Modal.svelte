@@ -5,9 +5,9 @@
   interface Props {
     /** Two-way bindable open state. Parent holds `let modalOpen = $state(false)`. */
     open: boolean;
-    /** Optional serif italic eyebrow rendered above the title. */
+    /** Optional eyebrow rendered above the title. */
     eyebrow?: string;
-    /** Main heading rendered as serif H3 inside the modal header. */
+    /** Main heading rendered as H3 inside the modal header. */
     title: string;
     /** Overrides title for aria-label. Defaults to title. */
     ariaLabel?: string;
@@ -118,9 +118,8 @@
   }
 
   .modal-eyebrow {
-    font-family: var(--font-serif);
-    font-style: italic;
-    color: var(--brand-light, var(--brand));
+    font-family: var(--font-ui);
+    color: var(--brand);
     font-size: 13px;
     line-height: 1;
     margin-bottom: 4px;
