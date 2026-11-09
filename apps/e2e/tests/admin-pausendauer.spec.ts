@@ -149,7 +149,7 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     await expect(over6h).toBeVisible();
     await expect(over9h).toBeVisible();
 
-    // Regular employee (not Azubi) — the JArbSchG pill must NOT be visible.
+    // An adult employee (no birth date under 18) — the § 11 JArbSchG pill must NOT be visible.
     await expect(page.getByTestId("pausendauer-azubi-pill")).toBeHidden();
 
     // Fill overrides + save + verify the PATCH round-trips.

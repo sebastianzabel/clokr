@@ -162,7 +162,7 @@ describe("TRAVEL_TEXTS", () => {
     expect(TRAVEL_TEXTS.editTitle).toBe("Fahrzeit bearbeiten");
     expect(TRAVEL_TEXTS.badge).toBe("Fahrzeit");
     expect(TRAVEL_TEXTS.hint).toBe(
-      "Erfassen Sie die Fahrt ab dem Verlassen des ersten Salons. Der Weg von oder nach Hause ist keine Arbeitszeit.",
+      "Erfasse die Fahrt ab dem Verlassen des ersten Salons. Der Weg von oder nach Hause ist keine Arbeitszeit.",
     );
   });
 });

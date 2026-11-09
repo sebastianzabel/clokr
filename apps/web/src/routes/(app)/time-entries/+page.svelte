@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { leaveTypeColor, FALLBACK } from "$lib/leave/leave-colors"; // Issue #840 (D-840-12)
   import { onDestroy, onMount, tick } from "svelte";
   import { page } from "$app/stores";
@@ -74,6 +75,7 @@
     endOfWeek,
   } from "date-fns";
   import { de } from "date-fns/locale";
+  import { retroWindowHint } from "$lib/time-entries/retro-window-hint"; // Issue #849 (5)
   import {
     getDayExpectedMinutes,
     monthlyHoursWorkDays,
@@ -327,6 +329,9 @@
   // Shown inside the modal when a 403 RETRO_WINDOW_EXCEEDED is returned.
   let retroWindowExceeded = $state(false);
   let retroWindowDays = $state(0);
+  // Issue #849 (5): the tenant's window from GET /settings/work (null until loaded).
+  let retroWindowSetting = $state<number | null>(null);
+  const retroHint = $derived(retroWindowHint(retroWindowSetting, todayStr));
   let retroReason = $state("");
   let retroReasonError = $state("");
   let retroSubmitting = $state(false);
@@ -537,6 +542,7 @@
             defaultBreakOver9h?: number | null;
             defaultWorkDays?: number[];
             enforceBreakConfirmation?: boolean;
+            retroEntryWindowDays?: number;
           }>("/settings/work")
           .catch(() => null),
         // 260611-ly6 / bs-tage-cross-employee-leak — own Berufsschultage (BS) for
@@ -608,6 +614,8 @@
       // Phase 93 (BREAK-07) — fail-safe dormant: only ON when the field is
       // explicitly true (absent config row / missing field → break-confirm UI hidden).
       enforceBreakConfirmation = rawConfig?.enforceBreakConfirmation === true;
+      // Issue #849 (5): the self-service retro window, shown in the form before any refusal.
+      retroWindowSetting = rawConfig?.retroEntryWindowDays ?? null;
       // v1.8.8 — fetch Shift rows for SHIFT_BASED so the calendar can render Soll.
       // EMPLOYEE role: no employeeId param — endpoint defaults to req.user.employeeId.
       // SHIFT_BASED removed from monthly-path shortcut: the workaround (monthly=true
@@ -1897,14 +1905,14 @@
   );
 </script>
 
-<svelte:head><title>Zeiterfassung – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/time-entries")} – Clokr</title></svelte:head>
 <svelte:window
   onkeydown={(e) => {
     if (e.key === "Escape" && modalOpen) closeModal();
   }}
 />
 
-<PageHead eyebrow="Mein Bereich" title="Zeiterfassung">
+<PageHead eyebrow="Mein Bereich" title={pageLabel("/time-entries")}>
   {#snippet actions()}
     <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt users see no
          "+ Neuer Eintrag" CTA. Full HIDE, NOT disabled — don't teach
@@ -2446,6 +2454,9 @@
           class="form-input"
           data-testid="time-entry-modal-date"
         />
+        {#if retroHint}
+          <p class="form-hint" data-testid="time-entry-modal-retro-hint">{retroHint}</p>
+        {/if}
       </div>
       {#if multiEntryUi}
         {#if travelMode === "offer"}

@@ -37,9 +37,9 @@ describe("support-access labels", () => {
   it("names who ended an access", () => {
     expect(ENDED_BY_LABELS).toEqual({
       OPERATOR: "durch den Betreiber",
-      TENANT: "durch Ihre Verwaltung",
+      TENANT: "durch deine Verwaltung",
     });
-    expect(endedByLabel("TENANT")).toBe("durch Ihre Verwaltung");
+    expect(endedByLabel("TENANT")).toBe("durch deine Verwaltung");
     expect(endedByLabel(null)).toBe("");
   });
 

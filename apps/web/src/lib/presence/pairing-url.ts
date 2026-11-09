@@ -43,7 +43,7 @@ export function pairingUrlMessage(reason: PairingUrlRefusal): string {
     case "NOT_PRIVATE":
       return "Bitte gib die Adresse des Adapters im Salon-WLAN ein (z. B. 192.168.178.20).";
     case "INVALID_ADDRESS":
-      return "Das ist keine gültige IP-Adresse. Sie besteht aus vier Zahlen, z. B. 192.168.178.20.";
+      return "Das ist keine gültige IP-Adresse. Eine IP-Adresse besteht aus vier Zahlen, z. B. 192.168.178.20.";
     case "INVALID_PORT":
       return "Der Port muss eine Zahl zwischen 1 und 65535 sein.";
   }

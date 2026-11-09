@@ -32,8 +32,8 @@ describe("Issue #840 G-8 / G-3 - the inbox chrome", () => {
     expect(INBOX).toContain("<ApprovalRow");
   });
 
-  it("[G-8] the header is the leave pages' PageHead: eyebrow „Team“, plain title „Inbox“", () => {
-    expect(INBOX).toContain('<PageHead eyebrow="Team" title="Inbox" />');
+  it("[G-8] the header is the leave pages' PageHead: eyebrow „Team“, plain title „Aufgaben“ from page-labels.ts (Issue #574)", () => {
+    expect(INBOX).toContain('<PageHead eyebrow="Team" title={pageLabel("/inbox")} />');
     expect(INBOX).not.toContain('eyebrow="Manager"');
     expect(INBOX).not.toMatch(/<PageHead[^>]*accent=/);
   });

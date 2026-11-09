@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -157,7 +158,7 @@
     errors = validateSalonForm(form, "create");
     hoursErrors = validateOpeningHours(form.openingHours);
     if (hasMessages(errors) || hasMessages(hoursErrors)) {
-      toasts.error("Bitte prüfen Sie die markierten Felder.");
+      toasts.error("Bitte prüf die markierten Felder.");
       return;
     }
     creating = true;
@@ -188,7 +189,7 @@
       federalState: all.federalState,
     };
     if (hasMessages(errors)) {
-      toasts.error("Bitte prüfen Sie die markierten Felder.");
+      toasts.error("Bitte prüf die markierten Felder.");
       return;
     }
     const patch = salonPatch(salon, form, MASTER_KEYS);
@@ -222,7 +223,7 @@
     if (!salon) return;
     hoursErrors = validateOpeningHours(form.openingHours);
     if (hasMessages(hoursErrors)) {
-      toasts.error("Bitte prüfen Sie die markierten Tage.");
+      toasts.error("Bitte prüf die markierten Tage.");
       return;
     }
     const patch = salonPatch(salon, form, ["openingHours"]);
@@ -288,9 +289,9 @@
 {#if loading}
   <div class="page-loading" role="status">Laden…</div>
 {:else if isCreate && !rights.canManage}
-  <div class="page-loading">Für das Anlegen von Salons fehlt Ihnen die Berechtigung.</div>
+  <div class="page-loading">Für das Anlegen von Salons fehlt dir die Berechtigung.</div>
 {:else if forbidden}
-  <div class="page-loading">Für die Salonübersicht fehlt Ihnen die Berechtigung.</div>
+  <div class="page-loading">Für die Salonübersicht fehlt dir die Berechtigung.</div>
 {:else if !isCreate && (loadError || !salon)}
   <div class="page-error">{loadError || "Salon nicht gefunden."}</div>
 {:else}
@@ -302,7 +303,7 @@
       : "Stammdaten, Öffnungszeiten und Feiertage dieses Salons"}
     view="detail"
     crumbs={[
-      { label: "Salons", href: "/admin/salons" },
+      { label: pageLabel("/admin/salons"), href: "/admin/salons" },
       { label: salon ? salon.name : "Neuer Salon" },
     ]}
   >

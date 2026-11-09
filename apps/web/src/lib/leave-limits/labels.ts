@@ -10,7 +10,7 @@ import type { LeaveLimitGroupKind } from "./types";
  * Nr. 5 BetrVG). Clokr does not check any of that.
  */
 export const LEAVE_LIMIT_LEGAL_HINT =
-  "Eine Urlaubssperre braucht dringende betriebliche Gründe. Sie muss Raum lassen, den Jahresurlaub zu nehmen, davon einmal 12 aufeinanderfolgende Werktage (§ 7 Abs. 1 und 2 BUrlG). Gibt es einen Betriebsrat, bestimmt er mit (§ 87 Abs. 1 Nr. 5 BetrVG). Clokr prüft das nicht automatisch – das ist eine Abwägung im Einzelfall.";
+  "Eine Urlaubssperre braucht dringende betriebliche Gründe. Die Sperre muss Raum lassen, den Jahresurlaub zu nehmen, davon einmal 12 aufeinanderfolgende Werktage (§ 7 Abs. 1 und 2 BUrlG). Gibt es einen Betriebsrat, bestimmt er mit (§ 87 Abs. 1 Nr. 5 BetrVG). Clokr prüft das nicht automatisch – das ist eine Abwägung im Einzelfall.";
 
 /** The group fields of a rule or a warning that the labels read. */
 export interface GroupFields {

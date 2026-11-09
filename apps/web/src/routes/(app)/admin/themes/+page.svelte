@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { theme, themes, type Theme } from "$stores/theme";
   import { mode, type Mode } from "$stores/mode";
   import { skin, type Skin } from "$stores/skin";
@@ -74,12 +75,12 @@
 </script>
 
 <svelte:head>
-  <title>Branding & Themes – Clokr</title>
+  <title>{pageLabel("/admin/themes")} – Clokr</title>
 </svelte:head>
 
 <SectionStack
   eyebrow="System"
-  title="Branding & Themes"
+  title={pageLabel("/admin/themes")}
   sub="Erscheinungsbild für alle Mitarbeitenden"
   animate
 >

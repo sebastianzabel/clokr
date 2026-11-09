@@ -83,7 +83,7 @@ describe("coverageRuleSalonChoices", () => {
       { value: "salon-1", label: "Salon Nord" },
       { value: "salon-2", label: "Salon Süd" },
     ]);
-    expect(COVERAGE_RULE_ALL_SALONS_OPTION).toBe("Alle Salons (mandantenweit)");
+    expect(COVERAGE_RULE_ALL_SALONS_OPTION).toBe("Alle Salons (ganzes Unternehmen)");
   });
 
   it("a tenant-wide or listed editing rule adds nothing", () => {

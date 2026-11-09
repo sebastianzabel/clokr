@@ -99,10 +99,10 @@ describe("support labels", () => {
   );
 
   it("names the figures the operator expects", () => {
-    expect(SCHEDULE_TYPE_LABELS.FIXED_SCHEDULE).toBe("Feste Arbeitszeiten");
+    expect(SCHEDULE_TYPE_LABELS.FIXED_SCHEDULE).toBe("Feste Arbeitszeit");
     expect(SCHEDULE_TYPE_LABELS.FLEXTIME).toBe("Gleitzeit");
     expect(SCHEDULE_TYPE_LABELS.MONTHLY_HOURS).toBe("Monatsstunden");
-    expect(SCHEDULE_TYPE_LABELS.SHIFT_BASED).toBe("Schichtbasiert");
+    expect(SCHEDULE_TYPE_LABELS.SHIFT_BASED).toBe("Nach Schichtplan");
     expect(BREAK_STATUS_LABELS.AUTO).toBe("Automatisch");
     expect(BREAK_STATUS_LABELS.CONFIRMED).toBe("Bestätigt");
     expect(BREAK_STATUS_LABELS.WAIVED).toBe("Durchgearbeitet");

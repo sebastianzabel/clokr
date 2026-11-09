@@ -80,6 +80,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/middleware/auth.ts": "rahmen",
   "src/utils/test-database.ts": "rahmen", // sole source of the test-DB name pattern/marker/worker-count (CLAUDE.md) — test infra, not a business context
   "src/utils/with-advisory-lock.ts": "rahmen", // generic Postgres advisory-lock helper; imported by 8 plugins + integrations.ts across every context, owns no model
+  "src/utils/duplicate-conflict.ts": "rahmen", // Issue #573: unhandled P2002/P2034 -> 409 text table for the global error handler; owns no model
+  "src/utils/zod-german.ts": "rahmen", // Issue #573: German Zod error map and field labels for the global error handler; owns no model
   "src/utils/prisma-unique-violation.ts": "rahmen", // generic Prisma P2002 target reader; imported by the platform and scheduling contexts, owns no model
   "src/utils/crypto.ts": "rahmen", // generic crypto helper (hashing/encryption), no model, no single owning context
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
@@ -87,6 +89,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/client-log-url.ts": "rahmen", // strips query/fragment from client-reported URLs before logging (Issue #610 review WR-02); pure, no model
   "src/utils/code-unit-order.ts": "rahmen", // locale-independent code-unit comparator for stable sorts; pure, no model, imported by the platform and absence contexts
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
+  "src/__tests__/english-zod-fragments.ts": "rahmen", // Issue #573: test-only list of English Zod default fragments, no model
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
@@ -122,6 +125,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/composition/employee-exit-ports.ts": "komposition", // Issue #615 (D-15) — hands the Unterbau deactivation route the closed-month answer of Arbeitszeitkonto; owns no model, carries no rule of its own
   "src/composition/pdf.ts": "komposition", // pure PDF-layout rendering of pre-computed data; sole caller is reports.ts; no Prisma access, no Fachregel
   "src/composition/pdf-format.ts": "komposition", // Issue #617: pure German number formatting for PDF output (H:MM from minutes, decimal comma, day plurals); no Prisma, no model, no Fachregel - only pdf.ts and reports.ts import it
+  "src/composition/activity-sentences.ts": "komposition", // Issue #849 (4): the wording of the "Aktivität" time-entry sentences — presentation only, owns no model, carries no Fachregel
   "src/composition/activity.ts": "komposition", // dashboard "Aktivität" widget backend; ADMIN branch reads AuditLog (platform-owned), EMPLOYEE/MANAGER branch aggregates timeEntry/leaveRequest/saldoSnapshot through facades (Phase 243 D-13, overruling this file's earlier D-17-as-enumeration argument: D-17 was an enumeration, not a criterion — the operative rule is "owns no model, carries no Fachregel", already applied to pdf.ts above; activity.ts owns no model and aggregates across three contexts' facades, so it fits the same bucket)
   "src/composition/data-retention.ts": "komposition", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears; touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge — no single business context owns a generic cross-context retention policy (Phase 243 D-01/D-13: same substance as the prior unterbau reasoning, verdict changed to komposition, which is what "no context owns it" actually describes)
 
@@ -169,6 +173,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/anonymize.ts": "unterbau", // DSGVO Art. 17 anonymization; primary subject is Employee+User (CLAUDE.md "DSGVO Employee Deletion"), other models' notes/documents nulled as side effects
   "src/contexts/platform/audit-reason.ts": "unterbau", // shared "Begründung ist erforderlich" validation reused across every correction/storno field app-wide; audit-trail vocabulary, no model
   "src/contexts/platform/calculate-work-days.ts": "unterbau", // normalizes WorkSchedule.workDays — Unterbau's own model
+  "src/contexts/platform/fixed-schedule-hours.ts": "unterbau", // Issue #848: weeklyHours = Σ {day}Hours write guard on WorkSchedule
   "src/contexts/platform/employee-anonymization-filter.ts": "unterbau", // Phase 101B (Issue #101) — lifted out of anonymize.ts; Employee is Unterbau's own model, same as anonymize.ts above
   "src/contexts/platform/employed-in-period.ts": "unterbau", // Issue #613 — the one period population rule (Employee.hireDate/exitDate + the anonymisation sentinel); Employee is Unterbau's own model, same as employee-anonymization-filter.ts above
   "src/contexts/platform/federal-state-iso.ts": "unterbau", // FederalState enum <-> ISO-3166-2, feeds PublicHoliday lookups (Unterbau model)

@@ -6,8 +6,9 @@
  *
  * The API's error shape is `{ error, message?, details? }` (apps/api/src/app.ts): `error` is the
  * CATEGORY ("Validierungsfehler", "Nicht gefunden"), `message` is the specific reason — for a
- * ZodError it names every failing field, e.g. "holidayRulesValidFromYear: Expected number,
- * received null". Both constructors below used to take `error` and drop `message`, so every
+ * ZodError the German text of every failing field, named by its German label where one exists
+ * (Issue #573; the raw keys are in `details[].path`). Before #573 it read like
+ * "holidayRulesValidFromYear: Expected number, received null". Both constructors below used to take `error` and drop `message`, so every
  * validation failure in the whole app surfaced as the bare word "Validierungsfehler" with no
  * field and no clue, while the answer sat unread in `.data`.
  *
