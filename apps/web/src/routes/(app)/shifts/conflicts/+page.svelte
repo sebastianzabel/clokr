@@ -13,6 +13,7 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import {
     buildShiftNotices,
     NOTICE_KINDS,
@@ -105,7 +106,7 @@
 
   <section class="card-animate notice-card" aria-label="Hinweise">
     {#if loading}
-      <p class="empty">Lädt…</p>
+      <Skeleton shape="row" count={3} />
     {:else if notices.length === 0 && !loadError}
       <p class="empty">Keine Hinweise im Zeitraum. Alles passt.</p>
     {:else}

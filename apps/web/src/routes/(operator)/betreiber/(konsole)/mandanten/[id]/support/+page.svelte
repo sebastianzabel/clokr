@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -74,11 +75,8 @@
   </div>
 
   {#if loadState === "loading"}
-    <div aria-busy="true" data-testid="op-support-employees-loading">
-      <span class="sr-only" role="status">Wird geladen …</span>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
+    <div data-testid="op-support-employees-loading">
+      <Skeleton shape="block" count={3} height="48px" />
     </div>
   {:else if loadState === "error"}
     <div class="alert alert-error" role="alert" data-testid="op-support-employees-error">
@@ -97,10 +95,5 @@
   .message {
     margin: 0 0 16px;
     font-size: 16px;
-  }
-
-  .row {
-    height: 48px;
-    margin-bottom: 8px;
   }
 </style>

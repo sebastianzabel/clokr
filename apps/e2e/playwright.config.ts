@@ -244,6 +244,19 @@ export default defineConfig({
       //     built app and the axe scans); tenant fixture plus API-created people, requests, plans,
       //     a holiday and opening hours, every date computed from the clock
       //
+      // Issue #843 (D-843-11) added a fifteenth file:
+      //   - narrow-648-843.spec.ts (#648: the /shifts week header and the /admin/employees table fit
+      //     360/390 px; employee list search and sort in the URL); tenant fixture only, no seed
+      //
+      // Issue #843 (D-843-10, D-843-12) added a sixteenth file:
+      //   - startpage-feedback-843.spec.ts (AC-3: every write of the start pages acknowledges its
+      //     result in the toast status region); tenant fixture only, no seed
+      // and a seventeenth file:
+      //   - bausteine-843.spec.ts (AC-4/AC-7: keyboard proofs of Dialog, Combobox, Tabs, DatePicker
+      //     and the toolbar popover on /admin/bausteine, axe with colour contrast in the six
+      //     theme x mode frames, and the #636 stacking of an open ConfirmDialog over the topbar);
+      //     tenant fixture only, no seed
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -264,6 +277,10 @@ export default defineConfig({
         /role-editor-visibility-710\.spec\.ts/,
         /push-pwa\.spec\.ts/,
         /leave-area-840\.spec\.ts/,
+        /narrow-648-843\.spec\.ts/,
+        /startpage-feedback-843\.spec\.ts/,
+        /bausteine-843\.spec\.ts/,
+        /all-routes-overflow-843\.spec\.ts/,
         /shift-notices-850\.spec\.ts/,
       ],
       use: {

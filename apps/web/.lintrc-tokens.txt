@@ -56,6 +56,8 @@ BANNED-TOKEN --row-h
 BANNED-TOKEN --body-gradient
 
 # === Retired v1.2 prefixes ===
+# --color- and --radius- are the Tailwind namespaces: exactly src/tailwind-theme.css is exempt from
+# these two prefixes (TAILWIND_THEME_FILE in scripts/lint-tokens.mjs, Issue #843, D-843-13).
 BANNED-PREFIX --color-
 BANNED-PREFIX --glass-
 BANNED-PREFIX --radius-

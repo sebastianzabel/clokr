@@ -308,7 +308,8 @@ describe("DeactivateEmployeeDialog", () => {
   it("disables the confirm button while a preview loads", async () => {
     post.mockReturnValue(new Promise(() => {}));
     mount();
-    await screen.findByText("Vorschau wird geladen …");
+    // #843 D-843-07: the preview loading state is the Skeleton status, not a text
+    await screen.findByRole("status", { name: "Wird geladen" });
     expect(confirmButton().disabled).toBe(true);
   });
 

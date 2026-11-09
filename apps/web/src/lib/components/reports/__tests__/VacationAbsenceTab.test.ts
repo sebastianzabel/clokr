@@ -190,10 +190,13 @@ describe("VacationAbsenceTab - the Urlaubsübersicht table (wide)", () => {
     expect(badge.closest("td")?.getAttribute("colspan")).toBe("8");
   });
 
-  it("has a hidden loading text while loading and no table before the first answer", () => {
+  it("shows the Skeleton while loading and no table before the first answer", () => {
     viewport(false);
     renderWithTheme(VacationAbsenceTab, props({ vacation: null, absences: null, loading: true }));
-    expect(screen.getByText("Lade Urlaubsübersicht…")).toBeTruthy();
+    // #843 D-843-07: scoped to the vacation region; the absences card renders its own Skeleton.
+    expect(
+      within(screen.getByTestId("vacation-skeleton")).getByRole("status", { name: "Wird geladen" }),
+    ).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
   });
 

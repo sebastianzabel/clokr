@@ -664,7 +664,10 @@ select.form-input {
   margin: 1.5rem 0;
 }
 
-/* ─── Loading Skeleton ───────────────────────────────────────────────── */
+/* ─── Loading Skeleton (Issue #843, block 10) ───────────────────────────
+   One block: the shimmer base, the legacy variants the existing pages use (.skeleton-text,
+   .skeleton-heading, .skeleton-stat, .skeleton-card) and the shapes of Skeleton.svelte (line, block,
+   row, card, inline). The shimmer stops under reduced motion (see the Reduced Motion block). */
 .skeleton {
   background: linear-gradient(90deg, var(--sunk) 25%, var(--line) 50%, var(--sunk) 75%);
   background-size: 200% 100%;
@@ -679,6 +682,100 @@ select.form-input {
   100% {
     background-position: -200% 0;
   }
+}
+
+.skeleton-text {
+  height: 1em;
+  border-radius: 4px;
+}
+
+.skeleton-heading {
+  height: 2rem;
+  width: 60%;
+  border-radius: var(--r-control);
+}
+
+.skeleton-stat {
+  height: 2.5rem;
+  width: 80%;
+  border-radius: var(--r-control);
+}
+
+.skeleton-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  padding: 1.5rem 1.75rem;
+  min-height: 120px;
+}
+
+/* Skeleton.svelte shapes */
+.skeleton-region {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.skeleton-region--inline {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.skeleton-line {
+  display: block;
+}
+
+.skeleton-block {
+  display: block;
+  height: var(--skeleton-block-h, 6rem);
+  border-radius: var(--r-card);
+}
+
+.skeleton-inline {
+  display: inline-block;
+  height: 1em;
+  vertical-align: middle;
+  border-radius: 4px;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  height: var(--h-row);
+}
+
+.skeleton-avatar {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-pill);
+}
+
+.skeleton-row-bars {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.skeleton-bar-long {
+  width: 60%;
+  height: 0.75em;
+}
+
+.skeleton-bar-short {
+  width: 35%;
+  height: 0.65em;
+}
+
+.skeleton-card > .skeleton {
+  display: block;
+}
+
+.skeleton-card > .skeleton + .skeleton {
+  margin-top: var(--s-2);
 }
 
 /* ─── Utilities ──────────────────────────────────────────────────────── */
@@ -877,19 +974,19 @@ select.form-input {
   animation-delay: 0ms;
 }
 .card-animate:nth-child(2) {
-  animation-delay: 60ms;
+  animation-delay: 35ms;
 }
 .card-animate:nth-child(3) {
-  animation-delay: 120ms;
+  animation-delay: 70ms;
 }
 .card-animate:nth-child(4) {
-  animation-delay: 180ms;
+  animation-delay: 105ms;
 }
 .card-animate:nth-child(5) {
-  animation-delay: 240ms;
+  animation-delay: 140ms;
 }
 .card-animate:nth-child(6) {
-  animation-delay: 300ms;
+  animation-delay: 175ms;
 }
 
 /* ─── Micro-Interactions ────────────────────────────────────────────── */
@@ -955,32 +1052,6 @@ select.form-input {
 /* ─── Button press effect ───────────────────────────────────────────── */
 .btn-press:active:not(:disabled) {
   transform: scale(0.97);
-}
-
-/* ─── Skeleton Variants ─────────────────────────────────────────────── */
-.skeleton-text {
-  height: 1em;
-  border-radius: 4px;
-}
-
-.skeleton-heading {
-  height: 2rem;
-  width: 60%;
-  border-radius: var(--r-control);
-}
-
-.skeleton-stat {
-  height: 2.5rem;
-  width: 80%;
-  border-radius: var(--r-control);
-}
-
-.skeleton-card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--r-control);
-  padding: 1.5rem 1.75rem;
-  min-height: 120px;
 }
 
 /* ─── Improved Section Spacing ──────────────────────────────────────── */
@@ -1835,6 +1906,19 @@ textarea.form-input {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  /* Issue #843: no reveal at all - a stagger delay would otherwise keep the block hidden (the
+     `backwards` fill) for up to STAGGER_MS x position before it appears. */
+  .card-animate,
+  .fade-up {
+    animation: none !important;
+  }
+
+  /* Issue #843 (block 10): the loading shimmer stands still; the bars stay as a static placeholder. */
+  .skeleton,
+  .cal-cell.skeleton {
+    animation: none !important;
+  }
 }
 
 /* ─── v1.5 component recipes ─────────────────────────────────────────
@@ -2052,44 +2136,99 @@ textarea.form-input {
   cursor: not-allowed;
 }
 
-/* ─── Chips / status pills (COMP-03) ─── */
+/* ─── Chips / status pills (COMP-03; Issue #843 block 8) ───
+   The 22 px pill of the Chip block. A tone is one colour pair (same pairs as the .badge-* recipes,
+   so the #842 contrast proof covers both). .chip-good is the legacy name of the ok tone and stays
+   a valid selector. */
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
+  gap: 6px;
+  box-sizing: border-box;
+  min-height: 22px;
+  padding: 0 var(--s-2);
   border-radius: var(--r-pill);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
-  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
   background: var(--sunk);
   color: var(--text-2);
   border: 1px solid var(--line);
 }
 .chip .dot {
+  flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
 }
-.chip-good {
+
+/* ─── Note (Issue #843 block 8) — the soft-colour hint line ───
+   Same tone pairs as the chip (status colour on its -soft partner). Not .callout: that recipe
+   has warn / brand / error only, no ok / info tone. */
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-control);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-2);
+  background: var(--sunk);
+}
+.note .note-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 0.5em;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* Tone pairs of Chip and Note (Issue #843): a status colour on its soft partner, the same pairs the
+   .badge-* recipes use, each proven at 4.5:1 in all six combinations by token-contrast-842. The
+   badge rules keep their own declarations (KontoSaldoCard.test.ts pins .badge-yellow as written). */
+.chip-neutral {
+  color: var(--text-2);
+  background: var(--sunk);
+}
+.chip-ok,
+.chip-good,
+.note-ok {
   color: var(--ok);
   background: var(--ok-soft);
-  border-color: transparent;
 }
-.chip-warn {
+.chip-warn,
+.note-warn {
   color: var(--warn);
   background: var(--warn-soft);
-  border-color: transparent;
 }
-.chip-bad {
+.chip-bad,
+.note-bad {
   color: var(--bad);
   background: var(--bad-soft);
-  border-color: transparent;
 }
-.chip-brand {
+.chip-info,
+.note-info {
+  color: var(--info);
+  background: var(--info-soft);
+}
+.chip-brand,
+.note-brand {
   color: var(--brand);
   background: var(--brand-soft);
+}
+.chip-neutral {
+  border-color: var(--line);
+}
+.chip-ok,
+.chip-good,
+.chip-warn,
+.chip-bad,
+.chip-info,
+.chip-brand {
   border-color: transparent;
 }
 
@@ -2157,19 +2296,25 @@ textarea.form-input {
   animation-delay: 0ms;
 }
 .card-animate:nth-child(2) {
-  animation-delay: 60ms;
+  animation-delay: 35ms;
 }
 .card-animate:nth-child(3) {
-  animation-delay: 120ms;
+  animation-delay: 70ms;
 }
 .card-animate:nth-child(4) {
-  animation-delay: 180ms;
+  animation-delay: 105ms;
 }
 .card-animate:nth-child(5) {
-  animation-delay: 240ms;
+  animation-delay: 140ms;
 }
 .card-animate:nth-child(6) {
-  animation-delay: 300ms;
+  animation-delay: 175ms;
+}
+/* Issue #843 (D-843-01 block 12): the step between two neighbours is STAGGER_MS = 35 ms (source:
+   lib/motion/index.ts; motion-843.test.ts pins these literals to it). The `stagger` action sets
+   `--card-idx` for lists longer than six; it only exists outside reduced motion. */
+.card-animate[style*="--card-idx"] {
+  animation-delay: calc(var(--card-idx) * 35ms);
 }
 
 /* Shared `.fade-up` utility (matches handoff styles.css:636 — for one-off elements

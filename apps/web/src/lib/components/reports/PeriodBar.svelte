@@ -4,7 +4,7 @@
   // who may export — "Exportieren". It owns no URL and no navigation: the page passes `onChange`.
   import Icon from "$components/Icon.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
-  import Spinner from "$components/ui/Spinner.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import type { YearMonth } from "$lib/reports/period-report";
   import {
     activePreset,
@@ -128,7 +128,7 @@
       onclick={(e) => onOpenRange(e.currentTarget)}>Zeitraum…</button
     >
     {#if loading}
-      <span class="period-loading"><Spinner label="Wird geladen" /></span>
+      <span class="period-loading"><Skeleton inline width={8} /></span>
     {/if}
   </div>
 </div>

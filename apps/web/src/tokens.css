@@ -78,8 +78,10 @@
   --brand-ink: #ffffff;
 
   /* Honey accent: a fill or indicator for "now" and "break" only. NEVER a text colour and never
-     a surface that carries text - it does not reach 4.5:1 as text on any surface (D-842-07). */
-  --accent: #d9a441;
+     a surface that carries text - it does not reach 4.5:1 as text on any surface (D-842-07).
+     As a meaningful non-text element it reaches 3:1 on card and bg (WCAG 1.4.11, #843); the
+     light values are darker than the prototype for that reason, dark keeps the lighter honey. */
+  --accent: #b68324;
 
   /* Surfaces and lines */
   --bg: #faf8f7;
@@ -192,7 +194,7 @@
   --brand-soft: #ebe8e3;
   --brand-tint: #f6f3ee;
   /* Salz honey is a touch deeper than the Pflaume one (D-842-05). */
-  --accent: #c98a3a;
+  --accent: #bb7f33;
   --bg: #f9f7f3;
   --card: #fffefc;
   --rail: #f1eee8;
@@ -214,7 +216,7 @@
   --brand-tint: #f0f6f5;
   /* Declared on purpose although it equals the Pflaume honey: a Petrol preview nested in a Salz
      page would otherwise inherit the Salz accent (WR-03). */
-  --accent: #d9a441;
+  --accent: #b68324;
   --bg: #f8faf9;
   --card: #ffffff;
   --rail: #eef4f2;
@@ -231,6 +233,7 @@
 
 /* ─── Shared dark roles - Pflaume, dark ───────────────────────────────── */
 [data-mode="dark"] {
+  --accent: #d9a441;
   --brand: #cf93c1;
   --brand-hover: #e2b0d6;
   --brand-soft: #3a2334;
@@ -282,6 +285,7 @@
 
 /* ─── Salz, dark ──────────────────────────────────────────────────────── */
 [data-theme="salz"][data-mode="dark"] {
+  --accent: #c98a3a;
   --card: #1e1e21;
   --brand: #ecebe6;
   --brand-hover: #ffffff;

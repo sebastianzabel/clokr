@@ -10,6 +10,9 @@ import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import ConfirmDialog from "../ConfirmDialog.svelte";
 
+// #843 D-843-16: ConfirmDialog renders through the Dialog block, whose Escape layer listens on
+// `document` (it used to be a window keydown listener of Modal). Every Escape below targets it.
+
 function baseProps(overrides: Record<string, unknown> = {}) {
   return {
     open: true,
@@ -34,7 +37,7 @@ describe("ConfirmDialog — dismiss paths (Phase 76.13 UI-V19-05)", () => {
   it("ESC key → onCancel called once, modal closes (M-01 regression)", async () => {
     const props = baseProps();
     renderWithTheme(ConfirmDialog, props);
-    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.keyDown(document, { key: "Escape" });
     expect(props.onCancel).toHaveBeenCalledTimes(1);
     expect(props.onConfirm).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -75,7 +78,7 @@ describe("ConfirmDialog — dismiss paths (Phase 76.13 UI-V19-05)", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
 
     // While pending, attempt all three dismiss paths.
-    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.keyDown(document, { key: "Escape" });
     const scrim = document.querySelector(".scrim");
     if (scrim) await fireEvent.click(scrim);
     // Cancel button is disabled while pending (existing behaviour) — click is a no-op.
@@ -105,7 +108,7 @@ describe("ConfirmDialog — dismiss paths (Phase 76.13 UI-V19-05)", () => {
 
     // Subsequent ESC SHOULD fire onCancel - the failure path resets to a normal
     // dismiss cycle.
-    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.keyDown(document, { key: "Escape" });
     expect(props.onCancel).toHaveBeenCalledTimes(1);
   });
 
@@ -196,14 +199,14 @@ describe("ConfirmDialog — dismiss paths (Phase 76.13 UI-V19-05)", () => {
   it("Re-open after dismiss → effect re-arms, no stale onCancel", async () => {
     const props = baseProps();
     const { rerender } = renderWithTheme(ConfirmDialog, props);
-    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.keyDown(document, { key: "Escape" });
     expect(props.onCancel).toHaveBeenCalledTimes(1);
     // Parent re-opens the dialog (open: false → true).
     await rerender({ ...props, open: true });
     // The effect must NOT fire onCancel just because we re-rendered.
     expect(props.onCancel).toHaveBeenCalledTimes(1);
     // Dismiss again — confirms the effect re-armed.
-    await fireEvent.keyDown(window, { key: "Escape" });
+    await fireEvent.keyDown(document, { key: "Escape" });
     expect(props.onCancel).toHaveBeenCalledTimes(2);
   });
 });

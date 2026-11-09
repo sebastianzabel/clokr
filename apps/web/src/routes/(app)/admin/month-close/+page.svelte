@@ -4,6 +4,7 @@
   import { page } from "$app/stores";
   import Modal from "$components/ui/Modal.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import ToolPage from "$lib/components/admin/ToolPage.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import {
@@ -674,8 +675,14 @@
 
             <div class="control-group control-action">
               <span class="control-label">&nbsp;</span>
-              <button class="btn btn-primary" onclick={loadYearStatus} disabled={loading}>
-                {loading ? "Wird geladen..." : "Aktualisieren"}
+              <button
+                class="btn btn-primary"
+                onclick={loadYearStatus}
+                disabled={loading}
+                aria-busy={loading}
+              >
+                {#if loading}<Spinner />{/if}
+                Aktualisieren
               </button>
             </div>
           </div>
@@ -870,7 +877,7 @@
                             </div>
                           {/if}
                           {#if detailLoading}
-                            <div class="detail-loading">Lade Details...</div>
+                            <Skeleton shape="row" count={3} />
                           {:else if detailEmployees.length === 0}
                             <div class="detail-empty">Keine Mitarbeiter gefunden.</div>
                           {:else}
@@ -1001,7 +1008,7 @@
           </Section>
         {/if}
       {:else}
-        <p class="text-muted">Lade Jahresstatus...</p>
+        <Skeleton shape="card" lines={3} />
       {/if}
     {/snippet}
   </ToolPage>
@@ -1301,7 +1308,6 @@
     padding: 12px 16px 0;
   }
 
-  .detail-loading,
   .detail-empty {
     padding: 1rem;
     text-align: center;

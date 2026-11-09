@@ -130,7 +130,8 @@ describe("SupportAccessList", () => {
         "Bisher hat der Betreiber nicht auf die Daten deines Unternehmens zugegriffen.",
       ),
     ).toBeNull();
-    expect(screen.getByRole("status", { name: "Support-Zugriffe werden geladen" })).toBeTruthy();
+    // #843 D-843-07: the loading state is the shared Skeleton status
+    expect(screen.getByRole("status", { name: "Wird geladen" })).toBeTruthy();
   });
 
   it("shows a load error with a retry that calls onRetry", async () => {

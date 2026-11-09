@@ -8,6 +8,7 @@
   import { salonNameLabel } from "$lib/salons/page-scope";
   import SalonScopeLabel from "./SalonScopeLabel.svelte";
   import { TRAVEL_TEXTS, isTravelRow, travelRouteLabel } from "$lib/time-entries/travel-entry-form";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   interface Props {
     days: SalonViewDay[];
@@ -33,7 +34,7 @@
 
 <div class="salon-view" data-testid="salon-time-entries">
   {#if status === "loading"}
-    <p class="salon-view-note" role="status">Wird geladen …</p>
+    <Skeleton shape="row" count={5} />
   {:else if status === "prompt"}
     <div class="callout brand" role="status">
       <p>Wähl in der Kopfleiste einen Salon, um seine Einträge zu sehen.</p>
@@ -120,10 +121,5 @@
   .salon-view-route {
     display: inline-block;
     overflow-wrap: break-word;
-  }
-  .salon-view-note {
-    margin: 0;
-    color: var(--text-2);
-    font-size: 0.875rem;
   }
 </style>

@@ -9,7 +9,8 @@ import Modal from "../Modal.svelte";
 const children = createRawSnippet(() => ({ render: () => "<p>Inhalt</p>" }));
 
 async function escape() {
-  await fireEvent.keyDown(window, { key: "Escape" });
+  // #843 D-843-16: the dialog is portaled to body and bits-ui listens for Escape on document
+  await fireEvent.keyDown(document, { key: "Escape" });
   flushSync();
 }
 
