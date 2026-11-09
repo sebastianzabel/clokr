@@ -58,12 +58,17 @@ function finalText(params: CountUpParams): string {
     : String(params.value ?? "");
 }
 
-/** Writes into the node's single text node when there is one (keeps the framework's reference). */
+/**
+ * Writes into the node's FIRST text node when there is one (keeps the framework's reference and
+ * any sibling element, e.g. a unit span after the figure); an empty node gets a text node.
+ */
 function write(node: HTMLElement, text: string): void {
   const first = node.firstChild;
-  if (first && first.nodeType === 3 && node.childNodes.length === 1) {
+  if (first && first.nodeType === 3) {
     if (first.nodeValue !== text) first.nodeValue = text;
-  } else if (node.textContent !== text) {
+  } else if (first) {
+    node.insertBefore(document.createTextNode(text), first);
+  } else {
     node.textContent = text;
   }
 }

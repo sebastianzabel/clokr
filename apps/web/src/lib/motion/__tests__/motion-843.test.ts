@@ -139,6 +139,14 @@ describe("countUp", () => {
     expect(node.textContent).toBe(before);
   });
 
+  it("writes only the first text node and leaves a sibling element (a unit span) alone", () => {
+    const node = document.createElement("div");
+    node.innerHTML = "0<span> h</span>";
+    countUp(node, { value: 7 });
+    expect(node.firstChild?.nodeValue).toBe("7");
+    expect(node.querySelector("span")?.textContent).toBe(" h");
+  });
+
   it("keeps the framework's text node when there is exactly one", () => {
     const node = document.createElement("span");
     node.textContent = "0";
