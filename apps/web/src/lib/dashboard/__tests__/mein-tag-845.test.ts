@@ -80,6 +80,12 @@ describe("Stundenkonto parity (AC: same figure as GET /overtime/:id on /time-ent
     expect(src).toMatch(/api\.get<OvertimeAnswer>\(`\/overtime\/\$\{/);
     expect(src).toMatch(/saldoFigure\(/);
   });
+  it("the derivation link goes to Ich › Konto once that page exists (#851), else to Zeiten", () => {
+    expect(src).toMatch(
+      /mayOpenPath\(\$authStore\.user, "\/ich\/konto"\) \? "\/ich\/konto" : "\/ich\/zeiten"/,
+    );
+    expect(src).toMatch(/derivationHref: kontoHref/);
+  });
   it("the Zeiten page reads the same endpoint", () => {
     const te = readFileSync(
       resolve(__dirname, "../../../routes/(app)/time-entries/+page.svelte"),

@@ -1465,6 +1465,10 @@
     );
   }
 
+  const kontoHref = $derived(
+    mayOpenPath($authStore.user, "/ich/konto") ? "/ich/konto" : "/ich/zeiten",
+  );
+
   let kpiItems = $derived.by((): KpiItem[] => {
     const items: KpiItem[] = [];
     // Phase 76b (Issue #76), CR-01: `stats.overtime === null` = no overtime:read:EIGENE — no cell at all.
@@ -1485,7 +1489,8 @@
         value: f.value,
         unit: "h",
         explanation: saldoMonthsLine(ownOvertime, todayIso) ?? undefined,
-        derivationHref: "/ich/zeiten",
+        // The derivation lives on Ich › Konto (#851); until that page exists, the Zeiten page.
+        derivationHref: kontoHref,
         testId: "kpi-saldo",
       });
     } else {
