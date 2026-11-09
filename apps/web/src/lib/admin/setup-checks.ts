@@ -41,6 +41,12 @@ export interface EmployeeRow {
 
 export interface SmtpAnswer {
   deliveryReady?: boolean;
+  smtpHost?: string | null;
+}
+
+/** Can mail be sent? The server's answer (#847); an older answer without it: the tenant's own host. */
+function canDeliver(smtp: SmtpAnswer): boolean {
+  return smtp.deliveryReady ?? !!smtp.smtpHost;
 }
 
 export interface WorkSettingsAnswer {
@@ -122,10 +128,10 @@ export function setupChecks(input: CheckInputs, today: string): SetupCheck[] {
     checks.push({
       key: "smtp",
       title: "E-Mail-Versand eingerichtet",
-      detail: input.smtp.deliveryReady
+      detail: canDeliver(input.smtp)
         ? "E-Mails können verschickt werden."
         : "Es ist kein Mailserver eingerichtet.",
-      state: input.smtp.deliveryReady ? "erledigt" : "offen",
+      state: canDeliver(input.smtp) ? "erledigt" : "offen",
       href: "/verwalten/system/allgemein",
       action: "E-Mail",
     });
@@ -206,7 +212,7 @@ export function mailWithoutDelivery(
   security: { emailNotificationsEnabled?: boolean } | null,
   smtp: SmtpAnswer | null,
 ): boolean {
-  return security?.emailNotificationsEnabled === true && smtp?.deliveryReady === false;
+  return security?.emailNotificationsEnabled === true && smtp !== null && !canDeliver(smtp);
 }
 
 export const MAIL_WITHOUT_DELIVERY_TEXT =

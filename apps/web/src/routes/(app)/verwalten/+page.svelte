@@ -75,7 +75,10 @@
       readIf<SmtpAnswer>(canSettings, "/settings/smtp"),
       readIf<{ emailNotificationsEnabled?: boolean }>(canSettings, "/settings/security"),
       readIf<WorkSettingsAnswer>(canSettings, "/settings/work"),
-      readIf<TerminalRow[]>(may("terminal:manage") && hardware !== false, "/terminals"),
+      readIf<{ keys: TerminalRow[] }>(
+        may("terminal:manage") && hardware !== false,
+        "/terminals",
+      ).then((r) => r?.keys ?? null),
       may("month-close:read")
         ? Promise.all(
             years.map((y) =>
@@ -199,14 +202,25 @@
           <div data-testid="setup-checks">
             <List ariaLabel="Einrichtung">
               {#each checks as c (c.key)}
-                <ListRow title={c.title} subtitle={c.detail} avatar={false}>
+                <ListRow
+                  title={c.title}
+                  subtitle={c.detail}
+                  avatar={false}
+                  href={mayOpenPath($authStore.user, c.href) ? c.href : undefined}
+                >
                   {#snippet trailing()}
                     <span class="vw-row-end" data-check={c.key} data-state={c.state}>
                       <Chip tone={c.state === "erledigt" ? "ok" : "warn"}
                         >{c.state === "erledigt" ? "Erledigt" : "Offen"}</Chip
                       >
                       {#if mayOpenPath($authStore.user, c.href)}
-                        <a class="btn btn-outline btn-sm" href={c.href}>{c.action}</a>
+                        <a
+                          class="btn btn-sm"
+                          class:btn-outline={c.state === "offen"}
+                          class:btn-ghost={c.state === "erledigt"}
+                          class:vw-quiet={c.state === "erledigt"}
+                          href={c.href}>{c.action}</a
+                        >
                       {/if}
                     </span>
                   {/snippet}
@@ -239,6 +253,12 @@
     font-size: var(--fs-sm);
     font-weight: 500;
     color: var(--text-2);
+  }
+  /* phone: a done check needs no second link — its title already is one */
+  @media (max-width: 759.98px) {
+    .vw-quiet {
+      display: none;
+    }
   }
   .vw-row-end {
     display: inline-flex;
