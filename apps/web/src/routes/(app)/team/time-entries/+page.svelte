@@ -2147,7 +2147,7 @@
                     class:row-invalid={slot.isInvalid}
                     class:row-day-focus={multiEntryUi && slotDate === selectedDate}
                   >
-                    <td class="font-mono"
+                    <td
                       >{new Date(slot.startTime).toLocaleDateString("de-DE", {
                         day: "2-digit",
                         month: "2-digit",
@@ -2174,16 +2174,16 @@
                             >{travelRouteLabel(slot)}</span
                           >{:else}{slot.salonName ?? "—"}{/if}</td
                       >{/if}
-                    <td class="font-mono">{fmtTime(slot.startTime)}</td>
-                    <td class="font-mono">
+                    <td>{fmtTime(slot.startTime)}</td>
+                    <td>
                       {#if slot.endTime}{fmtTime(slot.endTime)}
                       {:else}<span class="badge badge-green">Aktiv</span>{/if}
                     </td>
                     <td>{fmtBreaks(slot)}</td>
-                    <td class="font-mono font-medium">{slotNet(slot)}</td>
+                    <td class="font-medium">{slotNet(slot)}</td>
                     {#if isShiftBased && monthSaldo}
                       {@const cum = monthSaldoDayMap.get(slotDate)}
-                      <td class="font-mono {cum != null ? balClass(cum) : ''}">
+                      <td class={cum != null ? balClass(cum) : ""}>
                         {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
                       </td>
                     {/if}
@@ -2219,7 +2219,7 @@
                 {:else}
                   <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions. -->
                   <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
-                    <td class="font-mono"
+                    <td
                       >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
                         day: "2-digit",
                         month: "2-digit",
@@ -2227,10 +2227,10 @@
                       })}</td
                     >
                     {#if multiEntryUi}<td class="text-muted">—</td>{/if}
-                    <td class="font-mono text-muted">—</td>
-                    <td class="font-mono text-muted">—</td>
                     <td class="text-muted">—</td>
-                    <td class="font-mono font-medium text-muted">—</td>
+                    <td class="text-muted">—</td>
+                    <td class="text-muted">—</td>
+                    <td class="font-medium text-muted">—</td>
                     <td><span class="badge badge-blue">Berufsschule</span></td>
                     <td class="note-cell text-muted"
                       >{slot.source === "PATTERN"
@@ -2609,7 +2609,7 @@
     justify-content: space-between;
     gap: var(--s-2);
     padding: var(--s-3) var(--s-4);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .list-day-label {
     font-size: 0.875rem;
@@ -2638,7 +2638,7 @@
     margin-top: var(--s-3);
   }
   .data-table tbody tr.row-day-focus {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 
   /* ── List card (v1.5) ────────────────────────────────── */
@@ -2658,12 +2658,12 @@
   }
   .list-card .list-skel-row {
     height: 2.25rem;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
   .list-card .empty-state {
     padding: 48px 24px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .list-card .empty-state .empty-icon {
     font-size: 32px;
@@ -2672,7 +2672,7 @@
     opacity: 0.6;
   }
   .list-card .empty-state h3 {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     font-size: 18px;
     margin: 0 0 4px;
@@ -2695,7 +2695,7 @@
 
   .day-before-hire {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.5;
   }
 
@@ -2716,7 +2716,7 @@
 
   .day-missing {
     font-size: 0.7rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     color: var(--bad);
     opacity: 0.75;
   }
@@ -2739,7 +2739,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.7;
   }
   .leg {
@@ -2748,7 +2748,7 @@
     gap: 0.4rem;
     font-size: 0.75rem;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .leg::before {
     content: "";
@@ -2758,8 +2758,8 @@
     border-radius: 3px;
   }
   .leg-ok::before {
-    background: var(--good-soft);
-    border: 1px solid color-mix(in srgb, var(--good) 25%, transparent);
+    background: var(--ok-soft);
+    border: 1px solid color-mix(in srgb, var(--ok) 25%, transparent);
   }
   .leg-partial::before {
     background: var(--warn-soft);
@@ -2770,8 +2770,8 @@
     border: 1px solid color-mix(in srgb, var(--bad) 25%, transparent);
   }
   .leg-noexpect::before {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
   }
   /* Absence swatch: the colour is the custom property the template feeds from leave-colors.ts. */
   .leg-abs::before {
@@ -2807,7 +2807,7 @@
      leave type for Berufsschule would be the long-term home if BS gets promoted
      to a first-class leave type. */
   :global(.cal-cell.cal-abs-vocational_school:not(.cal-selected)) {
-    background: color-mix(in srgb, var(--brand) 15%, var(--bg-card)) !important;
+    background: color-mix(in srgb, var(--brand) 15%, var(--card)) !important;
     opacity: 1;
   }
 
@@ -2824,8 +2824,8 @@
     padding: 0.875rem 1rem;
     gap: 1rem;
     flex-wrap: wrap;
-    border-bottom: 1px solid var(--bg-subtle);
-    background: var(--bg-card);
+    border-bottom: 1px solid var(--sunk);
+    background: var(--card);
   }
 
   .day-detail-title {
@@ -2848,14 +2848,14 @@
   }
 
   .dstat {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .dstat strong {
     color: var(--text);
     font-weight: 600;
   }
   .dstat.bal.pos strong {
-    color: var(--good);
+    color: var(--ok);
   }
   .dstat.bal.neg strong {
     color: var(--bad);
@@ -2865,7 +2865,7 @@
     padding: 1.5rem 1rem;
     display: flex;
     align-items: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -2884,19 +2884,19 @@
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-align: left;
     white-space: nowrap;
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border);
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
   }
   .slots-table tbody td {
     padding: 0.5rem 0.75rem;
-    border-top: 1px solid var(--bg-subtle);
+    border-top: 1px solid var(--sunk);
     vertical-align: middle;
   }
   .slots-table tbody tr:hover {
-    background: var(--bg-card);
+    background: var(--card);
   }
   .note-cell {
     max-width: 160px;
@@ -2909,7 +2909,7 @@
     text-align: right;
   }
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .fw-med {
     font-weight: 500;
@@ -2963,14 +2963,14 @@
     border-radius: 4px;
     font-size: 0.9375rem;
     line-height: 1;
-    color: var(--text-muted);
+    color: var(--text-2);
     transition: background 0.15s;
   }
   .btn-icon:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .btn-icon-danger {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .btn-icon-danger:hover {
     background: var(--bad-soft);
@@ -2978,7 +2978,7 @@
   }
 
   .btn-danger-sm {
-    color: white;
+    color: var(--card);
     background: var(--bad);
     border-radius: 4px;
     font-size: 0.8125rem;
@@ -2993,8 +2993,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     margin-top: 4px;
   }
   .net-label {
@@ -3002,10 +3002,10 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
   .net-value {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 24px;
     font-weight: 400;
@@ -3019,11 +3019,11 @@
     color: var(--bad);
   }
   .net-unit {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-variant-numeric: normal;
     font-size: 12px;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .form-row-two {
@@ -3067,7 +3067,7 @@
     min-width: 0;
   }
   .break-sep {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-weight: 600;
     flex-shrink: 0;
   }
@@ -3079,7 +3079,7 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.5rem 0.625rem;
-    background: var(--bg-card);
+    background: var(--card);
     border-radius: 6px;
     font-size: 0.8125rem;
   }
@@ -3108,7 +3108,7 @@
     bottom: 100%;
     left: 0;
     background: var(--text);
-    color: #fff;
+    color: var(--card);
     font-size: 0.75rem;
     line-height: 1.4;
     padding: 0.5rem 0.75rem;
@@ -3232,10 +3232,10 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 0.875rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-md);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    box-shadow: var(--shadow);
     cursor: pointer;
     min-height: 2.5rem;
   }
@@ -3256,12 +3256,12 @@
   }
 
   .emp-search-input::placeholder {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .emp-chevron {
     flex-shrink: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     transition: transform 0.15s;
   }
 
@@ -3280,10 +3280,10 @@
     top: calc(100% + 4px);
     left: 0;
     right: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    box-shadow: var(--shadow-pop);
     list-style: none;
     margin: 0;
     padding: 0.25rem 0;
@@ -3302,7 +3302,7 @@
 
   .emp-dropdown-item:hover,
   .emp-dropdown-item:focus {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     outline: none;
   }
 
@@ -3314,14 +3314,14 @@
   .emp-dropdown-empty {
     padding: 0.75rem 0.875rem;
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* ── No-employee empty state ──────────────────────────────────────── */
   .no-emp-hint {
     text-align: center;
     padding: 1.5rem 1rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
     margin: 0;
   }
@@ -3341,7 +3341,7 @@
 
   .no-emp-text {
     font-size: 0.9375rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     max-width: 32rem;
     margin: 0;
     line-height: 1.6;

@@ -2221,7 +2221,7 @@
                     class:row-day-focus={slotDate === selectedDate && slot.id !== focusedEntryId}
                     data-testid={`time-entry-row-${slot.id}`}
                   >
-                    <td class="font-mono"
+                    <td
                       >{new Date(slot.startTime).toLocaleDateString("de-DE", {
                         day: "2-digit",
                         month: "2-digit",
@@ -2248,8 +2248,8 @@
                             >{travelRouteLabel(slot)}</span
                           >{:else}{slot.salonName ?? "—"}{/if}</td
                       >{/if}
-                    <td class="font-mono">{fmtTime(slot.startTime)}</td>
-                    <td class="font-mono">
+                    <td>{fmtTime(slot.startTime)}</td>
+                    <td>
                       {#if slot.endTime}{fmtTime(slot.endTime)}
                       {:else}<span class="badge badge-green">Aktiv</span>{/if}
                     </td>
@@ -2267,10 +2267,10 @@
                         >
                       {/if}
                     </td>
-                    <td class="font-mono font-medium">{slotNet(slot)}</td>
+                    <td class="font-medium">{slotNet(slot)}</td>
                     {#if isShiftBased && monthSaldo}
                       {@const cum = monthSaldoDayMap.get(slotDate)}
-                      <td class="font-mono {cum != null ? balClass(cum) : ''}">
+                      <td class={cum != null ? balClass(cum) : ""}>
                         {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
                       </td>
                     {/if}
@@ -2365,7 +2365,7 @@
                        Distinct data-testid namespace (`bs-row-*`) so it never collides with the
                        existing `time-entry-row-*` testids used by E2E specs. -->
                   <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
-                    <td class="font-mono"
+                    <td
                       >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
                         day: "2-digit",
                         month: "2-digit",
@@ -2373,10 +2373,10 @@
                       })}</td
                     >
                     {#if multiEntryUi}<td class="text-muted">—</td>{/if}
-                    <td class="font-mono text-muted">—</td>
-                    <td class="font-mono text-muted">—</td>
                     <td class="text-muted">—</td>
-                    <td class="font-mono font-medium text-muted">—</td>
+                    <td class="text-muted">—</td>
+                    <td class="text-muted">—</td>
+                    <td class="font-medium text-muted">—</td>
                     <td><span class="badge badge-blue">Berufsschule</span></td>
                     <td class="note-cell text-muted"
                       >{slot.source === "PATTERN"
@@ -2895,7 +2895,7 @@
     gap: 12px;
     margin-top: 16px;
     padding-top: 16px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
   .break-status-badge {
     font-weight: 500;
@@ -2905,7 +2905,7 @@
     margin: 0.375rem 0 0;
     font-size: 0.8125rem;
     line-height: 1.5;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .break-actions {
     display: flex;
@@ -2917,9 +2917,9 @@
     flex-direction: column;
     gap: 12px;
     padding: 16px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background-color: var(--bg-subtle);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background-color: var(--sunk);
   }
   .break-waive-heading {
     font-size: 1rem;
@@ -2932,14 +2932,14 @@
     font-size: 0.9375rem;
     line-height: 1.5;
     margin: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   /* long-text backstop (UI-SPEC T-93-02): wrap free text, never overflow. */
   .break-waived-reason {
     font-size: 0.9375rem;
     line-height: 1.5;
     margin: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
     white-space: pre-wrap;
   }
@@ -2947,15 +2947,15 @@
   .break-editor-highlight {
     outline: 2px solid var(--brand-soft);
     outline-offset: 4px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     transition: outline-color 0.2s ease;
   }
   .btn-spinner {
     display: inline-block;
     width: 1rem;
     height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-top-color: #fff;
+    border: 2px solid color-mix(in srgb, var(--brand-ink) 40%, transparent);
+    border-top-color: var(--brand-ink);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
     margin-right: 0.4rem;
@@ -2974,7 +2974,7 @@
     gap: 12px;
     margin-top: 16px;
     padding-top: 16px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
   .retro-field-error {
     font-size: 12.5px;
@@ -3033,7 +3033,7 @@
     justify-content: space-between;
     gap: var(--s-2);
     padding: var(--s-3) var(--s-4);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .list-day-label {
     font-size: 0.875rem;
@@ -3080,12 +3080,12 @@
   }
   .list-card .list-skel-row {
     height: 2.25rem;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
   .list-card .empty-state {
     padding: 48px 24px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .list-card .empty-state .empty-icon {
     font-size: 32px;
@@ -3094,7 +3094,7 @@
     opacity: 0.6;
   }
   .list-card .empty-state h3 {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     font-size: 18px;
     margin: 0 0 4px;
@@ -3119,9 +3119,9 @@
 
   /* EMP-03: v1.5 mini-card calendar cells (Phase 29) */
   .cal-cell {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     min-height: 86px;
     padding: 8px;
     display: flex;
@@ -3134,30 +3134,30 @@
     position: relative;
   }
   .cal-cell:not(.cal-other):hover {
-    border-color: var(--brand-light);
+    border-color: var(--brand);
   }
   :global(.cal-cell.cal-today) {
-    outline: 1.5px solid var(--brand-light);
+    outline: 1.5px solid var(--brand);
     outline-offset: -1.5px;
   }
   :global(.cal-cell.cal-weekend:not(.cal-today)) {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   /* Tage vor dem Eintrittsdatum */
   :global(.cal-cell.cal-cell--disabled) {
     opacity: 0.4;
     pointer-events: none;
     cursor: default;
-    background: var(--bg-subtle) !important;
+    background: var(--sunk) !important;
   }
   .day-before-hire {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.5;
   }
   /* Status accent: left rule only — keeps mini-card surface for v1.5 look */
   .cal-cell--ok {
-    border-left: 3px solid var(--good);
+    border-left: 3px solid var(--ok);
   }
   .cal-cell--partial {
     border-left: 3px solid var(--warn);
@@ -3166,7 +3166,7 @@
     border-left: 3px solid var(--warn);
   }
   .cal-cell--today-ok {
-    border-left: 3px solid var(--good);
+    border-left: 3px solid var(--ok);
   }
   .cal-cell--today-partial {
     border-left: 3px solid var(--warn);
@@ -3190,7 +3190,7 @@
   }
 
   .day-worked {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 18px;
     font-variant-numeric: tabular-nums;
     font-weight: 400;
@@ -3199,18 +3199,18 @@
   }
   .day-bal {
     font-size: 0.6875rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-weight: 600;
   }
   .day-bal.pos {
-    color: var(--good);
+    color: var(--ok);
   }
   .day-bal.neg {
     color: var(--bad);
   }
   .day-missing {
     font-size: 0.7rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     color: var(--bad);
     opacity: 0.75;
   }
@@ -3233,7 +3233,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.7;
   }
   .leg {
@@ -3242,7 +3242,7 @@
     gap: 0.4rem;
     font-size: 0.75rem;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .leg::before {
     content: "";
@@ -3252,8 +3252,8 @@
     border-radius: 3px;
   }
   .leg-ok::before {
-    background: var(--good-soft);
-    border: 1px solid color-mix(in srgb, var(--good) 25%, transparent);
+    background: var(--ok-soft);
+    border: 1px solid color-mix(in srgb, var(--ok) 25%, transparent);
   }
   .leg-partial::before {
     background: var(--warn-soft);
@@ -3264,8 +3264,8 @@
     border: 1px solid color-mix(in srgb, var(--bad) 25%, transparent);
   }
   .leg-noexpect::before {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
   }
   /* Absence swatch: the colour is the custom property the template feeds from leave-colors.ts. */
   .leg-abs::before {
@@ -3301,7 +3301,7 @@
      leave type for Berufsschule would be the long-term home if BS gets promoted
      to a first-class leave type. */
   :global(.cal-cell.cal-abs-vocational_school:not(.cal-selected)) {
-    background: color-mix(in srgb, var(--brand) 15%, var(--bg-card)) !important;
+    background: color-mix(in srgb, var(--brand) 15%, var(--card)) !important;
     opacity: 1;
   }
 
@@ -3318,8 +3318,8 @@
     padding: 0.875rem 1rem;
     gap: 1rem;
     flex-wrap: wrap;
-    border-bottom: 1px solid var(--bg-subtle);
-    background: var(--bg-card);
+    border-bottom: 1px solid var(--sunk);
+    background: var(--card);
   }
 
   .day-detail-title {
@@ -3342,14 +3342,14 @@
   }
 
   .dstat {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .dstat strong {
     color: var(--text);
     font-weight: 600;
   }
   .dstat.bal.pos strong {
-    color: var(--good);
+    color: var(--ok);
   }
   .dstat.bal.neg strong {
     color: var(--bad);
@@ -3359,7 +3359,7 @@
     padding: 1.5rem 1rem;
     display: flex;
     align-items: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -3378,19 +3378,19 @@
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-align: left;
     white-space: nowrap;
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border);
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
   }
   .slots-table tbody td {
     padding: 0.5rem 0.75rem;
-    border-top: 1px solid var(--bg-subtle);
+    border-top: 1px solid var(--sunk);
     vertical-align: middle;
   }
   .slots-table tbody tr:hover {
-    background: var(--bg-card);
+    background: var(--card);
   }
   .note-cell {
     max-width: 160px;
@@ -3403,7 +3403,7 @@
     text-align: right;
   }
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .fw-med {
     font-weight: 500;
@@ -3441,7 +3441,7 @@
     background: var(--brand-soft);
   }
   .data-table tbody tr.row-day-focus {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 
   .row-invalid {
@@ -3479,26 +3479,26 @@
     border-radius: 4px;
     font-size: 0.9375rem;
     line-height: 1;
-    color: var(--text-muted);
+    color: var(--text-2);
     transition: background 0.15s;
   }
   .btn-icon:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .btn-icon-danger {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .btn-icon-danger:hover {
     background: var(--bad-soft);
     color: var(--bad);
   }
 
-  /* Ensure delete confirmation button has white text on red background */
+  /* Ensure the delete confirmation button keeps readable card-coloured text on the danger fill */
   .del-confirm :global(.btn-danger) {
-    color: #fff !important;
+    color: var(--card) !important;
   }
   .btn-danger-sm {
-    color: white;
+    color: var(--card);
     background: var(--bad);
     border-radius: 4px;
     font-size: 0.8125rem;
@@ -3519,8 +3519,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     margin-top: 4px;
   }
   .net-label {
@@ -3528,10 +3528,10 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
   .net-value {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 24px;
     font-weight: 400;
@@ -3545,11 +3545,11 @@
     color: var(--bad);
   }
   .net-unit {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-variant-numeric: normal;
     font-size: 12px;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .form-label-row {
     display: flex;
@@ -3587,7 +3587,7 @@
     min-width: 0;
   }
   .break-sep {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-weight: 600;
     flex-shrink: 0;
   }
@@ -3599,7 +3599,7 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.5rem 0.625rem;
-    background: var(--bg-card);
+    background: var(--card);
     border-radius: 6px;
     font-size: 0.8125rem;
   }
@@ -3629,7 +3629,7 @@
     bottom: 100%;
     left: 0;
     background: var(--text);
-    color: #fff;
+    color: var(--card);
     font-size: 0.75rem;
     line-height: 1.4;
     padding: 0.5rem 0.75rem;
