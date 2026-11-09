@@ -244,6 +244,10 @@ export default defineConfig({
       //     built app and the axe scans); tenant fixture plus API-created people, requests, plans,
       //     a holiday and opening hours, every date computed from the clock
       //
+      // Issue #843 (D-843-11) added a fifteenth file:
+      //   - narrow-648-843.spec.ts (#648: the /shifts week header and the /admin/employees table fit
+      //     360/390 px; employee list search and sort in the URL); tenant fixture only, no seed
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -264,6 +268,7 @@ export default defineConfig({
         /role-editor-visibility-710\.spec\.ts/,
         /push-pwa\.spec\.ts/,
         /leave-area-840\.spec\.ts/,
+        /narrow-648-843\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
