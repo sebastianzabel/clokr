@@ -5,6 +5,7 @@ import { API_KEY_SUBJECT_PREFIX, accessContextFromRequest } from "../access-cont
 import { contextSalonIds, ownRoleNames } from "../facade/role-assignments";
 import { isMultiSalonTenant, listSalons } from "../facade/salons";
 import { packagesForDisplay } from "../tenant-packages";
+import { PERSONAL_EMAIL_OPT_OUT_FIELDS } from "../notification-email-policy";
 import { LEGACY_UI_THEME_IDS, UI_THEME_IDS, normalizeUiTheme, type UiThemeId } from "../ui-theme";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
@@ -17,10 +18,17 @@ const themeInput = z.enum([...UI_THEME_IDS, ...LEGACY_UI_THEME_IDS]).transform(n
 const modeEnum = z.enum(["light", "dark"]);
 const languageEnum = z.enum(["de", "en"]);
 
+// Issue #602 (Phase 851): the e-mail groups the person switched off (the tenant toggle fields of the
+// "toggle" policies; never an "always" type). The whole list is replaced on every write.
+const emailOptOutInput = z
+  .array(z.enum(PERSONAL_EMAIL_OPT_OUT_FIELDS))
+  .max(PERSONAL_EMAIL_OPT_OUT_FIELDS.length);
+
 const updatePreferencesSchema = z.object({
   theme: themeInput.optional(),
   mode: modeEnum.optional(),
   language: languageEnum.optional(),
+  emailOptOut: emailOptOutInput.optional(),
 });
 
 // Phase 110 (D-10/AK-10): the version string is echoed back to the client and stored, so it is
@@ -35,12 +43,14 @@ interface UiPreferences {
   theme: UiThemeId;
   mode: z.infer<typeof modeEnum>;
   language: z.infer<typeof languageEnum>;
+  emailOptOut: z.infer<typeof emailOptOutInput>;
 }
 
 const DEFAULT_PREFERENCES: UiPreferences = {
   theme: "pflaume",
   mode: "light",
   language: "de",
+  emailOptOut: [],
 };
 
 /**
@@ -58,6 +68,11 @@ function mergePreferences(stored: unknown): UiPreferences {
     language: languageEnum.safeParse(partial.language).success
       ? (partial.language as UiPreferences["language"])
       : DEFAULT_PREFERENCES.language,
+    emailOptOut: Array.isArray(partial.emailOptOut)
+      ? [...new Set(partial.emailOptOut)].filter((v): v is UiPreferences["emailOptOut"][number] =>
+          (PERSONAL_EMAIL_OPT_OUT_FIELDS as readonly unknown[]).includes(v),
+        )
+      : [],
   };
 }
 

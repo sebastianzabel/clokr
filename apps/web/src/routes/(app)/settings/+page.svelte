@@ -12,6 +12,7 @@
   import Spinner from "$components/ui/Spinner.svelte";
   import AppearanceSettings from "$components/settings/AppearanceSettings.svelte";
   import MyWorkSettings from "$components/settings/MyWorkSettings.svelte";
+  import EmailNotificationSettings from "$components/settings/EmailNotificationSettings.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
   import PasswordStrength from "$components/ui/PasswordStrength.svelte";
   import PushSettings from "$components/settings/PushSettings.svelte";
@@ -194,6 +195,7 @@
   <div class="profile-grid">
     <div class="profile-col">
       <MyWorkSettings />
+      <EmailNotificationSettings />
       <!-- Notifications: push per device and the shift reminders (Issue #608/#609) -->
       <PushSettings />
       <ReminderSettings />
