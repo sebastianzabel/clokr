@@ -115,6 +115,41 @@ beforeEach(() => {
   onSaveDefaultsOnly.mockResolvedValue(undefined);
 });
 
+describe("BulkApplyDialog - loading (#843 D-843-07)", () => {
+  it("shows the Skeleton, not a loading sentence, until the first preview arrives", async () => {
+    let resolve!: (p: BulkApplyPreview) => void;
+    loadPreview.mockReturnValue(
+      new Promise<BulkApplyPreview>((r) => {
+        resolve = r;
+      }),
+    );
+    mount();
+    expect(screen.getByRole("status", { name: "Wird geladen" })).toBeTruthy();
+    expect(screen.queryByText(/Vorschau wird geladen/)).toBeNull();
+    expect((confirmButton() as HTMLButtonElement).disabled).toBe(true);
+    resolve(preview());
+    await screen.findByText("Probe Eins");
+    expect(screen.queryByRole("status", { name: "Wird geladen" })).toBeNull();
+  });
+
+  it("shows the Skeleton again while a changed date reloads, with the date select kept", async () => {
+    mount();
+    await screen.findByText("Probe Eins");
+    let resolve!: (p: BulkApplyPreview) => void;
+    loadPreview.mockReturnValueOnce(
+      new Promise<BulkApplyPreview>((r) => {
+        resolve = r;
+      }),
+    );
+    const select = screen.getByLabelText("Gültig ab") as HTMLSelectElement;
+    await fireEvent.change(select, { target: { value: "2026-12-01" } });
+    await screen.findByRole("status", { name: "Wird geladen" });
+    expect((screen.getByLabelText("Gültig ab") as HTMLSelectElement).disabled).toBe(true);
+    resolve(preview({ effectiveFrom: "2026-12-01" }));
+    await screen.findByText("2 Verträge werden ab 01.12.2026 geändert");
+  });
+});
+
 describe("BulkApplyDialog", () => {
   it("loads the preview once on open and pre-ticks exactly defaultSelected", async () => {
     mount();
