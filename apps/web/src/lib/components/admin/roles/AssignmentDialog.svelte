@@ -16,6 +16,11 @@
     type AssignmentScope,
     type RoleAssignment,
   } from "$lib/api/roles";
+  import {
+    SCOPE_TENANT_LABEL,
+    UNKNOWN_PERSON_LABEL,
+    UNKNOWN_SALON_LABEL,
+  } from "$lib/roles/assignment-label";
 
   interface Props {
     open: boolean;
@@ -116,7 +121,7 @@
       errorText =
         err instanceof ApiError
           ? err.message
-          : "Die Anfrage ist fehlgeschlagen. Bitte erneut versuchen.";
+          : "Die Anfrage ist fehlgeschlagen. Bitte versuch es noch einmal.";
     } finally {
       saving = false;
     }
@@ -144,7 +149,7 @@
       <legend class="form-label">Geltungsbereich</legend>
       <label class="assignment-choice">
         <input type="radio" name="assignment-scope" value="TENANT" bind:group={scopeType} />
-        <span>Ganzer Mandant</span>
+        <span>{SCOPE_TENANT_LABEL}</span>
       </label>
       <label class="assignment-choice">
         <input type="radio" name="assignment-scope" value="SALONS" bind:group={scopeType} />
@@ -179,7 +184,7 @@
                 checked
                 onchange={(e) => (salonIds = toggle(salonIds, id, e.currentTarget.checked))}
               />
-              <span>Salon nicht mehr aktiv</span>
+              <span>{UNKNOWN_SALON_LABEL}</span>
             </label>
           {/each}
           {#if salons.length === 0 && unknownSalonIds.length === 0}
@@ -217,7 +222,7 @@
               checked
               onchange={(e) => (employeeIds = toggle(employeeIds, id, e.currentTarget.checked))}
             />
-            <span>Person nicht mehr verfügbar</span>
+            <span>{UNKNOWN_PERSON_LABEL}</span>
           </label>
         {/each}
       </fieldset>
@@ -225,8 +230,8 @@
 
     {#if showMandantHint}
       <div class="callout brand" role="note">
-        Diese Rolle enthält Rechte, die nur bei einer Zuweisung für den ganzen Mandanten wirken. Für
-        Salons oder Personen gelten diese Rechte nicht.
+        Diese Rolle enthält Rechte, die nur bei einer Zuweisung für das ganze Unternehmen wirken.
+        Für Salons oder Personen gelten diese Rechte nicht.
       </div>
     {/if}
   </div>

@@ -106,6 +106,8 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/components/admin/roles/RoleEditor.svelte",
   "apps/web/src/lib/components/admin/roles/AssignmentsTab.svelte",
   "apps/web/src/lib/components/admin/roles/AssignmentDialog.svelte",
+  "apps/web/src/lib/components/admin/roles/PersonRoleAssignments.svelte", // #580
+  "apps/web/src/lib/roles/assignment-label.ts", // #580
   "apps/web/src/lib/components/ui/CommandPalette.svelte",
   // Phase 84 (#84): the Team block's salon filter and trend-card decisions.
   "apps/web/src/lib/dashboard/team-view.ts",
