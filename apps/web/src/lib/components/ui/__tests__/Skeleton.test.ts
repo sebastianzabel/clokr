@@ -79,10 +79,10 @@ describe("Skeleton (843-13)", () => {
   });
 
   it("stops the shimmer under reduced motion", () => {
-    const m = css.match(
-      /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.skeleton\s*\{([^}]*)\}/,
-    );
-    expect(m).not.toBeNull();
-    expect(m?.[1]).toMatch(/animation:\s*none/);
+    // The one Reduced Motion block of app.css carries the rule (the motion test reads its first block).
+    const start = css.indexOf("@media (prefers-reduced-motion: reduce) {");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const body = css.slice(start, css.indexOf("\n}\n", start));
+    expect(body).toMatch(/\.skeleton[^{]*\{[^}]*animation:\s*none/);
   });
 });

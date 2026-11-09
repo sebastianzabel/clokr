@@ -667,7 +667,7 @@ select.form-input {
 /* ─── Loading Skeleton (Issue #843, block 10) ───────────────────────────
    One block: the shimmer base, the legacy variants the existing pages use (.skeleton-text,
    .skeleton-heading, .skeleton-stat, .skeleton-card) and the shapes of Skeleton.svelte (line, block,
-   row, card, inline). The shimmer stops under reduced motion; the bars stay as a static placeholder. */
+   row, card, inline). The shimmer stops under reduced motion (see the Reduced Motion block). */
 .skeleton {
   background: linear-gradient(90deg, var(--sunk) 25%, var(--line) 50%, var(--sunk) 75%);
   background-size: 200% 100%;
@@ -681,12 +681,6 @@ select.form-input {
   }
   100% {
     background-position: -200% 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .skeleton {
-    animation: none;
   }
 }
 
@@ -1557,11 +1551,6 @@ textarea.form-input {
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s infinite;
 }
-@media (prefers-reduced-motion: reduce) {
-  .cal-cell.skeleton {
-    animation: none;
-  }
-}
 /* WR-03: no !important — higher specificity handles conflict with status classes */
 .cal-cell.cal-other:not(.cal-selected) {
   opacity: 0.35;
@@ -1922,6 +1911,12 @@ textarea.form-input {
      `backwards` fill) for up to STAGGER_MS x position before it appears. */
   .card-animate,
   .fade-up {
+    animation: none !important;
+  }
+
+  /* Issue #843 (block 10): the loading shimmer stands still; the bars stay as a static placeholder. */
+  .skeleton,
+  .cal-cell.skeleton {
     animation: none !important;
   }
 }
