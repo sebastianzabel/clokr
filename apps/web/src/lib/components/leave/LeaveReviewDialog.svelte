@@ -36,6 +36,7 @@
   } from "$lib/phorest/appointmentCollisions";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import { salonContext, showSalonOptions } from "$stores/salon-context"; // Issue #853: salon names, one module (#82)
   import {
     LEAVE_TYPE_OPTIONS,
     NEUTRAL_CHIP_LABEL,
@@ -108,7 +109,15 @@
   // ── Issue #853 (D-853-08): optional decision facts ──────────────────────────
   // `null` = not shown (flag off, not loaded yet, or the read was refused). A refusal or a network
   // error omits the line silently; no error text is ever rendered for these lines.
-  let homeSalonName = $state<string | null>(null);
+  let homeSalonId = $state<string | null>(null);
+  // The name comes from the salon context store (the only module that reads /me/context, #82),
+  // gated by its one rule `showSalonOptions` (#64): a salon outside the caller's reach is not in
+  // its list, so the line is omitted for it.
+  let homeSalonName = $derived(
+    showSalonOptions($salonContext)
+      ? ($salonContext.salons.find((x) => x.id === homeSalonId)?.name ?? null)
+      : null,
+  );
   let vacationFact = $state<{ label: string; value: string } | null>(null);
   let shiftFactLines = $state<string[] | null>(null);
   // The request the facts belong to; a late answer for another request is discarded (T-853-15).
@@ -162,7 +171,7 @@
   // Issue #853 (D-853-08): the optional facts. One effect per open request; each read runs only
   // behind its own flag, and every answer is compared with the request id it was asked for.
   $effect(() => {
-    homeSalonName = null;
+    homeSalonId = null;
     vacationFact = null;
     shiftFactLines = null;
     if (!open || !request) {
@@ -183,15 +192,10 @@
     const current = () => factsFor === rid;
 
     if (wantEmployee) {
-      Promise.all([
-        api.get<{ assignments: SalonAssignment[] }>(`/employees/${employeeId}/salon-assignments`),
-        api.get<{ isMultiSalon: boolean; salons: { id: string; name: string }[] }>("/me/context"),
-      ])
-        .then(([assigned, context]) => {
-          if (!current() || context.isMultiSalon !== true) return;
-          const salonId = homeSalonIdOn(assigned.assignments, startDate);
-          const name = context.salons.find((x) => x.id === salonId)?.name;
-          if (name) homeSalonName = name;
+      api
+        .get<{ assignments: SalonAssignment[] }>(`/employees/${employeeId}/salon-assignments`)
+        .then((assigned) => {
+          if (current()) homeSalonId = homeSalonIdOn(assigned.assignments, startDate);
         })
         .catch(() => {});
     }

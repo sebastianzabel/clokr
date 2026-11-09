@@ -34,6 +34,7 @@ import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import LeaveReviewDialog from "../LeaveReviewDialog.svelte";
 import { toasts } from "$stores/toast";
+import { salonContext } from "$stores/salon-context";
 import { showsBurlgSection7Notice, type LeaveReviewRequest } from "$lib/leave/leave-review";
 import { LEAVE_TYPES, NEUTRAL_CHIP_LABEL, SICK_CODES } from "$lib/leave/team-calendar-visibility";
 
@@ -552,6 +553,10 @@ describe("LeaveReviewDialog - decision facts (#853)", () => {
 
   const paths = () => apiGet.mock.calls.map((c) => String(c[0]));
 
+  beforeEach(() => {
+    salonContext.reset();
+  });
+
   it("with all three props false only /leave/overlap is read and no fact line renders", async () => {
     answerWith({});
     renderFacts({});
@@ -562,41 +567,66 @@ describe("LeaveReviewDialog - decision facts (#853)", () => {
     expect(screen.queryByTestId("review-fact-shifts")).toBeNull();
   });
 
+  /** The salon names come from the salon context store, the only module reading /me/context. */
+  async function loadSalonContext(context: { isMultiSalon: boolean; salons: unknown[] }) {
+    apiGet.mockResolvedValueOnce({
+      tenant: { id: "t1", name: "Test" },
+      homeSalonId: null,
+      ...context,
+    });
+    await salonContext.load("u1", { force: true });
+    apiGet.mockClear();
+  }
+
   it("Stammsalon: shown with canReadEmployee when the name resolves in a multi-salon tenant", async () => {
-    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS, "/me/context": CONTEXT });
+    await loadSalonContext(CONTEXT);
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
     renderFacts({ canReadEmployee: true });
     const line = await screen.findByTestId("review-fact-home-salon");
     expect(line.textContent).toContain("Stammsalon");
     expect(line.textContent).toContain("Salon Nord");
+    // The dialog itself never reads /me/context.
+    expect(paths()).not.toContain("/me/context");
   });
 
   it("Stammsalon: absent in a single-salon tenant", async () => {
-    answerWith({
-      "/employees/emp-1/salon-assignments": ASSIGNMENTS,
-      "/me/context": { ...CONTEXT, isMultiSalon: false },
-    });
+    await loadSalonContext({ ...CONTEXT, isMultiSalon: false });
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
     renderFacts({ canReadEmployee: true });
-    await waitFor(() => expect(paths()).toContain("/me/context"));
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+  });
+
+  it("Stammsalon: absent when the caller reaches only one salon (no choice, nothing to tell apart)", async () => {
+    await loadSalonContext({ ...CONTEXT, salons: [{ id: "salon-nord", name: "Salon Nord" }] });
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
   });
 
   it("Stammsalon: absent when the salon is outside the caller's reachable list", async () => {
-    answerWith({
-      "/employees/emp-1/salon-assignments": ASSIGNMENTS,
-      "/me/context": { ...CONTEXT, salons: [{ id: "salon-ost", name: "Salon Ost" }] },
-    });
+    await loadSalonContext({ ...CONTEXT, salons: [{ id: "salon-ost", name: "Salon Ost" }] });
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
     renderFacts({ canReadEmployee: true });
-    await waitFor(() => expect(paths()).toContain("/me/context"));
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+  });
+
+  it("Stammsalon: absent while the salon context is not loaded", async () => {
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
   });
 
   it("Stammsalon: absent after a 404 answer, and no error text appears", async () => {
-    answerWith({
-      "/employees/emp-1/salon-assignments": () => Promise.reject({ status: 404 }),
-      "/me/context": CONTEXT,
-    });
+    await loadSalonContext(CONTEXT);
+    answerWith({ "/employees/emp-1/salon-assignments": () => Promise.reject({ status: 404 }) });
     renderFacts({ canReadEmployee: true });
     await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
     await new Promise((r) => setTimeout(r, 0));
