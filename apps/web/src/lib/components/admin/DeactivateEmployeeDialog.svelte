@@ -322,7 +322,7 @@
   }
   .dx-figure dt {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .dx-figure dd {
     margin: 0;
@@ -336,10 +336,10 @@
   .dx-figure dd .dx-note {
     font-size: 12px;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .dx-absences {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding-top: 12px;
     display: flex;
     flex-direction: column;
@@ -349,7 +349,7 @@
     margin: 0;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .dx-absences .form-hint {
     margin: 0;
@@ -368,9 +368,9 @@
     align-items: baseline;
     gap: 2px 10px;
     padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
   }
   .dx-type {
     font-size: 14px;
@@ -379,7 +379,7 @@
   }
   .dx-period {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .dx-action {
     font-size: 13px;
@@ -388,6 +388,6 @@
   .dx-reason {
     flex-basis: 100%;
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 </style>

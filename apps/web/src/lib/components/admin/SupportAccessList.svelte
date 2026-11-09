@@ -126,7 +126,7 @@
     margin: 0 0 12px;
     font-size: 14px;
     line-height: 1.55;
-    color: var(--text-muted);
+    color: var(--text-2);
     max-width: 70ch;
   }
 
@@ -142,7 +142,7 @@
 
   .sa-skel-row {
     height: 56px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
 
   .sa-list {
@@ -154,7 +154,7 @@
   }
 
   .sa-list li {
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .sa-list li:last-child {
@@ -167,7 +167,7 @@
     align-items: center;
     gap: 16px;
     padding: 12px 8px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     color: var(--text);
     /* The global inline-link recipe (app.css, a:not(.btn)...) outweighs a plain class and would underline
        every text of the row; only the operator name carries the link affordance. */
@@ -177,7 +177,7 @@
 
   .sa-row:hover,
   .sa-row:focus-visible {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     outline: none;
   }
 
@@ -195,7 +195,7 @@
   .sa-operator {
     font-weight: 600;
     text-decoration-line: underline;
-    text-decoration-color: var(--brand-light);
+    text-decoration-color: var(--brand);
     text-underline-offset: 2px;
     text-decoration-thickness: 1px;
   }
@@ -207,7 +207,7 @@
 
   .sa-reason {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -230,12 +230,12 @@
 
   .sa-muted {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .sa-count {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     white-space: nowrap;
     text-align: right;
   }

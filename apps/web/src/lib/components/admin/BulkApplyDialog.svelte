@@ -288,9 +288,9 @@
     align-items: flex-start;
     gap: 12px;
     padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
     cursor: pointer;
   }
   .bulk-row-on {
@@ -322,7 +322,7 @@
   }
   .bulk-number {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .bulk-change {
     font-size: 13px;
@@ -331,8 +331,8 @@
   }
   .bulk-empty {
     padding: 12px 14px;
-    border: 1px dashed var(--border-strong);
-    border-radius: var(--r-md);
+    border: 1px dashed var(--line-2);
+    border-radius: var(--r-control);
   }
   .bulk-empty-title {
     margin: 0 0 4px;
@@ -344,7 +344,7 @@
     margin: 0;
   }
   .bulk-skipped {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding-top: 12px;
     display: flex;
     flex-direction: column;
@@ -354,7 +354,7 @@
     margin: 0;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .bulk-skipped-group p {
     margin: 0;
@@ -365,7 +365,7 @@
   }
   .bulk-skipped-names {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
   }
 </style>

@@ -82,10 +82,10 @@
 
 <style>
   section {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-md);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    box-shadow: var(--shadow);
     overflow: hidden;
   }
 
@@ -97,7 +97,7 @@
   }
 
   .section-hd {
-    padding: var(--pad-card) var(--pad-card) var(--s-3);
+    padding: var(--s-6) var(--s-6) var(--s-3);
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -110,7 +110,7 @@
   }
 
   .section-title {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -123,10 +123,10 @@
   }
 
   .section-sub {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: var(--s-1);
     line-height: 1.5;
   }
@@ -139,19 +139,19 @@
   }
 
   .section-body {
-    padding: var(--s-3) var(--pad-card) var(--pad-card);
+    padding: var(--s-3) var(--s-6) var(--s-6);
   }
 
   .section-body--no-header {
-    padding: var(--pad-card);
+    padding: var(--s-6);
   }
 
   .section-footer {
-    border-top: 1px solid var(--border);
-    padding: var(--s-4) var(--pad-card);
+    border-top: 1px solid var(--line);
+    padding: var(--s-4) var(--s-6);
     display: flex;
     align-items: center;
     gap: var(--s-3);
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 </style>

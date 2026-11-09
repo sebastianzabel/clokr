@@ -7,7 +7,7 @@
   When both `steps` and `currentStep` are provided the step indicator is shown
   above the form — an ordered list of numbered circles connected by horizontal
   lines. Active step: --brand background with white number. Completed steps
-  (index < currentStep): --good background with a checkmark. Upcoming steps:
+  (index < currentStep): --ok background with a checkmark. Upcoming steps:
   muted border + text.
 
   Props:
@@ -269,14 +269,14 @@
   .step-connector {
     width: var(--s-8);
     height: 2px;
-    background: var(--border);
+    background: var(--line);
     flex-shrink: 0;
     transition: background 0.2s var(--ease);
     margin-right: var(--s-2);
   }
 
   .step--completed .step-connector {
-    background: var(--good);
+    background: var(--ok);
   }
 
   /* Step circle — 24px diameter */
@@ -288,12 +288,12 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 600;
-    border: 2px solid var(--border);
-    color: var(--text-faint);
-    background: var(--bg-card);
+    border: 2px solid var(--line);
+    color: var(--text-3);
+    background: var(--card);
     transition:
       background 0.2s var(--ease),
       border-color 0.2s var(--ease),
@@ -303,21 +303,21 @@
   .step--active .step-circle {
     background: var(--brand);
     border-color: var(--brand);
-    color: var(--text-on-brand);
+    color: var(--brand-ink);
   }
 
   .step--completed .step-circle {
-    background: var(--good);
-    border-color: var(--good);
-    color: #ffffff;
+    background: var(--ok);
+    border-color: var(--ok);
+    color: var(--card);
   }
 
   /* Step label */
   .step-label {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 500;
-    color: var(--text-faint);
+    color: var(--text-3);
     white-space: nowrap;
     transition: color 0.2s var(--ease);
   }
@@ -328,7 +328,7 @@
   }
 
   .step--completed .step-label {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* Responsive: hide labels on small screens, keep circles + connectors */
