@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -302,7 +303,7 @@
       : "Stammdaten, Öffnungszeiten und Feiertage dieses Salons"}
     view="detail"
     crumbs={[
-      { label: "Salons", href: "/admin/salons" },
+      { label: pageLabel("/admin/salons"), href: "/admin/salons" },
       { label: salon ? salon.name : "Neuer Salon" },
     ]}
   >

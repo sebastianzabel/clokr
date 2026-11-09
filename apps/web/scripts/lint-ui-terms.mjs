@@ -11,9 +11,9 @@
  *     SKIP_ATTRS, data-* and event handlers), and string literals inside `{…}` tags and attribute
  *     expressions;
  *   - .svelte `<script>` blocks and .ts modules: string and template literals that look like
- *     prose (contain whitespace and a letter), plus a literal that is ONE capitalized word such as
- *     a nav label ("Inbox"). A control value such as "SHIFT_BASED" has no whitespace and is no
- *     capitalized word, so code may compare enum values freely.
+ *     prose (contain whitespace and a letter) and every other literal with a letter that is no
+ *     control token (see isControlToken: identifiers, paths, enum values, permission keys) — so
+ *     a label such as "Inbox" or "Σ" is read, while code may compare "SHIFT_BASED" freely.
  * Never checked: comments, import specifiers, `console.*` arguments, type positions, test files.
  *
  * Scope: apps/web/src/routes and apps/web/src/lib (every .svelte and .ts file, tests excluded),
@@ -164,11 +164,20 @@ export function listScannedFiles() {
 
 const looksLikeProse = (/** @type {string} */ text) =>
   /\s/.test(text.trim()) && /\p{L}/u.test(text);
-/** One capitalized word ("Inbox", "Team-Zeiten") — a label, even without whitespace. */
-const isCapitalizedWord = (/** @type {string} */ text) =>
-  /^\p{Lu}\p{Ll}[\p{L}-]*$/u.test(text.trim());
+/** A control value, never shown: a lowercase identifier, key or path ("tenant", "/tenants/x",
+ *  "leave-type"), an enum value ("SHIFT_BASED", "TENANT"), a permission key or a camel/PascalCase
+ *  identifier. */
+const isControlToken = (/** @type {string} */ text) =>
+  /^[a-z0-9_$./:#?&=%@*+~-]*$/.test(text) ||
+  /^[A-Z0-9]+(?:_[A-Z0-9]+)+$/.test(text) ||
+  /^[A-Z][A-Z0-9]{2,}$/.test(text) || // a one-word enum value ("TENANT"); "MA" stays shown
+  /^[a-z0-9-]+(?::[a-zA-Z0-9-]+)+$/.test(text) || // a permission key ("audit-log:read:ZUGEWIESEN")
+  /^[a-z]+(?:[A-Z][a-z0-9]*)+$/.test(text) ||
+  /^(?:[A-Z][a-z0-9]+){2,}$/.test(text);
+/** Shown unless it is a control token: prose, a label, or any other token with a letter
+ *  ("Σ", "MA", "Mandant:", "Inbox.") — review WR-02. */
 const isShownLiteral = (/** @type {string} */ text) =>
-  looksLikeProse(text) || isCapitalizedWord(text);
+  looksLikeProse(text) || (/\p{L}/u.test(text) && !isControlToken(text.trim()));
 
 /** Shown literals of a TypeScript source; `lineBase` is the 1-based line of the source's first line. */
 /** @typedef {(line: number, text: string) => void} Push */

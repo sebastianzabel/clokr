@@ -42,11 +42,13 @@ describe("Issue #574 — § 11 JArbSchG for every person under 18", () => {
 
   it("names § 11 JArbSchG in the hint, the pill and the placeholders — never § 9", () => {
     expect(DETAIL.replace(/\s+/g, " ")).toContain(
-      "Für Personen unter 18 Jahren gelten bei den Pausen die Regeln nach § 11 JArbSchG (30 / 60 Min).",
+      "Für Personen unter 18 Jahren gelten bei den Pausen die Regeln nach § 11 JArbSchG: mehr als 4,5 Stunden 30 Min, mehr als 6 Stunden 60 Min.",
     );
     expect(DETAIL).toContain("Unter 18 — Pausen nach § 11 JArbSchG");
-    expect(DETAIL).toContain('"30 Min — nach § 11 JArbSchG"');
-    expect(DETAIL).toContain('"60 Min — nach § 11 JArbSchG"');
+    // § 11 Abs. 1: 60 Min above 6 h — the ">6h" and the ">9h" placeholder both say 60 (review WR-05)
+    expect(DETAIL.split('"60 Min — nach § 11 JArbSchG"').length - 1).toBe(2);
+    expect(DETAIL).not.toContain('"30 Min — nach § 11 JArbSchG"');
+    expect(DETAIL).toMatch(/eBreakOver6hOverride = "60";\s*eBreakOver9hOverride = "60";/);
     expect(DETAIL).not.toMatch(/JArbSchG\s*§\s*9|§\s*9\s*JArbSchG/);
   });
 });

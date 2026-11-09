@@ -31,7 +31,7 @@ describe("integrations page - pairing guide (Issue #610)", () => {
   it("renders it inside the Section 'Handys per QR-Code koppeln' after 'Präsenz-Quellen'", () => {
     const sources = sectionStart("Präsenz-Quellen");
     const guide = sectionStart("Handys per QR-Code koppeln");
-    const devices = sectionStart("WiFi-Geräteliste");
+    const devices = sectionStart("WLAN-Geräteliste");
     expect(sources).toBeGreaterThan(-1);
     expect(guide).toBeGreaterThan(sources);
     expect(devices).toBeGreaterThan(guide);

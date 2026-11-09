@@ -126,3 +126,23 @@ describe("page-labels: H1 and tab title of every page", () => {
     });
   }
 });
+
+describe("page-labels: breadcrumbs of detail pages (review WR-04)", () => {
+  const DETAIL_PAGES = [
+    "routes/(app)/admin/support-access/[id]/+page.svelte",
+    "routes/(app)/admin/shutdowns/[id]/+page.svelte",
+    "routes/(app)/admin/audit/[id]/+page.svelte",
+    "routes/(app)/admin/salons/[id]/+page.svelte",
+    "routes/(app)/admin/employees/[id]/+page.svelte",
+    "routes/(app)/admin/availability/[employeeId]/+page.svelte",
+  ];
+  for (const rel of DETAIL_PAGES) {
+    it(`${rel}: a crumb to a named page carries that page's name`, () => {
+      const source = read(rel);
+      const crumbs = [...source.matchAll(/\{\s*label:\s*([^,]+),\s*href:\s*"([^"]+)"\s*\}/g)];
+      const named = crumbs.filter(([, , href]) => href in labels);
+      expect(named.length, `${rel}: no crumb to a named page`).toBeGreaterThan(0);
+      for (const [, label, href] of named) expect(label.trim()).toBe(`pageLabel("${href}")`);
+    });
+  }
+});

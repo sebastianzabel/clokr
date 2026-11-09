@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   // Phase 260523-0qf, Task 3 — per-employee availability detail page.
   // Accessed via /admin/availability/[employeeId].
   //
@@ -199,7 +200,7 @@
   title={employee ? `${employee.firstName} ${employee.lastName}` : "Verfügbarkeit"}
   sub="Wann kann dieser Mitarbeiter arbeiten? Urlaub und Abwesenheit werden automatisch berücksichtigt."
   crumbs={[
-    { label: "Verfügbarkeit", href: "/admin/availability" },
+    { label: pageLabel("/admin/availability"), href: "/admin/availability" },
     { label: employee ? `${employee.firstName} ${employee.lastName}` : "Detail" },
   ]}
 >

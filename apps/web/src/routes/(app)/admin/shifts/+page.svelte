@@ -551,7 +551,7 @@
            registry; only this Section carries a dirty prop. -->
       <Section
         title="Schicht-Muster (Wochenrhythmus)"
-        sub="Wiederkehrendes Wochenmuster je Person. Nur Mitarbeitende mit Arbeitszeitmodell „Nach Schichtplan“ erscheinen hier. Änderungen werden erst beim Klick auf „Muster speichern&quot; übernommen."
+        sub="Wiederkehrendes Wochenmuster je Person. Nur Mitarbeitende mit Arbeitszeitmodell „Nach Schichtplan“ erscheinen hier. Änderungen werden erst beim Klick auf „Muster speichern“ übernommen."
         dirty={patternsDirty}
       >
         {#if shiftEmployees.length === 0}

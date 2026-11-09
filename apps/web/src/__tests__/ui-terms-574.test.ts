@@ -73,6 +73,20 @@ describe("lint-ui-terms: every shown-text shape is read", () => {
       "sigma",
     );
   });
+  it("single-token labels that are not control values (review WR-02)", () => {
+    expect(termsOf(MODULE, `export const HEADERS = ["Σ", "Name"];`)).toContain("sigma");
+    expect(termsOf(MODULE, `export const unit = "MA";`)).toContain("ma");
+    expect(termsOf(MODULE, `export const label = "Mandant:";`)).toContain("mandant");
+    expect(termsOf(ROUTE, `<KPIStat unit="MA" />`)).toContain("ma");
+  });
+  it("keeps control tokens out: enum values, permission keys, paths, identifiers", () => {
+    expect(
+      scanSource(
+        MODULE,
+        `export const x = ["TENANT", "MANDANT", "tenant-settings:update:ZUGEWIESEN", "/tenants/a", "tenantId", "TenantConfig"];`,
+      ),
+    ).toEqual([]);
+  });
   it("a capitalized single-word label in a .ts module", () => {
     expect(termsOf(MODULE, `export const NAV = [{ href: "/inbox", label: "Inbox" }];`)).toContain(
       "inbox",

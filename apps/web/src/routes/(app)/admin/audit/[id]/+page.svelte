@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
   import { page } from "$app/stores";
   import { onMount } from "svelte";
@@ -74,7 +75,7 @@
     sub="Vollständiger Eintrag aus dem Audit-Trail"
     crumbs={[
       { label: "Compliance" },
-      { label: "Audit", href: "/admin/audit" },
+      { label: pageLabel("/admin/audit"), href: "/admin/audit" },
       { label: `Eintrag #${entry.id.slice(0, 8)}` },
     ]}
   >

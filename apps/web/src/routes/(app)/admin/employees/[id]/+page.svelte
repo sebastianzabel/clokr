@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
@@ -956,7 +957,9 @@
 
   // Phase 65 / Issue #574 — one-click § 11 JArbSchG suggestion for a person under 18
   function applyUnder18Suggestion() {
-    eBreakOver6hOverride = "30";
+    // § 11 Abs. 1 JArbSchG: 30 Min above 4.5 h, 60 Min above 6 h — so both the ">6h" and the
+    // ">9h" field carry 60; the 4.5 h band is enforced by the API's break regime for minors.
+    eBreakOver6hOverride = "60";
     eBreakOver9hOverride = "60";
   }
 
@@ -1949,7 +1952,7 @@
     sub={eEmployeeNumber ? `Personalnummer: ${eEmployeeNumber}` : undefined}
     crumbs={[
       { label: "Personal" },
-      { label: "Mitarbeitende", href: "/admin/employees" },
+      { label: pageLabel("/admin/employees"), href: "/admin/employees" },
       { label: displayName || "Mitarbeiter" },
     ]}
     {tabs}
@@ -2071,8 +2074,8 @@
               <label class="form-label" for="e-birthdate">Geburtsdatum (optional)</label>
               <input id="e-birthdate" type="date" bind:value={eBirthDate} class="input" />
               <p class="hint">
-                Für Personen unter 18 Jahren gelten bei den Pausen die Regeln nach § 11 JArbSchG (30
-                / 60 Min).
+                Für Personen unter 18 Jahren gelten bei den Pausen die Regeln nach § 11 JArbSchG:
+                mehr als 4,5 Stunden 30 Min, mehr als 6 Stunden 60 Min.
               </p>
               {#if azubiMissingBirthDate}
                 <div class="callout">{MISSING_BIRTH_DATE_HINT}</div>
@@ -2733,7 +2736,7 @@
                     class="btn btn-secondary"
                     onclick={applyUnder18Suggestion}
                     data-testid="pausendauer-azubi-apply"
-                    >Vorschlag nach § 11 JArbSchG übernehmen (30 / 60 Min)</button
+                    >Vorschlag nach § 11 JArbSchG übernehmen (60 Min ab 6 h)</button
                   >
                 </div>
               {/if}
@@ -2754,7 +2757,7 @@
                 step="1"
                 bind:value={eBreakOver6hOverride}
                 placeholder={isUnder18
-                  ? "30 Min — nach § 11 JArbSchG"
+                  ? "60 Min — nach § 11 JArbSchG"
                   : `Standard: ${tenantBreakConfig?.defaultBreakOver6h ?? 30} Min`}
                 class="form-input"
                 disabled={pausendauerSaving}

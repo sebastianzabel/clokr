@@ -495,7 +495,7 @@
         <KPIStat
           label="Zuordnung"
           value={`${phMappedCount}/${phStaffTotal || 0}`}
-          unit="MA"
+          unit="Personen"
           progress={{
             value: phMappedCount,
             max: phStaffTotal || 1,

@@ -38,7 +38,7 @@
   let srcPageSize = $state(10);
   let pagedSources = $derived(sources.slice((srcPage - 1) * srcPageSize, srcPage * srcPageSize));
 
-  // ── Block 2: WiFi-Geräteliste ────────────────────────────────────────────
+  // ── Block 2: WLAN-Geräteliste ────────────────────────────────────────────
   interface Employee {
     id: string;
     firstName: string;
@@ -207,7 +207,7 @@
           : d,
       );
       if (result.optInAutoEnabled) {
-        toasts.success(`${name} zugewiesen — WiFi-Opt-In automatisch aktiviert`);
+        toasts.success(`${name} zugewiesen — WLAN-Präsenz automatisch eingeschaltet`);
         // Refresh opt-in overview so Block 3 reflects the new opt-in
         loadOptedIn();
       } else {
@@ -238,7 +238,7 @@
         d.mac === mac ? { ...d, assignedEmployeeId: null, assignedEmployeeName: null } : d,
       );
       if (result.optInAutoDisabled) {
-        toasts.success(`Zuweisung aufgehoben — WiFi-Opt-In für ${name} deaktiviert`);
+        toasts.success(`Zuweisung aufgehoben — WLAN-Präsenz für ${name} ausgeschaltet`);
         loadOptedIn();
       } else {
         toasts.success("Zuweisung aufgehoben");
@@ -376,8 +376,8 @@
     <PairingGuide />
   </Section>
 
-  <!-- ── Block 2: WiFi-Geräteliste ────────────────────────────────────── -->
-  <Section title="WiFi-Geräteliste" sub="Verbundene Geräte und ihre Zuweisungen">
+  <!-- ── Block 2: WLAN-Geräteliste ────────────────────────────────────── -->
+  <Section title="WLAN-Geräteliste" sub="Verbundene Geräte und ihre Zuweisungen">
     <div class="devices-toolbar">
       <div class="devices-toolbar-left">
         {#if sources.filter((s) => !s.revokedAt).length > 1}
