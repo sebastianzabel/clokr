@@ -6,7 +6,7 @@ The `int` environment is the integration / pre-production cluster for clokr. It 
 
 - **URL:** `https://clokr-int.example.com`
 - **Cluster:** k3s in the homelab
-- **Source of truth:** `https://github.com/sebastianzabel/clokr` (public), branch `release/1.9.x`
+- **Source of truth:** `https://github.com/getclokr/clokr` (public), branch `release/1.9.x`
 - **Helm chart:** `charts/clokr-app/` in the clokr repo (single umbrella chart)
 - **ArgoCD Application:** `argocd-apps/clokr-app.yaml` in the `git.internal/home/homelab` repo
 - **Version check:** manual `curl` of `/api/v1/version` after the int pin, see `docs/release-process.md` ("Getting the release onto int and prod")

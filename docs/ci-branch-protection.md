@@ -113,7 +113,7 @@ The command below is **idempotent** — safe to re-run at any time. It preserves
 gh api \
   --method PUT \
   -H "Accept: application/vnd.github+json" \
-  /repos/sebastianzabel/clokr/branches/main/protection \
+  /repos/getclokr/clokr/branches/main/protection \
   --input - <<'EOF'
 {
   "required_status_checks": {
@@ -142,7 +142,7 @@ EOF
 GitHub's branch-protection PUT API requires the **full** settings object — fields not included are reset to their defaults. Always snapshot the current state and copy any non-null fields into the PUT body before re-applying:
 
 ```bash
-gh api /repos/sebastianzabel/clokr/branches/main/protection > /tmp/branch-protection-before.json
+gh api /repos/getclokr/clokr/branches/main/protection > /tmp/branch-protection-before.json
 cat /tmp/branch-protection-before.json | jq '{required_pull_request_reviews, enforce_admins, restrictions}'
 ```
 
@@ -159,7 +159,7 @@ If `required_pull_request_reviews` is non-null (it is in Phase 70 pre-state), co
 The raw equivalent:
 
 ```bash
-gh api /repos/sebastianzabel/clokr/branches/main/protection \
+gh api /repos/getclokr/clokr/branches/main/protection \
   --jq '.required_status_checks.checks[].context' | sort
 ```
 
@@ -179,7 +179,7 @@ If output is empty or missing any of these → re-run the Apply command above.
 Lighthouse + axe-scan MUST NOT appear in the audit output during Phase 70:
 
 ```bash
-gh api /repos/sebastianzabel/clokr/branches/main/protection \
+gh api /repos/getclokr/clokr/branches/main/protection \
   --jq '.required_status_checks.checks[].context' | grep -cE '^(lighthouse|axe-scan)$'
 # Expected: 0
 ```

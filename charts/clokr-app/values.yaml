@@ -14,11 +14,11 @@ createNamespace: false
 
 image:
   registry: ghcr.io
-  repository: sebastianzabel
+  repository: getclokr
   tag: "latest" # overridden per env (values-int.yaml: "main"; values-prod.yaml: "vX.Y.Z")
   pullPolicy: Always
-  # NO imagePullSecrets — GHCR packages ghcr.io/sebastianzabel/clokr-{api,web}
-  # are PUBLIC (verified 2026-06-04 via `gh api user/packages`). See D-10.
+  # NO imagePullSecrets — GHCR packages ghcr.io/getclokr/clokr-{api,web} must be PUBLIC
+  # (D-10). Images up to v1.18.x live under ghcr.io/sebastianzabel (repo moved 09.11.2026).
 
 api:
   port: 4000

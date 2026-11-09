@@ -9,8 +9,8 @@
 
 ```bash
 # 1. Konfigurationsdateien herunterladen
-curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/docker-compose.prod.yml
-curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/getclokr/clokr/main/docker-compose.prod.yml
+curl -fsSLO https://raw.githubusercontent.com/getclokr/clokr/main/.env.example
 cp .env.example .env
 ```
 
@@ -84,6 +84,6 @@ docker compose -f docker-compose.prod.yml up -d
 
 ```bash
 # In .env — Tags ohne führendes `v`
-CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.12.0
-CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:1.12.0
+CLOKR_API_IMAGE=ghcr.io/getclokr/clokr-api:1.12.0
+CLOKR_WEB_IMAGE=ghcr.io/getclokr/clokr-web:1.12.0
 ```

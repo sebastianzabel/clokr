@@ -49,7 +49,7 @@ run on the same host or on any host that can reach the API port), `gh` logged in
 issues, 4 GB RAM and 2 vCPUs are enough for 300 people.
 
 ```bash
-git clone https://github.com/sebastianzabel/clokr.git && cd clokr
+git clone https://github.com/getclokr/clokr.git && cd clokr
 pnpm install --frozen-lockfile
 cd apps/sim
 cp sim.env.example sim.env
