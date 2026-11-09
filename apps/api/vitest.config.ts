@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import { TEST_DATABASE_WORKER_COUNT } from "./src/utils/test-database";
+import { DurationShardSequencer } from "./vitest.shard-sequencer";
 
 // Issue #172: pin the process timezone BEFORE any worker is forked (workers inherit the env), so a
 // run no longer depends on the host TZ. An explicit TZ=... in the shell wins, which is how the DST
@@ -29,6 +30,9 @@ export default defineConfig({
     // performance unused. Derived from the runner's MEASURED nproc/RAM — see 106-MEASUREMENTS.md.
     maxWorkers: TEST_DATABASE_WORKER_COUNT,
     testTimeout: 30000,
+    // Issue #889: with `--shard` (CI) the files are split by measured duration
+    // (test-durations.json), not into equal counts; without --shard nothing changes.
+    sequence: { sequencer: DurationShardSequencer },
     // Phase 106 D-09: the JSON reporter is the input to scripts/check-test-completeness.mjs, the
     // hard floor on collected files/tests. Parallelisation can silently collect FEWER files;
     // coverage would dip slightly and could still clear the 40% line threshold, so R6 would be

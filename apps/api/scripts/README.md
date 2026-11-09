@@ -1043,6 +1043,21 @@ and its own "amendments register (Issue #551)" describe validates the register (
 duplicate key, no missing field, no orphaned or stale entry). Its two entries are the login and refresh
 cells of the user without an Employee, who can no longer sign in.
 
+## CI shard balance (Issue #889)
+
+The API suite runs in three CI shards (#884). `vitest.shard-sequencer.ts` splits the files by
+measured duration from `apps/api/test-durations.json` (greedy longest-first, `shard-partition.ts`)
+instead of vitest's equal-count split. The file is a **balance hint, never a correctness input**:
+a file it does not know gets the median, entries of deleted files are ignored, and without the file
+vitest's own split applies. Every file runs in exactly one shard either way; the `api-coverage`
+job proves that against `vitest list` (none missing, none twice).
+
+- **Measured by:** `shard-durations-reporter.ts` on every shard (setup + import + tests per file).
+- **Refresh (optional, when shards drift apart):** `pnpm --filter @clokr/api run test:durations:update -- <CI run id>`
+  copies the `api-test-durations` artifact of that run into `test-durations.json`; commit it.
+- **Fixture test:** `scripts/__tests__/shard-partition.test.ts` (exact cover, order independence,
+  balance, stale and missing entries).
+
 ## Invocation
 
 All scripts run via `tsx` with the `apps/api` workspace:

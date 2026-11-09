@@ -29,6 +29,9 @@ coverage/
 # Vitest JSON reporter output (apps/api/vitest.config.ts outputFile.json) — input to
 # apps/api/scripts/check-test-completeness.mjs, regenerated on every test run
 apps/api/vitest-report.json
+# vitest blob reports and the per-file durations of a shard run (CI, Issues #884/#889)
+apps/api/.vitest-reports/
+apps/api/.vitest-durations/
 
 # Playwright test artifacts
 apps/e2e/test-results/

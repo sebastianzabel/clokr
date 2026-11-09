@@ -625,10 +625,15 @@ jobs:
         # shard covers only a third of the files and would fail them on its own, so they are
         # switched off for the shard run only (never in vitest.config.ts).
         # `json` keeps writing vitest-report.json, the input of the shard file floor below.
+        # Issue #889: the split itself is by measured duration (apps/api/test-durations.json, read by
+        # vitest.shard-sequencer.ts); the durations reporter records this run's costs for the next
+        # refresh. A stale or missing durations file only costs balance — the merge job proves that
+        # every file ran exactly once.
         working-directory: apps/api
         run: >-
           pnpm exec vitest run --coverage --shard=${{ matrix.shard }}/3
           --reporter=default --reporter=blob --reporter=json
+          --reporter=./scripts/shard-durations-reporter.ts
           --outputFile.blob=.vitest-reports/blob-${{ matrix.shard }}-3.json
           --coverage.thresholds.lines=0 --coverage.thresholds.functions=0
           --coverage.thresholds.branches=0
@@ -665,6 +670,14 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+      - name: Upload the shard's measured file durations (Issue 889)
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-durations-${{ matrix.shard }}
+          path: apps/api/.vitest-durations/durations-${{ matrix.shard }}.json
+          retention-days: 3
+          if-no-files-found: error
+
   api-coverage:
     needs: [changes, api-tests]
     if: needs.changes.outputs.api == 'true'
@@ -697,12 +710,46 @@ jobs:
           path: apps/api/.vitest-reports
           merge-multiple: true
 
+      - name: Download the shard durations (Issue 889)
+        uses: actions/download-artifact@v8
+        with:
+          pattern: api-durations-*
+          path: apps/api/.vitest-durations
+          merge-multiple: true
+
       - name: Exactly three shard reports
         # A missing shard report must never shrink the merged coverage silently.
         run: |
           ls -la apps/api/.vitest-reports
           n=$(ls apps/api/.vitest-reports/blob-*-3.json | wc -l)
           if [ "$n" -ne 3 ]; then echo "::error::expected 3 shard reports, found $n"; exit 1; fi
+
+      - name: Every test file ran in exactly one shard (Issue 889)
+        # The shards are split by measured duration, not by vitest's own hash split, so the cover is
+        # proven here: the files of the three shard reports, together, are exactly the files
+        # `vitest list` collects — none missing, none twice. Needs no database.
+        working-directory: apps/api
+        run: |
+          pnpm exec vitest list --filesOnly --json=/tmp/vitest-files.json > /dev/null
+          node -e '
+            const fs = require("fs"), path = require("path");
+            const root = process.cwd();
+            const rel = (f) => path.relative(root, f).split(path.sep).join("/");
+            const listed = JSON.parse(fs.readFileSync("/tmp/vitest-files.json", "utf8")).map((e) => rel(e.file)).sort();
+            const ran = [];
+            for (const i of [1, 2, 3]) ran.push(...Object.keys(JSON.parse(fs.readFileSync(`.vitest-durations/durations-${i}.json`, "utf8"))));
+            const dup = ran.filter((f, i) => ran.indexOf(f) !== i);
+            const ranSet = new Set(ran);
+            const missing = listed.filter((f) => !ranSet.has(f));
+            const extra = [...ranSet].filter((f) => !listed.includes(f));
+            console.log(`listed ${listed.length}, ran ${ran.length} (unique ${ranSet.size})`);
+            if (dup.length || missing.length || extra.length || listed.length === 0) {
+              for (const f of dup) console.error(`::error::ran twice: ${f}`);
+              for (const f of missing) console.error(`::error::ran in no shard: ${f}`);
+              for (const f of extra) console.error(`::error::ran but not listed: ${f}`);
+              process.exit(1);
+            }
+          '
 
       - name: Merge the shard reports — API coverage gate (lines >= 40)
         # Replays the three blob reports as one run: the merged coverage is checked against the
@@ -719,6 +766,29 @@ jobs:
         # violated in effect with nothing else turning red. See
         # apps/api/scripts/check-test-completeness.mjs for the floor values and the remedy text.
         run: node apps/api/scripts/check-test-completeness.mjs apps/api/vitest-report.json
+
+      - name: Combine the measured durations into the next test-durations.json (Issue 889)
+        # Refresh hint, never a gate: `pnpm --filter @clokr/api run test:durations:update -- <run id>`
+        # copies this artifact into apps/api/test-durations.json.
+        working-directory: apps/api
+        run: |
+          node -e '
+            const fs = require("fs");
+            const all = {};
+            for (const i of [1, 2, 3]) Object.assign(all, JSON.parse(fs.readFileSync(`.vitest-durations/durations-${i}.json`, "utf8")));
+            const sorted = Object.fromEntries(Object.entries(all).sort(([a], [b]) => (a < b ? -1 : 1)));
+            fs.writeFileSync("test-durations.json", JSON.stringify(sorted, null, 2) + "\n");
+            const s = (i) => Object.values(JSON.parse(fs.readFileSync(`.vitest-durations/durations-${i}.json`, "utf8"))).reduce((a, b) => a + b, 0);
+            console.log(`summed file seconds per shard this run: ${[1, 2, 3].map((i) => Math.round(s(i) / 1000)).join(" / ")}`);
+          '
+
+      - name: Upload test-durations.json for the next refresh (Issue 889)
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-test-durations
+          path: apps/api/test-durations.json
+          retention-days: 30
+          if-no-files-found: error
 
   web-tests:
     runs-on: ubuntu-latest

@@ -16,6 +16,7 @@
     "lint:role-checks": "tsx scripts/lint-role-checks.ts",
     "lint:prisma-unknown-keys": "tsx scripts/lint-prisma-unknown-keys.ts",
     "lint:unordered-test-reads": "tsx scripts/lint-unordered-test-reads.ts",
+    "test:durations:update": "tsx scripts/update-test-durations.ts",
     "lint:api-terms": "tsx scripts/lint-api-terms.ts",
     "measure:context-access": "tsx scripts/measure-foreign-context-access.ts",
     "measure:boundary-imports": "tsx scripts/measure-context-boundary-imports.ts",
