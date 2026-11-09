@@ -664,7 +664,10 @@ select.form-input {
   margin: 1.5rem 0;
 }
 
-/* ─── Loading Skeleton ───────────────────────────────────────────────── */
+/* ─── Loading Skeleton (Issue #843, block 10) ───────────────────────────
+   One block: the shimmer base, the legacy variants the existing pages use (.skeleton-text,
+   .skeleton-heading, .skeleton-stat, .skeleton-card) and the shapes of Skeleton.svelte (line, block,
+   row, card, inline). The shimmer stops under reduced motion; the bars stay as a static placeholder. */
 .skeleton {
   background: linear-gradient(90deg, var(--sunk) 25%, var(--line) 50%, var(--sunk) 75%);
   background-size: 200% 100%;
@@ -679,6 +682,106 @@ select.form-input {
   100% {
     background-position: -200% 0;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+.skeleton-text {
+  height: 1em;
+  border-radius: 4px;
+}
+
+.skeleton-heading {
+  height: 2rem;
+  width: 60%;
+  border-radius: var(--r-control);
+}
+
+.skeleton-stat {
+  height: 2.5rem;
+  width: 80%;
+  border-radius: var(--r-control);
+}
+
+.skeleton-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  padding: 1.5rem 1.75rem;
+  min-height: 120px;
+}
+
+/* Skeleton.svelte shapes */
+.skeleton-region {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.skeleton-region--inline {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.skeleton-line {
+  display: block;
+}
+
+.skeleton-block {
+  display: block;
+  height: var(--skeleton-block-h, 6rem);
+  border-radius: var(--r-card);
+}
+
+.skeleton-inline {
+  display: inline-block;
+  height: 1em;
+  vertical-align: middle;
+  border-radius: 4px;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  height: var(--h-row);
+}
+
+.skeleton-avatar {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-pill);
+}
+
+.skeleton-row-bars {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.skeleton-bar-long {
+  width: 60%;
+  height: 0.75em;
+}
+
+.skeleton-bar-short {
+  width: 35%;
+  height: 0.65em;
+}
+
+.skeleton-card > .skeleton {
+  display: block;
+}
+
+.skeleton-card > .skeleton + .skeleton {
+  margin-top: var(--s-2);
 }
 
 /* ─── Utilities ──────────────────────────────────────────────────────── */
@@ -955,32 +1058,6 @@ select.form-input {
 /* ─── Button press effect ───────────────────────────────────────────── */
 .btn-press:active:not(:disabled) {
   transform: scale(0.97);
-}
-
-/* ─── Skeleton Variants ─────────────────────────────────────────────── */
-.skeleton-text {
-  height: 1em;
-  border-radius: 4px;
-}
-
-.skeleton-heading {
-  height: 2rem;
-  width: 60%;
-  border-radius: var(--r-control);
-}
-
-.skeleton-stat {
-  height: 2.5rem;
-  width: 80%;
-  border-radius: var(--r-control);
-}
-
-.skeleton-card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--r-control);
-  padding: 1.5rem 1.75rem;
-  min-height: 120px;
 }
 
 /* ─── Improved Section Spacing ──────────────────────────────────────── */
@@ -1479,6 +1556,11 @@ textarea.form-input {
   background: linear-gradient(90deg, var(--sunk) 25%, var(--line) 50%, var(--sunk) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cal-cell.skeleton {
+    animation: none;
+  }
 }
 /* WR-03: no !important — higher specificity handles conflict with status classes */
 .cal-cell.cal-other:not(.cal-selected) {
