@@ -1,5 +1,12 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
+  import {
+    STAFFING_EXPLANATION,
+    staffingFigure,
+    staffingStatusText,
+    staffingTooltip,
+  } from "$lib/shifts/staffing"; // Issue #850
+  import { shortGermanDay } from "$lib/shifts/planning-week"; // Issue #850
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
@@ -393,7 +400,8 @@
       generateDiff = null;
       await load();
     } catch (e) {
-      generateError = e instanceof Error ? e.message : "Generierung fehlgeschlagen.";
+      generateError =
+        e instanceof Error ? e.message : "Die Muster konnten nicht angewendet werden.";
     } finally {
       generating = false;
     }
@@ -1149,23 +1157,6 @@
     }
   }
 
-  // Coverage tooltip text
-  function coverageTooltip(c: CoverageEntry | undefined): string {
-    if (!c) return "";
-    const parts: string[] = [];
-    parts.push(
-      `Summe der Schicht-Gewichte: ${c.effectiveStaff.toFixed(2)} von ${c.minStaff.toFixed(2)}`,
-    );
-    if (c.unsupervisedAzubis > 0 && !c.hasSupervisor) {
-      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige Person(en) ohne Aufsicht`);
-    } else if (c.unsupervisedAzubis > 0) {
-      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige Person(en), Aufsicht vorhanden`);
-    }
-    if (c.coverageStatus === "under") parts.push("⚠ Unterbesetzt");
-    if (c.coverageStatus === "supervision-missing") parts.push("⚠ Aufsicht fehlt");
-    return parts.join("\n");
-  }
-
   // ── Modal handlers ─────────────────────────────────────────────────────────
   function onCellClick(employeeId: string, date: string) {
     editingShiftId = null;
@@ -1433,12 +1424,12 @@
     eyebrow="Team"
     title={pageLabel("/shifts")}
     accent="Schicht"
-    sub="Wöchentliche Schichten zuweisen — mit Verfügbarkeit und Besetzungs-Übersicht. Vorlagen und Bedarfsregeln pflegt die Administration."
+    sub="Wöchentliche Schichten zuweisen — mit Verfügbarkeit und Besetzung je Tag. Vorlagen und Mindestbesetzung pflegt die Verwaltung."
   >
     {#snippet actions()}
       <!-- Phase 430 (D-11/D-14, Issue #430): sibling links to the conflict overview and the
            new Wochenübersicht Planungsbedarf — neither page was linked from here before. -->
-      <a class="btn btn-ghost btn-sm" href="/shifts/conflicts">Konflikte</a>
+      <a class="btn btn-ghost btn-sm" href="/shifts/conflicts">Hinweise</a>
       <a class="btn btn-ghost btn-sm" href="/shifts/planning">Planungsbedarf</a>
     {/snippet}
   </PageHead>
@@ -1540,13 +1531,13 @@
       </div>
       <div class="week-header-actions">
         <!-- Phase 43-05: "Letzte Woche kopieren" is the primary action;
-             "Aus Mustern generieren" stays as a secondary/ghost button for
+             "Muster anwenden" (Issue #850, was "Aus Mustern generieren") stays secondary for
              tenants that have EmployeeShiftPattern rows configured. -->
         <button type="button" class="btn btn-primary sm" onclick={openCopy}>
           Letzte Woche kopieren
         </button>
         <button type="button" class="btn btn-ghost sm" onclick={openGenerate}>
-          Aus Mustern generieren
+          Muster anwenden
         </button>
       </div>
     </div>
@@ -1742,13 +1733,13 @@
               {@const reductionH = sr.leaveH + sr.absenceH}
               <div
                 class="sp-soll-label"
-                aria-label="Geplant gegen Soll für {u.firstName} {u.lastName}"
+                aria-label="Geplant / Vertrag für {u.firstName} {u.lastName}"
               >
                 <div
                   class="sp-soll-sublabel"
-                  title="Soll = Ø-Methode − Urlaub/Abwesenheit/Feiertag + Berufsschule (Berufsschule zählt als erfüllte Arbeitszeit)"
+                  title="Vertrag der Woche abzüglich Urlaub, Abwesenheit und Feiertagen. Berufsschule zählt als geplante Zeit."
                 >
-                  ↳ Geplant gegen Soll
+                  ↳ Geplant / Vertrag
                 </div>
               </div>
               <div
@@ -1758,7 +1749,7 @@
                   sr.assignedH,
                 )}h ({formatHours(sr.shiftH)}h Schicht{sr.bsH > 0
                   ? ` + ${formatHours(sr.bsH)}h Berufsschule`
-                  : ''}), Soll {formatHours(sr.contractSollH)}h{reductionH > 0
+                  : ''}), Vertrag {formatHours(sr.contractSollH)}h{reductionH > 0
                   ? ` (${formatHours(sr.weeklyH)}h − ${formatHours(
                       reductionH,
                     )}h Urlaub/Abwesenheit)`
@@ -1767,13 +1758,13 @@
                 <span class="sp-soll-num">Geplant {formatHours(sr.assignedH)}h</span>
                 {#if reductionH > 0}
                   <span class="sp-soll-soll">
-                    / Soll {formatHours(sr.contractSollH)}h
+                    / Vertrag {formatHours(sr.contractSollH)}h
                     <small class="sp-soll-reduction">
                       ({formatHours(sr.weeklyH)}h − {formatHours(reductionH)}h Urlaub/Abwesenheit)
                     </small>
                   </span>
                 {:else}
-                  <span class="sp-soll-soll">/ Soll {formatHours(sr.contractSollH)}h</span>
+                  <span class="sp-soll-soll">/ Vertrag {formatHours(sr.contractSollH)}h</span>
                 {/if}
                 <span class="sp-soll-diff">
                   {sr.diff >= 0 ? "+" : "−"}{formatHours(Math.abs(sr.diff))}h
@@ -1781,19 +1772,26 @@
                 {#if sr.underCoverage}
                   <span
                     class="sp-soll-under-coverage"
-                    aria-label="Unterdeckung: {u.firstName} {u.lastName}"
+                    aria-label="Zu wenig geplant: {u.firstName} {u.lastName}"
                   >
-                    ↓ Unterdeckung: Soll {formatHours(sr.contractSollH)}h − geplant {formatHours(
-                      sr.geplantH,
-                    )}h = {formatHours(sr.gapH)}h unterplant
+                    ↓ {formatHours(sr.gapH)}h weniger geplant als im Vertrag
                   </span>
                 {/if}
               </div>
             {/if}
           {/each}
 
-          <!-- Coverage heatmap row -->
-          <div class="sp-coverage-label">Besetzung</div>
+          <!-- Besetzung row (Issue #850): "x / y" against the Mindestbesetzung, explanation behind (i) -->
+          <div class="sp-coverage-label">
+            Besetzung
+            <span
+              class="sp-info"
+              role="img"
+              aria-label="Erklärung: {STAFFING_EXPLANATION}"
+              title={STAFFING_EXPLANATION}
+              data-testid="staffing-info">i</span
+            >
+          </div>
           {#each week.weekDays as d (d)}
             {@const iso = d.slice(0, 10)}
             {@const c = coverageByDate.get(iso)}
@@ -1802,18 +1800,14 @@
               class:sp-coverage-cell--ok={c?.coverageStatus === "ok"}
               class:sp-coverage-cell--under={c?.coverageStatus === "under"}
               class:sp-coverage-cell--supervision={c?.coverageStatus === "supervision-missing"}
-              title={coverageTooltip(c)}
+              title={staffingTooltip(c)}
             >
               {#if c}
-                <div class="sp-coverage-num">
-                  {c.effectiveStaff.toFixed(2)} / {c.minStaff.toFixed(2)}
-                </div>
-                {#if c.coverageStatus === "supervision-missing"}
-                  <span class="sp-coverage-warn" aria-label="Aufsicht fehlt">⚠ Aufsicht</span>
-                {:else if c.coverageStatus === "under"}
-                  <span class="sp-coverage-warn" aria-label="Unterbesetzt">⚠ Bedarf</span>
+                <div class="sp-coverage-num" data-testid="staffing-figure">{staffingFigure(c)}</div>
+                {#if c.coverageStatus === "ok"}
+                  <span class="sp-coverage-ok">{staffingStatusText(c.coverageStatus)}</span>
                 {:else}
-                  <span class="sp-coverage-ok">OK</span>
+                  <span class="sp-coverage-warn">⚠ {staffingStatusText(c.coverageStatus)}</span>
                 {/if}
               {:else}
                 <span class="sp-coverage-num">—</span>
@@ -1821,11 +1815,6 @@
             </div>
           {/each}
         </div>
-
-        <p class="sp-legend">
-          Besetzung = Summe der Schicht-Gewichte der verfügbaren eingeplanten Mitarbeitenden.
-          Standard-Minimum 2,0 (oder die Bedarfsregel aus den Schichteinstellungen).
-        </p>
       {/if}
     </div>
   </Card>
@@ -1952,7 +1941,7 @@
   />
 
   <!-- Phase 43-02: generate-week diff-preview modal -->
-  <Modal bind:open={generateOpen} eyebrow="Schichtplanung" title="Woche generieren">
+  <Modal bind:open={generateOpen} eyebrow="Schichtplanung" title="Muster auf die Woche anwenden">
     {#if pageSalonId !== null}
       <!-- Issue #558 D-10 — the bulk action keeps acting on the caller's whole reach. -->
       <p class="form-hint sp-bulk-scope" role="note">
@@ -1965,7 +1954,8 @@
       <div class="callout error" role="alert">{generateError}</div>
     {:else if generateDiff}
       <p class="sp-gen-intro">
-        Vorschau für Woche ab <strong>{generateDiff.weekStart}</strong>. Es werden
+        Vorschau für die Woche ab <strong>{shortGermanDay(generateDiff.weekStart)}</strong>. Es
+        werden
         <strong>{generateDiff.create.length}</strong>
         Schicht(en) erstellt; <strong>{generateDiff.skip.length}</strong> Eintrag/Einträge werden übersprungen.
       </p>
@@ -1976,7 +1966,7 @@
           {#each generateDiff.create as c (`${c.employeeId}::${c.date}`)}
             <div class="sp-gen-row">
               <span class="sp-gen-emp">{empName(c.employeeId)}</span>
-              <span class="sp-gen-date">{c.date}</span>
+              <span class="sp-gen-date">{shortGermanDay(c.date)}</span>
               <span class="sp-gen-time">{c.startTime}–{c.endTime}</span>
               {#if c.label}<span class="sp-gen-label">{c.label}</span>{/if}
             </div>
@@ -1990,7 +1980,7 @@
           {#each generateDiff.skip as s (`${s.employeeId}::${s.date}::${s.reason}`)}
             <div class="sp-gen-row">
               <span class="sp-gen-emp">{empName(s.employeeId)}</span>
-              <span class="sp-gen-date">{s.date}</span>
+              <span class="sp-gen-date">{shortGermanDay(s.date)}</span>
               <span class="sp-gen-reason sp-gen-reason--{s.reason}"
                 >{skipReasonLabel(s.reason)}</span
               >
@@ -2063,7 +2053,7 @@
           {#each copyDiff.create as c (`${c.employeeId}::${c.date}`)}
             <div class="sp-gen-row">
               <span class="sp-gen-emp">{empName(c.employeeId)}</span>
-              <span class="sp-gen-date">{c.date}</span>
+              <span class="sp-gen-date">{shortGermanDay(c.date)}</span>
               <span class="sp-gen-time">{c.startTime}–{c.endTime}</span>
               {#if c.label}<span class="sp-gen-label">{c.label}</span>{/if}
             </div>
@@ -2077,7 +2067,7 @@
           {#each copyDiff.skip as s (`${s.employeeId}::${s.date}::${s.reason}`)}
             <div class="sp-gen-row">
               <span class="sp-gen-emp">{empName(s.employeeId)}</span>
-              <span class="sp-gen-date">{s.date}</span>
+              <span class="sp-gen-date">{shortGermanDay(s.date)}</span>
               <span class="sp-gen-reason sp-gen-reason--{s.reason}"
                 >{copySkipReasonLabel(s.reason)}</span
               >
@@ -2380,10 +2370,20 @@
     font-weight: 600;
   }
 
-  .sp-legend {
-    margin: 12px 0 0;
-    font-size: 12.5px;
-    color: var(--text-2);
+  /* Issue #850 — the (i) behind which the Besetzung explanation sits (replaces the footnote). */
+  .sp-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.1em;
+    height: 1.1em;
+    margin-left: 4px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    font-size: 0.85em;
+    text-transform: none;
+    cursor: help;
+    vertical-align: middle;
   }
 
   .sp-modal-context {

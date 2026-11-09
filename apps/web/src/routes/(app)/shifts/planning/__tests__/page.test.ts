@@ -155,11 +155,11 @@ describe("Wochenübersicht Planungsbedarf (Phase 430, Issue #430)", () => {
     expect(diffDays).toBe(7);
   });
 
-  it("labels the server's Monday–Sunday week in German dates, never start = end (Issue #849)", async () => {
+  it("labels the server's Monday–Sunday week as „KW 45 · 2.–8. Nov.“, never start = end (Issues #849, #850)", async () => {
     // The client asked for a Sunday (the old UTC slip); the server normalises to the Monday.
     apiGet.mockResolvedValueOnce(response("2026-11-02", "2026-11-08", []));
     renderWithTheme(PlanningOverviewPage, {});
-    await waitFor(() => expect(screen.getByText("Woche 02.11.2026 – 08.11.2026")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("KW 45 · 2.–8. Nov.")).toBeTruthy());
     expect(screen.queryByText(/2026-11-08/)).toBeNull();
   });
 
