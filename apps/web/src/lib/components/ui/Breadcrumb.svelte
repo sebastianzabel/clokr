@@ -75,12 +75,12 @@
   }
 
   .breadcrumb-sep {
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.5;
   }
 
   .breadcrumb-link {
-    color: var(--text-muted);
+    color: var(--text-2);
     text-decoration: none;
     transition: color 0.15s;
   }

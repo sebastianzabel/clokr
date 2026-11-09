@@ -63,7 +63,7 @@
   }
   .pw-bar-track {
     height: 4px;
-    background: var(--border);
+    background: var(--line);
     border-radius: 2px;
     overflow: hidden;
     margin-bottom: 0.5rem;
@@ -82,7 +82,7 @@
     background: var(--warn);
   }
   .pw-strong {
-    background: var(--good);
+    background: var(--ok);
   }
   .pw-checks {
     list-style: none;
@@ -94,13 +94,13 @@
   }
   .pw-check {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     display: flex;
     align-items: center;
     gap: 0.25rem;
   }
   .pw-check-ok {
-    color: var(--good);
+    color: var(--ok);
   }
   .pw-check-icon {
     font-size: 0.7rem;

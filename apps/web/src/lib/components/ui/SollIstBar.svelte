@@ -85,8 +85,8 @@
   .sib-track {
     height: 12px;
     border-radius: var(--r-pill);
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     overflow: hidden;
     display: flex;
     position: relative;
@@ -102,7 +102,7 @@
   }
 
   .sib-seg--over {
-    background: var(--good);
+    background: var(--ok);
   }
 
   .sib-seg--deficit {
@@ -119,7 +119,7 @@
     top: 0;
     bottom: 0;
     width: 2px;
-    background: var(--border-strong);
+    background: var(--line-2);
   }
 
   .sib-labels {
@@ -128,7 +128,7 @@
     gap: var(--s-2);
     margin-top: var(--s-2);
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
 
@@ -145,13 +145,13 @@
   }
 
   .sib-label--mid--good {
-    color: var(--good);
+    color: var(--ok);
     font-weight: 600;
   }
 
   .sib-nosoll {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: var(--s-2) 0 0;
   }
 

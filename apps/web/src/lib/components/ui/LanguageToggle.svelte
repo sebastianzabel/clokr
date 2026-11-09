@@ -58,7 +58,7 @@
     display: inline-flex;
     padding: 2px;
     gap: 2px;
-    background: var(--bg-subtle);
+    background: var(--sunk);
     border-radius: var(--r-pill);
   }
   .seg-btn {
@@ -69,9 +69,9 @@
     padding: 6px 14px;
     border: 0;
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-2);
     border-radius: var(--r-pill);
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
@@ -83,18 +83,18 @@
     color: var(--text);
   }
   .seg-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
   .seg-btn.active {
-    background: var(--bg-card);
+    background: var(--card);
     color: var(--text);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow);
   }
 
   /* "Bald" badge — segmented EN affordance, signals stub state. */
   .badge-soon {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 9px;
     font-weight: 700;
     text-transform: uppercase;
@@ -111,14 +111,14 @@
   .lang-btn {
     width: 36px;
     height: 36px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     background: transparent;
     display: grid;
     place-items: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-weight: 600;
     font-size: 11px;
     letter-spacing: 0.06em;
@@ -127,11 +127,11 @@
       color 120ms var(--ease-out);
   }
   .lang-btn:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
   .lang-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 </style>

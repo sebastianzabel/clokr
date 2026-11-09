@@ -206,8 +206,8 @@
   }
 
   .approval-primary:focus-visible::after {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: -2px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
 </style>
