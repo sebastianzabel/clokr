@@ -8003,3 +8003,35 @@ Tokens, dazu die Rezeptdeklarationen), `leave-looks-840-gaps`, `leave-chip-contr
 Komponententests von `LeaveRequestForm`, `LeaveTypeChip`, `LeaveToolbar`, `LeavePlanningPanel`, `AbsenceTimeline` und
 `LeaveLegend` sowie die angepassten Fixierungen (jede mit `#840 G-n` im Test benannt). Browser:
 `apps/e2e/tests/leave-area-840.spec.ts`, Tests 6 bis 9 (Planung, Zähler/Chips/Inbox-Kopf, Formular, Primärknöpfe).
+
+## AK — Kalender-Abo „Mein Dienstplan“: ein Token je Person im Unterbau (Phase 597, Issue #597)
+
+**Entscheidung (Grauzonen auf #597 dokumentiert).** Eine Person kann ihre eigenen Schichten, wirksamen Abwesenheiten und die
+Feiertage ihres Arbeitsorts als ICS abonnieren. Kalender-Apps senden keinen Header; das Geheimnis steht deshalb im Link
+(`/api/v1/calendar-feed/dienstplan.ics?token=…`). Das Token (`CalendarFeedToken`, Unterbau) ist 32 Zufallsbytes, gespeichert
+wird nur der SHA-256; es gibt eins je Person, Rotation ersetzt es sofort, Widerruf löscht es. Der Link wird nur in der Antwort
+auf Anlegen/Rotieren genannt.
+
+**Wann der Link nichts mehr liefert.** Bei jedem Abruf prüft `resolveCalendarFeedToken()` (`contexts/platform/calendar-feed-token.ts`,
+die eine Stelle) Nutzer aktiv, Mandant aktiv, Person nicht anonymisiert und die eigenen Leserechte (`shift:read:EIGENE` für
+Schichten, `leave-request:read:EIGENE` für Abwesenheiten). Jeder ungültige Zustand ist dieselbe 404. Deaktivierung,
+Rollenentzug und Anonymisierung beenden den Link also ohne weiteren Schritt; die Anonymisierung löscht das Token zusätzlich.
+
+**Inhalt minimal (Art. 5 Abs. 1 lit. c, Art. 9 DSGVO).** Schichten heißen „Schicht“ und tragen nur Zeit und Salon (keine Notiz,
+keine Bezeichnung, kein Integrationsname, keine Kolleginnen); Abwesenheiten ganztägig, Krankheit neutral „Abwesend“; Feiertage
+mit Namen. Fenster 30 Tage zurück, 180 voraus. Eine Schicht, die genehmigter Urlaub verdrängt, erscheint nicht.
+
+**Abwägung eines geleakten Links.** Wer den Link hat, sieht die eigenen Arbeitszeiten und Abwesenheitstage dieser Person, nichts
+sonst und nichts Schreibendes. Gegenmittel: Rotieren und Widerrufen im Profil, `lastUsedAt` zeigt den letzten Abruf (höchstens
+stündlich aktualisiert, kein Audit je Abruf, weil Kalender-Apps alle paar Minuten abfragen), Ratenbegrenzung 60/Stunde, das Token
+erscheint in keiner Logzeile (`redactCalendarFeedPath`, Route auf Log-Stufe `warn`). Anlegen, Rotieren und Widerrufen sind
+auditiert, ohne Token.
+
+**Ort im Code.** Token und eigene Routen (`/api/v1/me/calendar-feed`) im Unterbau; der öffentliche Feed in der Kompositionsschicht
+(`composition/calendar-feed.ts`), weil er drei Kontexte liest — jeden nur über sein `index.ts`. Der ICS-Schreiber bleibt der eine
+in Abwesenheiten (`ical.ts`, additiv um zeitgebundene Termine und `LOCATION` erweitert).
+
+**Auswirkung auf die Kontexte.** Zeiterfassung: keine (gelesen werden nur die eigenen Arbeitseinträge für die Feiertagsauflösung).
+Abwesenheiten: `ical.ts` additiv erweitert und über `index.ts` exportiert, sonst keine. Schichtplanung: keine. Arbeitszeitkonto:
+keine. Kompositionsschicht: neue Lese-Route ohne eigene Regel. Unterbau: neues Modell `CalendarFeedToken` (Erweiterung, FKs auf
+`Tenant` Restrict und `User` Cascade), Anonymisierung und Int-Refresh löschen die Tokens.

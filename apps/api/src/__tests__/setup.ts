@@ -849,6 +849,7 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // Issue #608: PushSubscription.tenant is onDelete: Restrict - the rows must go before the user and
   // tenant deletes below, or a fixture tenant with a device cannot be removed.
   await prisma.pushSubscription.deleteMany({ where: { tenantId } });
+  await prisma.calendarFeedToken.deleteMany({ where: { tenantId } }); // Issue #597
   await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });

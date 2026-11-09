@@ -65,6 +65,7 @@ import { invitationRoutes } from "./contexts/platform/api/invitations";
 import { auditLogRoutes } from "./contexts/platform/api/audit-logs";
 import { supportAccessRoutes } from "./contexts/platform/api/support-accesses"; // Issue #93 (D-08)
 import { activityRoutes } from "./composition/activity";
+import { calendarFeedRoutes } from "./composition/calendar-feed"; // Issue #597
 import { companyShutdownRoutes } from "./contexts/absence/api/company-shutdowns";
 import { dashboardRoutes } from "./composition/dashboard";
 import { shiftRoutes } from "./contexts/scheduling/api/shifts";
@@ -92,11 +93,13 @@ import { adminPresenceSourcesRoutes } from "./contexts/time-tracking/api/admin-p
 import { adminSchoolHolidaysRoutes } from "./contexts/platform/api/admin/school-holidays";
 import { meRoutes } from "./contexts/platform/api/me";
 import { mePushRoutes } from "./contexts/platform/api/me-push";
+import { meCalendarFeedRoutes } from "./contexts/platform/api/me-calendar-feed"; // Issue #597
 import { meAvailabilityRoutes } from "./contexts/scheduling/api/me-availability"; // Phase 243 Plan 02 (B3)
 import { releaseNotesRoutes } from "./contexts/platform/api/release-notes";
 import { testBootstrapRoutes } from "./contexts/platform/api/test-bootstrap";
 import { retroEntryRequestRoutes } from "./contexts/time-tracking/api/retro-entry-requests";
 import { requireAuth } from "./middleware/auth";
+import { redactCalendarFeedPath } from "./contexts/platform"; // Issue #597
 import { clientLogUrl } from "./utils/client-log-url"; // Issue #610 (WR-02): no query/fragment in the client log
 
 // Phase 69 (DEVOPS-V8-02): bake version from package.json at module init.
@@ -352,7 +355,8 @@ export async function buildApp() {
       msg: "request completed",
       http: {
         method: req.method,
-        url: req.url,
+        // Issue #597: a calendar-feed path carries its secret and is never logged in clear.
+        url: redactCalendarFeedPath(req.url),
         status_code: reply.statusCode,
         response_time: reply.elapsedTime,
       },
@@ -503,6 +507,9 @@ export async function buildApp() {
   await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
   await app.register(meRoutes, { prefix: "/api/v1/me" });
   await app.register(mePushRoutes, { prefix: "/api/v1/me/push" });
+  // Issue #597 — the own calendar-feed token and the public feed it unlocks.
+  await app.register(meCalendarFeedRoutes, { prefix: "/api/v1/me/calendar-feed" });
+  await app.register(calendarFeedRoutes, { prefix: "/api/v1/calendar-feed" });
   // Phase 243 Plan 02 (B3) — the caller's own availability, kept under the /me prefix
   // (GET/PUT /api/v1/me/availability); sibling to availabilityRoutes's
   // /employees/:id/availability above.

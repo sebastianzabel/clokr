@@ -93,6 +93,7 @@
  * The helper assumes the employee exists and has a non-null userId. Callers
  * are expected to validate that before opening the transaction.
  */
+import { deleteCalendarFeedTokensOfUser } from "./calendar-feed-token"; // Issue #597
 import type { Prisma } from "@clokr/db";
 import {
   clearEntryNotesForEmployee,
@@ -292,6 +293,8 @@ export async function anonymizeEmployeeData(
   await tx.otpToken.deleteMany({ where: { userId } });
   await tx.refreshToken.deleteMany({ where: { userId } });
   await tx.pushSubscription.deleteMany({ where: { userId } });
+  // Issue #597: the calendar-feed token is a credential of the person, not a record.
+  await deleteCalendarFeedTokensOfUser(tx, employee.tenantId, userId);
   await deletePairingCodesOfUser(tx, userId, employee.tenantId);
 
   return {

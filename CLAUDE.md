@@ -197,7 +197,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **WLAN identifiers** (Issue #388): `Employee.wifiMacs` → `[]`, `wifiPresenceEnabled` → false, `wifiOptInAt` → null; `PresenceDevice` rows (MAC + label) are hard-deleted. The `ANONYMIZE` audit carries counts only (`clearedDeviceIdentifiers`); Bestand is listed read-only by `scripts/audit-388-anonymized-leftovers.ts` (`docs/migrations.md` „Phase 388“)
 - **Documents**: Absence documentPath → null
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
-- **Auth tokens**: Invitations, OTP, RefreshTokens, push subscriptions (Issue #608) and WLAN pairing codes (`PresencePairingCode`, Issue #610 - the rows naming the person through `consumedByUserId` go with the anonymization, stale ones with the daily token cleanup) are hard-deleted (not retention-relevant)
+- **Auth tokens**: Invitations, OTP, RefreshTokens, push subscriptions (Issue #608), calendar-feed tokens (Issue #597) and WLAN pairing codes (`PresencePairingCode`, Issue #610 - the rows naming the person through `consumedByUserId` go with the anonymization, stale ones with the daily token cleanup) are hard-deleted (not retention-relevant)
 - **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). Since Release B (#641) there is no `User.role` column to rewrite: the person holds nothing after anonymization because the `RoleAssignment` rows are gone (hard-deleted in the anonymization transaction, each with a `DELETE` audit) and `isActive` is `false` (the #357 sub-fix C rewrite of the column to EMPLOYEE went with the column). Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
 - **Device MAC addresses in audit rows** (Issue #820, Art. 4 Nr. 1 / Art. 17 DSGVO): `audit-mac-redaction.ts` (`contexts/platform/`, the only place; runs first in `anonymizeEmployeeData`) replaces every MAC in the old/new values of the person's rows with "[ausgeblendet]" — by KEY (every string under a key whose tokens contain `mac`/`macs`/`macAddress`) and by SHAPE (MAC-shaped substrings, e.g. inside a note), never by an action list. The person's rows: authored by the user, naming the employee (`employeeId`), `PresenceEvent` with `entityId` = employee, `PresenceDevice` rows of the live devices and of every device id an audit row with the employee names (label redacted by type too), `TimeEntry` rows of the person's entries (`timeEntryIdsOfEmployee()`), and any row whose `mac` equals one of the person's MACs (unknown-MAC events). Rows stay; counts only (`macAuditRedaction`, ANONYMIZE audit `auditRowsMacRedacted`). The `PresenceDevice` rows themselves were already hard-deleted (#388). A new audit writer must put a MAC under a `mac`-token key and be registered in `audit-mac-writers-820.test.ts`, which fails otherwise. Bestand: `scripts/audit-820-anonymized-audit-macs.ts` (read-only, ids and counts).
 - **Leave plan wishes (Issue #835)**: `LeavePlanWish` has no free-text column (data minimisation), so the anonymization has nothing to clear; a wish of an anonymized or exited person is refused at takeover with `LEAVE_PLAN_WISH_NOT_EMPLOYED` and never counts anywhere. Rows are hard-deleted only by the employee hard-delete path.
@@ -1666,6 +1666,17 @@ operator runbook `docs/runbooks/web-push.md`. Rules, as built:
   `vocational-school-generator.ts`). Moving them onto `notify()` is a deliberate follow-up, not a fix to slip into another change.
 - A new notification type needs its push entry in the same commit (the scan fails otherwise); a new `notify()` call site needs
   none beyond that. Rotating the VAPID pair invalidates every subscription (each device enables push again).
+
+### Calendar feed „Mein Dienstplan“ (Issue #597)
+
+A person subscribes to their own shifts, effective leave and work-location holidays as ICS; ADR `docs/adr/0001-abweichungen.md`
+Eintrag AK. The secret travels in the link (`/api/v1/calendar-feed/dienstplan.ics?token=…`, calendar apps send no header):
+`CalendarFeedToken` (Unterbau) stores only the SHA-256, one row per user, rotate replaces it, revoke deletes it
+(`/api/v1/me/calendar-feed`, audited without the token). `resolveCalendarFeedToken()` (`contexts/platform/calendar-feed-token.ts`)
+is the ONE validity rule, on every poll: active user, active tenant, not anonymized, and the own-read permissions the feed shows
+(`shift:read:EIGENE`, `leave-request:read:EIGENE`); every invalid state is one identical 404. The feed (`composition/calendar-feed.ts`)
+is minimal: shifts as „Schicht“ with time and salon only, sick leave as „Abwesend“, no note, no label, no names. The token never
+reaches a log line (`redactCalendarFeedPath`, route log level `warn`). Anonymization and the int refresh delete the tokens.
 
 ### Shift reminders (Issue #609)
 

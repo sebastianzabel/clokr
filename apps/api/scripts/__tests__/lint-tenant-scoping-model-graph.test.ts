@@ -18,7 +18,7 @@ import {
 
 const liveModels = Prisma.dmmf.datamodel.models as unknown as readonly DmmfModel[];
 
-// The 26 models measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
+// The 27 models (Issue #597: + CalendarFeedToken) measured directly against schema.prisma (204-RESEARCH.md §Schema Derivation,
 // D-19; AccessRole added Phase 73b, Issue #73; Salon added Phase 64b, Issue #64; RoleAssignment
 // added Phase 74b, Issue #74; SalonCoupling added Phase 65b, Issue #65; EmployeeSalonAssignment
 // added Phase 67b, Issue #67; SupportAccess added Issue #93; PushSubscription added Issue #608; PresencePairingCode added Issue #610; LeaveLimitRule added Issue #836; LeavePlan and LeavePlanWish added Issue #835) to carry their own `tenantId` scalar column.
@@ -49,6 +49,7 @@ const EXPECTED_OWN_MODELS = [
   "LeaveLimitRule", // Issue #836 — carries its own tenantId scalar column
   "LeavePlan", // Issue #835 — carries its own tenantId scalar column
   "LeavePlanWish", // Issue #835 — carries its own tenantId scalar column
+  "CalendarFeedToken", // Issue #597 — carries its own tenantId scalar column
 ].sort();
 
 describe("delegateName", () => {
@@ -141,9 +142,10 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   // models, own count 21 -> 22 — and Issue #610 (+ PresencePairingCode, own: it carries a `tenantId`
   // scalar) — 54 -> 55 models, own count 22 -> 23 — and Issue #836 (+ LeaveLimitRule, own: it
   // carries a `tenantId` scalar) — 55 -> 56 models, own count 23 -> 24 — and Issue #835 (+ LeavePlan
-  // and LeavePlanWish, own: both carry a `tenantId` scalar) — 56 -> 58 models, own count 24 -> 26.
-  it("classifies exactly 58 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(58);
+  // and LeavePlanWish, own: both carry a `tenantId` scalar) — 56 -> 58 models, own count 24 -> 26 —
+  // and Issue #597 (+ CalendarFeedToken, own: it carries a `tenantId` scalar) — 58 -> 59, own 26 -> 27.
+  it("classifies exactly 59 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(59);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
@@ -155,7 +157,7 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
     expect(graph.has("apiKey")).toBe(true);
   });
 
-  it("marks exactly the 26 measured models as own, by NAME (not just count)", () => {
+  it("marks exactly the 27 measured models as own, by NAME (not just count)", () => {
     const ownDelegateNames = [...graph]
       .filter(([, v]) => v.kind === "own")
       .map(([k]) => k)
