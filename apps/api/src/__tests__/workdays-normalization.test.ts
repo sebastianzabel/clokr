@@ -54,7 +54,8 @@ describe("WorkSchedule.workDays normalization (Phase 61)", () => {
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
         type: "FIXED_SCHEDULE",
-        weeklyHours: 32,
+        // Issue #848: no weeklyHours — the API takes Σ day hours, so every override stays a
+        // consistent FIXED_SCHEDULE contract (32 h with Mo–Fr 8 h used to be accepted).
         mondayHours: 8,
         tuesdayHours: 8,
         wednesdayHours: 8,
