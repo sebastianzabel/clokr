@@ -3,6 +3,10 @@ name: CI
 on:
   pull_request:
     branches: [main, "release/**"]
+  # The merge queue on main (since 09.11.2026, repo in the getclokr organisation) runs this
+  # workflow on the queued merge commit. Every required check (test, codeql, secret-scan,
+  # docker-gate) must therefore report for this event too, or a queued PR waits forever.
+  merge_group:
 
 # Least-privilege default: every job states its own scopes below, see the job blocks.
 permissions:
@@ -74,6 +78,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # In the merge queue paths-filter diffs against the queue base commit with git, so the
+          # history must be present; on pull_request it reads the changed files from the API.
+          fetch-depth: ${{ github.event_name == 'merge_group' && 0 || 1 }}
 
       # The API integration suite is 11 of this job's 14 minutes. It exercises
       # Postgres, Prisma and MinIO, so a PR that touches only docs, workflows or
@@ -88,6 +96,8 @@ jobs:
         id: changes
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          # Ignored on pull_request; in the merge queue the diff runs against the queue base.
+          base: ${{ github.event.merge_group.base_sha }}
           filters: |
             api:
               - 'apps/api/**'
@@ -559,7 +569,8 @@ jobs:
         run: pnpm --filter @clokr/web build
 
       - name: Post PR Summary
-        if: always()
+        # A merge-queue run has no PR to comment on.
+        if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v9
         with:
           script: |
@@ -657,13 +668,13 @@ jobs:
           category: "/language:javascript-typescript"
 
   # ── Secret scan (DEVOPS-V8-04) ───────────────────────────────────────
-  # NOTE: gitleaks/gitleaks-action requires a free GITLEAKS_LICENSE for org repos.
-  # If license cannot be provisioned, fallback action is `gacts/gitleaks` (MIT, no license).
-  # See 70-03-SUMMARY.md for setup instructions.
+  # gitleaks/gitleaks-action handles only push, pull_request, workflow_dispatch and schedule
+  # events, so it would not report in the merge queue (and documents a licence requirement for
+  # organisation repos, where this repository lives since 09.11.2026). The job therefore runs the gitleaks CLI (MIT) from its pinned image over exactly the commits the PR or
+  # the queued merge adds. `.gitleaks.toml` and `.gitleaksignore` in the repo root are read as before.
   secret-scan:
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
       contents: read
     steps:
       - uses: actions/checkout@v6
@@ -671,10 +682,23 @@ jobs:
           fetch-depth: 0 # required for gitleaks to access commit history
 
       - name: Gitleaks secret scan
-        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          set -o pipefail
+          # gitleaks exits 0 on a PARTIAL scan (e.g. git refusing the mounted repo), so the log is
+          # checked too: no "commits scanned" line or any "partial scan" fails the job.
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            -v "$PWD:/repo" -w /repo ghcr.io/gitleaks/gitleaks:v8.24.0 \
+            git --redact --verbose --no-color --config /repo/.gitleaks.toml \
+            --gitleaks-ignore-path /repo/.gitleaksignore \
+            --log-opts="${BASE_SHA}..${HEAD_SHA}" /repo 2>&1 | tee gitleaks.log
+          if grep -q "partial scan" gitleaks.log || ! grep -q "commits scanned" gitleaks.log; then
+            echo "::error::gitleaks did not scan the full commit range"
+            exit 1
+          fi
 
   # ── Lighthouse CI (DEVOPS-V8-05, advisory in Phase 70) ───────────────
   # Phase 73 will upgrade to blocking + extend to authenticated pages via
@@ -794,11 +818,14 @@ jobs:
     # whether the heavy steps run.
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: ${{ github.event_name == 'merge_group' && 0 || 1 }}
 
       - name: Detect visual-relevant changes
         id: changes
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          base: ${{ github.event.merge_group.base_sha }}
           filters: |
             visual:
               - 'apps/web/**'
