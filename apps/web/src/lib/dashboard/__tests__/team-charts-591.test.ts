@@ -21,9 +21,9 @@ import { periodSearch } from "$lib/reports/period-state";
 import type { TeamTrendView } from "../team-view";
 import type { TeamSaldoBar } from "$lib/reports/team-saldo";
 
+// #842 D-842-26: brandLight left the chart theme, so the fixture no longer carries it.
 const THEME: ChartTheme = {
   brand: "T-brand",
-  brandLight: "T-brandLight",
   brandTint: "T-brandTint",
   neutral: "T-neutral",
   sick: "T-sick",
