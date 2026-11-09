@@ -153,20 +153,20 @@
 {/snippet}
 
 <style>
-  /* The bar is NOT a `.card`: under data-skin="modern" `.card` forces overflow:hidden, which would
-     clip MonthBar's month picker. The sticky wrapper is the surface itself (the `.cal-monthbar`
-     escape recipe). The card colours are repeated here on purpose and only here: `.card` cannot
-     be used for a surface that must show an overflowing dropdown, and the layered gradient keeps
-     the surface opaque in every skin and mode so scrolled content never shows through. */
+  /* The bar is NOT a `.card`: a card surface may clip its content, which would hide MonthBar's
+     month picker. The sticky wrapper is the surface itself (the `.cal-monthbar` escape recipe).
+     The card colours are repeated here on purpose and only here: `.card` cannot be used for a
+     surface that must show an overflowing dropdown, and the layered gradient keeps the surface
+     opaque in every theme and mode so scrolled content never shows through. */
   .period-sticky {
     position: sticky;
     top: var(--topbar-h);
     z-index: 30;
     overflow: visible;
-    background: linear-gradient(var(--bg-card), var(--bg-card)), var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-md);
+    background: linear-gradient(var(--card), var(--card)), var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    box-shadow: var(--shadow);
   }
 
   .period-presets {
@@ -175,7 +175,7 @@
     align-items: center;
     gap: var(--s-2);
     padding: var(--s-3) var(--s-6);
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
 
   .period-preset-group {
@@ -187,7 +187,7 @@
   /* Pressed preset: the accent is reserved for exactly this (text stays --text for contrast). */
   .period-presets .btn.is-active {
     background: var(--brand-soft);
-    border-color: var(--brand-light);
+    border-color: var(--brand);
     color: var(--text);
     font-weight: 600;
   }
@@ -197,7 +197,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--s-2);
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 12px;
   }
 

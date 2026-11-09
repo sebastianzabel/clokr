@@ -230,7 +230,7 @@
     margin: 0;
   }
   .takeover-note {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
   .takeover-error {
@@ -250,7 +250,7 @@
   }
   .takeover-reason {
     display: block;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
   }
 </style>

@@ -145,14 +145,14 @@
 
 <style>
   .section-date {
-    font-family: var(--font-mono);
-    color: var(--text-muted);
+    font-family: var(--font-ui);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
   .section-placeholder,
   .section-error {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.9375rem;
     margin: 0;
   }
@@ -169,8 +169,8 @@
   }
 
   .summary-chip {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 10px;
     padding: 0.75rem;
     display: flex;
@@ -180,13 +180,13 @@
 
   .summary-chip .label {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
 
   .summary-chip .value {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 1.25rem;
     font-weight: 700;
     color: var(--text);
@@ -206,11 +206,11 @@
   .attendance-table td {
     padding: 0.625rem 0.75rem;
     text-align: left;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .attendance-table th {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-weight: 600;
     font-size: 0.8125rem;
     text-transform: uppercase;
@@ -227,8 +227,8 @@
 
   .status-present,
   .status-clocked-in {
-    background: var(--good-soft);
-    color: var(--good);
+    background: var(--ok-soft);
+    color: var(--ok);
   }
 
   .status-absent {
@@ -248,8 +248,8 @@
 
   .status-scheduled,
   .status-none {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
+    background: var(--sunk);
+    color: var(--text-2);
   }
 
   .status-requested {

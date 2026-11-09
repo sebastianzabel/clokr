@@ -578,7 +578,7 @@
     display: flex;
     align-items: center;
     gap: var(--s-2);
-    color: var(--text-muted);
+    color: var(--text-2);
     padding: var(--s-4) 0;
   }
   .plan-notice {
