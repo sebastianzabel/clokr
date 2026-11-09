@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.19.0](https://github.com/sebastianzabel/clokr/compare/v1.18.0...v1.19.0) (2026-11-09)
+
+
+### Features
+
+* **835:** Urlaubsplaner pro Salon und Jahr mit Übernahme in Anträge ([#839](https://github.com/sebastianzabel/clokr/issues/839)) ([a25c0ec](https://github.com/sebastianzabel/clokr/commit/a25c0ec31d3c17719095abb6fb31595ce417b4b7))
+* **836:** Urlaubsgrenzen und Urlaubssperren je Salon ([#837](https://github.com/sebastianzabel/clokr/issues/837)) ([ac18dc3](https://github.com/sebastianzabel/clokr/commit/ac18dc3b2a4fa245627d373320ad4a0dbf96e6dd))
+* **840:** Abwesenheiten – ein Bereich, eine Zeitleiste ([#841](https://github.com/sebastianzabel/clokr/issues/841)) ([695080f](https://github.com/sebastianzabel/clokr/commit/695080f1a23b9814e0b78fa3c19ff5f274ef3b91))
+
 ## [1.18.0](https://github.com/sebastianzabel/clokr/compare/v1.17.0...v1.18.0) (2026-11-05)
 
 
