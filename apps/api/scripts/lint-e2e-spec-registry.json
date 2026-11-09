@@ -14,7 +14,7 @@
     {
       "file": "apps/e2e/tests/functional.spec.ts",
       "category": "in-ci",
-      "reason": "Selected for the new e2e-ci Playwright project (D-06): 0 date references, and once the shared What's-New-drawer mock landed in the tenant fixture, 21/22 tests pass with 1 designed self-skip for an empty release-notes corpus (measured, 275-03)."
+      "reason": "Selected for the new e2e-ci Playwright project (D-06): 0 date references, and once the shared What's-New-drawer mock landed in the tenant fixture, the What's-New test serves its own synthetic corpus since Issue #576 and asserts click-only opening (no self-skip any more; 22 tests, pass count re-measured in CI)."
     },
     {
       "file": "apps/e2e/tests/bs-pattern-retroactive.spec.ts",

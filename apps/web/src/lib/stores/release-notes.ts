@@ -208,6 +208,12 @@ export function markReleaseNotesSeen(): void {
   });
 }
 
+/** The accessible name of the version entry; the unread state is part of it (the badge itself is
+ *  hidden from assistive technology to avoid a double announcement). */
+export function whatsNewEntryLabel(version: string, unread: boolean): string {
+  return `Was ist neu in Version ${version}${unread ? " (ungelesen)" : ""}`;
+}
+
 /** Opens the panel on the reader's click (Issue #576: never automatically) and marks it seen. */
 export function openWhatsNew(): void {
   whatsNewOpen.set(true);

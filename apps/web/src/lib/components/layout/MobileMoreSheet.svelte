@@ -1,7 +1,12 @@
 <script lang="ts">
   import { focusTrap } from "$lib/utils/focus-trap";
   import { versionStore, loadVersion } from "$stores/version";
-  import { hasUnreadReleaseNotes, loadReleaseNotesData, openWhatsNew } from "$stores/release-notes";
+  import {
+    hasUnreadReleaseNotes,
+    loadReleaseNotesData,
+    openWhatsNew,
+    whatsNewEntryLabel,
+  } from "$stores/release-notes";
   import { onMount } from "svelte";
   import { activeNavHref } from "$lib/nav/active-route";
 
@@ -228,13 +233,13 @@
               type="button"
               class="mehr-version-btn"
               onclick={openWhatsNew}
-              aria-label="Was ist neu in Version {$versionStore}"
+              aria-label={whatsNewEntryLabel($versionStore, $hasUnreadReleaseNotes)}
               title="Was ist neu"
               data-testid="mobile-whats-new"
             >
               <span class="mehr-version-label" translate="no">v{$versionStore}</span>
               {#if $hasUnreadReleaseNotes}
-                <span class="mehr-version-dot" aria-hidden="true"></span>
+                <span class="badge badge-purple mehr-version-badge" aria-hidden="true">Neu</span>
               {/if}
             </button>
           </div>
@@ -461,12 +466,9 @@
   }
 
   /* Mirrors Topbar.svelte's .notif-dot.unread-dot idiom. */
-  .mehr-version-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--brand);
-    flex-shrink: 0;
+  .mehr-version-badge {
+    font-size: 10px;
+    padding: 1px 6px;
   }
 
   @keyframes mehr-fade {

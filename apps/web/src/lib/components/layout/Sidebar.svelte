@@ -3,7 +3,12 @@
   import { salonContext, roleNamesLabel } from "$stores/salon-context";
   import { tenantFeatures } from "$stores/tenant-features";
   import { versionStore, loadVersion } from "$stores/version";
-  import { hasUnreadReleaseNotes, loadReleaseNotesData, openWhatsNew } from "$stores/release-notes";
+  import {
+    hasUnreadReleaseNotes,
+    loadReleaseNotesData,
+    openWhatsNew,
+    whatsNewEntryLabel,
+  } from "$stores/release-notes";
   import { goto } from "$app/navigation";
   import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
@@ -141,13 +146,13 @@
         type="button"
         class="version-btn"
         onclick={openWhatsNew}
-        aria-label="Was ist neu in Version {$versionStore}"
+        aria-label={whatsNewEntryLabel($versionStore, $hasUnreadReleaseNotes)}
         title="Was ist neu"
         data-testid="sidebar-whats-new"
       >
         <span class="version-label" translate="no">v{$versionStore}</span>
         {#if $hasUnreadReleaseNotes}
-          <span class="version-dot" aria-hidden="true"></span>
+          <span class="badge badge-purple version-badge" aria-hidden="true">Neu</span>
         {/if}
       </button>
     </div>
@@ -391,12 +396,9 @@
   }
 
   /* Mirrors Topbar.svelte's .notif-dot.unread-dot idiom. */
-  .version-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--brand);
-    flex-shrink: 0;
+  .version-badge {
+    font-size: 10px;
+    padding: 1px 6px;
   }
 
   @media (max-width: 960px) {
