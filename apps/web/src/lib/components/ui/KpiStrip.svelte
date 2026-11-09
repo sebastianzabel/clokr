@@ -4,6 +4,7 @@
   // one row from 1100 px, columns of at least 160 px between 760 and 1100, two columns below 760.
   // `band` tints the strip with --brand-tint (text, text-2, text-3, brand and the status colours
   // reach 4.5:1 on it in all six combinations, proven in KpiStrip-843.test.ts).
+  import type { Snippet } from "svelte";
   import KpiCell from "./KpiCell.svelte";
   import type { KpiProgress } from "./KpiCell.svelte";
 
@@ -25,9 +26,15 @@
     /** Tinted band variant. */
     band?: boolean;
     ariaLabel?: string;
+    /**
+     * Issue #851 (additive): one more cell for a figure the label/value shape cannot express (the
+     * two-figure saldo of SaldoAnzeige). Rendered after the items inside the same grid, padded like
+     * a cell; counted in the one-row column count.
+     */
+    extra?: Snippet;
   }
 
-  let { items, band = false, ariaLabel }: Props = $props();
+  let { items, band = false, ariaLabel, extra }: Props = $props();
 </script>
 
 <div
@@ -36,7 +43,7 @@
   role={ariaLabel ? "group" : undefined}
   aria-label={ariaLabel}
 >
-  <div class="kpi-strip-grid" style="--kpi-count: {Math.max(1, items.length)}">
+  <div class="kpi-strip-grid" style="--kpi-count: {Math.max(1, items.length + (extra ? 1 : 0))}">
     {#each items as item, index (index)}
       <KpiCell
         strip
@@ -52,6 +59,7 @@
         testId={item.testId}
       />
     {/each}
+    {#if extra}<div class="kpi-strip-extra">{@render extra()}</div>{/if}
   </div>
 </div>
 
@@ -69,6 +77,17 @@
      the secondary text colour is the safe one. */
   .kpi-strip--band :global(.kpi-label) {
     color: var(--text-2);
+  }
+
+  .kpi-strip-extra {
+    min-width: 0;
+    padding: var(--s-3) var(--s-4);
+  }
+  /* Two columns below 760 px: the extra cell (a wider figure) takes the whole row (#564 overflow). */
+  @container (max-width: 759.98px) {
+    .kpi-strip-extra {
+      grid-column: 1 / -1;
+    }
   }
 
   .kpi-strip-grid {

@@ -177,3 +177,27 @@ describe("DataTable - rows and columns", () => {
     expect(screen.queryByText("person-a@beispiel.test")).toBeNull();
   });
 });
+
+// Issue #851 (additive): an element id and a highlight per row.
+describe("DataTable rowId and rowHighlight (#851)", () => {
+  it("puts the id on the row and marks the highlighted one", () => {
+    const { container } = renderWithTheme(DataTable, {
+      caption: "Anträge",
+      columns: [{ key: "name", label: "Name", primary: true }],
+      rows: [
+        { id: "a", name: "Erster" },
+        { id: "b", name: "Zweiter" },
+      ],
+      rowKey: (r: { id: string }) => r.id,
+      rowId: (r: { id: string }) => `request-${r.id}`,
+      rowHighlight: (r: { id: string }) => r.id === "b",
+    });
+    expect(container.querySelector("#request-a")).not.toBeNull();
+    expect(container.querySelector("#request-b")?.classList.contains("dt-row--highlight")).toBe(
+      true,
+    );
+    expect(container.querySelector("#request-a")?.classList.contains("dt-row--highlight")).toBe(
+      false,
+    );
+  });
+});

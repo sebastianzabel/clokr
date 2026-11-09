@@ -195,12 +195,9 @@ describe("Issue #840 E-03 / D-840-24 / AC-3 - the Kalender is own data only", ()
   });
 
   it("[Meine Anträge] the year's own requests stay: filters, table and row actions keep their test ids", () => {
-    for (const id of [
-      "leave-filter-status",
-      "leave-filter-type",
-      "leave-mine-table",
-      "leave-empty-state",
-    ]) {
+    // #851 (D-851-04): the two status/type selects became the filters of the TableToolbar block,
+    // addressed by the toolbar's own test id; the filter values still drive the same table.
+    for (const id of ["leave-filters", "leave-mine-table", "leave-empty-state"]) {
       expect(PAGE, id).toContain(`data-testid="${id}"`);
     }
     expect(PAGE).toContain("/leave/requests?year=${calYear}");

@@ -42,9 +42,22 @@ try {
   );
 }
 
+// Issue #851 (D-851-04): the Urlaubsjahr tiles are the items of one KpiStrip now (`vacYearItems`),
+// so the labels are read from that list instead of from tile markup. Same claims, new place.
+const ITEMS_START = PAGE.indexOf("let vacYearItems = $derived<KpiItem[]>([");
+const ITEMS = ITEMS_START < 0 ? "" : PAGE.slice(ITEMS_START, PAGE.indexOf("]);", ITEMS_START));
+const tile = (label: string) => `label: "${label}"`;
+
+describe("leave page vocabulary — the tile list is found", () => {
+  it("vacYearItems exists and is non-empty", () => {
+    expect(ITEMS_START).toBeGreaterThan(-1);
+    expect(ITEMS.length).toBeGreaterThan(0);
+  });
+});
+
 describe("leave page vocabulary — RETIRED terms must not come back", () => {
   it("no strip tile is called `Resturlaub` — that tile meant carryOverRemaining (0), not the balance", () => {
-    expect(PAGE).not.toContain('<div class="vac-stat-label">Resturlaub</div>');
+    expect(ITEMS).not.toContain(tile("Resturlaub"));
   });
 
   it("`Resturlaub Vorjahr` is gone — it meant the GROSS carry-over (14), a third meaning of the word", () => {
@@ -56,7 +69,7 @@ describe("leave page vocabulary — RETIRED terms must not come back", () => {
   });
 
   it("no strip tile is called `Geplant` — the days are submitted and awaiting approval, i.e. beantragt", () => {
-    expect(PAGE).not.toContain('<div class="vac-stat-label">Geplant</div>');
+    expect(ITEMS).not.toContain(tile("Geplant"));
   });
 
   it("the old `von N verfügbar` template literal is gone", () => {
@@ -70,21 +83,21 @@ describe("leave page vocabulary — RETIRED terms must not come back", () => {
 
 describe("leave page vocabulary — the new terms must be PRESENT", () => {
   it("names the gross Vorjahresübertrag in its own strip tile", () => {
-    expect(PAGE).toContain('<div class="vac-stat-label">Übertrag Vorjahr</div>');
+    expect(ITEMS).toContain(tile("Übertrag Vorjahr"));
   });
 
   it("names the unused rest of that Übertrag distinctly", () => {
-    expect(PAGE).toContain('<div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>');
+    expect(ITEMS).toContain(tile("Übertrag Vorjahr (Rest)"));
   });
 
   it("calls the pending days `Beantragt` — the same stem the card's qualifier uses", () => {
-    expect(PAGE).toContain('<div class="vac-stat-label">Beantragt</div>');
+    expect(ITEMS).toContain(tile("Beantragt"));
   });
 
   it("keeps the three unchanged strip tiles, so a later edit cannot quietly rename them either", () => {
-    expect(PAGE).toContain('<div class="vac-stat-label">Anspruch</div>');
-    expect(PAGE).toContain('<div class="vac-stat-label">Genommen</div>');
-    expect(PAGE).toContain('<div class="vac-stat-label">Verbleibend</div>');
+    expect(ITEMS).toContain(tile("Anspruch"));
+    expect(ITEMS).toContain(tile("Genommen"));
+    expect(ITEMS).toContain(tile("Verbleibend"));
   });
 
   it("takes the card's label from the tested conditional, not from a template literal", () => {
@@ -112,55 +125,28 @@ describe("leave page vocabulary — the new terms must be PRESENT", () => {
 
 describe("leave page vocabulary — structure", () => {
   it("has exactly six strip tiles (five before, plus the gross Übertrag)", () => {
-    // Counts TILE MARKUP only. A bare /vac-stat-label/ scan would also hit the two
-    // `.vac-stat-label` selectors in the <style> block and report 8 — a number that would
-    // silently drift with any CSS edit and would not be measuring "how many tiles".
-    expect(PAGE.match(/<div class="vac-stat-label">/g)!.length).toBe(6);
+    expect(ITEMS.match(/\blabel: "/g)!.length).toBe(6);
   });
 
   it("keeps the two Übertrag tiles adjacent — separated, `(Rest) 0` would be an orphaned number again", () => {
-    const grossIdx = PAGE.indexOf('<div class="vac-stat-label">Übertrag Vorjahr</div>');
-    const restIdx = PAGE.indexOf('<div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>');
+    const grossIdx = ITEMS.indexOf(tile("Übertrag Vorjahr"));
+    const restIdx = ITEMS.indexOf(tile("Übertrag Vorjahr (Rest)"));
     expect(grossIdx).toBeGreaterThan(-1);
     expect(restIdx).toBeGreaterThan(grossIdx);
-    expect(restIdx - grossIdx).toBeLessThan(400);
+    // No other tile sits between them.
+    expect(ITEMS.slice(grossIdx + 1, restIdx).match(/\blabel: "/g) ?? []).toHaveLength(0);
   });
 
-  it("introduces no new CSS class — the new tiles reuse the existing recipe only", () => {
-    expect(PAGE).not.toContain("vac-stat-carryover-value");
-    // Window bounded EXACTLY to the two Übertrag tiles: from the gross tile's opening <div>
-    // to the {/if} that closes the carry-over branch. A fixed-width slice would spill into
-    // the neighbouring `Beantragt` tile and flag its legitimate, pre-existing
-    // `vac-stat-planned` class — i.e. fail on markup that is correct.
-    const blockStart = PAGE.indexOf('<div class="vac-stat" data-testid="vac-stat-carryover">');
-    const restIdx = PAGE.indexOf('<div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>');
-    const blockEnd = PAGE.indexOf("{/if}", restIdx);
-    expect(blockStart).toBeGreaterThan(-1);
-    expect(blockEnd).toBeGreaterThan(blockStart);
-    const block = PAGE.slice(blockStart, blockEnd);
-    const allowed = new Set([
-      "vac-stat",
-      "vac-stat-label",
-      "vac-stat-value",
-      "vac-stat-unit",
-      "vac-stat-carry",
-    ]);
-    // Scan CLASS ATTRIBUTES only. A bare token scan over the block would also match the
-    // `data-testid="vac-stat-carryover"` hooks, which are test selectors, not CSS classes —
-    // it would fail on markup that is in fact correct while proving nothing about styling.
-    for (const attr of block.matchAll(/class="([^"]*)"/g)) {
-      for (const cls of attr[1].match(/vac-stat[a-z-]*/g) ?? []) {
-        expect(allowed.has(cls), `unexpected class "${cls}" in the Übertrag tiles`).toBe(true);
-      }
-    }
-    // And the tiles must not have grown a bespoke selector in <style> either.
-    expect(PAGE).not.toContain(".vac-stat-carryover");
+  it("builds the tiles from the block only — no page-own tile markup or bespoke selector", () => {
+    expect(PAGE).not.toMatch(/class="vac-stat/);
+    expect(PAGE).not.toContain(".vac-stat");
+    expect(PAGE).toContain('<KpiStrip ariaLabel="Urlaubsjahr {calYear}" items={vacYearItems} />');
   });
 
   it("does not interpolate a year into any Urlaubs-label", () => {
     // loadVacationSummary() always fetches the CURRENT year regardless of the viewed calYear
-    // (see deferred-items.md #1), so a year in a label would be an outright false statement.
-    expect(PAGE).not.toMatch(/vac-stat-label">[^<]*\{calYear\}/);
-    expect(PAGE).not.toMatch(/vac-stat-label">[^<]*\d{4}/);
+    // (see deferred-items.md #1), so a year in a tile label would be an outright false statement.
+    expect(ITEMS).not.toMatch(/label: `[^`]*\{calYear\}/);
+    expect(ITEMS).not.toMatch(/label: "[^"]*\d{4}/);
   });
 });

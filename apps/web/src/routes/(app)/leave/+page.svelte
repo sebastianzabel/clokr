@@ -11,7 +11,11 @@
   import Spinner from "$components/ui/Spinner.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
-  import KPIStat from "$components/ui/KPIStat.svelte";
+  import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import { matchesSearch } from "$lib/table/search";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-06
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
@@ -916,6 +920,43 @@
   let vacSummaryPlanned = $derived(vacSummary.planned);
   let vacSummaryCarryOverRemaining = $derived(vacSummary.carryOverRemaining);
   let vacSummaryLeft = $derived(vacSummary.left);
+
+  /** „Tag“ / „Tage“ for an entitlement figure. */
+  function daysUnit(n: number): string {
+    return n === 1 ? "Tag" : "Tage";
+  }
+
+  // Issue #851 (D-851-04): the Urlaubsjahr figures - same labels, same conditions as the former tiles.
+  let vacYearItems = $derived<KpiItem[]>([
+    { label: "Anspruch", value: vacSummaryTotal, unit: daysUnit(vacSummaryTotal) },
+    ...(vacSummaryCarryOver > 0
+      ? [
+          {
+            label: "Übertrag Vorjahr",
+            value: `+${vacSummaryCarryOver}`,
+            unit: daysUnit(vacSummaryCarryOver),
+            testId: "vac-stat-carryover",
+          },
+          {
+            label: "Übertrag Vorjahr (Rest)",
+            value: vacSummaryCarryOverRemaining === 0 ? "0" : `+${vacSummaryCarryOverRemaining}`,
+            unit: daysUnit(vacSummaryCarryOverRemaining),
+            testId: "vac-stat-carryover-rest",
+          },
+        ]
+      : []),
+    { label: "Genommen", value: vacSummaryUsed, unit: daysUnit(vacSummaryUsed) },
+    ...(vacSummaryPlanned > 0
+      ? [{ label: "Beantragt", value: vacSummaryPlanned, unit: daysUnit(vacSummaryPlanned) }]
+      : []),
+    {
+      label: "Verbleibend",
+      value: vacSummaryLeft,
+      unit: daysUnit(vacSummaryLeft),
+      deltaTone: vacSummaryLeft < 0 ? "bad" : "neutral",
+      delta: vacSummaryLeft < 0 ? "mehr genommen als verfügbar" : undefined,
+    },
+  ]);
   let showVacSummary = $state(true);
   // Phase 114: `vacSummary.remaining` is `number | null` — the null branch is what makes the
   // Urlaubskonto-Karte render "–" instead of a fake "0". Do NOT add `?? 0`. Declared here
@@ -924,6 +965,25 @@
   // gate: `$derived` is lazily evaluated at runtime regardless of script position, but the
   // static checker still flags a forward reference as "used before declaration".
   let vacRemaining = $derived(vacSummary.remaining);
+
+  // Issue #851 (D-851-04): the figures of the Kennzahlenleiste - the same values and wording the former
+  // three cards showed (vacationCardLabel / vacationCardDelta, calendarDaysUnit for sick days, #595).
+  let balanceItems = $derived<KpiItem[]>([
+    {
+      label: vacationCardLabel(vacSummaryPlanned),
+      value: vacRemaining === null ? "–" : vacRemaining,
+      unit: (vacRemaining ?? 0) === 1 ? "Tag" : "Tage",
+      delta: vacationBalance
+        ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
+        : undefined,
+    },
+    {
+      label: "Krankheitstage",
+      value: sickDaysYear === null ? "–" : sickDaysYear,
+      unit: calendarDaysUnit(sickDaysYear ?? 0),
+      explanation: `in ${calYear}`,
+    },
+  ]);
 
   // ── iCal-Download ────────────────────────────────────────────────────────
   let icalDownloading = $state(false);
@@ -960,13 +1020,62 @@
   let myReqPage = $state(1);
   let myReqPageSize = $state(10);
 
+  // Issue #851 (D-851-04): the search of the table toolbar (type, period, note).
+  let myReqQuery = $state("");
+
   let filteredMyRequests = $derived(
     myRequests.filter((req) => {
       if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
-      return true;
+      const haystack = [
+        typeName(req.typeCode),
+        fmtDate(req.startDate),
+        fmtDate(req.endDate),
+        statusLabel(req.status),
+        req.note ?? "",
+      ].join(" ");
+      return matchesSearch(haystack, myReqQuery);
     }),
   );
+
+  const MY_REQ_STATUS_OPTIONS: { value: Status; label: string }[] = [
+    { value: "PENDING", label: "Ausstehend" },
+    { value: "APPROVED", label: "Genehmigt" },
+    { value: "REJECTED", label: "Abgelehnt" },
+    { value: "CANCELLED", label: "Storniert" },
+    { value: "CANCELLATION_REQUESTED", label: "Stornierung beantragt" },
+  ];
+
+  let myReqFilters = $derived<ToolbarFilter[]>([
+    { key: "status", label: "Status", options: MY_REQ_STATUS_OPTIONS, value: filterLeaveStatus },
+    {
+      key: "type",
+      label: "Art",
+      options: TYPE_OPTIONS.map((t) => ({ value: t.code, label: t.label })),
+      value: filterLeaveType,
+    },
+  ]);
+
+  function onMyReqFilter(key: string, value: string) {
+    if (key === "status") filterLeaveStatus = value as Status | "";
+    if (key === "type") filterLeaveType = value as TypeCode | "";
+  }
+
+  function resetMyReqFilters() {
+    myReqQuery = "";
+    filterLeaveStatus = "";
+    filterLeaveType = "";
+  }
+
+  const MY_REQ_COLUMNS: DataTableColumn[] = [
+    { key: "type", label: "Art", primary: true },
+    { key: "start", label: "Von" },
+    { key: "end", label: "Bis" },
+    { key: "days", label: "Umfang", align: "end" },
+    { key: "status", label: "Status" },
+    { key: "note", label: "Anmerkung" },
+    { key: "actions", label: "Aktionen", align: "end" },
+  ];
 
   let pagedMyRequests = $derived(
     filteredMyRequests.slice((myReqPage - 1) * myReqPageSize, myReqPage * myReqPageSize),
@@ -1013,72 +1122,37 @@
     </div>
   {/if}
 
-  <!-- ── KPI-Zeile (Resturlaub, Überstundenkonto, Krankheitstage) ───────────── -->
-  <div class="kpi-row" data-testid="leave-balance">
-    <Card animate class="kpi-card">
-      <!-- Phase 114 (RU-01/02/04): `Resturlaub` = der verfügbare Saldo, genau diese eine
-           Bedeutung auf /leave. Der Vorjahresübertrag heißt „Übertrag Vorjahr" (Strip +
-           Delta-Zeile), nie mehr „Resturlaub". Das „(ohne beantragte)" im Label ist
-           ABSICHTLICH bedingt — bei 0 beantragten Tagen zeigen Karte und Leiste dieselbe
-           Zahl und der Zusatz würde einen Unterschied behaupten, den es nicht gibt (gleiche
-           Begründung wie Phase 107 G-03 im Panel unten). Die Entscheidung liegt in
-           vacationCardLabel(), damit sie getestet ist. -->
-      <KPIStat
-        label={vacationCardLabel(vacSummaryPlanned)}
-        value={vacRemaining === null ? "–" : String(vacRemaining)}
-        unit={(vacRemaining ?? 0) === 1 ? "Tag" : "Tage"}
-        delta={vacationBalance
-          ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
-          : undefined}
-      />
-    </Card>
-
-    <Card animate class="kpi-card">
-      <!-- Phase 97-06 (SALDO-DISP-02/05) — the split primitive replaces the inline
-           KPIStat markup outright (not wrapped), same as the dashboard tile:
-           KPIStat's pure-props string contract cannot express a two-figure tile.
-           Leads with "Bestätigt", subordinates the forecast, worded from the data by
-           forecastLabel() (Issue #588). -->
-      <!-- IN-01 (code review) — `loading` (declared above) now reaches the primitive. Note:
-           this KPI's own data arrives via loadOvertimeBalance(), fired (not awaited) AFTER
-           `loading` already flips false in onMount — so this only narrows the "Kein
-           Stundenplan" flash window (covers loadData()'s own fetch), it does not close it
-           completely. A fully precise fix would need a dedicated loading flag for
-           loadOvertimeBalance() itself; not added here to keep this change minimal. `error` is
-           deliberately NOT wired — this page's `error` string is reused for unrelated
-           mutations (delete/iCal-download/etc.), so surfacing it here would mislabel an
-           unrelated failure as "saldo failed to load". -->
-      {#if confirmedMinutes !== undefined}
-        <SaldoAnzeige
-          variant="expanded"
-          label="Überstundenkonto"
-          confirmedMinutes={confirmedMinutes ?? 0}
-          openMonthMinutes={openMonthMinutes ?? null}
-          hasClosedMonth={hasClosedMonth ?? false}
-          {unconfirmedMonths}
-          {rosterIncomplete}
-          {loading}
-        />
-      {:else}
-        <!-- Fallback: an older cached response without the split fields — degrade
-             to the primitive's single-value rendering instead of blanking. -->
-        <SaldoAnzeige
-          variant="expanded"
-          label="Überstundenkonto"
-          saldoMinutes={overtimeBalance !== null ? Math.round(overtimeBalance * 60) : null}
-          {loading}
-        />
-      {/if}
-    </Card>
-
-    <Card animate class="kpi-card">
-      <KPIStat
-        label="Krankheitstage"
-        value={sickDaysYear === null ? "–" : String(sickDaysYear)}
-        unit={calendarDaysUnit(sickDaysYear ?? 0)}
-        delta={`in ${calYear}`}
-      />
-    </Card>
+  <!-- ── Kennzahlen (Resturlaub, Krankheitstage, Überstundenkonto) — Issue #851 (D-851-04): one
+       Kennzahlenleiste instead of three page-own cards. `Resturlaub` keeps its one meaning on /leave
+       (Phase 114, RU-01/02/04): the label comes from vacationCardLabel(), the delta line from
+       vacationCardDelta(). The two-figure saldo cannot be a label/value cell, so SaldoAnzeige sits in
+       the strip's extra cell (Phase 97-06; forecast wording from forecastLabel(), Issue #588). -->
+  <div data-testid="leave-balance">
+    <KpiStrip ariaLabel="Urlaub, Krankheitstage und Überstundenkonto" items={balanceItems}>
+      {#snippet extra()}
+        {#if confirmedMinutes !== undefined}
+          <SaldoAnzeige
+            variant="expanded"
+            label="Überstundenkonto"
+            confirmedMinutes={confirmedMinutes ?? 0}
+            openMonthMinutes={openMonthMinutes ?? null}
+            hasClosedMonth={hasClosedMonth ?? false}
+            {unconfirmedMonths}
+            {rosterIncomplete}
+            {loading}
+          />
+        {:else}
+          <!-- Fallback: an older cached response without the split fields — degrade
+               to the primitive's single-value rendering instead of blanking. -->
+          <SaldoAnzeige
+            variant="expanded"
+            label="Überstundenkonto"
+            saldoMinutes={overtimeBalance !== null ? Math.round(overtimeBalance * 60) : null}
+            {loading}
+          />
+        {/if}
+      {/snippet}
+    </KpiStrip>
   </div>
 
   <!-- ── The one toolbar: tabs, period, zoom (Issue #840, E-01, D-840-13) ─────────────────── -->
@@ -1145,58 +1219,14 @@
        usual width; the two Übertrag tiles are conditional, so the placeholder count is
        deliberately approximate — it is a shimmer, not a claim. -->
   {#snippet vacStatsSkeleton()}
-    <div class="vac-summary-skeleton" data-testid="vac-summary-skeleton" aria-hidden="true">
-      {#each Array(4) as _, i (i)}<div class="skeleton vac-summary-skel-tile"></div>{/each}
-    </div>
+    <div data-testid="vac-summary-skeleton"><Skeleton shape="block" height="72px" /></div>
   {/snippet}
   {#snippet vacStats()}
-    <div class="vac-stats">
-      <div class="vac-stat">
-        <div class="vac-stat-label">Anspruch</div>
-        <div class="vac-stat-value">{vacSummaryTotal}<span class="vac-stat-unit">T</span></div>
-      </div>
-      {#if vacSummaryCarryOver > 0}
-        <!-- Phase 114 (RU-01/RU-03): zwei Kacheln statt einer. Der BRUTTO-Übertrag war bisher
-             nirgends als Zahl sichtbar — nur eingerechnet — weshalb „Genommen 31 bei Anspruch 24"
-             unerklärt blieb. Die zweite Kachel ist die frühere Kachel „Resturlaub": sie meint
-             ausschließlich den ungenutzten REST des Übertrags. Beide stehen bewusst
-             nebeneinander; getrennt wäre „(Rest) 0" wieder eine verwaiste Zahl. Kein Jahr im
-             Label — die Entitlement-Zahlen kommen immer aus dem laufenden Jahr, unabhängig vom
-             angezeigten calYear (siehe deferred-items.md). -->
-        <div class="vac-stat" data-testid="vac-stat-carryover">
-          <div class="vac-stat-label">Übertrag Vorjahr</div>
-          <div class="vac-stat-value vac-stat-carry">
-            +{vacSummaryCarryOver}<span class="vac-stat-unit">T</span>
-          </div>
-        </div>
-        <div class="vac-stat" data-testid="vac-stat-carryover-rest">
-          <div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>
-          <div class="vac-stat-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-stat-carry'}">
-            {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining}<span
-              class="vac-stat-unit">T</span
-            >
-          </div>
-        </div>
-      {/if}
-      <div class="vac-stat">
-        <div class="vac-stat-label">Genommen</div>
-        <div class="vac-stat-value">{vacSummaryUsed}<span class="vac-stat-unit">T</span></div>
-      </div>
-      {#if vacSummaryPlanned > 0}
-        <div class="vac-stat">
-          <div class="vac-stat-label">Beantragt</div>
-          <div class="vac-stat-value vac-stat-planned">
-            {vacSummaryPlanned}<span class="vac-stat-unit">T</span>
-          </div>
-        </div>
-      {/if}
-      <div class="vac-stat vac-stat--highlight">
-        <div class="vac-stat-label">Verbleibend</div>
-        <div class="vac-stat-value {vacSummaryLeft < 0 ? 'neg' : 'pos'}">
-          {vacSummaryLeft}<span class="vac-stat-unit">T</span>
-        </div>
-      </div>
-    </div>
+    <!-- Issue #851 (D-851-04): the entitlement figures as one Kennzahlenleiste. Phase 114 (RU-01/RU-03)
+         stays: the gross carry-over and its unused rest are two cells side by side, and none is
+         called „Resturlaub“; no year in the label (the figures always come from the running year,
+         see deferred-items.md). -->
+    <KpiStrip ariaLabel="Urlaubsjahr {calYear}" items={vacYearItems} />
   {/snippet}
 
   <!-- ── Kalender (Issue #840, E-03): the caller's own absences and the holidays ────────────── -->
@@ -1204,8 +1234,8 @@
     <div role="tabpanel" id="leave-panel-kalender" aria-labelledby="leave-tab-kalender">
       <!-- The entitlement figures of the viewed year; a year switch shows the skeleton, never the
            numbers of the year just left (issue #122). -->
-      <div class="card card-body vac-strip card-animate" data-testid="leave-vac-strip">
-        <div class="serif-eyebrow">Urlaubsjahr {calYear}</div>
+      <div class="vac-strip card-animate" data-testid="leave-vac-strip">
+        <h2 class="leave-section-title">Urlaubsjahr {calYear}</h2>
         {#if showVacSummary}
           {#if vacSummaryLoading}
             {@render vacStatsSkeleton()}
@@ -1399,8 +1429,8 @@
   <!-- ── Meine Anträge: the year's own requests (Issue #840) ─────────────────────────────────── -->
   {#if activeTab === "antraege"}
     <div role="tabpanel" id="leave-panel-antraege" aria-labelledby="leave-tab-antraege">
-      <div class="card card-body vac-strip card-animate">
-        <div class="serif-eyebrow">Urlaubsjahr {calYear}</div>
+      <div class="vac-strip card-animate">
+        <h2 class="leave-section-title">Urlaubsjahr {calYear}</h2>
         {#if showVacSummary}
           {#if vacSummaryLoading}
             {@render vacStatsSkeleton()}
@@ -1410,176 +1440,148 @@
         {/if}
       </div>
 
-      <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
-      <div class="section-header card-animate">
-        <h2>Meine Anträge</h2>
-      </div>
+      <!-- ── Anträge-Tabelle — Issue #851 (D-851-04): toolbar and table from the blocks ──────── -->
+      <h2 class="leave-section-title card-animate">Meine Anträge</h2>
 
       {#if loading}
-        <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
+        <Skeleton shape="card" lines={3} />
       {:else}
-        <div class="filter-bar card-animate">
-          <select
-            data-testid="leave-filter-status"
-            class="form-input filter-select"
-            bind:value={filterLeaveStatus}
-            aria-label="Nach Status filtern"
-          >
-            <option value="" data-testid="leave-filter-open">Alle Status</option>
-            <option value="PENDING">Ausstehend</option>
-            <option value="APPROVED" data-testid="leave-filter-approved">Genehmigt</option>
-            <option value="REJECTED">Abgelehnt</option>
-            <option value="CANCELLED">Storniert</option>
-            <option value="CANCELLATION_REQUESTED" data-testid="leave-filter-cancellation"
-              >Stornierung beantragt</option
-            >
-          </select>
-          <select
-            data-testid="leave-filter-type"
-            class="form-input filter-select"
-            bind:value={filterLeaveType}
-            aria-label="Nach Art filtern"
-          >
-            <option value="">Alle Arten</option>
-            {#each TYPE_OPTIONS as t (t.code)}
-              <option value={t.code}>{t.label}</option>
-            {/each}
-          </select>
-          <span class="filter-count">{filteredMyRequests.length} im Jahr {calYear}</span>
+        <div class="card-animate" data-testid="leave-filters">
+          <TableToolbar
+            bind:query={myReqQuery}
+            count={filteredMyRequests.length}
+            total={myRequests.length}
+            filters={myReqFilters}
+            onFilterChange={onMyReqFilter}
+            onReset={resetMyReqFilters}
+            searchLabel="Anträge durchsuchen"
+          />
         </div>
 
         {#if myRequests.length === 0}
-          <div class="empty-state card card-body" data-testid="leave-empty-state">
-            <span class="empty-icon">🏖️</span>
-            <h3>Keine Anträge in {calYear}</h3>
-            <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
+          <div data-testid="leave-empty-state">
+            <EmptyState
+              icon="calendar"
+              title="Keine Anträge in {calYear}"
+              description="Wähle ein anderes Jahr oder lege einen neuen Antrag an."
+            />
           </div>
         {:else}
-          <div class="table-wrapper">
-            <table class="data-table" data-testid="leave-mine-table">
-              <thead>
-                <tr>
-                  <th>Art</th>
-                  <th>Von</th>
-                  <th>Bis</th>
-                  <th class="text-center">Umfang</th>
-                  <th>Status</th>
-                  <th>Anmerkung</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each pagedMyRequests as req (req.id)}
-                  {@const isOwn = req.employeeId === $authStore.user?.employeeId}
-                  <tr
-                    id="request-{req.id}"
-                    data-testid={`leave-mine-row-${req.id}`}
-                    data-status={req.status}
-                    class:highlight-row={highlightRequestId === req.id}
+          <div data-testid="leave-mine-table">
+            <DataTable
+              caption="Meine Anträge {calYear}"
+              columns={MY_REQ_COLUMNS}
+              rows={pagedMyRequests}
+              rowKey={(req) => req.id}
+              rowTestId={(req) => `leave-mine-row-${req.id}`}
+              rowId={(req) => `request-${req.id}`}
+              rowHighlight={(req) => highlightRequestId === req.id}
+              filtered={filteredMyRequests.length === 0}
+              onResetFilters={resetMyReqFilters}
+            >
+              {#snippet cell(req, column)}
+                {@const isOwn = req.employeeId === $authStore.user?.employeeId}
+                {#if column.key === "type"}
+                  {typeName(req.typeCode)}
+                {:else if column.key === "start"}
+                  {fmtDate(req.startDate)}
+                {:else if column.key === "end"}
+                  {fmtDate(req.endDate)}
+                {:else if column.key === "days"}
+                  {leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}
+                {:else if column.key === "status"}
+                  <span
+                    class="badge {statusClass(req.status)}"
+                    data-testid={`leave-mine-row-${req.id}-status-badge`}
+                    >{statusLabel(req.status)}</span
                   >
-                    <td>{typeName(req.typeCode)}</td>
-                    <td>{fmtDate(req.startDate)}</td>
-                    <td>{fmtDate(req.endDate)}</td>
-                    <td class="text-center"
-                      >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</td
-                    >
-                    <td>
-                      <span
-                        class="badge {statusClass(req.status)}"
-                        data-testid={`leave-mine-row-${req.id}-status-badge`}
-                        >{statusLabel(req.status)}</span
-                      >
-                      {#if req.lastDaysAdjustment}
-                        {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
-                        <!-- Phase 107-07 (D-19/D-21): persistent — NOT tied to the triggering
+                  {#if req.lastDaysAdjustment}
+                    {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
+                    <!-- Phase 107-07 (D-19/D-21): persistent — NOT tied to the triggering
                            bell-notification's read/dismissed state, always the latest
                            adjustment only. Reading order: status, then this, then Vorläufig
                            (UI-SPEC §Visual Hierarchy — this reports something that
                            happened, Vorläufig only a standing condition). -->
-                        <span
-                          class={adjBadge.badgeClass}
-                          data-testid={`leave-mine-row-${req.id}-adjustment-badge`}
-                          title={adjBadge.tooltip}
-                        >
-                          {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
-                            ? "+"
-                            : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
-                            >{:else}{adjBadge.delta}{/if} Tag(e)
-                        </span>
-                      {/if}
-                      {#if req.daysProvisional}
-                        <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
+                    <span
+                      class={adjBadge.badgeClass}
+                      data-testid={`leave-mine-row-${req.id}-adjustment-badge`}
+                      title={adjBadge.tooltip}
+                    >
+                      {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
+                        ? "+"
+                        : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
+                        >{:else}{adjBadge.delta}{/if} Tag(e)
+                    </span>
+                  {/if}
+                  {#if req.daysProvisional}
+                    <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
                            provisional request is fully valid and payable today. -->
-                        <span
-                          class="badge badge-yellow"
-                          data-testid={`leave-mine-row-${req.id}-provisional-badge`}
-                          title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
-                        >
-                          Vorläufig
-                        </span>
-                      {/if}
-                      {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                        <span
-                          class="badge badge-attest {req.attestPresent
-                            ? 'badge-green'
-                            : 'badge-gray'}"
-                          title={req.attestPresent ? "Attest liegt vor." : KARENZ_BADGE_TOOLTIP}
-                        >
-                          {req.attestPresent ? "Attest" : "Kein Attest"}
-                        </span>
-                      {/if}
-                      <!-- Phase 104-10 (D-29): § 9 status alongside the existing SICK badge —
+                    <span
+                      class="badge badge-yellow"
+                      data-testid={`leave-mine-row-${req.id}-provisional-badge`}
+                      title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
+                    >
+                      Vorläufig
+                    </span>
+                  {/if}
+                  {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+                    <span
+                      class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
+                      title={req.attestPresent ? "Attest liegt vor." : KARENZ_BADGE_TOOLTIP}
+                    >
+                      {req.attestPresent ? "Attest" : "Kein Attest"}
+                    </span>
+                  {/if}
+                  <!-- Phase 104-10 (D-29): § 9 status alongside the existing SICK badge —
                          also shown on the overlapping VACATION row so a manager can see the
                          case from either side. Text label carries the meaning, not colour
                          alone (Phase-97 UAT lesson). -->
-                      {#if req.section9Status === "AU_PENDING"}
-                        <span class="badge badge-yellow" data-testid="section9-list-badge">
-                          AU ausstehend
-                        </span>
-                      {:else if req.section9Status === "CONFIRMED"}
-                        <span class="badge badge-gray" data-testid="section9-list-badge">
-                          § 9 gutgeschrieben
-                        </span>
-                      {:else if req.section9Status === "REJECTED"}
-                        <span class="badge badge-gray" data-testid="section9-list-badge">
-                          AU abgelehnt
-                        </span>
-                      {/if}
-                    </td>
-                    <td class="note-cell text-muted">
-                      {#if req.status === "REJECTED" && req.reviewNote}
-                        <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
-                      {:else}
-                        {req.note ?? "—"}
-                      {/if}
-                    </td>
-                    <td class="action-cell">
-                      <div class="action-cell__group">
-                        {#if isOwn && req.status === "PENDING"}
-                          <button
-                            data-testid={`leave-mine-row-${req.id}-edit`}
-                            class="btn btn-sm btn-ghost"
-                            onclick={() => openEditForm(req)}>Bearbeiten</button
-                          >
-                          <button
-                            data-testid={`leave-mine-row-${req.id}-withdraw`}
-                            class="btn btn-sm btn-ghost text-red"
-                            onclick={() => openCancelDialog(req)}>Zurückziehen</button
-                          >
-                        {/if}
-                        {#if isOwn && req.status === "APPROVED"}
-                          <button
-                            data-testid={`leave-mine-row-${req.id}-cancel`}
-                            class="btn btn-sm btn-ghost text-red"
-                            onclick={() => openCancelDialog(req)}>Stornieren</button
-                          >
-                        {/if}
-                      </div>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
+                  {#if req.section9Status === "AU_PENDING"}
+                    <span class="badge badge-yellow" data-testid="section9-list-badge">
+                      AU ausstehend
+                    </span>
+                  {:else if req.section9Status === "CONFIRMED"}
+                    <span class="badge badge-gray" data-testid="section9-list-badge">
+                      § 9 gutgeschrieben
+                    </span>
+                  {:else if req.section9Status === "REJECTED"}
+                    <span class="badge badge-gray" data-testid="section9-list-badge">
+                      AU abgelehnt
+                    </span>
+                  {/if}
+                {:else if column.key === "note"}
+                  <span class="note-cell text-muted">
+                    {#if req.status === "REJECTED" && req.reviewNote}
+                      <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
+                    {:else}
+                      {req.note ?? "—"}
+                    {/if}
+                  </span>
+                {:else}
+                  <div class="action-cell__group">
+                    {#if isOwn && req.status === "PENDING"}
+                      <button
+                        data-testid={`leave-mine-row-${req.id}-edit`}
+                        class="btn btn-sm btn-ghost"
+                        onclick={() => openEditForm(req)}>Bearbeiten</button
+                      >
+                      <button
+                        data-testid={`leave-mine-row-${req.id}-withdraw`}
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => openCancelDialog(req)}>Zurückziehen</button
+                      >
+                    {/if}
+                    {#if isOwn && req.status === "APPROVED"}
+                      <button
+                        data-testid={`leave-mine-row-${req.id}-cancel`}
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => openCancelDialog(req)}>Stornieren</button
+                      >
+                    {/if}
+                  </div>
+                {/if}
+              {/snippet}
+            </DataTable>
             <Pagination
               total={filteredMyRequests.length}
               bind:page={myReqPage}
@@ -1667,55 +1669,6 @@
 <!-- /leave-page -->
 
 <style>
-  /* ── KPI Row (v1.5 design system) ─────────────────────────────────── */
-  .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-bottom: 16px;
-  }
-  .kpi-card {
-    /* .card recipe in app.css provides bg, border, radius, padding */
-    min-height: 96px;
-  }
-  @media (max-width: 768px) {
-    /* minmax(0, 1fr): a bare 1fr track is minmax(auto, 1fr) and grew with the widest nowrap
-       content of the Überstundenkonto card, pushing the page past a 320 px viewport (Issue #564,
-       seen on CI with wider fallback fonts). */
-    .kpi-row {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 12px;
-    }
-  }
-
-  /* ── Highlight from notification deep-link ────────────────────────── */
-  @keyframes highlight-fade {
-    0% {
-      background-color: var(--brand-soft);
-    }
-    100% {
-      background-color: transparent;
-    }
-  }
-  .highlight-row {
-    animation: highlight-fade 3s var(--ease-out) both;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    margin-bottom: 0.875rem;
-  }
-  .section-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-2);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 0;
-  }
-
   /* ── Form (inside Modal primitive) ──────────────────────────────── */
   .form-grid {
     display: grid;
@@ -1803,14 +1756,13 @@
     color: var(--bad);
   }
   .note-cell {
+    display: inline-block;
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .action-cell {
-    white-space: nowrap;
-  }
+
   /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
      keeps display: table-cell and lines up with the rest of the row even when empty. */
   .action-cell__group {
@@ -1818,22 +1770,6 @@
     gap: 0.25rem;
     align-items: center;
     flex-wrap: wrap;
-  }
-
-  /* ── Empty ────────────────────────────────────────────────────────── */
-  .empty-state {
-    text-align: center;
-    padding: 3rem 2rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.625rem;
-  }
-  .empty-icon {
-    font-size: 2.5rem;
-  }
-  .empty-state h3 {
-    font-size: 1rem;
   }
 
   /* ── Buttons ──────────────────────────────────────────────────────── */
@@ -1936,6 +1872,12 @@
      The period switcher is the one LeaveToolbar (#840); the page has no month bar of its own. */
 
   /* The entitlement strip of the viewed year (Kalender and Meine Anträge). */
+  .leave-section-title {
+    font-size: var(--fs-h2);
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+  }
   .vac-strip {
     display: flex;
     flex-direction: column;
@@ -1954,80 +1896,6 @@
     text-align: center;
     color: var(--text-2);
     font-size: 0.875rem;
-  }
-
-  .vac-stats {
-    display: flex;
-    align-items: flex-end;
-    gap: 28px;
-    flex-wrap: wrap;
-  }
-
-  /* Phase 117 (issue #122, D-03) — Ladezustand der Kachelleiste. Reuses the global .skeleton
-     shimmer (app.css:883); only the geometry is page-scoped, same split as Phase 116's
-     .list-skeleton on /time-entries. Mirrors .vac-stats' own flex row + 28px gap so the strip
-     does not jump when the numbers arrive. */
-  .vac-summary-skeleton {
-    display: flex;
-    align-items: flex-end;
-    gap: 28px;
-    flex-wrap: wrap;
-  }
-  .vac-summary-skel-tile {
-    width: 72px;
-    height: 38px;
-    border-radius: var(--r-control);
-  }
-
-  .vac-stat {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .vac-stat-label {
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-3);
-  }
-
-  .vac-stat-value {
-    font-family: var(--font-ui);
-    font-variant-numeric: tabular-nums;
-    font-size: 22px;
-    font-weight: 400;
-    color: var(--text);
-    line-height: 1;
-    display: inline-flex;
-    align-items: baseline;
-    gap: 4px;
-  }
-  .vac-stat-value.pos {
-    color: var(--ok);
-  }
-  .vac-stat-value.neg {
-    color: var(--bad);
-  }
-  .vac-stat-carry {
-    color: var(--brand);
-  }
-  .vac-stat-planned {
-    color: var(--warn);
-  }
-
-  .vac-stat-unit {
-    font-family: var(--font-ui);
-    font-variant-numeric: normal;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-2);
-  }
-
-  .vac-stat--highlight .vac-stat-label {
-    color: var(--text);
   }
 
   /* ── Days-Info Bar ────────────────────────────────────────────────── */
