@@ -2,8 +2,11 @@
 //
 // G-2: the weekend band was the near-white `--bg-subtle` at 0.8 opacity (1.09:1 on editorial light,
 // about 1:1 on the translucent modern card), so the owner could not see weekends. The proofs here
-// resolve the declared tokens from `tokens.css` (jsdom resolves no custom properties) in all four
-// surface modes and measure the contrast of the shade against the card it lies on.
+// resolve the declared tokens from `tokens.css` (jsdom resolves no custom properties) and measure
+// the contrast of the shade against the card it lies on.
+//
+// #842 (D-842-02): the four retired surface modes (editorial/modern x light/dark) became the six
+// theme x mode combinations; every proof below iterates all six through the one cascade resolver.
 //
 // G-4: every look of the legend means exactly one thing (describe further down).
 import { readFileSync } from "node:fs";
@@ -16,14 +19,14 @@ import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svel
 import { periodOf, type TimelineBar, type TimelinePerson } from "$lib/leave/timeline-model";
 import { MIXED, allLeaveColorTokens } from "$lib/leave/leave-colors";
 import {
-  SURFACES,
+  COMBINATION_NAMES,
   cardSurface,
   contrast,
   over,
   readTokensCss,
   resolveColor,
   tokenIn,
-  type SurfaceName,
+  type CombinationName,
 } from "./token-css";
 
 function readSource(relativeFromHere: string, relativeFromCwd: string): string {
@@ -54,41 +57,51 @@ function ruleBody(source: string, selector: string): string {
 }
 
 describe("#840 G-2 weekend shade", () => {
-  describe("the token resolves to a visible tint in every surface mode", () => {
-    for (const name of Object.keys(SURFACES) as SurfaceName[]) {
+  describe("the token resolves to a visible tint in every combination", () => {
+    it("the six combinations are all under test (anti-vacuity)", () => {
+      expect(COMBINATION_NAMES).toHaveLength(6);
+    });
+
+    for (const name of COMBINATION_NAMES as CombinationName[]) {
       it(`${name}: --weekend-shade reaches 1.2:1 against the card`, () => {
-        const blocks = SURFACES[name];
-        const card = cardSurface(TOKENS, blocks);
-        const shade = resolveColor(TOKENS, blocks, "var(--weekend-shade)");
+        const card = cardSurface(TOKENS, name);
+        const shade = resolveColor(TOKENS, name, "var(--weekend-shade)");
         const ratio = contrast(over(shade, card), card);
         expect(ratio).toBeGreaterThanOrEqual(1.2);
       });
     }
 
     it("the shade is a quiet background, far below a leave-type fill", () => {
-      for (const name of Object.keys(SURFACES) as SurfaceName[]) {
-        const blocks = SURFACES[name];
-        const card = cardSurface(TOKENS, blocks);
-        const shade = over(resolveColor(TOKENS, blocks, "var(--weekend-shade)"), card);
-        const fill = over(resolveColor(TOKENS, blocks, "var(--leave-type-absent)"), card);
-        expect(contrast(shade, card)).toBeLessThan(contrast(fill, card));
+      for (const name of COMBINATION_NAMES as CombinationName[]) {
+        const card = cardSurface(TOKENS, name);
+        const shade = over(resolveColor(TOKENS, name, "var(--weekend-shade)"), card);
+        const fill = over(resolveColor(TOKENS, name, "var(--leave-type-absent)"), card);
+        expect(contrast(shade, card), name).toBeLessThan(contrast(fill, card));
       }
     });
 
-    it("the old value (the subtle background at 0.8 opacity) is invisible — the proof can fail", () => {
-      const old = (name: SurfaceName) => {
-        const blocks = SURFACES[name];
-        const card = cardSurface(TOKENS, blocks);
-        const subtle = resolveColor(TOKENS, blocks, "var(--bg-subtle)");
-        return contrast(over({ ...subtle, a: subtle.a * 0.8 }, card), card);
+    it("a synthetic too-faint shade (the sunk surface at 80%) is invisible — the proof can fail", () => {
+      // #842: the earlier negative control read a token that no longer exists; this one is built
+      // from a live role. The same check that passes for the real shade has to fail for this one.
+      const faint = (name: CombinationName) => {
+        const card = cardSurface(TOKENS, name);
+        const shade = resolveColor(
+          TOKENS,
+          name,
+          "color-mix(in srgb, var(--sunk) 80%, transparent)",
+        );
+        return contrast(over(shade, card), card);
       };
-      expect(old("editorial-light")).toBeLessThan(1.2);
-      expect(old("modern-light")).toBeLessThan(1.2);
+      const lightOnes = (COMBINATION_NAMES as CombinationName[]).filter((n) =>
+        n.endsWith("-light"),
+      );
+      expect(lightOnes).toHaveLength(3);
+      expect(lightOnes.some((name) => faint(name) < 1.2)).toBe(true);
     });
 
-    it("the helper reads the dark block, never the `html[data-mode=dark]` one (prefix trap)", () => {
-      expect(tokenIn(TOKENS, [":root", '[data-mode="dark"]'], "--bg-card")).toBe("#1f1827");
-      expect(tokenIn(TOKENS, [":root"], "--bg-card")).toBe("#ffffff");
+    it("the resolver reads the dark card from the dark block, not the light root", () => {
+      expect(tokenIn(TOKENS, "pflaume-dark", "--card")).toBe("#1f1b22");
+      expect(tokenIn(TOKENS, "pflaume-light", "--card")).toBe("#ffffff");
     });
   });
 
@@ -162,11 +175,6 @@ const barOf = (over: Partial<TimelineBar>): TimelineBar => ({
   ...over,
 });
 
-const MODES = {
-  light: SURFACES["editorial-light"],
-  dark: SURFACES["editorial-dark"],
-} as const;
-
 const HOSTS = [
   "routes/(app)/team/leave/+page.svelte",
   "routes/(app)/leave/+page.svelte",
@@ -174,10 +182,10 @@ const HOSTS = [
 ] as const;
 
 describe("#840 G-4 one look, one meaning", () => {
-  describe("the solid neutral looks are pairwise apart in light and dark", () => {
-    for (const [mode, blocks] of Object.entries(MODES)) {
+  describe("the solid neutral looks are pairwise apart in every combination", () => {
+    for (const mode of COMBINATION_NAMES as CombinationName[]) {
       const colorOf = (token: string) =>
-        over(resolveColor(TOKENS, blocks, `var(${token})`), cardSurface(TOKENS, blocks));
+        over(resolveColor(TOKENS, mode, `var(${token})`), cardSurface(TOKENS, mode));
       const looks = {
         Abwesend: "--leave-type-absent",
         "Andere Abwesenheit": "--leave-type-default",
@@ -203,10 +211,10 @@ describe("#840 G-4 one look, one meaning", () => {
         ]) {
           expect(contrast(fill, colorOf(neutral)), neutral).toBeGreaterThanOrEqual(1.4);
         }
-        const body = tokenIn(TOKENS, blocks, "--leave-type-default");
+        const body = tokenIn(TOKENS, mode, "--leave-type-default");
         const others = [...allLeaveColorTokens()]
           .filter((token) => !token.endsWith("-text") && token !== "--leave-type-default")
-          .map((token) => tokenIn(TOKENS, blocks, token));
+          .map((token) => tokenIn(TOKENS, mode, token));
         expect(others.length).toBeGreaterThan(10); // the walked set is not empty
         expect(others).not.toContain(body);
       });
