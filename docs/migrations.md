@@ -1897,3 +1897,29 @@ und `density` eines veralteten Browser-Tabs werden ignoriert (200, nicht gespeic
 **Rollback.** Ein Image-Rollback genügt nicht für die Daten: die Zeilen tragen dann `salz`/`petrol`, die der alte Code beim Lesen auf
 `pflaume` zurückfallen lässt (kein Fehler, keine Sperre). Der Verlust ist rein kosmetisch (die Wahl der Person muss neu getroffen
 werden); eine Rückabbildung ist nicht möglich, weil `nacht` und `schiefer` auf `salz` zusammenfallen.
+
+## Phase 599 — Korrekturanfrage für abgeschlossene Monate (Issue #599)
+
+**Was die Migrationen tun.** Zwei Verzeichnisse in `packages/db/prisma/migrations/`:
+
+- `20261109170042_month_correction_request` (erzeugt mit `prisma migrate diff` gegen eine Schatten-DB, rein additiv): neuer Enum
+  `MonthCorrectionRequestStatus`, neue Tabelle `MonthCorrectionRequest` mit zwei Fremdschlüsseln (`Employee`, `OvertimeTransaction`,
+  beide `ON DELETE RESTRICT`) und dem von Hand geschriebenen CHECK `MonthCorrectionRequest_booking_shape_check` (eine genehmigte
+  Anfrage trägt immer Minuten, Buchungstag und Journalzeile, keine andere; nie 0 Minuten). Keine bestehende Tabelle, Spalte oder Zeile
+  wird verändert; die CI-Driftprüfung bleibt leer.
+- `20261109180000_month_correction_template_grant` (rein datenbezogen, wiederholbar über `IS DISTINCT FROM`): die globalen
+  Systemvorlagen Admin, Manager, Mitarbeiter, Inhaber und Salonmanager erhalten die `month-correction:*`-Rechte spiegelbildlich zu
+  ihren Zeitnachtrag-Rechten (`docs/permissions.md`, „Seit #599“). Personalabteilung und Ausbilder bleiben unverändert;
+  Kundenkopien der Vorlagen bleiben unverändert; niemandem wird eine Rolle zugewiesen. Bewiesen durch
+  `apps/api/src/__tests__/month-correction-template-migration-599.test.ts`.
+
+`prisma migrate deploy` wendet beide auf jeder Stufe an; kein Skript, kein manueller Schritt, keine Bestandsdaten zu korrigieren
+(die Tabelle ist neu und leer).
+
+**Wirkung auf den Saldo.** Erst eine Genehmigung bucht: Journalzeile `OvertimeTransaction` (Typ CORRECTION) plus Minuten und
+Buchungstag an der Anfrage; der Saldo-Kern `closeEmployeeMonth()` zieht die Minuten als Kontobewegung am Buchungstag ein. Ohne
+genehmigte Anfrage ändert sich kein Saldo, kein Snapshot und kein abgeschlossener Monat.
+
+**Rollback.** Ein Image-Rollback auf eine Version ohne #599 lässt die Tabelle stehen; der alte Code liest sie nicht, gebuchte
+Korrekturen fallen dann aus dem Live-Saldo heraus (die Journalzeile bleibt). Nach einem Rollback mit bereits genehmigten Anfragen
+deshalb wieder vorwärts gehen, nicht die Tabelle löschen (Revisionssicherheit).
