@@ -214,6 +214,27 @@ describe("Dialog - inert page", () => {
   });
 });
 
+// #580 carried into the Dialog (D-843-16): stacked dialogs close one at a time.
+describe("Dialog - stacking (#580)", () => {
+  it("one Escape closes only the dialog opened last, the next Escape the other", async () => {
+    renderWithTheme(Dialog, { open: true, title: "Unten", children });
+    renderWithTheme(Dialog, { open: true, title: "Oben", children });
+    await waitFor(() => expect(screen.getAllByRole("dialog").length).toBe(2));
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.getAllByRole("dialog").length).toBe(1));
+    expect(screen.getByRole("dialog", { name: "Unten" })).toBeTruthy();
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryAllByRole("dialog").length).toBe(0));
+  });
+
+  it("a closed dialog does not swallow the Escape of an open one", async () => {
+    renderWithTheme(Dialog, { open: false, title: "Zu", children });
+    renderWithTheme(Dialog, { open: true, title: "Offen", children });
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryAllByRole("dialog").length).toBe(0));
+  });
+});
+
 // D-843-16 (#636): the dialog stacks above the topbar and below the toast. The numbers of the
 // neighbours are read from their sources, so a change there turns this red.
 describe("Dialog - z-scale", () => {
