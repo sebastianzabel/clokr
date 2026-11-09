@@ -1,23 +1,22 @@
 // Issue #546 — regression shield for the dashboard clock card buttons ("Einstempeln" /
 // "Ausstempeln", the loading spinner and the keyboard focus ring).
 //
-// Defect (measured in Chromium before the fix, editorial pflaume light, hover): white label on a
-// 92 % white fill = 1.00..1.19:1, and the loading spinner arc (white) on the white fill = 1.00:1.
-// Root cause: the primary card button composed the global `.btn-primary`, whose
-// `.btn-primary:hover:not(:disabled)` (0,3,0) forced `color: #fff` and beat the card's own
-// `.timer-card-wrap .timer-cta-primary` (0,2,0) colour; the modern skin layered more `.btn-primary`
-// rules on top. After the fix (browser probe, 8 UI-selectable combinations x base/hover/focus/loading,
-// idle and running fixture): label 6.31..12.11:1 in every state, focus ring 7.11..12.11:1 against its
-// band, spinner arc 7.11..12.11:1 against the fill; the control element differs in every state.
+// Defect (measured in Chromium before the fix): a light label on a light 92 % fill = 1.00..1.19:1,
+// and the loading spinner arc on the same fill = 1.00:1. Root cause: the primary card button composed
+// the global `.btn-primary`, whose `.btn-primary:hover:not(:disabled)` (0,3,0) forced the label
+// colour and beat the card's own `.timer-card-wrap .timer-cta-primary` (0,2,0) colour.
 //
 // Why it reads SOURCE: no route page is mounted in this workspace (see dashboard-clock-card.test.ts
 // for the precedent), and jsdom resolves neither custom properties nor `:hover`. The shield therefore
 // proves two things from the stylesheets themselves:
 //   1. cascade   - a card rule out-specifies EVERY app.css / tokens.css / page rule that can reach the
-//                  button or its spinner, per state (so a new skin layer cannot silently win again);
-//   2. contrast  - the tokens those winning rules reference, resolved per UI-selectable
-//                  theme/mode/skin combination, give WCAG contrast (label >= 4.5, spinner arc >= 3,
-//                  focus ring vs its band >= 3).
+//                  button or its spinner, per state (so a new layer cannot silently win again);
+//   2. contrast  - the tokens those winning rules reference, resolved for each of the six
+//                  combinations of the three themes of theme.ts x light/dark through the one token
+//                  cascade resolver (`token-cascade.ts`), give WCAG contrast (label >= 4.5, spinner
+//                  arc >= 3, focus ring vs its band >= 3). #842 (D-842-16, D-842-25): the retired
+//                  skin axis and its Branding & Themes presets are gone; the card text is the
+//                  --brand-ink role on the --brand-hover -> --brand gradient (D-842-08, P6).
 // The Svelte-compiled form of the page's scoped spinner rule, taken from the browser probe, is
 // `.btn-spinner.svelte-<hash>` = (0,2,0); the page's scoped rules therefore count +(0,1,0) here.
 import { readFileSync } from "node:fs";
@@ -26,6 +25,16 @@ import { fileURLToPath } from "node:url";
 
 import postcss from "postcss";
 import { describe, expect, it } from "vitest";
+
+import {
+  COMBINATIONS,
+  contrast,
+  resolveColor,
+  resolveCombination,
+  type Mode,
+  type Rgba,
+  type Theme,
+} from "../../../__tests__/token-cascade";
 
 function readSource(url: URL, fallback: string): string {
   try {
@@ -44,10 +53,6 @@ const TOKENS_CSS = readSource(new URL("../../../tokens.css", import.meta.url), "
 const THEME_TS = readSource(
   new URL("../../stores/theme.ts", import.meta.url),
   "src/lib/stores/theme.ts",
-);
-const ADMIN_THEMES = readSource(
-  new URL("../../../routes/(app)/admin/themes/+page.svelte", import.meta.url),
-  "src/routes/(app)/admin/themes/+page.svelte",
 );
 const DAY_STATE = readSource(
   new URL("../day-state.ts", import.meta.url),
@@ -372,32 +377,13 @@ const GHOSTS = BUTTONS.filter((b) => b.classes.includes("timer-cta-ghost"));
 
 const DECLARED_TOKENS = new Set([...TOKENS_CSS.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
 
-function srgb(c: number): number {
-  const v = c / 255;
-  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-}
-type Rgb = [number, number, number];
-function hexToRgb(hex: string): Rgb {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) throw new Error(`Not a 6-digit hex colour: ${hex}`);
-  const n = parseInt(m[1], 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-function luminance([r, g, b]: Rgb): number {
-  return 0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);
-}
-function contrast(a: Rgb, b: Rgb): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-}
-
 interface Combo {
   id: string;
-  theme: string;
-  mode: string;
-  skin: string | null;
+  theme: Theme;
+  mode: Mode;
 }
 
+/** The theme ids of theme.ts (its `id: "…"` literals) crossed with light/dark. */
 function comboList(): Combo[] {
   const slice = THEME_TS.slice(THEME_TS.indexOf("export const themes"));
   const block = slice.slice(0, slice.indexOf("];"));
@@ -405,68 +391,33 @@ function comboList(): Combo[] {
   const combos: Combo[] = [];
   for (const theme of themes)
     for (const mode of ["light", "dark"])
-      combos.push({ id: `editorial-${theme}-${mode}`, theme, mode, skin: null });
-  for (const m of ADMIN_THEMES.matchAll(/skin:\s*"modern",\s*mode:\s*"(\w+)",\s*theme:\s*"(\w+)"/g))
-    combos.push({ id: `modern-${m[2]}-${m[1]}`, theme: m[2], mode: m[1], skin: "modern" });
+      combos.push({ id: `${theme}-${mode}`, theme: theme as Theme, mode: mode as Mode });
   return combos;
 }
 
-/** Resolves every custom property for one combination from the tokens.css cascade. */
+/** Resolves every custom property for one combination through the shared cascade resolver. */
 function resolveTokens(combo: Combo): Map<string, string> {
-  const winners = new Map<string, { spec: Spec; order: number; value: string }>();
-  for (const rule of TOKEN_RULES) {
-    const sel = rule.selector.replace(/^html(?=\[)/, "");
-    let matches = false;
-    if (sel === ":root") matches = true;
-    else if (/^(\[data-(theme|mode|skin)="[a-z]+"\])+$/.test(sel)) {
-      matches = [...sel.matchAll(/\[data-(theme|mode|skin)="([a-z]+)"\]/g)].every(([, k, v]) => {
-        if (k === "theme") return combo.theme === v;
-        if (k === "mode") return combo.mode === v;
-        return combo.skin === v;
-      });
-    }
-    if (!matches) continue;
-    for (const d of rule.decls) {
-      if (!d.prop.startsWith("--")) continue;
-      const prev = winners.get(d.prop);
-      if (
-        !prev ||
-        cmp(rule.spec, prev.spec) > 0 ||
-        (cmp(rule.spec, prev.spec) === 0 && rule.order > prev.order)
-      )
-        winners.set(d.prop, { spec: rule.spec, order: rule.order, value: d.value.trim() });
-    }
-  }
-  const out = new Map<string, string>();
-  for (const [k, v] of winners) out.set(k, v.value);
-  return out;
+  return resolveCombination(TOKENS_CSS, combo.theme, combo.mode);
 }
 
-function tokenRgb(tokens: Map<string, string>, name: string, depth = 0): Rgb {
-  if (depth > 8) throw new Error(`token cycle at ${name}`);
-  const raw = tokens.get(name);
-  if (raw === undefined) throw new Error(`token ${name} is not defined`);
-  const ref = /^var\((--[\w-]+)\)$/.exec(raw);
-  if (ref) return tokenRgb(tokens, ref[1], depth + 1);
-  return hexToRgb(raw);
+function tokenRgb(tokens: Map<string, string>, name: string): Rgba {
+  if (!tokens.has(name)) throw new Error(`token ${name} is not defined`);
+  return resolveColor(tokens, `var(${name})`);
 }
 
-/** `var(--x)` or `color-mix(in srgb, var(--a) N%, var(--b))` (gamma-sRGB mix), nothing else. */
-function evalColor(value: string, tokens: Map<string, string>): Rgb {
+/**
+ * `var(--x)` or `color-mix(in srgb, var(--a) N%, var(--b) | transparent)`, nothing else: any other
+ * expression throws instead of passing silently. The value is then resolved by the shared resolver.
+ */
+function evalColor(value: string, tokens: Map<string, string>): Rgba {
   const v = value.trim();
-  const plain = /^var\((--[\w-]+)\)$/.exec(v);
-  if (plain) return tokenRgb(tokens, plain[1]);
-  const mix =
-    /^color-mix\(\s*in srgb\s*,\s*var\((--[\w-]+)\)\s+(\d+(?:\.\d+)?)%\s*,\s*var\((--[\w-]+)\)\s*\)$/.exec(
+  const supported =
+    /^var\(--[\w-]+\)$/.test(v) ||
+    /^color-mix\(\s*in srgb\s*,\s*var\(--[\w-]+\)\s+\d+(?:\.\d+)?%\s*,\s*(?:var\(--[\w-]+\)|transparent)\s*\)$/.test(
       v,
     );
-  if (mix) {
-    const a = tokenRgb(tokens, mix[1]);
-    const b = tokenRgb(tokens, mix[3]);
-    const n = Number(mix[2]) / 100;
-    return [0, 1, 2].map((i) => a[i] * n + b[i] * (1 - n)) as Rgb;
-  }
-  throw new Error(`Unsupported colour expression: ${value}`);
+  if (!supported) throw new Error(`Unsupported colour expression: ${value}`);
+  return resolveColor(tokens, v);
 }
 
 // ── Cascade helpers ─────────────────────────────────────────────────────────
@@ -511,7 +462,7 @@ const SPINNER_EL: Element = { tag: "span", classes: ["btn-spinner"] };
 describe("clock card CTA (Issue #546) - specificity engine", () => {
   it("computes the specificity of the shapes that matter", () => {
     expect(specificity(".btn-primary:hover:not(:disabled)")).toEqual([0, 3, 0]);
-    expect(specificity('[data-skin="modern"][data-mode="dark"] .btn-primary')).toEqual([0, 3, 0]);
+    expect(specificity('[data-theme="salz"][data-mode="dark"] .btn-primary')).toEqual([0, 3, 0]);
     expect(specificity(":where(button, a):focus-visible")).toEqual([0, 1, 0]);
     expect(
       specificity(":global(.timer-card-wrap .timer-cta-primary:hover:not(:disabled))"),
@@ -643,26 +594,34 @@ describe("clock card CTA (Issue #546) - tokens only", () => {
   });
 });
 
-describe("clock card CTA (Issue #546) - WCAG contrast per UI-selectable combination", () => {
+describe("clock card CTA (Issue #546) - WCAG contrast per theme x mode combination", () => {
   const combos = comboList();
 
-  it("derives its combinations from the theme store and the admin presets", () => {
-    expect(combos.filter((c) => c.skin === null && c.theme === "pflaume")).toHaveLength(2);
-    expect(
-      new Set(combos.filter((c) => c.skin === null).map((c) => c.theme)).size,
-    ).toBeGreaterThanOrEqual(3);
-    expect(combos.filter((c) => c.skin === "modern").length).toBeGreaterThanOrEqual(1);
-    expect(combos.length).toBeGreaterThanOrEqual(8);
+  it("derives exactly the six combinations of the theme store (#842, D-842-25)", () => {
+    expect(combos).toHaveLength(6);
+    expect(combos.map((c) => c.id).sort()).toEqual(
+      COMBINATIONS.map((c) => `${c.theme}-${c.mode}`).sort(),
+    );
+    expect(new Set(combos.map((c) => c.theme)).size).toBe(3);
+    expect(new Set(combos.map((c) => c.mode)).size).toBe(2);
   });
 
-  it("token resolution distinguishes skins and modes (positive controls)", () => {
+  it("token resolution distinguishes themes and modes (positive controls)", () => {
     const get = (id: string) => resolveTokens(combos.find((c) => c.id === id)!);
-    expect(get("modern-pflaume-dark").get("--brand-dark")).not.toBe(
-      get("editorial-pflaume-light").get("--brand-dark"),
+    expect(get("pflaume-dark").get("--brand-hover")).not.toBe(
+      get("pflaume-light").get("--brand-hover"),
     );
-    expect(get("editorial-pflaume-dark").get("--bg-card")).not.toBe(
-      get("editorial-pflaume-light").get("--bg-card"),
+    expect(get("salz-light").get("--brand-hover")).not.toBe(
+      get("pflaume-light").get("--brand-hover"),
     );
+    expect(get("pflaume-dark").get("--card")).not.toBe(get("pflaume-light").get("--card"));
+  });
+
+  it("an unsupported colour expression in the card rules throws instead of passing", () => {
+    const tokens = resolveTokens(combos[0]);
+    expect(() => evalColor("#ffffff", tokens)).toThrow(/Unsupported colour expression/);
+    expect(() => evalColor("rgba(255, 255, 255, 0.5)", tokens)).toThrow(/Unsupported/);
+    expect(() => evalColor("var(--no-such-token)", tokens)).toThrow(/not defined/);
   });
 
   it("label >= 4.5:1 in base, hover and focus; spinner arc >= 3:1; focus ring >= 3:1 against its band", () => {
@@ -686,12 +645,14 @@ describe("clock card CTA (Issue #546) - WCAG contrast per UI-selectable combinat
       ringRule.decls.find((d) => d.prop === "box-shadow")!.value,
     )![1];
 
+    let labelChecks = 0;
     for (const combo of combos) {
       const tokens = resolveTokens(combo);
       for (const state of ["base", "hover", "focus"] as State[]) {
         const text = evalColor(effective(state, "COLOR", /^color$/), tokens);
         const fill = evalColor(effective(state, "FILL", /^background(-color)?$/), tokens);
         expect(contrast(text, fill), `${combo.id} ${state} label`).toBeGreaterThanOrEqual(4.5);
+        labelChecks++;
       }
       const baseFill = evalColor(effective("base", "FILL", /^background(-color)?$/), tokens);
       expect(
@@ -703,5 +664,7 @@ describe("clock card CTA (Issue #546) - WCAG contrast per UI-selectable combinat
         `${combo.id} focus ring vs band`,
       ).toBeGreaterThanOrEqual(3);
     }
+    // anti-vacuity: six combinations x three states were actually measured
+    expect(labelChecks).toBe(18);
   });
 });
