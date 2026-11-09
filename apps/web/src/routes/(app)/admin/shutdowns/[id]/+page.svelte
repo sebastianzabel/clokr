@@ -13,6 +13,7 @@
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import Modal from "$components/ui/Modal.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   // ── Types ──────────────────────────────────────────────────────────────────
   interface Employee {
@@ -238,7 +239,7 @@
 </script>
 
 {#if loading}
-  <div class="page-loading">Laden…</div>
+  <div class="page-loading"><Skeleton shape="card" lines={3} /></div>
 {:else if loadError || !shutdown}
   <div class="page-error">{loadError || "Betriebsurlaub nicht gefunden."}</div>
 {:else}
