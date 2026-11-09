@@ -52,6 +52,7 @@ export {
   employedInPeriodWhere,
   reportPopulationWhere,
   isEmployedInPeriod,
+  hasWorkScheduleInPeriodWhere, // Issue #576 — team week and attendance only
 } from "./employed-in-period";
 // Phase 77b (Issue #77): the central, fail-closed access context and the one EmployeeScope factory.
 export {
