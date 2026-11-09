@@ -2,6 +2,7 @@
 // the final figure under reduced motion, the container breakpoints, the band's contrast proof and
 // the KPIStat delegation.
 import { describe, expect, it } from "vitest";
+import type { ComponentProps } from "svelte";
 import { screen, within } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import {
@@ -13,15 +14,22 @@ import {
   resolveCombination,
 } from "$tests/token-cascade";
 import KpiStrip from "../KpiStrip.svelte";
-import type { KpiItem } from "../KpiStrip.svelte";
 import KPIStat from "../KPIStat.svelte";
 import stripSource from "../KpiStrip.svelte?raw";
 import statSource from "../KPIStat.svelte?raw";
 import { CONTAINER_NARROW_PX, CONTAINER_WIDE_PX } from "../breakpoints";
 
+// #843: plain tsc types a .svelte import by the ambient default-only shim; take the item type from props.
+type KpiItem = ComponentProps<typeof KpiStrip>["items"][number];
+
 const ITEMS: KpiItem[] = [
   { label: "Soll", value: "160:00", unit: "h" },
-  { label: "Ist", value: 152.5, format: (n) => `${n.toFixed(1).replace(".", ",")}`, unit: "h" },
+  {
+    label: "Ist",
+    value: 152.5,
+    format: (n: number) => `${n.toFixed(1).replace(".", ",")}`,
+    unit: "h",
+  },
   { label: "Saldo", value: "−7:30", explanation: "bis gestern", derivationHref: "/reports?x=1" },
 ];
 

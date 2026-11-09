@@ -173,7 +173,10 @@ describe("PeriodPicker", () => {
     renderWithTheme(PeriodPicker, q);
     const next = screen.getByTestId("month-bar-next") as HTMLButtonElement;
     expect(next).toBeDisabled();
-    expect(next).toHaveAttribute("title", pickerModule.NEXT_PERIOD_DISABLED_TITLE);
+    expect(next).toHaveAttribute(
+      "title",
+      (pickerModule as unknown as Record<string, string>).NEXT_PERIOD_DISABLED_TITLE,
+    );
     expect(next).toHaveAttribute("aria-label", "Nächster Monat");
     next.click();
     expect(q.onNext).not.toHaveBeenCalled();

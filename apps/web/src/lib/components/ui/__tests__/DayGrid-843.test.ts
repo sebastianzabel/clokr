@@ -2,7 +2,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
-import DayGrid, { DAY_KEYS, formatHours, isValidDayHours, sumDayHours } from "../DayGrid.svelte";
+import DayGrid from "../DayGrid.svelte";
+import * as dayGridModule from "../DayGrid.svelte";
+
+// #843: plain tsc types a .svelte import by the ambient default-only shim, so the module-script
+// exports are typed by hand here (vitest and svelte-check resolve the real module).
+type DayHours = Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", number | null>;
+const { DAY_KEYS, formatHours, isValidDayHours, sumDayHours } = dayGridModule as unknown as {
+  DAY_KEYS: readonly (keyof DayHours)[];
+  formatHours: (hours: number) => string;
+  isValidDayHours: (hours: number | null) => boolean;
+  sumDayHours: (value: DayHours) => number;
+};
 import gridSource from "../DayGrid.svelte?raw";
 
 afterEach(() => cleanup());

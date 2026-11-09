@@ -5,8 +5,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, within } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
-import DataTable, { nextSortState, sortDirectionOf } from "../DataTable.svelte";
+import DataTable from "../DataTable.svelte";
+import * as dataTableModule from "../DataTable.svelte";
 import SortHeader from "../SortHeader.svelte";
+
+// #843: plain tsc types a .svelte import by the ambient default-only shim, so the module-script
+// exports are typed by hand here (vitest and svelte-check resolve the real module).
+type Sort = { key: string; dir: "asc" | "desc" } | null;
+const { nextSortState, sortDirectionOf } = dataTableModule as unknown as {
+  nextSortState: (current: Sort, key: string) => Sort;
+  sortDirectionOf: (current: Sort, key: string) => "none" | "ascending" | "descending";
+};
 import tableSource from "../DataTable.svelte?raw";
 
 afterEach(() => cleanup());

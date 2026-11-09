@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, waitFor } from "@testing-library/svelte";
-import { tick } from "svelte";
+import { tick, type Component } from "svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import { toasts } from "$stores/toast";
 import Toast from "../Toast.svelte";
@@ -189,7 +189,12 @@ beforeEach(() => clearStore());
 
 describe("feedback demo", () => {
   it("is block 9 and lists the two Toast files as entries", async () => {
-    const demo = await import("../../../../routes/(app)/admin/bausteine/demos/09-feedback.svelte");
+    // #843: plain tsc types a .svelte import by the ambient default-only shim; `block` is typed by hand.
+    const demo =
+      (await import("../../../../routes/(app)/admin/bausteine/demos/09-feedback.svelte")) as unknown as {
+        block: unknown;
+        default: Component;
+      };
     expect(demo.block).toEqual({
       id: 9,
       name: "Rückmeldung",

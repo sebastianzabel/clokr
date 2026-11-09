@@ -5,7 +5,16 @@ import { createRawSnippet } from "svelte";
 import { screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import List from "../List.svelte";
-import ListRow, { AVATAR_COLOURS, avatarIndex, initialsOf } from "../ListRow.svelte";
+import ListRow from "../ListRow.svelte";
+import * as listRowModule from "../ListRow.svelte";
+
+// #843: plain tsc types a .svelte import by the ambient default-only shim, so the module-script
+// exports are typed by hand here (vitest and svelte-check resolve the real module).
+const { AVATAR_COLOURS, avatarIndex, initialsOf } = listRowModule as unknown as {
+  AVATAR_COLOURS: number;
+  avatarIndex: (key: string) => number;
+  initialsOf: (title: string) => string;
+};
 import rowSource from "../ListRow.svelte?raw";
 import listSource from "../List.svelte?raw";
 

@@ -3,14 +3,16 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createRawSnippet } from "svelte";
+import { createRawSnippet, type ComponentProps } from "svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import Chip from "../Chip.svelte";
-import type { ChipTone } from "../Chip.svelte";
 import Note from "../Note.svelte";
-import type { NoteTone } from "../Note.svelte";
 import chipSource from "../Chip.svelte?raw";
 import noteSource from "../Note.svelte?raw";
+
+// #843: plain tsc types a .svelte import by the ambient default-only shim; take the tone types from props.
+type ChipTone = NonNullable<ComponentProps<typeof Chip>["tone"]>;
+type NoteTone = NonNullable<ComponentProps<typeof Note>["tone"]>;
 
 // Comments stripped so a selector list never starts inside prose.
 const css = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8").replace(

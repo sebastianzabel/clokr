@@ -1,13 +1,16 @@
 // Issue #843 (D-843-01 block 4) - the Bühne: four states, surfaces, the 350 ms background
 // transition and its reduced-motion override, the stage-high action buttons.
 import { describe, expect, it } from "vitest";
-import { createRawSnippet } from "svelte";
+import { createRawSnippet, type ComponentProps } from "svelte";
 import { screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import { STATE_MS } from "$lib/motion";
 import Stage from "../Stage.svelte";
-import type { StageState } from "../Stage.svelte";
 import source from "../Stage.svelte?raw";
+
+// #843: plain tsc resolves a .svelte import through the ambient default-only shim, so the type of a
+// module-script export is taken from the component props instead.
+type StageState = ComponentProps<typeof Stage>["state"];
 
 const body = createRawSnippet(() => ({ render: () => "<span>Arbeitet seit 08:02</span>" }));
 const actions = createRawSnippet(() => ({
