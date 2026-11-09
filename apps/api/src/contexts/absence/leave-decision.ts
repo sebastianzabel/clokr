@@ -559,7 +559,7 @@ export async function decidePendingLeaveRequest(
             type: "SECTION9_AU_PENDING_EMPLOYEE",
             title: "AU nachreichen — Urlaubstage stehen auf dem Spiel",
             message:
-              `Für ${rangeLabel} liegt eine Krankmeldung während Ihres genehmigten Urlaubs vor. ` +
+              `Für ${rangeLabel} liegt eine Krankmeldung während deines genehmigten Urlaubs vor. ` +
               `Ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet (§ 9 BUrlG).`,
             link: "/leave",
             tenantId: employeeUser.tenantId,
@@ -801,7 +801,7 @@ export async function decidePendingLeaveRequest(
       userId: requestEmployee.userId,
       type: input.status === "APPROVED" ? "LEAVE_APPROVED" : "LEAVE_REJECTED",
       title: input.status === "APPROVED" ? "Antrag genehmigt" : "Antrag abgelehnt",
-      message: `Ihr ${existing.leaveType.name}-Antrag wurde ${input.status === "APPROVED" ? "genehmigt" : "abgelehnt"}.`,
+      message: `Dein ${existing.leaveType.name}-Antrag wurde ${input.status === "APPROVED" ? "genehmigt" : "abgelehnt"}.`,
       link: `/leave?request=${existing.id}`,
       tenantId: requestEmployee.tenantId,
     });

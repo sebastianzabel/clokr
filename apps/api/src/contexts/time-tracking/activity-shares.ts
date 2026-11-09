@@ -40,7 +40,7 @@ const SHARE_OWN_KIND_BODY = {
  */
 export const TRAVEL_SHARE_BODY = {
   error:
-    "Fahrzeit ist kein Tätigkeitsanteil. Sie wird als eigener Eintrag zwischen zwei Salons erfasst.",
+    "Fahrzeit ist kein Tätigkeitsanteil. Eine Fahrzeit wird als eigener Eintrag zwischen zwei Salons erfasst.",
 } as const;
 
 // ── 409: the share list does not fit the entry ────────────────────────────────────────────────

@@ -19,6 +19,7 @@
  * customer role via a TENANT-scope assignment) — never one of the neutrality matrix's actors, so
  * these cells are outside that matrix's territory and cannot change any of its recorded ones.
  */
+import { PERMISSION_LABELS } from "../permission-labels";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
@@ -191,7 +192,10 @@ describe("Customer-role escalation guards (Issue #354, pre-merge review of #75)"
         email: `esc-c1-${uid}@test.de`,
       });
       expect(body.details[1].status).toBe("error");
-      expect(body.details[1].error).toContain("role-assignment:manage");
+      // the refusal names the missing permission in words (Issue #861), by its catalog label
+      expect(body.details[1].error).toContain(
+        `„${PERMISSION_LABELS["role-assignment:manage:ZUGEWIESEN"]}“`,
+      );
 
       const rowOk = await app.prisma.user.findUnique({ where: { email: `esc-c1-${uid}@test.de` } });
       expect(rowOk).not.toBeNull();
@@ -245,7 +249,9 @@ describe("Customer-role escalation guards (Issue #354, pre-merge review of #75)"
       });
 
       expect(res.statusCode).toBe(403);
-      expect(JSON.parse(res.body).error).toContain("role-assignment:manage");
+      expect(JSON.parse(res.body).error).toContain(
+        `„${PERMISSION_LABELS["role-assignment:manage:ZUGEWIESEN"]}“`,
+      );
       const row = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: actor.roleId } });
       expect(row.permissions).toEqual(["role:manage:ZUGEWIESEN"]);
     });

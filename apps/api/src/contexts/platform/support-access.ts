@@ -507,7 +507,7 @@ export async function notifySupportAccessStarted(
     timeStyle: "short",
     timeZone,
   }).format(input.expiresAt);
-  const message = `Ein Support-Zugriff auf Ihren Mandanten wurde gestartet. Er endet am ${endsAt} Uhr. Grund: ${input.reason}`;
+  const message = `Ein Support-Zugriff auf dein Unternehmen wurde gestartet. Er endet am ${endsAt} Uhr. Grund: ${input.reason}`;
 
   for (const recipient of recipients) {
     try {

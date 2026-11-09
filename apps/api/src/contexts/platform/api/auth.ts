@@ -575,7 +575,7 @@ export async function authRoutes(app: FastifyInstance) {
       if (otpToken.expiresAt < new Date()) {
         return reply
           .code(410)
-          .send({ error: "Der Link ist abgelaufen. Bitte fordern Sie einen neuen an." });
+          .send({ error: "Der Link ist abgelaufen. Bitte fordere einen neuen an." });
       }
 
       // Load tenant password policy for the user

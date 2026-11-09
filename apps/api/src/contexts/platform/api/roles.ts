@@ -25,7 +25,7 @@ import {
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
 const ROLE_NOT_FOUND_MESSAGE = "Rolle nicht gefunden";
 const ROLE_SYSTEM_UPDATE_MESSAGE =
-  "Systemrollen können nicht geändert werden. Kopieren Sie die Rolle, um sie anzupassen.";
+  "Systemrollen können nicht geändert werden. Kopier die Rolle, um sie anzupassen.";
 const ROLE_SYSTEM_DELETE_MESSAGE = "Systemrollen können nicht gelöscht werden.";
 const ROLE_ASSIGNED_DELETE_MESSAGE =
   "Die Rolle ist noch Nutzern zugewiesen und kann nicht gelöscht werden.";
@@ -43,7 +43,7 @@ const ROLE_LEAVE_LIMIT_DELETE_MESSAGE =
 // the target role via an assignment could otherwise add rights to it and grant itself more —
 // self-service escalation. Rejected unless the caller additionally holds role-assignment:manage.
 const ROLE_SELF_HELD_UPDATE_MESSAGE =
-  "Eine Ihnen selbst zugewiesene Rolle können Sie ohne die Berechtigung role-assignment:manage nicht ändern.";
+  "Eine dir selbst zugewiesene Rolle kannst du ohne die Berechtigung „Rollen an Personen zuweisen und entziehen“ nicht ändern.";
 // Phase 78b (issue #78, D-05): the fixed 409 reply for a save that would newly create the
 // four-eyes combination without confirm: true — same `{ error, code }` shape as
 // SALON_ALREADY_COUPLED_REPLY (contexts/scheduling/api/integrations.ts).

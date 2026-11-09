@@ -54,7 +54,7 @@ export const FOUR_EYES_CONFIRMATION_MESSAGE =
   "Diese Rolle enthält zugleich „Eigene Zeiten ändern“ (eigene Zeiteinträge anlegen oder ändern) " +
   "und „Zeiten genehmigen“ (Zeitnachträge anderer genehmigen). Wer beides hat, erfasst und " +
   "genehmigt Arbeitszeiten mit derselben Rolle – die Trennung hängt dann allein an der Sperre " +
-  "gegen Selbstgenehmigung. Bitte bestätigen Sie diese Zusammenstellung ausdrücklich.";
+  "gegen Selbstgenehmigung. Bitte bestätige diese Zusammenstellung ausdrücklich.";
 
 /**
  * Thrown inside a role-mutation transaction when a save would newly create the combination

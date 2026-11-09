@@ -221,7 +221,7 @@ x-${u}@test.de;X;Einzel;SX-${u};01.01.2026;`;
       });
     });
 
-    it("D-23: tenant with no active salon: 400 'Der Mandant hat keinen aktiven Salon.'", async () => {
+    it("D-23: tenant with no active salon: 400 'Das Unternehmen hat keinen aktiven Salon.'", async () => {
       const zero = await seedTestData(app, "im-zero");
       try {
         await app.prisma.salon.update({
@@ -240,7 +240,9 @@ zero-${Date.now().toString(36)}@test.de;Zero;Salon;ZERO-1;01.01.2026`;
         });
 
         expect(res.statusCode, res.body.slice(0, 400)).toBe(400);
-        expect(JSON.parse(res.body)).toEqual({ error: "Der Mandant hat keinen aktiven Salon." });
+        expect(JSON.parse(res.body)).toEqual({
+          error: "Das Unternehmen hat keinen aktiven Salon.",
+        });
       } finally {
         await cleanupTestData(app, zero.tenant.id);
       }

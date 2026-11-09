@@ -132,7 +132,7 @@ describe("Two-salon tenant: SALON_REQUIRED, per-salon manual holidays, byte-iden
     });
     expect(postRes.statusCode).toBe(400);
     expect(JSON.parse(postRes.body)).toEqual({
-      error: "Bitte einen Salon angeben — der Mandant hat mehrere aktive Salons.",
+      error: "Bitte einen Salon angeben — das Unternehmen hat mehrere aktive Salons.",
       code: "SALON_REQUIRED",
     });
   });

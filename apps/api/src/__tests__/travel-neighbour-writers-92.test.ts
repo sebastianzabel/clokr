@@ -248,7 +248,7 @@ ${nr};${germanDate(day)};16:00;17:00;0;${salonC.id}`;
       expect(body.details).toHaveLength(2);
       expect(body.details[0].status).toBe("error");
       expect(body.details[0].error).toBe(
-        "Dieser Eintrag ist Abfahrts- oder Ankunftseintrag einer Fahrzeit. Bitte ändern oder löschen Sie zuerst die Fahrzeit.",
+        "Dieser Eintrag ist Abfahrts- oder Ankunftseintrag einer Fahrzeit. Bitte änder oder lösch zuerst die Fahrzeit.",
       );
       expect(body.details[1].status).toBe("ok");
       expect(await liveRows(day)).toHaveLength(4);

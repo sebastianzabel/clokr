@@ -4,7 +4,7 @@
 //
 // (a)/(b): the NFC-Terminals section of /admin/system holds exactly one hint for HARDWARE_CLOCK and
 // still holds its create markup (the hint replaces the row at runtime, never in the source).
-// (c): no file outside the admin set-up areas mentions the hint, "Zusatzmodul" or "Ihr Anbieter
+// (c): no file outside the admin set-up areas mentions the hint, "Zusatzmodul" or "Anbieter
 // schaltet".
 // (d)-(g) (Plan 566-10): the other three spots — API-Keys (/admin/system), Präsenz-Quellen
 // (/admin/integrations) and the Branch-ID field (/admin/phorest) — plus the total.
@@ -51,7 +51,7 @@ function stripComments(text: string): string {
     .replace(/(^|[^:])\/\/.*$/gm, "$1");
 }
 
-const FORBIDDEN = ["ModuleHint", "Zusatzmodul", "Ihr Anbieter schaltet"];
+const FORBIDDEN = ["ModuleHint", "Zusatzmodul", "Anbieter schaltet"];
 
 /** The markup of one `<Section title="…">` up to the next section. */
 function sectionOf(source: string, title: string): string {

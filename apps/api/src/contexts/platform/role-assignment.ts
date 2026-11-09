@@ -241,7 +241,7 @@ export type GuardedPermission = (typeof GUARDED_PERMISSIONS)[number];
 
 /** The German 409 message every lockout trigger answers with (D-19). */
 export const ROLE_LOCKOUT_MESSAGE =
-  "Nicht möglich: Danach hätte kein aktiver Nutzer mehr das Recht, Rollen bzw. Rollenzuweisungen mandantenweit zu verwalten.";
+  "Nicht möglich: Danach hätte kein aktiver Nutzer mehr das Recht, Rollen bzw. Rollenzuweisungen für das ganze Unternehmen zu verwalten.";
 
 /**
  * Thrown inside a guarded transaction when the write would remove the last holder of

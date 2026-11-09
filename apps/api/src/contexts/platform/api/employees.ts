@@ -915,7 +915,7 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
               error: "Bei mehreren aktiven Salons ist die Angabe des Stammsalons erforderlich.",
             });
           case "NO_ACTIVE_SALON":
-            return reply.code(400).send({ error: "Der Mandant hat keinen aktiven Salon." });
+            return reply.code(400).send({ error: "Das Unternehmen hat keinen aktiven Salon." });
           default: {
             // Compile-time exhaustiveness: resolveHomeSalonForNewEmployee's return type has no
             // other non-OK status.

@@ -363,7 +363,7 @@ describe("Phase 73-01: test-only tenant bootstrap", () => {
       });
       expect(res.statusCode).toBe(409);
       const body = res.json() as { error?: string };
-      expect(body.error).toBe("Der Mandant hat keinen aktiven Salon.");
+      expect(body.error).toBe("Das Unternehmen hat keinen aktiven Salon.");
 
       const usersAfter = await appOn.prisma.user.count({
         where: { email: { contains: tenantId } },
