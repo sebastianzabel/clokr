@@ -130,7 +130,7 @@
   }
   .bs-pattern-picker__weekday--selected {
     background: var(--brand);
-    color: var(--brand-fg);
+    color: var(--brand-ink);
   }
   .bs-pattern-picker__mode-btn--active {
     font-weight: 600;

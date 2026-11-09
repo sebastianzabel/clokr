@@ -163,7 +163,7 @@
   }
 
   .sa-dl dt {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .sa-dl dd {
@@ -179,7 +179,7 @@
   .sa-empty {
     margin: 0;
     font-size: 14px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .sa-reads {
@@ -196,7 +196,7 @@
     align-items: center;
     gap: 12px;
     padding: 10px 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 14px;
   }
 
@@ -214,7 +214,7 @@
   }
 
   .sa-read-scope {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   @media (max-width: 720px) {

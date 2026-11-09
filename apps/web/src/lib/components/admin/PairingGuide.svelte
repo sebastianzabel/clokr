@@ -154,8 +154,8 @@
     align-items: center;
     gap: var(--s-2);
     padding: var(--s-4);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     /* A QR code must be dark on light in every theme, so the sheet does not follow the tokens. */
     background: #ffffff;
     color: #000000;
@@ -170,7 +170,7 @@
 
   .pairing-url {
     margin: 0;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-code);
     font-size: 0.875rem;
     word-break: break-all;
     text-align: center;
@@ -205,10 +205,10 @@
   }
 
   .pairing-checklist code {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-code);
     font-size: 0.875em;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     padding: 0 0.25rem;
   }
 

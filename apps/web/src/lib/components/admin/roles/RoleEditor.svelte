@@ -140,8 +140,8 @@
     margin: 0;
   }
   .role-editor-group {
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 12px 16px;
     margin: 0;
     display: grid;
@@ -149,7 +149,7 @@
     gap: 8px 16px;
   }
   .role-editor-group:disabled {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .role-editor-legend {
     display: inline-flex;
@@ -173,6 +173,6 @@
     accent-color: var(--brand);
   }
   .role-editor-group:disabled .role-editor-permission {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 </style>

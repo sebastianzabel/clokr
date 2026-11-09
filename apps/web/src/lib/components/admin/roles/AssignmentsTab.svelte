@@ -283,7 +283,7 @@
     max-width: 320px;
   }
   .assignments-person {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding-top: 12px;
     display: flex;
     flex-direction: column;
@@ -325,7 +325,7 @@
     color: var(--text);
   }
   .assignments-scope {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .assignments-actions {
     display: flex;

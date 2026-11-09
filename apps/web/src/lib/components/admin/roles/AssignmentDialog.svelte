@@ -247,8 +247,8 @@
   }
   .assignment-scope,
   .assignment-list {
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 12px 16px;
     margin: 0;
     display: flex;

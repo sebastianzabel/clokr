@@ -99,13 +99,13 @@
     align-items: center;
     gap: 12px;
     padding: 8px 4px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 14px;
   }
   .ohe-row--head {
     font-size: 12.5px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
@@ -170,7 +170,7 @@
       clip-path: none;
       white-space: normal;
       font-size: 12.5px;
-      color: var(--text-muted);
+      color: var(--text-2);
       cursor: pointer;
     }
   }

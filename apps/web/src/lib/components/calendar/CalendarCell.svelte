@@ -103,7 +103,7 @@
 
 <style>
   /* Internal element layout only — no token overrides per UI_STYLE_GUIDE.
-     Semantic colour tokens use the v1.5 namespace (--good/--bad/--warn), NOT
+     Semantic colour tokens use the v1.5 namespace (--ok/--bad/--warn), NOT
      the non-existent --success/--danger/--warning the plan scaffold suggested.
      The .calendar-cell-recipe global styles (background / border / hover) are
      intentionally out of scope here — tests assert classes + text only. */
@@ -116,14 +116,14 @@
   }
   .calendar-cell__label {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .calendar-cell__delta {
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
   }
   .calendar-cell__delta--positive {
-    color: var(--good);
+    color: var(--ok);
   }
   .calendar-cell__delta--negative {
     color: var(--bad);
