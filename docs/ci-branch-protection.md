@@ -1,6 +1,6 @@
 # CI Branch Protection — Required Status Checks
 
-Last applied: 2026-06-04 (Phase 70 — `70-07`)
+Last applied: 2026-11-09 (merge queue, six required checks)
 Source-of-truth for which CI jobs MUST pass before a PR can merge to `main`.
 
 > **The executable source of truth is [`scripts/apply-branch-protection.sh`](../scripts/apply-branch-protection.sh).**
@@ -26,22 +26,29 @@ This runbook documents the operational `gh api` commands for applying, auditing,
 
 `release/1.9.x` is **retired** and no longer protected. It was found completely unprotected in the 2026-08-26 audit, which is moot now that it is frozen: its release tags are independent git objects that outlive the branch, and int pins a tag rather than tracking the branch. If a maintenance line is ever reopened, add it to `BRANCHES` in the script rather than protecting it by hand.
 
-## Required checks (Phase 70 baseline)
+## Merge queue (since 09.11.2026)
 
-| Check         | Workflow | Job           | Why required                                                                                                                                                                                                                                                   |
-| ------------- | -------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test`        | ci.yml   | `test`        | Pre-merge quality + security gate: ESLint API + Web, Prettier `--check`, UI primitives lint, tsc API + Web, Vitest coverage ≥ 40%, `pnpm audit --audit-level high`, Trivy FS scan, Build API + Build Web                                                       |
-| `codeql`      | ci.yml   | `codeql`      | SAST — CodeQL semantic vulnerability analysis (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                                                                            |
-| `secret-scan` | ci.yml   | `secret-scan` | gitleaks v3 scan of PR diff for leaked credentials (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                                                                       |
-| `docker-gate` | ci.yml   | `docker-gate` | Stable context for the `docker` matrix build, which validates that `apps/api/Dockerfile` and `apps/web/Dockerfile` compile (no push) and warms the GHA cache for the later `build-push.yml` run. See the caveat below — require `docker-gate`, never `docker`. |
+`main` merges through a **merge queue** (ruleset „main merge queue“: squash, grouping ALLGREEN, up to 5
+entries built and merged together, 60 min check timeout). The queue tests each PR on the combined state
+before it lands, so branch protection's „require branches to be up to date“ (`strict`) is **off** — with
+it on, every merge made all other PRs stale and forced a full CI rerun each. `ci.yml` runs on
+`merge_group` as well, so every required check reports for queue runs. A PR joins the queue only once
+all its own checks are green; the queue then runs them again on the merge commit.
 
-Note: `visual-regression` was previously listed in this table as merge-blocking, but it was
-never present in the `gh api` payload below and is not in the script's check list — the table
-and the payload contradicted each other. It is **advisory**. The job is technically eligible
-(it always reports a status; only its _steps_ are path-filtered, so it never hangs as
-"pending"), but its baselines are recorded on arm64 locally and replayed on amd64 in CI, so
-it fails for reasons unrelated to the change under review. Promoting it to blocking is a
-baseline fix — see `docs/visual-regression-workflow.md` — not a protection change.
+## Required checks
+
+| Check               | Workflow | Job                 | Why required                                                                                                                                                                                                                                                   |
+| ------------------- | -------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test`              | ci.yml   | `test`              | Pre-merge quality + security gate: ESLint API + Web, Prettier `--check`, UI primitives lint, tsc API + Web, Vitest coverage ≥ 40%, `pnpm audit --audit-level high`, Trivy FS scan, Build API + Build Web                                                       |
+| `codeql`            | ci.yml   | `codeql`            | SAST — CodeQL semantic vulnerability analysis (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                                                                            |
+| `secret-scan`       | ci.yml   | `secret-scan`       | gitleaks CLI (pinned image) over the commits the PR or the queued merge adds (DEVOPS-V8-04); fails on a partial scan.                                                                                                                                          |
+| `docker-gate`       | ci.yml   | `docker-gate`       | Stable context for the `docker` matrix build, which validates that `apps/api/Dockerfile` and `apps/web/Dockerfile` compile (no push) and warms the GHA cache for the later `build-push.yml` run. See the caveat below — require `docker-gate`, never `docker`. |
+| `e2e-ci`            | ci.yml   | `e2e-ci`            | Playwright end-to-end suite against the docker stack. Required since 09.11.2026: the merge queue only waits for required checks.                                                                                                                               |
+| `visual-regression` | ci.yml   | `visual-regression` | Screenshot comparison; always reports, only its steps are path-filtered. Required since 09.11.2026 for the same reason; baselines come from the CI images.                                                                                                     |
+
+Note: `visual-regression` was advisory until 09.11.2026 (its baselines used to be recorded on
+arm64 locally). Since baselines are taken from the CI images (`docs/visual-regression-workflow.md`),
+it is required together with `e2e-ci`.
 
 Note: the `docker` PR-gate job is in `ci.yml`, not `build-push.yml`. `build-push.yml` runs ONLY on push to `main` (after merge) and is therefore not a PR-blocking candidate. Trivy container-scan results from `build-push.yml` are post-merge and surface via the GitHub Security tab.
 
@@ -117,12 +124,14 @@ gh api \
   --input - <<'EOF'
 {
   "required_status_checks": {
-    "strict": true,
+    "strict": false,
     "checks": [
       { "context": "test", "app_id": -1 },
       { "context": "codeql", "app_id": -1 },
       { "context": "secret-scan", "app_id": -1 },
-      { "context": "docker-gate", "app_id": -1 }
+      { "context": "docker-gate", "app_id": -1 },
+      { "context": "e2e-ci", "app_id": -1 },
+      { "context": "visual-regression", "app_id": -1 }
     ]
   },
   "enforce_admins": false,
@@ -194,9 +203,12 @@ gh api /repos/getclokr/clokr/branches/main/protection \
 | A workflow job is removed                            | Remove from this list; re-apply. (Otherwise PRs block forever on a non-existent check.)          |
 | Required-approving-review-count raised               | Update `required_approving_review_count` in the PUT body above before re-applying.               |
 
-## Why `required_status_checks.strict: true`
+## Why `required_status_checks.strict: false`
 
-`strict: true` means PRs must be up-to-date with `main` before merging. This prevents the "tests passed at PR head but main moved on incompatibly" foot-gun. Already true in the Phase 70 pre-state — preserved.
+Until 09.11.2026 `strict: true` required every PR to be up to date with `main` before merging, to
+prevent "tests passed at PR head but main moved on incompatibly". The merge queue now gives that
+guarantee itself — it runs the required checks on the queued merge commit — so `strict` is off; with
+it on, each merge forced every other open PR through another full CI run.
 
 ## Why `enforce_admins: false`
 
