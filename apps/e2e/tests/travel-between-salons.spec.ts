@@ -207,6 +207,8 @@ test.describe("a trip between two salons (Issue #92)", () => {
     const cell = page.getByTestId(`calendar-cell-${day}`);
     await expect(cell).toHaveAttribute("title", "2 Einträge");
     await cell.click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
     await expect(page.locator("tr[data-testid^='time-entry-row-']")).toHaveCount(2);
 
@@ -397,6 +399,8 @@ test.describe("a trip between two salons (Issue #92)", () => {
     // Issue #660 (AC-660-6): no offer button either (the positive control is the two-salon test d.).
     await expect(page.getByTestId("day-break-travel-offer")).toHaveCount(0);
     await page.getByTestId(`calendar-cell-${day}`).click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     const modal = page.getByTestId("time-entry-modal");
     await expect(modal).toBeVisible();
     await expect(page.getByTestId("time-entry-modal-travel-switch")).toHaveCount(0);

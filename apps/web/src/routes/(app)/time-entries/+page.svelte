@@ -60,10 +60,13 @@
   import { mayFileRetroRequest } from "$lib/page-rights";
   import { toasts } from "$stores/toast";
   import { correctionSaved } from "$lib/feedback/action-messages"; // #843 (D-843-08)
-  import PageHead from "$lib/components/layout/PageHead.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
   import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
+  import DaySheet from "$lib/components/me/DaySheet.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
+  import { downloadStundennachweis } from "$lib/me/stundennachweis";
   import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-elk
   import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-elk
   import Modal from "$components/ui/Modal.svelte";
@@ -1144,7 +1147,60 @@
 
   // Issue #70: a calendar cell with one entry still opens it for editing, a cell with several
   // switches to the list focused on that day, an empty cell opens the new form.
-  async function onCellClick(day: string) {
+  // Issue #599 (Phase 851): a calendar cell first opens the day to read; the sheet's primary action
+  // runs what the cell click did before (edit, list, add). In a closed month it is the correction
+  // request, which has no target until its API exists.
+  // Issue #598 (Phase 851): the own Stundennachweis of the month on screen.
+  let pdfBusy = $state(false);
+  async function downloadMonthPdf() {
+    const id = $authStore.user?.employeeId;
+    if (!id) return;
+    pdfBusy = true;
+    try {
+      await downloadStundennachweis(id, calMonth.getFullYear(), calMonth.getMonth() + 1);
+      toasts.success("Stundennachweis heruntergeladen");
+    } catch (e) {
+      toasts.error(
+        e instanceof Error
+          ? e.message
+          : "Der Stundennachweis ließ sich nicht erstellen. Bitte versuche es noch einmal.",
+      );
+    } finally {
+      pdfBusy = false;
+    }
+  }
+
+  let sheetOpen = $state(false);
+  let sheetDay = $state<CalDay | null>(null);
+
+  function onCellClick(day: string) {
+    sheetDay = calendarDays.find((d) => d.dateStr === day) ?? null;
+    sheetOpen = true;
+  }
+
+  const sheetRows = $derived(sheetDay ? rowsOfDay(sheetDay.dateStr) : []);
+  const sheetLocked = $derived(sheetRows.some((e) => e.isLocked === true));
+  const sheetTitle = $derived(
+    sheetDay
+      ? format(new Date(sheetDay.dateStr + "T12:00:00"), "EEEE, d. MMMM", { locale: de })
+      : "",
+  );
+  const sheetReason = $derived.by(() => {
+    if (!sheetDay) return undefined;
+    if (sheetDay.isHoliday) return `${sheetDay.holidayName}.`;
+    if (sheetDay.absenceType)
+      return absenceLabel(sheetDay.absenceType) + (sheetDay.absenceHalf ? " (halber Tag)" : "");
+    if (sheetDay.isVocationalSchool) return "Berufsschule";
+    return undefined;
+  });
+  const sheetPrimary = $derived.by((): { label: string | null; enabled: boolean } => {
+    if (!sheetDay || isExempt || sheetDay.isBeforeHire) return { label: null, enabled: false };
+    if (sheetLocked) return { label: "Korrektur anfragen", enabled: false };
+    if (sheetDay.isFuture) return { label: null, enabled: false };
+    return { label: sheetRows.length > 0 ? "Bearbeiten" : "Zeit nachtragen", enabled: true };
+  });
+
+  async function runCellAction(day: string) {
     const action = cellClickAction(rowsOfDay(day));
     if (action.kind === "edit") {
       openEdit(action.entry);
@@ -1953,22 +2009,33 @@
   }}
 />
 
-<PageHead eyebrow="Ich" title={pageLabel("/time-entries")}>
+<PageHeader
+  title={pageLabel("/time-entries")}
+  subtitle="Deine erfassten Arbeitszeiten, Tag für Tag"
+>
   {#snippet actions()}
-    <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt users see no
-         "+ Neuer Eintrag" CTA. Full HIDE, NOT disabled — don't teach
-         exempt users to click a disabled control. -->
-    <!-- quick 260820-elk — Gesamt-Saldo moved OUT of the page head entirely, into the
-         quiet Konto card in the metrics row below (see KontoSaldoCard). -->
+    <!-- Phase 851 (prototype): the Stundennachweis of the month on screen (#598) and the one way to
+         add a time. Phase 76.7 (D-16): § 18 ArbZG-exempt users see no add action at all. -->
+    {#if $authStore.user?.employeeId}
+      <button
+        class="btn btn-secondary btn-sm"
+        data-testid="time-entries-pdf"
+        disabled={pdfBusy}
+        onclick={downloadMonthPdf}
+      >
+        {#if pdfBusy}<Spinner size={14} label="Wird erstellt" />{/if}
+        Stundennachweis (PDF)
+      </button>
+    {/if}
     {#if !isExempt}
       <button
         class="btn btn-primary btn-sm"
         onclick={() => openAdd()}
-        data-testid="time-entries-add">+ Neuer Eintrag</button
+        data-testid="time-entries-add">Zeit nachtragen</button
       >
     {/if}
   {/snippet}
-</PageHead>
+</PageHeader>
 
 <div data-testid="time-entries-page">
   <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
@@ -2431,6 +2498,30 @@
       {/if}
     </div>
   {/if}
+
+  <DaySheet
+    bind:open={sheetOpen}
+    title={sheetTitle}
+    subtitle={sheetRows.find((e) => e.salonName)?.salonName
+      ? `Erfasst in ${sheetRows.find((e) => e.salonName)?.salonName}`
+      : undefined}
+    sollMin={sheetDay && sheetDay.expectedMin > 0 ? sheetDay.expectedMin : null}
+    istMin={sheetDay?.workedMin ?? 0}
+    entries={sheetRows.map((e) => ({
+      id: e.id,
+      from: fmtTime(e.startTime),
+      to: e.endTime ? fmtTime(e.endTime) : "läuft",
+      pause: fmtBreaks(e),
+      net: slotNet(e),
+      salon: multiEntryUi ? (e.salonName ?? null) : null,
+    }))}
+    reason={sheetReason}
+    locked={sheetLocked}
+    future={sheetDay?.isFuture ?? false}
+    primaryLabel={sheetPrimary.label}
+    primaryEnabled={sheetPrimary.enabled}
+    onPrimary={() => sheetDay && runCellAction(sheetDay.dateStr)}
+  />
 
   <!-- ── Modal (Modal primitive — owns backdrop/escape/focus-trap) ────────── -->
   <Modal

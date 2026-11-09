@@ -204,6 +204,8 @@ test.describe("several entries on one day (Issue #70)", () => {
     // first entry's end.
     await expect(page.getByTestId(`calendar-cell-${dayTwo}`)).toContainText("4:00");
     await page.getByTestId(`calendar-cell-${dayTwo}`).click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     await expect(modal).toBeVisible();
     await expect(page.locator("[role='dialog'] .modal-eyebrow").first()).toContainText(
       "Eintrag bearbeiten",
@@ -225,6 +227,8 @@ test.describe("several entries on one day (Issue #70)", () => {
     const cell = page.getByTestId(`calendar-cell-${dayTwo}`);
     await expect(cell).toHaveAttribute("title", "2 Einträge");
     await cell.click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     await expect(modal).toBeHidden();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
     const dayRows = page.locator("tr.row-day-focus");
@@ -261,6 +265,8 @@ test.describe("several entries on one day (Issue #70)", () => {
     const oneCell = page.getByTestId(`calendar-cell-${dayOne}`);
     await expect(oneCell).not.toHaveAttribute("title", "2 Einträge");
     await oneCell.click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     await expect(modal).toBeVisible();
     await expect(page.locator("[role='dialog'] .modal-eyebrow").first()).toContainText(
       "Eintrag bearbeiten",
@@ -286,6 +292,8 @@ test.describe("several entries on one day (Issue #70)", () => {
 
     // The cell of a day with one entry opens it for editing - no salon field in the dialog.
     await page.getByTestId(`calendar-cell-${day}`).click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     const modal = page.getByTestId("time-entry-modal");
     await expect(modal).toBeVisible();
     await expect(page.locator("[role='dialog'] .modal-eyebrow").first()).toContainText(
