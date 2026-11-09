@@ -42,6 +42,7 @@ async function seedMarkedShift(request: APIRequestContext, token: string): Promi
   const emp = await request.post(`${API_BASE}/api/v1/employees`, {
     headers,
     data: {
+      usualWorkDays: [1, 2, 3, 4, 5],
       email: `hinweis-${stamp}@example.test`,
       firstName: "Hanna",
       lastName: `Hinweis ${stamp.slice(-4)}`,
@@ -141,7 +142,7 @@ test.describe("Hinweise zur Schichtplanung (Issue #850)", () => {
     );
     await row.getByRole("button", { name: "Schicht behalten" }).click();
     expect((await restored).ok()).toBe(true);
-    await expect(page.getByTestId("toast-success")).toContainText("Hinweis erledigt");
+    await expect(page.getByText("Hinweis erledigt")).toBeVisible();
     await expect(page.getByTestId("shift-notice").filter({ hasText: "Hanna Hinweis" })).toHaveCount(
       0,
     );
@@ -155,7 +156,7 @@ test.describe("Hinweise zur Schichtplanung (Issue #850)", () => {
     await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
     await page.goto("/shifts/planning");
     const label = page.locator(".week-pager-label");
-    await expect(label).toHaveText(/^KW \d{1,2} · /);
+    await expect(label).toHaveText(/^KW \d{1,2} · \d{1,2}\..*–/);
     expect(await label.innerText()).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 });
@@ -202,7 +203,8 @@ defineVisibilityWalkthrough({
     {
       name: "Wochenlabel",
       act: async (page) => {
-        await expect(page.locator(".week-pager-label")).toHaveText(/^KW \d{1,2} · /);
+        // the loaded week names both days ("KW 46 · 9.–15. Nov."), not only its start
+        await expect(page.locator(".week-pager-label")).toHaveText(/^KW \d{1,2} · \d{1,2}\..*–/);
       },
       target: (page) => page.locator(".week-pager-label"),
     },
