@@ -124,7 +124,7 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   // aliases that redirect to a route above
   aliasRoute("/admin/special-leave", [Z("tenant-settings:update")], [Z("leave-config:manage")]),
   aliasRoute("/admin/wifi-presence", [Z("presence-source:manage")]),
-  // #843 D-843-04: the design-system example page - intern, nicht in der Navigation. It reads no
+  // #843 D-843-04: the design-system example page - internal, never in a navigation. It reads no
   // API data, so this is a UX gate only (the same read key the themes page accepts).
   internalRoute("/admin/bausteine", [Z("tenant-settings:read")]),
 ];
