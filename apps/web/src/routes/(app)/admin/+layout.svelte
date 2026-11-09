@@ -9,7 +9,7 @@
   import { authStore } from "$stores/auth";
   import { loadPermissionsIfMissing } from "$api/client";
   import { adminGuardDecision } from "$lib/nav/admin-route-permissions";
-  import Spinner from "$components/ui/Spinner.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -43,20 +43,15 @@
   </div>
 {:else if decision === "wait"}
   <div class="admin-shell">
-    <div role="status" aria-live="polite" class="admin-wait">
-      <Spinner />
-      <span>Berechtigungen werden geladen …</span>
+    <div class="admin-wait">
+      <Skeleton shape="card" lines={3} />
     </div>
   </div>
 {/if}
 
 <style>
   .admin-wait {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     padding: 24px 0;
-    color: var(--text-2);
   }
 
   .admin-shell {

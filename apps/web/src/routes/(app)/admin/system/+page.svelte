@@ -1259,7 +1259,11 @@
       await api.delete(`/api-keys/${id}`);
       apiKeys = await api.get<ApiKeyEntry[]>("/api-keys");
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Fehler");
+      toasts.error(
+        e instanceof Error
+          ? e.message
+          : "API-Schlüssel konnte nicht widerrufen werden. Versuche es noch einmal.",
+      );
     }
   }
 

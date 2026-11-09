@@ -17,11 +17,20 @@
  * which is the failure mode tracked as UI-21: silent drift between the
  * primitive layer and the v2 design tokens (tokens.css, Issue #842).
  *
+ * Routes mode (Issue #843, D-843-05, D-843-18) runs after that sweep: it scans every `.svelte`
+ * file under `src/routes` and under `lib/components` outside `ui/` and `layout/` for page-own
+ * markup — an own filter bar, period control, KPI card or data table — and compares the counts
+ * with the falling-only register `lint-ui-classes-route-ratchet.json`. A new occurrence, a
+ * rising count or an unregistered file fails; so does a register count above the found count.
+ * Raw scrim/modal markup is a hard failure with no register.
+ *
  * Flags:
- *   (none — full sweep only; the script is fast)
+ *   --print   write the current page-own counts in register shape (tickets and reasons of
+ *             existing entries are kept) instead of checking; use it to lower the register
  *
  * Env:
- *   LINT_UI_CLASSES_SOFT=1   Soft-mode: exit 0 even on misses (migration window).
+ *   LINT_UI_CLASSES_SOFT=1   Soft-mode: exit 0 even on primitive misses (migration window).
+ *                            The routes mode is never softened.
  *
  * Exit codes:
  *   0 — no misses OR LINT_UI_CLASSES_SOFT=1
@@ -33,9 +42,12 @@
  *   a parent OR they are pure semantic hooks (e.g. `unread-dot` on bell items).
  *   Adding to the whitelist requires a code-review justification.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { resolve, relative } from "node:path";
+import { resolve, relative, sep } from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { extractEmittedClasses, extractScopedClasses } from "./lib/class-tokens.mjs";
 
 // Resolve repo root: git rev-parse --show-toplevel can return a subdirectory
 // when running inside a git worktree with GIT_DIR set (e.g. during pre-commit hooks).
@@ -68,9 +80,7 @@ const WHITELIST = new Set([
   "logout",
 ]);
 
-// CSS identifier syntax: start with letter/underscore/hyphen, then letters/digits/_/-
-const CSS_IDENT_RE = /^[a-zA-Z_-][a-zA-Z0-9_-]*$/;
-
+/** @param {string} scope repo-relative directory */
 function listSvelteFiles(scope) {
   const out = execSync(`find '${scope}' -type f -name '*.svelte'`, {
     cwd: repoRoot,
@@ -95,107 +105,344 @@ function listAllSvelteFiles() {
   return out;
 }
 
+// ── Routes mode: page-own patterns (Issue #843, D-843-05, D-843-18) ─────────────────────────
+//
+// The primitive check above only looks at `ui/` and `layout/`. A page can still build its OWN
+// filter bar, period control, KPI card or data table out of raw markup instead of the blocks, and
+// it can hide such markup in an area component (`lib/components/leave/…`). The detectors below
+// find those patterns in every `.svelte` file under `src/routes` and under `lib/components`
+// outside `ui/` and `layout/`.
+
+/** Rules whose existing occurrences are tolerated and counted in the ratchet register. */
+export const RATCHET_RULES = [
+  "own-filter-bar",
+  "own-period-control",
+  "own-kpi-card",
+  "own-data-table",
+];
+/** Hard failure with no register: raw scrim/modal markup (the Dialog block replaces it). */
+export const HARD_RULE = "raw-scrim-modal";
+export const PATTERN_RULES = [...RATCHET_RULES, HARD_RULE];
+
+/** Follow-up tickets a register entry may name (Issue #843, the page rebuilds #845 to #854). */
+export const TICKET_RE = /^#8(4[5-9]|5[0-4])$/;
+
+const FILTER_BAR_RE =
+  /^(filter-bar|filter-row|filter-select|filter-count|filter-search|filter-toggle(--on)?|year-filter|table-toolbar|toolbar|filters|.+-filter-bar|.+-filters|.+-toolbar)$/;
+const PERIOD_CONTROL_RE =
+  /^(month-bar.*|cal-monthbar.*|.+-monthbar|period-(bar|nav|switch.*)|week-nav|month-nav|.+-nav-btn|nav-btn)$/;
+const KPI_CARD_RE =
+  /^(kpi|kpi-.+|stat-card|.+-kpis?|.+-kpi-.+|vac-stat|today-stat.*|mini-stat(-grid)?|mstat|stat-tile|summary-bar)$/;
+const SCRIM_MODAL_RE = /^(scrim|modal|modal-hd|modal-body|modal-foot)$/;
+const PERIOD_LABEL_RE =
+  /\b(?:title|aria-label)\s*=\s*"\s*(?:Vorherig|Nächst|Vorwoche|Folgewoche|Vormonat)/;
+
 /**
- * Extract every class token emitted by a Svelte file.
+ * Drop `<script>`, `<style>` and HTML comments so only template markup is scanned.
  *
- * - `class="a b c"`   — split on whitespace, all tokens harvested
- * - `class:foo`       — `foo`
- * - `class:foo={…}`   — `foo`
- * - `class="a-{$x}-b"` — interpolated chunks are skipped (we can't statically
- *   know the runtime value), but the literal `a-` / `-b` chunks are also
- *   skipped since they are not standalone class tokens.
- *
- * Multi-line `class="…"` values are supported.
+ * @param {string} source
  */
-function extractEmittedClasses(content) {
-  const stripped = content.replace(/<style[\s\S]*?<\/style>/g, "");
-  const out = new Set();
-
-  // Helper: tokenize a text fragment on whitespace, validating each candidate
-  // against the CSS identifier regex. This drops noise like `?`, `:`, quote
-  // characters, and any other Svelte template syntax that escapes the
-  // interpolation extractor below.
-  const harvestTokens = (text) => {
-    for (const tok of text.split(/\s+/)) {
-      if (!tok) continue;
-      if (!CSS_IDENT_RE.test(tok)) continue;
-      out.add(tok);
-    }
-  };
-
-  // Helper: given the body of a Svelte interpolation `{...}`, pull out every
-  // string-literal's contents and tokenize them. Anything that isn't inside a
-  // string literal is dynamic — we can't statically resolve it — so we skip it.
-  const harvestFromExpression = (body) => {
-    const strRe = /(["'])((?:\\.|(?!\1)[^\\])*)\1/g;
-    let s;
-    while ((s = strRe.exec(body))) {
-      harvestTokens(s[2]);
-    }
-  };
-
-  // 1. Literal class="…" — multiline-safe. Inside the value, Svelte
-  // interpolations `{...}` are valid and may contain string literals; pull
-  // those out separately, and tokenize the remaining bare text on whitespace.
-  const literalRe = /\bclass\s*=\s*"([^"]*)"/g;
-  let m;
-  while ((m = literalRe.exec(stripped))) {
-    const raw = m[1];
-    // Extract any `{...}` interpolation bodies and harvest string literals
-    // from them. Replace the interpolations with a sentinel non-identifier
-    // character (NUL) — this kills concatenated fragments like
-    // `toast-{toast.type}` (which would otherwise leave the partial token
-    // `toast-`) while still letting standalone tokens through cleanly.
-    const interpRe = /\{([^{}]*)\}/g;
-    let interp;
-    while ((interp = interpRe.exec(raw))) {
-      harvestFromExpression(interp[1]);
-    }
-    const bareText = raw.replace(/\{[^{}]*\}/g, "\x00");
-    // Split on whitespace AND on the sentinel boundary, but require that any
-    // surviving token contains no sentinel character — adjacent text to a
-    // `{...}` interpolation is a concatenation, not a complete class name.
-    for (const tok of bareText.split(/\s+/)) {
-      if (!tok) continue;
-      if (tok.includes("\x00")) continue;
-      if (!CSS_IDENT_RE.test(tok)) continue;
-      out.add(tok);
-    }
-  }
-
-  // 2. Dynamic class={expr} — extract string-literal members.
-  // Matches things like  class={["card", animate ? "card-animate" : "", x].filter(...)...}
-  const dynRe = /\bclass\s*=\s*\{([^}]*)\}/g;
-  while ((m = dynRe.exec(stripped))) {
-    harvestFromExpression(m[1]);
-  }
-
-  // 3. `class:foo` and `class:foo={…}` shorthand.
-  const dirRe = /\bclass:([a-zA-Z][a-zA-Z0-9_-]*)/g;
-  while ((m = dirRe.exec(stripped))) {
-    out.add(m[1]);
-  }
-
-  return out;
+function stripNonMarkup(source) {
+  return source
+    .replace(/<script\b[\s\S]*?<\/script>/g, "")
+    .replace(/<style\b[\s\S]*?<\/style>/g, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
 }
 
 /**
- * Extract every class name DECLARED inside the file's scoped `<style>` block.
- * Svelte namespaces these per-component, so they don't need a global recipe.
+ * Every opening tag of a plain HTML element (lowercase name) in the markup, as source text.
+ * Component tags (`<PeriodPicker`, `<KpiStrip`, …) and `svelte:` elements are skipped on purpose:
+ * markup rendered through a block is not page-own markup. Svelte `{…}` expressions inside the
+ * attributes may contain `>` and quotes, so the end of the tag is found by a small state machine.
+ *
+ * @param {string} markup
+ * @returns {string[]}
  */
-function extractScopedClasses(content) {
-  const out = new Set();
-  const styleBlocks = content.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g);
-  for (const block of styleBlocks) {
-    const css = block[1];
-    // `.foo`, `.foo-bar`, `.foo_bar` — class-name characters per CSS spec.
-    const re = /\.([a-zA-Z_-][a-zA-Z0-9_-]*)/g;
-    let m;
-    while ((m = re.exec(css))) {
-      out.add(m[1]);
+function openingTags(markup) {
+  const tags = [];
+  let from = 0;
+  while (from < markup.length) {
+    const lt = markup.indexOf("<", from);
+    if (lt < 0) break;
+    const name = /^<([A-Za-z][\w:.-]*)/.exec(markup.slice(lt, lt + 80));
+    if (!name) {
+      from = lt + 1;
+      continue;
+    }
+    let brace = 0;
+    let attrQuote = null;
+    let jsString = null;
+    let end = -1;
+    let bogus = false;
+    for (let j = lt + name[0].length; j < markup.length; j++) {
+      const c = markup[j];
+      if (jsString) {
+        if (c === "\\") j += 1;
+        else if (c === jsString) jsString = null;
+        continue;
+      }
+      if (brace > 0) {
+        if (c === '"' || c === "'" || c === "`") jsString = c;
+        else if (c === "{") brace += 1;
+        else if (c === "}") brace -= 1;
+        continue;
+      }
+      if (c === "{") {
+        brace = 1;
+        continue;
+      }
+      if (attrQuote) {
+        if (c === attrQuote) attrQuote = null;
+        continue;
+      }
+      if (c === '"' || c === "'") {
+        attrQuote = c;
+        continue;
+      }
+      if (c === "<") {
+        // A new tag opens before this one closed: `a <b` in text, not a tag.
+        bogus = true;
+        break;
+      }
+      if (c === ">") {
+        end = j;
+        break;
+      }
+    }
+    if (bogus || end < 0) {
+      from = lt + 1;
+      continue;
+    }
+    if (/^[a-z]/.test(name[1]) && !name[1].includes(":")) {
+      tags.push(markup.slice(lt, end + 1));
+    }
+    from = end + 1;
+  }
+  return tags;
+}
+
+/**
+ * Count the page-own patterns in one Svelte source, per rule. An element counts once per rule it
+ * matches, however many of its class tokens match.
+ *
+ * @param {string} source whole `.svelte` source
+ * @returns {Record<string, number>} a count for every rule in `PATTERN_RULES`
+ */
+export function detectPagePatterns(source) {
+  /** @type {Record<string, number>} */
+  const counts = Object.fromEntries(PATTERN_RULES.map((rule) => [rule, 0]));
+  for (const tag of openingTags(stripNonMarkup(source))) {
+    const tokens = [...extractEmittedClasses(tag)];
+    const tagName = /^<([a-z][\w:.-]*)/.exec(tag)?.[1];
+    if (tokens.some((t) => FILTER_BAR_RE.test(t))) counts["own-filter-bar"] += 1;
+    if (tokens.some((t) => PERIOD_CONTROL_RE.test(t)) || PERIOD_LABEL_RE.test(tag)) {
+      counts["own-period-control"] += 1;
+    }
+    if (tokens.some((t) => KPI_CARD_RE.test(t))) counts["own-kpi-card"] += 1;
+    if (tagName === "table" && tokens.some((t) => t === "data-table" || t === "table")) {
+      counts["own-data-table"] += 1;
+    }
+    if (tokens.some((t) => SCRIM_MODAL_RE.test(t))) counts[HARD_RULE] += 1;
+  }
+  return counts;
+}
+
+/**
+ * Every `.svelte` file below `dir` (absolute paths), skipping test-harness directories.
+ *
+ * @param {string} dir
+ */
+function svelteFilesBelow(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true })
+    .map(String)
+    .filter((f) => f.endsWith(".svelte"))
+    .filter((f) => !f.split(sep).includes("__tests__"))
+    .map((f) => resolve(dir, f));
+}
+
+/**
+ * The two scopes of the routes mode (D-843-05, D-843-18): every `.svelte` file under
+ * `src/routes`, and every one under `lib/components` outside `ui/` and `layout/`.
+ *
+ * @param {string} [root] repository root
+ * @returns {{ routes: string[], components: string[] }} absolute paths, sorted
+ */
+export function walkPatternScopes(root = repoRoot) {
+  const routes = svelteFilesBelow(resolve(root, "apps/web/src/routes")).sort();
+  const uiDir = resolve(root, "apps/web/src/lib/components/ui") + sep;
+  const layoutDir = resolve(root, "apps/web/src/lib/components/layout") + sep;
+  const components = svelteFilesBelow(resolve(root, "apps/web/src/lib/components"))
+    .filter((f) => !f.startsWith(uiDir) && !f.startsWith(layoutDir))
+    .sort();
+  return { routes, components };
+}
+
+/**
+ * Compare found counts with the ratchet register. The register only falls: a higher count, an
+ * unregistered file, a register count above the found count and an invalid entry all fail.
+ *
+ * @param {Record<string, Record<string, number>>} found rule -> repo-relative path -> count (> 0)
+ * @param {{ rules?: Record<string, Record<string, { count: number, ticket: string | null, reason?: string }>> }} register
+ * @returns {string[]} problems; empty when the tree conforms
+ */
+export function compareWithRegister(found, register) {
+  const problems = [];
+  const rules = register?.rules ?? {};
+  for (const rule of Object.keys(rules)) {
+    if (rule === HARD_RULE) {
+      if (Object.keys(rules[rule] ?? {}).length > 0) {
+        problems.push(`${rule}: raw scrim/modal markup has no register, remove the entries`);
+      }
+    } else if (!RATCHET_RULES.includes(rule)) {
+      problems.push(`${rule}: unknown rule in the register`);
     }
   }
-  return out;
+  for (const [path, count] of Object.entries(found[HARD_RULE] ?? {})) {
+    problems.push(
+      `${HARD_RULE}: ${path} has ${count} raw scrim/modal element(s) — use the Dialog block (hard failure, no register)`,
+    );
+  }
+  for (const rule of RATCHET_RULES) {
+    const registered = rules[rule] ?? {};
+    const seen = found[rule] ?? {};
+    for (const [path, count] of Object.entries(seen)) {
+      const entry = registered[path];
+      if (!entry) {
+        problems.push(
+          `${rule}: neues Seitenmuster in ${path} (${count} found, file not in the register) — build it from the blocks`,
+        );
+      } else if (count > entry.count) {
+        problems.push(
+          `${rule}: neues Seitenmuster in ${path} (${count} found, ${entry.count} registered) — build it from the blocks`,
+        );
+      } else if (count < entry.count) {
+        problems.push(
+          `${rule}: Register senken for ${path} (${count} found, ${entry.count} registered) — run with --print and lower the entry`,
+        );
+      }
+    }
+    for (const [path, entry] of Object.entries(registered)) {
+      if (!seen[path]) {
+        problems.push(
+          `${rule}: Register senken for ${path} (0 found, ${entry.count} registered) — remove the entry`,
+        );
+      }
+      if (!Number.isInteger(entry.count) || entry.count < 1) {
+        problems.push(`${rule}: ${path} has an invalid count ${entry.count}`);
+      }
+      if (entry.ticket === null || entry.ticket === undefined) {
+        if (!entry.reason || !String(entry.reason).trim()) {
+          problems.push(`${rule}: ${path} has no ticket and no reason`);
+        }
+      } else if (!TICKET_RE.test(entry.ticket)) {
+        problems.push(`${rule}: ${path} names ticket "${entry.ticket}", expected #845 to #854`);
+      }
+    }
+  }
+  return problems;
+}
+
+const REGISTER_PATH = "apps/web/scripts/lint-ui-classes-route-ratchet.json";
+const REGISTER_SOURCE =
+  "Issue #843, D-843-05: every page-own filter bar, period control, KPI card and data table that existed when the routes mode started, with the follow-up ticket that migrates it (D-843-18: area components included). Counts may only fall.";
+
+/**
+ * Count the page-own patterns of every file in both scopes.
+ *
+ * @param {string} [root] repository root
+ * @returns {{ found: Record<string, Record<string, number>>, routeFiles: number, componentFiles: number }}
+ *   `found`: rule -> repo-relative posix path -> count (> 0 only)
+ */
+export function collectPatternCounts(root = repoRoot) {
+  const { routes, components } = walkPatternScopes(root);
+  /** @type {Record<string, Record<string, number>>} */
+  const found = Object.fromEntries(PATTERN_RULES.map((rule) => [rule, {}]));
+  for (const file of [...routes, ...components]) {
+    const counts = detectPagePatterns(readFileSync(file, "utf8"));
+    const rel = relative(root, file).split(sep).join("/");
+    for (const rule of PATTERN_RULES) {
+      if (counts[rule] > 0) found[rule][rel] = counts[rule];
+    }
+  }
+  return { found, routeFiles: routes.length, componentFiles: components.length };
+}
+
+/**
+ * The register shape for the counts found now. Ticket and reason of an entry that already exists
+ * are kept, so lowering a count never loses them; a new entry gets `ticket: null` and fails the
+ * check until a ticket or a reason is written.
+ *
+ * @param {Record<string, Record<string, number>>} found
+ * @param {{ rules?: Record<string, Record<string, { ticket: string | null, reason?: string }>> }} [previous]
+ */
+export function registerFromCounts(found, previous = {}) {
+  /** @type {Record<string, Record<string, object>>} */
+  const rules = {};
+  for (const rule of RATCHET_RULES) {
+    rules[rule] = {};
+    for (const path of Object.keys(found[rule] ?? {}).sort()) {
+      const old = previous.rules?.[rule]?.[path];
+      rules[rule][path] = {
+        count: found[rule][path],
+        ticket: old ? old.ticket : null,
+        ...(old?.reason ? { reason: old.reason } : {}),
+      };
+    }
+  }
+  // Raw scrim/modal markup has no register: the key stays, always empty.
+  rules[HARD_RULE] = {};
+  return { registerSource: REGISTER_SOURCE, rules };
+}
+
+/**
+ * The routes mode: compare the page-own patterns on the tree with the ratchet register (D-843-05).
+ * Aborts when a scope is empty, so a moved directory can never read as a clean tree.
+ *
+ * @param {{ print?: boolean }} [options] `print`: write the current counts in register shape
+ * @returns {boolean} true when the tree conforms
+ */
+function runRoutesMode({ print = false } = {}) {
+  const { found, routeFiles, componentFiles } = collectPatternCounts();
+  if (routeFiles === 0 || componentFiles === 0) {
+    console.error(
+      `[lint:ui-classes] routes mode scanned ${routeFiles} route file(s) and ${componentFiles} area ` +
+        `component file(s) — a scope is empty, the scan root moved. This is a failure, not a clean result.`,
+    );
+    return false;
+  }
+  const registerFile = resolve(repoRoot, REGISTER_PATH);
+  const register = existsSync(registerFile) ? JSON.parse(readFileSync(registerFile, "utf8")) : null;
+  if (print) {
+    console.log(JSON.stringify(registerFromCounts(found, register ?? {}), null, 2));
+    return true;
+  }
+  if (!register) {
+    console.error(`[lint:ui-classes] ${REGISTER_PATH} is missing — run with --print to seed it.`);
+    return false;
+  }
+  const problems = compareWithRegister(found, register);
+  if (problems.length > 0) {
+    console.error(`\n[lint:ui-classes] routes mode: ${problems.length} problem(s):\n`);
+    for (const problem of problems) console.error(`  ${problem}`);
+    console.error(
+      `\nA page builds its filter bar, period control, KPI row and table from the blocks ` +
+        `(PeriodPicker, KpiStrip, TableToolbar, DataTable, Dialog). The register ` +
+        `${REGISTER_PATH} lists the old occurrences and only falls; lower an entry with ` +
+        `\`node scripts/lint-ui-classes.mjs --print\` when a page is migrated.\n`,
+    );
+    return false;
+  }
+  const entries = RATCHET_RULES.reduce((n, rule) => n + Object.keys(found[rule]).length, 0);
+  const occurrences = RATCHET_RULES.reduce(
+    (n, rule) => n + Object.values(found[rule]).reduce((a, b) => a + b, 0),
+    0,
+  );
+  console.log(
+    `[lint:ui-classes] routes OK — ${routeFiles} route and ${componentFiles} area component file(s) scanned, ` +
+      `${occurrences} registered page-own occurrence(s) in ${entries} register entr${entries === 1 ? "y" : "ies"}, none new.`,
+  );
+  return true;
 }
 
 /**
@@ -218,56 +465,72 @@ function loadGlobalClasses() {
   return out;
 }
 
-// Build the file list first (SCOPES above), abort on empty, THEN run the content check over it —
-// this is what makes the empty case a hard failure instead of a silent "0 miss(es)" success.
-const files = listAllSvelteFiles();
-if (files.length === 0) {
-  console.error(
-    `[lint:ui-classes] scanned 0 file(s) under ${SCOPES.join(", ")} — the scan root moved or ` +
-      `the filter matched nothing. This is a failure, not a clean result.`,
-  );
-  process.exit(1);
-}
-
-const global = loadGlobalClasses();
-const misses = [];
-let totalEmitted = 0;
-const totalFiles = files.length;
-
-for (const file of files) {
-  const content = readFileSync(file, "utf8");
-  const emitted = extractEmittedClasses(content);
-  const scoped = extractScopedClasses(content);
-  for (const cls of emitted) {
-    totalEmitted += 1;
-    if (global.has(cls)) continue;
-    if (scoped.has(cls)) continue;
-    if (WHITELIST.has(cls)) continue;
-    misses.push({ file, cls });
-  }
-}
-
-if (misses.length > 0) {
-  console.error(`\n[lint:ui-classes] ${misses.length} miss(es) across ${totalFiles} file(s):\n`);
-  for (const { file, cls } of misses) {
-    const loc = relative(repoRoot, file);
-    console.error(`  ${loc} — emitted class ".${cls}" has no global recipe match`);
-  }
-  console.error(
-    `\nFix options:\n` +
-      `  1. Add a recipe to apps/web/src/app.css or tokens.css\n` +
-      `  2. Move the class into the component's own <style> block (scoped)\n` +
-      `  3. Add to WHITELIST in scripts/lint-ui-classes.mjs with justification\n`,
-  );
-  if (process.env.LINT_UI_CLASSES_SOFT === "1") {
+/** The primitive <-> global-recipe alignment sweep (UI-21): the check this script always ran. */
+function runPrimitiveAlignment() {
+  // Build the file list first (SCOPES above), abort on empty, THEN run the content check over it —
+  // this is what makes the empty case a hard failure instead of a silent "0 miss(es)" success.
+  const files = listAllSvelteFiles();
+  if (files.length === 0) {
     console.error(
-      "[lint:ui-classes] LINT_UI_CLASSES_SOFT=1 — exiting 0 despite misses (migration mode).\n",
+      `[lint:ui-classes] scanned 0 file(s) under ${SCOPES.join(", ")} — the scan root moved or ` +
+        `the filter matched nothing. This is a failure, not a clean result.`,
     );
-    process.exit(0);
+    process.exit(1);
   }
-  process.exit(1);
+
+  const global = loadGlobalClasses();
+  const misses = [];
+  let totalEmitted = 0;
+  const totalFiles = files.length;
+
+  for (const file of files) {
+    const content = readFileSync(file, "utf8");
+    const emitted = extractEmittedClasses(content);
+    const scoped = extractScopedClasses(content);
+    for (const cls of emitted) {
+      totalEmitted += 1;
+      if (global.has(cls)) continue;
+      if (scoped.has(cls)) continue;
+      if (WHITELIST.has(cls)) continue;
+      misses.push({ file, cls });
+    }
+  }
+
+  if (misses.length > 0) {
+    console.error(`\n[lint:ui-classes] ${misses.length} miss(es) across ${totalFiles} file(s):\n`);
+    for (const { file, cls } of misses) {
+      const loc = relative(repoRoot, file);
+      console.error(`  ${loc} — emitted class ".${cls}" has no global recipe match`);
+    }
+    console.error(
+      `\nFix options:\n` +
+        `  1. Add a recipe to apps/web/src/app.css or tokens.css\n` +
+        `  2. Move the class into the component's own <style> block (scoped)\n` +
+        `  3. Add to WHITELIST in scripts/lint-ui-classes.mjs with justification\n`,
+    );
+    if (process.env.LINT_UI_CLASSES_SOFT === "1") {
+      console.error(
+        "[lint:ui-classes] LINT_UI_CLASSES_SOFT=1 — exiting 0 despite misses (migration mode).\n",
+      );
+      return;
+    }
+    process.exit(1);
+  }
+
+  console.log(
+    `[lint:ui-classes] OK — ${totalEmitted} class token(s) across ${totalFiles} primitive file(s) all match a global recipe or are scoped/whitelisted.`,
+  );
 }
 
-console.log(
-  `[lint:ui-classes] OK — ${totalEmitted} class token(s) across ${totalFiles} primitive file(s) all match a global recipe or are scoped/whitelisted.`,
-);
+// Run the sweep only when the script is invoked directly, so importing the detectors in a test
+// does not lint.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv.includes("--print")) {
+    // Seed or refresh the ratchet register: the sweep itself stays out of the output.
+    process.exit(runRoutesMode({ print: true }) ? 0 : 1);
+  }
+  runPrimitiveAlignment();
+  // The routes mode is not softened by LINT_UI_CLASSES_SOFT: that switch is the primitive
+  // migration window only (Issue #843, D-843-05).
+  if (!runRoutesMode()) process.exit(1);
+}

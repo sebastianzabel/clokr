@@ -10,6 +10,8 @@
   import Section from "$lib/components/admin/Section.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import { toasts } from "$stores/toast";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   interface Employee {
@@ -154,7 +156,9 @@
       await api.delete(`/company-shutdowns/${deleteConfirm.id}`);
       await loadShutdowns();
     } catch {
-      alert("Löschen fehlgeschlagen.");
+      toasts.error(
+        "Betriebsurlaub konnte nicht gelöscht werden. Lade die Seite neu und versuche es noch einmal.",
+      );
     }
   }
 
@@ -183,7 +187,9 @@
       addExceptionReason = "";
       await loadShutdowns();
     } catch {
-      alert("Ausnahme konnte nicht hinzugefügt werden.");
+      toasts.error(
+        "Ausnahme konnte nicht hinzugefügt werden. Prüfe die Auswahl und versuche es noch einmal.",
+      );
     } finally {
       savingException = false;
     }
@@ -194,7 +200,7 @@
       await api.delete(`/company-shutdowns/${shutdownId}/exceptions/${employeeId}`);
       await loadShutdowns();
     } catch {
-      alert("Ausnahme konnte nicht entfernt werden.");
+      toasts.error("Ausnahme konnte nicht entfernt werden. Versuche es noch einmal.");
     }
   }
 
@@ -245,8 +251,7 @@
 
     {#if loading}
       <Section>
-        <span class="sr-only">Wird geladen…</span>
-        <div class="loading-placeholder"></div>
+        <Skeleton shape="row" count={3} />
       </Section>
     {:else if shutdowns.length === 0}
       <Section>
@@ -488,10 +493,6 @@
   .year-filter {
     width: auto;
     min-width: 90px;
-  }
-
-  .loading-placeholder {
-    height: 180px;
   }
 
   .shutdown-list {
@@ -741,18 +742,6 @@
 
   .text-muted {
     color: var(--text-2);
-  }
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
   }
 
   @media (max-width: 640px) {

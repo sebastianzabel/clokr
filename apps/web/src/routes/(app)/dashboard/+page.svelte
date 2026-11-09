@@ -98,6 +98,13 @@
   import { de } from "date-fns/locale";
   import { salonContext } from "$stores/salon-context"; // Issue #84 (D-01)
   import {
+    breakEnded,
+    breakStarted,
+    clockedIn as clockedInMessage,
+    clockedOut as clockedOutMessage,
+    clockTime,
+  } from "$lib/feedback/action-messages"; // #843 (D-843-08, D-843-19): the acknowledgement texts
+  import {
     TEAM_SALON_UNAVAILABLE_TEXT,
     isTeamSalonRejected,
     teamSalonFilter,
@@ -973,6 +980,19 @@
     // A new second-salon entry is adopted with the display name of the salon it was started in; the
     // reload that follows replaces it with the list row (which carries `salonName` itself).
     const startedIn = body.salonId ? otherSalonName(clockSalonViewState, body.salonId) : undefined;
+    // #843 (D-843-19): the salon name is read BEFORE the entry is adopted - adopting it changes the
+    // day state, and with it the clock-salon view this reads from. Order: the response's own name,
+    // the second salon this request started in, the salon picked on the idle select view, the salon
+    // a re-open continues (the fixed one); none known = no salon part in the text.
+    const pickedSalon =
+      clockSalonViewState.kind === "select" && body.salonId
+        ? clockSalonViewState.salons.find((s) => s.id === body.salonId)?.name
+        : undefined;
+    const bookedSalon =
+      clockSalonViewState.kind === "fixed" && !body.salonId
+        ? clockSalonViewState.salon.name
+        : undefined;
+    const salonName = entry.salonName ?? startedIn ?? pickedSalon ?? bookedSalon;
     todayEntries = upsertDayEntry(
       todayEntries,
       startedIn ? { ...entry, salonName: startedIn } : entry,
@@ -981,6 +1001,8 @@
     // (resolver.ts:130-136). Adopting it keeps the local *display* in sync with the
     // value the server recomputed — the client never sends it back (Phase 129).
     breakMinutes = entry.breakMinutes ?? 0;
+    // #843 (D-843-08, D-843-19): the server answered, say so.
+    toasts.success(clockedInMessage(clockTime(entry.startTime), salonName));
   }
 
   async function handleClock() {
@@ -1022,6 +1044,8 @@
         if (clockOutResult.kind === "not-closed") {
           toasts.error(clockOutResult.message);
         } else {
+          // #843 (D-843-19): acknowledged only after the server closed the entry.
+          toasts.success(clockedOutMessage(clockTime(clockOutResult.entry.endTime)));
           // Issue #80 (D-09a): a clock-out that completes a cross-salon day without enough break
           // is saved either way; the API's warning is shown as a notice.
           const breakFindingNotice = breakFindingSaveNotice(clockOutResponse.warnings);
@@ -1194,9 +1218,13 @@
     breakLoading = true;
     try {
       if (breakStartedAt) {
-        await endOpenBreak();
+        // #843 (D-843-19): said after the break POST succeeded (endOpenBreak throws otherwise).
+        const endedAt = await endOpenBreak();
+        if (endedAt) toasts.success(breakEnded(clockTime(endedAt)));
       } else {
-        startOpenBreak();
+        const startedAt = startOpenBreak();
+        // #843 (D-843-19): local acknowledgement, the server-side pause is #596.
+        toasts.success(breakStarted(clockTime(startedAt)));
       }
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Pause fehlgeschlagen");
@@ -1205,13 +1233,16 @@
     }
   }
 
-  function startOpenBreak() {
-    breakStartedAt = new Date();
+  function startOpenBreak(): Date {
+    const startedAt = new Date();
+    breakStartedAt = startedAt;
     persistOpenBreak();
+    return startedAt;
   }
 
-  async function endOpenBreak() {
-    if (!breakStartedAt || !activeEntryId) return;
+  /** Returns the instant the break ended at, `null` when there was nothing to end. */
+  async function endOpenBreak(): Promise<Date | null> {
+    if (!breakStartedAt || !activeEntryId) return null;
     const startedAt = breakStartedAt;
     const endedAt = new Date();
     // Guard against zero-length breaks (double-click): ensure the Break record
@@ -1237,6 +1268,7 @@
     breakMinutes = res.breakMinutes;
     breakStartedAt = null;
     clearStoredOpenBreak();
+    return endedAt;
   }
 
   function persistOpenBreak() {

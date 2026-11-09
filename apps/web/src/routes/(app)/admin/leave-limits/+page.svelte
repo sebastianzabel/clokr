@@ -36,6 +36,7 @@
   import Section from "$lib/components/admin/Section.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   // Presentation only: the API decides every read and write by reach (Issue #836, D-836-13). The
   // page hides controls the caller cannot use; a forged request still meets the API's 403/404.
@@ -235,7 +236,7 @@
 
     {#if loading}
       <Section>
-        <p class="text-muted" role="status">Wird geladen…</p>
+        <Skeleton shape="row" count={3} />
       </Section>
     {:else if forbidden}
       <Section>

@@ -321,6 +321,11 @@ jobs:
         # group. See docs/ADMIN_STRUCTURE.md §3.2.1.
         run: pnpm --filter @clokr/web lint:save-pattern
 
+      - name: Lint native dialogs (Issue #843, D-843-06)
+        # No alert/prompt/confirm in apps/web/src: feedback goes through toasts, decisions through
+        # ConfirmDialog or ReasonDialog.
+        run: pnpm --filter @clokr/web lint:no-alert
+
       - name: Lint shown text against the glossary (Issue #574)
         # No forbidden term (Tenant, enum values, env names, Sie-forms, Σ, Coverage, …) in any
         # text the web app shows. Vocabulary and the address form "du": docs/glossar.md.

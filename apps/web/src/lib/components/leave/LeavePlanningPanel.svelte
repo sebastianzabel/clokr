@@ -22,7 +22,7 @@
   import { hasPermission } from "$lib/permissions";
   import Card from "$components/ui/Card.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
-  import Spinner from "$components/ui/Spinner.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte";
   import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte";
   import LeavePlanWishList from "$lib/components/leave/LeavePlanWishList.svelte";
@@ -444,7 +444,7 @@
 
 <div class="planning-panel" data-testid="leave-plan-page">
   {#if loading}
-    <div class="plan-state" role="status"><Spinner /> Urlaubsplanung wird geladen …</div>
+    <Skeleton shape="card" />
   {:else if loadError}
     <div class="alert alert-error" role="alert" data-testid="leave-plan-error">
       <span>⚠</span><span>{loadError}</span>
@@ -573,13 +573,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--s-4);
-  }
-  .plan-state {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    color: var(--text-2);
-    padding: var(--s-4) 0;
   }
   .plan-notice {
     margin: var(--s-3) 1.25rem;

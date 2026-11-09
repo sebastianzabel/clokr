@@ -12,6 +12,7 @@
   import CardHeader from "$components/ui/CardHeader.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import {
     ABSENCE_UNIT_HINT,
     absenceListLine,
@@ -126,12 +127,9 @@
 
   {#if rows === null}
     {#if loading}
-      <div class="abp-skeleton" data-testid="absence-skeleton" aria-busy="true">
-        {#each Array.from({ length: 4 }, (_, i) => i) as i (i)}
-          <div class="skeleton skeleton-text"></div>
-        {/each}
+      <div data-testid="absence-skeleton">
+        <Skeleton shape="row" count={4} />
       </div>
-      <span class="sr-only">Abwesenheiten werden geladen…</span>
     {/if}
   {:else if rows.length === 0}
     <EmptyState
@@ -282,12 +280,6 @@
 </Card>
 
 <style>
-  .abp-skeleton {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-3);
-  }
-
   .abp-empty {
     margin: 0;
     font-size: 15px;

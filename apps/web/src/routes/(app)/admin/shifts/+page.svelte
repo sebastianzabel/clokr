@@ -17,6 +17,7 @@
   import Section from "$lib/components/admin/Section.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import Modal from "$components/ui/Modal.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   // ── Types ───────────────────────────────────────────────────
   interface ShiftTemplate {
@@ -437,7 +438,7 @@
     {/if}
 
     {#if loading}
-      <div role="status" class="cfg-loading">Lade Konfiguration…</div>
+      <Skeleton shape="card" count={2} lines={3} />
     {:else if currentTab === "vorlagen"}
       <!-- ── Templates section ────────────────────────────────────── -->
       <Section title="Schichtvorlagen" sub="Wiederkehrende Schichtmuster definieren">
@@ -779,12 +780,6 @@
 />
 
 <style>
-  .cfg-loading {
-    padding: var(--s-6) 0;
-    color: var(--text-2);
-    font-size: 14px;
-  }
-
   .cfg-table {
     display: flex;
     flex-direction: column;

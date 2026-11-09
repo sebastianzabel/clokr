@@ -75,7 +75,8 @@ describe("TodayAttendance - header and states", () => {
 
   it("shows the loading text, the error text and the calm salon state", () => {
     const loading = renderWithTheme(TodayAttendance, props({ loading: true, attendance: null }));
-    expect(screen.getByText("Lade Anwesenheit…")).toBeTruthy();
+    // #843 D-843-07: the loading state is the Skeleton, the one source of loading wording.
+    expect(screen.getByRole("status", { name: "Wird geladen" })).toBeTruthy();
     loading.unmount();
     const error = renderWithTheme(
       TodayAttendance,

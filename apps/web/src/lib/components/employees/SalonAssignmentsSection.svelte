@@ -16,6 +16,7 @@
 <script lang="ts">
   import { api } from "$api/client";
   import Section from "$lib/components/admin/Section.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { localCalendarDay } from "$lib/employees/employment-state";
   import {
     WEEKDAY_OPTIONS,
@@ -190,7 +191,7 @@
   {#if loadError}
     <div class="callout error">{loadError}</div>
   {:else if loading}
-    <p class="hint">Wird geladen…</p>
+    <Skeleton shape="row" count={2} />
   {:else}
     {#if salonNamesUnavailable}
       <p class="hint" data-testid="salon-names-hint">

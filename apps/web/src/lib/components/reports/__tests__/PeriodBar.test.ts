@@ -168,7 +168,8 @@ describe("PeriodBar — actions, loading and structure", () => {
     }
   });
 
-  it("shows the keep-label spinner only while loading", () => {
+  it("shows the Skeleton loading cue only while loading", () => {
+    // #843 D-843-20: the cue is a Skeleton (role=status "Wird geladen"), no longer a Spinner.
     const { unmount } = renderWithTheme(PeriodBar, props());
     expect(screen.queryByRole("status", { name: "Wird geladen" })).toBeNull();
     unmount();

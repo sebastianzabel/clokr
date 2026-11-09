@@ -188,4 +188,29 @@ test.describe("Phase 75 — Visual baselines", () => {
       mask: [page.locator("canvas"), page.getByTestId("team-saldo-values")],
     });
   });
+
+  // Issue #843 (D-843-04): the example page of the design-system blocks. One screenshot per
+  // theme x mode frame (six); the page reads no API data. The baselines are taken from the CI
+  // artifact (plan 843-36), never from a local render.
+  test("11 — Bausteine", async ({ page }) => {
+    await page.goto("/admin/bausteine");
+    await expect(page.locator('[data-testid="bausteine-page"]')).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    // The frames are taller than the viewport, so an element screenshot scrolls the page, and the
+    // sticky chrome (the Topbar, the SaveBar of the form demo) lands inside each image at an offset
+    // that depends on that scroll position. For this test only the chrome sits in the flow: the
+    // product behaviour is untouched, the six frames just no longer depend on where the page was
+    // scrolled to when the screenshot fired.
+    await page.addStyleTag({
+      content: ".topbar, .save-bar { position: static !important; }",
+    });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    for (const theme of ["pflaume", "salz", "petrol"]) {
+      for (const mode of ["light", "dark"]) {
+        await expect(page.getByTestId(`bausteine-frame-${theme}-${mode}`)).toHaveScreenshot(
+          `11-bausteine-${theme}-${mode}.png`,
+        );
+      }
+    }
+  });
 });

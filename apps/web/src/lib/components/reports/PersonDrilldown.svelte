@@ -9,6 +9,7 @@
   // `canTimeEntryRead` (T-612-20): without the right there is no request, just one hint line.
   import { untrack } from "svelte";
   import Modal from "$components/ui/Modal.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte";
   import { absenceEntryText, personAbsenceEntries } from "$lib/reports/absence-table"; // Issue #713
@@ -398,7 +399,7 @@
           {#if !canTimeEntryRead}
             <p class="drill-sub">Die Tagesliste ist nur mit Leserecht auf Zeiteinträge sichtbar.</p>
           {:else if dayState === "loading" || dayState === "idle"}
-            <p class="drill-sub" aria-busy="true"><Spinner size={13} /> Wird geladen</p>
+            <Skeleton shape="block" height="8rem" />
           {:else if dayState === "error"}
             <div class="drill-error" role="alert">
               <p>Die Einträge konnten nicht geladen werden.</p>
