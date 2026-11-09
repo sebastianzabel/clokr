@@ -23,7 +23,9 @@
   },
   "dependencies": {
     "@clokr/types": "workspace:*",
+    "@internationalized/date": "3.12.4",
     "@tanstack/svelte-query": "^6.3.11",
+    "bits-ui": "2.20.2",
     "chart.js": "^4.6.1",
     "date-fns": "^4.4.0",
     "svelte-dnd-action": "^0.9.79",

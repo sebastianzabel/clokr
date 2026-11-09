@@ -115,6 +115,9 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   // aliases that redirect to a route above
   aliasRoute("/admin/special-leave", [Z("tenant-settings:update")], [Z("leave-config:manage")]),
   aliasRoute("/admin/wifi-presence", [Z("presence-source:manage")]),
+  // #843 D-843-04: the design-system example page; reads no API data, so this is a UX gate only
+  // (the same read key the themes page accepts). Not a navigation entry.
+  aliasRoute("/admin/bausteine", [Z("tenant-settings:read")]),
 ];
 
 const HREFS = ADMIN_ROUTE_PERMISSIONS.map((entry) => entry.href);

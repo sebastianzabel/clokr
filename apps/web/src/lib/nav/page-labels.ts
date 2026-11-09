@@ -37,6 +37,8 @@ export const PAGE_LABELS = Object.freeze({
   "/admin/export": "DATEV-Export",
   "/admin/system": "Allgemein",
   "/admin/themes": "Branding & Themes",
+  // example page of the design-system blocks (#843 D-843-04); not in the navigation
+  "/admin/bausteine": "Bausteine",
   "/admin/integrations": "Integrationen",
   // redirect-only alias (Phase 52 rename to /admin/integrations) — carries its target's name
   "/admin/wifi-presence": "Integrationen",
