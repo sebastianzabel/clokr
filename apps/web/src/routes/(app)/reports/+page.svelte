@@ -835,8 +835,7 @@
       {:else if periodFailure === "FAILED"}
         <div class="callout error" role="alert" data-testid="period-error">
           <p>
-            Der Bericht konnte nicht geladen werden. Prüfen Sie die Verbindung und versuchen Sie es
-            erneut.
+            Der Bericht konnte nicht geladen werden. Prüf die Verbindung und versuch es noch einmal.
           </p>
           <button
             type="button"

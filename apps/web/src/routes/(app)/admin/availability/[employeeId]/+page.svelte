@@ -236,7 +236,7 @@
         <div class="av-feature-disabled-icon" aria-hidden="true">⚙️</div>
         <h2 class="av-feature-disabled-title">Verfügbarkeits-System deaktiviert</h2>
         <p class="av-feature-disabled-body">
-          Diese Funktion ist für deinen Tenant deaktiviert. Aktiviere sie in den
+          Diese Funktion ist für dein Unternehmen ausgeschaltet. Aktiviere sie in den
           System-Einstellungen unter <strong>Features</strong>.
         </p>
         <a class="btn btn-primary" href="/admin/system#features">Zu den Features</a>

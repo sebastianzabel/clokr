@@ -168,7 +168,9 @@ describe("Wochenübersicht Planungsbedarf (Phase 430, Issue #430)", () => {
     apiGet.mockResolvedValueOnce(response("2031-02-03", "2031-02-09", []));
     renderWithTheme(PlanningOverviewPage, {});
     await waitFor(() =>
-      expect(screen.getByText("Keine SHIFT_BASED-Mitarbeiter im Scope.")).toBeTruthy(),
+      expect(
+        screen.getByText("In deiner Reichweite arbeitet niemand nach Schichtplan."),
+      ).toBeTruthy(),
     );
   });
 });

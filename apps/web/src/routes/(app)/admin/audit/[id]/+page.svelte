@@ -90,7 +90,7 @@
           <dt>Aktion</dt>
           <dd>{shownEntry.action}</dd>
 
-          <dt>Entität</dt>
+          <dt>Datensatz</dt>
           <dd>{shownEntry.entity}{shownEntry.entityId ? ` #${shownEntry.entityId}` : ""}</dd>
 
           <dt>IP-Adresse</dt>

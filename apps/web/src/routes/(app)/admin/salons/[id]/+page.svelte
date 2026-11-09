@@ -157,7 +157,7 @@
     errors = validateSalonForm(form, "create");
     hoursErrors = validateOpeningHours(form.openingHours);
     if (hasMessages(errors) || hasMessages(hoursErrors)) {
-      toasts.error("Bitte prüfen Sie die markierten Felder.");
+      toasts.error("Bitte prüf die markierten Felder.");
       return;
     }
     creating = true;
@@ -188,7 +188,7 @@
       federalState: all.federalState,
     };
     if (hasMessages(errors)) {
-      toasts.error("Bitte prüfen Sie die markierten Felder.");
+      toasts.error("Bitte prüf die markierten Felder.");
       return;
     }
     const patch = salonPatch(salon, form, MASTER_KEYS);
@@ -288,9 +288,9 @@
 {#if loading}
   <div class="page-loading" role="status">Laden…</div>
 {:else if isCreate && !rights.canManage}
-  <div class="page-loading">Für das Anlegen von Salons fehlt Ihnen die Berechtigung.</div>
+  <div class="page-loading">Für das Anlegen von Salons fehlt dir die Berechtigung.</div>
 {:else if forbidden}
-  <div class="page-loading">Für die Salonübersicht fehlt Ihnen die Berechtigung.</div>
+  <div class="page-loading">Für die Salonübersicht fehlt dir die Berechtigung.</div>
 {:else if !isCreate && (loadError || !salon)}
   <div class="page-error">{loadError || "Salon nicht gefunden."}</div>
 {:else}

@@ -68,6 +68,6 @@
     {/if}
   {/snippet}
   {#if tabs.length === 0}
-    <div class="callout error" role="alert">Für diese Seite fehlen Ihnen die Berechtigungen.</div>
+    <div class="callout error" role="alert">Für diese Seite fehlen dir die Berechtigungen.</div>
   {/if}
 </SectionStack>

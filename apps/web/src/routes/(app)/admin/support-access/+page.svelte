@@ -45,7 +45,7 @@
 <SectionStack
   eyebrow="Compliance"
   title={pageLabel("/admin/support-access")}
-  sub="Zugriffe des Betreibers auf Ihre Daten"
+  sub="Zugriffe des Betreibers auf die Daten deines Unternehmens"
   animate
 >
   <Section title="Zugriffe" sub="Neueste zuerst">

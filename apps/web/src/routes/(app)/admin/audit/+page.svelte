@@ -224,9 +224,9 @@
             class="form-input"
             bind:value={filterEntity}
             onchange={applyFilter}
-            aria-label="Nach Entität filtern"
+            aria-label="Nach Art filtern"
           >
-            <option value="">Alle Entitäten</option>
+            <option value="">Alle Arten</option>
             {#each ENTITIES as e (e)}
               <option value={e}>{e}</option>
             {/each}

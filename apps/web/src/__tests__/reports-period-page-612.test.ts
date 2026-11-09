@@ -208,7 +208,7 @@ describe("/reports period area (Issue #612) - one request, the latest answer, no
       "Dieser Zeitraum lässt sich nicht auswerten – höchstens 12 Monate auf einmal.",
     );
     expect(TEMPLATE).toContain(
-      "Der Bericht konnte nicht geladen werden. Prüfen Sie die Verbindung und versuchen Sie es",
+      "Der Bericht konnte nicht geladen werden. Prüf die Verbindung und versuch es noch einmal.",
     );
   });
 

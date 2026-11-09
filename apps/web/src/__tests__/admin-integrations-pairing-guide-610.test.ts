@@ -1,5 +1,5 @@
 // Issue #610 (P-610-22) - source pin for the integrations page: the pairing guide sits in its own
-// Section right after "Presence-Quellen", and the page gains no API call for it. Routes cannot be
+// Section right after "Präsenz-Quellen", and the page gains no API call for it. Routes cannot be
 // mounted (`apps/web/vitest.config.ts` has no `$app` alias), so the contract is read from source.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,8 +28,8 @@ describe("integrations page - pairing guide (Issue #610)", () => {
   const sectionStart = (title: string): number =>
     source.search(new RegExp(`<Section\\s+title="${title}"`));
 
-  it("renders it inside the Section 'Handys per QR-Code koppeln' after 'Presence-Quellen'", () => {
-    const sources = sectionStart("Presence-Quellen");
+  it("renders it inside the Section 'Handys per QR-Code koppeln' after 'Präsenz-Quellen'", () => {
+    const sources = sectionStart("Präsenz-Quellen");
     const guide = sectionStart("Handys per QR-Code koppeln");
     const devices = sectionStart("WiFi-Geräteliste");
     expect(sources).toBeGreaterThan(-1);

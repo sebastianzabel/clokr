@@ -50,7 +50,7 @@ function effectContaining(marker: string): string {
 
 const SPREAD = "...(pageSalonId !== null ? { salonId: pageSalonId } : {})";
 const BULK_NOTE =
-  "Diese Aktion gilt für alle Salons Ihrer Reichweite, nicht nur für den gewählten Salon.";
+  "Diese Aktion gilt für alle Salons deiner Reichweite, nicht nur für den gewählten Salon.";
 
 describe("Issue #558 — the shift planner follows the header salon", () => {
   it("[vacuity gate] the page source is loaded and still is the shift planner", () => {

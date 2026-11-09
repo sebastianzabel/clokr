@@ -166,7 +166,7 @@
           {:else if employees.length === 0}
             <tr>
               <td colspan={hasPlannedColumns ? 6 : 4} class="empty">
-                Keine SHIFT_BASED-Mitarbeiter im Scope.
+                In deiner Reichweite arbeitet niemand nach Schichtplan.
               </td>
             </tr>
           {:else}

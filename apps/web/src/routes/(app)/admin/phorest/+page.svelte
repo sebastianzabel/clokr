@@ -715,8 +715,8 @@
         <div class="alert alert-warning ph-alert" role="alert">
           <span>⚠</span>
           <span>
-            {phUnmappedCount} Phorest-Mitarbeiter ohne Zuordnung. Ihre Schichten werden übersprungen,
-            bis Sie sie einem clokr-Mitarbeiter zuordnen.
+            {phUnmappedCount} Phorest-Mitarbeitende ohne Zuordnung. Deren Schichten werden übersprungen,
+            bis du sie einer Person in Clokr zuordnest.
           </span>
         </div>
       {/if}
@@ -791,7 +791,7 @@
         </div>
       {:else}
         <p class="text-muted ph-note">
-          Keine Phorest-Mitarbeiter gefunden. Prüfen Sie Branch-ID und Zugangsdaten.
+          Keine Phorest-Mitarbeitenden gefunden. Prüf Branch-ID und Zugangsdaten.
         </p>
       {/if}
     </Section>
@@ -847,7 +847,9 @@
           </div>
         {/if}
       {:else}
-        <p class="text-muted ph-note">Noch kein Sync-Lauf. Starten Sie einen manuellen Sync.</p>
+        <p class="text-muted ph-note">
+          Noch kein Abgleich gelaufen. Starte einen manuellen Abgleich.
+        </p>
       {/if}
 
       {#if phSyncError}

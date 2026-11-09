@@ -25,7 +25,7 @@
   import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
   import PairingGuide from "$lib/components/admin/PairingGuide.svelte";
 
-  // ── Block 1: Presence-Quellen ─────────────────────────────────────────────
+  // ── Block 1: Präsenz-Quellen ─────────────────────────────────────────────
   let sources: PresenceSource[] = $state([]);
   let sourcesLoading = $state(true);
   let newSourceName = $state("");
@@ -169,7 +169,7 @@
       devPage = 1;
     } catch {
       devicesError =
-        "Geräteliste konnte nicht geladen werden. Bitte prüfen Sie, ob der Adapter erreichbar ist.";
+        "Geräteliste konnte nicht geladen werden. Bitte prüf, ob der Adapter erreichbar ist.";
     } finally {
       devicesLoading = false;
     }
@@ -261,11 +261,11 @@
 <SectionStack
   eyebrow="System"
   title={pageLabel("/admin/integrations")}
-  sub="WiFi-Präsenz und externe Dienste"
+  sub="WLAN-Präsenz und externe Dienste"
   animate
 >
-  <!-- ── Block 1: Presence-Quellen ──────────────────────────────────────── -->
-  <Section title="Presence-Quellen" sub="API-Schlüssel für WiFi-Adapter verwalten">
+  <!-- ── Block 1: Präsenz-Quellen ──────────────────────────────────────── -->
+  <Section title="Präsenz-Quellen" sub="API-Schlüssel für WLAN-Adapter verwalten">
     {#if showNewKey}
       <div class="alert alert-success new-key-alert" role="status" aria-live="polite">
         <div>
@@ -363,7 +363,7 @@
       </div>
     {:else}
       <p class="text-muted empty-msg">
-        Noch keine Presence-Quellen. Erstellen Sie einen Schlüssel für Ihren ersten Adapter.
+        Noch keine Präsenz-Quellen. Leg einen Schlüssel für deinen ersten Adapter an.
       </p>
     {/if}
   </Section>
@@ -473,18 +473,18 @@
       </div>
     {:else if devicesLastRefreshed}
       <p class="text-muted empty-msg">
-        Keine Geräte gefunden. Stellen Sie sicher, dass der WiFi-Adapter (z.B. FritzBox) läuft und
+        Keine Geräte gefunden. Stell sicher, dass der WLAN-Adapter (z. B. FRITZ!Box) läuft und
         verbunden ist.
       </p>
     {:else}
       <p class="text-muted empty-msg">
-        Klicken Sie auf "Liste aktualisieren", um die verbundenen Geräte zu laden.
+        Klick auf „Liste aktualisieren“, um die verbundenen Geräte zu laden.
       </p>
     {/if}
   </Section>
 
   <!-- ── Block 3: Opt-in-Übersicht ─────────────────────────────────────── -->
-  <Section title="Opt-In-Übersicht" sub="Welche Mitarbeiter haben WiFi-Präsenzerkennung aktiviert">
+  <Section title="Opt-In-Übersicht" sub="Welche Mitarbeiter haben WLAN-Präsenzerkennung aktiviert">
     {#if optInLoading}
       <div class="skeleton skeleton-text optin-skel"></div>
     {:else if optedIn.length > 0}
@@ -530,7 +530,7 @@
         <Pagination total={optedIn.length} bind:page={optPage} bind:pageSize={optPageSize} />
       </div>
     {:else}
-      <p class="text-muted empty-msg">Kein Mitarbeiter hat WiFi-Präsenzerkennung aktiviert.</p>
+      <p class="text-muted empty-msg">Kein Mitarbeiter hat WLAN-Präsenzerkennung aktiviert.</p>
     {/if}
   </Section>
 </SectionStack>
@@ -538,7 +538,7 @@
 <!-- ── Bestätigungs-Dialoge ──────────────────────────────────────────────── -->
 <ConfirmDialog
   bind:open={revokeConfirm.open}
-  title="Presence-Quelle widerrufen?"
+  title="Präsenz-Quelle widerrufen?"
   description="Aktive Adapter können sich dann nicht mehr einloggen."
   confirmLabel="Widerrufen"
   danger
@@ -591,7 +591,7 @@
         {/each}
       </select>
       <p class="text-muted form-hint">
-        Bei der ersten Zuweisung wird WiFi-Präsenzerkennung für den Mitarbeiter automatisch
+        Bei der ersten Zuweisung wird WLAN-Präsenzerkennung für den Mitarbeiter automatisch
         aktiviert.
       </p>
     </div>
@@ -613,7 +613,7 @@
 {/if}
 
 <style>
-  /* ── Block 1: Presence-Quellen ───────────────────────────────────── */
+  /* ── Block 1: Präsenz-Quellen ───────────────────────────────────── */
   .new-key-alert {
     margin-bottom: var(--s-4);
   }

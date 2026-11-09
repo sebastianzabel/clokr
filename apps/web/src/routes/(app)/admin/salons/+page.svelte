@@ -54,7 +54,7 @@
 <ListDetail
   eyebrow="Administration"
   title={pageLabel("/admin/salons")}
-  sub="Standorte Ihres Unternehmens mit Adresse und Öffnungszeiten."
+  sub="Standorte deines Unternehmens mit Adresse und Öffnungszeiten."
   view="list"
 >
   {#snippet actions()}
@@ -74,7 +74,7 @@
       </Section>
     {:else if forbidden}
       <Section>
-        <p class="text-muted">Für die Salonübersicht fehlt Ihnen die Berechtigung.</p>
+        <p class="text-muted">Für die Salonübersicht fehlt dir die Berechtigung.</p>
       </Section>
     {:else if loadError}
       <div class="alert alert-error">{loadError}</div>

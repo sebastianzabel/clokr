@@ -256,10 +256,10 @@
     const ok = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - ok;
     if (fail === 0) {
-      toasts.success(`Schicht-Muster gespeichert (${ok} MA).`);
+      toasts.success(`Schicht-Muster gespeichert (${ok} Personen).`);
       patternMatrixInitial = JSON.parse(JSON.stringify(patternMatrix));
     } else if (ok === 0) {
-      toasts.error(`Speichern fehlgeschlagen für alle ${fail} MA.`);
+      toasts.error(`Speichern fehlgeschlagen für alle ${fail} Personen.`);
     } else {
       toasts.error(`Teilweise gespeichert: ${ok} OK, ${fail} Fehler. Bitte erneut versuchen.`);
     }
@@ -551,13 +551,13 @@
            registry; only this Section carries a dirty prop. -->
       <Section
         title="Schicht-Muster (Wochenrhythmus)"
-        sub="Wiederkehrendes Wochenmuster pro Mitarbeiter. Nur Mitarbeiter mit Arbeitszeitmodell „Schichtplan ist führend&quot; (SHIFT_BASED) erscheinen hier. Änderungen werden erst beim Klick auf „Muster speichern&quot; übernommen."
+        sub="Wiederkehrendes Wochenmuster je Person. Nur Mitarbeitende mit Arbeitszeitmodell „Nach Schichtplan“ erscheinen hier. Änderungen werden erst beim Klick auf „Muster speichern&quot; übernommen."
         dirty={patternsDirty}
       >
         {#if shiftEmployees.length === 0}
           <div class="callout info">
-            Keine SHIFT_BASED-Mitarbeiter konfiguriert. Wechsle das Arbeitszeitmodell unter
-            <a href="/admin/vacation">Personalstruktur</a> zu „Schichtplan ist führend", damit Mitarbeiter
+            Noch niemand arbeitet nach Schichtplan. Stell das Arbeitszeitmodell unter
+            <a href="/admin/vacation">Personalstruktur</a> auf „Nach Schichtplan“ um, damit Mitarbeitende
             hier erscheinen.
           </div>
         {:else}
@@ -699,10 +699,10 @@
       </select>
     </div>
     <p class="cfg-help">
-      Eine Regel für einen Salon geht auf derselben Stufe der Regel für alle Salons vor. Sie gilt,
-      wenn die Wochenansicht genau diesen Salon zeigt: bei Wahl in der Kopfleiste, für alle, die nur
-      diesen Salon planen, und in Mandanten mit nur einem aktiven Salon. Sonst gelten nur die Regeln
-      für alle Salons.
+      Eine Regel für einen Salon geht auf derselben Stufe der Regel für alle Salons vor. Die Regel
+      gilt, wenn die Wochenansicht genau diesen Salon zeigt: bei Wahl in der Kopfleiste, für alle,
+      die nur diesen Salon planen, und in Unternehmen mit nur einem aktiven Salon. Sonst gelten nur
+      die Regeln für alle Salons.
     </p>
   {/if}
   <div class="form-group">

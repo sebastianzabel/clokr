@@ -186,7 +186,7 @@
   function removeDescription(rule: LeaveLimitRuleDto | null): string {
     if (!rule) return "";
     const what = rule.name ? `„${rule.name}“` : `Die Regel für ${groupPluralLabel(rule)}`;
-    return `${what} gilt danach nicht mehr. Sie bleibt nachvollziehbar und wird nicht gelöscht.`;
+    return `${what} gilt danach nicht mehr. Die Regel bleibt nachvollziehbar und wird nicht gelöscht.`;
   }
 
   function salonCell(rule: LeaveLimitRuleDto): string {
