@@ -6,7 +6,7 @@
 
   When both `steps` and `currentStep` are provided the step indicator is shown
   above the form — an ordered list of numbered circles connected by horizontal
-  lines. Active step: --brand background with white number. Completed steps
+  lines. Active step: --brand background with the --brand-ink number. Completed steps
   (index < currentStep): --ok background with a checkmark. Upcoming steps:
   muted border + text.
 

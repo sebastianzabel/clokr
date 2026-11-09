@@ -2096,7 +2096,8 @@
     gap: 0.2rem;
     padding: 2px 0.4rem;
     border-radius: 4px;
-    color: white;
+    /* Fallback only: the chip sets the fill's own text partner inline (#842, D-842-08). */
+    color: var(--card);
     font-size: 0.75rem;
     line-height: 1.4;
     overflow: hidden;
@@ -2120,7 +2121,7 @@
     height: 22px;
   }
   .cal-chip--pending {
-    outline: 1.5px dashed rgba(255, 255, 255, 0.7);
+    outline: 1.5px dashed color-mix(in srgb, var(--card) 70%, transparent);
     outline-offset: -2px;
     opacity: 0.9;
   }
@@ -2170,7 +2171,7 @@
     font-size: 0.5625rem;
     font-weight: 700;
     line-height: 1.3;
-    background: rgba(255, 255, 255, 0.35);
+    background: color-mix(in srgb, var(--card) 35%, transparent);
   }
   .section9-chip-badge--pending {
     background: var(--warn-soft);
