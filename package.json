@@ -37,7 +37,7 @@
     "turbo": "^2.11.10",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^4.1.10"
+    "vitest": "^5.1.0"
   },
   "lint-staged": {
     "*.{ts,js,svelte}": [
