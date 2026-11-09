@@ -696,7 +696,7 @@
 <SectionStack
   eyebrow="Personal"
   title={pageLabel("/admin/vacation")}
-  sub="Globale Einstellungen, Sonderurlaubsregeln und Tenant-Übersicht"
+  sub="Einstellungen, Sonderurlaubsregeln und Übersicht für das ganze Unternehmen"
   tabs={TABS}
   bind:activeTab
   animate
@@ -710,7 +710,7 @@
       </div>
     {:else if currentTab === "uebersicht"}
       <!-- ── Tab: Übersicht ──────────────────────────────────────────────── -->
-      <Section title="Übersicht" sub="Tenant-weite Eckdaten auf einen Blick">
+      <Section title="Übersicht" sub="Eckdaten für das ganze Unternehmen auf einen Blick">
         <div class="vac-kpi-grid">
           <KPIStat label="Jahresurlaub (Standard)" value={String(gVacationDays)} unit="T" />
           <KPIStat label="Wochenstunden (Standard)" value={gWeekly.toFixed(1)} unit="h" />
@@ -718,9 +718,9 @@
           <KPIStat label="Überstunden-Warnschwelle" value={String(gThreshold)} unit="h" />
         </div>
         <div class="vac-callout">
-          <strong>Per-MA Konfiguration:</strong> Individuelle Urlaubs- und Arbeitszeiteinstellungen
-          pro Mitarbeiter verwalten Sie in der
-          <a href="/admin/employees">Mitarbeiter-Detailseite</a>.
+          <strong>Für einzelne Personen:</strong> Individuelle Urlaubs- und Arbeitszeiteinstellungen
+          verwaltest du auf der
+          <a href="/admin/employees">Detailseite der Person</a>.
         </div>
       </Section>
     {:else if currentTab === "standards"}
@@ -816,7 +816,7 @@
               />
             </div>
             <div class="day-input total-col">
-              <span class="day-label form-label">&#x3a3;/Wo</span>
+              <span class="day-label form-label">Summe/Woche</span>
               <span class="weekly-total">{gWeekly.toFixed(1)}&thinsp;h</span>
             </div>
           </div>
@@ -1276,8 +1276,8 @@
                 <option value={12}>Dezember</option>
               </select>
               <p class="form-hint">
-                Ab diesem Monat werden MA über verfallenden Urlaub erinnert (Hinweispflicht EuGH
-                C-684/16).
+                Ab diesem Monat werden Mitarbeitende an verfallenden Urlaub erinnert (Hinweispflicht
+                EuGH C-684/16).
               </p>
             </div>
           </div>

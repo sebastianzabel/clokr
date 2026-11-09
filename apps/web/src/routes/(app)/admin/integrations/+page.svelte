@@ -270,7 +270,7 @@
       <div class="alert alert-success new-key-alert" role="status" aria-live="polite">
         <div>
           <strong>Neuer Schlüssel erstellt!</strong>
-          <p class="key-hint">Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:</p>
+          <p class="key-hint">Kopier den Schlüssel jetzt — er wird nicht erneut angezeigt:</p>
           <div class="key-row">
             <code class="key-value">{newRawKey}</code>
             <button class="btn btn-sm btn-ghost" onclick={() => copyToClipboard(newRawKey)}

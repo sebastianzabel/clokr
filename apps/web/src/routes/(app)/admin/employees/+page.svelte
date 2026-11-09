@@ -572,7 +572,7 @@
     view="list"
     eyebrow="Personal"
     title={pageLabel("/admin/employees")}
-    sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
+    sub="Lege Personen an, lade sie ein und verwalte ihre Daten."
   >
     {#snippet actions()}
       {#if canCreate}
@@ -937,10 +937,10 @@
           data-testid="admin-employees-create-annual-vacation-days"
         />
         <p class="form-hint">
-          Vorschlag aus den Mandanten-Einstellungen (Azubis: „Urlaubstage Azubis"). Entspricht der
-          Wert dem Standard, wird kein eigener Wert gespeichert – die Person folgt dann auch
-          späteren Änderungen des Standards. Wird auf die vertraglichen Arbeitstage umgerechnet und
-          im Eintrittsjahr anteilig berechnet.
+          Vorschlag aus den Einstellungen des Unternehmens (Azubis: „Urlaubstage Azubis").
+          Entspricht der Wert dem Standard, wird kein eigener Wert gespeichert – die Person folgt
+          dann auch späteren Änderungen des Standards. Wird auf die vertraglichen Arbeitstage
+          umgerechnet und im Eintrittsjahr anteilig berechnet.
         </p>
         {#if cBirthMinimum && cAnnualVacationDays !== null && cAnnualVacationDays < cBirthMinimum.days}
           <div class="callout error">

@@ -1389,7 +1389,7 @@
   <SectionStack
     eyebrow="System"
     title={pageLabel("/admin/system")}
-    sub="Tenant-Einstellungen, Sicherheit & Benachrichtigungen"
+    sub="Einstellungen des Unternehmens, Sicherheit und Benachrichtigungen"
     tabs={TABS}
     bind:activeTab
     animate
@@ -1496,7 +1496,7 @@
           {/snippet}
 
           <p class="form-hint">
-            Die Öffnungszeiten selbst pflegen Sie je Salon unter Administration › Salons.
+            Die Öffnungszeiten selbst pflegst du je Salon unter Administration › Salons.
           </p>
 
           <div class="cfg-section-title">Schicht-Zeiten an Öffnungszeiten binden</div>
@@ -1543,7 +1543,7 @@
         </Section>
 
         <!-- ── Features (Phase 47.3 / 49.4) ─────────────────────────────────── -->
-        <Section title="Features" sub="Tenant-weite Feature-Toggles">
+        <Section title="Features" sub="Funktionen für das ganze Unternehmen ein- und ausschalten">
           <div class="toggle-row">
             <div class="toggle-info">
               <span class="toggle-row-label">Verfügbarkeits-System aktiviert</span>
@@ -1610,10 +1610,11 @@
             <div class="toggle-info" style="margin-bottom: 0.5rem;">
               <span class="toggle-row-label">Standard-Arbeitstage pro Woche</span>
               <p class="form-hint text-muted">
-                Wie viele Arbeitstage hat eine Vollzeit-Woche bei euch? Unabhängig vom AZ-Modell —
-                wird für Urlaubsverbrauch und Pro-Rata-Berechnung verwendet. Default-Reihenfolge
-                Mo–Fr (Mo–Sa bei 6, Mo–So bei 7). Pro MA überschreibbar unter
-                <a href="/admin/vacation">Urlaub &amp; Zeiten</a>.
+                Wie viele Arbeitstage hat eine Vollzeit-Woche bei euch? Unabhängig vom
+                Arbeitszeitmodell — wird für Urlaubsverbrauch und Pro-Rata-Berechnung verwendet.
+                Standard-Reihenfolge Mo–Fr (Mo–Sa bei 6, Mo–So bei 7). Für einzelne Personen
+                überschreibbar unter
+                <a href="/admin/vacation">Urlaubsverwaltung</a>.
               </p>
             </div>
             <div class="workdays-row" style="align-items: center;">
@@ -1883,7 +1884,8 @@
               {/each}
             </div>
             <p class="form-hint text-muted">
-              Leer lassen für keine Tenant-Defaults (Gleitzeit-MA starten ohne Kernzeit-Vorauswahl).
+              Leer lassen, wenn es keine Vorgabe für das Unternehmen geben soll (Mitarbeitende mit
+              Gleitzeit starten dann ohne vorausgewählte Kernzeit).
             </p>
           </div>
         </Section>
@@ -1965,7 +1967,7 @@
         <!-- ── Berufsschule — Zeitgutschrift (Phase 76.35) ─────────────────── -->
         <Section
           title="Berufsschule — Zeitgutschrift"
-          sub="Tenant-weite Zeitgutschrift-Slots für Berufsschultage (§ 15 Abs. 2 BBiG)"
+          sub="Zeitgutschrift für Berufsschultage im ganzen Unternehmen (§ 15 Abs. 2 BBiG)"
           dirty={bsSlotDirty}
         >
           {#snippet footer()}
@@ -1987,10 +1989,10 @@
           {/snippet}
 
           <p class="form-hint text-muted" style="margin-bottom: 1.25rem;">
-            Überschreibt den systemweiten Fallback für alle Mitarbeitenden dieses Mandanten. Leer
-            lassen = Wert wird vom Tages-Soll des Mitarbeiters geerbt (kein expliziter
-            Tenant-Override). Tages-Slots: 240–600 Min (4–10 h). Blockunterricht-Woche: 1200–3000
-            Min (20–50 h).
+            Überschreibt den systemweiten Fallback für alle Mitarbeitenden deines Unternehmens. Leer
+            lassen = Wert kommt aus dem Tages-Soll der Person (keine eigene Vorgabe des
+            Unternehmens). Tages-Slots: 240–600 Min (4–10 h). Blockunterricht-Woche: 1200–3000 Min
+            (20–50 h).
           </p>
 
           {#if bsSlotError}
@@ -2744,7 +2746,7 @@
               <div>
                 <strong>Neuer Schlüssel erstellt!</strong>
                 <p style="margin: 0.5rem 0;">
-                  Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
+                  Kopier den Schlüssel jetzt — er wird nicht erneut angezeigt:
                 </p>
                 <div class="key-display">
                   <code class="key-code">{newKeyRaw}</code>
@@ -2868,7 +2870,7 @@
               <div>
                 <strong>API Key erstellt!</strong>
                 <p style="margin: 0.5rem 0;">
-                  Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
+                  Kopier den Schlüssel jetzt — er wird nicht erneut angezeigt:
                 </p>
                 <div class="key-display">
                   <code class="key-code">{newApiKeyRaw}</code>
