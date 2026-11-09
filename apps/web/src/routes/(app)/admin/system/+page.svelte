@@ -1401,10 +1401,10 @@
         <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
       {:else if currentTab === "allgemein"}
         <!-- ── Erscheinungsbild ─────────────────────────────────────────────── -->
-        <Section title="Erscheinungsbild" sub="Theme & Branding">
+        <Section title="Erscheinungsbild" sub={pageLabel("/admin/themes")}>
           <p class="sys-note">
-            Theme, Modus und Dichte werden jetzt auf der eigenen Seite
-            <a href="/admin/themes">Themes &amp; Branding</a> verwaltet.
+            Theme und Hell/Dunkel wählt jede Person selbst auf der Seite
+            <a href="/admin/themes">{pageLabel("/admin/themes")}</a>.
           </p>
         </Section>
 
