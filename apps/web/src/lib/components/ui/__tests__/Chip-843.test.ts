@@ -76,14 +76,21 @@ describe("Chip", () => {
     expect(rule).toMatch(new RegExp(`background:\\s*var\\(--${bg}\\)`));
   });
 
-  it("keeps the legacy selectors and shares each pair with the badge recipes", () => {
+  it("keeps the legacy selector and the badge pairs identical to the chip pairs", () => {
     expect(ruleOf(".chip-good")).toMatch(/color:\s*var\(--ok\)/);
-    // one declaration of a pair: the badge and the chip tone sit in the same rule
-    const ok = css.match(/[^{}]*\.chip-ok[^{}]*\{[^}]*\}/)?.[0] ?? "";
-    expect(ok).toContain(".badge-green");
-    expect(ok).toContain(".chip-good");
-    // the badge recipes keep only their border
-    expect(ruleOf(".badge-green")).toMatch(/border:/);
+    const badge: Array<[string, string, string]> = [
+      ["badge-green", "ok", "ok-soft"],
+      ["badge-yellow", "warn", "warn-soft"],
+      ["badge-red", "bad", "bad-soft"],
+      ["badge-blue", "info", "info-soft"],
+      ["badge-purple", "brand", "brand-soft"],
+      ["badge-gray", "text-2", "sunk"],
+    ];
+    for (const [name, fg, bg] of badge) {
+      const rule = ruleOf(`.${name}`);
+      expect(rule, name).toMatch(new RegExp(`color:\\s*var\\(--${fg}\\)`));
+      expect(rule, name).toMatch(new RegExp(`background-color:\\s*var\\(--${bg}\\)`));
+    }
   });
 
   it("renders text only", () => {
