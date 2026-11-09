@@ -54,7 +54,7 @@ a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-us
     .sidebar-brand
   ):not(.mehr-item) {
   text-decoration-line: underline;
-  text-decoration-color: var(--brand-light);
+  text-decoration-color: var(--brand);
   text-underline-offset: 2px;
   text-decoration-thickness: 1px;
 }
@@ -89,7 +89,7 @@ a {
   text-decoration: none;
 }
 a:hover {
-  color: var(--brand-dark);
+  color: var(--brand-hover);
 }
 
 input,
@@ -108,8 +108,8 @@ button {
   gap: 0.4rem;
   padding: 0.625rem 1.35rem;
   min-height: 44px; /* WCAG 2.5.5 touch target minimum */
-  border-radius: var(--r-sm);
-  font-family: var(--font-sans);
+  border-radius: var(--r-control);
+  font-family: var(--font-ui);
   font-size: 1rem;
   font-weight: 500;
   line-height: 1.4;
@@ -143,15 +143,15 @@ button {
 
 .btn-primary {
   background-color: var(--brand);
-  color: #fff;
+  color: var(--brand-ink);
   border-color: var(--brand);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   border-radius: 9999px;
 }
 .btn-primary:hover:not(:disabled) {
-  background-color: var(--brand-dark);
-  border-color: var(--brand-dark);
-  color: #fff;
+  background-color: var(--brand-hover);
+  border-color: var(--brand-hover);
+  color: var(--brand-ink);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
   transform: translateY(-1px);
 }
@@ -159,13 +159,13 @@ button {
 .btn-secondary {
   background-color: var(--brand-soft);
   color: var(--brand);
-  border-color: var(--border);
+  border-color: var(--line);
   border-radius: 9999px;
 }
 .btn-secondary:hover:not(:disabled) {
   background-color: var(--brand-soft);
-  color: var(--brand-dark);
-  box-shadow: var(--shadow-xs);
+  color: var(--brand-hover);
+  box-shadow: var(--shadow);
   transform: translateY(-1px);
 }
 
@@ -176,17 +176,17 @@ button {
 }
 .btn-outline:hover:not(:disabled) {
   background-color: var(--brand-soft);
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--shadow);
   transform: translateY(-1px);
 }
 
 .btn-ghost {
   background-color: transparent;
-  color: var(--text-muted);
+  color: var(--text-2);
   border-color: transparent;
 }
 .btn-ghost:hover:not(:disabled) {
-  background-color: var(--bg-subtle);
+  background-color: var(--sunk);
   color: var(--text);
   transform: translateY(-1px);
 }
@@ -208,13 +208,13 @@ button {
 
 .btn-danger {
   background-color: var(--bad);
-  color: #fff;
+  color: var(--card);
   border-color: var(--bad);
 }
 .btn-danger:hover:not(:disabled) {
-  background-color: #b91c1c;
-  border-color: #b91c1c;
-  color: #fff;
+  background-color: color-mix(in srgb, var(--bad) 85%, var(--text));
+  border-color: color-mix(in srgb, var(--bad) 85%, var(--text));
+  color: var(--card);
   box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
   transform: translateY(-1px);
 }
@@ -231,10 +231,10 @@ button {
 
 /* ─── Card ───────────────────────────────────────────────────────────── */
 .card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background: var(--card);
+  border: 1px solid var(--line);
   border-radius: 18px;
-  box-shadow: var(--shadow-md), none;
+  box-shadow: var(--shadow), none;
   backdrop-filter: blur(0px) saturate(100%);
   -webkit-backdrop-filter: blur(0px) saturate(100%);
   overflow: clip;
@@ -249,7 +249,7 @@ button {
 }
 
 .card:hover {
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow);
 }
 
 /* ─── Glass Fallback: no backdrop-filter support ─────────────────────── */
@@ -258,7 +258,7 @@ button {
   .stat-card,
   .table-wrapper,
   .dialog-content {
-    background: var(--bg-card);
+    background: var(--card);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -272,13 +272,13 @@ button {
   .dialog-content {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    background: var(--bg-card);
+    background: var(--card);
   }
 }
 
 .card-header {
   padding: 1.25rem 1.75rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
 }
 
 /* ─── Badges ─────────────────────────────────────────────────────────── */
@@ -300,9 +300,9 @@ button {
 }
 
 .badge-green {
-  background-color: var(--good-soft);
-  color: var(--good);
-  border: 1px solid var(--good-soft);
+  background-color: var(--ok-soft);
+  color: var(--ok);
+  border: 1px solid var(--ok-soft);
 }
 
 .badge-yellow {
@@ -330,9 +330,9 @@ button {
 }
 
 .badge-gray {
-  background-color: var(--bg-subtle);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
+  background-color: var(--sunk);
+  color: var(--text-2);
+  border: 1px solid var(--line);
 }
 
 .badge-orange {
@@ -345,12 +345,12 @@ button {
    admin Section primitive emits it and three route pages emit it inline; the sibling
    `.saved-hint` is still duplicated per-page and is NOT the model to copy. */
 .unsaved-hint {
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   font-size: 12px;
   font-weight: 600;
   color: var(--bad);
   background: var(--bad-soft);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
   padding: var(--s-1) var(--s-2);
   margin-left: auto;
 }
@@ -371,12 +371,12 @@ button {
 .form-input {
   width: 100%;
   padding: 0.65rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  font-family: var(--font-sans);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  font-family: var(--font-ui);
   font-size: 1rem;
   color: var(--text);
-  background-color: var(--bg-card);
+  background-color: var(--card);
   transition:
     border-color 0.15s,
     box-shadow 0.15s,
@@ -387,7 +387,7 @@ button {
 }
 
 .form-input::placeholder {
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 
 .form-input:focus-visible,
@@ -399,8 +399,8 @@ button {
 }
 
 .form-input:disabled {
-  background-color: var(--bg-subtle);
-  color: var(--text-muted);
+  background-color: var(--sunk);
+  color: var(--text-2);
   cursor: not-allowed;
 }
 
@@ -434,7 +434,7 @@ select.form-input {
 
 .form-hint {
   font-size: 0.8125rem;
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 
 .form-error {
@@ -450,12 +450,12 @@ select.form-input {
 .select {
   width: 100%;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border, var(--border));
-  border-radius: var(--r-md, var(--r-sm));
-  font-family: var(--font-sans);
+  border: 1px solid var(--line, var(--line));
+  border-radius: var(--r-control, var(--r-control));
+  font-family: var(--font-ui);
   font-size: 0.9375rem;
   color: var(--text, var(--text));
-  background-color: var(--bg-card, var(--bg-card));
+  background-color: var(--card, var(--card));
   transition:
     border-color 0.15s,
     box-shadow 0.15s,
@@ -466,7 +466,7 @@ select.form-input {
 }
 
 .input::placeholder {
-  color: var(--text-faint, var(--text-faint));
+  color: var(--text-3, var(--text-3));
 }
 
 .input:focus-visible,
@@ -479,8 +479,8 @@ select.form-input {
 
 .input:disabled,
 .select:disabled {
-  background-color: var(--bg-subtle, var(--bg-subtle));
-  color: var(--text-muted, var(--text-muted));
+  background-color: var(--sunk, var(--sunk));
+  color: var(--text-2, var(--text-2));
   cursor: not-allowed;
 }
 
@@ -498,7 +498,7 @@ select.form-input {
 
 .page-header p {
   font-size: 1rem;
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 
 /* Compact page header variant for pages with tabs below */
@@ -528,10 +528,10 @@ select.form-input {
 
 /* ─── Stat Card ──────────────────────────────────────────────────────── */
 .stat-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-md);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  box-shadow: var(--shadow);
   backdrop-filter: blur(0px);
   -webkit-backdrop-filter: blur(0px);
   padding: 1.5rem 1.75rem;
@@ -543,9 +543,7 @@ select.form-input {
 .stat-card .stat-label {
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--text-2);
   margin-bottom: 0.5rem;
 }
 
@@ -558,12 +556,12 @@ select.form-input {
 
 .stat-card .stat-sub {
   font-size: 0.8125rem;
-  color: var(--text-muted);
+  color: var(--text-2);
   margin-top: 0.25rem;
 }
 
 .stat-card .stat-trend-up {
-  color: var(--good);
+  color: var(--ok);
 }
 .stat-card .stat-trend-down {
   color: var(--bad);
@@ -574,9 +572,9 @@ select.form-input {
 .table-wrapper {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  border-radius: var(--r-md);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-md);
+  border-radius: var(--r-control);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
   backdrop-filter: blur(0px);
   -webkit-backdrop-filter: blur(0px);
 }
@@ -590,8 +588,8 @@ select.form-input {
 }
 
 .data-table thead tr {
-  background-color: var(--bg-card);
-  border-bottom: 1px solid var(--border);
+  background-color: var(--card);
+  border-bottom: 1px solid var(--line);
 }
 
 .data-table th {
@@ -599,16 +597,14 @@ select.form-input {
   text-align: left;
   font-size: 0.8125rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
+  color: var(--text-2);
   white-space: nowrap;
 }
 
 .data-table td {
   padding: 1rem 1.125rem;
   color: var(--text);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
   vertical-align: middle;
   font-variant-numeric: tabular-nums;
 }
@@ -617,7 +613,7 @@ select.form-input {
   border-bottom: none;
 }
 .data-table tbody tr:nth-child(even) {
-  background-color: var(--bg-card);
+  background-color: var(--card);
 }
 .data-table tbody tr:hover {
   background-color: var(--brand-soft);
@@ -629,7 +625,7 @@ select.form-input {
 /* ─── Alert / Info Banner ────────────────────────────────────────────── */
 .alert {
   padding: 1rem 1.25rem;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
   font-size: 0.9375rem;
   display: flex;
   align-items: flex-start;
@@ -653,25 +649,25 @@ select.form-input {
   border-color: var(--bad-soft);
 }
 .alert-success {
-  background-color: var(--good-soft);
-  color: var(--good);
-  border-color: var(--good-soft);
+  background-color: var(--ok-soft);
+  color: var(--ok);
+  border-color: var(--ok-soft);
 }
 
 /* ─── Divider ────────────────────────────────────────────────────────── */
 .divider {
   height: 1px;
-  background-color: var(--border);
+  background-color: var(--line);
   border: none;
   margin: 1.5rem 0;
 }
 
 /* ─── Loading Skeleton ───────────────────────────────────────────────── */
 .skeleton {
-  background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--border) 50%, var(--bg-subtle) 75%);
+  background: linear-gradient(90deg, var(--sunk) 25%, var(--line) 50%, var(--sunk) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s infinite;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
 }
 
 @keyframes skeleton-shimmer {
@@ -685,13 +681,13 @@ select.form-input {
 
 /* ─── Utilities ──────────────────────────────────────────────────────── */
 .text-muted {
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 .text-brand {
   color: var(--brand);
 }
 .text-green {
-  color: var(--good);
+  color: var(--ok);
 }
 .text-yellow {
   color: var(--warn);
@@ -732,7 +728,7 @@ select.form-input {
   display: flex;
   gap: 0.25rem;
   margin-bottom: 1rem;
-  box-shadow: inset 0 -2px 0 var(--border);
+  box-shadow: inset 0 -2px 0 var(--line);
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -751,10 +747,10 @@ select.form-input {
   cursor: pointer;
   padding: 0.6875rem 1.125rem;
   min-height: 44px;
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--text-2);
   border-bottom: 2px solid transparent;
   border-radius: 4px 4px 0 0;
   transition:
@@ -781,7 +777,7 @@ select.form-input {
   padding: 0 0.3rem;
   border-radius: 9999px;
   background: var(--bad);
-  color: #fff;
+  color: var(--card);
   font-size: 0.6875rem;
   font-weight: 700;
   margin-left: 0.375rem;
@@ -793,9 +789,9 @@ select.form-input {
  * of the Anträge tab is information, so it is a quiet pill from the surface tokens instead.
  */
 .tab-badge--count {
-  background: var(--bg-alt);
+  background: var(--rail);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--border-strong);
+  box-shadow: inset 0 0 0 1px var(--line-2);
 }
 
 .tab-badge--link {
@@ -839,7 +835,7 @@ select.form-input {
 .filter-count {
   margin-left: auto;
   font-size: 0.8125rem;
-  color: var(--text-muted);
+  color: var(--text-2);
   white-space: nowrap;
 }
 
@@ -904,7 +900,7 @@ select.form-input {
 
 .stat-card:hover {
   transform: translateY(-3px);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow);
 }
 
 .card-interactive {
@@ -917,7 +913,7 @@ select.form-input {
 
 .card-interactive:hover {
   transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow);
 }
 
 /* ─── Animated Counter ──────────────────────────────────────────────── */
@@ -968,19 +964,19 @@ select.form-input {
 .skeleton-heading {
   height: 2rem;
   width: 60%;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
 }
 
 .skeleton-stat {
   height: 2.5rem;
   width: 80%;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
 }
 
 .skeleton-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
   padding: 1.5rem 1.75rem;
   min-height: 120px;
 }
@@ -1008,7 +1004,7 @@ select.form-input {
 .input-icon {
   position: absolute;
   left: 0.875rem;
-  color: var(--text-faint);
+  color: var(--text-3);
   pointer-events: none;
   z-index: 1;
   transition: color 0.15s;
@@ -1033,8 +1029,8 @@ select.form-input {
   border: none;
   cursor: pointer;
   padding: 0.375rem;
-  border-radius: var(--r-sm);
-  color: var(--text-faint);
+  border-radius: var(--r-control);
+  color: var(--text-3);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1045,7 +1041,7 @@ select.form-input {
 
 .password-toggle:hover {
   color: var(--text);
-  background-color: var(--bg-subtle);
+  background-color: var(--sunk);
 }
 
 /* Smoother focus transition */
@@ -1086,7 +1082,7 @@ textarea.form-input {
   position: sticky;
   top: 0;
   z-index: 10;
-  background-color: var(--bg-card);
+  background-color: var(--card);
 }
 
 .data-table th.sortable {
@@ -1144,9 +1140,9 @@ textarea.form-input {
   left: 50%;
   transform: translateX(-50%);
   background: var(--brand);
-  color: #fff;
+  color: var(--brand-ink);
   padding: 0.5rem 1.25rem;
-  border-radius: 0 0 var(--r-sm) var(--r-sm);
+  border-radius: 0 0 var(--r-control) var(--r-control);
   z-index: 10000;
   font-size: 0.875rem;
   font-weight: 500;
@@ -1201,12 +1197,12 @@ textarea.form-input {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: var(--bg-card);
+  background: var(--card);
   backdrop-filter: blur(0px);
   -webkit-backdrop-filter: blur(0px);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  box-shadow: var(--shadow-pop);
   z-index: 501;
   max-width: 90vw;
   max-height: 90vh;
@@ -1230,7 +1226,7 @@ textarea.form-input {
   align-items: center;
   justify-content: space-between;
   padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
 }
 
 .dialog-header h2 {
@@ -1248,7 +1244,7 @@ textarea.form-input {
   justify-content: flex-end;
   gap: 0.75rem;
   padding: 1rem 1.5rem;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
 }
 
 /* ─── Calendar shared: holiday + weekend cells ───────────────────────────────────── */
@@ -1269,32 +1265,32 @@ textarea.form-input {
 }
 
 .cal-cell.cal-weekend:not(.cal-other):not(.cal-selected) {
-  background: var(--bg-subtle) !important;
+  background: var(--sunk) !important;
 }
 
 /* ─── Leave-type absence cell backgrounds (used by .cal-abs-* in Zeiterfassung) ── */
 .cal-cell.cal-abs-vacation:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-vacation) 15%, var(--bg-card)) !important;
+  background: color-mix(in srgb, var(--leave-type-vacation) 15%, var(--card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-sick:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-sick) 15%, var(--bg-card)) !important;
+  background: color-mix(in srgb, var(--leave-type-sick) 15%, var(--card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-special:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-special) 15%, var(--bg-card)) !important;
+  background: color-mix(in srgb, var(--leave-type-special) 15%, var(--card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-overtime_comp:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-overtime) 15%, var(--bg-card)) !important;
+  background: color-mix(in srgb, var(--leave-type-overtime) 15%, var(--card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-education:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-education) 15%, var(--bg-card)) !important;
+  background: color-mix(in srgb, var(--leave-type-education) 15%, var(--card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-unpaid:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-unpaid) 15%, var(--bg-card)) !important;
+  background: color-mix(in srgb, var(--leave-type-unpaid) 15%, var(--card)) !important;
   opacity: 1;
 }
 
@@ -1305,17 +1301,15 @@ textarea.form-input {
   margin-bottom: 1rem;
 }
 .cal-header-row {
-  border-bottom: 1.5px solid var(--border);
-  background: var(--bg-card);
+  border-bottom: 1.5px solid var(--line);
+  background: var(--card);
 }
 .cal-dow {
   padding: 0.5rem;
   text-align: center;
   font-size: 0.75rem;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 /* v1.5 canonical page wrapper — ALL (app)/ pages should wrap their content
    in <div class="page"> for consistent vertical rhythm between sections.
@@ -1361,9 +1355,9 @@ textarea.form-input {
   font: inherit;
   text-align: inherit;
   color: inherit;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
   min-height: 86px;
   /* Override the browser default `min-width: min-content` on <button> so the
      cell can shrink below its content's natural width. Without this the v1.8.6
@@ -1386,24 +1380,24 @@ textarea.form-input {
   cursor: default;
 }
 .cal-cell:not(.cal-other):hover {
-  border-color: var(--brand-light);
+  border-color: var(--brand);
 }
 .cal-cell.cal-today {
-  outline: 1.5px solid var(--brand-light);
+  outline: 1.5px solid var(--brand);
   outline-offset: -1.5px;
 }
 .cal-cell.cal-weekend:not(.cal-today) {
-  background: var(--bg-subtle);
+  background: var(--sunk);
 }
 .cal-cell.cal-cell--disabled {
   opacity: 0.4;
   pointer-events: none;
   cursor: default;
-  background: var(--bg-subtle) !important;
+  background: var(--sunk) !important;
 }
 /* Status accent: left rule only — keeps mini-card surface for v1.5 look. */
 .cal-cell--ok {
-  border-left: 3px solid var(--good);
+  border-left: 3px solid var(--ok);
 }
 .cal-cell--partial {
   border-left: 3px solid var(--warn);
@@ -1416,13 +1410,13 @@ textarea.form-input {
   background: var(--warn-soft);
 }
 .cal-cell--today-ok {
-  border-left: 3px solid var(--good);
+  border-left: 3px solid var(--ok);
 }
 .cal-cell--today-partial {
   border-left: 3px solid var(--warn);
 }
 /* ArbZG hint — a MARK, not a colour state (quick task 260820-1i7).
-   Deliberately achromatic: --good/--warn/--bad are spoken for by the Soll-status
+   Deliberately achromatic: --ok/--warn/--bad are spoken for by the Soll-status
    channel (left edge), so any hue here would read as a fourth Soll state. Legibility
    on every absence fill (incl. the brand-tinted vocational_school surface) is
    inherited from --text, which .cal-day-num and .day-worked already render in on
@@ -1439,7 +1433,7 @@ textarea.form-input {
 }
 /* Canonical cell-content typography */
 .cal-cell .day-worked {
-  font-family: var(--font-serif);
+  font-family: var(--font-ui);
   font-size: 18px;
   font-variant-numeric: tabular-nums;
   font-weight: 400;
@@ -1448,32 +1442,30 @@ textarea.form-input {
 }
 .cal-cell .day-bal {
   font-size: 0.6875rem;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-weight: 600;
 }
 .cal-cell .day-bal.pos {
-  color: var(--good);
+  color: var(--ok);
 }
 .cal-cell .day-bal.neg {
   color: var(--bad);
 }
 .cal-cell .day-missing {
   font-size: 0.7rem;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   color: var(--bad);
   opacity: 0.75;
 }
 .cal-cell .day-before-hire {
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: var(--text-2);
   opacity: 0.5;
 }
 .cal-cell .cal-abs-type {
   display: block;
   font-size: 0.6rem;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   opacity: 0.65;
   line-height: 1.2;
   overflow: hidden;
@@ -1482,7 +1474,7 @@ textarea.form-input {
 }
 /* WR-02: skeleton must override base background */
 .cal-cell.skeleton {
-  background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--border) 50%, var(--bg-subtle) 75%);
+  background: linear-gradient(90deg, var(--sunk) 25%, var(--line) 50%, var(--sunk) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s infinite;
 }
@@ -1490,7 +1482,7 @@ textarea.form-input {
 .cal-cell.cal-other:not(.cal-selected) {
   opacity: 0.35;
   cursor: default;
-  background: var(--bg-card);
+  background: var(--card);
 }
 .cal-today {
   box-shadow: inset 0 0 0 2px var(--brand);
@@ -1510,11 +1502,11 @@ textarea.form-input {
 .cal-cell.cal-selected:not(.cal-other) .cal-abs-type,
 .cal-cell.cal-selected:not(.cal-other) .cal-holiday-label,
 .cal-cell.cal-selected:not(.cal-other) .cal-arbzg-mark {
-  color: white !important;
+  color: var(--brand-ink) !important;
 }
 /* today+selected: ring + bg-subtle; text reverts so day-worked/bal stay readable */
 .cal-cell.cal-selected.cal-today:not(.cal-other) {
-  background-color: var(--bg-subtle) !important;
+  background-color: var(--sunk) !important;
   box-shadow: inset 0 0 0 2px var(--brand) !important;
 }
 .cal-cell.cal-selected.cal-today:not(.cal-other) .day-worked,
@@ -1523,19 +1515,19 @@ textarea.form-input {
 .cal-cell.cal-selected.cal-today:not(.cal-other) .cal-abs-type,
 .cal-cell.cal-selected.cal-today:not(.cal-other) .cal-holiday-label,
 .cal-cell.cal-selected.cal-today:not(.cal-other) .cal-arbzg-mark {
-  color: var(--text-muted) !important;
+  color: var(--text-2) !important;
 }
-/* .cal-day-num: white on brand circle (handled by .cal-today .cal-day-num below) */
+/* .cal-day-num: brand-ink on brand circle (handled by .cal-today .cal-day-num below) */
 .cal-day-num {
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text-2);
   line-height: 1;
   flex-shrink: 0;
 }
 .cal-today .cal-day-num {
   background: var(--brand);
-  color: white;
+  color: var(--brand-ink);
   width: 20px;
   height: 20px;
   border-radius: 50%;
@@ -1561,16 +1553,16 @@ textarea.form-input {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-card);
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
 }
 .cal-nav-center {
   position: relative;
   justify-self: center;
 }
 .nav-btn {
-  background: var(--bg-card);
-  border: 1.5px solid var(--border);
+  background: var(--card);
+  border: 1.5px solid var(--line);
   border-radius: 8px;
   padding: 0.6875rem;
   min-height: 44px;
@@ -1583,11 +1575,11 @@ textarea.form-input {
     border-color 0.15s ease,
     color 0.15s ease,
     box-shadow 0.15s ease;
-  box-shadow: var(--shadow-xs);
+  box-shadow: var(--shadow);
 }
 .nav-btn:hover {
   background: var(--brand-soft);
-  border-color: var(--brand-light);
+  border-color: var(--brand);
   color: var(--brand);
 }
 .cal-nav-title {
@@ -1604,11 +1596,11 @@ textarea.form-input {
   gap: 0.375rem;
   padding: 0.6875rem 0.5rem;
   min-height: 44px;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
   transition: background 0.15s;
 }
 .cal-nav-title:hover {
-  background: var(--bg-subtle);
+  background: var(--sunk);
 }
 .month-picker-backdrop {
   position: fixed;
@@ -1621,10 +1613,10 @@ textarea.form-input {
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-lg);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  box-shadow: var(--shadow-pop);
   padding: 0.75rem;
   min-width: 240px;
   margin-top: 0.25rem;
@@ -1643,11 +1635,11 @@ textarea.form-input {
   cursor: pointer;
   font-size: 1.25rem;
   padding: 0.25rem 0.5rem;
-  border-radius: var(--r-sm);
-  color: var(--text-muted);
+  border-radius: var(--r-control);
+  color: var(--text-2);
 }
 .month-picker-year button:hover {
-  background: var(--bg-subtle);
+  background: var(--sunk);
   color: var(--text);
 }
 .month-picker-grid {
@@ -1658,7 +1650,7 @@ textarea.form-input {
 .month-picker-btn {
   padding: 0.375rem;
   border: none;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
   background: none;
   cursor: pointer;
   font-size: 0.8125rem;
@@ -1674,14 +1666,14 @@ textarea.form-input {
 }
 .month-picker-btn.active {
   background: var(--brand);
-  color: white;
+  color: var(--brand-ink);
 }
 .month-picker-today {
   width: 100%;
   margin-top: 0.5rem;
   padding: 0.375rem;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
   background: none;
   cursor: pointer;
   font-size: 0.8125rem;
@@ -1694,7 +1686,7 @@ textarea.form-input {
 
 /* ─── Combined Calendar Month-Bar (v1.5 canonical) ──────────────────────
    Shared by /leave + /team/leave calendar / list views. Sits as its own
-   .card above the calendar grid card. The eyebrow + serif title pattern
+   .card above the calendar grid card. The eyebrow + title pattern
    matches /time-entries MonthBar. Per-page scoped overrides of these
    classes are forbidden (see CLAUDE.md UI Consistency Rules). The narrow-viewport
    layout (Issue #553) follows after .cal-monthbar-today. */
@@ -1740,20 +1732,20 @@ textarea.form-input {
   border: 0;
   cursor: pointer;
   color: var(--text);
-  font-family: var(--font-serif);
+  font-family: var(--font-ui);
   font-weight: 400;
   font-size: 26px;
   line-height: 1.1;
   letter-spacing: 0.005em;
   padding: 2px 4px;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
   text-transform: capitalize;
 }
 .cal-monthbar-title:hover {
-  color: var(--brand-light);
+  color: var(--brand);
 }
 .cal-monthbar-title svg {
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 .cal-monthbar-title--static {
   cursor: default;
@@ -1795,8 +1787,8 @@ textarea.form-input {
     min-height: 44px;
   }
 }
-/* 26px fits between the arrows from 481 to 640 px. Below that 20px (the serif
-   .mini-stat .value size) clears the arrows at 360 px in both skins; same value and source
+/* 26px fits between the arrows from 481 to 640 px. Below that 20px (the
+   .mini-stat .value size) clears the arrows at 360 px; same value and source
    as the MonthBar primitive's label. */
 @media (max-width: 480px) {
   .cal-monthbar-title {
@@ -1808,7 +1800,7 @@ textarea.form-input {
    13 px. Less side padding and an 18px title leave ~12 px clearance in both skins. Same values
    as the MonthBar primitive's 360 px block. */
 @media (max-width: 360px) {
-  /* Compound selector (0,2,0): the v1.5 `.card { padding: var(--pad-card) }` further down would
+  /* Compound selector (0,2,0): the v1.5 `.card { padding: var(--s-6) }` further down would
      otherwise win by source order. */
   .cal-monthbar.card {
     padding-left: 12px;
@@ -1851,15 +1843,15 @@ textarea.form-input {
 
 /* ─── Cards (COMP-01) ─── */
 .card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: var(--pad-card);
-  box-shadow: var(--shadow-md);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: var(--s-6);
+  box-shadow: var(--shadow);
   position: relative;
 }
 .card.dark-fill {
-  background: var(--bg-elevated);
+  background: var(--card);
 }
 
 .card-hd {
@@ -1872,14 +1864,11 @@ textarea.form-input {
 .card-title {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 .card-sub {
-  font-family: var(--font-serif);
-  font-style: italic;
-  color: var(--brand-light);
+  font-family: var(--font-ui);
+  color: var(--brand);
   font-size: 13px;
   margin-top: 2px;
 }
@@ -1892,12 +1881,12 @@ textarea.form-input {
 .card-foot {
   margin-top: 14px;
   padding-top: 14px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--line);
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 
 /* ─── KPI card (COMP-04) ─── */
@@ -1914,13 +1903,11 @@ textarea.form-input {
 .kpi-label {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 .kpi .value,
 .kpi-value {
-  font-family: var(--font-serif);
+  font-family: var(--font-ui);
   font-weight: 400;
   font-size: 38px;
   line-height: 1;
@@ -1934,21 +1921,21 @@ textarea.form-input {
 .kpi .value .u,
 .kpi-unit {
   font-size: 14px;
-  color: var(--text-muted);
-  font-family: var(--font-sans);
+  color: var(--text-2);
+  font-family: var(--font-ui);
   font-variant-numeric: normal;
 }
 .kpi .delta,
 .kpi-delta {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-2);
   display: flex;
   align-items: center;
   gap: 4px;
 }
 .kpi .delta.up,
 .kpi-delta-good {
-  color: var(--good);
+  color: var(--ok);
 }
 .kpi .delta.down,
 .kpi-delta-bad {
@@ -1960,7 +1947,7 @@ textarea.form-input {
 
 /* KPI bar (8 px pill with brand fill — used in KPI cards per COMP-04) */
 .kpi .bar {
-  background: var(--bg-subtle);
+  background: var(--sunk);
   border-radius: var(--r-pill);
   height: 8px;
   overflow: hidden;
@@ -1981,8 +1968,8 @@ textarea.form-input {
   justify-content: center;
   gap: 8px;
   padding: 9px 16px;
-  border-radius: var(--r-sm);
-  font-family: var(--font-sans);
+  border-radius: var(--r-control);
+  font-family: var(--font-ui);
   font-weight: 500;
   font-size: 13.5px;
   line-height: 1.2;
@@ -2003,45 +1990,45 @@ textarea.form-input {
 }
 .btn-primary {
   background: var(--brand);
-  color: var(--text-on-brand);
-  box-shadow: var(--shadow-brand);
+  color: var(--brand-ink);
+  box-shadow: var(--shadow);
   border-color: transparent;
   /* Override legacy pill rule from line ~336 */
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
 }
 .btn-primary:hover:not(:disabled) {
-  /* Issue 840 G-7: darken on hover (the original v1 rule); lightening the fill under white text
+  /* Issue 840 G-7: darken on hover (the original v1 rule); lightening the fill under light text
      measured 2.5:1 to 4.4:1. */
-  background: var(--brand-dark);
-  box-shadow: var(--shadow-brand-lg);
+  background: var(--brand-hover);
+  box-shadow: var(--shadow);
   transform: translateY(-1px);
 }
 .btn-outline {
-  border-color: var(--border-strong);
+  border-color: var(--line-2);
   color: var(--text);
   background: transparent;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
 }
 .btn-outline:hover:not(:disabled) {
-  background: var(--bg-subtle);
+  background: var(--sunk);
 }
 .btn-ghost {
-  color: var(--text-muted);
+  color: var(--text-2);
   background: transparent;
   border-color: transparent;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
 }
 .btn-ghost:hover:not(:disabled) {
-  background: var(--bg-subtle);
+  background: var(--sunk);
   color: var(--text);
 }
 .btn-danger {
   background: transparent;
-  /* --bad-text is identical to --bad in light mode and brightened in dark mode: the label of an outline
+  /* --bad is identical to --bad in light mode and brightened in dark mode: the label of an outline
      danger button measured 2.62:1 (below WCAG AA) with --bad on the dark card surface. */
-  color: var(--bad-text);
+  color: var(--bad);
   border-color: rgba(180, 35, 24, 0.3);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
 }
 .btn-danger:hover:not(:disabled) {
   background: var(--bad-soft);
@@ -2073,9 +2060,9 @@ textarea.form-input {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
+  background: var(--sunk);
+  color: var(--text-2);
+  border: 1px solid var(--line);
 }
 .chip .dot {
   width: 6px;
@@ -2084,8 +2071,8 @@ textarea.form-input {
   background: currentColor;
 }
 .chip-good {
-  color: var(--good);
-  background: var(--good-soft);
+  color: var(--ok);
+  background: var(--ok-soft);
   border-color: transparent;
 }
 .chip-warn {
@@ -2104,7 +2091,7 @@ textarea.form-input {
   border-color: transparent;
 }
 [data-mode="dark"] .chip-brand {
-  color: var(--brand-light);
+  color: var(--brand);
 }
 [data-mode="dark"] .chip-good {
   color: #6bd49a;
@@ -2120,9 +2107,9 @@ textarea.form-input {
 /* Reset default browser outline only for elements that explicitly opt in to a custom
    focus style via :focus-visible. This preserves keyboard accessibility everywhere. */
 :where(button, a, input, select, textarea, [tabindex], summary):focus-visible {
-  outline: 2px solid var(--brand-light);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
 }
 /* Suppress the default focus outline on mouse-only focus (Chrome/Edge) but keep it
    for keyboard via :focus-visible above. */
@@ -2139,7 +2126,7 @@ textarea.form-input {
 }
 .card.hover-lift:hover {
   transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow);
 }
 
 @keyframes fadeUp {
@@ -2210,11 +2197,10 @@ textarea.form-input {
   border-radius: 1px;
 }
 
-/* ─── Serif italic eyebrow helper (used by card-sub and elsewhere) ─── */
+/* ─── Eyebrow helper (used by card-sub and elsewhere) ─── */
 .serif-eyebrow {
-  font-family: var(--font-serif);
-  font-style: italic;
-  color: var(--brand-light);
+  font-family: var(--font-ui);
+  color: var(--brand);
   font-size: 14px;
   letter-spacing: 0.02em;
 }
@@ -2279,8 +2265,8 @@ textarea.form-input {
    Composes with .card. Replaces the .card white surface with a brand-gradient hero
    used only on the employee dashboard. */
 .timer-card {
-  background: linear-gradient(135deg, var(--brand-dark), var(--brand));
-  color: white;
+  background: linear-gradient(135deg, var(--brand-hover), var(--brand));
+  color: var(--brand-ink);
   border: 0;
   overflow: hidden;
   position: relative;
@@ -2292,11 +2278,15 @@ textarea.form-input {
   right: -20%;
   width: 280px;
   height: 280px;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.12), transparent 70%);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--brand-ink) 12%, transparent),
+    transparent 70%
+  );
   pointer-events: none;
 }
 .timer-card .timer-display {
-  font-family: var(--font-serif);
+  font-family: var(--font-ui);
   font-weight: 300;
   font-size: 96px;
   line-height: 1;
@@ -2305,16 +2295,15 @@ textarea.form-input {
   margin: 12px 0 8px;
 }
 .timer-card .timer-sub {
-  font-style: italic;
-  font-family: var(--font-serif);
+  font-family: var(--font-ui);
   font-size: 15px;
   opacity: 0.85;
 }
 .timer-card .card-title {
-  color: rgba(255, 255, 255, 0.7);
+  color: color-mix(in srgb, var(--brand-ink) 70%, transparent);
 }
 .timer-card .card-foot {
-  border-color: rgba(255, 255, 255, 0.18);
+  border-color: color-mix(in srgb, var(--brand-ink) 18%, transparent);
 }
 
 /* Live pulse dot (used in .timer-card to signal active timer).
@@ -2349,7 +2338,7 @@ textarea.form-input {
   display: flex;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: var(--r-md);
+  border-radius: var(--r-control);
   background: var(--warn-soft);
   border: 1px solid transparent;
   font-size: 13px;
@@ -2361,7 +2350,7 @@ textarea.form-input {
   color: var(--brand);
 }
 [data-mode="dark"] .callout.brand {
-  color: var(--brand-light);
+  color: var(--brand);
 }
 [data-mode="dark"] .callout {
   color: #fbbf24;
@@ -2404,9 +2393,9 @@ textarea.form-input {
   animation: fadeUp 200ms var(--ease-out);
 }
 .modal {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   display: flex;
@@ -2420,10 +2409,10 @@ textarea.form-input {
   justify-content: space-between;
   gap: 14px;
   padding: 22px 26px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
 }
 .modal-hd h3 {
-  font-family: var(--font-serif);
+  font-family: var(--font-ui);
   font-weight: 400;
   font-size: 22px;
   line-height: 1.2;
@@ -2442,8 +2431,8 @@ textarea.form-input {
 }
 .modal-foot {
   padding: 16px 26px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-subtle);
+  border-top: 1px solid var(--line);
+  background: var(--sunk);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2454,21 +2443,21 @@ textarea.form-input {
 .modal-close {
   width: 32px;
   height: 32px;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
   background: transparent;
   border: 1px solid transparent;
-  color: var(--text-muted);
+  color: var(--text-2);
   cursor: pointer;
   display: grid;
   place-items: center;
   flex-shrink: 0;
 }
 .modal-close:hover {
-  background: var(--bg-subtle);
+  background: var(--sunk);
   color: var(--text);
 }
 
-/* MiniStat block used inside modal-body — three across, label + serif value */
+/* MiniStat block used inside modal-body — three across, label + value */
 .mini-stat {
   display: flex;
   flex-direction: column;
@@ -2477,12 +2466,10 @@ textarea.form-input {
 .mini-stat .label {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 .mini-stat .value {
-  font-family: var(--font-serif);
+  font-family: var(--font-ui);
   font-size: 20px;
   font-weight: 400;
   color: var(--text);
@@ -2504,7 +2491,7 @@ textarea.form-input {
   align-items: center;
   padding: 14px 18px;
   border: 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
   background: transparent;
   cursor: pointer;
   transition: background 120ms var(--ease);
@@ -2516,7 +2503,7 @@ button.approval-row:disabled {
   border-bottom: 0;
 }
 .approval-row:hover {
-  background: var(--bg-subtle);
+  background: var(--sunk);
 }
 .approval-row .avatar {
   width: 32px;
@@ -2530,7 +2517,7 @@ button.approval-row:disabled {
   font-size: 13px;
 }
 [data-mode="dark"] .approval-row .avatar {
-  color: var(--brand-light);
+  color: var(--brand);
 }
 .approval-row .who-name {
   font-weight: 600;
@@ -2539,7 +2526,7 @@ button.approval-row:disabled {
 }
 .approval-row .who-meta {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-2);
   margin-top: 2px;
   display: flex;
   align-items: center;
@@ -2554,7 +2541,7 @@ button.approval-row:disabled {
 }
 .approval-row .dates .days-sub {
   font-size: 11.5px;
-  color: var(--text-muted);
+  color: var(--text-2);
   margin-top: 2px;
 }
 .approval-row .actions {
@@ -2578,7 +2565,7 @@ button.approval-row:disabled {
   font-size: 13px;
 }
 [data-mode="dark"] .approval-row .approval-avatar {
-  color: var(--brand-light);
+  color: var(--brand);
 }
 .approval-row .approval-name-meta {
   min-width: 0;
@@ -2590,7 +2577,7 @@ button.approval-row:disabled {
 }
 .approval-row .approval-meta {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-2);
   margin-top: 2px;
   display: flex;
   align-items: center;
@@ -2613,7 +2600,7 @@ button.approval-row:disabled {
   display: flex;
   gap: 6px;
   padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--line);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -2625,12 +2612,12 @@ button.approval-row:disabled {
   font-size: 11px;
   padding: 1px 6px;
   border-radius: var(--r-pill);
-  background: var(--bg-subtle);
-  color: var(--text-faint);
+  background: var(--sunk);
+  color: var(--text-3);
 }
 .tab-bar .btn-primary .count-pill {
-  background: rgba(255, 255, 255, 0.22);
-  color: white;
+  background: color-mix(in srgb, var(--brand-ink) 22%, transparent);
+  color: var(--brand-ink);
 }
 
 /* ─── v1.5 Shift grid + pill recipes (MGR-04) ─── */
@@ -2638,17 +2625,15 @@ button.approval-row:disabled {
   display: grid;
   grid-template-columns: 160px repeat(7, 1fr);
   gap: 2px;
-  background: var(--border);
-  border-radius: var(--r-sm);
+  background: var(--line);
+  border-radius: var(--r-control);
   overflow: hidden;
 }
 .shift-grid .head {
-  background: var(--bg-card);
+  background: var(--card);
   padding: 12px 10px;
   font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-3);
   font-weight: 600;
   text-align: center;
 }
@@ -2657,7 +2642,7 @@ button.approval-row:disabled {
   color: var(--brand);
 }
 .shift-grid .who-cell {
-  background: var(--bg-card);
+  background: var(--card);
   padding: 14px 12px;
   display: flex;
   flex-direction: column;
@@ -2670,18 +2655,17 @@ button.approval-row:disabled {
 }
 .shift-grid .who-cell .role {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 .shift-grid .shift-cell {
-  background: var(--bg-card);
+  background: var(--card);
   min-height: 56px;
   padding: 6px;
   display: grid;
   place-items: center;
 }
 .shift-grid .shift-cell.off {
-  color: var(--text-faint);
-  font-style: italic;
+  color: var(--text-3);
   font-size: 12px;
 }
 
@@ -2689,7 +2673,7 @@ button.approval-row:disabled {
 .shift-pill {
   background: var(--brand-soft);
   color: var(--brand);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-control);
   padding: 6px 10px;
   font-size: 12.5px;
   font-weight: 600;
@@ -2702,7 +2686,7 @@ button.approval-row:disabled {
   text-overflow: ellipsis;
 }
 [data-mode="dark"] .shift-pill {
-  color: var(--brand-light);
+  color: var(--brand);
 }
 .shift-pill.late {
   background: color-mix(in srgb, var(--brand) 14%, transparent);
@@ -2717,17 +2701,17 @@ button.approval-row:disabled {
   border-radius: var(--r-pill);
   font-size: 11.5px;
   font-weight: 500;
-  font-family: var(--font-sans);
-  background: var(--bg-card);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
+  font-family: var(--font-ui);
+  background: var(--card);
+  color: var(--text-2);
+  border: 1px solid var(--line);
   min-height: 24px;
   line-height: 1;
 }
 .av-pill--available {
-  color: var(--good);
-  background: var(--good-soft);
-  border-color: var(--good);
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-color: var(--ok);
 }
 .av-pill--unavailable {
   color: var(--bad);
@@ -2740,7 +2724,7 @@ button.approval-row:disabled {
   border-color: var(--brand);
 }
 .av-pill--default {
-  color: var(--text-muted);
+  color: var(--text-2);
 }
 
 /* Phase 46 — extend existing .sp-avail-badge family for two new derived statuses on /shifts */
@@ -2795,8 +2779,8 @@ button.approval-row:disabled {
    the cloned ghost element; we just normalize its appearance.
    This rule lives in the global app.css, so no :global() wrapper is needed. */
 .dnd-action-dragged-el {
-  box-shadow: var(--shadow-md);
-  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+  border-radius: var(--r-control);
 }
 
 /* svelte-dnd-action clones the dragged element into document.body. The clone
