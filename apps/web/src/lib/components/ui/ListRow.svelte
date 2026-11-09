@@ -23,6 +23,12 @@
   // Issue #843 (D-843-01 block 5) - one list row: avatar - title / subtitle - trailing snippet.
   // The task variant puts `actions` under the text instead of trailing. Text only, never raw markup;
   // `href` is passed by page code.
+  //
+  // Issue #853 (D-853-06) - additive props for the Team pages: `meta` (chips under the subtitle),
+  // `rowId` (the `id` of the li, target of a deep link), `testId`, `kind` (`data-kind`), `highlight`
+  // (a tinted row for a deep-linked entry) and `onPrimary` (the title becomes the one button of the
+  // text block, stretched over the row like ApprovalRow's; `actions`/`trailing` stay siblings above
+  // it, so no interactive element is nested in another). `href` wins over `onPrimary`.
   import type { Snippet } from "svelte";
 
   interface Props {
@@ -37,6 +43,18 @@
     href?: string;
     trailing?: Snippet;
     actions?: Snippet;
+    /** Chips or a short hint under the subtitle (both variants). Never raw markup. */
+    meta?: Snippet;
+    /** The `id` of the `li` (a deep link target). */
+    rowId?: string;
+    /** `data-testid` of the row. */
+    testId?: string;
+    /** `data-kind` of the row (a control value of the caller, never shown). */
+    kind?: string;
+    /** Tints the row (a deep-linked entry). */
+    highlight?: boolean;
+    /** The title becomes the row's one button, stretched over the row; ignored when `href` is set. */
+    onPrimary?: () => void;
   }
 
   let {
@@ -48,12 +66,27 @@
     href,
     trailing,
     actions,
+    meta,
+    rowId,
+    testId,
+    kind,
+    highlight = false,
+    onPrimary,
   }: Props = $props();
 
   let colour = $derived(avatarIndex(avatarKey ?? title));
 </script>
 
-<li class="list-row" class:list-row--task={variant === "task"} class:list-row--bare={!avatar}>
+<li
+  class="list-row"
+  class:list-row--task={variant === "task"}
+  class:list-row--bare={!avatar}
+  class:list-row--highlight={highlight}
+  class:list-row--stretched={!!onPrimary && !href}
+  id={rowId}
+  data-testid={testId}
+  data-kind={kind}
+>
   {#if avatar}
     <span
       class="list-avatar"
@@ -64,10 +97,15 @@
   <div class="list-text">
     {#if href}
       <a class="list-title list-link" {href}>{title}</a>
+    {:else if onPrimary}
+      <button type="button" class="list-title list-primary" onclick={() => onPrimary()}
+        >{title}</button
+      >
     {:else}
       <span class="list-title">{title}</span>
     {/if}
     {#if subtitle}<span class="list-subtitle">{subtitle}</span>{/if}
+    {#if meta}<div class="list-meta">{@render meta()}</div>{/if}
   </div>
   {#if variant === "task"}
     {#if actions}<div class="list-actions">{@render actions()}</div>{/if}
@@ -134,6 +172,54 @@
     align-items: center;
     gap: var(--s-2);
     white-space: nowrap;
+  }
+
+  .list-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-1) var(--s-2);
+    margin-top: var(--s-1);
+  }
+  .list-row--highlight {
+    background: var(--brand-tint);
+  }
+
+  /* #853 primary-button mode: the title button is stretched over the whole row; the actions and
+     the trailing cell sit above it and stay separately clickable. */
+  .list-row--stretched {
+    position: relative;
+  }
+  .list-primary {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    font-size: var(--fs-base);
+    font-weight: 600;
+    color: var(--text);
+    text-align: start;
+    cursor: pointer;
+  }
+  .list-primary::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  .list-row--stretched .list-actions,
+  .list-row--stretched .list-trailing {
+    position: relative;
+    z-index: 1;
+  }
+  .list-primary:focus-visible {
+    outline: none;
+  }
+  .list-primary:focus-visible::after {
+    outline: 2px solid var(--brand);
+    outline-offset: -2px;
+    border-radius: var(--r-control);
   }
 
   /* Task variant: the buttons sit under the text block, in the text column. */

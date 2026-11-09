@@ -14,6 +14,9 @@
     width?: string;
   }
 
+  /** Row tint of the `rowTone` prop (Issue #853, D-853-10). */
+  export type DataTableRowTone = "warn" | "info" | "highlight";
+
   export interface DataTableSort {
     key: string;
     dir: "asc" | "desc";
@@ -62,6 +65,11 @@
     toolbar?: Snippet;
     /** Optional stable `data-testid` of a row (a page whose e2e addresses its rows by id). */
     rowTestId?: (row: Row) => string | undefined;
+    /**
+     * Issue #853 (D-853-10): tints a row by tone (`data-tone` on the row, in table and card layout).
+     * The block owns the colours; a page never styles DataTable internals.
+     */
+    rowTone?: (row: Row) => DataTableRowTone | undefined;
     /** Accessible table caption (visually hidden). */
     caption: string;
     loading?: boolean;
@@ -79,6 +87,7 @@
     onRowClick,
     toolbar,
     rowTestId,
+    rowTone,
     caption,
     loading = false,
   }: Props = $props();
@@ -150,6 +159,7 @@
               <tr
                 class="dt-row--click"
                 data-testid={rowTestId?.(row)}
+                data-tone={rowTone?.(row)}
                 onclick={(e) => onRowActivate(e, row)}
               >
                 {#each columns as column (column.key)}
@@ -175,7 +185,7 @@
                 {/each}
               </tr>
             {:else}
-              <tr data-testid={rowTestId?.(row)}>
+              <tr data-testid={rowTestId?.(row)} data-tone={rowTone?.(row)}>
                 {#each columns as column (column.key)}
                   <td
                     data-label={column.label}
@@ -243,6 +253,20 @@
 
   .dt-end {
     text-align: end;
+  }
+
+  /* Issue #853: row tones. The hover rule above has the same specificity (:global tr) and comes
+     first, so a tinted row keeps its tint under the pointer. */
+  .dt-table :global(tbody tr[data-tone="warn"]) {
+    background-color: var(--warn-soft);
+  }
+
+  .dt-table :global(tbody tr[data-tone="info"]) {
+    background-color: var(--info-soft);
+  }
+
+  .dt-table :global(tbody tr[data-tone="highlight"]) {
+    background-color: var(--brand-tint);
   }
 
   .dt-primary-cell {
