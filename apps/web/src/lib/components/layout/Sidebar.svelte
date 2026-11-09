@@ -158,9 +158,15 @@
     border-right: 1px solid var(--line);
     display: flex;
     flex-direction: column;
-    position: sticky;
+    /* #844 (owner acceptance): the rail always spans the full viewport height with its own scroll, whatever
+       the page length — fixed, not sticky (a sticky grid item depends on every ancestor and the browser);
+       the grid column of the app layout keeps its width. */
+    position: fixed;
     top: 0;
+    left: 0;
+    bottom: 0;
     height: 100vh;
+    height: 100dvh;
     width: var(--sidebar-w);
     min-width: var(--sidebar-w);
     z-index: 100;

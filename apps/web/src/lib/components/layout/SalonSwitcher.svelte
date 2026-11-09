@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { ALL_SALONS, salonContext, showSalonOptions } from "$stores/salon-context";
+  import Icon from "$lib/components/Icon.svelte";
 
   let visible = $derived(showSalonOptions($salonContext));
   let value = $derived($salonContext.selection ?? ALL_SALONS);
@@ -19,6 +20,7 @@
   <label class="salon-switcher">
     <span class="salon-switcher-label">Salon</span>
     <span class="salon-switcher-field">
+      <span class="salon-switcher-icon" aria-hidden="true"><Icon name="store" size={15} /></span>
       <select class="select filter-select salon-switcher-select" {value} onchange={handleChange}>
         <option value={ALL_SALONS}>Alle Salons</option>
         {#each $salonContext.salons as salon (salon.id)}
@@ -33,21 +35,34 @@
   .salon-switcher {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
     min-width: 0;
   }
+  /* Visually hidden, still the accessible name of the select (the pill shows the icon instead). */
   .salon-switcher-label {
-    font-family: var(--font-ui);
-    font-size: 13px;
-    color: var(--text-2);
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
     white-space: nowrap;
+    border: 0;
   }
-  /* The global .select recipe draws no chevron; in the Topbar the label may be hidden, so the
-     control shows its own to read as a choice. */
+  /* #844: the salon pill of design concept § 2 — icon, name, chevron; the native select keeps the keyboard
+     and screen-reader behaviour. */
   .salon-switcher-field {
     position: relative;
     display: inline-flex;
+    align-items: center;
     min-width: 0;
+  }
+  .salon-switcher-icon {
+    position: absolute;
+    left: 11px;
+    display: inline-flex;
+    color: var(--brand);
+    pointer-events: none;
   }
   .salon-switcher-field::after {
     content: "";
@@ -63,30 +78,26 @@
   }
   .salon-switcher-select {
     max-width: 220px;
-    min-height: 36px;
-    padding: 0.375rem 2rem 0.375rem 0.75rem;
-    font-size: 14px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 30px 0 32px;
+    border-radius: var(--r-pill);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--text);
     text-overflow: ellipsis;
   }
   @media (max-width: 720px) {
-    /* Visually hidden, still the accessible name of the select. */
-    .salon-switcher-label {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
-    }
     .salon-switcher-select {
       max-width: 160px;
     }
   }
   @media (max-width: 640px) {
+    /* WCAG 2.5.5 touch target on phones */
     .salon-switcher-select {
+      height: 44px;
       min-height: 44px;
     }
   }
