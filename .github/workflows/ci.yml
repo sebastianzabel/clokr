@@ -1285,6 +1285,10 @@ jobs:
   # Validates Dockerfiles compile and warms the GHA cache for faster builds on main.
   docker:
     needs: test
+    # Explicit, not the implicit `success()`: that one also looks at `test`'s own skipped needs. On a PR
+    # that cannot affect the API suite, `api-tests` and `api-coverage` are skipped by design and `test`
+    # passes — but `success()` then skipped this job and turned `docker-gate` red (Issue #884 follow-up).
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout (the gha build cache uses the runtime token)
