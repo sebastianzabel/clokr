@@ -100,6 +100,19 @@ describe("#842 D-842-17 - one-time mode seed for hell and dunkel only", () => {
     expect(localStorage.getItem("mode")).toBe("light");
   });
 
+  it("prototype property names seed no mode (IN-01)", async () => {
+    for (const hostile of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      await bootWith({ theme: hostile });
+      expect(localStorage.getItem("mode"), hostile).toBeNull();
+      expect(localStorage.getItem("theme"), hostile).toBe("pflaume");
+    }
+  });
+
+  it("control: a real legacy id still seeds (the guard did not close the path)", async () => {
+    await bootWith({ theme: "dunkel" });
+    expect(localStorage.getItem("mode")).toBe("dark");
+  });
+
   it("nacht, schiefer and wald seed no mode", async () => {
     for (const legacy of ["nacht", "schiefer", "wald"]) {
       await bootWith({ theme: legacy });

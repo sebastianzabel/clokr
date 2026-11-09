@@ -40,7 +40,7 @@ export function normalizeTheme(raw: unknown): Theme {
   if (typeof raw !== "string") return "pflaume";
   const known = themes.find((t) => t.id === raw);
   if (known) return known.id;
-  if (Object.prototype.hasOwnProperty.call(LEGACY_THEME_MAP, raw)) return LEGACY_THEME_MAP[raw];
+  if (Object.hasOwn(LEGACY_THEME_MAP, raw)) return LEGACY_THEME_MAP[raw];
   return "pflaume";
 }
 
@@ -56,7 +56,8 @@ function readInitial(): Theme {
     localStorage.setItem("theme", normalized); // overwrite the legacy value immediately
     // One-time mode seed for hell/dunkel legacy users - only if no mode key set yet.
     // This is the ONLY case where theme.ts touches another store's localStorage key.
-    const seed = LEGACY_MODE_SEED[raw];
+    // Own keys only: "constructor" or "__proto__" must not read from the object prototype.
+    const seed = Object.hasOwn(LEGACY_MODE_SEED, raw) ? LEGACY_MODE_SEED[raw] : undefined;
     if (seed && localStorage.getItem("mode") === null) {
       localStorage.setItem("mode", seed);
     }
