@@ -229,13 +229,18 @@ describe("tenant provisioning (Phase 88, D-04/D-04a)", () => {
 // import and are never loaded here.
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..", "..", "..");
 
-/** The `prisma.salon.create({ ... })` call of a seed module, braces balanced. */
-function salonCreateCall(source: string): string {
-  const start = source.indexOf("prisma.salon.create(");
-  expect(start, "no prisma.salon.create( call in the seed module").toBeGreaterThan(-1);
-  expect(source.indexOf("prisma.salon.create(", start + 1), "more than one salon per tenant").toBe(
-    -1,
-  );
+/** Every `prisma.salon.create(` call of a seed module, in source order, braces balanced. */
+function salonCreateCalls(source: string): string[] {
+  const calls: string[] = [];
+  for (let at = source.indexOf("prisma.salon.create("); at > -1;) {
+    calls.push(balancedCall(source, at));
+    at = source.indexOf("prisma.salon.create(", at + 1);
+  }
+  return calls;
+}
+
+/** The balanced call starting at `start`. */
+function balancedCall(source: string, start: number): string {
   let depth = 0;
   for (let i = source.indexOf("(", start); i < source.length; i++) {
     if (source[i] === "(") depth++;
@@ -244,8 +249,18 @@ function salonCreateCall(source: string): string {
       if (depth === 0) return source.slice(start, i + 1);
     }
   }
-  throw new Error("unbalanced prisma.salon.create( call");
+  throw new Error("unbalanced call");
 }
+
+/**
+ * The salons each seed creates. The FIRST call is the pinned copy of the provisioning rule (the
+ * tenant's default salon); `seed-demo.ts` adds exactly one more, named, demo salon so a Springerin
+ * and the salon choice are demonstrable (Issue #577). Anything else turns this block red.
+ */
+const SALON_CALLS: Record<string, number> = {
+  "packages/db/src/seed.ts": 1,
+  "packages/db/src/seed-demo.ts": 2,
+};
 
 /** The `prisma.tenant.create(` / `prisma.tenant.upsert(` call of a seed module, braces balanced. */
 function tenantCreateCall(source: string): string {
@@ -253,30 +268,32 @@ function tenantCreateCall(source: string): string {
     .map((needle) => source.indexOf(needle))
     .filter((index) => index > -1);
   expect(starts, "exactly one tenant creation call in the seed module").toHaveLength(1);
-  const start = starts[0] ?? 0;
-  let depth = 0;
-  for (let i = source.indexOf("(", start); i < source.length; i++) {
-    if (source[i] === "(") depth++;
-    if (source[i] === ")") {
-      depth--;
-      if (depth === 0) return source.slice(start, i + 1);
-    }
-  }
-  throw new Error("unbalanced tenant creation call");
+  return balancedCall(source, starts[0] ?? 0);
 }
 
 describe("seed parity — D-04a deviation", () => {
   const seeds = ["packages/db/src/seed.ts", "packages/db/src/seed-demo.ts"] as const;
 
   for (const rel of seeds) {
-    it(`${rel} creates one salon with the tenant name, the tenant's Bundesland and the default opening hours, plus a TenantConfig`, () => {
+    it(`${rel} creates its default salon with the tenant name, the tenant's Bundesland and the default opening hours, plus a TenantConfig`, () => {
       const source = readFileSync(join(REPO_ROOT, rel), "utf8");
-      const call = salonCreateCall(source);
+      const calls = salonCreateCalls(source);
+      expect(calls, "salon creations of the seed module").toHaveLength(SALON_CALLS[rel]);
+      const call = calls[0];
       expect(call).toMatch(/tenantId:\s*tenant\.id/);
       expect(call).toMatch(/name:\s*tenant\.name/);
       expect(call).toMatch(/federalState:\s*tenant\.federalState/);
       expect(call).toMatch(/openingHours:\s*DEFAULT_SALON_OPENING_HOURS\b/);
       expect(call).toMatch(/isActive:\s*true/);
+      for (const extra of calls.slice(1)) {
+        // the demo's second salon: same tenant, Bundesland and hours, its own literal name, active
+        expect(extra).toMatch(/tenantId:\s*tenant\.id/);
+        expect(extra).toMatch(/name:\s*"[^"]+"/);
+        expect(extra).not.toMatch(/name:\s*tenant\.name/);
+        expect(extra).toMatch(/federalState:\s*tenant\.federalState/);
+        expect(extra).toMatch(/openingHours:\s*DEFAULT_SALON_OPENING_HOURS\b/);
+        expect(extra).toMatch(/isActive:\s*true/);
+      }
       expect(source).toMatch(/prisma\.tenantConfig\.(create|upsert)\(/);
       expect(source).toMatch(/tenantId:\s*tenant\.id/);
     });
