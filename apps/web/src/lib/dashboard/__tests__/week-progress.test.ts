@@ -66,14 +66,14 @@ const PAGE = readRouteFile(
   "src/routes/(app)/dashboard/+page.svelte",
 );
 
-describe("dashboard +page.svelte source pin — FLEXTIME tile delta via weekProgressDelta(stats.week)", () => {
+describe("dashboard +page.svelte source pin — the week cell delta via weekProgressDelta(stats.week) (#845: every schedule type)", () => {
   it("B1: imports weekProgressDelta from $lib/dashboard/week-progress", () => {
     expect(PAGE).toMatch(
       /import\s*\{\s*weekProgressDelta\s*\}\s*from\s*["']\$lib\/dashboard\/week-progress["']/,
     );
   });
 
-  it("B2: the FLEXTIME tile computes its delta via weekProgressDelta(stats.week)", () => {
+  it("B2: the week cell computes its delta via weekProgressDelta(stats.week)", () => {
     expect(PAGE).toMatch(/weekProgressDelta\(stats\.week\)/);
   });
 

@@ -121,7 +121,7 @@ describe("the finished-day second-salon action (D-02/D-11)", () => {
     expect(screen.getByRole("button", { name: "In anderem Salon einstempeln" })).toBeTruthy();
   });
 
-  it("the request carries exactly the chosen offered salon, while „Erneut einstempeln“ carries none", () => {
+  it("the request carries exactly the chosen offered salon, while „Wieder einstempeln“ carries none", () => {
     expect(clockInBody(view, SALON_B.id, "otherSalon")).toEqual({
       source: "MOBILE",
       salonId: SALON_B.id,
@@ -282,20 +282,20 @@ describe("the page wires every new element behind the server's answer (source ga
   it("a multi-entry day gets no § 4 verdict computed from the day sums — the server decides it", () => {
     // Found in the visual check: Σ working minutes against Σ break minutes claimed „§ 4 ArbZG verletzt“
     // on a two-salon day whose gap between the salons is working time, not a break, by the server's rule.
-    const start = PAGE.indexOf("let arbzgCallout");
-    const callout = PAGE.slice(start, PAGE.indexOf("});", start));
-    expect(start).toBeGreaterThan(-1);
-    expect(callout).toContain("if (multiRowDay)");
-    expect(callout).toContain("Mehrere Einträge heute.");
-    expect(callout.indexOf("if (multiRowDay)")).toBeLessThan(callout.indexOf("const workedHours"));
+    // Since #845 (D-06, D-845-02) the page computes no § 4 verdict for ANY day: the former live callout
+    // is gone, a break finding comes only from the server's day check („Für dich“).
+    expect(PAGE.length).toBeGreaterThan(50_000);
+    expect(PAGE).not.toContain("let arbzgCallout");
+    expect(PAGE).not.toMatch(/§ 4 ArbZG: /);
+    expect(PAGE).toContain("breakNudgeHref(breakNudge)");
   });
 
   it("the entry count keeps its words together on a narrow card (no-break spaces)", () => {
     expect(PAGE).toContain('entryCount.replaceAll(" ", "\\u00A0")');
   });
 
-  it("the reopen path is unchanged: its Rückfrage is still the only way into „Erneut einstempeln“", () => {
-    expect(PAGE).toContain('confirmLabel="Erneut einstempeln"');
+  it("the reopen path is unchanged: its Rückfrage is still the only way into „Wieder einstempeln“", () => {
+    expect(PAGE).toContain('confirmLabel="Wieder einstempeln"');
     expect(PAGE).toContain("onclick={openReopenDialog}");
   });
 });

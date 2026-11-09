@@ -99,10 +99,10 @@ test("every start-page write acknowledges its result in the toast status region"
   // A salon part, when the page names one, is „ · “ followed by non-empty text.
   await expect(region).toHaveText(/^\s*Eingestempelt \d{2}:\d{2}( · \S.*)?\s*$/);
 
-  await page.getByRole("button", { name: "Pause starten", exact: true }).click();
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(region).toContainText(/Pause gestartet \d{2}:\d{2}/);
 
-  await page.getByRole("button", { name: "Pause beenden", exact: true }).click();
+  await page.getByRole("button", { name: "Weiterarbeiten", exact: true }).click();
   await expect(region).toContainText(/Pause beendet \d{2}:\d{2}/);
 
   await page.getByRole("button", { name: "Ausstempeln", exact: true }).click();

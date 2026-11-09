@@ -232,7 +232,7 @@ describe("dashboard - the four clock and break writes acknowledge their result (
     apiPost.mockResolvedValue({ breakMinutes: 30 });
     renderWithTheme(DashboardPage, {});
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Pause starten" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
 
     await waitFor(() => expect(success).toHaveBeenCalledTimes(1));
     expect(success).toHaveBeenLastCalledWith(breakStarted(clockTime(local(12, 3))));
@@ -240,7 +240,7 @@ describe("dashboard - the four clock and break writes acknowledge their result (
     expect(apiPost).not.toHaveBeenCalled();
 
     vi.setSystemTime(local(12, 33));
-    await fireEvent.click(await screen.findByRole("button", { name: "Pause beenden" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Weiterarbeiten" }));
 
     await waitFor(() => expect(success).toHaveBeenCalledTimes(2));
     expect(apiPost).toHaveBeenCalledWith(
@@ -256,10 +256,10 @@ describe("dashboard - the four clock and break writes acknowledge their result (
     apiPost.mockRejectedValue(new ApiError(400, "Pause konnte nicht gespeichert werden"));
     renderWithTheme(DashboardPage, {});
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Pause starten" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
     await waitFor(() => expect(success).toHaveBeenCalledTimes(1));
     vi.setSystemTime(local(12, 33));
-    await fireEvent.click(await screen.findByRole("button", { name: "Pause beenden" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Weiterarbeiten" }));
 
     await waitFor(() =>
       expect(error).toHaveBeenCalledWith("Pause konnte nicht gespeichert werden"),

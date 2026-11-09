@@ -109,7 +109,7 @@
         "ticket": "#854"
       },
       "apps/web/src/routes/(app)/dashboard/+page.svelte": {
-        "count": 13,
+        "count": 1,
         "ticket": "#845"
       },
       "apps/web/src/routes/(app)/inbox/+page.svelte": {
