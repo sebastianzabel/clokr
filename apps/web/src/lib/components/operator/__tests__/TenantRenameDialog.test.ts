@@ -33,7 +33,7 @@ function mount(onRename = vi.fn().mockResolvedValue(undefined)) {
   renderWithTheme(
     TenantRenameDialog,
     { open: true, currentName: "Beispiel GmbH", onRename },
-    "nacht",
+    "salz",
   );
   return { onRename };
 }

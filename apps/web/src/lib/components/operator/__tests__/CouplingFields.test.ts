@@ -32,7 +32,7 @@ function mount(props: MountProps = {}) {
   renderWithTheme(
     CouplingFields,
     { provider: "NONE", externalBranchId: "", ...props } as never,
-    "nacht",
+    "salz",
   );
 }
 

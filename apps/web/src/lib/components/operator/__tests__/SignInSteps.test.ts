@@ -57,7 +57,7 @@ function mount(overrides: Record<string, unknown> = {}) {
   const onLogin = vi.fn().mockResolvedValue(CHALLENGE);
   const onVerify = vi.fn().mockResolvedValue(ACCESS);
   const onSuccess = vi.fn();
-  renderWithTheme(SignInSteps, { onLogin, onVerify, onSuccess, ...overrides }, "nacht");
+  renderWithTheme(SignInSteps, { onLogin, onVerify, onSuccess, ...overrides }, "salz");
   return { onLogin, onVerify, onSuccess };
 }
 

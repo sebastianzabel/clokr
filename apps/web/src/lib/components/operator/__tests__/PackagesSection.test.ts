@@ -67,7 +67,7 @@ function mount(tenant: OperatorTenant, onSave?: ReturnType<typeof vi.fn>) {
   renderWithTheme(
     PackagesSection,
     { tenant, onSave: save, onSaved, tenantDeactivated: tenant.deactivatedAt !== null },
-    "nacht",
+    "salz",
   );
   return { onSave: save, onSaved };
 }
@@ -277,7 +277,7 @@ describe("PackagesSection", () => {
         onSaved: vi.fn(),
         tenantDeactivated: false,
       },
-      "nacht",
+      "salz",
     );
     await toggle("ANALYTICS");
     await view.rerender({
@@ -297,7 +297,7 @@ describe("PackagesSection", () => {
         onSaved: vi.fn(),
         tenantDeactivated: false,
       },
-      "nacht",
+      "salz",
     );
     await toggle("ANALYTICS");
     await view.rerender({

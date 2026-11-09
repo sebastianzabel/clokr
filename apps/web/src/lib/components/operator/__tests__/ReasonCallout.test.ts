@@ -35,7 +35,7 @@ afterEach(() => {
 
 describe("ReasonCallout", () => {
   it("renders the brand callout with the code and the console's sentence", () => {
-    renderWithTheme(ReasonCallout, { code: "FEDERAL_STATE_IN_USE" }, "nacht");
+    renderWithTheme(ReasonCallout, { code: "FEDERAL_STATE_IN_USE" }, "salz");
     const node = callout();
     expect(node).toHaveClass("callout", "brand");
     expect(node).toHaveAttribute("data-code", "FEDERAL_STATE_IN_USE");
@@ -49,24 +49,20 @@ describe("ReasonCallout", () => {
     renderWithTheme(
       ReasonCallout,
       { code: "LAST_ACTIVE_SALON", serverError: "Letzter aktiver Salon" },
-      "nacht",
+      "salz",
     );
     expect(callout()).toHaveTextContent(REASON_TEXTS["LAST_ACTIVE_SALON"] as string);
     expect(callout()).not.toHaveTextContent("Letzter aktiver Salon.");
   });
 
   it("falls back to the server's string for an unknown code", () => {
-    renderWithTheme(
-      ReasonCallout,
-      { code: "SOMETHING_NEW", serverError: "Server sagt X" },
-      "nacht",
-    );
+    renderWithTheme(ReasonCallout, { code: "SOMETHING_NEW", serverError: "Server sagt X" }, "salz");
     expect(callout()).toHaveTextContent("Server sagt X");
     expect(callout()).toHaveAttribute("data-code", "SOMETHING_NEW");
   });
 
   it("names the salon in a page-level notice", () => {
-    renderWithTheme(ReasonCallout, { code: "ALREADY_INACTIVE", subject: "Hauptsalon" }, "nacht");
+    renderWithTheme(ReasonCallout, { code: "ALREADY_INACTIVE", subject: "Hauptsalon" }, "salz");
     expect(callout()).toHaveTextContent("Salon „Hauptsalon“: Der Salon ist bereits deaktiviert.");
   });
 
@@ -83,14 +79,14 @@ describe("ReasonCallout", () => {
       "SALON_NOT_FOUND",
     ]) {
       document.body.innerHTML = "";
-      renderWithTheme(ReasonCallout, { code }, "nacht");
+      renderWithTheme(ReasonCallout, { code }, "salz");
       expect(callout()?.textContent, code).not.toMatch(/\d/);
       expect(callout()?.textContent?.trim().length, code).toBeGreaterThan(5);
     }
   });
 
   it("is styled: it differs from a control element with an invented class", () => {
-    renderWithTheme(ReasonCallout, { code: "FEDERAL_STATE_IN_USE" }, "nacht");
+    renderWithTheme(ReasonCallout, { code: "FEDERAL_STATE_IN_USE" }, "salz");
     const control = document.createElement("div");
     control.className = "callout-that-does-not-exist";
     document.body.appendChild(control);
@@ -102,15 +98,15 @@ describe("ReasonCallout", () => {
   });
 
   it("passes an id through for aria-describedby", () => {
-    renderWithTheme(ReasonCallout, { code: "FEDERAL_STATE_IN_USE", id: "reason-1" }, "nacht");
+    renderWithTheme(ReasonCallout, { code: "FEDERAL_STATE_IN_USE", id: "reason-1" }, "salz");
     expect(callout()?.id).toBe("reason-1");
   });
 
   it("renders nothing without a code", () => {
-    renderWithTheme(ReasonCallout, {}, "nacht");
+    renderWithTheme(ReasonCallout, {}, "salz");
     expect(callout()).toBeNull();
     document.body.innerHTML = "";
-    renderWithTheme(ReasonCallout, { code: null, serverError: "x" }, "nacht");
+    renderWithTheme(ReasonCallout, { code: null, serverError: "x" }, "salz");
     expect(callout()).toBeNull();
   });
 });

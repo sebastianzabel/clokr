@@ -82,7 +82,7 @@ function created(mailSent: boolean): CreateTenantResult {
 function mount(onCreate = vi.fn().mockResolvedValue(created(true))) {
   const onOpen = vi.fn();
   const onCreated = vi.fn();
-  renderWithTheme(TenantCreateDialog, { open: true, onCreate, onOpen, onCreated }, "nacht");
+  renderWithTheme(TenantCreateDialog, { open: true, onCreate, onOpen, onCreated }, "salz");
   return { onCreate, onOpen, onCreated };
 }
 

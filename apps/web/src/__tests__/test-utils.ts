@@ -13,7 +13,7 @@
 //   const { container } = renderWithTheme(MyComponent, { foo: "bar" });
 //
 // Override theme for theme-specific regression tests:
-//   renderWithTheme(MyComponent, props, "nacht");
+//   renderWithTheme(MyComponent, props, "salz");
 //
 // Typing: we forward through to @testing-library/svelte's `render` and re-use
 // its first-arg type so component-import variants (default + named exports)
@@ -26,7 +26,8 @@ import { render } from "@testing-library/svelte";
 type RenderFirstArg = Parameters<typeof render>[0];
 type RenderOptions = Parameters<typeof render>[1];
 
-export type Theme = "pflaume" | "nacht" | "wald" | "schiefer";
+// #842 D-842-17/D-842-21: the three current themes; the operator console tests pin "salz".
+export type Theme = "pflaume" | "salz" | "petrol";
 
 /**
  * Render a Svelte 5 component with a `data-theme` attribute applied to

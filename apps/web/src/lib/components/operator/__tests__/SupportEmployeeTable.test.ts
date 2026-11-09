@@ -53,7 +53,7 @@ const ROWS: SupportEmployee[] = [
 ];
 
 function mount(items: SupportEmployee[] = ROWS) {
-  renderWithTheme(SupportEmployeeTable, { tenantId: "tenant-1", employees: items }, "nacht");
+  renderWithTheme(SupportEmployeeTable, { tenantId: "tenant-1", employees: items }, "salz");
 }
 
 afterEach(() => {

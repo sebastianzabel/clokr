@@ -60,7 +60,7 @@ function mount(tenant: OperatorTenant, overrides: Partial<Callbacks> = {}) {
       .mockResolvedValue({ invitationMailSent: true } satisfies ResendInvitationResult),
     ...overrides,
   };
-  renderWithTheme(TenantMasterData, { tenant, ...callbacks }, "nacht");
+  renderWithTheme(TenantMasterData, { tenant, ...callbacks }, "salz");
   return callbacks;
 }
 

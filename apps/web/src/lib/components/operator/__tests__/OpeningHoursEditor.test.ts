@@ -21,7 +21,7 @@ function must<T extends HTMLElement = HTMLInputElement>(id: string): T {
 
 function mount(initial: OpeningHoursDay[] = defaultOpeningHours()) {
   const onChange = vi.fn();
-  renderWithTheme(Host, { initial, onChange }, "nacht");
+  renderWithTheme(Host, { initial, onChange }, "salz");
   return { onChange };
 }
 

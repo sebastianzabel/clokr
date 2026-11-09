@@ -86,7 +86,7 @@ function mount(salons: OperatorSalon[] = TWO, overrides: Record<string, unknown>
       onReload,
       ...overrides,
     },
-    "nacht",
+    "salz",
   );
   return { onCreate, onUpdate, onDeactivate, onActivate, onReload };
 }
