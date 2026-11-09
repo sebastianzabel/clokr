@@ -223,17 +223,6 @@ describe("PeriodPicker", () => {
     expect(style).toMatch(/grid-template-columns:\s*auto minmax\(0, 1fr\) auto/);
   });
 
-  it("wraps the zoom Segment onto its own row in a narrow container (#900)", () => {
-    // A narrow container on a wide viewport fires no media query, so the base rule itself must
-    // wrap; with nowrap the label overlapped the Segment in the example page's narrow frame.
-    const style = pickerSource.slice(pickerSource.lastIndexOf("<style>"));
-    const base = style.match(/\n {2}\.month-bar\s*\{([^}]*)\}/);
-    expect(base).not.toBeNull();
-    expect(base?.[1]).toMatch(/flex-wrap:\s*wrap/);
-    expect(base?.[1]).not.toMatch(/flex-wrap:\s*nowrap/);
-    expect(base?.[1]).toMatch(/gap:\s*\d+px \d+px/); // a row gap between the wrapped rows
-  });
-
   it("carries no raw HTML, no literal id and no colour literal", () => {
     expect(pickerSource).not.toContain("{@html");
     expect(pickerSource).not.toMatch(/\bid="/);

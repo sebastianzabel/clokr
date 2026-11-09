@@ -183,15 +183,12 @@
      intrinsic width to zero, and the #553/#564 spec measures the viewport.
      Consumers must set the wrapping .card padding to 0 so the primitive
      owns the inner spacing. */
-  /* #900: the bar wraps at every width, so in a narrow container on a wide viewport (no media
-     query fires) the zoom Segment moves to its own row instead of being overlapped by the label.
-     Intrinsic, no container-type (D-843-21); the app.css mirror .cal-monthbar already wraps. */
   .month-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px 24px;
-    flex-wrap: wrap;
+    gap: 24px;
+    flex-wrap: nowrap;
     padding: 18px 24px;
   }
 
