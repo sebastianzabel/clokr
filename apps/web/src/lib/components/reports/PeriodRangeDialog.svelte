@@ -181,7 +181,7 @@
 
   .range-preset-list .btn.is-active {
     background: var(--brand-soft);
-    border-color: var(--brand-light);
+    border-color: var(--brand);
     color: var(--text);
     font-weight: 600;
   }

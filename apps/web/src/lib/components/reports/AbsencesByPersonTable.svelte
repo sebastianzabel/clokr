@@ -291,7 +291,7 @@
   .abp-empty {
     margin: 0;
     font-size: 15px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .abp-table .num {
@@ -355,7 +355,7 @@
     margin: 0;
     font-size: 12px;
     line-height: 1.4;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .abp-list {

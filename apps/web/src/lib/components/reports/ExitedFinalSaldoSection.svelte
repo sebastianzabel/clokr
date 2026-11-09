@@ -101,7 +101,7 @@
   .exited-more {
     margin: 0 0 0.75rem;
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .exited-more {

@@ -51,7 +51,7 @@
     padding: var(--s-3);
     background: var(--warn-soft);
     border: 1px solid var(--warn);
-    border-radius: var(--r-md);
+    border-radius: var(--r-control);
   }
 
   .collision-intro {
@@ -82,18 +82,18 @@
   }
 
   .collision-date {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 0.8125rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
 
   .collision-sep {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .collision-count {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 0.8125rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
