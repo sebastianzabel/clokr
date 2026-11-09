@@ -12,7 +12,7 @@ import type { PermissionHolder } from "$lib/permissions";
 import { matchesRoute } from "$lib/nav/active-route";
 import {
   APP_ROUTES,
-  LEGACY_ALIASES,
+  LEGACY_ROUTE_REDIRECTS,
   holdsAlternatives,
   mayOpenPath,
   visibleRoute,
@@ -50,7 +50,11 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
         ]
       : [],
   ),
-  ...LEGACY_ALIASES.map((alias) => ({ href: alias.href, requires: alias.requires, inNav: false })),
+  ...LEGACY_ROUTE_REDIRECTS.map((alias) => ({
+    href: alias.href,
+    requires: alias.requires,
+    inNav: false,
+  })),
 ];
 
 /** A Verwalten page (new URL) or an old `/admin` URL. */

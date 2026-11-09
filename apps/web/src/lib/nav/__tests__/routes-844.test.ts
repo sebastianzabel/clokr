@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   APP_ROUTES,
-  LEGACY_ALIASES,
+  LEGACY_ROUTE_REDIRECTS,
   homeHref,
   legacyRedirectTarget,
   mayOpenPath,
@@ -126,7 +126,7 @@ describe("old URLs of the acceptance criteria land on the new place", () => {
   it("every former nav href of the pre-#844 admin and team maps is redirected or a kept alias", () => {
     const old = [...Object.keys(pre844.admin), ...Object.keys(pre844.team)];
     expect(old.length).toBeGreaterThanOrEqual(24);
-    const aliases = new Set(LEGACY_ALIASES.map((a) => a.href));
+    const aliases = new Set(LEGACY_ROUTE_REDIRECTS.map((a) => a.href));
     for (const href of old) {
       expect(legacyRedirectTarget(href) !== null || aliases.has(href), href).toBe(true);
     }
@@ -141,7 +141,7 @@ describe("no permission change (D-06, AC: keine Berechtigungsänderung)", () => 
   for (const [file, requires] of Object.entries(pinned)) {
     it(`${file} keeps its alternatives`, () => {
       const route = APP_ROUTES.find((r) => r.file === file);
-      const alias = LEGACY_ALIASES.find((a) => a.href === file);
+      const alias = LEGACY_ROUTE_REDIRECTS.find((a) => a.href === file);
       expect(route?.requires ?? alias?.requires, file).toEqual(requires);
     });
   }
