@@ -15,6 +15,7 @@
 <script lang="ts">
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import {
     endedByLabel,
     formatInZone,
@@ -72,10 +73,7 @@
     </button>
   </div>
 {:else if loading}
-  <div class="sa-skeleton" role="status" aria-label="Support-Zugriffe werden geladen">
-    <div class="skeleton sa-skel-row"></div>
-    <div class="skeleton sa-skel-row"></div>
-  </div>
+  <Skeleton shape="row" count={3} />
 {:else if items.length === 0}
   <EmptyState
     icon="search"
@@ -135,17 +133,6 @@
 
   .sa-retry {
     margin-left: auto;
-  }
-
-  .sa-skeleton {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .sa-skel-row {
-    height: 56px;
-    border-radius: var(--r-control);
   }
 
   .sa-list {
