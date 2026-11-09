@@ -247,7 +247,6 @@
     height: 1.25rem;
     border: 1px solid var(--line);
     border-radius: 50%;
-    font-style: italic;
     font-size: 0.75rem;
     cursor: pointer;
     list-style: none;

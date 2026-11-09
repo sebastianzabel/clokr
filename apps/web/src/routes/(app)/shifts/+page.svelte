@@ -2381,7 +2381,6 @@
     border: 1px solid var(--line);
     border-radius: 50%;
     font-size: 0.85em;
-    font-style: italic;
     text-transform: none;
     cursor: help;
     vertical-align: middle;
