@@ -64,6 +64,55 @@ describe("DataTable - structure", () => {
     expect(tableSource).toMatch(/attr\(data-label\)/);
     expect(tableSource).not.toContain("{@html");
   });
+
+  // Issue #843 (843-37): the table keeps a value on one line, only the card may wrap it. The wrap
+  // rule sat at every width once and broke the 1440 px employee table ("VIS-/004", a clipped
+  // Aktionen column); jsdom has no container queries, so the proof reads the stylesheet.
+  describe("wrapping is a card-layout rule", () => {
+    const style = tableSource
+      .slice(tableSource.indexOf("<style>"))
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const cut = style.indexOf("@container (max-width: 759.98px)");
+    const tableMode = style.slice(0, cut);
+    const cardMode = style.slice(cut);
+
+    // The declarations of every rule whose selector list ends in `selector`, with the rules of
+    // nested blocks excluded: `selector {` up to the first closing brace.
+    function bodies(css: string, selector: string): string[] {
+      const out: string[] = [];
+      const pattern = new RegExp(
+        `(?:^|[\\s,}])${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`,
+        "g",
+      );
+      for (const match of css.matchAll(pattern)) out.push(match[1]);
+      return out;
+    }
+
+    it("finds the container query and the rules it is compared with", () => {
+      expect(cut).toBeGreaterThan(0);
+      expect(bodies(tableMode, ".dt-table td").length).toBeGreaterThan(0);
+      expect(bodies(cardMode, ".dt-table td").length).toBeGreaterThan(0);
+    });
+
+    it("keeps a table cell on one line outside the container query", () => {
+      const joined = bodies(tableMode, ".dt-table td").join("\n");
+      expect(joined).toMatch(/white-space:\s*nowrap/);
+      expect(tableMode).not.toMatch(/overflow-wrap/);
+      expect(tableMode).not.toMatch(/flex-wrap/);
+      // The only `white-space: normal` of table mode is the head, which carries no value.
+      const normal = [...tableMode.matchAll(/([^{}]+)\{[^}]*white-space:\s*normal/g)].map((m) =>
+        m[1].trim(),
+      );
+      expect(normal).toEqual([".dt-table :global(th)"]);
+    });
+
+    it("lets a cell, the primary cell and the name button wrap only inside the container query", () => {
+      expect(bodies(cardMode, ".dt-table td").join("\n")).toMatch(/white-space:\s*normal/);
+      expect(cardMode).toMatch(/overflow-wrap:\s*anywhere/);
+      expect(cardMode).toMatch(/flex-wrap:\s*wrap/);
+      expect(cardMode).toMatch(/\.dt-primary\s*\{[^}]*white-space:\s*normal/);
+    });
+  });
 });
 
 describe("DataTable - sorting", () => {

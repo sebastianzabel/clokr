@@ -200,7 +200,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
   {
     href: "/team/dienstplan/konflikte",
     area: "team",
-    label: "Schicht-Konflikte",
+    label: "Hinweise zur Schichtplanung",
     icon: "grid",
     width: "full",
     requires: [[Z("shift:plan")]],

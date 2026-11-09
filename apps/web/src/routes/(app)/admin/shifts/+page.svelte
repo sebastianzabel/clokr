@@ -1,5 +1,6 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
+  import { formatStaff } from "$lib/shifts/staffing"; // Issue #850 — "2", never "2.00"
   import { onMount } from "svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
@@ -77,7 +78,7 @@
 
   // ── Tabs (Phase 58) ─────────────────────────────────────────
   const TABS = [
-    { id: "vorlagen", label: "Vorlagen & Bedarf" },
+    { id: "vorlagen", label: "Vorlagen & Mindestbesetzung" },
     { id: "muster", label: "Muster" },
   ];
   let activeTab = $state<string>("vorlagen");
@@ -361,7 +362,7 @@
 
   async function saveRule() {
     if (ruleMinStaff < 0) {
-      ruleError = "Min. Schicht-Gewicht muss >= 0 sein.";
+      ruleError = "Die Mindestbesetzung darf nicht negativ sein.";
       return;
     }
     saving = true;
@@ -381,7 +382,9 @@
       }
       ruleModalOpen = false;
       await loadAll();
-      toasts.success(ruleEditingId ? "Bedarfsregel aktualisiert." : "Bedarfsregel erstellt.");
+      toasts.success(
+        ruleEditingId ? "Mindestbesetzung aktualisiert." : "Mindestbesetzung angelegt.",
+      );
     } catch (e) {
       ruleError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
@@ -398,7 +401,7 @@
     try {
       await api.delete(`/shifts/coverage-rules/${ruleDeleteConfirm.id}`);
       await loadAll();
-      toasts.success("Bedarfsregel gelöscht.");
+      toasts.success("Mindestbesetzung gelöscht.");
     } catch (e) {
       toasts.error(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
     }
@@ -424,7 +427,7 @@
 <SectionStack
   eyebrow="Verwalten"
   title={pageLabel("/admin/shifts")}
-  sub="Vorlagen, Bedarfsregeln und Schicht-Muster"
+  sub="Vorlagen, Mindestbesetzung und Schicht-Muster"
   tabs={TABS}
   bind:activeTab
   animate
@@ -485,12 +488,12 @@
 
       <!-- ── Coverage Rules section ───────────────────────────────── -->
       <Section
-        title="Bedarfsregeln"
-        sub="Mindest-Schicht-Gewicht je Vorlage und Wochentag. Spezifischste Regel gewinnt; Default = 2.0 wenn keine Regel."
+        title="Mindestbesetzung"
+        sub="Wie viele Personen je Vorlage und Wochentag mindestens eingeplant sein sollen. Die genaueste Regel gilt; ohne Regel sind es 2."
       >
         {#if coverageRules.length === 0}
           <p class="cfg-muted">
-            Noch keine Bedarfsregeln vorhanden. Default = 2.0 Schicht-Gewicht.
+            Noch keine Mindestbesetzung festgelegt. Ohne Regel gelten 2 Personen.
           </p>
         {:else}
           <div class="cfg-table">
@@ -503,7 +506,7 @@
               {/if}
               <div>Vorlage</div>
               <div>Wochentag</div>
-              <div>Min. Schicht-Gewicht</div>
+              <div>Mindestens</div>
               <div>Aufsicht erforderlich</div>
               <div class="cfg-row__actions">Aktionen</div>
             </div>
@@ -520,7 +523,7 @@
                 {/if}
                 <div class="cfg-cell-name">{ruleTemplateName(rule)}</div>
                 <div>{ruleDayLabel(rule)}</div>
-                <div class="cfg-cell-num">{Number(rule.minStaff).toFixed(2)}</div>
+                <div class="cfg-cell-num">{formatStaff(Number(rule.minStaff))}</div>
                 <div>{rule.requiresNonSupervised ? "Ja" : "Nein"}</div>
                 <div class="cfg-row__actions">
                   <button type="button" class="btn btn-ghost sm" onclick={() => openEditRule(rule)}>
@@ -540,7 +543,7 @@
         {/if}
         {#snippet footer()}
           <button type="button" class="btn btn-primary sm" onclick={openCreateRule}>
-            Neue Bedarfsregel
+            Neue Mindestbesetzung
           </button>
         {/snippet}
       </Section>
@@ -681,14 +684,15 @@
 <Modal
   bind:open={ruleModalOpen}
   eyebrow="Schicht-Konfiguration"
-  title={ruleEditingId ? "Bedarfsregel bearbeiten" : "Neue Bedarfsregel"}
+  title={ruleEditingId ? "Mindestbesetzung bearbeiten" : "Neue Mindestbesetzung"}
 >
   {#if ruleError}
     <div class="callout error" role="alert">{ruleError}</div>
   {/if}
   <p class="cfg-help">
-    Die spezifischste Regel gewinnt: (Vorlage + Wochentag) &gt; (Alle Vorlagen + Wochentag) &gt;
-    (Vorlage + Alle Tage) &gt; (Alle Vorlagen + Alle Tage). Default ist 2.0 Schicht-Gewicht.
+    Die genaueste Regel gilt: erst Vorlage und Wochentag, dann alle Vorlagen an diesem Wochentag,
+    dann die Vorlage an allen Tagen, zuletzt alle Vorlagen an allen Tagen. Ohne Regel gelten 2
+    Personen.
   </p>
   {#if salonOptionsShown}
     <div class="form-group">
@@ -725,7 +729,7 @@
     </select>
   </div>
   <div class="form-group">
-    <label class="form-label" for="rule-min">Min. Schicht-Gewicht *</label>
+    <label class="form-label" for="rule-min">Mindestens (Personen) *</label>
     <input
       id="rule-min"
       class="form-input"
@@ -736,7 +740,7 @@
       bind:value={ruleMinStaff}
     />
     <span class="cfg-muted cfg-hint">
-      Summe der coverageWeight-Werte (z.B. Azubi 0.5 + Vollzeit 1.0 = 1.5).
+      Personen zählen nach ihrem Schicht-Gewicht, z. B. Vollzeit 1 und Azubi 0,5 – zusammen 1,5.
     </span>
   </div>
   <div class="form-group">
@@ -768,8 +772,8 @@
 
 <ConfirmDialog
   bind:open={ruleDeleteConfirm.open}
-  title="Bedarfsregel löschen?"
-  description="Die Bedarfsregel wird dauerhaft entfernt. Falls keine andere passende Regel existiert, gilt der Default (2.0)."
+  title="Mindestbesetzung löschen?"
+  description="Die Regel wird dauerhaft entfernt. Gibt es keine andere passende Regel, gelten 2 Personen."
   confirmLabel="Löschen"
   danger
   onConfirm={confirmDeleteRule}

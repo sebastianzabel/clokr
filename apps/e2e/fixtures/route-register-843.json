@@ -278,7 +278,7 @@
       "page": "(auth)/login/+page.svelte",
       "path": "/login",
       "auth": "none",
-      "anchor": "h1"
+      "anchor": ".login-heading"
     },
     {
       "page": "(auth)/otp/+page.svelte",

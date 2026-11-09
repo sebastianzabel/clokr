@@ -1,7 +1,8 @@
-// Issue #843 (D-843-01 block 1, D-843-14) - PageHeader is the one Seitenkopf. The expected markup
-// below was captured from layout/PageHead.svelte BEFORE it became a delegate, so the block is
-// proven byte-compatible with what every page rendered until now (scope-hash classes and the
-// empty Svelte block markers are stripped on both sides; nothing else is normalised).
+// Issue #843 (D-843-01 block 1, D-843-14, D-843-22) - PageHeader is the one Seitenkopf. Since
+// D-843-22 (owner request 10.11., design concept 3/4) it renders title, subtitle and actions only:
+// no accent rule, no eyebrow line and no colour-set accent word. The byte-compat cases against the
+// old PageHead DOM are replaced by assertions of that contract; the legacy `eyebrow` / `accent`
+// props are still accepted (50+ callers) but inert.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen } from "@testing-library/svelte";
 import { createRawSnippet } from "svelte";
@@ -26,55 +27,85 @@ function normalise(html: string): string {
     .replace(/ class=""/g, "");
 }
 
-// Captured from the pre-delegate PageHead (see the file header); since Phase 851 (owner acceptance
-// 09.11.2026) without the accent rule and the eyebrow line.
-const LEGACY_PLAIN =
-  '<header class="page-head"><div class="page-head-text"><h1 translate="no">Team-<em>Zeiten</em></h1> </div> </header>';
-const LEGACY_ACCENT =
-  '<header class="page-head"><div class="page-head-text"><h1 translate="no"><em>Urlaub</em> &amp; Abwesenheit</h1> </div> </header>';
-const LEGACY_SUB_ACTIONS =
+const NEW_PLAIN =
+  '<header class="page-head"><div class="page-head-text"><h1 translate="no">Team-Zeiten</h1> </div> </header>';
+const NEW_SUB_ACTIONS =
   '<header class="page-head"><div class="page-head-text"><h1 translate="no">Zeiterfassung</h1> <p class="sub">Unterzeile</p></div> <div class="page-head-actions"><button>Neu</button></div></header>';
 
-describe("PageHeader - byte-compatible with the legacy PageHead", () => {
-  it("plain title: autoAccent on the last token", () => {
+describe("PageHeader - the D-843-22 contract (no rule, no eyebrow, no accent word)", () => {
+  it("renders the title as plain text in an h1, with no rule, eyebrow or em", () => {
+    const { container } = renderWithTheme(PageHeader, { title: "Team-Zeiten" });
+    expect(normalise(container.innerHTML)).toBe(NEW_PLAIN);
+    expect(container.querySelector("h1")!.textContent).toBe("Team-Zeiten");
+    expect(container.querySelector(".brand-rule")).toBeNull();
+    expect(container.querySelector(".eyebrow")).toBeNull();
+    expect(container.querySelector("em")).toBeNull();
+  });
+
+  // #843 D-843-14 -> D-843-22 (owner 10.11.): was a byte-compat case for the eyebrow + rule DOM.
+  it("the legacy eyebrow prop is accepted and renders nothing", () => {
     const { container } = renderWithTheme(PageHeader, {
       eyebrow: "Mein Bereich",
       title: "Team-Zeiten",
     });
-    expect(normalise(container.innerHTML)).toBe(LEGACY_PLAIN);
+    expect(normalise(container.innerHTML)).toBe(NEW_PLAIN);
+    expect(container.textContent).not.toContain("Mein Bereich");
+    expect(container.querySelector(".brand-rule")).toBeNull();
   });
 
-  it("explicit accent", () => {
+  // #843 D-843-14 -> D-843-22 (owner 10.11.): was the explicit-accent <em> case.
+  it("the legacy accent prop is accepted and sets no word apart", () => {
     const { container } = renderWithTheme(PageHeader, {
       eyebrow: "Mein Bereich",
       title: "Urlaub & Abwesenheit",
       accent: "Urlaub",
     });
-    expect(normalise(container.innerHTML)).toBe(LEGACY_ACCENT);
+    expect(container.querySelector("em")).toBeNull();
+    expect(container.querySelector("h1")!.innerHTML).toBe("Urlaub &amp; Abwesenheit");
   });
 
-  it("subtitle and actions (subtitle is PageHead's sub)", () => {
+  it("renders the subtitle and the actions container to the right of the title block", () => {
     const { container } = renderWithTheme(PageHeader, {
-      eyebrow: "E",
       title: "Zeiterfassung",
       subtitle: "Unterzeile",
       actions,
     });
-    expect(normalise(container.innerHTML)).toBe(LEGACY_SUB_ACTIONS);
+    expect(normalise(container.innerHTML)).toBe(NEW_SUB_ACTIONS);
+    const text = container.querySelector(".page-head-text")!;
+    const actionBox = container.querySelector(".page-head-actions")!;
+    expect(text.querySelector("p.sub")!.textContent).toBe("Unterzeile");
+    expect(text.compareDocumentPosition(actionBox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(actionBox.querySelector("button")!.textContent).toBe("Neu");
+  });
+
+  it("renders no subtitle and no actions container when neither is given", () => {
+    const { container } = renderWithTheme(PageHeader, { title: "Zeiterfassung" });
+    expect(container.querySelector("p.sub")).toBeNull();
+    expect(container.querySelector(".page-head-actions")).toBeNull();
   });
 
   it("the legacy PageHead renders the identical markup through the same block", () => {
     const { container } = renderWithTheme(PageHead, {
       eyebrow: "E",
       title: "Zeiterfassung",
+      accent: "Zeit",
       sub: "Unterzeile",
       actions,
     });
-    expect(normalise(container.innerHTML)).toBe(LEGACY_SUB_ACTIONS);
+    expect(normalise(container.innerHTML)).toBe(NEW_SUB_ACTIONS);
+  });
+
+  it("takes the title size, weight and subtitle colour from the tokens", () => {
+    const css = headerSource.slice(headerSource.indexOf("<style>"));
+    expect(css).toMatch(/font-size:\s*var\(--fs-h1\)/);
+    expect(css).toMatch(/font-weight:\s*600/);
+    expect(css).toMatch(/\.sub\s*\{[^}]*font-size:\s*var\(--fs-base\)[^}]*\}/);
+    expect(css).toMatch(/\.sub\s*\{[^}]*color:\s*var\(--text-2\)/);
+    expect(css).not.toMatch(/brand-rule|\.eyebrow|:global\(em\)/);
   });
 });
 
-describe("PageHeader - accent split is element text only (T-843-03)", () => {
+describe("PageHeader - the title is element text only (T-843-03)", () => {
   it("never interprets a title as HTML", () => {
     const { container } = renderWithTheme(PageHeader, {
       title: '<img src=x onerror="alert(1)"> Zeiten',
@@ -84,16 +115,6 @@ describe("PageHeader - accent split is element text only (T-843-03)", () => {
       '<img src=x onerror="alert(1)"> Zeiten',
     );
     expect(headerSource).not.toMatch(/\{@html\s/);
-  });
-
-  it("an accent that is not part of the title renders plain", () => {
-    const { container } = renderWithTheme(PageHeader, { title: "Zeiten", accent: "Urlaub" });
-    expect(container.querySelector("em")).toBeNull();
-  });
-
-  it("a single word renders without an accent", () => {
-    const { container } = renderWithTheme(PageHeader, { title: "Zeiterfassung" });
-    expect(container.querySelector("em")).toBeNull();
   });
 });
 
