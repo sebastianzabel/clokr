@@ -66,7 +66,8 @@
   .auth-card {
     background: var(--card);
     border: 1px solid var(--line);
-    border-radius: var(--r-stage);
+    /* a surface (Fläche, 14 px), not the stage (design concept § 3) */
+    border-radius: var(--r-card);
     box-shadow: var(--shadow);
     padding: var(--s-8) var(--s-6);
     display: flex;
