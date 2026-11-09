@@ -4,6 +4,7 @@
   import { focusTrap } from "$lib/utils/focus-trap";
   import { canAccessAdminPath, isAdminHref } from "$lib/nav/admin-route-permissions";
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
+  import { pageLabel } from "$lib/nav/page-labels";
 
   interface Action {
     id: string;
@@ -24,7 +25,7 @@
   const allActions: Action[] = [
     {
       id: "dashboard",
-      label: "Dashboard",
+      label: pageLabel("/dashboard"),
       description: "Zur Startseite",
       icon: "home",
       href: "/dashboard",
@@ -32,7 +33,7 @@
     },
     {
       id: "time-entries",
-      label: "Zeiteinträge",
+      label: pageLabel("/time-entries"),
       description: "Arbeitszeiten verwalten",
       icon: "clock",
       href: "/time-entries",
@@ -40,7 +41,7 @@
     },
     {
       id: "leave",
-      label: "Abwesenheiten",
+      label: pageLabel("/leave"),
       description: "Urlaub & Krankmeldungen",
       icon: "calendar",
       href: "/leave",
@@ -65,7 +66,7 @@
     },
     {
       id: "reports",
-      label: "Berichte",
+      label: pageLabel("/reports"),
       description: "Auswertungen & Exporte",
       icon: "chart",
       href: "/reports",
@@ -73,7 +74,7 @@
     },
     {
       id: "admin",
-      label: "Admin",
+      label: pageLabel("/admin"),
       description: "Verwaltung",
       icon: "settings",
       href: "/admin",
@@ -81,23 +82,23 @@
     },
     {
       id: "admin-shifts",
-      label: "Schichtplan",
-      description: "Schichten verwalten",
+      label: pageLabel("/admin/shifts"),
+      description: "Vorlagen, Mindestbesetzung und Wochenmuster",
       icon: "calendar",
       href: "/admin/shifts",
       group: "Admin",
     },
     {
       id: "admin-vacation",
-      label: "Urlaub & Zeiten",
-      description: "Arbeitszeiten konfigurieren",
+      label: pageLabel("/admin/vacation"),
+      description: "Urlaub, Sonderurlaub und Arbeitszeit-Vorgaben",
       icon: "settings",
       href: "/admin/vacation",
       group: "Admin",
     },
     {
       id: "admin-roles",
-      label: "Rollen & Rechte",
+      label: pageLabel("/admin/roles"),
       description: "Rollen anlegen und zuweisen",
       icon: "settings",
       href: "/admin/roles",

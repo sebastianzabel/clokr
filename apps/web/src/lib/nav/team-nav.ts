@@ -7,15 +7,16 @@
  * The mapping is not "every team-ish permission gets an entry" — it is picked so that, applied to
  * the two REAL scoped Systemrollen-Templates (`docs/permissions.md`'s Salonmanager and Ausbilder
  * rows), the result matches the issue's Akzeptanzkriterien exactly:
- *   - Salonmanager (Salon-Scope) sees Inbox, Team-Zeiten, Abwesenheiten,
+ *   - Salonmanager (Salon-Scope) sees Aufgaben, Team-Zeiten, Abwesenheiten,
  *     Schichtplanung — not Berichte (the template holds no `report:read:ZUGEWIESEN`).
  *   - Ausbilder (Personen-Scope) sees only Team-Zeiten, Abwesenheiten — no
- *     Inbox (no approve permission), no Schichtplanung (no `shift:plan`, only `shift:read` —
+ *     Aufgaben (no approve permission), no Schichtplanung (no `shift:plan`, only `shift:read` —
  *     the page has no read-only mode, see the item's own comment below), no Berichte.
  *   - ADMIN/MANAGER (legacy fallback, every permission via the compat system-role fallback) see
  *     every item, unchanged from before this phase.
  */
 import { hasAnyPermission, hasPermission, type PermissionHolder } from "$lib/permissions";
+import { pageLabel, type PageHref } from "$lib/nav/page-labels";
 
 export interface TeamNavItem {
   href: string;
@@ -23,7 +24,9 @@ export interface TeamNavItem {
   icon: string;
 }
 
-interface TeamNavEntry extends TeamNavItem {
+interface TeamNavEntry {
+  href: PageHref;
+  icon: string;
   /** A single permission key, or several where holding ANY of them is enough (e.g. `/inbox`
    *  approves both leave requests and Zeitnachträge — either permission alone unlocks it). */
   permission: string | readonly string[];
@@ -31,11 +34,11 @@ interface TeamNavEntry extends TeamNavItem {
 
 // #840 (D-840-06): ONE team entry for leave — „Abwesenheiten“ (/team/leave) holds the Übersicht
 // timeline, the Anträge and the Planung; the old „Team-Kalender“ entry (/teamcal) left with its
-// page (the URL redirects). „Inbox“ matches the page title of /inbox.
+// page (the URL redirects). The labels come from page-labels.ts (Issue #574), so the nav and the
+// page title can never disagree.
 const TEAM_NAV_ENTRIES: readonly TeamNavEntry[] = [
   {
     href: "/inbox",
-    label: "Inbox",
     icon: "inbox",
     // The Postfach decides leave requests, Zeitnachträge and (since #840 D-840-29) § 9 cases —
     // any one of the three is enough to need it.
@@ -47,19 +50,16 @@ const TEAM_NAV_ENTRIES: readonly TeamNavEntry[] = [
   },
   {
     href: "/team/time-entries",
-    label: "Team-Zeiten",
     icon: "clock",
     permission: "time-entry:read:ZUGEWIESEN",
   },
   {
     href: "/team/leave",
-    label: "Abwesenheiten",
     icon: "umbrella",
     permission: "leave-request:read:ZUGEWIESEN",
   },
   {
     href: "/shifts",
-    label: "Schichtplanung",
     icon: "grid",
     // The page is entirely write-oriented (create/generate/copy/delete shifts) with no read-only
     // rendering mode — gated on the PLAN permission, not the READ one, so a holder of only
@@ -68,7 +68,6 @@ const TEAM_NAV_ENTRIES: readonly TeamNavEntry[] = [
   },
   {
     href: "/reports",
-    label: "Berichte",
     icon: "chart",
     permission: "report:read:ZUGEWIESEN",
   },
@@ -83,9 +82,11 @@ function isVisible(entry: TeamNavEntry, user: PermissionHolder | null | undefine
 /** The Team-Bereich nav items `user` currently holds a permission for, in the fixed display
  *  order above. Empty for a plain Mitarbeiter — callers hide the whole "Team" section then. */
 export function visibleTeamNavItems(user: PermissionHolder | null | undefined): TeamNavItem[] {
-  return TEAM_NAV_ENTRIES.filter((entry) => isVisible(entry, user)).map(
-    ({ href, label, icon }) => ({ href, label, icon }),
-  );
+  return TEAM_NAV_ENTRIES.filter((entry) => isVisible(entry, user)).map(({ href, icon }) => ({
+    href,
+    label: pageLabel(href),
+    icon,
+  }));
 }
 
 /**

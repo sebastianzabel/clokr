@@ -3,6 +3,7 @@
   import { tenantFeatures } from "$stores/tenant-features";
   import { activeNavHref } from "$lib/nav/active-route";
   import { visibleNavSections, type NavSection } from "$lib/nav/app-nav";
+  import { pageLabel } from "$lib/nav/page-labels";
   import MobileMoreSheet from "./MobileMoreSheet.svelte";
 
   interface Props {
@@ -14,13 +15,13 @@
   type NavItem = { href: string; label: string; icon: string };
 
   // The four primary tabs visible to every authenticated user.
-  // Labels match Sidebar.svelte (employeeNav) verbatim — DE only, never translated.
+  // Labels come from $lib/nav/page-labels (Issue #574) — the one source of page names.
   // The fourth slot ("Mehr") is rendered as a button, not a link, so it gets
   // its own active state derived from the open-sheet flag.
   const primaryTabs: NavItem[] = [
-    { href: "/dashboard", label: "Übersicht", icon: "dashboard" },
-    { href: "/time-entries", label: "Zeit", icon: "clock" },
-    { href: "/leave", label: "Abwesenheiten", icon: "umbrella" },
+    { href: "/dashboard", label: pageLabel("/dashboard"), icon: "dashboard" },
+    { href: "/time-entries", label: "Zeit", icon: "clock" }, // mobile short form (docs/glossar.md)
+    { href: "/leave", label: pageLabel("/leave"), icon: "umbrella" },
   ];
 
   // The Mehr sheet shows the same sections as the desktop Sidebar, generated from the one
@@ -36,7 +37,7 @@
     });
     // The profile page has no sidebar entry (desktop reaches it from the top bar); it stays
     // reachable here, under the personal heading.
-    nav[0].items.push({ href: "/settings", label: "Mein Profil", icon: "settings" });
+    nav[0].items.push({ href: "/settings", label: pageLabel("/settings"), icon: "settings" });
     return nav;
   });
   const moreItems = $derived(sections.flatMap((section) => section.items));

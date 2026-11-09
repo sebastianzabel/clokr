@@ -12,6 +12,7 @@
 import type { PermissionHolder } from "$lib/permissions";
 import { visibleTeamNavItems } from "$lib/nav/team-nav";
 import { visibleAdminNavGroups } from "$lib/nav/admin-route-permissions";
+import { pageLabel } from "$lib/nav/page-labels";
 
 export interface NavItem {
   href: string;
@@ -28,10 +29,10 @@ export interface NavSection {
 
 /** The personal items every signed-in user has ("Mein Bereich"). */
 const PERSONAL_NAV: readonly NavItem[] = [
-  { href: "/dashboard", label: "Übersicht", icon: "dashboard" },
-  { href: "/time-entries", label: "Zeiterfassung", icon: "clock" },
-  { href: "/leave", label: "Abwesenheiten", icon: "umbrella" },
-  { href: "/availability", label: "Verfügbarkeit", icon: "calendar-check" },
+  { href: "/dashboard", label: pageLabel("/dashboard"), icon: "dashboard" },
+  { href: "/time-entries", label: pageLabel("/time-entries"), icon: "clock" },
+  { href: "/leave", label: pageLabel("/leave"), icon: "umbrella" },
+  { href: "/availability", label: pageLabel("/availability"), icon: "calendar-check" },
 ];
 
 export interface NavOptions {
