@@ -1,5 +1,7 @@
 import { derived, writable, get } from "svelte/store";
 import { api } from "$api/client";
+import { authStore } from "$stores/auth";
+import { hasPermission, type PermissionHolder } from "$lib/permissions";
 
 /**
  * Phase 110 (D-05/D-07/D-08/D-10/N-07/N-08): What's-New store.
@@ -30,6 +32,8 @@ export interface ReleaseNoteBullet {
 
 export interface ReleaseNoteSection {
   heading: string;
+  /** Issue #576: "admin" sections (Sicherheit, Betrieb & Migration) only for system-settings holders. */
+  audience?: "all" | "admin";
   bullets: ReleaseNoteBullet[];
 }
 
@@ -83,10 +87,66 @@ export const whatsNewOpen = writable(false);
 const notesReady = writable(true);
 const seenReady = writable(true);
 
+/** Issue #576 (D-576-02): who may see the operator sections of the notes. */
+export const RELEASE_NOTES_ADMIN_PERMISSION = "tenant-settings:update:ZUGEWIESEN";
+
+/** Fail-closed: no user or no permission list sees no admin section. */
+export function readerSeesAdminSections(user: PermissionHolder | null | undefined): boolean {
+  return hasPermission(user, RELEASE_NOTES_ADMIN_PERMISSION);
+}
+
+/**
+ * The releases as a reader sees them: a non-admin keeps only sections whose audience is exactly
+ * "all" (a missing audience — an older API image — is hidden from them, fail-closed); a release
+ * whose sections are all hidden disappears from the reader's list, one without sections stays.
+ */
+export function releasesForReader(notes: ReleaseNote[], seesAdmin: boolean): ReleaseNote[] {
+  if (seesAdmin) return notes;
+  return notes.flatMap((note) => {
+    if (note.sections.length === 0) return [note];
+    const sections = note.sections.filter((section) => section.audience === "all");
+    return sections.length === 0 ? [] : [{ ...note, sections }];
+  });
+}
+
+/** Numeric semver comparison; a value that is no x.y.z triple compares as not greater. */
+function versionGreater(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n) => !Number.isInteger(n))) {
+    return false;
+  }
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] > pb[i];
+  return false;
+}
+
+/**
+ * Issue #576 (D-576-05): unread is judged on what the reader may see — a release that brings only
+ * operator sections raises no badge for a non-admin. Compared numerically, so a marker set by an
+ * admin-only release never leaves an older visible release "unread" forever.
+ */
+export function hasUnreadForReader(
+  notes: ReleaseNote[],
+  lastSeen: string | null,
+  seesAdmin: boolean,
+): boolean {
+  const visible = releasesForReader(notes, seesAdmin);
+  if (visible.length === 0) return false;
+  if (lastSeen === null) return true;
+  return visible.some((note) => versionGreater(note.version, lastSeen));
+}
+
+const seesAdmin = derived(authStore, ($auth) => readerSeesAdminSections($auth.user));
+
+/** The releases the current reader sees (the panel renders these). */
+export const visibleReleaseNotes = derived([releaseNotesStore, seesAdmin], ([$notes, $admin]) =>
+  releasesForReader($notes, $admin),
+);
+
 export const hasUnreadReleaseNotes = derived(
-  [releaseNotesStore, lastSeenStore, notesReady, seenReady],
-  ([$notes, $seen, $notesReady, $seenReady]) =>
-    $notesReady && $seenReady && $notes.length > 0 && $notes[0].version !== $seen,
+  [releaseNotesStore, lastSeenStore, notesReady, seenReady, seesAdmin],
+  ([$notes, $seen, $notesReady, $seenReady, $admin]) =>
+    $notesReady && $seenReady && hasUnreadForReader($notes, $seen, $admin),
 );
 
 let loaded = false;
@@ -140,6 +200,7 @@ export function markReleaseNotesSeen(): void {
   if (notes.length === 0) return;
 
   const version = notes[0].version;
+  if (get(lastSeenStore) === version) return; // already marked: one PUT per version
   lastSeenStore.set(version);
 
   api.put("/me/release-notes-seen", { version }).catch(() => {
@@ -147,6 +208,8 @@ export function markReleaseNotesSeen(): void {
   });
 }
 
+/** Opens the panel on the reader's click (Issue #576: never automatically) and marks it seen. */
 export function openWhatsNew(): void {
   whatsNewOpen.set(true);
+  markReleaseNotesSeen();
 }

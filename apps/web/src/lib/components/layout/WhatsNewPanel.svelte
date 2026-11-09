@@ -11,11 +11,11 @@
   // without marking siblings non-interactive, reintroducing the same problem). It is also the
   // presentation the owner explicitly named as the model — a side drawer, not a forced dialog.
   // `Modal.svelte` remains correct for genuinely blocking flows and is not modified by this plan.
-  import { releaseNotesStore, whatsNewOpen, markReleaseNotesSeen } from "$stores/release-notes";
+  import { visibleReleaseNotes, whatsNewOpen, markReleaseNotesSeen } from "$stores/release-notes";
 
   let view = $state<"latest" | "history">("latest");
 
-  let notes = $derived($releaseNotesStore);
+  let notes = $derived($visibleReleaseNotes);
   let latest = $derived(notes[0] ?? null);
   let shown = $derived(view === "history" ? notes : latest ? [latest] : []);
 
