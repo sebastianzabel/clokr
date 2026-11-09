@@ -154,3 +154,60 @@ describe("Dialog - sizes and the sheet (CSS shapes)", () => {
     for (const q of queries) expect(q).toMatch(/max-width:\s*759\.98px|prefers-reduced-motion/);
   });
 });
+
+// D-843-16 (#636): the page behind an open dialog is inert, toast regions stay interactive.
+describe("Dialog - inert page", () => {
+  function fixture(tag: string, attrs: Record<string, string> = {}) {
+    const el = document.createElement("div");
+    el.id = tag;
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    document.body.appendChild(el);
+    return el;
+  }
+
+  afterEach(() => {
+    document.querySelectorAll("#app-root, #toast-fixture, #pre-inert").forEach((e) => e.remove());
+  });
+
+  it("sets inert on the page sibling only, not on the toast root or the portal container", async () => {
+    const app = fixture("app-root");
+    const toast = fixture("toast-fixture", { "data-toast-root": "" });
+    open();
+    await waitFor(() => expect(app.hasAttribute("inert")).toBe(true));
+    expect(toast.hasAttribute("inert")).toBe(false);
+    const portal = screen.getByRole("dialog").closest("body > *")!;
+    expect(portal.hasAttribute("inert")).toBe(false);
+  });
+
+  it("removes exactly what it set on close and keeps a node that was inert before", async () => {
+    const app = fixture("app-root");
+    const pre = fixture("pre-inert", { inert: "" });
+    open();
+    await waitFor(() => expect(app.hasAttribute("inert")).toBe(true));
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(app.hasAttribute("inert")).toBe(false));
+    expect(pre.hasAttribute("inert")).toBe(true);
+  });
+
+  it("restores when an open dialog is destroyed", async () => {
+    const app = fixture("app-root");
+    open();
+    await waitFor(() => expect(app.hasAttribute("inert")).toBe(true));
+    cleanup();
+    expect(app.hasAttribute("inert")).toBe(false);
+  });
+
+  it("keeps the page inert until the outer of two nested dialogs closes", async () => {
+    const app = fixture("app-root");
+    const outer = renderWithTheme(Dialog, { open: true, title: "Außen", children });
+    await waitFor(() => expect(app.hasAttribute("inert")).toBe(true));
+    renderWithTheme(Dialog, { open: true, title: "Innen", children });
+    await waitFor(() => expect(screen.getAllByRole("dialog").length).toBe(2));
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.getAllByRole("dialog").length).toBe(1));
+    expect(app.hasAttribute("inert")).toBe(true);
+    outer.unmount();
+    await waitFor(() => expect(app.hasAttribute("inert")).toBe(false));
+  });
+});

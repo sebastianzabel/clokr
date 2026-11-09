@@ -57,6 +57,26 @@
     if (e.target === e.currentTarget) setOpen(false);
   }
 
+  // D-843-16 (#636): bits-ui sets aria-modal but makes nothing inert. While open, every direct child
+  // of <body> that neither contains the dialog content (the portal container holds overlay and
+  // content) nor is a toast region gets `inert`. The effect remembers exactly the nodes it changed
+  // and restores them on close and on destroy; a node that is inert already (page state before
+  // opening, or an outer dialog's work for a nested one) is left alone.
+  $effect(() => {
+    if (staticPanel || !open || !contentEl) return;
+    const content = contentEl;
+    const changed: Element[] = [];
+    for (const child of Array.from(document.body.children)) {
+      if (child.contains(content) || child.matches("[data-toast-root]")) continue;
+      if (child.hasAttribute("inert")) continue;
+      child.setAttribute("inert", "");
+      changed.push(child);
+    }
+    return () => {
+      for (const el of changed) el.removeAttribute("inert");
+    };
+  });
+
   /** Focus the first [data-autofocus] element instead of bits-ui's first tabbable. */
   function onOpenAutoFocus(e: Event) {
     const target = contentEl?.querySelector<HTMLElement>("[data-autofocus]");
