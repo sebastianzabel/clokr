@@ -178,7 +178,7 @@ test.describe("Zeiterfassung — Complete Flow", () => {
 
   test("delete a time entry from the list view", async ({ page }) => {
     // Switch to list view — the calendar view doesn't expose row controls.
-    await page.getByTestId("time-entries-view-list").click();
+    await page.getByTestId("time-entries-view-tabs").getByRole("radio", { name: "Liste" }).click();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
 
     // Pick the first non-locked row's delete button. The page renders both

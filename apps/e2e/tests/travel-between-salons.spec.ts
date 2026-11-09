@@ -305,7 +305,7 @@ test.describe("a trip between two salons (Issue #92)", () => {
     await expect(page.getByTestId("day-break-travel-offer")).toHaveCount(0);
 
     // The list of the day: three rows, one with the badge and the route.
-    await page.getByTestId("time-entries-view-list").click();
+    await page.getByTestId("time-entries-view-tabs").getByRole("radio", { name: "Liste" }).click();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
     await expect(page.locator("tr[data-testid^='time-entry-row-']")).toHaveCount(3);
     const badges = page.locator("[data-testid$='-travel-badge']");
@@ -407,7 +407,7 @@ test.describe("a trip between two salons (Issue #92)", () => {
     await page.getByTestId("time-entry-modal-cancel").click();
     await expect(modal).toBeHidden();
     // The list of a single-salon tenant shows no trip badge.
-    await page.getByTestId("time-entries-view-list").click();
+    await page.getByTestId("time-entries-view-tabs").getByRole("radio", { name: "Liste" }).click();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
     await expect(page.locator("[data-testid$='-travel-badge']")).toHaveCount(0);
   });

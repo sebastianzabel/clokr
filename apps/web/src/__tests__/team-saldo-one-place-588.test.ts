@@ -258,14 +258,15 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     }
     expect(offenders).toEqual([]);
     // Non-vacuity: dashboard tile, /leave KPI and the leave form's box (split SaldoAnzeige);
-    // /time-entries and /team/time-entries (KontoSaldoCard), as found by Plan 588-03.
+    // /team/time-entries (KontoSaldoCard), as found by Plan 588-03; /time-entries dropped its card
+    // in Issue #851 (the own total is worded on /ich/konto, pinned in personal-saldo-label-588).
     expect(splitSites).toBeGreaterThanOrEqual(3);
     // Issue #612 (pin ledger row 8): the person drill-down is a further split call site, and it
     // hands the forecast the data that words it (a drill-down without it fails the loop above).
     expect(fileText("lib/components/reports/PersonDrilldown.svelte")).toMatch(
       /<SaldoAnzeige[^>]*confirmedMinutes=[^>]*unconfirmedMonths=/s,
     );
-    expect(cardSites).toBeGreaterThanOrEqual(2);
+    expect(cardSites).toBeGreaterThanOrEqual(1);
   });
 
   it("R5: the reports team table renders no SaldoAnzeige, and the page's overview card is gone", () => {

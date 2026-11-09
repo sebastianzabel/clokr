@@ -1,8 +1,8 @@
 <script lang="ts">
   // Issue #599 (Phase 851, prototype): the correction request for a day of a closed month. The person names
   // the times they want and a reason; the request goes to their leadership, and an approval is booked in
-  // the running month - the closed month stays as it is (API #902, Arbeitszeitkonto). No field is focused
-  // before the person chooses one; the reason is required (10 to 1000 characters, as the API checks).
+  // the running month - the closed month stays as it is (API #902, Arbeitszeitkonto). The Dialog block focuses the first field
+  // (Beginn); the reason is required (10 to 1000 characters, as the API checks).
   import Dialog from "$components/ui/Dialog.svelte";
   import FormField from "$components/ui/FormField.svelte";
   import Note from "$components/ui/Note.svelte";

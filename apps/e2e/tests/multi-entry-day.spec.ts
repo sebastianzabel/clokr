@@ -261,7 +261,10 @@ test.describe("several entries on one day (Issue #70)", () => {
     await expect(page.locator("tr[data-testid^='time-entry-row-']")).toHaveCount(3);
 
     // e. The cell of the one-entry day still opens that entry for editing, salon preselected.
-    await page.getByTestId("time-entries-view-calendar").click();
+    await page
+      .getByTestId("time-entries-view-tabs")
+      .getByRole("radio", { name: "Kalender" })
+      .click();
     const oneCell = page.getByTestId(`calendar-cell-${dayOne}`);
     await expect(oneCell).not.toHaveAttribute("title", "2 Einträge");
     await oneCell.click();
@@ -313,7 +316,7 @@ test.describe("several entries on one day (Issue #70)", () => {
     await page.getByTestId("time-entry-modal-cancel").click();
 
     // The list has no Salon column and no per-day bar.
-    await page.getByTestId("time-entries-view-list").click();
+    await page.getByTestId("time-entries-view-tabs").getByRole("radio", { name: "Liste" }).click();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
     await expect(page.locator("tr[data-testid^='time-entry-row-']")).toHaveCount(1);
     await expect(page.getByRole("columnheader", { name: "Salon", exact: true })).toHaveCount(0);

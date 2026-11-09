@@ -74,8 +74,12 @@
   import PageHeader from "$components/ui/PageHeader.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import { downloadStundennachweis } from "$lib/me/stundennachweis";
-  import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-elk
-  import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-elk
+  import KpiStrip from "$components/ui/KpiStrip.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import { zeitenKpis, zeitenStatus } from "$lib/me/zeiten-kpis";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import {
@@ -281,22 +285,6 @@
   // 260611-ly6 — BS-Tage (Berufsschultage) merged into the list view client-side.
   // Self-scope is enforced server-side from req.user.employeeId.
   let bsAbsences: BsAbsence[] = $state([]);
-  let overtimeTotalHours: number | null = $state(null);
-  // Phase 97-01 (TRACER, SALDO-DISP-01/03) — additive split fields from GET /overtime/:id.
-  // undefined when the endpoint didn't return the split (older cached response / fail-safe
-  // branch) — the Gesamt-Saldo snippet below falls back to the pre-existing single-value
-  // SaldoAnzeige rendering (via overtimeTotalHours) in that case.
-  let overtimeConfirmedMinutes: number | undefined = $state(undefined);
-  let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
-  let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
-  // Issue #588 (P-14): how many calendar months the forecast spans; words the card caption.
-  let overtimeUnconfirmedMonths: number | null | undefined = $state(undefined);
-  let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
-  // Phase 100 (OTC-03) — additive tolerance fields from GET /overtime/:id, mirroring the
-  // Phase-97-01 split fields above: undefined on fetch failure / older cached response
-  // (via rawOvertime?.field below), which KontoSaldoCard renders as "unconfigured".
-  let overtimeNegativeLimitExceeded: boolean | undefined = $state(undefined);
-  let overtimeMaxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
 
@@ -506,7 +494,6 @@
         rawSchedule,
         rawHolidays,
         rawAbsences,
-        rawOvertime,
         rawEmployee,
         rawConfig,
         rawBsAbsences,
@@ -522,23 +509,6 @@
               .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${activeEmpId}`)
               .catch(() => [] as Absence[])
           : Promise.resolve([] as Absence[]),
-        activeEmpId
-          ? settled(
-              api.get<{
-                balanceHours: number;
-                // Phase 97-01 (TRACER, SALDO-DISP-01/03/07) — additive split fields.
-                confirmedMinutes?: number;
-                openMonthMinutes?: number | null;
-                hasClosedMonth?: boolean;
-                unconfirmedMonths?: number | null;
-                rosterIncomplete?: boolean;
-                // Phase 100 (OTC-03) — additive tolerance fields, already returned by the
-                // endpoint (overtime.ts:172-173); only the client-side type was missing them.
-                maxNegativeBalanceMinutes?: number | null;
-                isNegativeLimitExceeded?: boolean;
-              }>(`/overtime/${activeEmpId}`),
-            )
-          : Promise.resolve(SKIPPED),
         activeEmpId
           ? api
               .get<{
@@ -591,22 +561,11 @@
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
       bsAbsences = rawBsAbsences;
-      const overtimeValue = valueOr(rawOvertime, null);
-      overtimeTotalHours = overtimeValue ? Number(overtimeValue.balanceHours) : null;
-      // Phase 97-01 — split fields, undefined when the endpoint didn't return them (older
-      // cached response / fail-safe branch); the Gesamt-Saldo snippet falls back accordingly.
-      overtimeConfirmedMinutes = overtimeValue?.confirmedMinutes;
-      overtimeOpenMonthMinutes = overtimeValue?.openMonthMinutes;
-      overtimeHasClosedMonth = overtimeValue?.hasClosedMonth;
-      overtimeUnconfirmedMonths = overtimeValue?.unconfirmedMonths;
-      overtimeRosterIncomplete = overtimeValue?.rosterIncomplete;
-      // Phase 100 (OTC-03) — same undefined-on-failure contract as the siblings above.
-      overtimeNegativeLimitExceeded = overtimeValue?.isNegativeLimitExceeded;
-      overtimeMaxNegativeBalanceMinutes = overtimeValue?.maxNegativeBalanceMinutes;
       // Phase 116 (issue #119) — a 500 here used to become `schedule = null`, which monthMetrics
       // turns into `sollToDateMin: 0`, which SollIstBar prints as "noch keine Sollzeit in diesem
-      // Monat". Now it reaches MonatSaldoCard's error branch instead.
-      saldoFetchFailed = anyFailed(rawSchedule, rawOvertime);
+      // Monat". Now it reaches the summary's error state instead (Issue #851: the account total
+      // left this page for /ich/konto, so only the contract read decides it).
+      saldoFetchFailed = anyFailed(rawSchedule);
       // Phase 97-05 — now consumed by gesamtSaldoStat below. 97-01/97-03 built the "Restmonat
       // unverplant" badge and stored this signal but never wired it into the snippet; fixed
       // here so this page renders identically to Team-Zeiten (97-05 Task 3 wires the same
@@ -1938,6 +1897,20 @@
   let arbzgDayMap = $derived(
     arbzgEnabled ? dayChecksToArbzgMap(dayChecks) : new Map<string, DayWarning[]>(),
   );
+  // Issue #851: the Kennzahlen of the prototype. Breaks are the recorded ones of the counted
+  // entries (closed, valid, through yesterday - the same set as Ist); findings come from the
+  // server's day check (#80/#511), never from a browser rule.
+  let breakMinutesToDate = $derived(entriesToDate.reduce((s, e) => s + (e.breakMinutes ?? 0), 0));
+  let zeitenItems = $derived(
+    zeitenKpis({
+      month: monthMetrics,
+      locked: monthIsLocked || monthMetrics.closed,
+      breakMinutes: breakMinutesToDate,
+      findingDays: arbzgEnabled ? arbzgDayMap.size : null,
+      runningCount,
+    }),
+  );
+  let zeitenMonthStatus = $derived(zeitenStatus(monthIsLocked || monthMetrics.closed));
 
   // Legend is derived from what the displayed month actually contains, and split by the
   // three encoding channels — quick task 260820-1i7. Colour = Soll status (left edge),
@@ -2090,25 +2063,31 @@
 </PageHeader>
 
 <div data-testid="time-entries-page">
-  <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
-  <div class="view-tabs" data-testid="time-entries-view-tabs">
-    <button
-      class="view-tab"
-      class:view-tab--active={teView === "calendar"}
-      onclick={() => (teView = "calendar")}
-      data-testid="time-entries-view-calendar"
-    >
-      Kalender
-    </button>
-    <button
-      class="view-tab"
-      class:view-tab--active={teView === "list"}
-      onclick={() => (teView = "list")}
-      data-testid="time-entries-view-list"
-    >
-      Liste
-    </button>
-  </div>
+  <!-- Issue #851 (prototype „Zeiten“): one toolbar - the month (the page's only month navigation)
+       and the view switch. -->
+  <MonthBar
+    date={calMonth}
+    onPrev={() => gotoMonth(-1)}
+    onNext={() => gotoMonth(1)}
+    onToday={gotoToday}
+    onSelectMonth={gotoMonthYear}
+    testIdPrefix="calendar-month-header"
+  >
+    {#snippet extraActions()}
+      <div data-testid="time-entries-view-tabs">
+        <SegmentedControl
+          size="sm"
+          name="time-entries-view"
+          ariaLabel="Ansicht"
+          options={[
+            { value: "calendar", label: "Kalender" },
+            { value: "list", label: "Liste" },
+          ]}
+          bind:value={teView}
+        />
+      </div>
+    {/snippet}
+  </MonthBar>
 
   {#if error}
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
@@ -2129,48 +2108,27 @@
     </div>
   {/if}
 
-  <!-- ── Metrics row (design variant 1c "Fortschritt", quick 260820-elk) ───────
-       Month card (nav + progress bar) + quiet Konto card. The metrics have left the
-       month bar entirely — MonthBar is called WITHOUT `stats`/`statRenders` below, so it
-       renders as pure navigation (D-NAV): this stays the page's ONE AND ONLY month nav. -->
-  <div class="te-metrics" data-testid="time-entries-summary">
-    <MonatSaldoCard
-      sollToDateMin={monthMetrics.sollToDateMin}
-      istMin={monthMetrics.istMin}
-      saldoMin={monthMetrics.saldoMin}
-      noSollTarget={monthMetrics.noSollTarget}
-      sollLabel={monthMetrics.sollLabel}
-      extraNote={monthMetrics.extraNote}
-      workdaysSoFar={monthMetrics.workdaysSoFar}
-      {runningCount}
-      isLocked={monthIsLocked || monthMetrics.closed}
-      loading={saldoCardState === "loading"}
-      error={saldoCardState === "error"}
-      onRetry={loadAll}
-    >
-      {#snippet monthNav()}
-        <MonthBar
-          eyebrow="Buchungsmonat"
-          date={calMonth}
-          onPrev={() => gotoMonth(-1)}
-          onNext={() => gotoMonth(1)}
-          onToday={gotoToday}
-          onSelectMonth={gotoMonthYear}
-          testIdPrefix="calendar-month-header"
-        />
-      {/snippet}
-    </MonatSaldoCard>
-    <KontoSaldoCard
-      totalHours={overtimeTotalHours}
-      confirmedMinutes={overtimeConfirmedMinutes}
-      openMonthMinutes={overtimeOpenMonthMinutes}
-      hasClosedMonth={overtimeHasClosedMonth}
-      unconfirmedMonths={overtimeUnconfirmedMonths}
-      rosterIncomplete={overtimeRosterIncomplete}
-      isNegativeLimitExceeded={overtimeNegativeLimitExceeded}
-      maxNegativeBalanceMinutes={overtimeMaxNegativeBalanceMinutes}
-      {loading}
-    />
+  <!-- Issue #851 (prototype „Zeiten“): four Kennzahlen of the displayed month. The figures are the
+       page's MonthMetrics (#125, #433, #495) - zeitenKpis() only words them; the account total lives
+       on /ich/konto. -->
+  <div data-testid="time-entries-summary">
+    {#if saldoCardState === "loading"}
+      <Skeleton shape="block" height="96px" />
+    {:else if saldoCardState === "error"}
+      <ErrorState message="Werte konnten nicht geladen werden." onRetry={loadAll} />
+    {:else}
+      <KpiStrip ariaLabel="Dein Monat in Zahlen" items={zeitenItems}>
+        {#snippet extra()}
+          <div class="te-status" data-testid="zeiten-kpi-status">
+            <span class="te-status-label">Status</span>
+            <span class="te-status-value"
+              ><Chip tone={zeitenMonthStatus.tone}>{zeitenMonthStatus.label}</Chip></span
+            >
+            <span class="te-status-note">{zeitenMonthStatus.explanation}</span>
+          </div>
+        {/snippet}
+      </KpiStrip>
+    {/if}
   </div>
 
   <!-- Phase 112 — § 4 ArbZG explanation + the mobile route into the confirm modal. Rendered
@@ -3065,6 +3023,22 @@
 <!-- /data-testid="time-entries-page" -->
 
 <style>
+  .te-status {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+  }
+  .te-status-label {
+    font-size: var(--fs-sm, 12.5px);
+    color: var(--text-2);
+  }
+  .te-status-value {
+    margin-top: var(--s-1);
+  }
+  .te-status-note {
+    font-size: var(--fs-sm, 12.5px);
+    color: var(--text-3);
+  }
   /* ── Phase 93 (BREAK-07) — break-confirmation status + actions ──────────── */
   .break-confirm-section {
     display: flex;
