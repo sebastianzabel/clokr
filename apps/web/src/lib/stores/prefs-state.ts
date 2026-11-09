@@ -1,7 +1,7 @@
 import { writable } from "svelte/store";
 
 /**
- * Gates whether theme/mode/density store subscribers should sync writes back to the API.
+ * Gates whether theme/mode store subscribers should sync writes back to the API.
  *
  * Lifecycle:
  *  - Starts as `false` (initial store subscription fires once during page load — we don't

@@ -1,11 +1,10 @@
 import { api } from "$api/client";
+import type { Theme } from "$stores/theme";
 
 /** Server shape — matches apps/api/src/contexts/platform/api/me.ts merged defaults. */
 export interface UiPreferences {
-  skin: "editorial" | "modern";
-  theme: "pflaume" | "nacht" | "wald" | "schiefer";
+  theme: Theme;
   mode: "light" | "dark";
-  density: "comfortable" | "compact";
   language: "de" | "en";
 }
 

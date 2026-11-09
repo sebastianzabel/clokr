@@ -1,75 +1,32 @@
 <script lang="ts">
   import { theme, themes, type Theme } from "$stores/theme";
   import { mode, type Mode } from "$stores/mode";
-  import { skin, type Skin } from "$stores/skin";
   import { applyPreferences } from "$stores/apply-preferences";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import LanguageToggle from "$components/ui/LanguageToggle.svelte";
-  import DensityToggle from "$components/ui/DensityToggle.svelte";
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
 
-  /** Modern preset entry: a triple of skin × mode × theme applied together. */
-  interface ModernPreset {
-    id: "mod_dark" | "mod_lite";
-    name: string;
-    skin: Skin;
-    mode: Mode;
-    theme: Theme;
-    primary: string; // gradient mid stop
-    light: string; // gradient end (top-left)
-    dark: string; // gradient start (bottom-right) — used for preview surface
-  }
-
-  const modernPresets: ModernPreset[] = [
-    {
-      id: "mod_dark",
-      name: "Modern Dark",
-      skin: "modern",
-      mode: "dark",
-      theme: "pflaume",
-      primary: "#B879F0",
-      light: "#D9A5FF",
-      dark: "#050507",
-    },
-    {
-      id: "mod_lite",
-      name: "Modern Bright",
-      skin: "modern",
-      mode: "light",
-      theme: "pflaume",
-      primary: "#B879F0",
-      light: "#D9A5FF",
-      dark: "#F7F7F8",
-    },
+  // #842 D-842-22: three themes, each previewed in light and dark. The previews are elements that
+  // carry data-theme + data-mode themselves, so the real token blocks of tokens.css resolve on
+  // them; the page holds no colour of its own.
+  const previewModes: { id: Mode; label: string }[] = [
+    { id: "light", label: "Hell" },
+    { id: "dark", label: "Dunkel" },
   ];
 
-  /** Editorial theme click: switch skin back to editorial + set theme, persisted with one PUT. */
+  const modeOptions = [
+    { value: "light", label: "Hell" },
+    { value: "dark", label: "Dunkel" },
+  ];
+
+  /** Theme click: one PUT through applyPreferences (Issue #392 rationale). */
   function selectTheme(id: Theme) {
-    applyPreferences({ skin: "editorial", theme: id });
+    applyPreferences({ theme: id });
   }
 
-  function selectMode(m: Mode) {
-    mode.set(m);
-  }
-
-  /** Modern preset click: apply skin + mode + theme together, persisted with one PUT
-   *  (Issue #392 — three separate store writes used to fire three concurrent partial PUTs). */
-  function selectModern(preset: ModernPreset) {
-    // Stores still own the DOM attribute writes — no manual setAttribute needed,
-    // each subscribe() in skin.ts / mode.ts / theme.ts already does that.
-    applyPreferences({ skin: preset.skin, mode: preset.mode, theme: preset.theme });
-  }
-
-  // Active detection — editorial cards only match when skin is editorial.
-  // Modern cards check the full triple (skin + mode + theme).
-  // Helper functions are called from the template; they read $store values
-  // which Svelte tracks at the call site, so re-renders fire on any change.
-  function isEditorialActive(id: Theme): boolean {
-    return $skin === "editorial" && $theme === id;
-  }
-
-  function isModernActive(p: ModernPreset): boolean {
-    return $skin === p.skin && $mode === p.mode && $theme === p.theme;
+  function selectMode(value: string) {
+    mode.set(value === "dark" ? "dark" : "light");
   }
 </script>
 
@@ -80,112 +37,59 @@
 <SectionStack
   eyebrow="System"
   title="Branding & Themes"
-  sub="Erscheinungsbild für alle Mitarbeitenden"
+  sub="Dein Erscheinungsbild: Es wird für dein Konto gespeichert und gilt auf all deinen Geräten."
   animate
 >
-  <!-- Theme picker (editorial) -->
-  <Section title="Theme" sub="Markenfarbe und Charakter">
-    <div class="theme-grid grid grid-3" role="group" aria-label="Theme auswählen">
+  <Section title="Theme" sub="Wähle die Farbwelt, jeweils in Hell und Dunkel gezeigt.">
+    <div class="theme-grid" role="group" aria-label="Theme auswählen">
       {#each themes as t (t.id)}
+        {@const active = $theme === t.id}
         <button
           type="button"
-          class="theme-card theme-pick-{t.id}"
-          class:active={isEditorialActive(t.id)}
-          aria-pressed={isEditorialActive(t.id)}
+          class="theme-card"
+          class:active
+          aria-pressed={active}
           onclick={() => selectTheme(t.id)}
         >
-          <div class="theme-hero">
-            {#if isEditorialActive(t.id)}
-              <span class="chip-brand">Aktiv</span>
-            {/if}
+          <div class="theme-previews">
+            {#each previewModes as m (m.id)}
+              <div class="theme-preview" data-theme={t.id} data-mode={m.id}>
+                <div class="tp-bar"></div>
+                <div class="tp-card">
+                  <span class="tp-brand"></span>
+                  <span class="tp-text"></span>
+                </div>
+                <span class="tp-caption">{m.label}</span>
+              </div>
+            {/each}
           </div>
           <div class="theme-body">
-            <div class="theme-eyebrow">Theme</div>
-            <div class="theme-label">{t.label}</div>
-            <div class="swatch-row">
-              <span class="swatch swatch-dark" title="Dark"></span>
-              <span class="swatch swatch-brand" title="Brand"></span>
-              <span class="swatch swatch-light" title="Light"></span>
-            </div>
+            <span class="theme-label">{t.label}</span>
+            {#if active}
+              <span class="chip-brand">Aktiv</span>
+            {/if}
           </div>
         </button>
       {/each}
     </div>
   </Section>
 
-  <!-- Modern presets — skin × mode × theme combos -->
-  <Section
-    title="Modern Skin"
-    sub="Glasmorphismus mit Inter Tight und Neon-Akzenten — überschreibt Theme + Modus."
-  >
-    <div class="theme-grid grid grid-3" role="group" aria-label="Modern Preset auswählen">
-      {#each modernPresets as p (p.id)}
-        <button
-          type="button"
-          class="theme-card theme-pick-{p.id}"
-          class:active={isModernActive(p)}
-          aria-pressed={isModernActive(p)}
-          onclick={() => selectModern(p)}
-        >
-          <div
-            class="theme-hero modern-hero"
-            style:background="linear-gradient(135deg, {p.light}, {p.primary} 55%, {p.dark})"
-          >
-            {#if isModernActive(p)}
-              <span class="chip-brand">Aktiv</span>
-            {/if}
-          </div>
-          <div class="theme-body">
-            <div class="theme-eyebrow">Modern · {p.mode === "dark" ? "Dunkel" : "Hell"}</div>
-            <div class="theme-label">{p.name}</div>
-            <div class="swatch-row">
-              <span class="swatch" style:background={p.dark} title="Surface"></span>
-              <span class="swatch" style:background={p.primary} title="Brand"></span>
-              <span class="swatch" style:background={p.light} title="Accent"></span>
-            </div>
-          </div>
-        </button>
-      {/each}
-    </div>
+  <Section title="Modus" sub="Hell oder dunkel, unabhängig vom Theme.">
+    <SegmentedControl
+      options={modeOptions}
+      value={$mode}
+      name="mode"
+      ariaLabel="Modus auswählen"
+      onchange={selectMode}
+    />
   </Section>
 
-  <!-- Mode picker -->
-  <Section title="Modus" sub="Hell oder dunkel — unabhängig vom Theme">
-    <div class="seg" role="group" aria-label="Modus auswählen">
-      <button
-        type="button"
-        class="seg-btn"
-        class:active={$mode === "light"}
-        aria-pressed={$mode === "light"}
-        onclick={() => selectMode("light")}
-      >
-        Hell
-      </button>
-      <button
-        type="button"
-        class="seg-btn"
-        class:active={$mode === "dark"}
-        aria-pressed={$mode === "dark"}
-        onclick={() => selectMode("dark")}
-      >
-        Dunkel
-      </button>
-    </div>
-  </Section>
-
-  <!-- Density picker -->
-  <Section title="Dichte" sub="Padding und Zeilenhöhe">
-    <DensityToggle />
-  </Section>
-
-  <!-- Language picker (stub) -->
   <Section title="Sprache" sub="UI-Sprache (Englisch folgt in v1.6)">
     <LanguageToggle variant="segmented" />
   </Section>
 </SectionStack>
 
 <style>
-  /* Theme picker */
   .theme-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -197,13 +101,14 @@
     }
   }
   .theme-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: 0;
-    overflow: hidden;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    padding: var(--s-3);
     cursor: pointer;
     text-align: left;
+    color: var(--text);
+    font-family: var(--font-ui);
     transition:
       transform 160ms var(--ease-out),
       border-color 160ms var(--ease-out);
@@ -212,130 +117,81 @@
     transform: translateY(-1px);
   }
   .theme-card:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
   .theme-card.active {
-    border-color: var(--brand-light);
-  }
-  .theme-hero {
-    height: 88px;
-    position: relative;
+    border-color: var(--brand);
   }
 
-  /* Theme-specific gradients (hero strip) and swatches.
-     Hex values mirror $stores/theme.ts; encoded as classes so the page
-     contains zero inline color/background styles. */
-  .theme-pick-pflaume .theme-hero {
-    background: linear-gradient(135deg, #5c2858, #a85ca3);
-  }
-  .theme-pick-pflaume .swatch-dark {
-    background: #5c2858;
-  }
-  .theme-pick-pflaume .swatch-brand {
-    background: #80377b;
-  }
-  .theme-pick-pflaume .swatch-light {
-    background: #a85ca3;
+  .theme-previews {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s-2);
   }
 
-  .theme-pick-nacht .theme-hero {
-    background: linear-gradient(135deg, #232e78, #6b7bd8);
-  }
-  .theme-pick-nacht .swatch-dark {
-    background: #232e78;
-  }
-  .theme-pick-nacht .swatch-brand {
-    background: #3d4dad;
-  }
-  .theme-pick-nacht .swatch-light {
-    background: #6b7bd8;
-  }
-
-  .theme-pick-wald .theme-hero {
-    background: linear-gradient(135deg, #1b4332, #52b788);
-  }
-  .theme-pick-wald .swatch-dark {
-    background: #1b4332;
-  }
-  .theme-pick-wald .swatch-brand {
-    background: #2d6a4f;
-  }
-  .theme-pick-wald .swatch-light {
-    background: #52b788;
-  }
-
-  .chip-brand {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    padding: 3px 9px;
-    border-radius: var(--r-pill);
-    background: var(--bg-card);
-    color: var(--brand);
-    font-family: var(--font-sans);
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .theme-body {
-    padding: var(--s-4);
-  }
-  .theme-eyebrow {
-    font-family: var(--font-serif);
-    font-style: italic;
-    font-size: 12px;
-    color: var(--brand-light);
-  }
-  .theme-label {
-    font-family: var(--font-serif);
-    font-size: 24px;
-    font-weight: 400;
+  /* Each preview resolves the real token blocks through its own data-theme + data-mode. */
+  .theme-preview {
+    background: var(--bg);
     color: var(--text);
-    margin: 2px 0 var(--s-3);
-  }
-  .swatch-row {
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    padding: var(--s-2);
     display: flex;
-    gap: 6px;
+    flex-direction: column;
+    gap: var(--s-2);
   }
-  .swatch {
+  .tp-bar {
+    height: 6px;
+    width: 40%;
+    border-radius: var(--r-pill);
+    background: var(--text-3);
+  }
+  .tp-card {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    padding: var(--s-2);
+  }
+  .tp-brand {
+    flex: none;
     width: 14px;
     height: 14px;
     border-radius: var(--r-pill);
-    border: 1px solid var(--border);
+    background: var(--brand);
+  }
+  .tp-text {
+    flex: 1;
+    height: 6px;
+    border-radius: var(--r-pill);
+    background: var(--text-3);
+  }
+  .tp-caption {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
   }
 
-  /* Segmented control (mode / density / language) */
-  .seg {
-    display: inline-flex;
-    padding: 2px;
-    gap: 2px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-pill);
+  .theme-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--s-3) var(--s-1) var(--s-1);
   }
-  .seg-btn {
-    padding: 6px 14px;
-    border: 0;
-    background: transparent;
-    color: var(--text-muted);
-    border-radius: var(--r-pill);
-    font-family: var(--font-sans);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition:
-      background 120ms var(--ease-out),
-      color 120ms var(--ease-out);
-  }
-  .seg-btn:hover {
+  .theme-label {
+    font-size: 16px;
+    font-weight: 600;
     color: var(--text);
   }
-  .seg-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
-    outline-offset: 2px;
-  }
-  .seg-btn.active {
-    background: var(--bg-card);
-    color: var(--text);
-    box-shadow: var(--shadow-sm);
+  .chip-brand {
+    padding: 3px 9px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-size: 11px;
+    font-weight: 600;
   }
 </style>

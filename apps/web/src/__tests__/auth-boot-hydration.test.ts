@@ -55,10 +55,9 @@ function memoryStorage(): Storage {
 }
 
 const VALID_PREFS = {
+  // #842 D-842-16: skin and density no longer exist in the preference shape.
   theme: "pflaume",
   mode: "light",
-  density: "comfortable",
-  skin: "editorial",
   language: "de",
 };
 
@@ -208,6 +207,28 @@ describe("Phase 412 (#412) — boot-time preferences hydration (AK-412-01/04)", 
     });
     await new Promise((r) => setTimeout(r, 50));
     expect(loggerMock.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("#842 D-842-17 — a retired server theme id hydrates as its successor", () => {
+  it("a server theme 'wald' hydrates the theme store as petrol", async () => {
+    seedSession();
+    fetchMock.mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("/me/preferences")) {
+        return jsonResponse({ ...VALID_PREFS, theme: "wald" });
+      }
+      return errorResponse(404);
+    });
+
+    vi.resetModules();
+    await import("$stores/auth");
+    const { prefsHydrated } = await import("$stores/prefs-state");
+    const { theme } = await import("$stores/theme");
+
+    await vi.waitFor(() => {
+      expect(get(prefsHydrated)).toBe(true);
+    });
+    expect(get(theme)).toBe("petrol");
   });
 });
 
