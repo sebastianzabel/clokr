@@ -201,14 +201,6 @@
     line-height: 1.5;
   }
 
-  .pairing-checklist code {
-    font-family: var(--font-mono, monospace);
-    font-size: 0.875em;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
-    padding: 0 0.25rem;
-  }
-
   /* Print: only the sheet (QR, URL, instruction) ends up on paper. */
   @media print {
     :global(body *) {

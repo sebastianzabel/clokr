@@ -9,6 +9,9 @@ pnpm --filter @clokr/web lint:ui-classes || exit 1
 # style: directive, auth pages whitelisted in lint-ui.mjs).
 pnpm --filter @clokr/web lint:ui --staged || exit 1
 
+# One-shot lint:ui-terms (Issue #574): no forbidden term in shown web-app text (docs/glossar.md).
+pnpm --filter @clokr/web lint:ui-terms || exit 1
+
 # One-shot lint-guard-vacuity (Phase 235-09, Issues #235/#240/#245). Full-repo, not staged-only —
 # lint-staged's *.{ts,js,svelte} glob does not match .mjs at all, and four of the guards this gate
 # proves are .mjs files. ~1.8s measured on this machine for the tool alone (`time pnpm --filter

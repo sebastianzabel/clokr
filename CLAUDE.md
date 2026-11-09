@@ -947,7 +947,8 @@ re-enabled and nothing is rethrown, so a refusal is no unhandled rejection and n
 `process.on("unhandledRejection")` allow-list in a test. `ReasonDialog` still throws to its
 `ConfirmDialog` to keep its inline error.
 
-Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern`. Note
+Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern` +
+`lint:ui-terms` (forbidden terms in shown text, `docs/glossar.md`, Issue #574). Note
 that `lint:ui-classes` only scans `lib/components/ui/` and `lib/components/layout/` — components
 elsewhere (`lib/components/saldo/`, `calendar/`, `breaks/`, …) are outside that gate and need their
 own mounted test instead.

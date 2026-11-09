@@ -9,6 +9,7 @@ import {
   ALLOWED,
   FORBIDDEN_TERMS,
   listScannedFiles,
+  scan,
   scanSource,
 } from "../../scripts/lint-ui-terms.mjs";
 
@@ -140,5 +141,9 @@ describe("lint-ui-terms: fail closed", () => {
     expect(files.length).toBeGreaterThanOrEqual(300);
     expect(files.some((f) => f.endsWith("src/routes/(app)/dashboard/+page.svelte"))).toBe(true);
     expect(files.some((f) => f.endsWith("src/lib/nav/app-nav.ts"))).toBe(true);
+  });
+  it("finds no forbidden term in the real tree (AC-574-2)", () => {
+    const findings = (scan() as Finding[]).map((f) => `${f.file}:${f.line} [${f.term}] ${f.text}`);
+    expect(findings).toEqual([]);
   });
 });
