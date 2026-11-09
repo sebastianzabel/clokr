@@ -2977,7 +2977,7 @@
 
   .sys-note {
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     line-height: 1.55;
     margin: 0;
   }
@@ -2986,13 +2986,13 @@
     text-decoration: underline;
   }
   .sys-note a:hover {
-    color: var(--brand-dark);
+    color: var(--brand-hover);
   }
 
   .sys-subtitle {
     font-size: 0.875rem;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin: 1rem 0 0.5rem;
@@ -3046,7 +3046,7 @@
     position: absolute;
     cursor: pointer;
     inset: 0;
-    background-color: var(--border);
+    background-color: var(--line);
     border-radius: 26px;
     transition: background-color 0.2s;
   }
@@ -3057,10 +3057,10 @@
     width: 20px;
     left: 3px;
     bottom: 3px;
-    background-color: var(--bg-card);
+    background-color: var(--card);
     border-radius: 50%;
     transition: transform 0.2s;
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow);
   }
   .switch input:checked + .switch-slider {
     background-color: var(--brand);
@@ -3072,10 +3072,10 @@
   .smtp-test-section {
     margin-top: 1.25rem;
     padding-top: 1.25rem;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
   .smtp-test-success {
-    color: var(--good);
+    color: var(--ok);
     margin-top: 0.5rem;
     font-size: 0.875rem;
   }
@@ -3113,10 +3113,10 @@
     display: inline-block;
     font-size: 0.7rem;
     font-weight: 600;
-    background: var(--good-soft);
-    color: var(--good);
+    background: var(--ok-soft);
+    color: var(--ok);
     padding: 0.1rem 0.4rem;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     margin-left: 0.5rem;
     vertical-align: middle;
   }
@@ -3137,7 +3137,7 @@
   }
 
   .saved-hint {
-    color: var(--good);
+    color: var(--ok);
     font-weight: 500;
     font-size: 0.9375rem;
   }
@@ -3148,7 +3148,7 @@
 
   /* Phase 49.5 — Standard-Arbeitstage UI */
   .workdays-section {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     margin-top: 1rem;
     padding-top: 1rem;
   }
@@ -3164,10 +3164,10 @@
     justify-content: center;
     min-width: 48px;
     padding: 0.4rem 0.65rem;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--bg-card);
-    color: var(--text-muted);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
+    color: var(--text-2);
     font-weight: 600;
     font-size: 0.875rem;
     cursor: pointer;
@@ -3215,15 +3215,15 @@
       background 0.15s,
       color 0.15s,
       border-color 0.15s;
-    border: 1.5px solid var(--border);
+    border: 1.5px solid var(--line);
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .wd-chip--active {
     background: var(--brand);
     border-color: var(--brand);
-    color: #fff;
+    color: var(--brand-ink);
   }
 
   .wd-chip:hover:not(.wd-chip--active) {
@@ -3261,7 +3261,7 @@
     justify-content: space-between;
     gap: 1.5rem;
     padding: 0.875rem 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .opt-row:last-child {
     border-bottom: none;
@@ -3286,7 +3286,7 @@
   }
   .opt-hint {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0;
   }
   .opt-control {
@@ -3304,7 +3304,7 @@
   }
   .opt-unit {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     min-width: 36px;
   }
 
@@ -3321,11 +3321,8 @@
 
   /* ── Schichtprüfung gegen Öffnungszeiten (Phase 58) ──────── */
   .cfg-muted {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13.5px;
-  }
-  .cfg-msg {
-    font-style: italic;
   }
   .cfg-section-title {
     margin: 24px 0 8px;
@@ -3344,9 +3341,9 @@
     align-items: flex-start;
     gap: 10px;
     padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
     cursor: pointer;
     font-size: 0.875rem;
     color: var(--text);
@@ -3381,15 +3378,15 @@
   .key-code {
     flex: 1;
     padding: 0.5rem;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     word-break: break-all;
     font-size: 0.8125rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     color: var(--text);
   }
   .inline-code {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 0.8125rem;
     color: var(--text);
   }
@@ -3444,18 +3441,18 @@
 
   .bs-slot-hint {
     font-size: 0.8125rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    color: var(--text-2);
+    font-family: var(--font-ui);
   }
 
   .bs-clear-btn {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     padding: 0.25rem 0.625rem;
     min-height: unset;
     height: 2rem;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     background: transparent;
     cursor: pointer;
     transition:

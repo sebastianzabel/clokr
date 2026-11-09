@@ -1625,12 +1625,12 @@
 
   /* ── Per-MA callout pointer ─────────────────────────────────────────────── */
   .vac-callout {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 10px 16px;
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .vac-callout a {
@@ -1642,8 +1642,8 @@
   /* ── Loading skeleton ───────────────────────────────────────────────────── */
   .vac-skeleton {
     height: 80px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     animation: pulse 1.5s ease-in-out infinite;
   }
 
@@ -1667,12 +1667,12 @@
 
   /* ── Inner section headers (nested within a Section card) ───────────────── */
   .section-inner-title {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
     margin-bottom: 12px;
   }
 
@@ -1683,13 +1683,13 @@
 
   .settings-divider {
     border: none;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     margin: 0;
   }
 
   .section-desc {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: -4px 0 16px;
   }
 
@@ -1732,17 +1732,17 @@
   }
 
   .total-col {
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--line);
     padding-left: 0.75rem;
     margin-left: 0.25rem;
   }
 
   .weekly-total {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 22px;
     font-weight: 400;
-    color: var(--brand-light);
+    color: var(--brand);
     line-height: 2.1;
   }
 
@@ -1759,13 +1759,13 @@
 
   .input-suffix {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     white-space: nowrap;
   }
 
   .form-hint {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: 0.25rem;
   }
 
@@ -1832,7 +1832,7 @@
     position: absolute;
     cursor: pointer;
     inset: 0;
-    background-color: var(--border-strong);
+    background-color: var(--line-2);
     border-radius: 26px;
     transition: background-color 0.2s var(--ease-out);
   }
@@ -1844,10 +1844,10 @@
     width: 20px;
     left: 3px;
     bottom: 3px;
-    background-color: var(--bg-card);
+    background-color: var(--card);
     border-radius: 50%;
     transition: transform 0.2s var(--ease-out);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow);
   }
 
   .switch input:checked + .switch-slider {
@@ -1880,7 +1880,7 @@
   }
 
   .saved-hint {
-    color: var(--good);
+    color: var(--ok);
     font-weight: 500;
     font-size: 0.9375rem;
   }
@@ -1919,19 +1919,19 @@
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
-    border-bottom: 2px solid var(--border);
+    color: var(--text-2);
+    border-bottom: 2px solid var(--line);
   }
   .sl-table td {
     padding: 0.75rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     vertical-align: middle;
   }
   .sl-row {
     cursor: pointer;
   }
   .sl-row:hover td {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .sl-inactive td {
     opacity: 0.5;
@@ -1947,8 +1947,8 @@
     font-weight: 500;
   }
   .sl-badge-statutory {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
+    background: var(--sunk);
+    color: var(--text-2);
   }
   .sl-badge-custom {
     background: var(--brand-soft);
@@ -1960,13 +1960,13 @@
     height: 8px;
     border-radius: 50%;
     margin-right: 0.25rem;
-    background: var(--text-faint);
+    background: var(--text-3);
   }
   .sl-status-dot.active {
-    background: var(--good);
+    background: var(--ok);
   }
   .sl-status-dot.deactivated {
-    background: var(--text-faint);
+    background: var(--text-3);
   }
   .sl-actions-cell {
     text-align: right;
@@ -1974,7 +1974,7 @@
   }
   .sl-skel {
     height: 200px;
-    border-radius: var(--r-md);
+    border-radius: var(--r-control);
   }
 
   /* ── Save bar (sticky bottom, visible across config tabs) ───────────────── */
@@ -1982,12 +1982,12 @@
     position: sticky;
     bottom: 0;
     z-index: 5;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
     padding: 16px 24px;
     margin-top: var(--s-4);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow);
     display: flex;
     flex-direction: column;
     gap: 8px;

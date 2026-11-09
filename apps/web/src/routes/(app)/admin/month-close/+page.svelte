@@ -895,7 +895,7 @@
                                           >
                                         {/if}
                                       </td>
-                                      <td class="font-mono">{emp.employeeNumber}</td>
+                                      <td>{emp.employeeNumber}</td>
                                       <td>
                                         {#if emp.status === "closed"}
                                           <span class="chip chip-good">
@@ -1050,7 +1050,7 @@
       <div>
         <b>Diese Aktion ist nicht rückgängig.</b>
         <p>
-          Alle Zeiteinträge dieses Monats werden gesperrt (<span class="font-mono"
+          Alle Zeiteinträge dieses Monats werden gesperrt (<span class="code-text"
             >isLocked=true</span
           >). Korrekturen sind danach nur noch durch Storno-Buchungen möglich (Audit-Proof /
           Revisionssicherheit).
@@ -1145,20 +1145,20 @@
   }
 
   .control-label {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
 
   .form-select {
     padding: 0.5rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--bg-card);
-    font-family: var(--font-sans);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
+    font-family: var(--font-ui);
     font-size: 0.875rem;
     color: var(--text);
     transition:
@@ -1174,7 +1174,7 @@
   /* ─── Progress ──────────────────────────────────────── */
   .progress-bar-track {
     height: 0.5rem;
-    background: var(--bg-subtle);
+    background: var(--sunk);
     border-radius: var(--r-pill);
     overflow: hidden;
   }
@@ -1203,25 +1203,25 @@
   .table {
     width: 100%;
     border-collapse: collapse;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 0.875rem;
   }
 
   .table th {
     text-align: left;
     padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-weight: 600;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
-    background: var(--bg-subtle);
+    color: var(--text-2);
+    background: var(--sunk);
   }
 
   .table td {
     padding: 0.625rem 1rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     vertical-align: middle;
   }
 
@@ -1258,7 +1258,7 @@
     display: inline-block;
     width: 1rem;
     font-size: 0.65rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .text-right {
@@ -1269,13 +1269,13 @@
     font-size: 0.8rem;
   }
 
-  .font-mono {
-    font-family: var(--font-mono, monospace);
+  .code-text {
+    font-family: var(--font-code);
     font-size: 0.8rem;
   }
 
   .text-muted {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.85rem;
   }
 
@@ -1286,14 +1286,14 @@
 
   .reason-text {
     font-size: 0.8rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* ─── Detail row ────────────────────────────────────── */
   .detail-row td {
     padding: 0;
-    background: var(--bg-subtle);
-    border-bottom: 1px solid var(--border);
+    background: var(--sunk);
+    border-bottom: 1px solid var(--line);
   }
 
   .detail-callout-wrapper {
@@ -1305,7 +1305,7 @@
     padding: 1rem;
     text-align: center;
     font-size: 0.85rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .detail-table-wrapper {
@@ -1315,23 +1315,23 @@
   .detail-table {
     width: 100%;
     border-collapse: collapse;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 0.8rem;
   }
 
   .detail-table th {
     text-align: left;
     padding: 0.375rem 0.5rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-weight: 600;
     font-size: 0.7rem;
     text-transform: uppercase;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .detail-table td {
     padding: 0.375rem 0.5rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     vertical-align: middle;
   }
 
@@ -1355,7 +1355,7 @@
 
   .dates-count {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-left: 0.25rem;
   }
 
@@ -1388,9 +1388,9 @@
   /* ─── Modal body helper (Modal primitive owns backdrop/card/header/footer) ────── */
   .modal-note {
     margin: 0;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     line-height: 1.5;
   }
 
@@ -1403,10 +1403,10 @@
   }
 
   .unlock-reason-label {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 0.8rem;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
