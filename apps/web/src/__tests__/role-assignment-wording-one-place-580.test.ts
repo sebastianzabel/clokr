@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  NO_ASSIGNMENT_LABEL,
   SCOPE_TENANT_LABEL,
   UNKNOWN_PERSON_LABEL,
   UNKNOWN_SALON_LABEL,
@@ -40,13 +41,19 @@ const FILES = walk(WEB_SRC).map((path) => ({
 }));
 
 /** The labels that may live only in the home module (plans 02/03 add more). */
-const ONE_PLACE_LABELS = [SCOPE_TENANT_LABEL, UNKNOWN_SALON_LABEL, UNKNOWN_PERSON_LABEL];
+const ONE_PLACE_LABELS = [
+  SCOPE_TENANT_LABEL,
+  UNKNOWN_SALON_LABEL,
+  UNKNOWN_PERSON_LABEL,
+  NO_ASSIGNMENT_LABEL,
+];
 
 /** Surfaces that show role assignments and must take the wording from the home module. */
 const IMPORTERS = [
   "lib/components/admin/roles/AssignmentsTab.svelte",
   "lib/components/admin/roles/AssignmentDialog.svelte",
   "lib/components/admin/roles/PersonRoleAssignments.svelte",
+  "routes/(app)/admin/employees/+page.svelte",
 ];
 
 describe("Issue #580 — the role-assignment wording lives in one place", () => {

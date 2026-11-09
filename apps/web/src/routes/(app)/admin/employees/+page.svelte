@@ -6,6 +6,18 @@
   import { api } from "$api/client";
   import { salonContext } from "$stores/salon-context";
   import {
+    listAssignablePeople,
+    listRoleAssignments,
+    type AssignablePerson,
+    type RoleAssignment,
+  } from "$lib/api/roles";
+  import {
+    NO_ASSIGNMENT_LABEL,
+    assignedRoleNames,
+    assignmentLabel,
+    groupAssignmentsByUser,
+  } from "$lib/roles/assignment-label";
+  import {
     isSalonFilterRejected,
     salonPageFilter,
     salonScopeLabel,
@@ -221,10 +233,17 @@
     return emp.firstName === "Gelöscht" && emp.lastName.startsWith("GELÖSCHT-");
   }
 
-  // Assigned role names per user id (Issue #538), loaded from the role-assignment resource only
-  // for a caller who may manage role assignments; null = not offered (chip, filter and count are
-  // hidden). GET /employees itself carries no role data.
-  let roleNamesByUser = $state<Record<string, string[]> | null>(null);
+  // The stored role assignments per user id, with their scope (Issue #538, #580 D-580-05), loaded
+  // only for a caller who may manage role assignments; null = not offered (column, filter and count
+  // are hidden). GET /employees itself carries no role data. Labels come from the one formatter.
+  let assignmentsByUser = $state<Record<string, RoleAssignment[]> | null>(null);
+  let assignmentPeople = $state<AssignablePerson[]>([]);
+  // Names of a person scope come from the whole-tenant people list, never from the filtered list.
+  let assignmentCtx = $derived({
+    salons: $salonContext.salons,
+    salonsLoaded: $salonContext.loaded,
+    people: assignmentPeople,
+  });
 
   // Filters
   let filterSearch = $state("");
@@ -279,7 +298,7 @@
   let statTotal = $derived(employees.filter((e) => !isAnonymized(e)).length);
   let statActive = $derived(employees.filter((e) => e.user.isActive && !isAnonymized(e)).length);
   // Role chip, filter and count exist only when the names were loaded (Issue #538).
-  let showRoles = $derived(roleNamesByUser !== null);
+  let showRoles = $derived(assignmentsByUser !== null);
   let roleOptions = $derived(
     [...new Set(employees.flatMap((e) => (isAnonymized(e) ? [] : (roleNamesOf(e) ?? []))))].sort(
       (a, b) => a.localeCompare(b, "de"),
@@ -327,22 +346,28 @@
   });
 
   function roleNamesOf(emp: Employee): string[] | null {
-    return roleNamesByUser === null ? null : (roleNamesByUser[emp.userId] ?? []);
+    return assignmentsByUser === null ? null : assignedRoleNames(assignmentsOf(emp));
   }
 
-  async function loadRoleNames() {
+  function assignmentsOf(emp: Employee): RoleAssignment[] {
+    return assignmentsByUser?.[emp.userId] ?? [];
+  }
+
+  async function loadRoleAssignments() {
     if (!canAssignRoles) {
-      roleNamesByUser = null;
+      assignmentsByUser = null;
       return;
     }
     try {
-      const res = await api.get<{ roleNames: Record<string, string[]> }>(
-        "/role-assignments/role-names",
-      );
-      roleNamesByUser = res.roleNames;
+      const [assignments, people] = await Promise.all([
+        listRoleAssignments(),
+        listAssignablePeople(),
+      ]);
+      assignmentPeople = people;
+      assignmentsByUser = groupAssignmentsByUser(assignments);
     } catch {
-      // The chip is decoration; a failed read hides it instead of blocking the list.
-      roleNamesByUser = null;
+      // The column is decoration; a failed read hides it instead of blocking the list.
+      assignmentsByUser = null;
     }
   }
 
@@ -355,7 +380,7 @@
       // "Anonymisierte anzeigen" toggle then filters them client-side (isAnonymized).
       const [list] = await Promise.all([
         api.get<Employee[]>(withSalonId("/employees?includeAnonymized=true", pageSalonId)),
-        loadRoleNames(),
+        loadRoleAssignments(),
       ]);
       if (generation !== listGeneration) return;
       employees = list;
@@ -707,10 +732,16 @@
                     <td class="col-email">{emp.user.email}</td>
                     {#if showRoles}
                       <td>
-                        {#if (roleNamesOf(emp) ?? []).length > 0}
-                          <span class="chip chip-brand">
-                            <span class="dot"></span>{(roleNamesOf(emp) ?? []).join(", ")}
+                        {#if assignmentsOf(emp).length > 0}
+                          <span class="role-chips">
+                            {#each assignmentsOf(emp) as assignment (assignment.id)}
+                              <span class="chip chip-brand"
+                                >{assignmentLabel(assignment, assignmentCtx)}</span
+                              >
+                            {/each}
                           </span>
+                        {:else}
+                          <span class="text-muted">{NO_ASSIGNMENT_LABEL}</span>
                         {/if}
                       </td>
                     {/if}
@@ -1447,5 +1478,10 @@
   .wd-chip:hover:not(.wd-chip--active) {
     border-color: var(--brand);
     color: var(--brand);
+  }
+  .role-chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
   }
 </style>
