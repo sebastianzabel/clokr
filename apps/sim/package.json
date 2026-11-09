@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "otpauth": "^9.5.2",
+    "otpauth": "^9.6.0",
     "pg": "^8.23.1"
   },
   "devDependencies": {
