@@ -8,6 +8,10 @@ pnpm --filter @clokr/web lint:ui-classes || exit 1
 # undeclared var() can come back in any web source file. Fast (single node process, no build).
 pnpm --filter @clokr/web lint:tokens || exit 1
 
+# One-shot lint:no-alert (Issue #843, D-843-06). Full tree: a native alert/prompt/confirm can come
+# back in any web source file. Single node process, no build.
+pnpm --filter @clokr/web lint:no-alert || exit 1
+
 # One-shot lint:ui (NOT inside lint-staged — see Plan 34-08 rationale).
 # Strict since UI-17 (admin/shifts migrated, all inline-color converted to
 # style: directive, auth pages whitelisted in lint-ui.mjs).

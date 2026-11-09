@@ -574,7 +574,7 @@
         failed = drafts.length > 0;
       }
       if (res.emailError) {
-        alert(
+        toasts.error(
           `Mitarbeiter angelegt, aber Einladungsmail konnte nicht gesendet werden: ${res.emailError}`,
         );
       }
@@ -593,9 +593,13 @@
   async function resendInvitation(emp: Employee) {
     try {
       await api.post(`/employees/${emp.id}/resend-invitation`, {});
-      alert("Einladung erneut gesendet.");
+      toasts.success("Einladung erneut gesendet.");
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Fehler beim Senden");
+      toasts.error(
+        e instanceof Error
+          ? e.message
+          : "Einladung konnte nicht gesendet werden. Versuche es noch einmal.",
+      );
     }
   }
 
@@ -625,7 +629,11 @@
       await api.patch(`/employees/${emp.id}/reactivate`, {});
       await loadEmployees();
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Fehler beim Reaktivieren");
+      toasts.error(
+        e instanceof Error
+          ? e.message
+          : "Mitarbeiter konnte nicht reaktiviert werden. Versuche es noch einmal.",
+      );
     }
   }
 

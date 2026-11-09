@@ -3,6 +3,8 @@
 // proves the detector can fail (positive controls), does not over-fire (negative controls) and
 // that the walked set is not empty.
 
+import { readFileSync } from "node:fs";
+
 import { describe, it, expect } from "vitest";
 
 import { findNativeDialogCalls, listSourceFiles } from "../../scripts/lint-no-alert.mjs";
@@ -67,5 +69,12 @@ describe("findNativeDialogCalls — negative controls", () => {
 describe("lint:no-alert on the real tree", () => {
   it("walks a real source set (anti-vacuity floor)", () => {
     expect(listSourceFiles().length).toBeGreaterThan(400);
+  });
+
+  it("finds no native dialog call in any source file", () => {
+    const hits = listSourceFiles().flatMap((file) =>
+      findNativeDialogCalls(readFileSync(file, "utf8")).map((h) => `${file}:${h.line}`),
+    );
+    expect(hits).toEqual([]);
   });
 });
