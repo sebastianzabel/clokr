@@ -8,6 +8,8 @@
   import { salonContext } from "$stores/salon-context";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-ef6
   import { toasts } from "$stores/toast";
@@ -1122,7 +1124,7 @@
         closedHint={overviewLegend.closedHint}
       />
       {#if overviewPeople.length === 0 && overviewLoading}
-        <p class="overview-empty">Lade Abwesenheiten …</p>
+        <Skeleton shape="block" height="240px" />
       {:else if overviewPeople.length === 0}
         <p class="overview-empty" data-testid="leave-overview-empty">
           Keine Abwesenheiten in diesem Zeitraum.
@@ -1161,8 +1163,14 @@
         </div>
       </div>
       <div class="ical-actions">
-        <button class="btn btn-ghost btn-sm" onclick={downloadIcal} disabled={icalDownloading}>
-          {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
+        <button
+          class="btn btn-ghost btn-sm"
+          onclick={downloadIcal}
+          disabled={icalDownloading}
+          aria-busy={icalDownloading}
+        >
+          {#if icalDownloading}<Spinner />{/if}
+          Team-Abwesenheiten
         </button>
       </div>
     </div>
@@ -1386,7 +1394,7 @@
 {#if activeTab === "planung"}
   <div role="tabpanel" id="leave-panel-planung" aria-labelledby="leave-tab-planung">
     {#if !contextLoaded}
-      <p class="overview-empty" role="status">Urlaubsplanung wird geladen …</p>
+      <Skeleton shape="card" lines={3} />
     {:else}
       <LeavePlanningPanel
         mode="team"
