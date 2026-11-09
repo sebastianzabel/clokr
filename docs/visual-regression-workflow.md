@@ -118,9 +118,9 @@ Wider thresholds erode the signal. If you find yourself reaching for
 `>0.005` repeatedly, that's a hint the baseline or the test setup is
 wrong, not the threshold.
 
-## Token v1.5 changes (special case)
+## Token and design-system changes (special case)
 
-A real change to `apps/web/src/tokens.css` (color/spacing/radius
+A real change to `apps/web/src/tokens.css` (color/spacing/radius/font
 shift, not a whitespace edit) will almost always trip ALL 10 baselines
 at once. This is expected behaviour, not a bug. Standard process:
 
@@ -133,17 +133,35 @@ at once. This is expected behaviour, not a bug. Standard process:
 4. Reviewer spot-checks 2-3 pages (not all 10) against the PR
    description and approves.
 
+### Deliberate re-baselining after a design-system change (Issue #842)
+
+The design-system v2 (new palette, Figtree, radii) changed every baseline on purpose; no layout
+change was intended. The procedure for such a change, in order of preference:
+
+1. **Locally, in the pinned image.** Start the branch's own test stack (never the shared dev stack),
+   then run the `e2e-visual` service of `docker-compose.e2e.yml` with
+   `playwright test --project=visual --update-snapshots` (the command is in "Step 2"). Look at every
+   changed PNG, then commit only the ten files of `apps/e2e/tests/visual.spec.ts-snapshots/` in their own
+   commit, with the reason (palette, font, radii; no layout change) in the message.
+2. **From CI.** A red `visual-regression` job uploads the `visual-regression-diffs` artifact. Download it,
+   rename each `*-actual.png` to its baseline name in `apps/e2e/tests/visual.spec.ts-snapshots/`, inspect
+   the images, commit and push. CI is the arbiter either way: the baselines must come from the
+   linux/amd64 Playwright image, never from a macOS render.
+
+The visual fixture waits for `document.fonts.ready`, so a web font that fails to load shows up as a diff
+instead of a silent fallback render.
+
 ## Anatomy of the gate
 
-| Component      | Where                                                                | Why                                                |
-| -------------- | -------------------------------------------------------------------- | -------------------------------------------------- |
-| Pinned image   | `apps/e2e/Dockerfile.visual`                                         | Font rendering must be byte-identical              |
-| Visual project | `apps/e2e/playwright.config.ts` (`projects` array, `name: "visual"`) | Fixed viewport 1440×900, `reducedMotion: "reduce"` |
-| Freeze hook    | `apps/e2e/tests/visual.setup.ts`                                     | Per-test animation/transition/caret kill-switch    |
-| Seed helper    | `apps/e2e/fixtures/visual-seed.ts`                                   | Byte-stable DB state on every run (D-07)           |
-| Specs          | `apps/e2e/tests/visual.spec.ts`                                      | 10 `toHaveScreenshot()` calls (D-01)               |
-| Baselines      | `apps/e2e/tests/visual.spec.ts-snapshots/visual/`                    | Authoritative reference; tracked in git            |
-| CI gate        | `.github/workflows/ci.yml` (job `visual-regression`)                 | Path-filtered (D-06)                               |
+| Component      | Where                                                                         | Why                                                |
+| -------------- | ----------------------------------------------------------------------------- | -------------------------------------------------- |
+| Pinned image   | `apps/e2e/Dockerfile.visual`                                                  | Font rendering must be byte-identical              |
+| Visual project | `apps/e2e/playwright.config.ts` (`projects` array, `name: "visual"`)          | Fixed viewport 1440×900, `reducedMotion: "reduce"` |
+| Freeze hook    | `apps/e2e/tests/visual.setup.ts`                                              | Per-test animation/transition/caret kill-switch    |
+| Seed helper    | `apps/e2e/fixtures/visual-seed.ts`                                            | Byte-stable DB state on every run (D-07)           |
+| Specs          | `apps/e2e/tests/visual.spec.ts`                                               | 10 `toHaveScreenshot()` calls (D-01)               |
+| Baselines      | `apps/e2e/tests/visual.spec.ts-snapshots/` (flat, `NN-name-visual-linux.png`) | Authoritative reference; tracked in git            |
+| CI gate        | `.github/workflows/ci.yml` (job `visual-regression`)                          | Path-filtered (D-06)                               |
 
 ## FAQ
 

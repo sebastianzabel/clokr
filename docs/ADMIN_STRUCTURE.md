@@ -61,25 +61,25 @@ These 5 groups and their exact entries are the authoritative target structure fo
 
 ### 1.2 Group → Pages Mapping
 
-| Group      | Sidebar label            | Route                 | Was (if renamed)                                                                        |
-| ---------- | ------------------------ | --------------------- | --------------------------------------------------------------------------------------- |
-| PERSONAL   | Mitarbeitende            | /admin/employees      | —                                                                                       |
-| PERSONAL   | Urlaubsverwaltung        | /admin/vacation       | — (global view + Sonderurlaubs-Typen tab; per-MA editor moved to /admin/employees/[id]) |
-| PERSONAL   | Betriebsurlaub           | /admin/shutdowns      | —                                                                                       |
-| PERSONAL   | Urlaubsgrenzen & Sperren | /admin/leave-limits   | — (new in Issue #836)                                                                   |
-| PLANUNG    | Schichtplan              | /admin/shifts         | —                                                                                       |
-| PLANUNG    | Verfügbarkeit            | /admin/availability   | —                                                                                       |
-| PLANUNG    | Salons                   | /admin/salons         | — (new in Issue #563)                                                                   |
-| COMPLIANCE | Monatsabschluss          | /admin/month-close    | —                                                                                       |
-| COMPLIANCE | Audit & Log              | /admin/audit          | —                                                                                       |
-| COMPLIANCE | Support-Zugriffe         | /admin/support-access | — (new in Issue #93)                                                                    |
-| DATEN      | CSV Import               | /admin/import         | —                                                                                       |
-| DATEN      | DATEV Export             | /admin/export         | —                                                                                       |
-| SYSTEM     | Allgemein                | /admin/system         | — (feature flags + defaults; theme picker moved to Branding)                            |
-| SYSTEM     | Branding & Themes        | /admin/themes         | —                                                                                       |
-| SYSTEM     | Integrationen            | /admin/integrations   | /admin/wifi-presence (renamed in Phase 52; 301 redirect — see §8)                       |
-| SYSTEM     | Phorest                  | /admin/phorest        | — (extracted out of /admin/system in Phase 85.1-03; D-10)                               |
-| SYSTEM     | Rollen & Rechte          | /admin/roles          | — (new in Phase 83, #83)                                                                |
+| Group      | Sidebar label            | Route                 | Was (if renamed)                                                                                                                     |
+| ---------- | ------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| PERSONAL   | Mitarbeitende            | /admin/employees      | —                                                                                                                                    |
+| PERSONAL   | Urlaubsverwaltung        | /admin/vacation       | — (global view + Sonderurlaubs-Typen tab; per-MA editor moved to /admin/employees/[id])                                              |
+| PERSONAL   | Betriebsurlaub           | /admin/shutdowns      | —                                                                                                                                    |
+| PERSONAL   | Urlaubsgrenzen & Sperren | /admin/leave-limits   | — (new in Issue #836)                                                                                                                |
+| PLANUNG    | Schichtplan              | /admin/shifts         | —                                                                                                                                    |
+| PLANUNG    | Verfügbarkeit            | /admin/availability   | —                                                                                                                                    |
+| PLANUNG    | Salons                   | /admin/salons         | — (new in Issue #563)                                                                                                                |
+| COMPLIANCE | Monatsabschluss          | /admin/month-close    | —                                                                                                                                    |
+| COMPLIANCE | Audit & Log              | /admin/audit          | —                                                                                                                                    |
+| COMPLIANCE | Support-Zugriffe         | /admin/support-access | — (new in Issue #93)                                                                                                                 |
+| DATEN      | CSV Import               | /admin/import         | —                                                                                                                                    |
+| DATEN      | DATEV Export             | /admin/export         | —                                                                                                                                    |
+| SYSTEM     | Allgemein                | /admin/system         | — (feature flags + defaults; theme picker moved to Branding)                                                                         |
+| SYSTEM     | Branding & Themes        | /admin/themes         | — (3 themes Pflaume, Salz, Petrol × Hell/Dunkel with live preview, Sprache; personal preference, saved instantly; no tenant default) |
+| SYSTEM     | Integrationen            | /admin/integrations   | /admin/wifi-presence (renamed in Phase 52; 301 redirect — see §8)                                                                    |
+| SYSTEM     | Phorest                  | /admin/phorest        | — (extracted out of /admin/system in Phase 85.1-03; D-10)                                                                            |
+| SYSTEM     | Rollen & Rechte          | /admin/roles          | — (new in Phase 83, #83)                                                                                                             |
 
 ### 1.3 Section Label Rules
 
@@ -891,7 +891,7 @@ location, `admin/roles` — `admin-roles` — keeps its marker in the role edito
 | `admin/month-close`                                                     | `selectedYear`/`statusFilter` are filters; `unlockReason`/`gapAcknowledged` are one-shot confirmations inside modals; the writes (`close-month`, `unlock-month`) are operations, not form state             |
 | `admin/import`                                                          | an operation (paste CSV → `POST /imports/:mode`), nothing is held as a setting                                                                                                                              |
 | `admin/integrations`                                                    | no update endpoint exists; the single write creates a NEW API key and the two inputs clear afterwards                                                                                                       |
-| `admin/themes`                                                          | no write path and no bound form state                                                                                                                                                                       |
+| `admin/themes`                                                          | no write path and no bound form state (the writes are instant personal preferences: theme, mode, language; there is no tenant-wide default theme)                                                           |
 | `admin/availability` (list)                                             | list view — no write path                                                                                                                                                                                   |
 | `admin/salons` (list)                                                   | list view — no form state; writes happen on the detail page                                                                                                                                                 |
 | `admin/audit/[id]`                                                      | detail view — no write path                                                                                                                                                                                 |
