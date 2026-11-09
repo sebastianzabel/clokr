@@ -165,7 +165,7 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
     });
     const res = await putWork(data.employee.id, {
       type: "FIXED_SCHEDULE",
-      weeklyHours: 32,
+      weeklyHours: 40, // Issue #848: = Σ Mo–Fr 8 h
       mondayHours: 8,
       tuesdayHours: 8,
       wednesdayHours: 8,
@@ -185,7 +185,7 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
   it("PUT FIXED_SCHEDULE with usualWorkDays [] -> 200, stored []", async () => {
     const res = await putWork(data.employee.id, {
       type: "FIXED_SCHEDULE",
-      weeklyHours: 32,
+      weeklyHours: 40, // Issue #848: = Σ Mo–Fr 8 h
       mondayHours: 8,
       tuesdayHours: 8,
       wednesdayHours: 8,
@@ -291,7 +291,7 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
 
     const res = await putWork(switchEmployee.id, {
       type: "FIXED_SCHEDULE",
-      weeklyHours: 32,
+      weeklyHours: 40, // Issue #848: = Σ Mo–Fr 8 h
       mondayHours: 8,
       tuesdayHours: 8,
       wednesdayHours: 8,
@@ -329,7 +329,7 @@ describe("Issue #436 Plan 02 — WorkSchedule.usualWorkDays on every write path 
 
     const res = await putWork(switchEmployee.id, {
       type: "FIXED_SCHEDULE",
-      weeklyHours: 32,
+      weeklyHours: 40, // Issue #848: = Σ Mo–Fr 8 h
       mondayHours: 8,
       tuesdayHours: 8,
       wednesdayHours: 8,

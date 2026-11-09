@@ -26,6 +26,7 @@ import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { DEFAULT_PASSWORD_POLICY, validatePassword, type PasswordPolicy } from "./password-policy";
 import { normalizeWorkDays, type PerDayHours } from "./calculate-work-days";
+import { fixedScheduleCreateHours } from "./fixed-schedule-hours";
 import { replaceSystemRoleAssignment } from "./system-role-assignment";
 import { lockTenantForRoleChanges } from "./facade/role-assignments";
 import {
@@ -549,6 +550,10 @@ export async function createEmployeeInTransaction(
   audit: EmployeeCreationAudit,
 ) {
   const { passwordHash, directPassword, resolvedWorkDays, usualWorkDays, tz } = prepared;
+  const fixedCreateHours =
+    body.scheduleType === "FIXED_SCHEDULE"
+      ? fixedScheduleCreateHours(body.weeklyHours, resolvedWorkDays)
+      : null;
 
   // D-22/D-02: the FIRST statement in the transaction — a rejected outcome below returns
   // before any write, so a 400 never leaves behind a User, Employee or assignment row.
@@ -616,7 +621,16 @@ export async function createEmployeeInTransaction(
       employeeId: emp.id,
       type: body.scheduleType,
       // For SHIFT_BASED: default to 40h if caller omits weeklyHours (null/0/undefined)
-      weeklyHours: body.scheduleType === "SHIFT_BASED" ? body.weeklyHours || 40 : body.weeklyHours,
+      weeklyHours:
+        body.scheduleType === "SHIFT_BASED"
+          ? body.weeklyHours || 40
+          : fixedCreateHours
+            ? fixedCreateHours.weeklyHours
+            : body.weeklyHours,
+      // Issue #848: a FIXED_SCHEDULE contract's day hours follow weeklyHours over its workDays
+      // (they used to fall to the column defaults Mo–Fr 8 h, whatever weeklyHours said).
+      // Other types keep the column defaults: their {day}Hours are placeholders.
+      ...(fixedCreateHours ? fixedCreateHours.dayHours : {}),
       monthlyHours: body.monthlyHours ?? null,
       // Phase 49.2 — FLEXTIME Kernarbeitszeit (only persisted when FLEXTIME)
       coreStart: body.scheduleType === "FLEXTIME" ? (body.coreStart ?? null) : null,
