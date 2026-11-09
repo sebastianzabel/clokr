@@ -3,8 +3,8 @@
  * .cal-monthbar recipe (/shifts has its own week header and is not covered here).
  *
  * Before the fix, at 390 px every page with a MonthBar / .cal-monthbar was wider than the phone
- * (editorial skin: horizontal scroll, 410-514 px) or had "Heute" cut off (modern skin). This spec
- * is the permanent gate: per surface x skin x viewport it proves that
+ * (horizontal scroll, 410-514 px) or had "Heute" cut off. This spec is the permanent gate: per
+ * surface x theme x viewport it proves that
  *   - the document does not scroll horizontally and no element of the page (not only of the bar)
  *     ends right of the viewport (Issue #564),
  *   - no element of the bar lies outside the viewport or outside the bar's own box,
@@ -12,17 +12,19 @@
  *   - "Heute" (where the page offers it) is visible, exactly labelled, fully inside the viewport,
  *     at least 44 px tall (the height of the neighbouring arrow buttons) and still works.
  *
- * Why geometry and not only scrollWidth: the modern skin clips overflow with
- * `[data-skin="modern"] .card { overflow: hidden }`, so there document.scrollWidth stays equal to
- * innerWidth (390) while "Heute" is cut off at x = 414-428. A scrollWidth check alone would be
- * vacuous in that skin, which is why the bar's descendants and "Heute" are measured directly.
+ * Why geometry and not only scrollWidth: a card that clips its overflow keeps document.scrollWidth
+ * equal to innerWidth (390) while "Heute" is cut off at x = 414-428. A scrollWidth check alone
+ * would be vacuous there, which is why the bar's descendants and "Heute" are measured directly.
+ *
+ * #842 (D-842-16): the former look axis is replaced by the three themes (pflaume, salz, petrol);
+ * Figtree text widths are measured by the same geometry assertions (A5).
  *
  * Why September: "September 2026" is the longest German month name, so the gate cannot pass in
  * May and fail in September. The browser clock is fixed at 2026-09-16 (page.clock.install).
  *
  * Auth: the tenant fixture bootstraps a throwaway tenant on the test stack; the spec logs in as
  * its admin through the API and hydrates localStorage with addInitScript (same model as
- * visual.spec.ts, without the seed). The modern skin is additionally stored as the user's
+ * visual.spec.ts, without the seed). A non-default theme is additionally stored as the user's
  * server-side preference, because the server value wins over localStorage on hydration.
  *
  * No fixed sleeps: every wait is an auto-waiting locator assertion (the e2e lint bans sleeps).
@@ -38,7 +40,7 @@ const PASSWORD = "test1234";
 /**
  * Three widths are pass/fail (360x800 is one of the most common Android sizes, 320x568 the
  * narrowest phone still in use). Issue #564 added 320 px: there /leave pushed the page to 337/349 px
- * (iCal buttons) and the modern skin's month label overlapped the arrows by 9-13 px.
+ * (iCal buttons) and a month label overlapped the arrows by 9-13 px.
  */
 const VIEWPORTS = [
   { width: 390, height: 844 },
@@ -46,8 +48,8 @@ const VIEWPORTS = [
   { width: 320, height: 568 },
 ] as const;
 
-const SKINS = ["editorial", "modern"] as const;
-type Skin = (typeof SKINS)[number];
+const THEMES = ["pflaume", "salz", "petrol"] as const;
+type Theme = (typeof THEMES)[number];
 
 interface Surface {
   path: string;
@@ -102,7 +104,7 @@ const LABEL_SELECTOR = ".month-bar-label, .cal-monthbar-title";
 const MIN_TOUCH_TARGET_PX = 44;
 const TOLERANCE_PX = 0.5;
 
-async function login(request: APIRequestContext, tenant: TestTenant, skin: Skin) {
+async function login(request: APIRequestContext, tenant: TestTenant, theme: Theme) {
   const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
     headers: { "content-type": "application/json" },
     data: { email: `admin@${tenant.tenantId}.test`, password: PASSWORD },
@@ -113,12 +115,12 @@ async function login(request: APIRequestContext, tenant: TestTenant, skin: Skin)
     refreshToken: string;
     user: Record<string, unknown>;
   };
-  if (skin === "modern") {
+  if (theme !== "pflaume") {
     const pref = await request.put(`${API_BASE}/api/v1/me/preferences`, {
       headers: { "content-type": "application/json", Authorization: `Bearer ${body.accessToken}` },
-      data: { skin: "modern" },
+      data: { theme },
     });
-    expect(pref.ok(), `store the modern skin preference (${pref.status()})`).toBe(true);
+    expect(pref.ok(), `store the ${theme} theme preference (${pref.status()})`).toBe(true);
   }
   return body;
 }
@@ -223,39 +225,35 @@ for (const viewport of VIEWPORTS) {
   test.describe(`${viewport.width}x${viewport.height}`, () => {
     test.use({ viewport });
 
-    for (const skin of SKINS) {
+    for (const theme of THEMES) {
       for (const surface of SURFACES) {
         const surfaceName = `${surface.path}${surface.listView ? " list" : ""}`;
-        const id = `${surfaceName} — ${skin} — month bar fits ${viewport.width} px`;
+        const id = `${surfaceName} — ${theme} — month bar fits ${viewport.width} px`;
 
         test(id, async ({ page, request, tenant }, testInfo) => {
-          const auth = await login(request, tenant, skin);
+          const auth = await login(request, tenant, theme);
           await page.addInitScript(
-            ({ accessToken, refreshToken, user, skinName }) => {
+            ({ accessToken, refreshToken, user, themeName }) => {
               try {
                 localStorage.setItem("accessToken", accessToken);
                 localStorage.setItem("refreshToken", refreshToken);
                 localStorage.setItem("user", JSON.stringify(user));
-                localStorage.setItem("skin", skinName);
+                localStorage.setItem("theme", themeName);
               } catch {
                 /* localStorage may be locked; the auth store then falls back to the login page */
               }
             },
-            { ...auth, skinName: skin },
+            { ...auth, themeName: theme },
           );
           await page.clock.install({ time: new Date("2026-09-16T10:00:00") });
 
-          const where = `${surfaceName} / ${skin} / ${viewport.width} px`;
+          const where = `${surfaceName} / ${theme} / ${viewport.width} px`;
           const bar = await openSurface(page, surface);
 
-          // Anti-vacuity: the widest label is on screen and the skin under test is active.
+          // Anti-vacuity: the widest label is on screen and the theme under test is active.
           const label = bar.locator(LABEL_SELECTOR).first();
           await expect(label).toContainText(surface.label);
-          if (skin === "modern") {
-            await expect(page.locator("html")).toHaveAttribute("data-skin", "modern");
-          } else {
-            await expect(page.locator("html")).not.toHaveAttribute("data-skin", /.*/);
-          }
+          await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 
           const g = await measure(bar, surface.prev, surface.next);
 
@@ -360,7 +358,7 @@ for (const viewport of VIEWPORTS) {
           }
 
           await testInfo.attach(
-            `${surface.path.replaceAll("/", "_")}${surface.listView ? "-list" : ""}-${skin}-${viewport.width}.png`,
+            `${surface.path.replaceAll("/", "_")}${surface.listView ? "-list" : ""}-${theme}-${viewport.width}.png`,
             { body: await bar.screenshot(), contentType: "image/png" },
           );
         });

@@ -1,8 +1,9 @@
 /**
  * Issue #564 — whole-page geometry probe shared by the narrow-viewport specs.
  *
- * `document.scrollWidth` alone is vacuous in the modern skin (`.card { overflow: hidden }` clips
- * the overflow instead of scrolling), so the probe measures every element's box. An element
+ * `document.scrollWidth` alone is vacuous wherever a card clips its overflow instead of scrolling
+ * (#842 D-842-16: written for a former look variant, valid for any clipping recipe), so the probe
+ * measures every element's box. An element
  * counts as overflowing when its right edge lies beyond the viewport and no ancestor that clips
  * (overflow other than `visible`) ends inside the viewport — a horizontally scrolling table
  * wrapper is legitimate, a clipped button is not.

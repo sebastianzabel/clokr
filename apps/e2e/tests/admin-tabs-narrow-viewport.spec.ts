@@ -4,7 +4,7 @@
  *
  * Before the fix, at 390 px `/admin/system` (five tabs) was ~565 px wide and the whole page
  * scrolled sideways. The strip now scrolls on its own. This spec is the permanent gate: per page x
- * skin x viewport it proves that
+ * theme x viewport it proves that
  *   - the document does not scroll horizontally,
  *   - the strip really is wider than its box on the narrowest page (non-vacuous: otherwise the
  *     check would pass on a page whose tabs simply fit),
@@ -27,8 +27,9 @@ const VIEWPORTS = [
   { width: 360, height: 800 },
 ] as const;
 
-const SKINS = ["editorial", "modern"] as const;
-type Skin = (typeof SKINS)[number];
+// #842 D-842-16: the former look axis is replaced by the three themes of the design system.
+const THEMES = ["pflaume", "salz", "petrol"] as const;
+type Theme = (typeof THEMES)[number];
 
 /** Pages whose SectionStack renders a tab strip; `/admin/system` has the widest one (5 tabs). */
 const PAGES = [
@@ -36,7 +37,7 @@ const PAGES = [
   { path: "/admin/vacation", widest: false },
 ] as const;
 
-async function login(request: APIRequestContext, tenant: TestTenant, skin: Skin) {
+async function login(request: APIRequestContext, tenant: TestTenant, theme: Theme) {
   const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
     headers: { "content-type": "application/json" },
     data: { email: `admin@${tenant.tenantId}.test`, password: PASSWORD },
@@ -47,12 +48,12 @@ async function login(request: APIRequestContext, tenant: TestTenant, skin: Skin)
     refreshToken: string;
     user: Record<string, unknown>;
   };
-  if (skin === "modern") {
+  if (theme !== "pflaume") {
     const pref = await request.put(`${API_BASE}/api/v1/me/preferences`, {
       headers: { "content-type": "application/json", Authorization: `Bearer ${body.accessToken}` },
-      data: { skin: "modern" },
+      data: { theme },
     });
-    expect(pref.ok(), `store the modern skin preference (${pref.status()})`).toBe(true);
+    expect(pref.ok(), `store the ${theme} theme preference (${pref.status()})`).toBe(true);
   }
   return body;
 }
@@ -134,34 +135,31 @@ for (const viewport of VIEWPORTS) {
   test.describe(`${viewport.width}x${viewport.height}`, () => {
     test.use({ viewport });
 
-    for (const skin of SKINS) {
+    for (const theme of THEMES) {
       for (const p of PAGES) {
-        test(`${p.path} — ${skin} — tab strip fits ${viewport.width} px`, async ({
+        test(`${p.path} — ${theme} — tab strip fits ${viewport.width} px`, async ({
           page,
           request,
           tenant,
         }) => {
-          const auth = await login(request, tenant, skin);
+          const auth = await login(request, tenant, theme);
           await page.addInitScript(
-            ({ accessToken, refreshToken, user, skinName }) => {
+            ({ accessToken, refreshToken, user, themeName }) => {
               try {
                 localStorage.setItem("accessToken", accessToken);
                 localStorage.setItem("refreshToken", refreshToken);
                 localStorage.setItem("user", JSON.stringify(user));
-                localStorage.setItem("skin", skinName);
+                localStorage.setItem("theme", themeName);
               } catch {
                 /* localStorage may be locked; the auth store then falls back to the login page */
               }
             },
-            { ...auth, skinName: skin },
+            { ...auth, themeName: theme },
           );
-          const where = `${p.path} / ${skin} / ${viewport.width} px`;
+          const where = `${p.path} / ${theme} / ${viewport.width} px`;
           const strip = await openPage(page, p.path);
-          if (skin === "modern") {
-            await expect(page.locator("html")).toHaveAttribute("data-skin", "modern");
-          } else {
-            await expect(page.locator("html")).not.toHaveAttribute("data-skin", /.*/);
-          }
+          // Anti-vacuity: the theme under test is the one applied to <html>.
+          await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 
           const tabs = strip.getByRole("tab");
           const count = await tabs.count();
