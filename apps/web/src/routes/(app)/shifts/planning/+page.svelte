@@ -17,6 +17,7 @@
     salonScopeLabel,
     withSalonId,
   } from "$lib/salons/page-scope"; // Issue #558 (D-03/D-04/D-07)
+  import { mondayOfWeek, planningWeekLabel } from "$lib/shifts/planning-week"; // Issue #849
 
   interface PlanningRow {
     employeeId: string;
@@ -34,14 +35,6 @@
     weekStart: string;
     weekEnd: string;
     employees: PlanningRow[];
-  }
-
-  function mondayOfWeek(d: Date): string {
-    const copy = new Date(d);
-    const dow = copy.getDay();
-    const offset = dow === 0 ? -6 : 1 - dow;
-    copy.setDate(copy.getDate() + offset);
-    return copy.toISOString().slice(0, 10);
   }
 
   let weekStart = $state(mondayOfWeek(new Date()));
@@ -73,6 +66,8 @@
       );
       if (generation !== loadGeneration) return;
       salonRejected = false;
+      // Issue #849 (3): the server normalises to the Monday of the week; take both bounds from it.
+      weekStart = res.weekStart;
       weekEnd = res.weekEnd;
       employees = res.employees;
     } catch (err) {
@@ -132,8 +127,7 @@
       ← Vorherige Woche
     </button>
     <div class="week-pager-label">
-      Woche {weekStart}{#if weekEnd}
-        – {weekEnd}{/if}
+      {planningWeekLabel(weekStart, weekEnd)}
     </div>
     <button type="button" class="btn btn-ghost btn-sm" onclick={nextWeek} disabled={loading}>
       Nächste Woche →
