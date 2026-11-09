@@ -3,160 +3,141 @@
 // The self-test found "+ Neue Abwesenheit", "Planung verwalten" and "Wunsch hinzufügen" pale pink
 // with white text. The browser measurement (e2e test 9 of leave-area-840.spec.ts) showed the cause
 // is the shared recipe, not a local override: the modern skin drew white text on a light neon
-// gradient (1.4:1 to 2.1:1 in light mode) and the editorial hover lightened the fill under white
-// text (2.5:1 to 4.4:1).
+// gradient and the editorial hover lightened the fill under white text.
+//
+// #842 (D-842-08, D-842-16, D-842-25): the skin layer is gone together with the rules this file
+// used to guard (the modern gradient recipes and their dark-mode literal), so those cases are
+// removed with them. What remains is the one recipe: `--brand-ink` on `--brand` at rest and
+// `--brand-ink` on `--brand-hover` on hover, measured in the six theme x mode combinations.
 //
 // jsdom computes no colours, so this test resolves the pairs the recipe draws from the SOURCE of
-// `tokens.css` (the helper applies the block chain of each skin x theme x mode in cascade order)
-// and pins the declarations of the recipe in `app.css`, so a later edit that points a rule at
-// another token or at a literal turns this red before any browser run.
+// `tokens.css` (the cascade resolver applies each combination) and pins the declarations of the
+// recipe in `app.css`, so a later edit that points a rule at another token or at a literal turns
+// this red before any browser run.
 
 import { describe, expect, it } from "vitest";
-import { contrast, over, readAppCss, readTokensCss, resolveColor, type Rgba } from "./token-css";
+import {
+  COMBINATION_NAMES,
+  contrast,
+  over,
+  readAppCss,
+  readTokensCss,
+  resolveColor,
+  type CombinationName,
+  type Rgba,
+} from "./token-css";
 
 const TOKENS = readTokensCss();
 const APP = readAppCss();
 
-const SKINS = ["editorial", "modern"] as const;
-const THEMES = ["pflaume", "nacht", "wald"] as const;
-const MODES = ["light", "dark"] as const;
-
-/** The selector blocks that apply to <html> for a look, in cascade order (specificity, then source). */
-function blocksFor(skin: (typeof SKINS)[number], theme: (typeof THEMES)[number], mode: string) {
-  const blocks: string[] = [":root"];
-  if (theme !== "pflaume") blocks.push(`[data-theme="${theme}"]`);
-  if (mode === "dark") blocks.push('[data-mode="dark"]');
-  if (skin === "modern") {
-    blocks.push('[data-skin="modern"]', `[data-skin="modern"][data-theme="${theme}"]`);
-    blocks.push(`[data-skin="modern"][data-mode="${mode}"]`);
-  }
-  return blocks;
-}
-
 const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 const squash = (text: string) => text.replace(/\s+/g, " ").trim();
 
-/** The declarations of the LAST rule whose selector list equals `selector` (whitespace-insensitive). */
-function lastRule(css: string, selector: string): Record<string, string> | null {
-  const source = stripComments(css);
-  const wanted = squash(selector);
-  let found: Record<string, string> | null = null;
-  for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (squash(match[1]) !== wanted) continue;
+interface Rule {
+  selectors: string[];
+  declarations: Record<string, string>;
+}
+
+/** Every top-level style rule of the stylesheet with its selector list split at the commas. */
+function rules(css: string): Rule[] {
+  const out: Rule[] = [];
+  for (const match of stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const declarations: Record<string, string> = {};
     for (const part of match[2].split(";")) {
       const colon = part.indexOf(":");
       if (colon === -1) continue;
       declarations[part.slice(0, colon).trim()] = squash(part.slice(colon + 1));
     }
-    found = declarations;
+    out.push({ selectors: match[1].split(",").map(squash), declarations });
   }
-  return found;
+  return out;
 }
 
-const MODERN_PRIMARY =
-  '[data-skin="modern"] .btn-primary, [data-skin="modern"] .btn.primary, [data-skin="modern"] .btn-brand';
-const MODERN_PRIMARY_HOVER =
-  '[data-skin="modern"] .btn-primary:hover, [data-skin="modern"] .btn.primary:hover, [data-skin="modern"] .btn-brand:hover';
+const RULES = rules(APP);
 
-function opaque(blocks: readonly string[], token: string): Rgba {
-  const color = resolveColor(TOKENS, blocks, `var(${token})`);
+/** The declarations of the LAST rule whose selector list is exactly `selector`. */
+function lastRule(selector: string): Record<string, string> | null {
+  const matching = RULES.filter(
+    (rule) => rule.selectors.length === 1 && rule.selectors[0] === selector,
+  );
+  return matching.length ? matching[matching.length - 1].declarations : null;
+}
+
+function opaque(combination: CombinationName, token: string): Rgba {
+  const color = resolveColor(TOKENS, combination, `var(${token})`);
   // A translucent token would need the surface under it; a primary fill is never translucent.
   return over(color, { r: 255, g: 255, b: 255, a: 1 });
 }
 
-describe("#840 G-7 the primary button recipe reaches 4.5:1 in every skin, theme, mode and state", () => {
-  for (const skin of SKINS) {
-    for (const theme of THEMES) {
-      for (const mode of MODES) {
-        const blocks = blocksFor(skin, theme, mode);
-        const label = `${skin} / ${theme} / ${mode}`;
+describe("#840 G-7 / #842 the primary button recipe reaches 4.5:1 in all six combinations and both states", () => {
+  it("measures all six combinations (anti-vacuity)", () => {
+    expect(COMBINATION_NAMES).toHaveLength(6);
+  });
 
-        if (skin === "editorial") {
-          it(`${label}: rest is --text-on-brand on --brand`, () => {
-            const ratio = contrast(opaque(blocks, "--text-on-brand"), opaque(blocks, "--brand"));
-            expect(ratio).toBeGreaterThanOrEqual(4.5);
-          });
-          it(`${label}: hover is --text-on-brand on --brand-dark`, () => {
-            const ratio = contrast(
-              opaque(blocks, "--text-on-brand"),
-              opaque(blocks, "--brand-dark"),
-            );
-            expect(ratio).toBeGreaterThanOrEqual(4.5);
-          });
-        } else {
-          for (const state of ["rest", "hover"]) {
-            it(`${label}: ${state} draws --text-on-brand-modern on both gradient stops`, () => {
-              const text = opaque(blocks, "--text-on-brand-modern");
-              for (const stop of ["--brand-light", "--brand"]) {
-                expect(
-                  contrast(text, opaque(blocks, stop)),
-                  `${stop} (${state})`,
-                ).toBeGreaterThanOrEqual(4.5);
-              }
-            });
-          }
-        }
-      }
-    }
+  for (const combination of COMBINATION_NAMES as CombinationName[]) {
+    it(`${combination}: rest is --brand-ink on --brand`, () => {
+      const ratio = contrast(opaque(combination, "--brand-ink"), opaque(combination, "--brand"));
+      expect(ratio).toBeGreaterThanOrEqual(4.5);
+    });
+    it(`${combination}: hover is --brand-ink on --brand-hover`, () => {
+      const ratio = contrast(
+        opaque(combination, "--brand-ink"),
+        opaque(combination, "--brand-hover"),
+      );
+      expect(ratio).toBeGreaterThanOrEqual(4.5);
+    });
   }
+
+  it("the checker can fail: the honey accent under the brand ink is far below the floor", () => {
+    // Negative control: --accent is a fill without text (D-842-07), so this is deliberately no pair.
+    const ratio = contrast(
+      opaque("pflaume-light", "--brand-ink"),
+      opaque("pflaume-light", "--accent"),
+    );
+    expect(ratio).toBeLessThan(4.5);
+  });
 });
 
-describe("#840 G-7 the recipe declarations in app.css", () => {
-  it("the v1.5 rule draws --text-on-brand on --brand and darkens on hover", () => {
-    const rest = lastRule(APP, ".btn-primary");
+describe("#840 G-7 / #842 the recipe declarations in app.css", () => {
+  it("the rule draws --brand-ink on --brand and darkens to --brand-hover on hover", () => {
+    const rest = lastRule(".btn-primary");
     expect(rest?.background).toBe("var(--brand)");
-    expect(rest?.color).toBe("var(--text-on-brand)");
-    const hover = lastRule(APP, ".btn-primary:hover:not(:disabled)");
+    expect(rest?.color).toBe("var(--brand-ink)");
+    const hover = lastRule(".btn-primary:hover:not(:disabled)");
     expect(hover?.background, "the hover darkens (the original v1 rule), it never lightens").toBe(
-      "var(--brand-dark)",
+      "var(--brand-hover)",
     );
   });
 
-  it("the modern rules draw --text-on-brand-modern on the gradient, at rest and on hover", () => {
-    const gradient = "linear-gradient(135deg, var(--brand-light), var(--brand))";
-    const rest = lastRule(APP, MODERN_PRIMARY);
-    expect(rest?.background).toBe(gradient);
-    expect(rest?.color).toBe("var(--text-on-brand-modern)");
-    const hover = lastRule(APP, MODERN_PRIMARY_HOVER);
-    expect(hover?.background, "the hover keeps the gradient instead of a solid light fill").toBe(
-      gradient,
+  it("no primary-button rule carries a colour literal", () => {
+    const primary = RULES.filter((rule) => rule.selectors.some((s) => s.includes(".btn-primary")));
+    // Anti-vacuity: the base rule, its hover and the count-pill rule at least.
+    expect(primary.length).toBeGreaterThanOrEqual(4);
+    const literal = primary.flatMap((rule) =>
+      Object.entries(rule.declarations)
+        .filter(
+          ([property, value]) =>
+            /(^|-)(color|background)$/.test(property) && /#[0-9a-f]{3,8}\b|rgba?\(/i.test(value),
+        )
+        .map(([property, value]) => `${rule.selectors.join(", ")} { ${property}: ${value} }`),
     );
-    expect(hover?.color).toBe("var(--text-on-brand-modern)");
+    expect(literal).toEqual([]);
   });
 
-  it("no modern primary rule carries a colour literal and no dark-mode literal rule remains", () => {
-    expect(
-      lastRule(
-        APP,
-        '[data-skin="modern"][data-mode="dark"] .btn-primary, [data-skin="modern"][data-mode="dark"] .btn.primary, [data-skin="modern"][data-mode="dark"] .btn-brand',
-      ),
-      "the dark mode uses the same token as the light mode",
-    ).toBeNull();
-    for (const selector of [MODERN_PRIMARY, MODERN_PRIMARY_HOVER]) {
-      const rule = lastRule(APP, selector);
-      expect(rule, selector).not.toBeNull();
-      const literal = Object.entries(rule ?? {}).filter(
-        ([property, value]) =>
-          ["color", "background", "background-color"].includes(property) &&
-          /#[0-9a-f]{3,8}\b|rgba?\(/i.test(value),
-      );
-      expect(literal, `${selector} must use tokens only`).toEqual([]);
-    }
+  it("the skin recipes of the primary button are gone with the skin layer (D-842-16)", () => {
+    expect(APP).not.toContain("data-skin");
+    expect(APP).not.toContain("--text-on-brand");
   });
 
-  it("--text-on-brand itself is untouched: still white in every block that declares it", () => {
-    // It is also used as a BACKGROUND (the dashboard timer card, Issue #546), so it must not flip.
-    for (const blocks of [
-      [":root"],
-      [":root", '[data-skin="modern"]', '[data-skin="modern"][data-mode="dark"]'],
-      [":root", '[data-skin="modern"]', '[data-skin="modern"][data-mode="light"]'],
-    ]) {
-      expect(resolveColor(TOKENS, blocks, "var(--text-on-brand)")).toMatchObject({
-        r: 255,
-        g: 255,
-        b: 255,
-      });
-    }
+  it("--brand-ink is white on the light brand fills and a dark ink on the dark ones", () => {
+    // It is also used as a BACKGROUND (the dashboard timer card, Issue #546), so each combination
+    // must give it a value that reads on its own --brand.
+    expect(resolveColor(TOKENS, "pflaume-light", "var(--brand-ink)")).toMatchObject({
+      r: 255,
+      g: 255,
+      b: 255,
+    });
+    const dark = resolveColor(TOKENS, "pflaume-dark", "var(--brand-ink)");
+    expect(dark.r + dark.g + dark.b).toBeLessThan(150);
   });
 });
