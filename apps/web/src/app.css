@@ -2295,20 +2295,21 @@ textarea.form-input {
 }
 
 /* Live pulse dot (used in .timer-card to signal active timer).
-   Green is intentionally fixed (#6BD49A) — must read as "live/active" across
-   all three themes, not the theme accent. */
+   Drawn from --brand-ink, the text colour of the timer card: it reads on the brand gradient in
+   all six theme/mode combinations (token-contrast-842 pins brand-ink on brand and brand-hover at
+   4.5:1), where a fixed green vanished on the light dark-mode brand fills. */
 .live-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #6bd49a;
+  background: var(--brand-ink);
   display: inline-block;
-  box-shadow: 0 0 0 0 rgba(107, 212, 154, 0.5);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand-ink) 50%, transparent);
   animation: pulse-dot 2s infinite;
 }
 @keyframes pulse-dot {
   0% {
-    box-shadow: 0 0 0 0 rgba(107, 212, 154, 0.4);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand-ink) 40%, transparent);
   }
   50% {
     box-shadow: 0 0 0 6px transparent;

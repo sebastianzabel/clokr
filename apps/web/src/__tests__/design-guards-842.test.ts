@@ -8,6 +8,7 @@
 //   D-842-07  --accent is a fill, never a text colour
 //   D-842-08  no white text on a brand, status or text fill (use --card / --brand-ink)
 //   D-842-01  tokens.css is the only file that declares a colour role (D-05)
+//   WR-01     the live dot of the timer card is drawn from a role that reads on the brand gradient
 
 import { describe, it, expect } from "vitest";
 import postcss from "postcss";
@@ -223,6 +224,24 @@ describe("Issue #842 design guards", () => {
         expect(props, sel).not.toContain("letter-spacing");
         expect(props, sel).not.toContain("text-transform");
       }
+    });
+  });
+
+  describe("WR-01 - the live dot reads on the timer card in all six combinations", () => {
+    it("draws from --brand-ink, the text colour of the brand gradient it sits on", () => {
+      const dot: string[] = [];
+      let timerInk = "";
+      postcss.parse(APP_CSS.text).walkRules((rule) => {
+        const sels = rule.selectors.map((s) => s.trim());
+        rule.walkDecls((d) => {
+          if (sels.includes(".live-dot") && d.prop === "background") dot.push(d.value.trim());
+          if (sels.includes(".timer-card") && d.prop === "color") timerInk = d.value.trim();
+        });
+      });
+      // The dot lives on .timer-card, whose text is --brand-ink; token-contrast-842 pins that
+      // role at 4.5:1 on both gradient ends in every combination.
+      expect(timerInk).toBe("var(--brand-ink)");
+      expect(dot).toEqual(["var(--brand-ink)"]);
     });
   });
 
