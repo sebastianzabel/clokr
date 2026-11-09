@@ -27,6 +27,8 @@ test.describe("Error Handling + UX Plausibility", () => {
     // The What's-New drawer, which would intercept the pointer events aimed at the settings form,
     // is stubbed away by the `page` override of the `../fixtures` test.
     await page.goto("/settings");
+    // #851 (prototype „Sicherheit“): the password form opens in a dialog.
+    await page.getByRole("button", { name: "Passwort ändern", exact: true }).click();
 
     // #851: the fields come from the FormField block (generated ids); found by their labels.
     const curPw = page.getByLabel("Aktuelles Passwort", { exact: true });
@@ -42,7 +44,7 @@ test.describe("Error Handling + UX Plausibility", () => {
     await newPw.fill("NewStr0ng!Pass#42");
     await confirmPw.fill("NewStr0ng!Pass#42");
 
-    const submit = page.getByRole("button", { name: "Passwort ändern", exact: true });
+    const submit = page.getByRole("button", { name: "Passwort speichern", exact: true });
     await expect(submit).toBeEnabled();
 
     // Register the response wait BEFORE the click so a fast answer cannot be missed.

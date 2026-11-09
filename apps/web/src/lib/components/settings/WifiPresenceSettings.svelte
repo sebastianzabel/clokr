@@ -125,7 +125,7 @@
   }
 </script>
 
-<Section title="Meine Geräte">
+<Section title="Stempeln mit dem Handy">
   <!-- GDPR notice - always visible, not dismissible -->
   <div class="alert alert-info wifi-gdpr-note" role="note">
     <svg

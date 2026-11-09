@@ -11,6 +11,8 @@
   import FormField from "$components/ui/FormField.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import AppearanceSettings from "$components/settings/AppearanceSettings.svelte";
+  import MyWorkSettings from "$components/settings/MyWorkSettings.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
   import PasswordStrength from "$components/ui/PasswordStrength.svelte";
   import PushSettings from "$components/settings/PushSettings.svelte";
   import ReminderSettings from "$components/settings/ReminderSettings.svelte";
@@ -21,6 +23,7 @@
   let newPassword = $state("");
   let confirmPassword = $state("");
   let saving = $state(false);
+  let passwordOpen = $state(false);
 
   let pwPolicy = $state({
     passwordMinLength: 12,
@@ -34,6 +37,7 @@
   const profileSubtitle = $derived(
     [$authStore.user?.email, roleNamesLabel($salonContext)].filter(Boolean).join(" · "),
   );
+  const displayName = $derived($authStore.user?.firstName ?? $authStore.user?.email ?? "");
 
   let passwordMismatch = $derived(confirmPassword.length > 0 && newPassword !== confirmPassword);
 
@@ -94,6 +98,7 @@
       await api.post("/auth/change-password", { currentPassword, newPassword });
       toasts.success("Passwort geändert");
       currentPassword = newPassword = confirmPassword = "";
+      passwordOpen = false;
     } catch (e: unknown) {
       toasts.error(
         e instanceof Error
@@ -138,152 +143,168 @@
 
 <svelte:head><title>{pageLabel("/settings")} – Clokr</title></svelte:head>
 
-<PageHeader title={pageLabel("/settings")} subtitle={profileSubtitle} />
+<!-- Phase 851 (prototype „Ich › Profil“, #602): who you are on top, your work and your notifications on
+     the left, appearance, phone clocking and security on the right. -->
+<PageHeader title={pageLabel("/settings")} subtitle={profileSubtitle}>
+  {#snippet actions()}
+    <button
+      type="button"
+      class="btn btn-secondary btn-sm"
+      onclick={openAvatarPicker}
+      disabled={avatarUploading}
+    >
+      {#if avatarUploading}<Spinner size={14} label="Bild wird hochgeladen" />{/if}
+      Foto ändern
+    </button>
+  {/snippet}
+</PageHeader>
+
+<div class="profile-person">
+  <button
+    type="button"
+    class="avatar-wrapper"
+    onclick={openAvatarPicker}
+    disabled={avatarUploading}
+    aria-label="Profilbild ändern"
+    title="Profilbild ändern"
+  >
+    {#if avatarSrc}
+      <img src={avatarSrc} alt="" class="avatar-preview" width="56" height="56" />
+    {:else}
+      <span class="avatar-initials" aria-hidden="true">
+        {(displayName || "?").charAt(0).toUpperCase()}
+      </span>
+    {/if}
+  </button>
+  <div class="profile-person-text">
+    <b>{displayName}</b>
+    <span>JPG, PNG oder WebP. Tippe auf das Bild, um es zu ändern.</span>
+  </div>
+  <input
+    bind:this={avatarFileInput}
+    type="file"
+    accept="image/jpeg,image/png,image/webp"
+    onchange={uploadAvatar}
+    class="avatar-file-input"
+    aria-label="Profilbild hochladen"
+  />
+</div>
 
 <div class="profile-wrap">
   <div class="profile-grid">
     <div class="profile-col">
-      <Section title="Profilbild" sub="JPG, PNG oder WebP. Tippe auf das Bild, um es zu ändern.">
-        <div class="avatar-section">
-          <button
-            type="button"
-            class="avatar-wrapper"
-            onclick={openAvatarPicker}
-            disabled={avatarUploading}
-            aria-label="Profilbild ändern"
-            title="Profilbild ändern"
-          >
-            {#if avatarSrc}
-              <img src={avatarSrc} alt="" class="avatar-preview" width="96" height="96" />
-            {:else}
-              <span class="avatar-initials" aria-hidden="true">
-                {($authStore.user?.firstName ?? $authStore.user?.email?.[0] ?? "?")
-                  .charAt(0)
-                  .toUpperCase()}
-              </span>
-            {/if}
-            <span class="avatar-overlay" aria-hidden="true">
-              <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path
-                  d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
-                /><circle cx="12" cy="13" r="4" /></svg
-              >
-            </span>
-          </button>
-          <input
-            bind:this={avatarFileInput}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onchange={uploadAvatar}
-            class="avatar-file-input"
-            aria-label="Profilbild hochladen"
-          />
-          <button
-            type="button"
-            class="btn btn-secondary btn-sm"
-            onclick={openAvatarPicker}
-            disabled={avatarUploading}
-          >
-            {#if avatarUploading}<Spinner size={14} label="Bild wird hochgeladen" />{/if}
-            Foto ändern
-          </button>
-        </div>
-      </Section>
-
-      <Section title="Sicherheit" sub="Ändere hier dein Passwort.">
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            changePassword();
-          }}
-          class="pw-form"
-        >
-          <FormField label="Aktuelles Passwort">
-            {#snippet field({ id, describedBy, invalid })}
-              <input
-                {id}
-                type="password"
-                bind:value={currentPassword}
-                required
-                class="form-input"
-                autocomplete="current-password"
-                aria-describedby={describedBy}
-                aria-invalid={invalid || undefined}
-              />
-            {/snippet}
-          </FormField>
-          <FormField label="Neues Passwort">
-            {#snippet field({ id, describedBy, invalid })}
-              <input
-                {id}
-                type="password"
-                bind:value={newPassword}
-                required
-                minlength={pwPolicy.passwordMinLength}
-                class="form-input"
-                autocomplete="new-password"
-                aria-describedby={describedBy}
-                aria-invalid={invalid || undefined}
-              />
-              <PasswordStrength password={newPassword} policy={pwPolicy} />
-            {/snippet}
-          </FormField>
-          <FormField
-            label="Passwort bestätigen"
-            error={passwordMismatch ? "Die Passwörter stimmen nicht überein." : undefined}
-          >
-            {#snippet field({ id, describedBy, invalid })}
-              <input
-                {id}
-                type="password"
-                bind:value={confirmPassword}
-                required
-                class="form-input"
-                autocomplete="new-password"
-                aria-describedby={describedBy}
-                aria-invalid={invalid || undefined}
-              />
-            {/snippet}
-          </FormField>
-          <div>
-            <button
-              type="submit"
-              class="btn btn-primary"
-              disabled={saving || !currentPassword || !newPassword || passwordMismatch}
-            >
-              {#if saving}<Spinner size={14} label="Passwort wird gespeichert" />{/if}
-              Passwort ändern
-            </button>
-          </div>
-        </form>
-      </Section>
-
-      <AppearanceSettings />
+      <MyWorkSettings />
+      <!-- Notifications: push per device and the shift reminders (Issue #608/#609) -->
+      <PushSettings />
+      <ReminderSettings />
     </div>
 
     <div class="profile-col">
-      <!-- Push notifications: per device, only offered when the instance has VAPID keys -->
-      <PushSettings />
-
-      <!-- Shift reminders (Issue #609): one switch per occasion the tenant enabled -->
-      <ReminderSettings />
-
-      <!-- WiFi presence: Meine Geräte (consent, coupled phones) -->
+      <AppearanceSettings />
+      <!-- Stempeln mit dem Handy: WLAN presence and coupled phones (Issue #388/#610) -->
       <WifiPresenceSettings />
+      <Section title="Sicherheit" sub="Dein Passwort für die Anmeldung.">
+        <div>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            onclick={() => (passwordOpen = true)}>Passwort ändern</button
+          >
+        </div>
+      </Section>
     </div>
   </div>
 </div>
 
+<Dialog bind:open={passwordOpen} title="Passwort ändern">
+  <form
+    id="pw-form"
+    onsubmit={(e) => {
+      e.preventDefault();
+      changePassword();
+    }}
+    class="pw-form"
+  >
+    <FormField label="Aktuelles Passwort">
+      {#snippet field({ id, describedBy, invalid })}
+        <input
+          {id}
+          type="password"
+          bind:value={currentPassword}
+          required
+          class="form-input"
+          autocomplete="current-password"
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+        />
+      {/snippet}
+    </FormField>
+    <FormField label="Neues Passwort">
+      {#snippet field({ id, describedBy, invalid })}
+        <input
+          {id}
+          type="password"
+          bind:value={newPassword}
+          required
+          minlength={pwPolicy.passwordMinLength}
+          class="form-input"
+          autocomplete="new-password"
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+        />
+        <PasswordStrength password={newPassword} policy={pwPolicy} />
+      {/snippet}
+    </FormField>
+    <FormField
+      label="Passwort bestätigen"
+      error={passwordMismatch ? "Die Passwörter stimmen nicht überein." : undefined}
+    >
+      {#snippet field({ id, describedBy, invalid })}
+        <input
+          {id}
+          type="password"
+          bind:value={confirmPassword}
+          required
+          class="form-input"
+          autocomplete="new-password"
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+        />
+      {/snippet}
+    </FormField>
+  </form>
+  {#snippet footer()}
+    <button type="button" class="btn btn-secondary" onclick={() => (passwordOpen = false)}
+      >Abbrechen</button
+    >
+    <button
+      type="submit"
+      form="pw-form"
+      class="btn btn-primary"
+      disabled={saving || !currentPassword || !newPassword || passwordMismatch}
+    >
+      {#if saving}<Spinner size={14} label="Passwort wird gespeichert" />{/if}
+      Passwort speichern
+    </button>
+  {/snippet}
+</Dialog>
+
 <style>
-  /* Issue #851 (D-851-02): two columns from the 760 px container breakpoint; the route width decides the rest. */
+  .profile-person {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    margin-bottom: var(--s-6);
+  }
+  .profile-person-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .profile-person-text span {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
   .profile-wrap {
     container-type: inline-size;
   }
@@ -303,22 +324,15 @@
     gap: var(--s-6);
     min-width: 0;
   }
-  .avatar-section {
-    display: flex;
-    align-items: center;
-    gap: var(--s-4);
-  }
   .avatar-wrapper {
-    position: relative;
-    width: 96px;
-    height: 96px;
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
     cursor: pointer;
     padding: 0;
     background: transparent;
     border: 0;
     overflow: hidden;
-    display: block;
     flex-shrink: 0;
   }
   .avatar-wrapper:disabled {
@@ -331,11 +345,9 @@
   }
   .avatar-preview,
   .avatar-initials {
-    width: 96px;
-    height: 96px;
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
-    border: 1px solid var(--line);
-    box-sizing: border-box;
     display: flex;
   }
   .avatar-preview {
@@ -344,27 +356,10 @@
   .avatar-initials {
     background: var(--brand-soft);
     color: var(--brand);
-    font-size: 32px;
+    font-size: 20px;
     font-weight: 600;
     align-items: center;
     justify-content: center;
-  }
-  .avatar-overlay {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    background: color-mix(in srgb, var(--text) 45%, transparent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    transition: opacity 0.2s;
-    color: var(--card);
-    pointer-events: none;
-  }
-  .avatar-wrapper:hover .avatar-overlay,
-  .avatar-wrapper:focus-visible .avatar-overlay {
-    opacity: 1;
   }
   .avatar-file-input {
     display: none;
