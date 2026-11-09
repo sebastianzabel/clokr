@@ -33,7 +33,7 @@ export const ACTIVE_TENANT_WHERE = { deactivatedAt: null } as const;
  * display only — nobody may branch on it.
  */
 export const TENANT_DEACTIVATED_ERROR = {
-  error: "Der Mandant ist deaktiviert. Eine Anmeldung ist nicht möglich.",
+  error: "Das Unternehmen ist deaktiviert. Eine Anmeldung ist nicht möglich.",
   code: "TENANT_DEACTIVATED",
 } as const;
 
@@ -42,7 +42,7 @@ export const TENANT_DEACTIVATED_ERROR = {
  * German `error` text is display only — nobody may branch on it.
  */
 export const TENANT_REQUIRED_ERROR = {
-  error: "Dieses Konto ist keinem Mandanten zugeordnet. Eine Anmeldung ist nicht möglich.",
+  error: "Dieses Konto ist keinem Unternehmen zugeordnet. Eine Anmeldung ist nicht möglich.",
   code: "TENANT_REQUIRED",
 } as const;
 

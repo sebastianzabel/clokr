@@ -186,10 +186,10 @@ describe("POST /api/v1/employees — Stammsalon resolution (Phase 67b Plan 03, D
     });
   });
 
-  it("zero active salons (default salon deactivated), homeSalonId omitted: 400 'Der Mandant hat keinen aktiven Salon.'", async () => {
+  it("zero active salons (default salon deactivated), homeSalonId omitted: 400 'Das Unternehmen hat keinen aktiven Salon.'", async () => {
     const res = await postEmployee(app, zeroActive.adminToken, minimalEmployeeBody());
     expect(res.statusCode, res.body.slice(0, 400)).toBe(400);
-    expect(JSON.parse(res.body)).toEqual({ error: "Der Mandant hat keinen aktiven Salon." });
+    expect(JSON.parse(res.body)).toEqual({ error: "Das Unternehmen hat keinen aktiven Salon." });
   });
 
   it("homeSalonId of a foreign tenant's real salon and a nonexistent uuid: byte-identical 400s; CROSS_TENANT_ACCESS_DENIED only for the foreign one", async () => {

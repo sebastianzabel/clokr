@@ -21,7 +21,7 @@ import {
 export const PERMISSION_RESOURCE_LABELS: Readonly<Record<PermissionResource, string>> = {
   employee: "Mitarbeiter-Stammdaten",
   contract: "Vertrag und Arbeitszeitmodell",
-  "tenant-settings": "Mandanteneinstellungen",
+  "tenant-settings": "Unternehmenseinstellungen",
   "api-key": "API-Schlüssel",
   "audit-log": "Audit-Protokoll",
   holiday: "Feiertage und Schulferien",
@@ -67,8 +67,8 @@ export const PERMISSION_LABELS: Readonly<Record<PermissionKey, string>> = {
   "contract:read:ZUGEWIESEN":
     "Arbeitszeitmodelle und Vertragshistorie im zugewiesenen Bereich lesen",
   "contract:update:ZUGEWIESEN": "Vertragswechsel im zugewiesenen Bereich anlegen",
-  "tenant-settings:read:ZUGEWIESEN": "Mandanteneinstellungen lesen",
-  "tenant-settings:update:ZUGEWIESEN": "Mandanteneinstellungen ändern",
+  "tenant-settings:read:ZUGEWIESEN": "Unternehmenseinstellungen lesen",
+  "tenant-settings:update:ZUGEWIESEN": "Unternehmenseinstellungen ändern",
   "api-key:manage:ZUGEWIESEN": "API-Schlüssel verwalten",
   "audit-log:read:ZUGEWIESEN": "Audit-Protokoll lesen",
   "holiday:manage:ZUGEWIESEN": "Feiertage und Schulferien verwalten",

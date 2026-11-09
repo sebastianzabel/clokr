@@ -331,7 +331,7 @@ export function requireAnyPermission(...keys: PermissionKey[]) {
  * `error` text is display only - nobody may branch on it.
  */
 export const NO_ROLE_ASSIGNED_ERROR = {
-  error: "Ihrem Konto ist keine Rolle zugewiesen. Bitte wenden Sie sich an Ihre Administration.",
+  error: "Deinem Konto ist keine Rolle zugewiesen. Bitte wende dich an deine Administration.",
   code: "NO_ROLE_ASSIGNED",
 } as const;
 

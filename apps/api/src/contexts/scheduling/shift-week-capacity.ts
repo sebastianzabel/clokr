@@ -181,7 +181,7 @@ export async function notifyWeekCapacityConflictOnce(
           userId: mgr.id,
           type: "SHIFT_WEEK_OVERBOOKED",
           title: `Wochenkapazität überschritten: ${employeeName.firstName} ${employeeName.lastName}`,
-          message: `In der Woche ab ${weekStartDe} sind ${conflict.scheduledDays} Schichttage geplant, Vertrag − Urlaub − Abwesenheit erlaubt nur ${allowed}. Bitte überprüfen Sie /shifts.`,
+          message: `In der Woche ab ${weekStartDe} sind ${conflict.scheduledDays} Schichttage geplant, Vertrag − Urlaub − Abwesenheit erlaubt nur ${allowed}. Bitte prüf die Schichtplanung.`,
           link: "/shifts",
           tenantId,
           relatedType: "ShiftWeekConflict",

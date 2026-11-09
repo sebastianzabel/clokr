@@ -421,7 +421,7 @@ export const MONTHLY_EXPORT_FORECAST_LEGEND =
 export const MONTHLY_EXPORT_UNLABELLED_LEGEND =
   "ohne Soll: Vertrag ohne Sollvorgabe (reine Zeiterfassung) \u2014 dort entfallen Soll, Saldo und Gesamtsaldo.";
 export const MONTHLY_EXPORT_DATEV_LEGEND =
-  "DATEV-Std.: Normalstunden der DATEV-Datei in Dezimalstunden (Summe aller gültigen, abgeschlossenen Zeiteinträge des Monats). Sie können vom Ist abweichen: Das Ist stammt aus dem Arbeitszeitkonto, zählt nur Einträge der Art Arbeit an Tagen im Beschäftigungszeitraum, enthält die Berufsschul-Anrechnung und ist in abgeschlossenen Monaten der gespeicherte Stand.";
+  "DATEV-Std.: Normalstunden der DATEV-Datei in Dezimalstunden (Summe aller gültigen, abgeschlossenen Zeiteinträge des Monats). Diese Stunden können vom Ist abweichen: Das Ist stammt aus dem Arbeitszeitkonto, zählt nur Einträge der Art Arbeit an Tagen im Beschäftigungszeitraum, enthält die Berufsschul-Anrechnung und ist in abgeschlossenen Monaten der gespeicherte Stand.";
 export const MONTHLY_EXPORT_UNITS_LEGEND =
   "Zeiten in Stunden:Minuten. Abwesenheiten in Arbeitstagen wie im DATEV-Export (leer = keine). Saldo Monat: der ganze Monat, im laufenden Monat als Prognose. Gesamtsaldo: Stand zum Monatsende, im laufenden Monat bis gestern.";
 

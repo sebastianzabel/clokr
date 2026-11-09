@@ -8,9 +8,14 @@ error messages written in the web app. Its machine-checkable half is the lint
 `pnpm --filter @clokr/web lint:ui-terms` (`apps/web/scripts/lint-ui-terms.mjs`), which runs in CI
 and in the pre-commit hook.
 
-Not yet covered: error messages produced by the API and the e-mail templates
-(`apps/api/src`). They follow the same rules, but the lint does not see them; their conversion is
-issue #861 (D-574-03).
+The German texts of the API follow the same rules — error messages, notifications, e-mail
+templates and PDF texts under `apps/api/src`. Their gate is `pnpm --filter @clokr/api run
+lint:api-terms` (`apps/api/scripts/lint-api-terms.ts`, Issue #861), which imports the term list of
+`lint:ui-terms` instead of copying it and reads only German text (English Swagger descriptions, log
+lines and raw SQL stay out). In the API, „Mandant“ is allowed only in texts of the operator console
+and in DATEV's field name „Mandantennummer“; „Phorest“ only in Schichtplanung, the integration and
+the permission names of the role editor. A permission key such as `role-assignment:manage` is never
+part of a text: the API gate names the permission in words.
 
 ## 2. Address form: „du“
 
@@ -80,5 +85,8 @@ Zeiterfassung. The names are deliberately not repeated here: the module is the o
 | `phorest`     | Phorest (area-scoped)                 |
 | `sie-form`    | Address form „du“                     |
 
-Limits: the lint cannot tell the plural „Mitarbeiter“ from the singular, does not judge button
-wording, and does not see texts that come from the API. Those are review questions.
+`lint:api-terms` adds one term of its own: `permission-key` (no permission key in a text).
+
+Limits: the lint cannot tell the plural „Mitarbeiter“ from the singular and does not judge button
+wording. The API gate recognises German text by umlauts, function words and word endings, so a
+German text without any of them is not read. Those are review questions.

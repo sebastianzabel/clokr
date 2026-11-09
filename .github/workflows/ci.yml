@@ -419,6 +419,12 @@ jobs:
         # text the web app shows. Vocabulary and the address form "du": docs/glossar.md.
         run: pnpm --filter @clokr/web lint:ui-terms
 
+      - name: Lint German API texts against the glossary (Issue #861)
+        # The API sibling of lint:ui-terms: the same term list, read in every German text the API
+        # shows (error messages, notifications, e-mail templates, PDF texts). Vocabulary and the
+        # address form "du": docs/glossar.md. Unconditional, ~2s.
+        run: pnpm --filter @clokr/api run lint:api-terms
+
       - name: Test comment-language script (extractor + classifier unit tests)
         # Root-level, node environment (see vitest.config.mjs) — protects the detector
         # itself (extractComments/classifyComment) from regressions, in particular the

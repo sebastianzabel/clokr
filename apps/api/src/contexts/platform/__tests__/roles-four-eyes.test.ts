@@ -38,7 +38,7 @@ import type { FastifyInstance } from "fastify";
 
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
 const ROLE_SYSTEM_UPDATE_MESSAGE =
-  "Systemrollen können nicht geändert werden. Kopieren Sie die Rolle, um sie anzupassen.";
+  "Systemrollen können nicht geändert werden. Kopier die Rolle, um sie anzupassen.";
 const ROLE_MANAGE = "role:manage:ZUGEWIESEN";
 const ASSIGNMENT_MANAGE = "role-assignment:manage:ZUGEWIESEN";
 

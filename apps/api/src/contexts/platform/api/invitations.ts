@@ -40,7 +40,7 @@ export async function invitationRoutes(app: FastifyInstance) {
 
       if (invitation.expiresAt < new Date()) {
         return reply.code(410).send({
-          error: "Dieser Link ist abgelaufen. Bitte wenden Sie sich an den Administrator.",
+          error: "Dieser Link ist abgelaufen. Bitte wende dich an deine Administration.",
         });
       }
 
@@ -77,7 +77,7 @@ export async function invitationRoutes(app: FastifyInstance) {
         newValue: { isActive: true, invitationAccepted: true },
       });
 
-      return { success: true, message: "Passwort gesetzt. Sie können sich jetzt anmelden." };
+      return { success: true, message: "Passwort gesetzt. Du kannst dich jetzt anmelden." };
     },
   });
 }

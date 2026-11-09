@@ -387,7 +387,7 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       const defaultSalon = activeSalons[0];
       if (!defaultSalon) {
         reply.code(409);
-        return { error: "Der Mandant hat keinen aktiven Salon." };
+        return { error: "Das Unternehmen hat keinen aktiven Salon." };
       }
       const timezone = await readTenantTimezone(app.prisma, body.tenantId);
 

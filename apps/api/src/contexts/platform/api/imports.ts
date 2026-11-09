@@ -187,7 +187,7 @@ export async function importRoutes(app: FastifyInstance) {
         includeInactive: false,
       });
       if (activeSalons.length === 0) {
-        return reply.code(400).send({ error: "Der Mandant hat keinen aktiven Salon." });
+        return reply.code(400).send({ error: "Das Unternehmen hat keinen aktiven Salon." });
       }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
 
@@ -220,7 +220,7 @@ export async function importRoutes(app: FastifyInstance) {
             !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
           ) {
             throw new Error(
-              "Zum Vergeben einer Rolle außer Mitarbeiter fehlt die Berechtigung role-assignment:manage.",
+              "Zum Vergeben einer Rolle außer Mitarbeiter fehlt die Berechtigung „Rollen an Personen zuweisen und entziehen“.",
             );
           }
 
@@ -244,9 +244,9 @@ export async function importRoutes(app: FastifyInstance) {
                 salonOutcome.status === "SALON_INACTIVE"
                   ? "Einem deaktivierten Salon kann keine neue Zuordnung zugewiesen werden."
                   : salonOutcome.status === "HOME_SALON_REQUIRED"
-                    ? "Der Mandant hat mehrere aktive Salons: bitte den Stammsalon in der Spalte salonId angeben."
+                    ? "Das Unternehmen hat mehrere aktive Salons: bitte den Stammsalon in der Spalte salonId angeben."
                     : salonOutcome.status === "NO_ACTIVE_SALON"
-                      ? "Der Mandant hat keinen aktiven Salon."
+                      ? "Das Unternehmen hat keinen aktiven Salon."
                       : "Salon nicht gefunden",
               );
             }

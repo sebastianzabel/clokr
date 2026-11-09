@@ -45,7 +45,7 @@ const RULE_CHANGED_CONCURRENTLY = {
   error: "Die Regel wurde gleichzeitig geändert. Bitte lade die Seite neu.",
 } as const;
 const ALL_SALONS_FORBIDDEN = {
-  error: "Regeln für alle Salons kann nur verwalten, wer für den ganzen Mandanten zuständig ist.",
+  error: "Regeln für alle Salons kann nur verwalten, wer für das ganze Unternehmen zuständig ist.",
 } as const;
 
 const idParamSchema = z.object({ id: z.string().uuid() });

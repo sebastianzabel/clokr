@@ -373,7 +373,7 @@ export function computeEmployeeSummary(
  * rather than shipping the old placeholder, which looked like a value and was not one.
  */
 export const DATEV_KANZLEI_MISSING_ERROR =
-  "Berater- und Mandantennummer sind nicht hinterlegt. Bitte unter Administration → Export → Konfiguration eintragen — ohne sie kann DATEV die Datei keinem Mandanten zuordnen.";
+  "Berater- und Mandantennummer sind nicht hinterlegt. Bitte unter Administration → Export → Konfiguration eintragen — ohne sie kann DATEV die Datei nicht zuordnen.";
 
 export function resolveDatevKanzlei(
   config: { datevBeraterNr: number | null; datevMandantenNr: number | null } | null,

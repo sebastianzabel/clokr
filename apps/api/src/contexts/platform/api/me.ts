@@ -216,7 +216,7 @@ export async function meRoutes(app: FastifyInstance) {
         where: { id: req.user.tenantId },
         select: { id: true, name: true },
       });
-      if (!tenant) return reply.code(404).send({ error: "Mandant nicht gefunden" });
+      if (!tenant) return reply.code(404).send({ error: "Unternehmen nicht gefunden" });
 
       // D-05: nothing reads this context back — a later view passes at most a `salonId`
       // parameter that the target endpoint validates itself.
