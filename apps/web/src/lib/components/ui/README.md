@@ -16,7 +16,7 @@ apart by colour, not by slant. Colours and sizes come from `tokens.css` roles (`
 ## Rules
 
 - Every `(app)/` page MUST use `<PageHead>` from `$components/layout/PageHead.svelte`.
-- No raw `<h1>` outside `PageHead.svelte`.
+- No raw `<h1>` outside `ui/PageHeader.svelte` (`layout/PageHead.svelte` delegates to it, #843).
 - No inline `style="color: …; background: …; background-color: …; border: …"` declarations — use theme tokens via class names. CSS custom property passthrough (`style="--card-idx: 3;"`) is allowed.
 - No raw `.scrim`, `.modal`, `.modal-hd`, `.modal-body`, `.modal-foot`, `.card-hd`, `.card-title`, `.card-sub`, `.month-bar`, `.month-bar-stats`, `.mstat`, `.approval-row` class usage in route files. Go through the primitive. (Note: the Modal primitive emits `.scrim` + `.modal` + `.modal-hd` + `.modal-body` + `.modal-foot` to match the canonical app.css recipe.)
 - Escape-hatch: `<!-- eslint-disable-next-line clokr/ui-no-raw-class -->` with a justification comment. PR review will scrutinize.

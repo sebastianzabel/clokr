@@ -101,11 +101,11 @@ for (const file of listFiles(APP_ROUTES)) {
 }
 
 // ── CHECK 2: no-raw-h1 ─────────────────────────────────────────────────────
-// PageHead.svelte is the ONLY place raw <h1> is allowed inside the (app) shell.
+// ui/PageHeader.svelte is the ONLY place raw <h1> is allowed inside the (app) shell (#843;
+// layout/PageHead.svelte delegates to it).
 // (auth)/ pages are standalone (no app shell, no PageHead) and may use their
 // own <h1> — exempt from this rule.
 for (const file of listFiles(ALL_SVELTE)) {
-  if (file.endsWith("lib/components/layout/PageHead.svelte")) continue;
   // #843 (D-843-14): the Seitenkopf block owns the <h1>; PageHead delegates to it.
   if (file.endsWith("lib/components/ui/PageHeader.svelte")) continue;
   if (file.includes("/routes/(auth)/")) continue;
@@ -118,7 +118,7 @@ for (const file of listFiles(ALL_SVELTE)) {
         rule: "no-raw-h1",
         file,
         line: i + 1,
-        msg: "Raw <h1> outside PageHead.svelte",
+        msg: "Raw <h1> outside ui/PageHeader.svelte",
       });
     }
   }
