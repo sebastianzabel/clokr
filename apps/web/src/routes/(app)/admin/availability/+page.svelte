@@ -10,6 +10,7 @@
   import { toasts } from "$stores/toast";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   interface Employee {
     id: string;
@@ -73,9 +74,7 @@
       </div>
 
       {#if loading}
-        <div class="av-empty-state">
-          <p class="av-empty-body">Lade Mitarbeiter…</p>
-        </div>
+        <Skeleton shape="row" count={4} />
       {:else if filtered.length === 0}
         <div class="av-empty-state">
           <h3 class="av-empty-title">Keine Mitarbeiter gefunden</h3>

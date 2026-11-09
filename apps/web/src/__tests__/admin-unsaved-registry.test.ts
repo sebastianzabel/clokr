@@ -57,6 +57,8 @@ const EXCLUDED: Record<string, string> = {
   "integrations/+page.svelte":
     "no update endpoint exists; the single write creates a NEW API key and the two inputs clear afterwards",
   "themes/+page.svelte": "no write path and no bound form state",
+  "bausteine/+page.svelte":
+    "example page of the building blocks (#843): demo data only, no write path",
   "availability/+page.svelte": "list view — no write path",
   "salons/+page.svelte": "list view — no form state; writes happen on the detail page",
   "audit/[id]/+page.svelte": "detail view — no write path",

@@ -8,6 +8,7 @@
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { federalStateLabel } from "$lib/salons/federal-states";
   import type { SalonDto } from "$lib/salons/salon-form";
 
@@ -70,7 +71,7 @@
   {#snippet list()}
     {#if loading}
       <Section>
-        <p class="text-muted" role="status">Wird geladen…</p>
+        <Skeleton shape="row" count={3} />
       </Section>
     {:else if forbidden}
       <Section>

@@ -59,6 +59,7 @@
   } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08; offer: Issue #660
   import { mayFileRetroRequest } from "$lib/page-rights";
   import { toasts } from "$stores/toast";
+  import { correctionSaved } from "$lib/feedback/action-messages"; // #843 (D-843-08)
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
   import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-elk
@@ -1351,6 +1352,9 @@
           salonId: formSalonPayload,
         });
       }
+      // #843 (D-843-08): acknowledge only after the server answered. The retro paths
+      // (submitRetroRequest) already say what happened and never reach this line.
+      toasts.success(correctionSaved());
       closeModal();
       await loadAll();
       const breakFindingNotice = breakFindingSaveNotice(saved?.warnings);

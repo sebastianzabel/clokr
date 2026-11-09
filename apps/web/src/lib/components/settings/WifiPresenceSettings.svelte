@@ -23,6 +23,7 @@
   import { toasts } from "$stores/toast";
   import Card from "$components/ui/Card.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   let enabled = $state(false);
   let devices = $state<MyWifiDevice[]>([]);
@@ -175,7 +176,7 @@
   <!-- Device list -->
   <div class="mac-list">
     {#if loading}
-      <p class="text-muted mac-list-status">Laden…</p>
+      <Skeleton shape="row" count={2} />
     {:else if loadFailed}
       <div class="callout error">
         <p>

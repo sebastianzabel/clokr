@@ -1,0 +1,341 @@
+{
+  "description": "Issue #843, D-843-09 (plan 843-32): every +page.svelte under apps/web/src/routes has exactly one entry here. The all-routes overflow spec (apps/e2e/tests/all-routes-overflow-843.spec.ts) visits each non-skipped entry at 360, 390, 1024 and 1440 px; apps/web/src/__tests__/routes-overflow-register-843.test.ts fails on a page without an entry, an entry without a page file or a skip without a reason. `auth` is tenant-admin (API login as the fixture tenant admin), operator (mocked operator API plus a seeded operator session), operator-anonymous (mocked operator API, no session) or none; `path` uses the placeholders listed under `fills`; `anchor` is a CSS selector that must be visible before measuring (default: defaultAnchor); `sessionStorage` is seeded before the page loads.",
+  "defaultAnchor": "header.page-head",
+  "fills": {
+    "employee": [":employeeId"],
+    "salon": [":salonId"],
+    "shutdown": [":shutdownId"],
+    "auditLog": [":auditLogId"],
+    "supportAccess": [":supportAccessId"],
+    "operatorTenant": [":tenantId"],
+    "operatorEmployee": [":tenantId", ":operatorEmployeeId"]
+  },
+  "routes": [
+    {
+      "page": "(app)/admin/+page.svelte",
+      "path": "/admin",
+      "auth": "tenant-admin",
+      "skip": "Redirect-only page: since #844 the URL /admin redirects to Verwalten › Übersicht (/verwalten, measured as its own route); the file renders no content of its own."
+    },
+    {
+      "page": "(app)/admin/audit/+page.svelte",
+      "path": "/admin/audit",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/audit/[id]/+page.svelte",
+      "path": "/admin/audit/:auditLogId",
+      "auth": "tenant-admin",
+      "fill": "auditLog"
+    },
+    {
+      "page": "(app)/admin/availability/+page.svelte",
+      "path": "/admin/availability",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/availability/[employeeId]/+page.svelte",
+      "path": "/admin/availability/:employeeId",
+      "auth": "tenant-admin",
+      "fill": "employee"
+    },
+    {
+      "page": "(app)/admin/bausteine/+page.svelte",
+      "path": "/admin/bausteine",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/employees/+page.svelte",
+      "path": "/admin/employees",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/employees/[id]/+page.svelte",
+      "path": "/admin/employees/:employeeId",
+      "auth": "tenant-admin",
+      "fill": "employee"
+    },
+    {
+      "page": "(app)/admin/export/+page.svelte",
+      "path": "/admin/export",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/import/+page.svelte",
+      "path": "/admin/import",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/integrations/+page.svelte",
+      "path": "/admin/integrations",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/leave-limits/+page.svelte",
+      "path": "/admin/leave-limits",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/month-close/+page.svelte",
+      "path": "/admin/month-close",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/phorest/+page.svelte",
+      "path": "/admin/phorest",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/roles/+page.svelte",
+      "path": "/admin/roles",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/salons/+page.svelte",
+      "path": "/admin/salons",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/salons/[id]/+page.svelte",
+      "path": "/admin/salons/:salonId",
+      "auth": "tenant-admin",
+      "fill": "salon"
+    },
+    {
+      "page": "(app)/admin/shifts/+page.svelte",
+      "path": "/admin/shifts",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/shutdowns/+page.svelte",
+      "path": "/admin/shutdowns",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/shutdowns/[id]/+page.svelte",
+      "path": "/admin/shutdowns/:shutdownId",
+      "auth": "tenant-admin",
+      "fill": "shutdown"
+    },
+    {
+      "page": "(app)/admin/special-leave/+page.svelte",
+      "path": "/admin/special-leave",
+      "auth": "tenant-admin",
+      "skip": "Redirect-only page: onMount sends the browser to /admin/vacation#sonderurlaub, which is measured as the /admin/vacation route."
+    },
+    {
+      "page": "(app)/admin/special-leave/[id]/+page.svelte",
+      "path": "/admin/special-leave/example",
+      "auth": "tenant-admin",
+      "skip": "Redirect stub with no content of its own (it sends the browser to /admin/vacation#sonderurlaub); the target is measured as the /admin/vacation route."
+    },
+    {
+      "page": "(app)/admin/support-access/+page.svelte",
+      "path": "/admin/support-access",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/support-access/[id]/+page.svelte",
+      "path": "/admin/support-access/:supportAccessId",
+      "auth": "tenant-admin",
+      "fill": "supportAccess"
+    },
+    {
+      "page": "(app)/admin/system/+page.svelte",
+      "path": "/admin/system",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/themes/+page.svelte",
+      "path": "/admin/themes",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/admin/vacation/+page.svelte",
+      "path": "/admin/vacation",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/availability/+page.svelte",
+      "path": "/availability",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/dashboard/+page.svelte",
+      "path": "/dashboard",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/employees/+page.svelte",
+      "path": "/employees",
+      "auth": "tenant-admin",
+      "skip": "Redirect-only page: onMount sends the browser to /admin/employees, which is measured as its own route."
+    },
+    {
+      "page": "(app)/inbox/+page.svelte",
+      "path": "/inbox",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/leave/+page.svelte",
+      "path": "/leave",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/leave/planung/+page.svelte",
+      "path": "/leave/planung",
+      "auth": "tenant-admin",
+      "skip": "Redirect-only page (Issue #835 old planner URL, since #840 a stub): it sends the browser to the Planung tab of /team/leave or /leave, which are measured as their own routes."
+    },
+    {
+      "page": "(app)/reports/+page.svelte",
+      "path": "/reports",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/settings/+page.svelte",
+      "path": "/settings",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/settings/geraet-koppeln/+page.svelte",
+      "path": "/settings/geraet-koppeln",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/shifts/+page.svelte",
+      "path": "/shifts",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/shifts/conflicts/+page.svelte",
+      "path": "/shifts/conflicts",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/shifts/planning/+page.svelte",
+      "path": "/shifts/planning",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/team/heute/+page.svelte",
+      "path": "/team/heute",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/team/leave/+page.svelte",
+      "path": "/team/leave",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/team/time-entries/+page.svelte",
+      "path": "/team/time-entries",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/time-entries/+page.svelte",
+      "path": "/time-entries",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/verwalten/+page.svelte",
+      "path": "/verwalten",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/verwalten/daten/+page.svelte",
+      "path": "/verwalten/daten",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/verwalten/regeln/+page.svelte",
+      "path": "/verwalten/regeln",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/verwalten/system/+page.svelte",
+      "path": "/verwalten/system",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(auth)/forgot-password/+page.svelte",
+      "path": "/forgot-password",
+      "auth": "none",
+      "anchor": "h1"
+    },
+    {
+      "page": "(auth)/invitation/+page.svelte",
+      "path": "/invitation?token=x",
+      "auth": "none",
+      "anchor": ".login-card"
+    },
+    {
+      "page": "(auth)/login/+page.svelte",
+      "path": "/login",
+      "auth": "none",
+      "anchor": "h1"
+    },
+    {
+      "page": "(auth)/otp/+page.svelte",
+      "path": "/otp",
+      "auth": "none",
+      "anchor": "h1",
+      "sessionStorage": {
+        "otp_userId": "synthetic-user"
+      }
+    },
+    {
+      "page": "(auth)/reset-password/+page.svelte",
+      "path": "/reset-password?token=x",
+      "auth": "none",
+      "anchor": "h1"
+    },
+    {
+      "page": "(operator)/betreiber/(konsole)/+page.svelte",
+      "path": "/betreiber",
+      "auth": "operator"
+    },
+    {
+      "page": "(operator)/betreiber/(konsole)/mandanten/[id]/+page.svelte",
+      "path": "/betreiber/mandanten/:tenantId",
+      "auth": "operator",
+      "fill": "operatorTenant"
+    },
+    {
+      "page": "(operator)/betreiber/(konsole)/mandanten/[id]/support/+page.svelte",
+      "path": "/betreiber/mandanten/:tenantId/support",
+      "auth": "operator",
+      "fill": "operatorTenant"
+    },
+    {
+      "page": "(operator)/betreiber/(konsole)/mandanten/[id]/support/mitarbeitende/[employeeId]/+page.svelte",
+      "path": "/betreiber/mandanten/:tenantId/support/mitarbeitende/:operatorEmployeeId",
+      "auth": "operator",
+      "fill": "operatorEmployee"
+    },
+    {
+      "page": "(operator)/betreiber/(konsole)/mandanten/[id]/support/mitarbeitende/[employeeId]/vertraege/+page.svelte",
+      "path": "/betreiber/mandanten/:tenantId/support/mitarbeitende/:operatorEmployeeId/vertraege",
+      "auth": "operator",
+      "fill": "operatorEmployee"
+    },
+    {
+      "page": "(operator)/betreiber/(konsole)/mandanten/[id]/support/protokoll/+page.svelte",
+      "path": "/betreiber/mandanten/:tenantId/support/protokoll",
+      "auth": "operator",
+      "fill": "operatorTenant"
+    },
+    {
+      "page": "(operator)/betreiber/anmelden/+page.svelte",
+      "path": "/betreiber/anmelden",
+      "auth": "operator-anonymous",
+      "anchor": "h1"
+    },
+    {
+      "page": "+page.svelte",
+      "path": "/",
+      "auth": "none",
+      "skip": "The root page only redirects to /dashboard or /login and renders no layout of its own; both targets are measured as their own routes."
+    }
+  ]
+}

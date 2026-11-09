@@ -244,7 +244,20 @@ export default defineConfig({
       //     built app and the axe scans); tenant fixture plus API-created people, requests, plans,
       //     a holiday and opening hours, every date computed from the clock
       //
-      // Issue #844 added a fifteenth file:
+      // Issue #843 (D-843-11) added a fifteenth file:
+      //   - narrow-648-843.spec.ts (#648: the /shifts week header and the /admin/employees table fit
+      //     360/390 px; employee list search and sort in the URL); tenant fixture only, no seed
+      //
+      // Issue #843 (D-843-10, D-843-12) added a sixteenth file:
+      //   - startpage-feedback-843.spec.ts (AC-3: every write of the start pages acknowledges its
+      //     result in the toast status region); tenant fixture only, no seed
+      // and a seventeenth file:
+      //   - bausteine-843.spec.ts (AC-4/AC-7: keyboard proofs of Dialog, Combobox, Tabs, DatePicker
+      //     and the toolbar popover on /admin/bausteine, axe with colour contrast in the six
+      //     theme x mode frames, and the #636 stacking of an open ConfirmDialog over the topbar);
+      //     tenant fixture only, no seed
+      //
+      // Issue #844 added a further file:
       //   - Navigation v2: the start page per role (Mitarbeiterin, Salonmanager, Inhaber,
       //     Personalabteilung), old URLs and a notification deep link redirect (308 on the server),
       //     the rail without scrolling at 1440 x 900 and 1024 x 768; tenant fixture plus API-created
@@ -271,6 +284,10 @@ export default defineConfig({
         /push-pwa\.spec\.ts/,
         /leave-area-840\.spec\.ts/,
         /navigation-v2\.spec\.ts/,
+        /narrow-648-843\.spec\.ts/,
+        /startpage-feedback-843\.spec\.ts/,
+        /bausteine-843\.spec\.ts/,
+        /all-routes-overflow-843\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

@@ -44,6 +44,9 @@ export interface AppRoute {
   description?: string;
   /** Tenant feature that must be on (Verfügbarkeits-System, Phase 47.3). */
   feature?: "availability";
+  /** An internal tool page (#843): reachable by URL behind its guard, never in a navigation, a hub, the
+   *  command palette or as a start page. */
+  internal?: true;
 }
 
 const Z = (resourceAction: string) => `${resourceAction}:ZUGEWIESEN`;
@@ -480,6 +483,19 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inNav: false,
     parent: "/verwalten/system",
     description: "Wer was sehen und ändern darf",
+  },
+  // #843 D-843-04: the design-system example page - internal, never in a navigation. It reads no API data, so
+  // this is a UX gate only (the same read key the themes page accepts).
+  {
+    href: "/verwalten/bausteine",
+    area: "verwalten",
+    label: "Bausteine",
+    icon: "grid",
+    width: "full",
+    requires: [[Z("tenant-settings:read")]],
+    file: "/admin/bausteine",
+    inNav: false,
+    internal: true,
   },
 ];
 

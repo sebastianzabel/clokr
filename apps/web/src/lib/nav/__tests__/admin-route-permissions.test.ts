@@ -58,7 +58,10 @@ function adminRoutePaths(dir = ADMIN_DIR): string[] {
 /** The pre-#844 admin pages (by their route file) the keys open, sorted — the matrix below is hand-written. */
 function visibleFor(keys: readonly string[]): string[] {
   return ADMIN_ROUTE_PERMISSIONS.filter(
-    (e) => e.file?.startsWith("/admin/") === true && holdsAlternatives(user([...keys]), e.requires),
+    (e) =>
+      e.file?.startsWith("/admin/") === true &&
+      !e.internal &&
+      holdsAlternatives(user([...keys]), e.requires),
   )
     .map((e) => e.file!)
     .sort();
@@ -152,7 +155,10 @@ describe("admin route permissions (Issue #83)", () => {
   });
 
   it("persona matrix of the system roles (D-14)", () => {
-    const ALL = ADMIN_ROUTE_PERMISSIONS.filter((e) => e.file?.startsWith("/admin/") === true)
+    // the internal example page of #843 is no navigable admin page
+    const ALL = ADMIN_ROUTE_PERMISSIONS.filter(
+      (e) => e.file?.startsWith("/admin/") === true && !e.internal,
+    )
       .map((e) => e.file!)
       .sort();
     expect(ALL.length).toBe(17);
@@ -204,7 +210,8 @@ describe("admin route permissions (Issue #83)", () => {
     expect(allow).toBeGreaterThan(-1);
     expect(render).toBeGreaterThan(allow);
     expect(render).toBeLessThan(wait);
-    expect(layout.slice(wait)).toContain('role="status"');
+    // #843 D-843-07: the wait state is a Skeleton, which carries role="status" itself.
+    expect(layout.slice(wait)).toContain("<Skeleton");
     expect(layout).toContain("loadPermissionsIfMissing");
     expect(layout).toContain("goto(homeHref($authStore.user)");
     expect(layout).not.toMatch(/\.role\b|"ADMIN"|"MANAGER"/);

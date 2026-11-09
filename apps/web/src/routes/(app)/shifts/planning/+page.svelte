@@ -12,6 +12,7 @@
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import { pageLabel } from "$lib/nav/page-labels";
   import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import {
     isSalonFilterRejected,
     salonPageFilter,
@@ -161,7 +162,7 @@
         </thead>
         <tbody>
           {#if loading}
-            <tr><td colspan={hasPlannedColumns ? 6 : 4}>Lädt…</td></tr>
+            <tr><td colspan={hasPlannedColumns ? 6 : 4}><Skeleton shape="row" count={3} /></td></tr>
           {:else if employees.length === 0}
             <tr>
               <td colspan={hasPlannedColumns ? 6 : 4} class="empty">

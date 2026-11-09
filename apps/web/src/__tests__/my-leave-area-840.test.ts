@@ -322,7 +322,8 @@ describe("Issue #840 E-03 / D-840-16 / D-840-23 - Planung shows the own wishes",
 
   it("[waits for the context] before the salon context is loaded the tab shows a status, not an empty planner", () => {
     expect(PLANUNG_PANEL).toContain("{#if !contextLoaded}");
-    expect(PLANUNG_PANEL).toContain('role="status"');
+    // #843 D-843-07: the status role now comes from the Skeleton (role=status, hidden „Wird geladen“).
+    expect(PLANUNG_PANEL).toContain("<Skeleton");
   });
 
   it("[deep link] the notification link's salon is preselected once, then dropped from the URL", () => {

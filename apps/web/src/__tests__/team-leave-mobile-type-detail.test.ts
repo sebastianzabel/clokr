@@ -272,7 +272,8 @@ describe("#265 — CalendarDayDetail spells the type out", () => {
   it("a keyboard can dismiss it: Escape closes the sheet", async () => {
     open(true);
     expect(screen.queryByRole("dialog")).toBeTruthy();
-    await fireEvent.keyDown(window, { key: "Escape" });
+    // #843 D-843-16: the dialog is portaled to body and bits-ui listens for Escape on document
+    await fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 

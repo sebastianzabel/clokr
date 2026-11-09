@@ -13,7 +13,7 @@
   import { loadPermissionsIfMissing } from "$api/client";
   import { adminGuardDecision } from "$lib/nav/admin-route-permissions";
   import { homeHref } from "$lib/nav/routes";
-  import Spinner from "$components/ui/Spinner.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -42,18 +42,14 @@
 {#if decision === "allow"}
   {@render children?.()}
 {:else if decision === "wait"}
-  <div role="status" aria-live="polite" class="guard-wait">
-    <Spinner />
-    <span>Berechtigungen werden geladen …</span>
+  <!-- #843 (D-06): loading is a skeleton in the shape of the surface, never a "Laden…" text -->
+  <div class="guard-wait">
+    <Skeleton shape="card" lines={3} />
   </div>
 {/if}
 
 <style>
   .guard-wait {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     padding: 24px 0;
-    color: var(--text-2);
   }
 </style>

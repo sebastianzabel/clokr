@@ -301,7 +301,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(xRow).toBeVisible();
     await expect(xRow).toContainText(x.lastName);
 
-    await xRow.getByRole("link", { name: new RegExp(x.lastName) }).click();
+    // #843 D-843-11: the list is a DataTable; the name cell is the row's keyboard control (a button).
+    await xRow.getByRole("button", { name: new RegExp(x.lastName) }).click();
     await expect(page).toHaveURL(new RegExp(`/verwalten/personen/${x.id}`));
     await expect(
       page.getByRole("tabpanel").getByText("Persönliche Daten", { exact: true }),
@@ -400,7 +401,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     ]);
 
     // ── 2. AC-86-2: change the contract from the next month-first ─────────────────────────────
-    await page.getByTestId(`admin-employees-row-${x.id}`).getByRole("link").first().click();
+    // #843 D-843-11: the name cell of the DataTable row is a button, not a link.
+    await page.getByTestId(`admin-employees-row-${x.id}`).getByRole("button").first().click();
     await expect(page).toHaveURL(new RegExp(`/verwalten/personen/${x.id}`));
     await page.getByRole("tab", { name: "Arbeitszeit" }).click();
     const contractHistory = page.getByTestId("contract-history");
@@ -500,7 +502,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     );
     await page.getByRole("tab", { name: "Urlaub & Abwesenheit" }).click();
     await expect(page.getByText("Urlaubsübersicht", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Lade Urlaubsübersicht…")).toHaveCount(0);
+    // #843 D-843-07: the tab loads through Skeleton; waiting for its status to vanish keeps this a real wait.
+    await expect(page.getByRole("status", { name: "Wird geladen" })).toHaveCount(0);
     await expect(page.getByText("DATEV-Export", { exact: true })).toHaveCount(0);
     // Issue #617: the Monatsexport card replaces the removed vacation-PDF card as the export control
     // the Personalabteilung (report:read, no report:export) must not see.

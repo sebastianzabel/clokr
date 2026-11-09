@@ -7,6 +7,8 @@
   import { authStore } from "$stores/auth";
   import { salonContext } from "$stores/salon-context";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
@@ -1375,15 +1377,19 @@
             class="btn btn-ghost btn-sm"
             onclick={() => downloadIcal("personal")}
             disabled={icalDownloading}
+            aria-busy={icalDownloading}
           >
-            {icalDownloading ? "Laden…" : "Meine Abwesenheiten"}
+            {#if icalDownloading}<Spinner />{/if}
+            Meine Abwesenheiten
           </button>
           <button
             class="btn btn-ghost btn-sm"
             onclick={() => downloadIcal("team")}
             disabled={icalDownloading}
+            aria-busy={icalDownloading}
           >
-            {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
+            {#if icalDownloading}<Spinner />{/if}
+            Team-Abwesenheiten
           </button>
         </div>
       </div>
@@ -1596,7 +1602,7 @@
           closedHint={teamLegend.closedHint}
         />
         {#if teamRows.length === 0 && teamLoading}
-          <p class="overview-empty">Lade Abwesenheiten …</p>
+          <Skeleton shape="block" height="240px" />
         {:else if teamRows.length === 0}
           <p class="overview-empty" data-testid="leave-team-empty">
             Keine Abwesenheiten in diesem Zeitraum.
@@ -1624,7 +1630,7 @@
   {#if activeTab === "planung"}
     <div role="tabpanel" id="leave-panel-planung" aria-labelledby="leave-tab-planung">
       {#if !contextLoaded}
-        <p class="overview-empty" role="status">Urlaubsplanung wird geladen …</p>
+        <Skeleton shape="card" lines={3} />
       {:else}
         <LeavePlanningPanel
           mode="own"

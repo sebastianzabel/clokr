@@ -697,7 +697,12 @@ describe("/reports (Issue #612) - states of the period area", () => {
   it("the first load shows skeletons with aria-busy in the KPI card and in both tabs", () => {
     const kpis = renderWithTheme(PeriodKpis, { kpis: null, filterActive: false, loading: true });
     expect(screen.getByTestId("period-kpis").getAttribute("aria-busy")).toBe("true");
-    expect(screen.getByTestId("period-kpis-skeleton")).toBeTruthy();
+    // #843 D-843-07: each area loads through its own Skeleton status, found inside the area.
+    expect(
+      within(screen.getByTestId("period-kpis-skeleton")).getByRole("status", {
+        name: "Wird geladen",
+      }),
+    ).toBeTruthy();
     kpis.unmount();
     const table = renderWithTheme(TimesAccountsTable, {
       ...TABLE_PROPS,
@@ -705,8 +710,11 @@ describe("/reports (Issue #612) - states of the period area", () => {
       loading: true,
     });
     expect(screen.getByTestId("period-section").getAttribute("aria-busy")).toBe("true");
-    expect(screen.getByTestId("period-table-skeleton")).toBeTruthy();
-    expect(screen.getByText("Bericht wird geladen…")).toBeTruthy();
+    expect(
+      within(screen.getByTestId("period-table-skeleton")).getByRole("status", {
+        name: "Wird geladen",
+      }),
+    ).toBeTruthy();
     table.unmount();
     renderWithTheme(VacationAbsenceTab, {
       vacation: null,
@@ -720,8 +728,9 @@ describe("/reports (Issue #612) - states of the period area", () => {
       onOpenPerson: () => {},
       onNotify: async () => ({ warned: 0, skippedDedup: 0 }),
     });
-    expect(screen.getByTestId("vacation-skeleton").getAttribute("aria-busy")).toBe("true");
-    expect(screen.getByText("Lade Urlaubsübersicht…")).toBeTruthy();
+    expect(
+      within(screen.getByTestId("vacation-skeleton")).getByRole("status", { name: "Wird geladen" }),
+    ).toBeTruthy();
   });
 
   it("a later load dims the previous figures instead of replacing them with a skeleton", () => {

@@ -185,6 +185,26 @@
       "file": "apps/e2e/tests/navigation-v2.spec.ts",
       "category": "in-ci",
       "reason": "Issue #844 browser proof of Navigation v2 on the real test stack: the start page per role after a sign-in through the UI (Mitarbeiterin -> /ich/tag with only the Ich area, Salonmanager with a SALONS assignment and Inhaber -> /team/heute, the Inhaber with all three areas, Personalabteilung -> /verwalten), the old URLs of the acceptance criteria (/inbox with its query, /team/leave, /teamcal, /admin/vacation, /admin/system, /dashboard, /admin) land on their new URL with a visible H1, a notification deep link answers 308 on the server with the query kept, and the Inhaber's rail has no scroll overflow at 1440x900 and 1024x768. Fixtures: the per-test tenant, synthetic persons with .invalid addresses and their system role templates through the API. No date dependency, no sleeps."
+    },
+    {
+      "file": "apps/e2e/tests/narrow-648-843.spec.ts",
+      "category": "in-ci",
+      "reason": "Issue #648 (Phase 843, D-843-11) geometry proof of the two narrow-viewport defects, fixed by the new blocks: at 360 and 390 px the next-week button of the /shifts PeriodPicker lies inside the viewport with a 44 px target and no unclipped element ends right of the viewport; at 360 px the e-mail value of the fixture admin on /admin/employees (DataTable cards below 760 px container width) is visible inside the viewport. It also proves that the employee list keeps its search text (q) and its Eintritt sort (sort, dir) in the URL across a reload. jsdom has no container queries, so the geometry is only provable in a browser; CI (the e2e-ci project, plan 843-34) is the arbiter, not a local run. Needs only the tenant fixture (no seed) and has no date dependency: it reads positions, not dates."
+    },
+    {
+      "file": "apps/e2e/tests/startpage-feedback-843.spec.ts",
+      "category": "in-ci",
+      "reason": "AC-3 / D-843-08 / D-843-19 (Phase 843) proof that every write of the start pages acknowledges its result: on the fixture tenant it clocks in, starts and ends a break and clocks out on /dashboard, files a one-day sick request on /leave through the form and corrects the end time of the day's entry on /time-entries, and after each write asserts the text of the polite toast status region (toast-region-status test id, because the Spinner also renders role=status): Eingestempelt, Pause gestartet, Pause beendet, Ausgestempelt, Antrag gestellt, Korrektur gespeichert. The salon part of the clock-in text is only required to be non-empty when present, never a hard-coded name. Needs the running stack with the tenant fixture and no seed; CI (the e2e-ci project, plan 843-34) is the arbiter, not a local run."
+    },
+    {
+      "file": "apps/e2e/tests/bausteine-843.spec.ts",
+      "category": "in-ci",
+      "reason": "AC-4 / AC-7 / D-843-10 / D-843-12 (Phase 843) keyboard, axe and #636 proofs on the example page /admin/bausteine: the Dialog traps Tab and Shift+Tab, ignores a press released on the overlay, closes on Escape and returns focus to its trigger; the Combobox opens on ArrowDown and selects the highlighted item with Enter; the page tabs move with ArrowRight and ArrowLeft; the DatePicker opens and a picked day shows in the segments; the toolbar's + Filter popover turns a chosen option into a removable chip; axe (WCAG 2 A/AA, colour contrast enabled) is clean in each of the six theme x mode frames; at 1440 px an open ConfirmDialog is what elementFromPoint returns over the topbar, the page behind it is inert and Tab stays inside the dialog. Needs the running stack with the tenant fixture and no seed; CI (the e2e-ci project, plan 843-34) is the arbiter, not a local run."
+    },
+    {
+      "file": "apps/e2e/tests/all-routes-overflow-843.spec.ts",
+      "category": "in-ci",
+      "reason": "AC-5 / #575 / D-843-09 (Phase 843) proof that no route of the app scrolls horizontally on a phone: it reads apps/e2e/fixtures/route-register-843.json (one entry per +page.svelte, kept complete by the web vitest routes-overflow-register-843) and visits every non-skipped route at 360, 390, 1024 and 1440 px, tenant routes as the fixture tenant admin (dynamic ones with an employee, salon, shutdown or audit entry created through the API, the support-access detail through a page.route mock of its one GET), the /betreiber console through the shared operator API mock of helpers/operator-api-mock.ts. Per route and width it asserts that the page head (or the registered anchor) is visible on the requested path, that document.documentElement.scrollWidth <= innerWidth and that measurePageOverflow() names no unclipped element beyond the viewport, and it prints route, width and offenders on failure. Redirect-only pages are skipped with a registered reason. Needs the running stack with the tenant fixture and no seed; CI (the e2e-ci project, plan 843-34) is the arbiter, not a local run."
     }
   ]
 }

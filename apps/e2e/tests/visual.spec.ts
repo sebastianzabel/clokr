@@ -188,4 +188,20 @@ test.describe("Phase 75 — Visual baselines", () => {
       mask: [page.locator("canvas"), page.getByTestId("team-saldo-values")],
     });
   });
+
+  // Issue #843 (D-843-04): the example page of the design-system blocks. One screenshot per
+  // theme x mode frame (six); the page reads no API data. The baselines are taken from the CI
+  // artifact (plan 843-36), never from a local render.
+  test("11 — Bausteine", async ({ page }) => {
+    await page.goto("/admin/bausteine");
+    await expect(page.locator('[data-testid="bausteine-page"]')).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    for (const theme of ["pflaume", "salz", "petrol"]) {
+      for (const mode of ["light", "dark"]) {
+        await expect(page.getByTestId(`bausteine-frame-${theme}-${mode}`)).toHaveScreenshot(
+          `11-bausteine-${theme}-${mode}.png`,
+        );
+      }
+    }
+  });
 });

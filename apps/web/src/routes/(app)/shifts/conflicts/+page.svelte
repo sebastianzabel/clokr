@@ -15,6 +15,8 @@
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import { pageLabel } from "$lib/nav/page-labels";
   import ShiftConflictRow from "$components/ShiftConflictRow.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
 
   interface ConflictShift {
     id: string;
@@ -135,8 +137,15 @@
         disabled={loading}
       />
     </label>
-    <button type="button" class="btn btn-secondary btn-sm" onclick={load} disabled={loading}>
-      {loading ? "Lädt…" : "Aktualisieren"}
+    <button
+      type="button"
+      class="btn btn-secondary btn-sm"
+      onclick={load}
+      disabled={loading}
+      aria-busy={loading}
+    >
+      {#if loading}<Spinner />{/if}
+      Aktualisieren
     </button>
   </div>
 
@@ -155,7 +164,7 @@
     </header>
 
     {#if loading}
-      <p class="empty">Lädt…</p>
+      <Skeleton shape="row" count={2} />
     {:else if softDeleted.length === 0}
       <p class="empty">Keine entfernten Schichten im Zeitraum.</p>
     {:else}
@@ -178,7 +187,7 @@
     </header>
 
     {#if loading}
-      <p class="empty">Lädt…</p>
+      <Skeleton shape="row" count={2} />
     {:else if flagged.length === 0}
       <p class="empty">Keine markierten Schichten im Zeitraum.</p>
     {:else}
@@ -204,7 +213,7 @@
     </header>
 
     {#if loading}
-      <p class="empty">Lädt…</p>
+      <Skeleton shape="row" count={2} />
     {:else if weekOverbooked.length === 0}
       <p class="empty">Keine Wochenkapazität-Konflikte im Zeitraum.</p>
     {:else}

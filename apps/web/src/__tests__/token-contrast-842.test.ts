@@ -222,19 +222,28 @@ describe("token-contrast-842 — nested previews are complete (D-842-02, WR-03)"
   );
 
   it("resolves the accent of the previewed theme, not an ancestor's", () => {
+    // #843: the light accents are darkened to 3:1 (WCAG 1.4.11); dark keeps the lighter honey.
+    const expected = {
+      light: { pflaume: "#b68324", salz: "#bb7f33", petrol: "#b68324" },
+      dark: { pflaume: "#d9a441", salz: "#c98a3a", petrol: "#d9a441" },
+    } as const;
     for (const mode of ["light", "dark"] as const) {
-      const accent = (theme: "pflaume" | "salz" | "petrol") =>
-        resolveCombination(css, theme, mode, true).get("--accent");
-      expect(accent("pflaume"), `pflaume/${mode}`).toBe("#d9a441");
-      expect(accent("salz"), `salz/${mode}`).toBe("#c98a3a");
-      expect(accent("petrol"), `petrol/${mode}`).toBe("#d9a441");
+      for (const theme of ["pflaume", "salz", "petrol"] as const) {
+        expect(resolveCombination(css, theme, mode, true).get("--accent"), `${theme}/${mode}`).toBe(
+          expected[mode][theme],
+        );
+      }
     }
   });
 
-  it("negative control: without the Petrol accent declaration the nested cascade has a gap", () => {
-    const stripped = css.replace(/\n\s*--accent: #d9a441;(?=[^}]*\}\s*\/\* ─── Shared dark)/, "");
+  it("negative control: without the dark accent declaration a dark preview keeps the light accent", () => {
+    // #843: the dark block declares the accent itself; stripping it lets the light theme value leak
+    // into the nested dark preview - the gap this suite exists to catch.
+    const stripped = css.replace(/(\[data-mode="dark"\] \{)\n\s*--accent: #d9a441;/, "$1");
     expect(stripped).not.toBe(css);
-    expect(cascadeCombination(stripped, "petrol", "dark", true).has("--accent")).toBe(false);
+    expect(resolveCombination(stripped, "petrol", "dark", true).get("--accent")).not.toBe(
+      "#d9a441",
+    );
   });
 });
 

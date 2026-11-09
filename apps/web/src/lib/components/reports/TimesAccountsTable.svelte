@@ -10,6 +10,7 @@
   import ApprovalRow from "$components/ui/ApprovalRow.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { fmtDateDe, fmtHoursDe } from "$lib/reports/period-format";
   import type { PeriodRow } from "$lib/reports/period-report";
   import {
@@ -216,12 +217,9 @@
 
   {#if rows === null}
     {#if loading}
-      <div class="period-skeleton" data-testid="period-table-skeleton">
-        {#each Array.from({ length: 5 }, (_, i) => i) as i (i)}
-          <div class="skeleton skeleton-text"></div>
-        {/each}
+      <div data-testid="period-table-skeleton">
+        <Skeleton shape="line" count={5} />
       </div>
-      <span class="sr-only">Bericht wird geladen…</span>
     {/if}
   {:else if rows.length === 0}
     <EmptyState
@@ -405,12 +403,6 @@
     font-size: 15px;
     color: var(--text);
     font-variant-numeric: tabular-nums;
-  }
-
-  .period-skeleton {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-3);
   }
 
   .period-section :global(.filter-bar) {

@@ -28,15 +28,26 @@ export interface AdminRoutePermission {
   /** The route file (pre-#844 URL); absent for a page created by #844. */
   file?: string;
   requires: PermissionAlternatives;
-  /** False for sub-pages and alias routes (not shown in the rail). */
+  /** False for sub-pages, alias routes and internal tool pages (not shown in the rail). */
   inNav: boolean;
+  /** An internal tool page (#843): reachable by URL behind its guard, never listed in a navigation,
+   *  the command palette or the start-page redirect. */
+  internal?: true;
 }
 
 /** Every permission-gated page of the route table plus the redirect-only aliases, keyed by the new href. */
 export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   ...APP_ROUTES.flatMap((route) =>
     Array.isArray(route.requires)
-      ? [{ href: route.href, file: route.file, requires: route.requires, inNav: route.inNav }]
+      ? [
+          {
+            href: route.href,
+            file: route.file,
+            requires: route.requires,
+            inNav: route.inNav,
+            ...(route.internal ? { internal: true as const } : {}),
+          },
+        ]
       : [],
   ),
   ...LEGACY_ALIASES.map((alias) => ({ href: alias.href, requires: alias.requires, inNav: false })),

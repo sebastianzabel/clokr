@@ -16,6 +16,7 @@
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // § 9 reject reason (moved from /team/leave, #840)
   import EmptyState from "$components/ui/EmptyState.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { LEAVE_TYPE_OPTIONS, type CalendarTypeCode } from "$lib/leave/team-calendar-visibility"; // Phase 262, Phase 255
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"; // Issue #840 (G-3)
@@ -676,7 +677,7 @@
   </div>
 
   {#if loading}
-    <div class="list-empty">Lädt…</div>
+    <Skeleton shape="row" count={3} />
   {:else if visibleRequests.length === 0}
     {#if tab === "open"}
       <EmptyState
@@ -822,7 +823,7 @@
   </div>
 
   {#if retroLoading}
-    <div class="list-empty">Lädt…</div>
+    <Skeleton shape="row" count={3} />
   {:else if retroVisible.length === 0}
     {#if retroTab === "open"}
       <EmptyState
@@ -907,7 +908,7 @@
     </div>
     <div class="section9-cases" data-testid="section9-cases-list">
       {#if section9Loading}
-        <div class="list-empty">Lädt…</div>
+        <Skeleton shape="row" count={3} />
       {:else if openSection9Cases.length === 0}
         <EmptyState
           icon="inbox"
@@ -1286,13 +1287,6 @@
   }
   .list-card-header :global(.card-hd) {
     margin-bottom: 0;
-  }
-
-  .list-empty {
-    padding: 32px 24px;
-    text-align: center;
-    color: var(--text-2);
-    font-size: 13.5px;
   }
 
   /* ── Modal body helpers ───────────────────────────────────────────────── */

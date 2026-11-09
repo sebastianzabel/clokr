@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { formatOperatorDateTime } from "$lib/operator/labels";
   import { auditActor, flattenAuditValue, windowError } from "$lib/operator/support-audit";
   import type { SupportAuditPage, SupportEmployee } from "$lib/operator/types";
@@ -123,10 +124,7 @@
 
   {#if loading}
     <div aria-busy="true" data-testid="op-support-audit-loading">
-      <span class="sr-only" role="status">Wird geladen …</span>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
+      <Skeleton shape="row" count={3} />
     </div>
   {:else if errorText !== ""}
     <div class="alert alert-error" role="alert" data-testid="op-support-audit-error">
@@ -252,11 +250,6 @@
   .message {
     margin: 0 0 16px;
     font-size: 16px;
-  }
-
-  .row {
-    height: 48px;
-    margin-bottom: 8px;
   }
 
   .empty {

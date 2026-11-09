@@ -19,6 +19,7 @@
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
   import AbsencesByPersonTable from "$lib/components/reports/AbsencesByPersonTable.svelte"; // Issue #713
@@ -994,7 +995,7 @@
       <CardHeader title="Monatsabschlüsse" sub="Persönliche Bilanz je Monat" />
     </div>
     {#if empClosesLoading}
-      <div class="emp-closes-loading">Lade Monatsabschlüsse…</div>
+      <Skeleton shape="row" count={3} />
     {:else if empClosesError}
       <div class="emp-closes-error" role="alert">{empClosesError}</div>
     {:else}
@@ -1216,11 +1217,6 @@
   .emp-pdf-cell {
     text-align: right;
     white-space: nowrap;
-  }
-  .emp-closes-loading {
-    padding: 32px;
-    text-align: center;
-    color: var(--text-2);
   }
   .emp-closes-error {
     padding: 16px 24px;
