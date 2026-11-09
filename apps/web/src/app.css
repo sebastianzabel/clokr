@@ -281,7 +281,9 @@ button {
   border-bottom: 1px solid var(--line);
 }
 
-/* ─── Badges ─────────────────────────────────────────────────────────── */
+/* ─── Badges ───────────────────────────────────────────────────────────
+   The colour pair of each .badge-* tone lives in the shared tone block next to .chip (Issue #843);
+   only the border is declared here. */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -300,46 +302,32 @@ button {
 }
 
 .badge-green {
-  background-color: var(--ok-soft);
-  color: var(--ok);
   border: 1px solid var(--ok-soft);
 }
 
 .badge-yellow {
-  background-color: var(--warn-soft);
-  color: var(--warn);
   border: 1px solid var(--warn-soft);
 }
 
 .badge-red {
-  background-color: var(--bad-soft);
-  color: var(--bad);
   border: 1px solid var(--bad-soft);
 }
 
 .badge-blue {
-  background-color: var(--info-soft);
-  color: var(--info);
   border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
 }
 
 .badge-purple {
-  background-color: var(--brand-soft);
-  color: var(--brand);
   border: 1px solid var(--brand-soft);
 }
 
 .badge-gray {
-  background-color: var(--sunk);
-  color: var(--text-2);
   border: 1px solid var(--line);
 }
 
 /* Conflict / overbooked marker. Same warn roles as .badge-yellow (the literal orange pair it used
    measured ~3:1 on the dark card); the border is the one difference, so it stays a stronger hint. */
 .badge-orange {
-  background-color: var(--warn-soft);
-  color: var(--warn);
   border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
 }
 
@@ -2059,44 +2047,106 @@ textarea.form-input {
   cursor: not-allowed;
 }
 
-/* ─── Chips / status pills (COMP-03) ─── */
+/* ─── Chips / status pills (COMP-03; Issue #843 block 8) ───
+   The 22 px pill of the Chip block. A tone is one colour pair, declared once here and shared with
+   the .badge-* recipes (same pairs, so the #842 contrast proof covers both). .chip-good is the
+   legacy name of the ok tone and stays a valid selector. */
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px;
+  gap: 6px;
+  box-sizing: border-box;
+  min-height: 22px;
+  padding: 0 var(--s-2);
   border-radius: var(--r-pill);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
-  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
   background: var(--sunk);
   color: var(--text-2);
   border: 1px solid var(--line);
 }
 .chip .dot {
+  flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
 }
-.chip-good {
+
+/* ─── Note (Issue #843 block 8) — the soft-colour hint line ───
+   Same tone pairs as the chip (status colour on its -soft partner). Not .callout: that recipe
+   has warn / brand / error only, no ok / info tone. */
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-control);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-2);
+  background: var(--sunk);
+}
+.note .note-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 0.5em;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* Tone pairs (Issue #843): the one place a status colour meets its soft partner. Chip, Note and the
+   .badge-* recipes share them; each pair is proven at 4.5:1 in all six combinations by
+   token-contrast-842. Borders differ per recipe and stay with it. */
+.badge-gray,
+.chip-neutral {
+  color: var(--text-2);
+  background: var(--sunk);
+}
+.badge-green,
+.chip-ok,
+.chip-good,
+.note-ok {
   color: var(--ok);
   background: var(--ok-soft);
-  border-color: transparent;
 }
-.chip-warn {
+.badge-yellow,
+.badge-orange,
+.chip-warn,
+.note-warn {
   color: var(--warn);
   background: var(--warn-soft);
-  border-color: transparent;
 }
-.chip-bad {
+.badge-red,
+.chip-bad,
+.note-bad {
   color: var(--bad);
   background: var(--bad-soft);
-  border-color: transparent;
 }
-.chip-brand {
+.badge-blue,
+.chip-info,
+.note-info {
+  color: var(--info);
+  background: var(--info-soft);
+}
+.badge-purple,
+.chip-brand,
+.note-brand {
   color: var(--brand);
   background: var(--brand-soft);
+}
+.chip-neutral {
+  border-color: var(--line);
+}
+.chip-ok,
+.chip-good,
+.chip-warn,
+.chip-bad,
+.chip-info,
+.chip-brand {
   border-color: transparent;
 }
 
