@@ -129,4 +129,10 @@ describe("validationSummary (Issue #573, D-05)", () => {
     );
     expect(summary).not.toMatch(/firstName|lastName|holidayRules|startTime/);
   });
+
+  it("does not repeat a label the message already names", () => {
+    expect(validationSummary([{ path: ["reason"], message: "Begründung ist erforderlich" }])).toBe(
+      "Begründung ist erforderlich",
+    );
+  });
 });

@@ -218,7 +218,10 @@ export function validationSummary(issues: readonly ValidationIssue[]): string {
   for (const issue of issues) {
     const last = [...issue.path].reverse().find((p) => typeof p === "string") as string | undefined;
     const label = last ? FIELD_LABELS[last] : undefined;
-    const text = label ? `${label}: ${issue.message}` : issue.message;
+    // A schema's own message often names its field already ("Begründung ist erforderlich"):
+    // then the label would only repeat it.
+    const named = label !== undefined && issue.message.toLowerCase().includes(label.toLowerCase());
+    const text = label && !named ? `${label}: ${issue.message}` : issue.message;
     if (!parts.includes(text)) parts.push(text);
   }
   return parts.length > 0 ? parts.join("; ") : GENERIC_INVALID;
