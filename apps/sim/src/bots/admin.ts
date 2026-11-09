@@ -66,8 +66,11 @@ export async function adminDay(ctx: BotContext, tenantKey: SimTenantKey): Promis
       const ids = state.persons[person.key];
       if (!ids.created || ids.exited || person.scheduleType !== "FIXED_SCHEDULE") continue;
       if (person.classification !== "VOLLZEIT" || !rng.chance(0.05)) continue;
-      const weeklyHours = ctx.progress.weeklyHours[person.key] === 36 ? 40 : 36;
-      const perDay = weeklyHours / person.workDays.length;
+      const targetHours = ctx.progress.weeklyHours[person.key] === 36 ? 40 : 36;
+      // Issue #848: the API refuses a FIXED_SCHEDULE whose weeklyHours differs from the sum of
+      // the (2-decimal) day hours, so the day value is rounded and the weekly value follows it.
+      const perDay = Math.round((targetHours / person.workDays.length) * 100) / 100;
+      const weeklyHours = Math.round(perDay * person.workDays.length * 100) / 100;
       const hours = (d: number) => (person.workDays.includes(d) ? perDay : 0);
       const res = await ctx.call("admin.contract", () =>
         ctx.api.put(
