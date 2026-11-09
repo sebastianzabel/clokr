@@ -269,6 +269,7 @@ export default defineConfig({
         /push-pwa\.spec\.ts/,
         /leave-area-840\.spec\.ts/,
         /narrow-648-843\.spec\.ts/,
+        /startpage-feedback-843\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

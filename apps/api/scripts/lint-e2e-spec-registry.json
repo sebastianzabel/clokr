@@ -185,6 +185,11 @@
       "file": "apps/e2e/tests/narrow-648-843.spec.ts",
       "category": "in-ci",
       "reason": "Issue #648 (Phase 843, D-843-11) geometry proof of the two narrow-viewport defects, fixed by the new blocks: at 360 and 390 px the next-week button of the /shifts PeriodPicker lies inside the viewport with a 44 px target and no unclipped element ends right of the viewport; at 360 px the e-mail value of the fixture admin on /admin/employees (DataTable cards below 760 px container width) is visible inside the viewport. It also proves that the employee list keeps its search text (q) and its Eintritt sort (sort, dir) in the URL across a reload. jsdom has no container queries, so the geometry is only provable in a browser; CI (the e2e-ci project, plan 843-34) is the arbiter, not a local run. Needs only the tenant fixture (no seed) and has no date dependency: it reads positions, not dates."
+    },
+    {
+      "file": "apps/e2e/tests/startpage-feedback-843.spec.ts",
+      "category": "in-ci",
+      "reason": "AC-3 / D-843-08 / D-843-19 (Phase 843) proof that every write of the start pages acknowledges its result: on the fixture tenant it clocks in, starts and ends a break and clocks out on /dashboard, files a one-day sick request on /leave through the form and corrects the end time of the day's entry on /time-entries, and after each write asserts the text of the polite toast status region (toast-region-status test id, because the Spinner also renders role=status): Eingestempelt, Pause gestartet, Pause beendet, Ausgestempelt, Antrag gestellt, Korrektur gespeichert. The salon part of the clock-in text is only required to be non-empty when present, never a hard-coded name. Needs the running stack with the tenant fixture and no seed; CI (the e2e-ci project, plan 843-34) is the arbiter, not a local run."
     }
   ]
 }
