@@ -1,209 +1,88 @@
-// Test helper (not a `*.test.ts`) — resolves design tokens from the SOURCE of `tokens.css`.
+// Test helper (not a `*.test.ts`) — the #840 helper API on top of the ONE cascade implementation.
 //
-// Why the source is parsed: jsdom resolves no custom properties and computes no colours, so a
-// test that wants to know "how visible is this tint in editorial dark" has to read the declarations
-// itself. The helper applies selector blocks in order (last declaration wins, as the cascade does
-// for blocks of equal specificity on the one `<html>` element), resolves `var()`, hex, `rgb()` /
-// `rgba()`, `transparent` and `color-mix(in srgb, ...)`, composites translucent colours and
-// measures WCAG 2.x contrast.
+// Issue #842, D-842-02 / D-842-25: the four surface modes the timeline used to be measured in
+// (editorial/modern x light/dark) are retired together with the skin layer. A colour is now
+// resolved for one of the six combinations (theme pflaume | salz | petrol x mode light | dark)
+// through `token-cascade.ts`, which parses `tokens.css` with postcss and applies the cascade the
+// way a browser does for an element carrying both attributes. This file owns no block extraction
+// and no colour maths of its own: it re-exports the cascade module's functions and adds the
+// combination-keyed names the #840 tests were written against.
 //
-// The identifier-prefix trap (Phase 258, see `leave-chip-contrast.test.ts`): `[data-mode="dark"] {`
-// is a SUBSTRING of `html[data-mode="dark"] {`, which holds only `color-scheme: dark`. A lookup that
-// takes the first substring match extracts nothing and passes having checked nothing. A block match
-// is therefore rejected when an identifier character precedes it, and it must be followed by `{`.
-//
-// Issue #840 G-2 / G-4.
+// Why the source is parsed: jsdom resolves no custom properties and computes no colours, so a test
+// that wants to know "how visible is this tint in Salz dark" has to read the declarations itself.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  COMBINATIONS,
+  contrast,
+  over,
+  readTokensCss,
+  resolveColor as resolveColorIn,
+  resolveCombination,
+  type Combination,
+  type Rgba,
+} from "./token-cascade";
 
-export interface Rgba {
-  /** 0..255 */
-  r: number;
-  g: number;
-  b: number;
-  /** 0..1 */
-  a: number;
-}
-
-function readRepoFile(relativeFromHere: string, relativeFromCwd: string): string {
-  try {
-    return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
-  } catch {
-    return readFileSync(resolve(process.cwd(), relativeFromCwd), "utf8");
-  }
-}
-
-export function readTokensCss(): string {
-  return readRepoFile("../tokens.css", "src/tokens.css");
-}
+export { contrast, over, readTokensCss };
+export type { Rgba };
 
 export function readAppCss(): string {
-  return readRepoFile("../app.css", "src/app.css");
+  try {
+    return readFileSync(fileURLToPath(new URL("../app.css", import.meta.url)), "utf8");
+  } catch {
+    return readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
+  }
 }
 
-/** The block chains of the four surface modes the timeline can be shown in. */
-export const SURFACES = {
-  "editorial-light": [":root"],
-  "editorial-dark": [":root", '[data-mode="dark"]'],
-  "modern-light": [":root", '[data-skin="modern"]', '[data-skin="modern"][data-mode="light"]'],
-  "modern-dark": [
-    ":root",
-    '[data-mode="dark"]',
-    '[data-skin="modern"]',
-    '[data-skin="modern"][data-mode="dark"]',
-  ],
-} as const satisfies Record<string, readonly string[]>;
+/** The six combinations keyed `"<theme>-<mode>"`, theme-major (replaces the retired four surfaces). */
+export const COMBINATION_CHAINS = Object.fromEntries(
+  COMBINATIONS.map((combo) => [`${combo.theme}-${combo.mode}`, combo]),
+) as Record<`${Combination["theme"]}-${Combination["mode"]}`, Combination>;
 
-export type SurfaceName = keyof typeof SURFACES;
+export type CombinationName = keyof typeof COMBINATION_CHAINS;
 
-const stripComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, "");
+/** The six combination names, theme-major. */
+export const COMBINATION_NAMES = Object.keys(COMBINATION_CHAINS) as CombinationName[];
 
-function blockBody(css: string, selector: string): string {
-  const source = stripComments(css);
-  const idChar = /[A-Za-z0-9_-]/;
-  let from = 0;
-  for (;;) {
-    const idx = source.indexOf(selector, from);
-    if (idx === -1) throw new Error(`Selector block not found in the stylesheet: ${selector}`);
-    from = idx + selector.length;
-    if (idx > 0 && idChar.test(source[idx - 1])) continue; // suffix of a longer selector
-    if (!/^\s*\{/.test(source.slice(from))) continue; // a prefix of a longer compound selector
-    const open = source.indexOf("{", from);
-    const close = source.indexOf("}", open);
-    if (close === -1) throw new Error(`Unterminated block: ${selector}`);
-    return source.slice(open + 1, close);
+// Resolving a combination parses the stylesheet; the tests ask for the same one hundreds of times.
+const resolved = new Map<string, Map<CombinationName, Map<string, string>>>();
+
+function propertiesOf(css: string, combination: CombinationName): Map<string, string> {
+  let perCss = resolved.get(css);
+  if (!perCss) {
+    perCss = new Map();
+    resolved.set(css, perCss);
   }
+  let map = perCss.get(combination);
+  if (!map) {
+    const { theme, mode } = COMBINATION_CHAINS[combination];
+    map = resolveCombination(css, theme, mode);
+    perCss.set(combination, map);
+  }
+  return map;
 }
 
 /**
- * The declared value of custom property `name` after the given selector blocks are applied in
- * order (the last declaration wins). Throws when no block declares it.
+ * The fully resolved value of custom property `name` in the combination (every `var()` followed).
+ * Throws when the combination does not declare it.
  */
-export function tokenIn(css: string, blocks: readonly string[], name: string): string {
-  let value: string | undefined;
-  const declaration = new RegExp(`(?:^|[;{\\s])${name.replace(/-/g, "\\-")}\\s*:\\s*([^;]+);`, "g");
-  for (const selector of blocks) {
-    const body = blockBody(css, selector);
-    for (const match of body.matchAll(declaration)) value = match[1].trim();
-  }
-  if (value === undefined) {
-    throw new Error(`${name} is not declared in ${JSON.stringify(blocks)}`);
-  }
+export function tokenIn(css: string, combination: CombinationName, name: string): string {
+  const value = propertiesOf(css, combination).get(name);
+  if (value === undefined) throw new Error(`${name} is not declared in ${combination}`);
   return value;
 }
 
-/** Splits at the commas that are not inside parentheses. */
-function splitTopLevel(text: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let current = "";
-  for (const ch of text) {
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
-    if (ch === "," && depth === 0) {
-      parts.push(current.trim());
-      current = "";
-    } else {
-      current += ch;
-    }
-  }
-  parts.push(current.trim());
-  return parts;
+/** Resolves a CSS colour value (`var()`, hex, `rgb[a]()`, `color-mix(in srgb, …)`) in the combination. */
+export function resolveColor(css: string, combination: CombinationName, value: string): Rgba {
+  return resolveColorIn(propertiesOf(css, combination), value);
 }
 
-function parseMixArgument(
-  css: string,
-  blocks: readonly string[],
-  argument: string,
-): { color: Rgba; percent: number | null } {
-  const match = /^(.*?)\s+(\d+(?:\.\d+)?)%$/.exec(argument);
-  if (match) {
-    return { color: resolveColor(css, blocks, match[1]), percent: Number(match[2]) / 100 };
-  }
-  return { color: resolveColor(css, blocks, argument), percent: null };
-}
-
-/** Resolves a CSS colour value (`var()`, hex, `rgb[a]()`, `transparent`, `color-mix(in srgb, …)`). */
-export function resolveColor(css: string, blocks: readonly string[], value: string): Rgba {
-  const text = value.trim();
-
-  const variable = /^var\(\s*(--[a-z0-9-]+)\s*(?:,[\s\S]*)?\)$/i.exec(text);
-  if (variable) return resolveColor(css, blocks, tokenIn(css, blocks, variable[1]));
-
-  if (text === "transparent") return { r: 0, g: 0, b: 0, a: 0 };
-
-  const hex = /^#([0-9a-f]{3,8})$/i.exec(text);
-  if (hex) {
-    let digits = hex[1];
-    if (digits.length === 3 || digits.length === 4) {
-      digits = [...digits].map((d) => d + d).join("");
-    }
-    if (digits.length !== 6 && digits.length !== 8) throw new Error(`Bad hex colour: ${text}`);
-    const int = (from: number) => parseInt(digits.slice(from, from + 2), 16);
-    return { r: int(0), g: int(2), b: int(4), a: digits.length === 8 ? int(6) / 255 : 1 };
-  }
-
-  const rgb = /^rgba?\(([^)]*)\)$/i.exec(text);
-  if (rgb) {
-    const parts = rgb[1].split(",").map((p) => p.trim());
-    if (parts.length < 3) throw new Error(`Unsupported rgb() form: ${text}`);
-    return {
-      r: Number(parts[0]),
-      g: Number(parts[1]),
-      b: Number(parts[2]),
-      a: parts.length > 3 ? Number(parts[3]) : 1,
-    };
-  }
-
-  const mix = /^color-mix\(\s*in srgb\s*,([\s\S]*)\)$/i.exec(text);
-  if (mix) {
-    const args = splitTopLevel(mix[1]);
-    if (args.length !== 2) throw new Error(`color-mix() needs two colours: ${text}`);
-    const first = parseMixArgument(css, blocks, args[0]);
-    const second = parseMixArgument(css, blocks, args[1]);
-    const p1 = first.percent ?? (second.percent === null ? 0.5 : 1 - second.percent);
-    const p2 = second.percent ?? 1 - p1;
-    // Premultiplied interpolation, as CSS Color 4 defines it for color-mix().
-    const a = first.color.a * p1 + second.color.a * p2;
-    if (a === 0) return { r: 0, g: 0, b: 0, a: 0 };
-    const channel = (key: "r" | "g" | "b") =>
-      (first.color[key] * first.color.a * p1 + second.color[key] * second.color.a * p2) / a;
-    return { r: channel("r"), g: channel("g"), b: channel("b"), a };
-  }
-
-  throw new Error(`Cannot resolve colour value: ${value}`);
-}
-
-/** Alpha compositing: `top` painted over `bottom`. */
-export function over(top: Rgba, bottom: Rgba): Rgba {
-  const a = top.a + bottom.a * (1 - top.a);
-  if (a === 0) return { r: 0, g: 0, b: 0, a: 0 };
-  const channel = (key: "r" | "g" | "b") =>
-    (top[key] * top.a + bottom[key] * bottom.a * (1 - top.a)) / a;
-  return { r: channel("r"), g: channel("g"), b: channel("b"), a };
-}
-
-function luminance(c: Rgba): number {
-  const lin = (v: number) => {
-    const s = v / 255;
-    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-  };
-  return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
-}
-
-/** WCAG 2.x contrast ratio of two OPAQUE colours (composite with `over()` first). */
-export function contrast(a: Rgba, b: Rgba): number {
-  if (a.a < 0.999 || b.a < 0.999) {
-    throw new Error("contrast() needs opaque colours — composite with over() first");
-  }
-  const la = luminance(a);
-  const lb = luminance(b);
-  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
-}
-
-/** The card surface of a block chain: `--bg-card` composited over `--bg`. */
-export function cardSurface(css: string, blocks: readonly string[]): Rgba {
-  return over(resolveColor(css, blocks, "var(--bg-card)"), resolveColor(css, blocks, "var(--bg)"));
+/** The card surface of a combination: `--card` composited over `--bg`. */
+export function cardSurface(css: string, combination: CombinationName): Rgba {
+  return over(
+    resolveColor(css, combination, "var(--card)"),
+    resolveColor(css, combination, "var(--bg)"),
+  );
 }

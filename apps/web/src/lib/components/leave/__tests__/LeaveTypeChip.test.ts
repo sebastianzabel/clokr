@@ -5,13 +5,13 @@ import { screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import { leaveTypeColor } from "$lib/leave/leave-colors";
 import {
-  SURFACES,
+  COMBINATION_NAMES,
   cardSurface,
   contrast,
   over,
   readTokensCss,
   resolveColor,
-  type SurfaceName,
+  type CombinationName,
 } from "../../../../__tests__/token-css";
 import LeaveTypeChip from "../LeaveTypeChip.svelte";
 
@@ -84,21 +84,22 @@ describe("markup", () => {
   });
 });
 
+// #842 (D-842-02): measured in the six theme x mode combinations instead of the retired surface modes.
 describe("the dashed tint carries the text colour at 4.5:1", () => {
   const TOKENS = readTokensCss();
   const CODES = ["VACATION", "OVERTIME_COMP", "SICK", "SICK_CHILD", "SPECIAL", "UNPAID"];
-  for (const name of Object.keys(SURFACES) as SurfaceName[]) {
+  it("covers all six combinations", () => expect(COMBINATION_NAMES).toHaveLength(6));
+  for (const name of COMBINATION_NAMES as CombinationName[]) {
     it(`${name}: --text on the tint of every type colour`, () => {
-      const blocks = SURFACES[name];
-      const card = cardSurface(TOKENS, blocks);
+      const card = cardSurface(TOKENS, name);
       for (const code of CODES) {
         const fill = leaveTypeColor(code).fill;
         const tint = over(
-          resolveColor(TOKENS, blocks, `color-mix(in srgb, var(${fill}) 14%, transparent)`),
+          resolveColor(TOKENS, name, `color-mix(in srgb, var(${fill}) 14%, transparent)`),
           card,
         );
         expect(
-          contrast(resolveColor(TOKENS, blocks, "var(--text)"), tint),
+          contrast(resolveColor(TOKENS, name, "var(--text)"), tint),
           `${code} ${name}`,
         ).toBeGreaterThanOrEqual(4.5);
       }

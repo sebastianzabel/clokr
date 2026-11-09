@@ -10,9 +10,8 @@
 // Only top-level rules are read. `@font-face`, `@keyframes` and `@media` are skipped on purpose: the
 // phone hero size inside the media query is not a colour and no combination depends on it.
 //
-// The colour parsing, compositing and WCAG 2.x formulas are the ones of the older `token-css.ts`
-// helper, copied unchanged so both agree to the last digit; a later plan turns that helper into a
-// consumer of this module so the repository ends with a single implementation.
+// This is the one implementation: `token-css.ts` (the helper API of the #840 tests) delegates here
+// and owns no block extraction or colour maths of its own (#842, 842-05).
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";

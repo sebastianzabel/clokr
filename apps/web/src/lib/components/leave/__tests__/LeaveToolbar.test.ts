@@ -5,14 +5,14 @@ import { describe, it, expect, vi } from "vitest";
 import { createRawSnippet } from "svelte";
 import { screen, fireEvent } from "@testing-library/svelte";
 import {
-  SURFACES,
+  COMBINATION_NAMES,
   cardSurface,
   contrast,
   over,
   readAppCss,
   readTokensCss,
   resolveColor,
-  type SurfaceName,
+  type CombinationName,
 } from "../../../../__tests__/token-css";
 import { renderWithTheme } from "$tests/test-utils";
 import { periodOf } from "$lib/leave/timeline-model";
@@ -209,24 +209,26 @@ describe("the neutral count (#840 G-1)", () => {
     expect(p.onTabChange).toHaveBeenCalledWith("antraege");
   });
 
-  describe("the neutral pair reaches 4.5:1 in every surface mode", () => {
+  // #842 (D-842-02): measured in the six theme x mode combinations instead of the retired surface modes.
+  describe("the neutral pair reaches 4.5:1 in every combination", () => {
     const APP_CSS = readAppCss();
     const TOKENS = readTokensCss();
     const body = /\.tab-badge--count\s*\{([^}]*)\}/.exec(APP_CSS)?.[1] ?? "";
     const declared = (prop: string) =>
       new RegExp(`(?:^|[;\\s])${prop}\\s*:\\s*([^;]+);`).exec(body)?.[1].trim();
 
+    it("covers all six combinations", () => expect(COMBINATION_NAMES).toHaveLength(6));
+
     it("declares a text and a background colour", () => {
       expect(declared("color")).toBeTruthy();
       expect(declared("background")).toBeTruthy();
     });
 
-    for (const name of Object.keys(SURFACES) as SurfaceName[]) {
+    for (const name of COMBINATION_NAMES as CombinationName[]) {
       it(`${name}: the count text on its pill`, () => {
-        const blocks = SURFACES[name];
-        const card = cardSurface(TOKENS, blocks);
-        const pill = over(resolveColor(TOKENS, blocks, declared("background")!), card);
-        const text = over(resolveColor(TOKENS, blocks, declared("color")!), pill);
+        const card = cardSurface(TOKENS, name);
+        const pill = over(resolveColor(TOKENS, name, declared("background")!), card);
+        const text = over(resolveColor(TOKENS, name, declared("color")!), pill);
         expect(contrast(text, pill)).toBeGreaterThanOrEqual(4.5);
       });
     }
