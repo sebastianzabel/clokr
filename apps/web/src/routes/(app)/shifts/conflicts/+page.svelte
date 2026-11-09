@@ -156,10 +156,10 @@
     flex-wrap: wrap;
     gap: var(--s-4);
     align-items: end;
-    padding: var(--pad-card);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
+    padding: var(--s-6);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
   }
 
   .filter-field {
@@ -171,19 +171,19 @@
   .filter-label {
     font-size: 0.8125rem;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .notice-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: var(--pad-card);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    padding: var(--s-6);
   }
 
   .empty {
     margin: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .notice-list {
@@ -200,7 +200,7 @@
     align-items: start;
     gap: var(--s-3);
     padding: var(--s-3) 0;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     color: var(--text);
   }
   .notice-row:first-child {
@@ -226,7 +226,7 @@
   .notice-detail {
     margin-left: var(--s-2);
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -235,7 +235,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--s-2);
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -245,7 +245,7 @@
     justify-content: center;
     width: 1.25rem;
     height: 1.25rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
     border-radius: 50%;
     font-style: italic;
     font-size: 0.75rem;
@@ -261,7 +261,7 @@
   .notice-info p {
     margin: var(--s-2) 0 0;
     max-width: 60ch;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .notice-action {
