@@ -29,6 +29,7 @@ const SCAN_EXTENSIONS = [".css", ".svelte", ".ts", ".js"];
 // for `--border`) are left alone.
 const IDENT = "A-Za-z0-9_-";
 
+/** @param {string} s */
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
@@ -37,7 +38,9 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  * @returns {Array<{ kind: "token" | "prefix" | "literal"; value: string }>}
  */
 export function parseDenyList(text) {
+  /** @type {Record<string, "token" | "prefix" | "literal">} */
   const kinds = { "BANNED-TOKEN": "token", "BANNED-PREFIX": "prefix", "BANNED-LITERAL": "literal" };
+  /** @type {Array<{ kind: "token" | "prefix" | "literal"; value: string }>} */
   const out = [];
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.replace(/\s+$/, "");
@@ -48,6 +51,7 @@ export function parseDenyList(text) {
   return out;
 }
 
+/** @param {{ kind: string; value: string }} rule */
 function denyMatcher({ kind, value }) {
   let body = escapeRe(value);
   if (kind === "literal") {
@@ -60,10 +64,16 @@ function denyMatcher({ kind, value }) {
   return new RegExp(`(?<![${IDENT}])${body}(?![${IDENT}])`, "g");
 }
 
+/**
+ * @param {string} text
+ * @param {number} index
+ */
 const lineOf = (text, index) => text.slice(0, index).split("\n").length;
 
 /** Names a file declares: `--x:`, `style:--x=`, `setProperty("--x"`. */
+/** @param {string} text */
 function declaredNames(text) {
+  /** @type {Set<string>} */
   const names = new Set();
   for (const m of text.matchAll(new RegExp(`(?<![${IDENT}])(--[${IDENT}]+)\\s*:`, "g"))) {
     names.add(m[1]);
@@ -131,8 +141,11 @@ export function resolveRepoRoot() {
 }
 
 /** Collects the scanned source files below `srcDir`: no tests, no `__tests__` directory. */
+/** @param {string} srcDir */
 export function collectSourceFiles(srcDir) {
+  /** @type {string[]} */
   const out = [];
+  /** @param {string} dir */
   const walk = (dir) => {
     for (const name of readdirSync(dir)) {
       const full = join(dir, name);
@@ -152,6 +165,7 @@ export function collectSourceFiles(srcDir) {
 /**
  * The whole lint run, without process side effects. Throws on the two vacuity conditions (an empty
  * deny list, zero scanned files) so a green result always means something was checked.
+ * @param {{ srcDir: string; denyText: string; root?: string }} args
  * @returns {{ code: number; messages: string[]; scanned: number; violations: object[] }}
  */
 export function runLint({ srcDir, denyText, root }) {

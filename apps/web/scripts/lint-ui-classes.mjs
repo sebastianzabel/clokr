@@ -15,7 +15,7 @@
  *
  * The goal is to catch primitives that emit a class name nothing has styled,
  * which is the failure mode tracked as UI-21: silent drift between the
- * primitive layer and the v1.5 design tokens.
+ * primitive layer and the v2 design tokens (tokens.css, Issue #842).
  *
  * Flags:
  *   (none — full sweep only; the script is fast)
