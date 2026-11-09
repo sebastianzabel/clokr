@@ -48,7 +48,7 @@
     "minio": "^8.0.7",
     "node-cron": "^4.6.0",
     "nodemailer": "^10.3.1",
-    "otpauth": "^9.5.2",
+    "otpauth": "^9.6.0",
     "pdfkit": "^0.20.2",
     "pg": "^8.23.1",
     "pino-pretty": "^13.2.0",
