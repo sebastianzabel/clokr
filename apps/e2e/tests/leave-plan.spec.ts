@@ -7,6 +7,11 @@
  * (pointer events, the PATCH is awaited, never slept on), takes the plan over and ends with exactly
  * one APPROVED VACATION request on the moved dates.
  *
+ * Since Issue #840 (plan 840-08) the planner runs on the one absence timeline and its admin
+ * controls (open the plan, takeover) live in the dialog „Planung verwalten“, opened by the primary
+ * action of the page; the month is chosen with the zoom radio and the period switcher of the
+ * toolbar. The proof is unchanged: open -> wish -> drag -> takeover -> APPROVED on the moved dates.
+ *
  * Setup goes through the API with the tenant admin's token (the Admin template holds
  * `leave-plan:manage`): one employee E, homed in the tenant's default salon by the employee
  * creation, and E's VACATION entitlement for the plan year (the entitlement read creates the row,
@@ -27,7 +32,8 @@ const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4001";
 const PASSWORD = "test1234";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// The plan year: next calendar year, as the planner page itself defaults to.
+// The plan year: next calendar year; the page is opened on it through `?year=` (#840: the page
+// itself anchors on today's period and no longer defaults to next year).
 const YEAR = new Date().getFullYear() + 1;
 
 function iso(date: Date): string {
@@ -105,12 +111,19 @@ test.describe("Leave planner (Issue #835)", () => {
     await page.goto(`/leave/planung?year=${YEAR}`);
     await expect(page.getByTestId("leave-plan-page")).toBeVisible();
 
-    // ── open the plan ──────────────────────────────────────────────────────────────────────
+    // ── open the plan through „Planung verwalten“ (#840, D-840-15) ───────────────────────────
+    const manageDialog = page.getByRole("dialog", { name: "Planung verwalten" });
+    await page.getByTestId("leave-plan-manage").click();
+    await expect(manageDialog).toBeVisible();
     const openResponse = page.waitForResponse(
       (r) => r.url().endsWith("/api/v1/leave/plans") && r.request().method() === "POST",
     );
-    await page.getByTestId("leave-plan-open").click();
+    await manageDialog.getByTestId("leave-plan-open").click();
     expect((await openResponse).status()).toBe(201);
+    // The dialog follows the reloaded plan: the open button gives way to the deadline section.
+    await expect(manageDialog.getByLabel("Frist für Wünsche")).toBeVisible();
+    await manageDialog.getByRole("button", { name: "Schließen" }).click();
+    await expect(manageDialog).toBeHidden();
     await expect(page.getByTestId("leave-plan-head")).toBeVisible();
 
     // ── enter a wish for E through the wish dialog (manager path) ─────────────────────────
@@ -126,9 +139,13 @@ test.describe("Leave planner (Issue #835)", () => {
     expect(created.status(), `create the wish (${await created.text()})`).toBe(201);
     const wishId = ((await created.json()) as { wish: { id: string } }).wish.id;
 
-    // ── the month view of March makes the day columns wide enough to drag ─────────────────
+    // ── the month view of March makes the day columns wide enough to drag (#840: the zoom radio
+    // and the period switcher of the toolbar; the page opened on January of the plan year) ────
     await page.getByRole("radio", { name: "Monat" }).click();
-    await page.locator('select[aria-label="Monat"]').selectOption("2");
+    await expect(page.getByText(`Januar ${YEAR}`, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Nächster Monat" }).click();
+    await page.getByRole("button", { name: "Nächster Monat" }).click();
+    await expect(page.getByText(`März ${YEAR}`, { exact: true })).toBeVisible();
     const track = page.getByTestId(`plan-track-${employee.id}`);
     await expect(track).toBeVisible();
     await expect(page.getByTestId(`leave-plan-wish-${wishId}`)).toBeVisible();
@@ -158,8 +175,9 @@ test.describe("Leave planner (Issue #835)", () => {
     expect(moved.startDate.slice(0, 10)).toBe(mondayIso);
     expect(moved.endDate.slice(0, 10)).toBe(friday);
 
-    // ── take the plan over ────────────────────────────────────────────────────────────────
-    const takeoverButton = page.getByTestId("leave-plan-takeover");
+    // ── take the plan over through „Planung verwalten“ ───────────────────────────────────
+    await page.getByTestId("leave-plan-manage").click();
+    const takeoverButton = manageDialog.getByTestId("leave-plan-takeover");
     await expect(takeoverButton).toBeEnabled();
     await takeoverButton.click();
     await expect(page.getByTestId("takeover-count")).toContainText("1 offener Wunsch");

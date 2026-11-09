@@ -7,10 +7,10 @@
  * The mapping is not "every team-ish permission gets an entry" — it is picked so that, applied to
  * the two REAL scoped Systemrollen-Templates (`docs/permissions.md`'s Salonmanager and Ausbilder
  * rows), the result matches the issue's Akzeptanzkriterien exactly:
- *   - Salonmanager (Salon-Scope) sees Anträge, Team-Zeiten, Team-Abwesenheiten, Team-Kalender,
+ *   - Salonmanager (Salon-Scope) sees Inbox, Team-Zeiten, Abwesenheiten,
  *     Schichtplanung — not Berichte (the template holds no `report:read:ZUGEWIESEN`).
- *   - Ausbilder (Personen-Scope) sees only Team-Zeiten, Team-Abwesenheiten, Team-Kalender — no
- *     Anträge (no approve permission), no Schichtplanung (no `shift:plan`, only `shift:read` —
+ *   - Ausbilder (Personen-Scope) sees only Team-Zeiten, Abwesenheiten — no
+ *     Inbox (no approve permission), no Schichtplanung (no `shift:plan`, only `shift:read` —
  *     the page has no read-only mode, see the item's own comment below), no Berichte.
  *   - ADMIN/MANAGER (legacy fallback, every permission via the compat system-role fallback) see
  *     every item, unchanged from before this phase.
@@ -29,13 +29,21 @@ interface TeamNavEntry extends TeamNavItem {
   permission: string | readonly string[];
 }
 
+// #840 (D-840-06): ONE team entry for leave — „Abwesenheiten“ (/team/leave) holds the Übersicht
+// timeline, the Anträge and the Planung; the old „Team-Kalender“ entry (/teamcal) left with its
+// page (the URL redirects). „Inbox“ matches the page title of /inbox.
 const TEAM_NAV_ENTRIES: readonly TeamNavEntry[] = [
   {
     href: "/inbox",
-    label: "Anträge",
+    label: "Inbox",
     icon: "inbox",
-    // The Postfach approves both leave requests and Zeitnachträge — either is enough to need it.
-    permission: ["leave-request:approve:ZUGEWIESEN", "retro-request:approve:ZUGEWIESEN"],
+    // The Postfach decides leave requests, Zeitnachträge and (since #840 D-840-29) § 9 cases —
+    // any one of the three is enough to need it.
+    permission: [
+      "leave-request:approve:ZUGEWIESEN",
+      "retro-request:approve:ZUGEWIESEN",
+      "section9:decide:ZUGEWIESEN",
+    ],
   },
   {
     href: "/team/time-entries",
@@ -45,15 +53,8 @@ const TEAM_NAV_ENTRIES: readonly TeamNavEntry[] = [
   },
   {
     href: "/team/leave",
-    label: "Team-Abwesenheiten",
+    label: "Abwesenheiten",
     icon: "umbrella",
-    permission: "leave-request:read:ZUGEWIESEN",
-  },
-  {
-    href: "/teamcal",
-    label: "Team-Kalender",
-    icon: "calendar",
-    // Same underlying data (team LeaveRequests) as Team-Abwesenheiten above.
     permission: "leave-request:read:ZUGEWIESEN",
   },
   {

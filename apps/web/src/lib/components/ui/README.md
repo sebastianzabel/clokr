@@ -258,6 +258,29 @@ Usage:
 </MonthBar>
 ```
 
+### `<PeriodSwitcher>`
+
+Source: `$components/ui/PeriodSwitcher.svelte`
+
+Phase 840 (Issue #840, D-840-13): one period control for all leave views; a wrapper around MonthBar, no new recipe. It renders ‹ label › Heute for a year, a quarter or a month and emits no markup or class of its own, so every `.month-bar` rule and the narrow-viewport proofs (Issue #553/#564) apply unchanged.
+
+```ts
+interface Props {
+  /** The shown period (`periodOf(zoom, datum)` from `$lib/leave/timeline-model`). */
+  period: Period;
+  /** Move one period back (-1) or forward (1). */
+  onShift: (step: -1 | 1) => void;
+  /** "Heute" jump-to-today handler. */
+  onToday: () => void;
+  /** Real disabled next arrow (MonthBar `nextDisabled`). */
+  nextDisabled?: boolean;
+  /** MonthBar test-id prefix (default "month-bar"). */
+  testIdPrefix?: string;
+}
+```
+
+Labels: „2026“ / „Q4 2026 · Okt–Dez“ / „November 2026“; arrow names „Vorheriges/Nächstes Jahr|Quartal“, „Vorheriger/Nächster Monat“.
+
 ### `<KPIStat>`
 
 Source: `$components/ui/KPIStat.svelte`
@@ -321,6 +344,8 @@ interface Props {
   primaryLabel?: string;
   /** Issue #612 — additive. Click handler of the primary link; see the interception contract below. */
   onPrimaryClick?: (e: MouseEvent) => void;
+  /** Issue #840 — additive. Primary-button mode: the name becomes the row's one `<button>` (stretched over the row). Wins over `onclick`, loses against `primaryHref`. */
+  onPrimary?: () => void;
   /** Right-aligned action buttons. */
   actions?: Snippet;
   /** Optional richer meta content (chip + text) when a plain string isn't enough. */
@@ -421,6 +446,35 @@ invalid HTML and breaks keyboard and assistive technology. A row that carries `a
 >
   {#snippet actions()}
     <button type="button" class="btn btn-ghost xs">Hinweis senden</button>
+  {/snippet}
+</ApprovalRow>
+```
+
+#### Primary-button mode (`onPrimary`, Issue #840 — additive)
+
+The in-page twin of `primaryHref`, for a row that opens a dialog or a panel instead of navigating and also
+carries `actions` (the inbox rows). The `onclick` mode puts `actions` inside a `<button>`, which axe reports as
+`nested-interactive`; `onPrimary` keeps every control a sibling:
+
+- the root is a `div` (never a button); the name is the only control (`button.approval-name.approval-primary`,
+  `type="button"`), stretched over the whole row with `::after`; focus is drawn on the whole row;
+- `actions` render as SIBLINGS of that button, above the stretched area (`z-index: 1`), so they stay separately
+  clickable, come right after it in tab order and need no `stopPropagation`;
+- Enter and Space on the focused name call `onPrimary` (native button behaviour); `primaryLabel` is the
+  button's accessible name, default `name`;
+- precedence when several are passed: `primaryHref` > `onPrimary` > `onclick`.
+
+```svelte
+<ApprovalRow
+  avatar="LM"
+  name="Lena Müller"
+  dates="12.04. – 18.04. · 5 Tage"
+  onPrimary={() => openDetail(req)}
+>
+  {#snippet actions()}
+    <button type="button" class="btn btn-primary btn-sm" onclick={() => openDetail(req)}
+      >Prüfen</button
+    >
   {/snippet}
 </ApprovalRow>
 ```

@@ -2890,6 +2890,8 @@ Besetzungsregeln), `/admin/salons` (ist selbst die Salonverwaltung), persönlich
   behoben; der Filter setzt auf dieser Reichweite auf.
 - `GET /leave/calendar` bleibt für Aufrufer ohne Vollzugriff mandantenweit, typmaskiert wie zuvor; unter einem
   Filter zeigt er weiterhin die Feiertage des Arbeitsorts des Anfragenden.
+  _Nachtrag Phase 840 (Issue #840):_ Dieser Satz gilt nicht mehr — `GET /leave/calendar` entscheidet seitdem je Person
+  nach Reichweite und maskiert fremde Zeilen; siehe Eintrag AI. Der Satz bleibt als Stand von Phase 558 stehen.
 - Berichte (#542) bekommen keinen Salonfilter.
 - Mindestbesetzung je Salon (Folge-Issue #647): `CoverageRule` hat keinen Salonbezug, unter einem Filter
   gelten die mandantenweiten Regeln für die Schichten des Salons.
@@ -7804,3 +7806,200 @@ Browser: `apps/e2e/tests/leave-plan.spec.ts` (Eröffnen → Wunsch → Ziehen �
 Tagen). Geänderte Prüfwerte: die Register der Fremdzugriffe und Mandantenbindung, das T-100-09-Register (+8 Routen), die
 Neutralitätsausschlüsse, `route-surface.txt`, `permission-site-mapping`, der Fassadenzähler und der Nutzlast-Zähler
 `admin-vacation-save-wiring`.
+
+### Nachtrag Phase 840 (Issue #840)
+
+Die Planungsansicht liegt seit Phase 840 auf der gemeinsamen Zeitleiste der Abwesenheiten, und der Planer-Lesezugriff
+maskiert fremde Zeilen je Person nach derselben Regel wie der Kalender (`MASKED` / „abwesend“, `view=own` für den
+persönlichen Planer). Die oben unter „Sichtbarkeit“ beschriebene Typmaskierung („Krankheitsarten sieht nur die Person
+selbst“) gilt weiter für Zeilen innerhalb der Reichweite; für Zeilen außerhalb der Reichweite ersetzt die Maskierung je
+Person die Typmaskierung. Details: Eintrag AI.
+
+## AI — Abwesenheiten: ein Bereich, eine Zeitleiste (Phase 840, Issue #840)
+
+### Herkunft der Entscheidungen
+
+Die **Owner-Entscheidungen** sind genau E-01 bis E-06 (Issue-Text und Kommentar des Owners vom 08.11.2026): die Struktur
+mit Team-Bereich und Mein Bereich (E-01), Genehmigen bleibt in der Inbox (E-02), der persönliche Kalender zeigt nur eigene
+Einträge (E-03), die Auslieferung ohne Release (E-04), der Team-Tab für alle Mitarbeitenden (E-05) und die Zoomstufen Jahr,
+Quartal und Monat (E-06). Alle weiteren Punkte — D-840-01 bis D-840-31, darunter das Weglassen fremder beantragter Zeilen, das
+Zusammenführen angrenzender maskierter Zeiträume, `scope=team` mit Maskierung für jede Rolle, der Umzug der § 9-Fälle in die
+Inbox und die Weiterleitungen alter Links — sind **Grauzonen-Entscheidungen des Planungsagenten**, begründet und als
+Kommentare am Issue #840 dokumentiert. Die Abnahme dieser Punkte durch den Owner auf dev (AC-14) steht zum Zeitpunkt dieses
+Eintrags **noch aus**; dieser Eintrag beschreibt den gebauten Stand und behauptet keine Zustimmung des Owners zu einem
+D-840-Punkt.
+
+### Ausgangslage
+
+Abwesenheiten waren auf vier Orte verteilt: der Monatsraster von `/team/leave`, der Team-Kalender `/teamcal`, der Urlaubsplaner
+`/leave/planung` und die Genehmigungen (Anträge und § 9-Fälle) in einem Tab von `/team/leave`. Jeder Ort hatte eigene Farben,
+eine eigene Legende, einen eigenen Zeitraumwechsel und eigene Sichtbarkeitsregeln; `GET /leave/calendar` zeigte jedem
+Aufrufer mandantenweit alle Zeilen, nur nach Art maskiert.
+
+### Rechtslage
+
+- Art. 5 Abs. 1 lit. c, Art. 9 und Art. 32 DSGVO: Wer wann abwesend ist, ist Personendatum; Art und Status einer Abwesenheit
+  (Krankheit!) sind besonders schützenswert. Wer eine Person nicht verwalten darf, sieht nur „abwesend“ — ohne Art, Status,
+  halben Tag und § 9-Angaben.
+- Revisionssicherheit: Die Phase schreibt nichts Neues und löscht nichts; Entscheidungen laufen unverändert über die
+  Genehmigungskerne mit Prüfprotokoll. Es gibt keine Migration, keine neue Berechtigung und keine neue Route.
+
+### Entscheidung — was gebaut wurde
+
+- **Maskierung je Person (Abwesenheiten, D-840-19).** `GET /leave/calendar` löst die Reichweite
+  `leave-request:read:ZUGEWIESEN` einmal je Anfrage auf und entscheidet je Zeile mit `isPersonVisibleOnSomeDay`
+  (`contexts/absence/leave-limits/redact.ts`, dieselbe Tagesregel „Stammsalon je Tag“ wie die Urlaubsgrenzen, #836). Den
+  reinen Kern bildet `maskCalendarRows` (`contexts/absence/leave-calendar-masking.ts`, ohne Laufzeit-Importe): eigene Zeilen
+  und Zeilen in Reichweite bleiben vollständig; fremde wirksame Zeilen werden zur maskierten Form (Person und Zeitraum, ohne
+  Id, Status, halben Tag, Art und § 9); fremde **beantragte** Zeilen entfallen ganz (sie sind noch keine Abwesenheit); angrenzende
+  maskierte Zeiträume einer Person werden mit `mergeDayRanges` zusammengeführt, damit keine Naht die Art verrät. Die frühere
+  Typprüfung `canSeeLeaveType` bleibt nur für `/overlap`.
+- **Zeitraumform und Bereiche.** `from`/`to` (höchstens 366 Tage) antworten `{ entries, salons }` (der Salon in der Ansicht
+  mit seinen Öffnungszeiten); die Monatsform bleibt das nackte Array. `scope=own|team` bedient Mein Bereich: `own` liefert nur
+  eigene Zeilen, `team` die eigenen Zeilen und die Personen mit Stammsalon am eigenen Salon an mindestens einem Tag des
+  Fensters, **jede fremde Zeile maskiert, für jede Rolle** (auch für Aufrufer mit Vollzugriff; Details gibt es nur im
+  Team-Bereich); `scope` zusammen mit `salonId` ist 400. Mit gültigem `salonId` stammen die Feiertage aus
+  `holidaysForSalon` (Unterbau-Fassade, nur lesend).
+- **Planer (D-840-20).** `GET /leave/plans/:id` maskiert fremde Zeilen mit derselben Regel (`MASKED`, Zustand `ABWESEND`,
+  beantragte Fremdzeilen entfallen, `mergeDayRanges`); `?view=own` maskiert jede fremde Zeile unabhängig von der
+  Reichweite und gibt jedem fremden Wunsch nur den Zeitraum (nie bearbeitbar, kein Antragsstatus, keine Ablehnung, kein
+  Konfliktkennzeichen, keine Prognose, keine Regeldaten im Tageswert; Review WR-02, die Web-App verengt die Antwort ein
+  zweites Mal in `lib/leave-plan/neutral.ts`); die Antwort nennt den Planungssalon mit Öffnungszeiten. Ohne `view=own`
+  bleiben Wünsche unverändert. Maskierte Zeiträume werden vor dem Zusammenführen auf das Fenster (Kalender) bzw. das Planjahr
+  gekürzt (Review WR-03), und ein Aufrufer ohne Leseberechtigungsreichweite, der kein `scope` sendet, wird wie mit
+  `scope=team` beantwortet (Review WR-04); wer eine Reichweite hat, behält den mandantenweiten Kalender.
+- **Benachrichtigungslinks (D-840-28).** Neuer Antrag → `/inbox?request=<id>`, beide § 9-Links → `/inbox?section9=<id>`,
+  „Urlaubsplanung eröffnet“ → `/leave?tab=planung&salonId&year`. Gespeicherte Benachrichtigungen werden nicht umgeschrieben.
+  Zwei Links bleiben auf `/team/leave?request=` (Korrektur nach Berufsschule: der Antrag ist nicht offen, die Inbox listet
+  ihn nicht; offene-Anträge-Erinnerung: sie dedupliziert nach der Link-Zeichenkette); die Web-App leitet sie weiter.
+- **Genehmigen nur in `/inbox` (E-02).** Der Tab „Genehmigungen“ ist entfallen. Die Inbox hat den Abschnitt „§ 9-Fälle“, lässt
+  `section9:decide` zu (ein reiner § 9-Entscheider erreicht sie weiterhin und löst keine Antragsliste aus), liest die
+  Deep Links `?request=` und `?section9=` (`inbox-deep-link.ts`) und listet im Tab „Offen“ **jeden** offenen Antrag in der
+  Genehmigungsreichweite, gleich in welchem Jahr er beginnt (`GET /leave/requests?status=PENDING` ohne `year`). Die
+  Prüfmaske ist `LeaveReviewDialog`. Der gemeinsame `ApprovalRow` hat dafür den additiven Modus `onPrimary` (der Name ist
+  der eine Zeilenknopf, die Aktionen sind Geschwister; axe `nested-interactive`).
+- **Eine Zeitleiste (D-840-01 ff.).** `AbsenceTimeline` ist das einzige Personen-mal-Tag-Raster der Abwesenheiten
+  (Wächter `leave-one-timeline-840`); sie rechnet nichts selbst, die Daten kommen aus dem reinen `timeline-model.ts`. Jahr:
+  ISO-Wochen, das ganze Jahr ohne Scrollen bei 1440 px, der Füllgrad ist der Anteil abwesender Werktage (offene Tage des
+  Salons, sonst Mo–Sa nach § 3 Abs. 2 BUrlG, ohne Feiertage), ein Klick auf eine Woche öffnet das Quartal. Quartal und Monat:
+  Wochentag und Tageszahl, Wochenende, Feiertag (Name beim Überfahren und Fokussieren), Schließtag des Salons
+  (`closedDaysFor()`), heute; Ziehen und Ändern von Wünschen nur im Quartal und im Monat. Balkenstile: gesetzt durchgezogen,
+  beantragt gestrichelt, Wunsch schraffiert, abwesend neutral. Unter 768 px zeigt `AbsenceList` eine Liste statt des Rasters.
+- **Eine Farbquelle, eine Legende, ein Zeitraumwechsel.** `leave-colors.ts` ist die einzige Farbquelle der Urlaubsarten
+  (Wächter `leave-colors-one-place-840`); `LeaveLegend` die eine Legende unter der Werkzeugleiste; `PeriodSwitcher`
+  (UI-Primitiv) der Zeitraumwechsel, `LeaveToolbar` die eine Werkzeugleiste (Tabs, Zeitraum, Heute, Zoom). Die zweite
+  Salonanzeige (`SalonScopeLabel`) ist von den Urlaubsseiten entfallen; der Salonfilter aus #558 bleibt.
+- **Bereiche und Wege.** Team → Abwesenheiten (`/team/leave`, Tabs Übersicht / Anträge / Planung) und Mein Bereich → Abwesenheiten
+  (`/leave`, Tabs Kalender / Meine Anträge / Team / Planung; der Team-Tab für alle, E-05). „Planung verwalten“ ist ein Dialog
+  (Status, Plan eröffnen, Frist mit eigenem Speichern, Übernehmen). Die Seitenleiste hat unter Team „Abwesenheiten“ und „Inbox“;
+  „Team-Kalender“ entfällt. Alte Links werden ausschließlich in `area-tabs.ts` abgebildet (`/teamcal`, `/leave/planung`,
+  `/team/leave?view=approvals|request|section9`), als SvelteKit-Weiterleitung (307) in `+page.ts`, mit übernommener Abfrage.
+- **Neutralitätsaufzeichnung.** `recorded/matrix.json` ist unverändert. Die geänderte Antwort von `GET /api/v1/leave/calendar`
+  für EMPLOYEE, FALLBACK_EMPLOYEE, FALLBACK_MANAGER und FALLBACK_ADMIN (zwei Zellen je Akteur, acht Verweise mit
+  `issue: 840`) ist als Änderungsverweis in `matrix-amendments.json` erfasst; der Tool-Schalter `--retired` von
+  `neutrality-amendments-from-run.ts` toleriert dabei nur die seit #617 fehlenden Routen.
+
+### Dokumentierte Grenzen
+
+- Berufsschule (auferlegte Abwesenheit) und Betriebsurlaub stehen nicht in der Team-Übersicht (der Kalenderlesezugriff
+  liefert sie nicht); zurückgestellt.
+- Der Kalender **ohne** `salonId` behält die Feiertage des Arbeitsorts des Anfragenden (#71, Zwischenlösung); Feiertage je Salon
+  gibt es nur mit gültigem `salonId`.
+- Schließtage zeichnet die Zeitleiste nur, wenn genau ein Salon in der Ansicht ist; bei mehreren Salons steht ein Hinweis in
+  der Legende, nichts wird gezeichnet.
+- Unter dem Zoom Jahr zeichnet die Zeitleiste keine Urlaubsgrenzen-Marker (#836; die Lesegrenze von 92 Tagen), und die Liste
+  „Alle“ im Tab Anträge ist an das Jahr gebunden; die Inbox-Liste „Offen“ ist es nicht.
+- Der Team-iCal-Download (`GET /leave/ical/team`) ist nicht Teil dieser Maskierung und unverändert.
+- Der Farbkontrast der gemeinsamen Shell-Token (Seitenleiste, Eyebrows, Badges) erreicht nicht überall AA; er ist älter als
+  die Phase. Der Browser-Test prüft die Kontrastregel deshalb nur auf dem Markup, das die Phase einführt, und alle übrigen
+  axe-Regeln auf jeder Seite.
+
+### Auswirkung auf die Kontexte
+
+- Abwesenheiten: Eigentümer der Änderung (Maskierung, Planer-Lesezugriff, Benachrichtigungslinks, die Seiten der Bereiche).
+- Unterbau: keine. Reichweitenauflösung (`resolveAccessReach`), `homeSalonsForDays`, `holidaysForSalon`, die Salonfassade und
+  `closedDaysFor()` werden nur gelesen; kein Feld, keine Relation, kein Export ändert sich.
+- Zeiterfassung: keine. Ihre Kalender wurden nur auf die gemeinsame Farbzuordnung umgestellt.
+- Schichtplanung: keine.
+- Arbeitszeitkonto: keine. `calcLeaveAbsenceMinutesTz` und die einmalige Soll-Minderung pro Tag sind nicht berührt.
+- Kompositionsschicht: keine.
+
+### Nachweise
+
+API: `leave-calendar-masking-840`, `leave-calendar-scope-840`, `leave-plan-masking-840`,
+`leave-requests-pending-all-years-840`, Kerntest `leave-calendar-masking`, angepasste Fixierungen (`leave-type-visibility`,
+`section9-credit`, `leave-plan-read-835`, Benachrichtigungslinks), Änderungsverweise der Neutralitätsmatrix. Web:
+`leave-colors-one-place-840`, `leave-one-timeline-840`, `team-leave-area-840`, `my-leave-area-840`, `inbox-section9-840`,
+`inbox-open-all-years-840`, `teamcal-redirect-840`, die Komponententests der Zeitleiste, Liste, Legende, Werkzeugleiste,
+des Zeitraumwechsels, des Planungsdialogs und des `ApprovalRow`-Modus `onPrimary`. Browser: `apps/e2e/tests/leave-area-840.spec.ts`
+(Manager-Pfad, Mitarbeiter-Pfad, Markierungen, Weiterleitungen, axe auf jeder Seite einschließlich Inbox).
+
+### Nachtrag: Lückenrunde nach dem Manager-Selbsttest (840-15 … 840-18)
+
+**Herkunft, genau.** Die Befunde G-1 bis G-8 stammen aus dem Selbsttest des Managers auf dev vom 08.11.2026
+(`840-UAT.md`); G-9 hat der Owner am selben Tag gemeldet. Die Befunde sind Beobachtungen, keine Entscheidungen. **Jede
+Lösung im Einzelnen ist eine Grauzonen-Entscheidung des Planungsagenten**, begründet in den Plänen 840-15 bis 840-18 —
+keine ist eine Owner-Entscheidung (die Owner-Entscheidungen bleiben genau E-01 bis E-06). Die Abnahme dieser Lösungen
+durch den Owner auf dev steht zum Zeitpunkt dieses Nachtrags **noch aus**; er behauptet keine Zustimmung.
+
+**Was gefunden wurde und was jetzt gilt.**
+
+- **G-1 Zähler am Tab „Anträge“.** Der rote Zähler war unerklärt und fehlte auf der Planung, solange die Seite lud. Jetzt:
+  ein neutraler Zähler mit Erklärung („3 offen: 2 Anträge, 1 Storno angefragt“), eigener Ladevorgang (`loadOpenRequests`),
+  sichtbar auf jedem Tab; ein Klick führt zu Anträge mit dem Filter „Offen“. Entscheidung des Planungsagenten:
+  „Offen“ umfasst beide wartenden Status (beantragt und Storno angefragt), und der Zähler ignoriert den Personenfilter,
+  weil dieser auf der Planung nicht sichtbar ist.
+- **G-2 Wochenenden.** Wochenenden waren in Quartal und Monat ohne einen einzelnen Salon nicht sichtbar. Jetzt: ein Token
+  (`--weekend-shade`, 12 % Textfarbe), in allen vier Oberflächen (editorial und modern, hell und dunkel) sichtbar; Schließtage
+  behalten die Schraffur.
+- **G-3 Farben der Typ-Chips.** Die Anträge-Liste und die Inbox zeigten jeden Typ in Violett. Jetzt: `LeaveTypeChip` mit der
+  einen Farbzuordnung (`leave-colors.ts`); beantragte Zeilen gestrichelt, gesetzte gefüllt.
+- **G-4 Legende.** „Gesetzt“ war irreführend, und „Andere Abwesenheit“ teilte sich ein Grau mit einer anderen Bedeutung.
+  Jetzt: „Genehmigt (voll)“, „Beantragt (gestrichelt)“, „Wunsch (gestreift)“, „Abwesend“; „Mehrere Arten“ nur im Jahr und nur,
+  wenn vorhanden. Entscheidungen des Planungsagenten: der Wortlaut der Legende, eine Woche mit mehreren sichtbaren Arten
+  hat einen eigenen Stil (Streifen; eine maskierte Woche bleibt „abwesend“, es wird nie aus einem maskierten Tag auf eine
+  Mischung geschlossen), und die Farbe der unbekannten Art ist ein Braun, das kein anderer Stil teilt (die Werte in
+  `tokens.css` wurden dafür geändert; `leave-chip-contrast` nennt die neuen Werte).
+- **G-5 Prognosespalte.** Die Spalte „Anspruch“ überdeckte die letzten Tage des Quartals. Jetzt: eine eigene Spalte neben dem
+  Tagesraster, kein Tag liegt darunter; der Hinweis „weiter →“ steht als Bildunterschrift unter dem Raster.
+- **G-6 Planungstext und Steuerung.** Die Hilfezeile sprach von einer „Kopfzeile“, die Zeile heißt „Abwesend (Personen)“; eine
+  Karte mit Status und „Wunsch hinzufügen“ lag auf der Zeitleistenkarte. Jetzt: ein Wortlaut aus derselben Quelle wie die
+  Zeile, der Planer ist eine Karte, Status, Frist und „Wunsch hinzufügen“ stehen in der Werkzeugleiste beider Bereiche.
+- **G-7 Primärknöpfe.** Gemessen im Browser (Test 9 von `leave-area-840.spec.ts`) vor der Änderung: Die Knöpfe der
+  Urlaubsseiten berechnen **dieselben** Farben wie der Referenzknopf auf `/admin/employees` — die Ursache ist das gemeinsame
+  Rezept, keine lokale Überschreibung. Im modernen Stil stand weißer Text auf einem hellen Neonverlauf (1,40:1 bis 2,07:1 im
+  hellen Modus), und die Rezeptregel `.btn-primary:hover` ersetzte den Verlauf durch einen einfarbigen hellen Grund; im
+  Editorial-Stil hellte der Hover den Grund unter weißem Text auf (Pflaume 4,44:1, Nacht 3,85:1, Wald 2,47:1). Jetzt: ein
+  eigenes Token `--text-on-brand-modern` (dunkle Tinte `#0a0a10`) für den Text des modernen Primärknopfs in beiden Modi, der
+  Hover behält den Verlauf, und der Editorial-Hover dunkelt (`--brand-dark`, die ursprüngliche v1-Regel). Alle 12
+  Kombinationen aus Stil, Thema und Modus erreichen im Ruhezustand und beim Überfahren mindestens 4,5:1.
+  `--text-on-brand` selbst bleibt unverändert weiß: Es wird auch als **Hintergrund** gelesen (die invertierte Primärfläche
+  der Dashboard-Zeitkarte, Issue #546).
+- **G-8 Kopf der Inbox.** Eigener Kopf mit Eyebrow „MANAGER“ und kursivem Titel. Jetzt: derselbe `PageHead` wie auf den
+  Urlaubsseiten (Eyebrow „Team“, Titel „Inbox“).
+- **G-9 Formular „Neue Abwesenheit“.** „Bis“ brach allein um, die Mitarbeiterauswahl war abgeschnitten, der Eyebrow „Urlaub“
+  stand über einem allgemeinen Formular. Jetzt: Zeile 1 Mitarbeiter + Art (im eigenen Formular Art, bei Sonderurlaub mit
+  „Anlass“ daneben), Zeile 2 Von + Bis nebeneinander, alle übrigen Felder in voller Breite, unter 480 px eine Spalte. Das
+  Anlegen zeigt keinen Eyebrow (der Typ wird im Formular gewählt), das Bearbeiten zeigt den Typ des bearbeiteten Antrags.
+  Entscheidungen des Planungsagenten: die Zeilenaufteilung und der Wegfall des Eyebrows beim Anlegen.
+
+**Grenzen dieser Runde.**
+
+- Der Monatsraster von „Mein Bereich → Kalender“ und die Kalender der Zeiterfassung behalten das gemeinsame
+  Wochenendrezept; nur die Zeitleiste und ihre Legende nutzen das neue Token.
+- Die Zähler der Inbox-Tabs bleiben rot; die Neutralisierung gilt nur dem Zähler am Tab „Anträge“.
+- Folgebefunde, bewusst nicht in dieser Runde angefasst: Andere Leser von `--text-on-brand` zeigen im modernen Stil weißen
+  Text auf hellen Neonflächen — die Schrittkreise von `ToolPage`, das Wunschfarbpaar
+  (`leave-colors.ts`, `WISH`) und die Zähler-Pille `.tab-bar .btn-primary .count-pill` (fester weißer Text). Sie brauchen
+  jeweils eine eigene Entscheidung; die Dashboard-Zeitkarte liest das Token als Hintergrund und bleibt unberührt.
+
+**Auswirkung auf die Kontexte.** Abwesenheiten: nur die Web-Oberfläche (Zeitleiste, Legende, Planer, Formular, Inbox-Kopf);
+keine API-Änderung, keine Migration, keine neue Berechtigung. Oberflächenrezepte der gesamten App: das Primärknopf-Rezept
+(`app.css`, `tokens.css`) gilt für jede Seite. Unterbau, Zeiterfassung, Schichtplanung, Arbeitszeitkonto,
+Kompositionsschicht: keine.
+
+**Nachweise.** Web: `btn-primary-contrast-840` (Kontrast jeder Kombination aus Stil, Thema, Modus und Zustand aus den
+Tokens, dazu die Rezeptdeklarationen), `leave-looks-840-gaps`, `leave-chip-contrast`, `inbox-chrome-840`, die
+Komponententests von `LeaveRequestForm`, `LeaveTypeChip`, `LeaveToolbar`, `LeavePlanningPanel`, `AbsenceTimeline` und
+`LeaveLegend` sowie die angepassten Fixierungen (jede mit `#840 G-n` im Test benannt). Browser:
+`apps/e2e/tests/leave-area-840.spec.ts`, Tests 6 bis 9 (Planung, Zähler/Chips/Inbox-Kopf, Formular, Primärknöpfe).

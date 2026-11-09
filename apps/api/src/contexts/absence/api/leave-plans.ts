@@ -105,6 +105,9 @@ const wishPatchBodySchema = z
     { message: "Mindestens eine Angabe ist erforderlich.", path: ["startDate"] },
   );
 
+/** Issue #840 (D-840-23): `?view=own` is the personal planner (every foreign row masked). */
+const plannerQuerySchema = z.object({ view: z.enum(["own"]).optional() });
+
 const takeoverBodySchema = z.object({
   limitExceptions: z
     .array(z.object({ wishId: z.string().uuid() }).merge(limitExceptionSchema))
@@ -184,7 +187,8 @@ export async function leavePlanRoutes(app: FastifyInstance) {
     try {
       const salon = await findSalon(app.prisma, tenantId, plan.salonId);
       const { persons } = await planPopulation(app.prisma, tenantId, plan.salonId, plan.year);
-      const link = `/leave/planung?salonId=${plan.salonId}&year=${plan.year}`;
+      // Issue #840 (D-840-28): the plan opens in the planner tab of the personal leave page.
+      const link = `/leave?tab=planung&salonId=${plan.salonId}&year=${plan.year}`;
       const frist = plan.deadline ? ` Frist: ${formatDateDe(plan.deadline)}.` : "";
       const message = `Die Urlaubsplanung ${plan.year} für ${salon?.name ?? "deinen Salon"} ist eröffnet. Trag deine Urlaubswünsche ein.${frist}`;
       const recipients = persons.filter((p) => p.userId !== null && p.userId !== req.user.sub);
@@ -405,11 +409,12 @@ export async function leavePlanRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       summary: "Read a leave plan (the planner)",
       description:
-        "Returns the planner of one plan: the persons with wishes inside the caller's admission. Readable with a leave-request:read reach over the salon or as a person homed in it.",
+        "Returns the planner of one plan: the persons with wishes inside the caller's admission. Readable with a leave-request:read reach over the salon or as a person homed in it. Rows of persons outside the caller's leave-request:read reach are masked (kind MASKED); view=own masks every foreign row and gives a colleague's wish the period only (no edit right, request status, refusal, forecast or rule data).",
     },
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
+      const { view } = plannerQuerySchema.parse(req.query);
       const tenantId = req.user.tenantId;
       const plan = await loadPlan(req, id);
       if (!plan) return reply.code(404).send(PLAN_NOT_FOUND);
@@ -435,8 +440,8 @@ export async function leavePlanRoutes(app: FastifyInstance) {
           userId: req.user.sub,
           employeeId: selfEmployeeId,
           canManage,
-          // The calendar's rule (`canSeeLeaveType`): the permission, computed once per request.
-          canSeeAllTypes: await hasPermission(req, "leave-request:read:ZUGEWIESEN"),
+          // Issue #840 (D-840-23): the personal planner masks every foreign row whatever the reach.
+          forceNeutral: view === "own",
           canCreateOwn: await hasPermission(req, "leave-request:create:EIGENE"),
           entitlementReach: await resolveAccessReach(
             app.prisma,

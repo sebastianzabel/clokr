@@ -45,6 +45,14 @@ describe("leave plan client", () => {
     expect(apiGet).toHaveBeenCalledWith("/leave/plans/x%2Fy");
   });
 
+  it("asks for the personal view with ?view=own, and only then (#840)", async () => {
+    apiGet.mockResolvedValue({});
+    await getPlan("p1", { view: "own" });
+    expect(apiGet).toHaveBeenCalledWith("/leave/plans/p1?view=own");
+    await getPlan("p1", {});
+    expect(apiGet).toHaveBeenLastCalledWith("/leave/plans/p1");
+  });
+
   it("opens a plan and sets a deadline, unwrapping the plan", async () => {
     apiPost.mockResolvedValue({ plan });
     expect(await openPlan({ salonId: "s", year: 2027, deadline: null })).toEqual(plan);

@@ -254,8 +254,9 @@ describe("Notifications API", () => {
       );
       expect(beforeNotif).toBeDefined();
       // Manager-facing notification must deep-link to the approval surface
-      // (/team/leave honors ?request=), NOT the recipient's own /leave page.
-      expect(beforeNotif.link).toBe(`/team/leave?request=${requestId}`);
+      // (the inbox honors ?request=), NOT the recipient's own /leave page.
+      // #840 D-840-28: the approval surface moved from /team/leave to /inbox.
+      expect(beforeNotif.link).toBe(`/inbox?request=${requestId}`);
 
       // Admin approves the request
       const reviewRes = await app.inject({

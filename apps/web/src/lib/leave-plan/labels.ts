@@ -23,18 +23,24 @@ export const ROW_STATE_LABELS = {
   GESETZT: "gesetzt",
   BEANTRAGT: "beantragt",
   WISH: "Wunsch",
+  ABWESEND: NEUTRAL_CHIP_LABEL,
 } as const;
 
 export const ROW_KIND_LABELS: Record<PlannerRow["kind"], string> = {
   LEAVE: "Urlaub",
   ABSENCE: "Abwesenheit",
   COMPANY_SHUTDOWN: "Betriebsurlaub",
+  MASKED: NEUTRAL_CHIP_LABEL,
 };
 
 export const HOLIDAY_LABEL = "Feiertag";
 
+/** Legend hint (#840, D-840-10/25): with several salons in view a closed weekday belongs to one salon. */
+export const CLOSED_DAYS_HINT_SEVERAL_SALONS = "Schließtage nur bei einem Salon";
+
 /** The label of a row's type: the leave-type display helper, neutral when the type is masked. */
 export function rowTypeLabel(row: Pick<PlannerRow, "kind" | "typeCode">): string {
+  if (row.kind === "MASKED") return NEUTRAL_CHIP_LABEL;
   if (row.kind === "COMPANY_SHUTDOWN") return ROW_KIND_LABELS.COMPANY_SHUTDOWN;
   if (row.typeCode === null) return NEUTRAL_CHIP_LABEL;
   return LEAVE_TYPES.find((t) => t.code === row.typeCode)?.label ?? ROW_KIND_LABELS[row.kind];
@@ -43,6 +49,14 @@ export function rowTypeLabel(row: Pick<PlannerRow, "kind" | "typeCode">): string
 export const DAY_LOAD_LABEL = "Urlaub";
 export const DAY_LOAD_HINT =
   "Genehmigt, beantragt und gewünscht – ohne Krankheit, Berufsschule und Betriebsurlaub";
+
+// Issue 840 G-6: the load row's name per zoom. Quartal and Monat show the server's day load of
+// the leave-limit kernel (counted codes only, wishes included); Jahr shows the week load of the
+// rows in view (any visible or masked absent Werktag, wishes not counted).
+export const PLAN_DAY_LOAD_ROW_LABEL = "Urlaub (Personen)";
+export const PLAN_WEEK_LOAD_ROW_LABEL = "Abwesend (Personen)";
+export const PLAN_WEEK_LOAD_HINT =
+  "Personen mit mindestens einem abwesenden Werktag in der Woche – Wünsche zählen nicht";
 
 export const PENDING_REASON_LABELS: Record<TakeoverPendingReason, string> = {
   OWN_WISH: "Eigener Wunsch – wartet auf eine zweite Genehmigung",

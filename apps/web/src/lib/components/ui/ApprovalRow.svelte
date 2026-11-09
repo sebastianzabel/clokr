@@ -29,7 +29,7 @@
      * row also carries `actions`.
      */
     primaryHref?: string;
-    /** Issue #612 — accessible name of the primary link. Defaults to `name`. */
+    /** Issue #612 — accessible name of the primary link or (Issue #840) button. Defaults to `name`. */
     primaryLabel?: string;
     /**
      * Issue #612 — click handler of the primary link. The caller decides: intercept a plain left
@@ -38,10 +38,19 @@
      */
     onPrimaryClick?: (e: MouseEvent) => void;
     /**
+     * Issue #840 — additive "primary button" mode, the in-page twin of `primaryHref` (axe
+     * `nested-interactive` on the inbox rows). When set, the row renders as a plain `div` and the
+     * name becomes the row's ONE `<button type="button">`, stretched over the whole row (`::after`);
+     * `actions` stay SIBLINGS of that button, above it, so no interactive element is nested in
+     * another. Precedence: `primaryHref` > `onPrimary` > `onclick`. Use this mode, not `onclick`,
+     * whenever the row also carries `actions` and the row opens something in the page.
+     */
+    onPrimary?: () => void;
+    /**
      * Right-aligned action cluster (buttons or chip). In the `onclick` mode callers MUST call
      * `e.stopPropagation()` inside button handlers to prevent the row's onclick from also firing
-     * (a button in a button — prefer `primaryHref`, where the actions are siblings and need no
-     * stopPropagation).
+     * (a button in a button — prefer `primaryHref` or `onPrimary`, where the actions are siblings
+     * and need no stopPropagation).
      */
     actions?: Snippet;
     /**
@@ -60,6 +69,7 @@
     primaryHref,
     primaryLabel,
     onPrimaryClick,
+    onPrimary,
     actions,
     metaContent,
   }: Props = $props();
@@ -76,6 +86,29 @@
         data-sveltekit-noscroll
         aria-label={primaryLabel}
         onclick={onPrimaryClick}>{name}</a
+      >
+      <div class="approval-meta">
+        {#if metaContent}
+          {@render metaContent()}
+        {:else if meta}
+          {meta}
+        {/if}
+      </div>
+    </div>
+    <div class="approval-dates">{dates}</div>
+    {#if actions}
+      <div class="approval-actions">{@render actions()}</div>
+    {/if}
+  </div>
+{:else if onPrimary}
+  <div class="approval-row approval-row--stretched">
+    <div class="approval-avatar" aria-hidden="true">{avatar}</div>
+    <div class="approval-name-meta">
+      <button
+        type="button"
+        class="approval-name approval-primary approval-primary--button"
+        aria-label={primaryLabel}
+        onclick={() => onPrimary()}>{name}</button
       >
       <div class="approval-meta">
         {#if metaContent}
@@ -152,6 +185,19 @@
   .approval-row--stretched .approval-actions {
     position: relative;
     z-index: 1;
+  }
+
+  /* Issue #840 — the button twin of the link: same stretched area, reset to look like the name. */
+  .approval-primary--button {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    width: 100%;
   }
 
   /* The focus ring is drawn on the whole row, not on the name text. */

@@ -182,6 +182,64 @@ describe("neutrality-amendments-from-run (Issue #539, D-15)", () => {
     expect(errorLines.join("\n")).toContain("misses this recorded key");
   });
 
+  describe("--retired (Issue #840)", () => {
+    const withRetired = {
+      ...matrixRecording,
+      "ADMIN | GET /gone | own": { status: 200, ids: [] },
+      "ADMIN | GET /gone-too | own": { status: 200, ids: [] },
+    };
+    function retiredFiles() {
+      return {
+        recording: put("matrix.json", JSON.stringify({ cells: withRetired })),
+        amendments: put("matrix-amendments.json", '{\n  "amendments": []\n}\n'),
+      };
+    }
+
+    it("a recorded key absent from the dump and matching --retired is skipped and listed", () => {
+      const files = retiredFiles();
+      const actual = dumpOf("cells", matrixRecording);
+      expect(
+        run("matrix", files, actual, [
+          "--only",
+          "^FALLBACK_",
+          "--retired",
+          "^ADMIN \\| GET /gone \\| own$",
+        ]),
+      ).toBe(REFUSED);
+      expect(errorLines.join("\n")).toContain("ADMIN | GET /gone-too | own");
+      expect(errorLines.join("\n")).not.toContain("ADMIN | GET /gone | own");
+      errorLines.length = 0;
+      infoLines.length = 0;
+      const both = ["--only", "^FALLBACK_", "--retired", "^ADMIN \\| GET /gone(-too)? \\| own$"];
+      expect(run("matrix", files, actual, both)).toBe(OK);
+      expect(infoLines).toContain("retired=2");
+      expect(infoLines).toContain("  ADMIN | GET /gone | own");
+    });
+
+    it("a recorded key absent from the dump that does not match --retired is still refused", () => {
+      const files = retiredFiles();
+      const actual = dumpOf("cells", matrixRecording);
+      expect(
+        run("matrix", files, actual, ["--only", "^FALLBACK_", "--retired", "GET /other"]),
+      ).toBe(REFUSED);
+      expect(errorLines.join("\n")).toContain("the dump misses this recorded key");
+    });
+
+    it("a retired key that IS in the dump is compared as usual: a difference outside --only still refuses", () => {
+      const files = retiredFiles();
+      const actual = dumpOf("cells", {
+        ...withRetired,
+        "ADMIN | GET /gone | own": { status: 403, ids: [] },
+        "ADMIN | GET /gone-too | own": { status: 200, ids: [] },
+      });
+      expect(
+        run("matrix", files, actual, ["--only", "^FALLBACK_", "--retired", "GET /gone", "--write"]),
+      ).toBe(REFUSED);
+      expect(errorLines.join("\n")).toContain("differs but is outside --only");
+      expect(readFileSync(files.amendments, "utf8")).toBe('{\n  "amendments": []\n}\n');
+    });
+  });
+
   it("a key in the dump that the recording lacks refuses", () => {
     const files = matrixFiles();
     const actual = dumpOf("cells", {

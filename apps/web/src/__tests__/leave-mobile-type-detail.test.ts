@@ -274,7 +274,9 @@ describe("#303 (leave) — CalendarDayDetail names no colleague's type without t
 describe("#303 (leave) — page wiring (source pins)", () => {
   function cellBlock(): string {
     const start = PAGE.indexOf("{@const entries = calMap.get(day.dateStr)");
-    const end = PAGE.indexOf('<div class="cal-legend">');
+    // #840 D-840-10: the hand-written legend block became the one <LeaveLegend> component; the
+    // cell block still ends where the legend starts.
+    const end = PAGE.indexOf("<LeaveLegend");
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     return PAGE.slice(start, end);
@@ -352,9 +354,13 @@ describe("#303 (leave) — page wiring (source pins)", () => {
     },
   );
 
-  it("the sheet is mounted with the derived entries and the permission-derived flag (Phase 378)", () => {
+  it("the sheet is mounted with the derived entries and without a colleague-type permission (#840)", () => {
+    // #840 (E-03): the calendar is own-only (`scope=own`), so the sheet never lists a colleague and
+    // `canSeeType` is `false` - an own entry names its type through `isOwn`, a foreign one (which
+    // cannot arrive) would read neutral. The Phase 378 permission flag is gone from the page.
     expect(PAGE).toContain("<CalendarDayDetail");
-    expect(PAGE).toContain("canSeeType={canSeeOthersLeaveType}");
+    expect(PAGE).toContain("canSeeType={false}");
+    expect(PAGE).not.toContain("canSeeOthersLeaveType");
     expect(PAGE).toContain("entries={dayDetailEntries}");
   });
 
@@ -365,14 +371,16 @@ describe("#303 (leave) — page wiring (source pins)", () => {
     expect(PAGE).not.toContain("resolveDayDetailRows");
   });
 
-  it("the day filter predicate occurs exactly three times: the lane map, dayAbsences, and the sheet", () => {
+  it("the day filter predicate occurs exactly four times: the lane map, dayAbsences, the sheet and the legend (#840)", () => {
     // Issue #446 (D-04): the colleague filter widened from APPROVED-only to the shared
     // isDrawnInCalendar predicate (APPROVED + CANCELLATION_REQUESTED) — the three-call-site
     // invariant (the lane map, the cell's dayAbsences, and the sheet's dayDetailEntries) is
     // unchanged. A fourth shape here would mean the sheet and the bars had started to disagree
     // about what the day contains.
+    // #840 (D-840-10): the legend is a fourth consumer of the same predicate - it names only the
+    // types of the bars that are actually drawn, so it can never promise a type the grid omits.
     expect(PAGE).not.toContain('e.status === "APPROVED")');
     const occurrences = PAGE.match(/\(e\) => isDrawnInCalendar\(e\)/g) ?? [];
-    expect(occurrences).toHaveLength(3);
+    expect(occurrences).toHaveLength(4);
   });
 });

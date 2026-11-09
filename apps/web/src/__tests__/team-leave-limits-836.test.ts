@@ -5,6 +5,12 @@
 // are mounted/unit-tested in `lib/leave-limits/__tests__/` and `lib/components/leave/__tests__/`;
 // this file proves the page uses them the way the decisions require.
 //
+// #840 amendments (plan 840-10, D-840-27): the limit marker no longer sits on a month-grid cell. It
+// lives on the load row of the one timeline (`AbsenceTimeline`'s `load.exceeded`), fed by the same
+// `GET /leave/limits/load` read over the period of the URL (Quartal and Monat; the endpoint answers
+// at most 92 days, so the Jahr zoom draws no marker). The permission gate, the salon, the calm failure
+// and the correction/exception tests are unchanged.
+//
 // Mutation proof (Phase 836, plan 07, 2026-11-06) — recorded here, not re-run by CI
 //   M1 the early `if (!canReadLimitLoad)` return of loadLimitDays removed -> red: "[load] ..."
 //   M2 `...pending.body` dropped from the resend in confirmLimitException -> red: "[correction] ..."
@@ -38,9 +44,9 @@ function functionBody(name: string): string {
 }
 
 describe("Issue #836 — leave limits on Team-Anträge", () => {
-  it("[vacuity gate] the page source is loaded and still is Team-Anträge", () => {
+  it("[vacuity gate] the page source is loaded and still is the team absence page", () => {
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain('title="Team-Anträge"');
+    expect(PAGE).toContain('title="Abwesenheiten"'); // #840 (E-01): formerly „Team-Anträge“
   });
 
   it("[load] the load is requested only for callers holding leave-limit:manage or leave-request:approve", () => {
@@ -56,10 +62,14 @@ describe("Issue #836 — leave limits on Team-Anträge", () => {
     expect(PAGE.match(/leave\/limits\/load/g)).toHaveLength(1);
   });
 
-  it("[load] the request carries the month range and the page salon", () => {
+  it("[load] the request carries the period of the URL (not the Jahr zoom) and the page salon", () => {
     const body = functionBody("loadLimitDays");
-    expect(body).toContain("loadRangeForMonth(calYear, calMonth)");
+    expect(body).toContain("const { startDay: from, endDay: to } = overviewPeriod;");
     expect(body).toContain("withSalonId(`/leave/limits/load?from=${from}&to=${to}`, pageSalonId)");
+    // The endpoint answers at most 92 days: a year is never asked for (and never guessed).
+    const yearGuard = body.indexOf('overviewPeriod.zoom === "jahr"');
+    expect(yearGuard).toBeGreaterThan(-1);
+    expect(yearGuard).toBeLessThan(body.indexOf("api.get"));
   });
 
   it("[load] a failed load leaves no badge and raises no toast", () => {
@@ -72,17 +82,18 @@ describe("Issue #836 — leave limits on Team-Anträge", () => {
     expect(catchText).not.toContain("error =");
   });
 
-  it("[load] the load follows the calendar: loadCalendar starts it", () => {
-    expect(functionBody("loadCalendar")).toContain("void loadLimitDays()");
+  it("[load] the load follows the timeline: loadOverview starts it", () => {
+    expect(functionBody("loadOverview")).toContain("void loadLimitDays()");
   });
 
-  it("[badge] a calendar cell renders the badge from the loaded map, current month only", () => {
-    const at = PAGE.indexOf("limitDays.get(day.dateStr)");
+  it("[marker] the load row of the timeline gets the tooltip of every exceeded day, from the loaded map", () => {
+    // #840 D-840-27: formerly a `cal-limit-badge` on a month-grid cell.
+    const at = PAGE.indexOf("for (const [day, over] of limitDays)");
     expect(at).toBeGreaterThan(-1);
-    const cell = PAGE.slice(PAGE.lastIndexOf("{#if day.isCurrentMonth}", at), at + 900);
-    expect(cell).toContain('class="badge badge-yellow cal-limit-badge"');
-    expect(cell).toContain("title={limitBadgeTitle(limitDay)}");
-    expect(cell).toContain('data-testid="cal-limit-badge"');
+    const loop = PAGE.slice(at, at + 120);
+    expect(loop).toContain("exceeded.set(day, limitBadgeTitle(over))");
+    expect(PAGE).toContain("load={overviewLoad}");
+    expect(PAGE).not.toContain("cal-limit-badge");
   });
 
   it("[correction] a 409 opens the exception ReasonDialog and the resend keeps the whole correction body", () => {

@@ -222,11 +222,12 @@ test.describe("Leave (Urlaub) UI flow", () => {
   });
 
   test("manager review modal exposes leave-approval-modal-* testids", async ({ page, tenant }) => {
-    // Seed a SICK leave for the bootstrap admin's employee via the API so the
-    // /team/leave Genehmigungen tab has something to render. Using SICK over
-    // VACATION sidesteps the vacation-entitlement guard on bare-bones tenants.
-    // Kept inside the current year — /team/leave loads its rows year-scoped, so a
-    // next-year request is created but never rendered (issue #319).
+    // Seed a SICK leave for another employee of the tenant via the API so the /team/leave Anträge
+    // tab has an open row to show. Using SICK over VACATION sidesteps the vacation-entitlement
+    // guard on bare-bones tenants. Kept inside the current year - the Anträge list is year-scoped
+    // (issue #319); the open filter and the inbox list open requests of every year since #840.
+    // Issue #840 (E-02): the decision itself is made in the inbox, so the open row's action leads
+    // there and the review dialog (and its testids) is asserted on /inbox.
     const dateStr = futureWeekdayInCurrentYear(100);
 
     // Create a second employee in the tenant so the admin (manager) is not
@@ -262,9 +263,8 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/team/leave");
 
-    // Open the review modal via the row's testid action — works regardless
-    // of which tab the page lands on (list shows it, approvals tab shows it).
-    // Switch to the list view tab first to guarantee a stable row.
+    // Open the review modal via the row's testid action. The Anträge tab shows the open row; its
+    // action „Im Posteingang prüfen“ is a link into the inbox, where the review dialog opens.
     const reviewBtn =
       leave.status === "CANCELLATION_REQUESTED"
         ? page.getByTestId(`leave-team-row-${leave.id}-review-cancel`)
@@ -276,6 +276,7 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await page.getByTestId("leave-team-view-list").click();
     await expect(reviewBtn).toBeVisible();
     await reviewBtn.click();
+    await page.waitForURL(/\/inbox/);
 
     const modal = page.getByTestId("leave-approval-modal");
     await expect(modal).toBeAttached();

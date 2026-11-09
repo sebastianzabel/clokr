@@ -757,6 +757,18 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   hard-delete path (`hardDeleteLeavePlanWishesForEmployee` before `hardDeleteLeaveRequestsForEmployee`, `Restrict` FKs). ADR
   `docs/adr/0001-abweichungen.md`, Eintrag AH.
 
+- **The leave area has one timeline and one approval place (Issue #840).** `AbsenceTimeline` is the only
+  person-by-day absence grid (`leave-one-timeline-840.test.ts`) and `apps/web/src/lib/leave/leave-colors.ts` the only
+  leave colour source (`leave-colors-one-place-840.test.ts`). `GET /leave/calendar` decides the detail level per person
+  through the #836 visibility rule (`maskCalendarRows`): a foreign row outside the reader's reach has no id, status,
+  halfDay, type or § 9, a foreign PENDING row is dropped, adjacent masked ranges of a person are merged (`mergeDayRanges`);
+  `from`/`to` (at most 366 days) answers `{ entries, salons }`, and `scope=own|team` serve Mein Bereich and mask every
+  foreign row whatever the caller's reach (`GET /leave/plans/:id?view=own` does the same for the planner read and gives a
+  foreign wish the period only). Masked ranges are clipped to the requested window before the merge, and a caller with an
+  empty `leave-request:read` reach who sends no `scope` is answered as `scope=team`. Leave
+  decisions, § 9 cases included, wait only in `/inbox`; old leave URLs are mapped only by `lib/leave/area-tabs.ts`.
+  ADR `docs/adr/0001-abweichungen.md`, Eintrag AI.
+
 ## Overtime Saldo Calculation (current)
 
 `Saldo = Worked − Expected` over (hire-date or month-start) → yesterday. The live saldo never includes today, not even a clocked-out today: a clock-out for a lunch break closes the entry exactly like the end of the day, so a closed entry does not mean the day is settled (Issue #438). Leave/holidays/absences reduce expected, clamped to effective range. The chain starts where every close path and the month series start it — `getCarryOverBase()` (`contexts/working-time-account/carry-over-base.ts`): the last closed month's stored carryOver, and only without any closed month the active `OpeningBalance` (Issue #682; before, the live saldo ignored it until the first close). Never re-read the OpeningBalance when a closed month exists — the first close already put it into its carryOver. "Bestätigt" (`confirmedMinutes`) stays the stored closed carry, so an OpeningBalance without a close is part of the forecast. Persons whose live saldo moved: `scripts/audit-682-opening-balance-live-gap.ts` (read-only, ids and minutes). Recalculated per GET /overtime/:employeeId. Will be replaced by snapshot-based calc (see Saldo Calculation & Monatsabschluss above).

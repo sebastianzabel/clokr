@@ -53,7 +53,12 @@ const SHARED_FORM = readRouteFile(
 describe("leave half-day sick guard + eyebrow (Phase 201, defects B + C)", () => {
   it("Test 1 (C): the shared create/edit dialog's eyebrow names the selected type, not a fixed 'Urlaub'", () => {
     expect(SHARED_FORM).not.toContain('eyebrow="Urlaub"');
-    expect(SHARED_FORM).toContain("eyebrow={typeName(formType)}");
+    // #840 G-9: the create dialog shows no eyebrow (the type is chosen in the form, so a type name
+    // above it would be misleading); the edit dialog names the edited request's own type.
+    expect(SHARED_FORM).toContain(
+      "eyebrow={editingRequest ? typeName(editingRequest.typeCode) : undefined}",
+    );
+    expect(SHARED_FORM).not.toContain("eyebrow={typeName(formType)}");
     // Neither page renders its own eyebrow any more — both delegate to the shared component
     // (Phase 415).
     expect(EMP_PAGE).not.toContain("eyebrow={typeName(formType)}");

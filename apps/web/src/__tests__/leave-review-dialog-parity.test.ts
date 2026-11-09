@@ -394,4 +394,16 @@ describe("Test 6 — D-06: the nine /team/leave data-testid anchors survive inta
     );
     expect(total).toBe(1);
   });
+
+  // #840 E-02: the team page no longer mounts the review dialog (its open rows link to the inbox,
+  // which owns the only approval place). The nine anchors therefore occur exactly once - in the
+  // shared component - and never on the team page itself; the e2e specs reach them through the
+  // inbox.
+  it("[#840 E-02] the nine anchors live in the component, none on the team page", () => {
+    expect(COMPONENT, "LeaveReviewDialog.svelte must exist").not.toBeNull();
+    for (const name of TESTID_NAMES) {
+      expect(countOccurrences(COMPONENT!, `"${name}"`), name).toBe(1);
+      expect(countOccurrences(TEAM_LEAVE_PAGE, `"${name}"`), `${name} on the team page`).toBe(0);
+    }
+  });
 });

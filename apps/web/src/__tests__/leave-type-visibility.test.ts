@@ -67,8 +67,14 @@ describe("leave page — one shared visibility decision (Phase 303)", () => {
       expect((PAGE.match(/resolveChipVisual\(/g) ?? []).length).toBe(1);
     });
 
-    it("A3: the one call is the {@const} binding, reading the permission-derived flag (Phase 378)", () => {
-      expect(PAGE).toContain("{@const _vis = resolveChipVisual(e, canSeeOthersLeaveType)}");
+    it("A3: the one call is the {@const} binding; the page is own-only, so no permission flag feeds it (#840)", () => {
+      // #840 (E-03, D-840-24): the calendar of /leave reads `scope=own` and draws only the caller's
+      // own absences. The decision therefore no longer depends on a permission (the Phase 378 flag
+      // is gone with the colleague chips): `false` is passed on purpose - an own entry shows its type
+      // through `isOwn`, and a row that is not the caller's (it cannot arrive) would render neutral.
+      expect(PAGE).toContain("{@const _vis = resolveChipVisual(e, false)}");
+      expect(PAGE).not.toContain("canSeeOthersLeaveType");
+      expect(PAGE).toContain("/leave/calendar?year=${calYear}&month=${calMonth}&scope=own");
     });
 
     it("A4: all four render points read from the binding", () => {

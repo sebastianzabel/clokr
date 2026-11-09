@@ -52,6 +52,8 @@ describe("planner wording", () => {
     expect(ROW_STATE_LABELS.GESETZT).toBe("gesetzt");
     expect(ROW_STATE_LABELS.BEANTRAGT).toBe("beantragt");
     expect(ROW_STATE_LABELS.WISH).toBe("Wunsch");
+    expect(ROW_STATE_LABELS.ABWESEND).toBe("abwesend");
+    expect(ROW_KIND_LABELS.MASKED).toBe("abwesend");
     expect(DAY_LOAD_LABEL).toBe("Urlaub");
     expect(DAY_LOAD_HINT).toBe(
       "Genehmigt, beantragt und gewünscht – ohne Krankheit, Berufsschule und Betriebsurlaub",
@@ -91,6 +93,11 @@ describe("rowTypeLabel", () => {
   it("is neutral „abwesend“ for a masked type", () => {
     expect(rowTypeLabel({ kind: "LEAVE", typeCode: null })).toBe("abwesend");
     expect(rowTypeLabel({ kind: "ABSENCE", typeCode: null })).toBe("abwesend");
+  });
+
+  it("a masked row is neutral „abwesend“, whatever type code it carries (#840)", () => {
+    expect(rowTypeLabel({ kind: "MASKED", typeCode: null })).toBe("abwesend");
+    expect(rowTypeLabel({ kind: "MASKED", typeCode: "SICK" })).toBe("abwesend");
   });
 
   it("names the Betriebsurlaub by its kind", () => {

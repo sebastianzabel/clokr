@@ -30,15 +30,15 @@
   const PAGE_LABELS: Record<string, string> = {
     "/dashboard": "Übersicht",
     "/time-entries": "Zeiterfassung",
-    "/leave": "Urlaub",
-    "/leave/planung": "Urlaubsplanung",
+    // #840 (D-840-06): one „Abwesenheiten“ label per area; /teamcal and /leave/planung are
+    // redirects and have no title of their own.
+    "/leave": "Abwesenheiten",
     "/reports": "Berichte",
     // v1.5 Phase 30 manager screens — primary nav targets.
-    "/inbox": "Anträge",
-    "/teamcal": "Team-Kalender",
+    "/inbox": "Inbox",
     "/shifts": "Schichtplanung",
     // Pre-v1.5 team pages kept for direct-link compatibility (no longer in nav).
-    "/team/leave": "Team-Anträge",
+    "/team/leave": "Abwesenheiten",
     "/team/time-entries": "Team-Zeiten",
     "/admin/employees": "Mitarbeitende",
     "/admin/month-close": "Monatsabschluss",

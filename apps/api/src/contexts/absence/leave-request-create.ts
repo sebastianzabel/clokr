@@ -621,9 +621,9 @@ export async function notifyLeaveRequestApprovers(
       type: "LEAVE_REQUEST",
       title: typeDef.notificationTitle,
       message: `${request.employee.firstName} ${request.employee.lastName} ${typeDef.requestPhrase} (${input.startDay} – ${input.endDay})`,
-      // Manager-facing: link to the approval surface (/team/leave honors ?request=),
-      // NOT /leave (which only shows the recipient's OWN requests).
-      link: `/team/leave?request=${request.id}`,
+      // Manager-facing: link to the approval surface, the inbox (Issue #840, D-840-28), which
+      // honors ?request=. NOT /leave (the personal area, which holds the recipient's OWN requests).
+      link: `/inbox?request=${request.id}`,
       tenantId,
       relatedType: "LeaveRequest",
       relatedId: request.id,

@@ -22,9 +22,13 @@ export async function listPlans(salonId: string, year?: number): Promise<LeavePl
   return res.plans;
 }
 
-/** The live planner read of one plan. */
-export function getPlan(id: string): Promise<PlannerReadDto> {
-  return api.get<PlannerReadDto>(`${BASE}/${enc(id)}`);
+/**
+ * The live planner read of one plan. `view: "own"` asks for the personal planner (#840): every
+ * foreign row is masked whatever the reader's reach.
+ */
+export function getPlan(id: string, opts?: { view?: "own" }): Promise<PlannerReadDto> {
+  const query = opts?.view === "own" ? "?view=own" : "";
+  return api.get<PlannerReadDto>(`${BASE}/${enc(id)}${query}`);
 }
 
 export async function openPlan(input: {

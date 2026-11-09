@@ -20,6 +20,7 @@
  */
 
 import { isEffectiveLeaveStatus } from "./effective-leave-statuses";
+import { ABSENT, ABSENT_MUTED, FALLBACK, leaveTypeColor, type LeaveColor } from "./leave-colors";
 
 /**
  * Every code the team calendar can paint a bar for.
@@ -67,41 +68,61 @@ export interface LeaveTypeEntry {
 /** Order is load-bearing: `LEAVE_TYPE_OPTIONS` derives from this array and drives three
  *  request-type <select> dropdowns on the team leave page. */
 export const LEAVE_TYPES: readonly LeaveTypeEntry[] = [
-  { code: "VACATION", label: "Urlaub", colorVar: "--leave-type-vacation", requestable: true },
+  {
+    code: "VACATION",
+    label: "Urlaub",
+    colorVar: leaveTypeColor("VACATION").fill,
+    requestable: true,
+  },
   {
     code: "OVERTIME_COMP",
     label: "Überstundenausgleich",
-    colorVar: "--leave-type-overtime",
+    colorVar: leaveTypeColor("OVERTIME_COMP").fill,
     requestable: true,
   },
-  { code: "SPECIAL", label: "Sonderurlaub", colorVar: "--leave-type-special", requestable: true },
+  {
+    code: "SPECIAL",
+    label: "Sonderurlaub",
+    colorVar: leaveTypeColor("SPECIAL").fill,
+    requestable: true,
+  },
   {
     code: "EDUCATION",
     label: "Bildungsurlaub",
-    colorVar: "--leave-type-education",
+    colorVar: leaveTypeColor("EDUCATION").fill,
     requestable: true,
   },
-  { code: "SICK", label: "Krankmeldung", colorVar: "--leave-type-sick", requestable: true },
+  { code: "SICK", label: "Krankmeldung", colorVar: leaveTypeColor("SICK").fill, requestable: true },
   {
     code: "SICK_CHILD",
     label: "Kinderkrank",
-    colorVar: "--leave-type-sick-child",
+    colorVar: leaveTypeColor("SICK_CHILD").fill,
     requestable: true,
   },
   {
     code: "UNPAID",
     label: "Unbezahlter Urlaub",
-    colorVar: "--leave-type-unpaid",
+    colorVar: leaveTypeColor("UNPAID").fill,
     requestable: true,
   },
   {
     code: "MATERNITY",
     label: "Mutterschutz",
-    colorVar: "--leave-type-maternity",
+    colorVar: leaveTypeColor("MATERNITY").fill,
     requestable: true,
   },
-  { code: "PARENTAL", label: "Elternzeit", colorVar: "--leave-type-parental", requestable: true },
-  { code: "HOLIDAY", label: "Feiertag", colorVar: "--leave-type-holiday", requestable: false },
+  {
+    code: "PARENTAL",
+    label: "Elternzeit",
+    colorVar: leaveTypeColor("PARENTAL").fill,
+    requestable: true,
+  },
+  {
+    code: "HOLIDAY",
+    label: "Feiertag",
+    colorVar: leaveTypeColor("HOLIDAY").fill,
+    requestable: false,
+  },
 ];
 
 /** The nine requestable types, in form order. Replaces the page's former `TYPE_OPTIONS`. */
@@ -109,10 +130,9 @@ export const LEAVE_TYPE_OPTIONS: readonly LeaveTypeEntry[] = LEAVE_TYPES.filter(
   (t) => t.requestable,
 );
 
-/** Fill tokens that are not leave-type codes. */
-const NEUTRAL_APPROVED_VAR = "--leave-type-absent";
-const NEUTRAL_PENDING_VAR = "--leave-type-absent-muted";
-const FALLBACK_VAR = "--leave-type-default";
+/** Colours that are not leave-type codes; every name comes from the one mapping (#840, D-840-12). */
+const NEUTRAL_APPROVED = ABSENT;
+const NEUTRAL_PENDING = ABSENT_MUTED;
 
 /** The neutral word an EMPLOYEE sees on a colleague's bar. German, user-facing. */
 export const NEUTRAL_CHIP_LABEL = "abwesend";
@@ -125,15 +145,15 @@ function entryFor(code: CalendarTypeCode): LeaveTypeEntry | undefined {
 }
 
 /** `var(--x)` for the bar background. */
-function background(colorVar: string): string {
-  return `var(${colorVar})`;
+function background(color: LeaveColor): string {
+  return `var(${color.fill})`;
 }
 
 /** `var(--x-text, #ffffff)` for the bar text. The `#ffffff` fallback is today's hardcoded
  *  `.cal-chip { color: white }` — it keeps rendering unchanged until Plan 257-03 declares the
  *  foreground tokens, so no intermediate state is broken. */
-function textColor(colorVar: string): string {
-  return `var(${colorVar}-text, #ffffff)`;
+function textColor(color: LeaveColor): string {
+  return `var(${color.text}, #ffffff)`;
 }
 
 /**
@@ -180,20 +200,20 @@ export function resolveChipVisual(entry: ChipEntry, canSeeOthersType: boolean): 
   const type = entry.typeCode ? entryFor(entry.typeCode) : undefined;
 
   if (!canSeeLeaveType(entry.isOwn, canSeeOthersType) || !entry.typeCode) {
-    const neutralVar = entry.status === "APPROVED" ? NEUTRAL_APPROVED_VAR : NEUTRAL_PENDING_VAR;
+    const neutral = entry.status === "APPROVED" ? NEUTRAL_APPROVED : NEUTRAL_PENDING;
     return {
-      background: background(neutralVar),
-      textColor: textColor(neutralVar),
+      background: background(neutral),
+      textColor: textColor(neutral),
       typeLabel: null,
       chipLabel: NEUTRAL_CHIP_LABEL,
     };
   }
 
   const label = entry.typeName ?? type?.label ?? entry.typeCode;
-  const colorVar = type?.colorVar ?? FALLBACK_VAR;
+  const color = type ? leaveTypeColor(type.code) : FALLBACK;
   return {
-    background: background(colorVar),
-    textColor: textColor(colorVar),
+    background: background(color),
+    textColor: textColor(color),
     typeLabel: label,
     chipLabel: label,
   };

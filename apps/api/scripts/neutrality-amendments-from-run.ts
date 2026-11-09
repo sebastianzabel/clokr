@@ -14,21 +14,31 @@
  *   - the recipients register changes in any way but the removal of the labels matching
  *     `--expect-removed`, or any other site field differs from the recording,
  *   - the dump misses a recorded key (an incomplete run) or holds a key the recording lacks,
+ *     except a recorded key matching `--retired` (see below),
  *   - an existing chain is broken, or the appended links would break one.
  * A refusal is a finding. Never widen `--only` to make it go away.
+ *
+ * `--retired <regex>` (Issue #840): a recorded key of a route that was REMOVED earlier (e.g. the
+ * #617 report documents) is absent from every dump, so the tool would refuse each run as
+ * "incomplete". `--retired` tolerates ONLY the absence of recorded keys matching the regex. A
+ * matching key that IS in the dump is compared and handled exactly as without the flag; the flag
+ * never tolerates a difference, never widens `--only` and never touches a recording. Pass an
+ * explicit anchored alternation of the removed routes, not a broad pattern. The skipped keys are
+ * listed on a `retired=<n>` line.
  *
  * Recordings are NEVER written: the only file this tool can write is the register
  * (`recorded/<name>-amendments.json`), and only with `--write`; existing links stay byte-identical,
  * new links are appended in code-point key order. Dry run by default.
  *
  * Output (fixed tokens, later plans grep them): first line `differing=<n>`, then one line per
- * differing key, with `--write` a final line `appended=<n>`.
+ * differing key, with `--retired` a `retired=<n>` line (plus one line per skipped key), with
+ * `--write` a final line `appended=<n>`.
  *
  * Usage:
  *   pnpm --filter @clokr/api exec tsx scripts/neutrality-amendments-from-run.ts \
  *     --register matrix|recipients|activity-auth --actual <file> --only <regex> \
  *     --issue <n> --date <YYYY-MM-DD> --reason <text, >= 20 chars> \
- *     [--expect-removed <regex>] [--write]
+ *     [--expect-removed <regex>] [--retired <regex>] [--write]
  *
  * Exit codes: 0 ok (also: 0 differences) · 1 refusal, bad CLI or unreadable input.
  */
@@ -98,6 +108,8 @@ export interface Diff {
   refusals: string[];
   /** The links to append, in code-point key order. */
   newLinks: Link[];
+  /** Recorded keys absent from the dump that `--retired` tolerated (Issue #840). */
+  retired: string[];
 }
 
 function codePointOrder(a: string, b: string): number {
@@ -122,12 +134,16 @@ export function diffRun(options: {
   actual: Record<string, unknown>;
   only: RegExp;
   expectRemoved?: RegExp;
+  /** Issue #840: recorded keys of removed routes whose ABSENCE from the dump is tolerated. */
+  retired?: RegExp;
   issue: number;
   date: string;
   reason: string;
 }): Diff {
-  const { register, recording, links, actual, only, expectRemoved, issue, date, reason } = options;
+  const { register, recording, links, actual, only, expectRemoved, retired, issue, date, reason } =
+    options;
   const refusals: string[] = [];
+  const retiredKeys: string[] = [];
   const differing: string[] = [];
   const newLinks: Link[] = [];
 
@@ -148,6 +164,10 @@ export function diffRun(options: {
 
   for (const key of Object.keys(recording).sort(codePointOrder)) {
     if (!(key in actual)) {
+      if (retired !== undefined && retired.test(key)) {
+        retiredKeys.push(key);
+        continue;
+      }
       refusals.push(`${key}: the dump misses this recorded key — the run was incomplete`);
       continue;
     }
@@ -199,7 +219,7 @@ export function diffRun(options: {
     for (const problem of after.problems) refusals.push(`appended links: ${problem}`);
   }
 
-  return { differing, refusals, newLinks };
+  return { differing, refusals, newLinks, retired: retiredKeys };
 }
 
 /** One appended link as text, in the layout of its register. */
@@ -264,11 +284,13 @@ Usage:
   pnpm --filter @clokr/api exec tsx scripts/neutrality-amendments-from-run.ts \\
     --register matrix|recipients|activity-auth --actual <dump.json> --only <regex> \\
     --issue <n> --date <YYYY-MM-DD> --reason <text, at least ${MIN_REASON_LENGTH} chars> \\
-    [--expect-removed <regex>] [--write] [--help]
+    [--expect-removed <regex>] [--retired <regex>] [--write] [--help]
 
 Turns a measured neutrality run (NEUTRALITY_ACTUAL_OUT_DIR dump) into appended amendment links.
 Dry run unless --write. Refuses (exit 1) any difference outside --only, any recipients change but
 the removal of --expect-removed labels, an incomplete dump and a broken chain. Never writes a recording.
+--retired <regex> tolerates only the ABSENCE from the dump of recorded keys matching it (routes removed
+earlier); a matching key present in the dump is compared as usual. Use an explicit anchored pattern.
 `;
 
 interface Cli {
@@ -280,6 +302,7 @@ interface Cli {
   date?: string;
   reason?: string;
   expectRemoved?: RegExp;
+  retired?: RegExp;
   write: boolean;
 }
 
@@ -295,6 +318,7 @@ function parseCli(argv: string[]): Cli {
       date: { type: "string" },
       reason: { type: "string" },
       "expect-removed": { type: "string" },
+      retired: { type: "string" },
       write: { type: "boolean", default: false },
     },
     strict: true,
@@ -336,6 +360,7 @@ function parseCli(argv: string[]): Cli {
     reason,
     expectRemoved:
       values["expect-removed"] === undefined ? undefined : new RegExp(values["expect-removed"]),
+    retired: values.retired === undefined ? undefined : new RegExp(values.retired),
     write: Boolean(values.write),
   };
 }
@@ -380,6 +405,7 @@ export function main(argv: string[], paths?: Partial<Record<RegisterName, Regist
       actual,
       only: cli.only as RegExp,
       expectRemoved: cli.expectRemoved,
+      retired: cli.retired,
       issue: cli.issue as number,
       date: cli.date as string,
       reason: cli.reason as string,
@@ -391,6 +417,10 @@ export function main(argv: string[], paths?: Partial<Record<RegisterName, Regist
 
   console.info(`differing=${diff.differing.length}`);
   for (const key of diff.differing) console.info(`  ${key}`);
+  if (cli.retired !== undefined) {
+    console.info(`retired=${diff.retired.length}`);
+    for (const key of diff.retired) console.info(`  ${key}`);
+  }
 
   if (diff.refusals.length > 0) {
     for (const refusal of diff.refusals) console.error(`REFUSED: ${refusal}`);

@@ -212,7 +212,8 @@ describe("Issue #835 - LEAVE_PLAN_OPENED notification", () => {
     for (const row of rows) {
       expect(row.relatedType).toBe("LeavePlan");
       expect(row.relatedId).toBe(planS);
-      expect(row.link).toBe(`/leave/planung?salonId=${one.salonId}&year=${YEAR}`);
+      // #840 D-840-28: the plan opens in the planner tab of the personal leave page.
+      expect(row.link).toBe(`/leave?tab=planung&salonId=${one.salonId}&year=${YEAR}`);
       expect(safePushUrl(row.link), "the push layer accepts the link as it is").toBe(row.link);
       expect(row.title).toBe("Urlaubsplanung eröffnet");
       expect(row.message).toContain(`Urlaubsplanung ${YEAR}`);

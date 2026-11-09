@@ -69,9 +69,16 @@ import {
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
   employeeScopeFor, // Phase 430 Plan 04 (D-15) — rosterImported's getShiftsInRange scope
   resolveSalonInReach, // Issue #558 (D-01) — the one validator of a chosen salon
+  homeSalonsForDays, // Issue #840 (D-840-19) — Stammsalon per day, one call per calendar request
+  findSalon, // Issue #840 (D-840-25) — the salon in view of the range form
+  holidaysForSalon, // Issue #840 (D-840-25) — the holidays of the salon in view
+  countActiveSalons, // Issue #840 (D-840-25) — a one-salon tenant always names its salon
+  findDefaultSalon, // Issue #840 (D-840-25) — the one active salon of such a tenant
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
 import { canSeeLeaveType } from "../leave-calendar-visibility"; // Issue #835 — moved out of this route (second caller)
+import { maskCalendarRows } from "../leave-calendar-masking"; // Issue #840 (D-840-19) — per-person masking of the calendar read
+import { isPersonVisibleOnSomeDay } from "../leave-limits/redact"; // Issue #840 (D-840-19) — the #836 per-person rule, no second one
 import {
   buildLeaveLimitExceptionAudit,
   correctionCandidateRanges,
@@ -108,6 +115,7 @@ import {
 } from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
 import { vacationBalanceForRow, type VacationBalance } from "../facade/vacation-balance"; // Issue #451 (D-07) — the ONE Resturlaub function, additive on the VACATION row of GET /entitlements
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
+import { byCodeUnit } from "../../../utils/code-unit-order";
 import { REQUESTABLE_CODES as TYPE_CODES, DISPLAY_NAME, withHalfDayMarker } from "../leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
 
 // Forwarded for the same backward-compatibility reason as the import above.
@@ -313,6 +321,66 @@ const sickDaysQuerySchema = z.object({ year: z.coerce.number().int().min(2000).m
 // list, it is never an access boundary — every handler validates it with `resolveSalonInReach`
 // against its own ZUGEWIESEN reach before any row read.
 const leaveSalonQuerySchema = z.object({ salonId: z.string().uuid().optional() });
+
+// Issue #840 (D-840-18/25): the calendar read alone also takes a day range. `from`/`to` are calendar
+// days, both or neither, `from <= to`, at most 366 days inclusive (one year plus a leap day); any
+// violation is a ZodError, i.e. a 400 through the global handler. `leaveSalonQuerySchema` stays
+// untouched because the other leave reads share it.
+const CALENDAR_RANGE_MAX_DAYS = 366;
+const calendarDaySchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  // Zod 4 runs this refinement even after the regex above failed, so an unparsable value must not
+  // reach `toISOString()` (a RangeError would answer 500 instead of 400).
+  .refine(
+    (v) => {
+      const t = Date.parse(`${v}T00:00:00.000Z`);
+      return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === v;
+    },
+    { message: "Ungültiges Datum" },
+  );
+const leaveCalendarQuerySchema = z
+  .object({
+    salonId: z.string().uuid().optional(),
+    // Issue #840 (D-840-18/24): the personal areas ask for their own slice. `own` = the caller's
+    // own rows, `team` = the caller's Stammsalon colleagues, masked. Never together with `salonId`.
+    scope: z.enum(["own", "team"]).optional(),
+    from: calendarDaySchema.optional(),
+    to: calendarDaySchema.optional(),
+    // The month form (review IN-07): a non-numeric or out-of-range value is a 400, never a NaN that
+    // reaches `monthDateRange` and answers 500.
+    year: z.coerce.number().int().min(2000).max(2100).optional(),
+    month: z.coerce.number().int().min(1).max(12).optional(),
+  })
+  .superRefine((q, ctx) => {
+    if (q.scope !== undefined && q.salonId !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "scope und salonId nicht gemeinsam",
+        path: ["scope"],
+      });
+      return;
+    }
+    if ((q.from === undefined) !== (q.to === undefined)) {
+      ctx.addIssue({ code: "custom", message: "from und to nur gemeinsam", path: ["from"] });
+      return;
+    }
+    if (q.from === undefined || q.to === undefined) return;
+    if (q.from > q.to) {
+      ctx.addIssue({ code: "custom", message: "from darf nicht nach to liegen", path: ["from"] });
+      return;
+    }
+    const days =
+      (Date.parse(`${q.to}T00:00:00.000Z`) - Date.parse(`${q.from}T00:00:00.000Z`)) / 86_400_000 +
+      1;
+    if (days > CALENDAR_RANGE_MAX_DAYS) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Zeitraum höchstens ${CALENDAR_RANGE_MAX_DAYS} Tage`,
+        path: ["to"],
+      });
+    }
+  });
 
 // Issue #558 (T-100-09): one body for every rejection cause — a foreign tenant's salon, an unknown
 // id, an inactive salon, a salon outside the reach and a caller without the ZUGEWIESEN reach are
@@ -1766,40 +1834,62 @@ export async function leaveRoutes(app: FastifyInstance) {
     },
   });
 
-  // ── GET /calendar  – Kalenderansicht für einen Monat ────────────────────
+  // ── GET /calendar  – calendar view for one month or a day range ───────
+  // Issue #840 (D-840-19): the detail level is decided PER PERSON by the reader's
+  // `leave-request:read:ZUGEWIESEN` reach (Stammsalon per day), not by a bare permission check.
   app.get("/calendar", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
-      const { year, month } = req.query as { year?: string; month?: string };
-      const { salonId } = leaveSalonQuerySchema.parse(req.query);
-      const y = year ? parseInt(year) : new Date().getFullYear();
-      const m = month ? parseInt(month) : new Date().getMonth() + 1;
+      const query = leaveCalendarQuerySchema.parse(req.query);
+      const { salonId } = query;
+      const rangeForm = query.from !== undefined && query.to !== undefined;
+      const y = query.year ?? new Date().getFullYear();
+      const m = query.month ?? new Date().getMonth() + 1;
+      const tenantId = req.user.tenantId;
 
-      // Issue #558 (D-01): the salon is validated against the caller's leave-request
-      // ZUGEWIESEN reach before any read; a caller without it gets the same 404 body.
+      // Resolved ONCE per request: it validates the chosen salon (Issue #558, D-01 — a caller
+      // without the reach gets the same 404 body) and decides the detail level of every row below.
+      const reach = await resolveAccessReach(
+        app.prisma,
+        accessContextFromRequest(req),
+        "leave-request:read:ZUGEWIESEN",
+      );
       let chosenSalonId: string | null = null;
       if (salonId !== undefined) {
-        const reach = await resolveAccessReach(
-          app.prisma,
-          accessContextFromRequest(req),
-          "leave-request:read:ZUGEWIESEN",
-        );
-        const salon = await resolveSalonInReach(app.prisma, req.user.tenantId, reach, salonId);
+        const salon = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
         if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
         chosenSalonId = salon.salonId;
       }
+      // Data minimisation is enforced here, not left to the client (Art. 5 Abs. 1 lit. c DSGVO,
+      // review WR-04): a caller whose `leave-request:read` reach is empty (own data only) who names
+      // no scope is answered as `scope=team` — their own rows and the masked colleagues of their
+      // own Stammsalon, never every salon of the tenant for a whole year. A caller with a reach
+      // keeps the tenant-wide calendar of the Team -> Uebersicht; an explicit scope always wins.
+      const reachIsEmpty =
+        reach.kind === "scoped" && reach.salonIds.length === 0 && reach.employeeIds.length === 0;
+      const scope = query.scope ?? (reachIsEmpty && salonId === undefined ? "team" : undefined);
 
-      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const tz = await getTenantTimezone(app.prisma, tenantId);
       // Issue #493: the leave overlap, the holiday window and the § 9 overlap all hit `@db.Date`
       // columns / date-string windows, so they take calendar-day bounds, not month instants.
-      const { firstDay, lastDay } = monthDateRange(y, m, tz);
+      // The range form (Issue #840) names calendar days directly.
+      const { firstDay, lastDay } =
+        query.from !== undefined && query.to !== undefined
+          ? {
+              firstDay: new Date(`${query.from}T00:00:00.000Z`),
+              lastDay: new Date(`${query.to}T00:00:00.000Z`),
+            }
+          : monthDateRange(y, m, tz);
+      const windowFromDay = firstDay.toISOString().slice(0, 10);
+      const windowToDay = lastDay.toISOString().slice(0, 10);
 
+      const selfEmployeeId = req.user.employeeId ?? null;
       const [allRows, holidayMap] = await Promise.all([
         app.prisma.leaveRequest.findMany({
           where: {
             deletedAt: null,
-            employee: { tenantId: req.user.tenantId },
+            employee: { tenantId },
             status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04): same set, now derived
             startDate: { lte: lastDay },
             endDate: { gte: firstDay },
@@ -1810,37 +1900,69 @@ export async function leaveRoutes(app: FastifyInstance) {
           },
           orderBy: { startDate: "asc" },
         }),
-        // Interim (Phase 71b, issue #71): a tenant-wide calendar has no single employee to
-        // resolve a work location for, so it shows the REQUESTER's own work-location holidays
-        // (or the tenant's default salon's, for a profile-less admin) until Block D (#82 ff.)
-        // designs a salon-aware calendar.
-        getHolidayMap(
-          app.prisma,
-          req.user.tenantId,
-          req.user.employeeId ?? null,
-          firstDay,
-          lastDay,
-        ),
+        // Issue #840 (D-840-25): a validated salon in view brings its OWN holidays (the one salon
+        // resolution of the Unterbau). Without one the interim below stays: a tenant-wide calendar
+        // has no single employee to resolve a work location for (Phase 71b, issue #71), so it
+        // shows the REQUESTER's own work-location holidays (or the tenant's default salon's, for a
+        // profile-less admin).
+        chosenSalonId !== null
+          ? holidaysForSalon(app.prisma, tenantId, chosenSalonId, windowFromDay, windowToDay).then(
+              (list) => new Map(list.map((h) => [h.date, h.name] as const)),
+            )
+          : getHolidayMap(app.prisma, req.user.tenantId, selfEmployeeId, firstDay, lastDay),
       ]);
+
+      // Issue #840 (D-840-18/23/24): the caller's own Stammsalons in the window, read ONCE and only
+      // when a personal scope or the `salons` field of the range form needs them. A foreign person's
+      // Stammsalon is never read here (that is the per-row decision below).
+      const ownHomeSalonIds: string[] = [];
+      if (scope !== undefined && selfEmployeeId !== null) {
+        const ownHome = (
+          await homeSalonsForDays(
+            app.prisma,
+            tenantId,
+            [selfEmployeeId],
+            windowFromDay,
+            windowToDay,
+          )
+        ).get(selfEmployeeId);
+        for (const home of ownHome?.values() ?? []) {
+          if (home !== null && !ownHomeSalonIds.includes(home)) ownHomeSalonIds.push(home);
+        }
+      }
 
       // Issue #558: the unfiltered calendar stays tenant-wide by design (type-masked below); a
       // chosen salon only narrows it. A row is kept by its range clipped to the SHOWN month
       // (calendar-day bounds, #493), so a request running into the next month is attributed by
-      // the Stammsalon of the days in view. The holiday entries stay the requester's
-      // work-location holidays (interim of #71) — the filter does not touch them.
-      const rows =
-        chosenSalonId === null
-          ? allRows
-          : await filterLeaveRowsToHomeSalon(
-              app.prisma,
-              req.user.tenantId,
-              allRows,
-              chosenSalonId,
-              {
-                fromDay: firstDay.toISOString().slice(0, 10),
-                toDay: lastDay.toISOString().slice(0, 10),
-              },
-            );
+      // the Stammsalon of the days in view. The holiday entries are not touched by the row filter
+      // (a chosen salon brings its own, see above; otherwise the requester's, interim of #71).
+      const isOwnRow = (r: (typeof allRows)[number]) => r.employee.userId === req.user.sub;
+      let rows = allRows;
+      if (chosenSalonId !== null) {
+        rows = await filterLeaveRowsToHomeSalon(app.prisma, tenantId, allRows, chosenSalonId, {
+          fromDay: windowFromDay,
+          toDay: windowToDay,
+        });
+      } else if (scope === "own") {
+        // Issue #840 (D-840-24): the personal calendar carries nothing of a colleague.
+        rows = allRows.filter(isOwnRow);
+      } else if (scope === "team") {
+        // Issue #840 (D-840-18/23, T-840-08): the persons homed in one of the caller's own
+        // Stammsalons on a window day, plus the caller; a caller without Stammsalon gets only
+        // their own rows. The input order is kept, a row reached through two salons appears once.
+        const teamIds = new Set<string>();
+        for (const ownSalonId of ownHomeSalonIds) {
+          const inSalon = await filterLeaveRowsToHomeSalon(
+            app.prisma,
+            tenantId,
+            allRows,
+            ownSalonId,
+            { fromDay: windowFromDay, toDay: windowToDay },
+          );
+          for (const r of inSalon) teamIds.add(r.id);
+        }
+        rows = allRows.filter((r) => isOwnRow(r) || teamIds.has(r.id));
+      }
 
       // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
       // query, scoped to the tenant, so the per-row masking below never needs a query inside
@@ -1894,30 +2016,71 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
-      // Computed once per request (not per row, Pitfall 10) — hoisted above the loop below.
-      const canSeeAll = await hasPermission(req, "leave-request:read:ZUGEWIESEN");
-      const leaveEntries = rows.map((r) => {
-        const isOwn = r.employee.userId === req.user.sub;
-        const showDetails = canSeeLeaveType(isOwn, canSeeAll);
-        return {
-          id: r.id,
-          isOwn,
-          employeeId: r.employeeId,
-          firstName: r.employee.firstName,
-          lastName: r.employee.lastName,
-          typeCode: showDetails ? r.leaveType.code : null,
-          typeName: showDetails ? r.leaveType.name : null,
-          startDate: r.startDate.toISOString().split("T")[0],
-          endDate: r.endDate.toISOString().split("T")[0],
-          halfDay: r.halfDay,
-          status: r.status,
-          isHoliday: false,
-          // Sichtbarkeit folgt exakt showDetails — wer typeCode nicht sehen darf, sieht auch
-          // keine § 9-Markierung (sonst wäre die Krankheit indirekt ablesbar).
-          section9: showDetails ? (section9ByEntry.get(r.id)?.marker ?? null) : null,
-          section9Days: showDetails ? Array.from(section9ByEntry.get(r.id)?.days ?? []).sort() : [],
-        };
-      });
+      // Issue #840 (D-840-19): the per-person decision. A row is detailed iff it is the caller's own
+      // or the person is visible on at least one day of the row clipped to the window (Stammsalon
+      // per day, ONE `homeSalonsForDays` call; skipped when no day can matter — a whole-tenant
+      // reach, or a reach without salons, answers without looking at days).
+      const visibility = readerVisibilityFrom(reach, req.user.employeeId ?? null);
+      const foreignIds = new Set<string>();
+      for (const r of rows) {
+        if (r.employee.userId === req.user.sub) continue;
+        foreignIds.add(r.employeeId);
+      }
+      // A personal scope forces every foreign row to "not visible" (E-03), so no day is looked at.
+      const needHomeDays =
+        scope === undefined &&
+        !visibility.wholeTenant &&
+        visibility.salonIds.size > 0 &&
+        foreignIds.size > 0;
+      const homes = needHomeDays
+        ? await homeSalonsForDays(
+            app.prisma,
+            tenantId,
+            Array.from(foreignIds),
+            windowFromDay,
+            windowToDay,
+          )
+        : new Map<string, Map<string, string | null>>();
+
+      const candidates = rows.map((r) => ({
+        id: r.id,
+        isOwn: r.employee.userId === req.user.sub,
+        employeeId: r.employeeId,
+        firstName: r.employee.firstName,
+        lastName: r.employee.lastName,
+        typeCode: r.leaveType.code,
+        typeName: r.leaveType.name,
+        startDate: r.startDate.toISOString().split("T")[0],
+        endDate: r.endDate.toISOString().split("T")[0],
+        halfDay: r.halfDay,
+        status: r.status as string,
+        isHoliday: false,
+      }));
+      const { detailed, masked } = maskCalendarRows(
+        candidates,
+        (row) =>
+          row.isOwn ||
+          // Issue #840 (D-840-18, E-03): the personal areas are neutral for everyone, whatever the
+          // caller's reach — the scope only ever forces "not visible", it never widens.
+          (scope === undefined &&
+            isPersonVisibleOnSomeDay(
+              visibility,
+              row.employeeId,
+              homes.get(row.employeeId),
+              row.startDate > windowFromDay ? row.startDate : windowFromDay,
+              row.endDate < windowToDay ? row.endDate : windowToDay,
+            )),
+        new Set<string>(EFFECTIVE_LEAVE_STATUSES),
+        // A masked range never reaches beyond the window asked for (WR-03).
+        { from: windowFromDay, to: windowToDay },
+      );
+      // § 9 markers and days only for detailed rows: whoever may not learn the type must not read
+      // the sick-in-vacation marker either (it would reveal the sickness indirectly).
+      const leaveEntries = detailed.map((row) => ({
+        ...row,
+        section9: section9ByEntry.get(row.id)?.marker ?? null,
+        section9Days: Array.from(section9ByEntry.get(row.id)?.days ?? []).sort(byCodeUnit),
+      }));
 
       // Feiertage als eigene Einträge hinzufügen
       const holidayEntries = Array.from(holidayMap.entries()).map(([date, name]) => ({
@@ -1934,7 +2097,33 @@ export async function leaveRoutes(app: FastifyInstance) {
         isHoliday: true,
       }));
 
-      return [...leaveEntries, ...holidayEntries];
+      const entries = [...leaveEntries, ...masked, ...holidayEntries];
+      if (!rangeForm) return entries;
+
+      // Issue #840 (D-840-25): the range form also names the salon in view (opening hours are
+      // salon master data, not personal data) so the web can draw closed days from the one rule.
+      // The salon in view: the validated one; else the caller's single Stammsalon of a personal
+      // scope; else the only active salon of a one-salon tenant (it has no header selection, so
+      // without this its closed days would never show; same reading as `coverageSalonInView`).
+      let salonInView: string | null = chosenSalonId;
+      if (salonInView === null && scope !== undefined && ownHomeSalonIds.length === 1) {
+        salonInView = ownHomeSalonIds[0];
+      }
+      let salon = salonInView === null ? null : await findSalon(app.prisma, tenantId, salonInView);
+      if (
+        salon === null &&
+        salonInView === null &&
+        (await countActiveSalons(app.prisma, tenantId)) === 1
+      ) {
+        salon = await findDefaultSalon(app.prisma, tenantId);
+      }
+      return {
+        entries,
+        salons:
+          salon === null
+            ? []
+            : [{ salonId: salon.id, name: salon.name, openingHours: salon.openingHours }],
+      };
     },
   });
 
@@ -2732,7 +2921,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const overruns = karenzOverrunFromRequests(rows, tz, graceDays).map((o) => ({
         leaveRequestId: o.leaveRequestId,
-        days: [...o.days].sort(),
+        days: [...o.days].sort(byCodeUnit),
       }));
       const totalDays = new Set(overruns.flatMap((o) => o.days)).size;
       return { graceDays, overruns, totalDays };
@@ -3608,7 +3797,8 @@ export async function leaveRoutes(app: FastifyInstance) {
           type: "SECTION9_AU_PENDING_MANAGER",
           title: "§ 9 BUrlG — AU-Nachweis ausstehend",
           message: `Krankmeldung während genehmigten Urlaubs (${rangeLabel}). Sobald die AU vorliegt, bitte bestätigen.`,
-          link: `/team/leave?section9=${credit.id}`,
+          // Issue #840 (D-840-28): the § 9 cases live in the inbox section.
+          link: `/inbox?section9=${credit.id}`,
           tenantId: credit.employee.tenantId,
           relatedType: "Section9Credit",
           relatedId: credit.id,

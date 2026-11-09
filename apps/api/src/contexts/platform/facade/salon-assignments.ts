@@ -45,6 +45,7 @@ import {
   type AssignmentRow,
   type CalendarDay,
 } from "../salon-assignment-rules";
+import { byCodeUnit } from "../../../utils/code-unit-order";
 
 const DEFAULT_TENANT_TIMEZONE = "Europe/Berlin";
 
@@ -459,7 +460,7 @@ export async function employeeIdsHomedInSalonDuring(
   for (const row of rows) {
     if (!isVoided(row)) ids.add(row.employeeId);
   }
-  return [...ids].sort();
+  return [...ids].sort(byCodeUnit);
 }
 
 // ── Phase 67b Plan 03 (issue #67) additions — the employee-lifecycle write helpers ───────────────

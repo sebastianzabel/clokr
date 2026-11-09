@@ -85,6 +85,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
   "src/utils/audit-diff.ts": "rahmen", // generic before/after diff for settings audit rows (Issue #285); pure, no model, imported by the platform and absence settings routes
   "src/utils/client-log-url.ts": "rahmen", // strips query/fragment from client-reported URLs before logging (Issue #610 review WR-02); pure, no model
+  "src/utils/code-unit-order.ts": "rahmen", // locale-independent code-unit comparator for stable sorts; pure, no model, imported by the platform and absence contexts
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
@@ -308,6 +309,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/plugins/employment-exit-decorate.ts": "abwesenheiten", // Issue #614 — composition-root decoration plugin exposing employment-exit.ts as app.absenceExit
   "src/contexts/absence/employment-exit.ts": "abwesenheiten", // Issue #614 (D-02) — the one rule that ends a person's absences after the exit day on anonymization; writes LeaveRequest/Absence/LeaveEntitlement
   "src/contexts/absence/leave-correction.ts": "abwesenheiten", // Issue #614 — correction core extracted from the /correct route (plan/apply/finish behind an audit port); writes LeaveRequest/LeaveEntitlement
+  "src/contexts/absence/leave-calendar-masking.ts": "abwesenheiten", // Issue #840 (D-840-19) - pure masking kernel of the leave calendar and the planner read (zero runtime imports); reads no model
   "src/contexts/absence/leave-request-create.ts": "abwesenheiten", // Issue #835 (D-835-12) — create core extracted from POST /leave/requests (refusals as data, hook inside the locked create transaction); writes LeaveRequest/LeaveEntitlement
   "src/contexts/absence/leave-decision.ts": "abwesenheiten", // Issue #835 (D-835-12) — decision core extracted from PATCH /leave/requests/:id/review (approve/reject a PENDING request); writes LeaveRequest/LeaveEntitlement/Section9Credit
   "src/contexts/absence/overtime-comp-minutes.ts": "abwesenheiten", // Issue #614 — the Überstundenausgleich amount rule moved out of the leave route; read-only over the stored minutes and the schedule
