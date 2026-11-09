@@ -116,7 +116,10 @@
     {@render panel(false)}
   </div>
 {:else}
-  <Dialog.Root {open} onOpenChange={setOpen}>
+  <!-- Controlled both ways: bits-ui reads `open` and writes through setOpen only. A parent whose
+         binding refuses a closing (ConfirmDialog while a confirm is pending) therefore keeps the
+         dialog open, instead of bits-ui holding a private closed state next to an open prop. -->
+  <Dialog.Root bind:open={() => open, setOpen}>
     <!-- Unmounted together with the state, not after bits-ui's presence delay (two animation
          frames): a closed dialog leaves no DOM behind in the same flush, as the old Modal did, and
          no exit animation exists. Mounted open, so bits-ui's presence starts present. -->
