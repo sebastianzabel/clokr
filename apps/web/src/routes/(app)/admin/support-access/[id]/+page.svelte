@@ -7,6 +7,7 @@
   import { toasts } from "$stores/toast";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import SupportAccessDetail from "$lib/components/admin/SupportAccessDetail.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { formatInZone, type SupportAccessDetailResponse } from "$lib/support-access/labels";
 
   let detail = $state<SupportAccessDetailResponse | null>(null);
@@ -67,11 +68,7 @@
 >
   {#snippet tabContent(_)}
     {#if loading}
-      <div
-        class="skeleton sa-detail-skeleton"
-        role="status"
-        aria-label="Support-Zugriff wird geladen"
-      ></div>
+      <Skeleton shape="card" lines={3} />
     {:else if notFound}
       <div class="alert alert-error" role="alert">
         <span>⚠</span>
@@ -93,11 +90,6 @@
 </ListDetail>
 
 <style>
-  .sa-detail-skeleton {
-    height: 160px;
-    border-radius: var(--r-card);
-  }
-
   .sa-back {
     margin-left: auto;
   }

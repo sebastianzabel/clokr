@@ -17,6 +17,7 @@
   import { markUnsaved } from "$stores/unsaved";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import AvailabilityWeekGrid, {
     type RecurringEntry,
   } from "$lib/components/availability/AvailabilityWeekGrid.svelte";
@@ -222,9 +223,7 @@
   {/snippet}
   {#snippet tabContent(_tab)}
     {#if loading}
-      <div class="av-loading" role="status" aria-label="Laden…">
-        <span class="av-loading-dot"></span>
-      </div>
+      <Skeleton shape="card" lines={3} />
     {:else if loadError}
       <Section>
         <div class="av-load-error">
@@ -263,27 +262,6 @@
 </ListDetail>
 
 <style>
-  .av-loading {
-    display: flex;
-    justify-content: center;
-    padding: var(--s-8) 0;
-  }
-
-  .av-loading-dot {
-    width: 32px;
-    height: 32px;
-    border: 3px solid var(--line);
-    border-top-color: var(--brand);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
   .av-load-error {
     display: flex;
     flex-direction: column;
