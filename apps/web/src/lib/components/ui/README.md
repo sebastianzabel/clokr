@@ -82,6 +82,16 @@ Sources: `Chip.svelte` (`tone` `ok | warn | bad | info | brand | neutral`, `titl
 
 Sources: `Toast.svelte` (the container with the two persistent live regions, mounted once; items are `ToastItem`), `Skeleton.svelte` (`shape`, `count?`, `lines?`, `height?`, `inline?`, `width?`), `EmptyState.svelte` (`title?`, `description?`, `actionLabel?` + `onaction?`, `variant?` `noData | noMatches`), `ErrorState.svelte` (`message?`, `hint?`, `onRetry`, `retrying?`; a bad `Note` with „Erneut versuchen“).
 
+### Signed-out frame and error page (Issue #855)
+
+Outside this directory, built only from the blocks above: `lib/components/auth/AuthFrame.svelte` (`title`, `subtitle?`,
+`children`, `footer?`) is the one frame of every signed-out page — logo, one `<h1>`, a 400 px surface on the page ground,
+the shared `.auth-form` / `.auth-submit` (40 px, the page's one primary action) / `.auth-link` pieces; fields go through
+`FormField`, messages through `Note` (`role="alert"` / `role="status"` wrapper). `lib/components/feedback/ErrorPage.svelte`
+(`status`, `framed?`) is the error page of `routes/+error.svelte` (framed, no shell) and `routes/(app)/+error.svelte` (in the
+shell); its text comes only from `error-copy.ts` and never from the raw error message. Both own their `<h1>` and are the two
+named exemptions of `lint:ui` `no-raw-h1`. `auth-frame-855.test.ts` pins that every `(auth)` page renders the frame.
+
 ### `$lib/motion`
 
 `fade` (350 ms crossfade for state changes), `countUp` (500 ms ease-out action), `stagger` (35 ms offset, folded into the `.card-animate` reveal), `reducedMotion` (store). All of them do nothing under `prefers-reduced-motion` or without `matchMedia`.
