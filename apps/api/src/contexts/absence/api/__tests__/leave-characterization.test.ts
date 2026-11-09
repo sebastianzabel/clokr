@@ -81,13 +81,26 @@ describe("leave.ts characterization — cancellation-approval Rückbuchung (Phas
   it("approving a CANCELLATION_REQUESTED VACATION leave: status -> CANCELLED, invalidated TimeEntry rows are revalidated, and LeaveEntitlement.usedDays is decremented by the request's days", async () => {
     const dateIso = holidayFreeMondayStr(6);
 
-    await app.prisma.leaveEntitlement.updateMany({
+    // Upsert, not updateMany: from mid-November the first holiday-free Monday six weeks ahead lies
+    // in the next year, where the seed holds no entitlement, and an updateMany would silently match
+    // nothing (the assertion below then read NaN).
+    const year = new Date(dateIso).getFullYear();
+    await app.prisma.leaveEntitlement.upsert({
       where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          year,
+        },
+      },
+      create: {
         employeeId: data.employee.id,
         leaveTypeId: data.vacationType.id,
-        year: new Date(dateIso).getFullYear(),
+        year,
+        totalDays: 30,
+        usedDays: 5,
       },
-      data: { usedDays: 5 },
+      update: { usedDays: 5 },
     });
 
     const leave = await app.prisma.leaveRequest.create({
@@ -146,7 +159,10 @@ describe("leave.ts characterization — cancellation-approval Rückbuchung (Phas
   });
 
   it("approving a CANCELLATION_REQUESTED SICK leave: status -> CANCELLED, TimeEntry revalidated, no LeaveEntitlement or OvertimeAccount side effect ('entitlement-neutral on the apply side')", async () => {
-    const dateIso = holidayFreeMondayStr(8);
+    // A Monday other than the VACATION case's: around the turn of the year both offsets skip the
+    // holiday weeks onto the same Monday, and the open entry below would collide with that case's.
+    const vacationCaseDate = holidayFreeMondayStr(6);
+    const dateIso = holidayFreeMondayStr(8, "NI", (monday) => monday !== vacationCaseDate);
     const sickType = await app.prisma.leaveType.create({
       data: { tenantId: data.tenant.id, ...leaveTypeFields("SICK"), color: "#EF4444" },
     });
