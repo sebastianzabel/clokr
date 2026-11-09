@@ -70,14 +70,15 @@ describe("SalonTimeEntries — rows", () => {
     expect(document.body.textContent ?? "").not.toMatch(/Summe|Gesamt/);
   });
 
-  it("shows the loading text", () => {
+  it("shows the Skeleton loading state", () => {
     renderWithTheme(SalonTimeEntries, {
       days: [],
       status: "loading",
       capReached: false,
       salonName: null,
     });
-    expect(screen.getByText("Wird geladen …")).toBeTruthy();
+    // #843 D-843-07: Skeleton is the only loading state.
+    expect(screen.getByRole("status", { name: "Wird geladen" })).toBeTruthy();
   });
 });
 
