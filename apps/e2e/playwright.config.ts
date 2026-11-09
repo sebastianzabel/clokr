@@ -294,6 +294,7 @@ export default defineConfig({
         /bausteine-843\.spec\.ts/,
         /all-routes-overflow-843\.spec\.ts/,
         /mein-tag-845\.spec\.ts/,
+        /shift-notices-850\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

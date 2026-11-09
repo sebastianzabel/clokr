@@ -52,9 +52,19 @@ const MANDANT_ALLOWED = [
   "src/lib/operator/",
   "src/routes/(app)/admin/export/", // DATEV's own field name „Mandantennummer“
 ];
+/**
+ * The shift planning surface (Issue #850): its own jargon (flag, generator, audit trail) is
+ * checked only here, because elsewhere the words may be legitimate (e.g. a feature flag in admin).
+ */
+const SHIFT_PLANNING_AREA = ["src/routes/(app)/shifts/", "src/lib/shifts/"];
+/** `where` for an allow-list: the term is checked everywhere EXCEPT in these areas. */
 /** @param {string[]} areas */
 const inArea = (areas) => (/** @type {string} */ file) =>
   !areas.some((prefix) => file.startsWith(prefix));
+/** `where` for a scoped term: the term is checked ONLY in these areas. */
+/** @param {string[]} areas */
+const onlyIn = (areas) => (/** @type {string} */ file) =>
+  areas.some((prefix) => file.startsWith(prefix));
 
 /**
  * The forbidden terms. `where` narrows a term to part of the app (default: everywhere);
@@ -90,6 +100,24 @@ export const FORBIDDEN_TERMS = [
     re: /phorest/i,
     where: inArea(PHOREST_ALLOWED),
     reason: "„Phorest“ only in Verwaltung, Schichtplanung and the operator console",
+  },
+  {
+    id: "flag",
+    re: /\bflags?\b/i,
+    where: onlyIn(SHIFT_PLANNING_AREA),
+    reason: "use „Hinweis“ / „markiert“ (Schichtplanung)",
+  },
+  {
+    id: "generator",
+    re: /generator/i,
+    where: onlyIn(SHIFT_PLANNING_AREA),
+    reason: "say what happens: „Muster anwenden“ (Schichtplanung)",
+  },
+  {
+    id: "audit-spur",
+    re: /audit[-\s]?spur/i,
+    where: onlyIn(SHIFT_PLANNING_AREA),
+    reason: "say „wird protokolliert“ (Schichtplanung)",
   },
   {
     id: "sie-form",

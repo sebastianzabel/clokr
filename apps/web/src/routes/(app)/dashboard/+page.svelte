@@ -1917,7 +1917,6 @@
   <PageHead
     eyebrow={view === "team" ? AREA_LABELS.team : AREA_LABELS.ich}
     title={view === "me" ? `${greeting()}, ${capitalizedName}` : pageLabel(pageKey)}
-    compact={view === "me"}
     sub={view === "me" ? meinTagSub : `${greeting()}, ${capitalizedName}`}
   >
     {#snippet actions()}

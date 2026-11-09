@@ -833,7 +833,12 @@ async function checkCell(
     [...document.body.querySelectorAll("*")]
       .filter((e) => {
         const ox = getComputedStyle(e).overflowX;
-        return (ox === "hidden" || ox === "clip") && e.scrollWidth > e.clientWidth + 1;
+        if (ox !== "hidden" && ox !== "clip") return false;
+        // A visually hidden box (the 1 x 1 px sr-only recipe: a table caption, the head row of a
+        // stacked table) hides its content on purpose and for assistive technology only; it cuts
+        // nothing off that anyone sees. Any larger box is still measured.
+        if (e.clientWidth <= 1 && e.clientHeight <= 1) return false;
+        return e.scrollWidth > e.clientWidth + 1;
       })
       .slice(0, 8)
       .map(
