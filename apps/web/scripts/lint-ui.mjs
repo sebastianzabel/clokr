@@ -106,6 +106,8 @@ for (const file of listFiles(APP_ROUTES)) {
 // own <h1> — exempt from this rule.
 for (const file of listFiles(ALL_SVELTE)) {
   if (file.endsWith("lib/components/layout/PageHead.svelte")) continue;
+  // #843 (D-843-14): the Seitenkopf block owns the <h1>; PageHead delegates to it.
+  if (file.endsWith("lib/components/ui/PageHeader.svelte")) continue;
   if (file.includes("/routes/(auth)/")) continue;
   const content = readFileSync(file, "utf8");
   const lines = content.split("\n");
