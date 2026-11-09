@@ -29,10 +29,11 @@ vi.mock("$api/client", () => ({
   },
 }));
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import LeaveReviewDialog from "../LeaveReviewDialog.svelte";
+import { toasts } from "$stores/toast";
 import { showsBurlgSection7Notice, type LeaveReviewRequest } from "$lib/leave/leave-review";
 import { LEAVE_TYPES, NEUTRAL_CHIP_LABEL, SICK_CODES } from "$lib/leave/team-calendar-visibility";
 
@@ -176,6 +177,10 @@ describe("LeaveReviewDialog", () => {
   // call-count assertion below still pins that /attest is the SECOND and ONLY other PATCH call.
   it("reject on a SICK request still calls PATCH /attest — the deliberately-untouched toggle (D-02)", async () => {
     const { onReviewed } = renderDialog({ typeCode: "SICK" });
+    // Issue #853 (D-853-09): a rejection needs a reason, so one is typed first.
+    await fireEvent.input(screen.getByTestId("leave-approval-modal-reason"), {
+      target: { value: "Zeitraum nicht besetzbar" },
+    });
     await fireEvent.click(screen.getByTestId("leave-approval-modal-reject"));
     await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
     expect(apiPatch).toHaveBeenCalledTimes(2);
@@ -315,9 +320,165 @@ describe("LeaveReviewDialog — leave limit exception step (#836)", () => {
 
   it("a REJECTED review never shows the step, even when the server answers the code", async () => {
     renderDialog({ typeCode: "VACATION" });
+    // Issue #853 (D-853-09): the reason is typed first, the rejection stays as strict as before.
+    await fireEvent.input(screen.getByTestId("leave-approval-modal-reason"), {
+      target: { value: "Zeitraum nicht besetzbar" },
+    });
     apiPatch.mockRejectedValueOnce(limitError());
     await fireEvent.click(screen.getByTestId("leave-approval-modal-reject"));
     await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1));
     expect(document.getElementById("reason-dialog-textarea")).toBeNull();
+  });
+});
+
+// Issue #853 (AC-2, D-853-09) - Ablehnen needs a reason; the API call is the unchanged one.
+describe("LeaveReviewDialog - a rejection needs a reason (#853)", () => {
+  const REASON_TEXT = "Bitte nenne einen Grund.";
+
+  function rejectButton(cancellation: boolean): HTMLButtonElement {
+    return screen.getByTestId(
+      cancellation ? "leave-cancel-approval-modal-reject" : "leave-approval-modal-reject",
+    ) as HTMLButtonElement;
+  }
+  function reasonField(cancellation: boolean): HTMLInputElement {
+    return screen.getByTestId(
+      cancellation ? "leave-cancel-approval-modal-reason" : "leave-approval-modal-reason",
+    ) as HTMLInputElement;
+  }
+
+  it("PENDING: Ablehnen is disabled with an empty reason", () => {
+    renderDialog({ status: "PENDING" });
+    expect(rejectButton(false).disabled).toBe(true);
+  });
+
+  it("PENDING: Ablehnen stays disabled for a whitespace-only reason", async () => {
+    renderDialog({ status: "PENDING" });
+    await fireEvent.input(reasonField(false), { target: { value: "   " } });
+    expect(rejectButton(false).disabled).toBe(true);
+  });
+
+  it("PENDING: Ablehnen is enabled after typing a reason and sends it unchanged", async () => {
+    const { onReviewed } = renderDialog({ status: "PENDING" });
+    await fireEvent.input(reasonField(false), { target: { value: "Team ist knapp besetzt" } });
+    expect(rejectButton(false).disabled).toBe(false);
+    await fireEvent.click(rejectButton(false));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(apiPatch).toHaveBeenCalledTimes(1);
+    expect(apiPatch.mock.calls[0][0]).toBe("/leave/requests/req-1/review");
+    expect(apiPatch.mock.calls[0][1]).toEqual({
+      status: "REJECTED",
+      reviewNote: "Team ist knapp besetzt",
+    });
+  });
+
+  it("CANCELLATION_REQUESTED: Stornierung ablehnen is disabled with an empty and a blank reason", async () => {
+    renderDialog({ status: "CANCELLATION_REQUESTED" });
+    expect(rejectButton(true).disabled).toBe(true);
+    await fireEvent.input(reasonField(true), { target: { value: "  \t " } });
+    expect(rejectButton(true).disabled).toBe(true);
+  });
+
+  it("CANCELLATION_REQUESTED: Stornierung ablehnen is enabled after typing a reason", async () => {
+    renderDialog({ status: "CANCELLATION_REQUESTED" });
+    await fireEvent.input(reasonField(true), { target: { value: "Termin steht fest" } });
+    expect(rejectButton(true).disabled).toBe(false);
+  });
+
+  it("Genehmigen needs no reason", () => {
+    renderDialog({ status: "PENDING" });
+    expect((screen.getByTestId("leave-approval-modal-approve") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("Stornierung genehmigen needs no reason", () => {
+    renderDialog({ status: "CANCELLATION_REQUESTED" });
+    expect(
+      (screen.getByTestId("leave-cancel-approval-modal-approve") as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it.each([
+    [false, "PENDING"],
+    [true, "CANCELLATION_REQUESTED"],
+  ] as const)(
+    "the hint is shown and referenced by aria-describedby (cancellation: %s)",
+    async (cancellation, status) => {
+      renderDialog({ status });
+      const hint = screen.getByText(REASON_TEXT);
+      expect(hint.id).toBe("review-reason-hint");
+      expect(rejectButton(cancellation).getAttribute("aria-describedby")).toBe(hint.id);
+      // The hint goes away together with the missing reason.
+      await fireEvent.input(reasonField(cancellation), { target: { value: "Grund" } });
+      expect(screen.queryByText(REASON_TEXT)).toBeNull();
+      expect(rejectButton(cancellation).getAttribute("aria-describedby")).toBeNull();
+    },
+  );
+
+  it("the field is labelled Begründung with the help Pflicht beim Ablehnen", () => {
+    renderDialog();
+    expect(screen.getByLabelText("Begründung")).toBe(reasonField(false));
+    expect(screen.getByText("Pflicht beim Ablehnen")).toBeTruthy();
+    expect(screen.queryByText("Anmerkung (optional)")).toBeNull();
+  });
+
+  it("approving without a reason still sends reviewNote null (API contract unchanged)", async () => {
+    const { onReviewed } = renderDialog({ typeCode: "VACATION" });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(apiPatch.mock.calls[0][1]).toEqual({ status: "APPROVED", reviewNote: null });
+  });
+});
+
+// Issue #853 (S-29) - the result toast names person and decision, never the leave type.
+describe("LeaveReviewDialog - result toast (#853)", () => {
+  let success: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    success = vi.spyOn(toasts, "success");
+  });
+  afterEach(() => {
+    success.mockRestore();
+  });
+
+  it("approve: Antrag von <Name> genehmigt.", async () => {
+    const { onReviewed } = renderDialog({ typeCode: "VACATION" });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(success).toHaveBeenCalledTimes(1);
+    expect(success).toHaveBeenCalledWith("Antrag von Alex Muster genehmigt.");
+  });
+
+  it("reject: Antrag von <Name> abgelehnt.", async () => {
+    const { onReviewed } = renderDialog({ typeCode: "VACATION" });
+    await fireEvent.input(screen.getByTestId("leave-approval-modal-reason"), {
+      target: { value: "Grund" },
+    });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-reject"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(success).toHaveBeenCalledWith("Antrag von Alex Muster abgelehnt.");
+  });
+
+  it("a cancellation decision says Stornierung", async () => {
+    const { onReviewed } = renderDialog({ status: "CANCELLATION_REQUESTED" });
+    await fireEvent.click(screen.getByTestId("leave-cancel-approval-modal-approve"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(success).toHaveBeenCalledWith("Stornierung von Alex Muster genehmigt.");
+  });
+
+  it("a sick-leave decision never names the type", async () => {
+    const { onReviewed } = renderDialog({ typeCode: "SICK" });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    const text = String(success.mock.calls[0][0]);
+    expect(text).toBe("Antrag von Alex Muster genehmigt.");
+    expect(text).not.toMatch(/krank|sick/i);
+  });
+
+  it("no success toast when the server refuses", async () => {
+    apiPatch.mockRejectedValueOnce({ data: { error: "Nein" }, message: "Bad Request" });
+    renderDialog({ typeCode: "VACATION" });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(screen.getByText("Nein")).toBeTruthy());
+    expect(success).not.toHaveBeenCalled();
   });
 });

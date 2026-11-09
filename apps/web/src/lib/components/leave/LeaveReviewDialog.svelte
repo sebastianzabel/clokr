@@ -21,7 +21,10 @@
    * free of that import. Reintroducing it later silently deletes that gain for every future test
    * of this file.
    */
-  import Modal from "$components/ui/Modal.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte";
   import AttestFields from "./AttestFields.svelte";
@@ -51,6 +54,7 @@
     type LeaveReviewRequest,
     type LeaveOverlapEntry,
   } from "$lib/leave/leave-review";
+  import { reviewResultToast } from "$lib/leave/review-facts"; // Issue #853 (S-29)
   import Skeleton from "$components/ui/Skeleton.svelte";
 
   interface Props {
@@ -135,6 +139,11 @@
   let approvedOverlap = $derived(overlap.filter((o) => o.status === "APPROVED"));
   let isCancellationReview = $derived(request?.status === "CANCELLATION_REQUESTED");
   let isSelfApproval = $derived(request !== null && request.employeeId === currentEmployeeId);
+  // Issue #853 (D-853-09): a rejection needs a reason. UI-only guard; the API stays as it is.
+  let reasonMissing = $derived(note.trim() === "");
+  let personName = $derived(
+    request ? `${request.employee.firstName} ${request.employee.lastName}` : "",
+  );
   let isDecidable = $derived(
     request !== null &&
       (request.status === "PENDING" || request.status === "CANCELLATION_REQUESTED"),
@@ -228,6 +237,9 @@
           attestValidTo: attestPresent && attestTo ? attestTo : null,
         });
       }
+      // Issue #853 (S-29): acknowledge the result once the server answered. The text names person
+      // and decision, never the leave type (sick leave is health data).
+      toasts.success(reviewResultToast(status, personName, isCancellationReview));
       open = false;
       pendingApprove = null;
       await onReviewed();
@@ -266,7 +278,7 @@
        (matches CLAUDE.md's leave-cancellation flow contract). The same component renders both
        states because the multi-step flow is owned by the same modal in this codebase. -->
 {#if request}
-  <Modal
+  <Dialog
     bind:open
     eyebrow={isCancellationReview ? "Stornierung" : "Antrag"}
     title={isCancellationReview ? "Stornierungsantrag prüfen" : "Antrag prüfen"}
@@ -275,42 +287,39 @@
       data-testid={isCancellationReview ? "leave-cancel-approval-modal" : "leave-approval-modal"}
       style="display: contents"
     >
-      <!-- Request details -->
-      <div
-        class="review-grid"
+      <!-- Issue #853: the facts of the decision, first -->
+      <dl
+        class="facts"
         data-testid={isCancellationReview
           ? "leave-cancel-approval-modal-summary"
           : "leave-approval-modal-summary"}
       >
-        <div class="review-field">
-          <span class="review-label">Mitarbeiter</span>
-          <span class="review-value">{request.employee.firstName} {request.employee.lastName}</span>
+        <div class="fact">
+          <dt>Person</dt>
+          <dd>{personName}</dd>
         </div>
-        <div class="review-field">
-          <span class="review-label">Art</span>
-          <span class="review-value">{typeName(request.typeCode)}</span>
+        <div class="fact">
+          <dt>Art</dt>
+          <dd>{typeName(request.typeCode)}</dd>
         </div>
-        <div class="review-field">
-          <span class="review-label">Zeitraum</span>
-          <span class="review-value">{fmtDate(request.startDate)} – {fmtDate(request.endDate)}</span
-          >
+        <div class="fact">
+          <dt>Zeitraum</dt>
+          <dd>{fmtDate(request.startDate)} – {fmtDate(request.endDate)}</dd>
         </div>
-        <div class="review-field">
-          <span class="review-label">Umfang</span>
-          <span class="review-value"
-            >{leaveDaysLabel(Number(request.days), request.halfDay, request.typeCode)}</span
-          >
+        <div class="fact">
+          <dt>Umfang</dt>
+          <dd>{leaveDaysLabel(Number(request.days), request.halfDay, request.typeCode)}</dd>
         </div>
         {#if request.note}
-          <div class="review-field review-field--full">
-            <span class="review-label">Anmerkung Mitarbeiter</span>
-            <span class="review-value">„{request.note}"</span>
+          <div class="fact fact--full">
+            <dt>Anmerkung Mitarbeiter</dt>
+            <dd>„{request.note}"</dd>
           </div>
         {/if}
-      </div>
+      </dl>
 
       <!-- Overlapping colleagues -->
-      <div class="overlap-box review-section">
+      <section class="overlap-box review-section">
         <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
         {#if loadingOverlap}
           <Skeleton shape="line" />
@@ -321,21 +330,20 @@
             {#each approvedOverlap as o (o.id)}
               <div class="overlap-row">
                 <span class="overlap-name">{o.employeeName}</span>
-                <span class="chip">{o.typeName ?? NEUTRAL_CHIP_LABEL}</span>
+                <Chip>{o.typeName ?? NEUTRAL_CHIP_LABEL}</Chip>
                 <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
               </div>
             {/each}
           </div>
         {/if}
-      </div>
+      </section>
 
       {#if showsBurlgSection7Notice(request.typeCode)}
-        <div class="callout">
-          <span class="ico" aria-hidden="true">⚖</span>
-          <p>
+        <div class="review-section">
+          <Note tone="info">
             <b>BUrlG § 7:</b> Urlaubsantrag muss zeitnah entschieden werden — gewährter Urlaub muss im
             laufenden Jahr gewährt werden, andernfalls verfällt er gem. § 7 Abs. 3 zum 31.03. des Folgejahres.
-          </p>
+          </Note>
         </div>
       {/if}
 
@@ -351,24 +359,29 @@
         </div>
       {/if}
 
-      <!-- Review note -->
-      <div class="form-group review-section">
-        <label class="form-label" for="review-note">Anmerkung (optional)</label>
-        <input
-          id="review-note"
-          data-testid={isCancellationReview
-            ? "leave-cancel-approval-modal-reason"
-            : "leave-approval-modal-reason"}
-          type="text"
-          bind:value={note}
-          class="form-input"
-          placeholder="Grund für Ablehnung o.ä."
-        />
+      <!-- Review note: the reason is required for a rejection (Issue #853, D-853-09) -->
+      <div class="review-section">
+        <FormField label="Begründung" help="Pflicht beim Ablehnen">
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              data-testid={isCancellationReview
+                ? "leave-cancel-approval-modal-reason"
+                : "leave-approval-modal-reason"}
+              type="text"
+              bind:value={note}
+              class="form-input"
+              placeholder="Grund für Ablehnung o.ä."
+              aria-describedby={describedBy}
+              aria-invalid={invalid ? "true" : undefined}
+            />
+          {/snippet}
+        </FormField>
       </div>
 
       {#if error}
-        <div class="alert alert-error review-error" role="alert">
-          <span>⚠</span><span>{error}</span>
+        <div class="review-error" role="alert">
+          <Note tone="bad">{error}</Note>
         </div>
       {/if}
     </div>
@@ -393,12 +406,16 @@
           Eigene Anträge können nicht selbst genehmigt werden.
         </p>
       {:else if isDecidable}
+        {#if reasonMissing}
+          <p class="text-muted reason-hint" id="review-reason-hint">Bitte nenne einen Grund.</p>
+        {/if}
         {#if isCancellationReview}
           <button
             data-testid="leave-cancel-approval-modal-reject"
-            class="btn btn-ghost"
+            class="btn btn-secondary"
             onclick={() => submitReview("REJECTED")}
-            disabled={saving}
+            disabled={saving || reasonMissing}
+            aria-describedby={reasonMissing ? "review-reason-hint" : undefined}
           >
             {saving ? "…" : "Stornierung ablehnen"}
           </button>
@@ -413,9 +430,10 @@
         {:else}
           <button
             data-testid="leave-approval-modal-reject"
-            class="btn btn-danger"
+            class="btn btn-secondary"
             onclick={() => submitReview("REJECTED")}
-            disabled={saving}
+            disabled={saving || reasonMissing}
+            aria-describedby={reasonMissing ? "review-reason-hint" : undefined}
           >
             {saving ? "…" : "Ablehnen"}
           </button>
@@ -432,7 +450,7 @@
         <span class="footer-note">Antrag bereits entschieden.</span>
       {/if}
     {/snippet}
-  </Modal>
+  </Dialog>
 {/if}
 
 <!-- Phase 87: appointment-collision warning (approve) -->
@@ -466,96 +484,82 @@
 {/if}
 
 <style>
-  /* ── Review Grid — copied from team/leave/+page.svelte, NOT cut (D-16): that page's § 9 confirm
-     modal, Korrektur modal and standalone Attest-erfassen modal also render .review-* elements
-     and are explicitly out of this phase's scope, so these six rules stay duplicated in both
-     files rather than being moved out of the page. Do not delete them from the page. */
-  .review-grid {
+  /* The facts are a plain definition list on the dialog surface (Issue #853); no bespoke box. */
+  .facts {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 0.75rem 1.5rem;
-    background: var(--sunk);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    padding: 1rem 1.25rem;
+    gap: var(--s-3) var(--s-6);
+    margin: 0;
   }
-  .review-field {
+  .fact {
     display: flex;
     flex-direction: column;
-    gap: 0.125rem;
+    gap: 2px;
+    min-width: 0;
   }
-  .review-field--full {
+  .fact--full {
     grid-column: 1 / -1;
   }
-  .review-label {
-    font-size: 0.75rem;
+  .fact dt {
+    font-size: var(--fs-sm);
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     color: var(--text-2);
   }
-  .review-value {
-    font-size: 0.9375rem;
+  .fact dd {
+    margin: 0;
+    font-size: var(--fs-base);
     font-weight: 500;
+    overflow-wrap: anywhere;
   }
   .review-section {
-    margin-top: 1.25rem;
+    margin-top: var(--s-5);
   }
   .review-error {
-    margin-top: 0.75rem;
+    margin-top: var(--s-3);
   }
 
-  /* ── Overlap — exclusive to this dialog on both former pages (RESEARCH.md § Scoped Styles). */
-  .overlap-box {
-    background: var(--sunk);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    padding: 0.875rem 1rem;
-  }
+  /* Overlap — exclusive to this dialog (RESEARCH.md § Scoped Styles). */
   .overlap-title {
-    font-size: 0.8125rem;
+    font-size: var(--fs-sm);
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     color: var(--text-2);
-    margin: 0 0 0.5rem;
+    margin: 0 0 var(--s-2);
   }
   .overlap-empty {
-    font-size: 0.9375rem;
+    font-size: var(--fs-base);
     margin: 0;
   }
   .overlap-list {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: var(--s-2);
   }
   .overlap-row {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--s-3);
     flex-wrap: wrap;
-    font-size: 0.9375rem;
+    font-size: var(--fs-base);
   }
   .overlap-name {
     font-weight: 600;
   }
   .overlap-dates {
-    font-family: var(--font-ui);
-    font-size: 0.875rem;
+    font-size: var(--fs-sm);
     margin-left: auto;
   }
-  .self-approval-note {
-    font-size: 0.875rem;
+  .self-approval-note,
+  .reason-hint {
+    font-size: var(--fs-sm);
     margin: 0 auto 0 0;
   }
-  /* Value from inbox/+page.svelte:1121-1124 (D-04 — the inbox footer wins). */
   .footer-note {
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     color: var(--text-2);
   }
 
   @media (max-width: 700px) {
-    .review-grid {
+    .facts {
       grid-template-columns: 1fr;
     }
     .overlap-dates {
