@@ -138,7 +138,7 @@ async function chooseRole(dialog: HTMLElement, roleId: string) {
 describe("AssignmentsTab (Issue #83)", () => {
   it("tracer: grant a role for the whole tenant", async () => {
     await mount();
-    expect(screen.getAllByText("Keine gespeicherte Zuweisung")).toHaveLength(2);
+    expect(screen.getAllByText("Keine Rolle zugewiesen")).toHaveLength(2);
     const dialog = await openGrant();
     expect(within(dialog).getByRole("radio", { name: "Ganzes Unternehmen" })).toBeChecked();
     await chooseRole(dialog, "r-probe");
@@ -286,9 +286,7 @@ describe("AssignmentsTab (Issue #83)", () => {
       within(screen.getByRole("dialog")).getByRole("button", { name: "Entziehen" }),
     );
     await waitFor(() => expect(apiDelete).toHaveBeenLastCalledWith("/role-assignments/a1"));
-    await waitFor(() =>
-      expect(screen.getAllByText("Keine gespeicherte Zuweisung")).toHaveLength(2),
-    );
+    await waitFor(() => expect(screen.getAllByText("Keine Rolle zugewiesen")).toHaveLength(2));
   });
 
   it("summaries name people, missing people and users without a profile", async () => {
@@ -334,5 +332,13 @@ describe("AssignmentsTab (Issue #83)", () => {
     await mount();
     await openGrant();
     expect(document.body.textContent ?? "").not.toMatch(/:(EIGENE|ZUGEWIESEN)/);
+  });
+
+  it("renders one PersonRoleAssignments per person and owns no dialog itself (Issue #580)", async () => {
+    const source = (await import("../AssignmentsTab.svelte?raw")).default as string;
+    expect(source).toContain("<PersonRoleAssignments");
+    expect(source).not.toContain("<AssignmentDialog");
+    expect(source).not.toContain("<ConfirmDialog");
+    expect(source).toMatch(/<Section[^>]*animate=\{false\}/);
   });
 });

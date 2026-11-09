@@ -9,7 +9,7 @@
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
@@ -38,13 +38,18 @@
     buildUsualWorkDaysBackfillPayload,
     type ContractHistoryRow,
   } from "$lib/utils/work-schedule";
+  import { type FormRole, NO_ROLE_HINT, hasNoRole } from "$lib/employees/form-role";
+  import PersonRoleAssignments from "$lib/components/admin/roles/PersonRoleAssignments.svelte";
   import {
-    type FormRole,
-    NO_ROLE_HINT,
-    hasNoRole,
-    initialFormRole,
-    roleForSave,
-  } from "$lib/employees/form-role";
+    listAssignablePeople,
+    listRoleAssignments,
+    loadAssignmentChoices,
+    type AccessRole,
+    type AssignablePerson,
+    type RoleAssignment,
+  } from "$lib/api/roles";
+  import { salonContext } from "$stores/salon-context";
+  import { hasPermission } from "$lib/permissions";
   import {
     statutoryMinimumFiveDayWeek,
     MISSING_BIRTH_DATE_HINT,
@@ -101,6 +106,7 @@
 
   interface Employee {
     id: string;
+    userId: string;
     firstName: string;
     lastName: string;
     employeeNumber?: string;
@@ -377,7 +383,6 @@
         eFirstName,
         eLastName,
         eEmployeeNumber,
-        eRole,
         eNfcCardId,
         eExitDate,
         eBirthDate,
@@ -461,12 +466,59 @@
   let eFirstName = $state<string>("");
   let eLastName = $state<string>("");
   let eEmployeeNumber = $state<string>("");
-  let eRole = $state<FormRole | "">("");
   // Permission-driven controls (Issue #538): the API refuses anything beyond these, the page only
   // hides. Setting a role needs role-assignment:manage; the § 18 ArbZG exemption rides on the
   // employee PATCH, hence employee:update.
   let rights = $derived(employeeAdminRights($authStore.user));
   let canAssignRoles = $derived(rights.canAssignRoles);
+  let canReadRoles = $derived(hasPermission($authStore.user, "role:read:ZUGEWIESEN"));
+
+  // ── Role assignments (Issue #580, D-580-01/D-580-07) ────────────────────────
+  // The tab „Berechtigungen“ shows and changes the person's assignments through the shared block.
+  // Every read needs role-assignment:manage, so nothing is requested without it (no 403s).
+  let roleAssignments = $state<RoleAssignment[]>([]);
+  let rolePeople = $state<AssignablePerson[]>([]);
+  let roleChoices = $state<AccessRole[]>([]);
+  let roleMandantIds = $state<string[]>([]);
+  let roleDataState = $state<"idle" | "loading" | "ready" | "error">("idle");
+  let roleDataError = $state("");
+
+  async function loadRoleData(userId: string) {
+    roleDataState = "loading";
+    try {
+      const [assignments, people, choices] = await Promise.all([
+        listRoleAssignments(userId),
+        listAssignablePeople(),
+        loadAssignmentChoices(canReadRoles),
+      ]);
+      roleAssignments = assignments;
+      rolePeople = people;
+      roleChoices = choices.roles;
+      roleMandantIds = choices.mandantRoleIds;
+      roleDataState = "ready";
+    } catch (err) {
+      roleDataError =
+        err instanceof Error ? err.message : "Die Rollen konnten nicht geladen werden.";
+      roleDataState = "error";
+    }
+  }
+
+  $effect(() => {
+    const userId = employee?.userId;
+    if (!userId || !canAssignRoles) return;
+    untrack(() => {
+      if (roleDataState === "idle") void loadRoleData(userId);
+    });
+  });
+
+  // After a grant, change or revoke: reload the assignments and refresh only the account part, so
+  // the no-role hint follows. Never initFields() here — it would discard unsaved edits elsewhere.
+  async function onRoleAssignmentsChanged() {
+    if (!employee) return;
+    roleAssignments = await listRoleAssignments(employee.userId);
+    const fresh = await api.get<Employee>(`/employees/${employee.id}`);
+    employee = { ...employee, user: fresh.user };
+  }
   let tabs = $derived(employeeDetailTabs(rights));
   let canDiscardShifts = $derived(contractShiftRights($authStore.user).canDiscardShifts);
   let canUpdateEmployee = $derived(rights.canUpdate);
@@ -677,7 +729,6 @@
     eFirstName = employee.firstName ?? "";
     eLastName = employee.lastName ?? "";
     eEmployeeNumber = employee.employeeNumber ?? "";
-    eRole = initialFormRole(employee.user?.role ?? null);
     eNfcCardId = employee.nfcCardId ?? "";
     eExitDate = employee.exitDate ? String(employee.exitDate).split("T")[0] : "";
     eBirthDate = employee.birthDate ? String(employee.birthDate).split("T")[0] : "";
@@ -830,9 +881,6 @@
           firstName: eFirstName,
           lastName: eLastName,
           employeeNumber: eEmployeeNumber,
-          // Only a caller who may assign roles sends one, and only once a role was chosen (the API
-          // checks the permission first).
-          ...roleForSave(canAssignRoles, eRole),
           nfcCardId: eNfcCardId || null,
           exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
           birthDate: eBirthDate ? new Date(eBirthDate).toISOString() : null,
@@ -850,7 +898,6 @@
         eFirstName,
         eLastName,
         eEmployeeNumber,
-        eRole,
         eNfcCardId,
         eExitDate,
         eBirthDate,
@@ -1787,7 +1834,6 @@
       eFirstName,
       eLastName,
       eEmployeeNumber,
-      eRole,
       eNfcCardId,
       eExitDate,
       eBirthDate,
@@ -3754,41 +3800,39 @@
         <!-- ── Berechtigungen ─────────────────────────────────────────────── -->
         <!-- The tab snippet loses the `!employee` narrowing of the page branch. -->
         {@const accountUser = employee?.user}
-        <Section
-          title="Rolle & Zugang"
-          sub="Benutzerkonto, Rolle und Einladungsstatus"
-          dirty={stammdatenDirty}
-        >
-          {#snippet footer()}
-            <button class="btn btn-primary" onclick={saveStammdaten} disabled={stammdatenSaving}>
-              {stammdatenSaving ? "Speichern…" : "Speichern"}
-            </button>
-            {#if stammdatenSaved}<span class="saved-hint">Gespeichert</span>{/if}
-          {/snippet}
-
-          {#if stammdatenError}
-            <div class="callout error">{stammdatenError}</div>
+        <Section title="Rollen" sub="Welche Rollen diese Person in welchem Bereich hat">
+          {#if canAssignRoles}
+            {#if roleDataState === "error"}
+              <div class="callout error" role="alert">{roleDataError}</div>
+            {:else if roleDataState !== "ready"}
+              <p class="form-hint">Rollen werden geladen …</p>
+            {:else if employee}
+              <PersonRoleAssignments
+                personName={displayName || "Person"}
+                userId={employee.userId}
+                items={roleAssignments}
+                roles={roleChoices}
+                mandantRoleIds={roleMandantIds}
+                salons={$salonContext.salons}
+                salonsLoaded={$salonContext.loaded}
+                people={rolePeople}
+                canManage={canAssignRoles}
+                {canReadRoles}
+                onChanged={onRoleAssignmentsChanged}
+              />
+            {/if}
+          {:else}
+            <div class="callout">
+              Welche Rollen diese Person hat, siehst du nur mit dem Recht, Rollen zuzuweisen.
+            </div>
           {/if}
+          {#if hasNoRole(accountUser)}
+            <div class="callout">{NO_ROLE_HINT}</div>
+          {/if}
+        </Section>
 
+        <Section title="Zugang" sub="Benutzerkonto und Anmeldung">
           <div class="form-grid">
-            {#if canAssignRoles}
-              <div class="form-group">
-                <label class="form-label" for="e-role">Rolle</label>
-                <select id="e-role" bind:value={eRole} class="select">
-                  <option value="" disabled>Keine Rolle zugewiesen</option>
-                  <option value="EMPLOYEE">Mitarbeiter</option>
-                  <option value="MANAGER">Manager</option>
-                  <option value="ADMIN">Administrator</option>
-                </select>
-              </div>
-            {/if}
-
-            {#if hasNoRole(accountUser)}
-              <div class="form-group form-group--full">
-                <div class="callout">{NO_ROLE_HINT}</div>
-              </div>
-            {/if}
-
             {#if accountUser}
               <div class="form-group">
                 <span class="form-label">E-Mail</span>
