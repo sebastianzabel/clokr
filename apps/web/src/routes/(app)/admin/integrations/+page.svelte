@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import Pagination from "$lib/components/ui/Pagination.svelte";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
@@ -255,9 +256,14 @@
   }
 </script>
 
-<svelte:head><title>Integrationen – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/admin/integrations")} – Clokr</title></svelte:head>
 
-<SectionStack eyebrow="System" title="Integrationen" sub="WiFi-Präsenz und externe Dienste" animate>
+<SectionStack
+  eyebrow="System"
+  title={pageLabel("/admin/integrations")}
+  sub="WiFi-Präsenz und externe Dienste"
+  animate
+>
   <!-- ── Block 1: Presence-Quellen ──────────────────────────────────────── -->
   <Section title="Presence-Quellen" sub="API-Schlüssel für WiFi-Adapter verwalten">
     {#if showNewKey}

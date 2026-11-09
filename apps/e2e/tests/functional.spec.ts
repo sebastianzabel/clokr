@@ -56,7 +56,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await expect(stempelBtn.first()).toBeVisible({ timeout: 10_000 });
 
       // Greeting at the top of the page proves the auth-store hydrated and
-      // the user data resolved (Guten Morgen/Tag/Abend, ...).
+      // the user data resolved (the PageHead sub line "Guten Morgen/Tag/Abend, ...", Issue #574).
       await expect(page.getByText(/Guten (Morgen|Tag|Abend)/)).toBeVisible();
     });
 

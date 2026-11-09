@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { api } from "$api/client";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
@@ -469,11 +470,11 @@
   }
 </script>
 
-<svelte:head><title>Phorest – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/admin/phorest")} – Clokr</title></svelte:head>
 
 <SectionStack
   eyebrow="System"
-  title="Phorest"
+  title={pageLabel("/admin/phorest")}
   sub="Schichten aus Salon-Software importieren"
   animate
 >

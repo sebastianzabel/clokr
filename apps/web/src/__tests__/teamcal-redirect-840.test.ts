@@ -97,7 +97,7 @@ describe("Issue #840 (D-840-03) - /teamcal redirects to the Übersicht", () => {
     expect(REDIRECT.length).toBeGreaterThan(300);
     expect(REDIRECT).toContain("export const load");
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain('<PageHead eyebrow="Team" title="Abwesenheiten">');
+    expect(PAGE).toContain('<PageHead eyebrow="Team" title={pageLabel("/team/leave")}>');
   });
 
   it("[page gone] the old team calendar page does not exist any more", () => {

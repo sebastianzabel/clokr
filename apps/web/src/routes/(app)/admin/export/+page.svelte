@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
@@ -219,11 +220,11 @@
   });
 </script>
 
-<svelte:head><title>DATEV Export – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/admin/export")} – Clokr</title></svelte:head>
 
 <ToolPage
   eyebrow="Daten"
-  title="DATEV Export"
+  title={pageLabel("/admin/export")}
   sub="Lohnabrechnungs-Daten für DATEV exportieren"
   tabs={TABS}
   bind:activeTab

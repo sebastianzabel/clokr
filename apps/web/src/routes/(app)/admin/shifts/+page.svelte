@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
@@ -416,12 +417,12 @@
 </script>
 
 <svelte:head>
-  <title>Schichtplan – Clokr</title>
+  <title>{pageLabel("/admin/shifts")} – Clokr</title>
 </svelte:head>
 
 <SectionStack
   eyebrow="Planung"
-  title="Schichtplan"
+  title={pageLabel("/admin/shifts")}
   sub="Vorlagen, Bedarfsregeln und Schicht-Muster"
   tabs={TABS}
   bind:activeTab

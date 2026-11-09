@@ -77,3 +77,52 @@ describe("page-labels: Schnellsuche (CommandPalette)", () => {
     });
   }
 });
+
+// ── H1 and browser tab title (D-574-10/11) ────────────────────────────────────────────────
+// The route pages are not mountable here (no `$app` alias), so the wiring is pinned by source:
+// the page's heading component and its <title> read pageLabel() of the page's own href.
+const NO_HEADING: Record<string, string> = {
+  "/admin": "redirects to the first permitted admin page, renders no heading",
+  "/admin/special-leave": "redirect-only alias of /admin/vacation",
+  "/admin/wifi-presence": "redirect-only alias of /admin/integrations",
+};
+const HEADING_TAG = /<(PageHead|SectionStack|ListDetail|ToolPage)\b[\s\S]*?\/?>/;
+
+function routeSource(href: string): string {
+  return read(`routes/(app)${href}/+page.svelte`);
+}
+
+const adminSections = visibleNavSections(
+  { permissions: (personas as Record<string, string[]>).ADMIN },
+  { availabilityEnabled: true },
+);
+const grouped = new Map<string, string[]>(
+  adminSections.map((s) => [s.label, s.items.map((i) => i.href)]),
+);
+const inNav = new Set([...grouped.values()].flat());
+grouped.set(
+  "Weitere Seiten",
+  Object.keys(labels).filter((href) => !inNav.has(href) && !(href in NO_HEADING)),
+);
+
+describe("page-labels: H1 and tab title of every page", () => {
+  it("checks at least 25 page files (non-vacuity)", () => {
+    expect([...grouped.values()].flat().length).toBeGreaterThanOrEqual(25);
+  });
+  for (const [section, hrefs] of grouped) {
+    describe(section, () => {
+      for (const href of hrefs) {
+        it(`${href} takes its H1 and <title> from pageLabel("${href}")`, () => {
+          const source = routeSource(href);
+          const body = source.slice(source.lastIndexOf("</script>"));
+          const heading = HEADING_TAG.exec(body)?.[0] ?? "";
+          expect(heading, `${href}: no heading component`).not.toBe("");
+          expect(heading).toContain(`title={pageLabel("${href}")}`);
+          const tabTitle = /<title>([^<]*)<\/title>/.exec(source)?.[1];
+          if (tabTitle !== undefined)
+            expect(tabTitle.startsWith(`{pageLabel("${href}")}`)).toBe(true);
+        });
+      }
+    });
+  }
+});

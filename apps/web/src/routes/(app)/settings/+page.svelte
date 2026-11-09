@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
   import { fetchAvatarObjectUrl } from "$api/avatar";
   import { authStore } from "$stores/auth";
@@ -119,12 +120,12 @@
   }
 </script>
 
-<svelte:head><title>Profil – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/settings")} – Clokr</title></svelte:head>
 
 <div class="settings-page">
   <PageHead
     eyebrow="Mein Bereich"
-    title="Mein Profil"
+    title={pageLabel("/settings")}
     accent="Profil"
     sub="Profilbild und Passwort verwalten"
   />

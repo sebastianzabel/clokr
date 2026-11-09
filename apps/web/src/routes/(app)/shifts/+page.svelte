@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
@@ -1420,7 +1421,7 @@
 </script>
 
 <svelte:head>
-  <title>Schichtplanung – Clokr</title>
+  <title>{pageLabel("/shifts")} – Clokr</title>
 </svelte:head>
 
 <!-- Phase 75-02 (D-01): data-testid surface for the Schichtplanung visual baseline.
@@ -1428,7 +1429,7 @@
 <div class="page" data-testid="shifts-page">
   <PageHead
     eyebrow="Team"
-    title="Schichtplanung"
+    title={pageLabel("/shifts")}
     accent="Schicht"
     sub="Wöchentliche Schichten zuweisen — mit Verfügbarkeit und Coverage-Heatmap. Vorlagen und Bedarfsregeln pflegt die Administration."
   >

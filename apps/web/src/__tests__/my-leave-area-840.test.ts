@@ -58,8 +58,8 @@ function between(from: string, to: string): string {
 describe("Issue #840 E-01 - one page, one toolbar", () => {
   it("[vacuity gate] the page source is loaded and is the personal host page", () => {
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain('<PageHead eyebrow="Mein Bereich" title="Abwesenheiten">');
-    expect(PAGE).toContain("<title>Abwesenheiten – Clokr</title>");
+    expect(PAGE).toContain('<PageHead eyebrow="Mein Bereich" title={pageLabel("/leave")}>');
+    expect(PAGE).toContain('<title>{pageLabel("/leave")} – Clokr</title>'); // Issue #574
     // The old title is gone from the page.
     expect(PAGE).not.toContain("Urlaub & Abwesenheit");
   });

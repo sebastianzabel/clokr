@@ -64,7 +64,7 @@ function salonEffectBody(): string {
 describe("Issue #558 — Team-Anträge follow the header salon", () => {
   it("[vacuity gate] the page source is loaded and still is the team absence page", () => {
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain('title="Abwesenheiten"'); // #840 (E-01): formerly „Team-Anträge“
+    expect(PAGE).toContain('title={pageLabel("/team/leave")}'); // #840 (E-01) / #574: „Abwesenheiten“
   });
 
   it("[filter] loadData sends the salon on the year list, the PENDING approval queue and the people list", () => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
@@ -1387,7 +1388,7 @@
 <div data-testid="admin-system-page" data-active-tab={activeTab} style="display: contents;">
   <SectionStack
     eyebrow="System"
-    title="Allgemein"
+    title={pageLabel("/admin/system")}
     sub="Tenant-Einstellungen, Sicherheit & Benachrichtigungen"
     tabs={TABS}
     bind:activeTab

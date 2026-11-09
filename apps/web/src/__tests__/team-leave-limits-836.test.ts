@@ -46,7 +46,7 @@ function functionBody(name: string): string {
 describe("Issue #836 — leave limits on Team-Anträge", () => {
   it("[vacuity gate] the page source is loaded and still is the team absence page", () => {
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain('title="Abwesenheiten"'); // #840 (E-01): formerly „Team-Anträge“
+    expect(PAGE).toContain('title={pageLabel("/team/leave")}'); // #840 (E-01) / #574: „Abwesenheiten“
   });
 
   it("[load] the load is requested only for callers holding leave-limit:manage or leave-request:approve", () => {

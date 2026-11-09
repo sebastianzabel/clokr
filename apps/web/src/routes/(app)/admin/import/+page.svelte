@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
   import ToolPage from "$lib/components/admin/ToolPage.svelte";
   import Section from "$lib/components/admin/Section.svelte";
@@ -120,12 +121,12 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
 </script>
 
 <svelte:head>
-  <title>CSV Import – Clokr</title>
+  <title>{pageLabel("/admin/import")} – Clokr</title>
 </svelte:head>
 
 <ToolPage
   eyebrow="Daten"
-  title="CSV Import"
+  title={pageLabel("/admin/import")}
   sub="Mitarbeiter und Zeiteinträge importieren"
   steps={["Datei wählen", "Vorschau", "Übernehmen"]}
   currentStep={importStep}

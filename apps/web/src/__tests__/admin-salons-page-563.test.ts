@@ -298,7 +298,7 @@ describe("salon pages - isolation and escaping", () => {
 describe("salon list page", () => {
   it("fetches every salon, titles itself 'Salons' and holds no unsaved state", () => {
     expect(LIST).toContain("/salons?includeInactive=true");
-    expect(LIST).toContain('title="Salons"');
+    expect(LIST).toContain('title={pageLabel("/admin/salons")}'); // Issue #574: from page-labels.ts
     expect(LIST).not.toContain("markUnsaved(");
   });
 

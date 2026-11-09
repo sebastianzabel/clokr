@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { run } from "svelte/legacy";
 
   import { onMount } from "svelte";
@@ -689,12 +690,12 @@
 </script>
 
 <svelte:head>
-  <title>Urlaubsverwaltung – Clokr</title>
+  <title>{pageLabel("/admin/vacation")} – Clokr</title>
 </svelte:head>
 
 <SectionStack
   eyebrow="Personal"
-  title="Urlaubsverwaltung"
+  title={pageLabel("/admin/vacation")}
   sub="Globale Einstellungen, Sonderurlaubsregeln und Tenant-Übersicht"
   tabs={TABS}
   bind:activeTab

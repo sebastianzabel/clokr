@@ -4,6 +4,7 @@
   page owns the role draft so a tab switch never discards it (D-09).
 -->
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import RolesTab from "$lib/components/admin/roles/RolesTab.svelte";
   import AssignmentsTab from "$lib/components/admin/roles/AssignmentsTab.svelte";
@@ -44,7 +45,7 @@
 
 <SectionStack
   eyebrow="System"
-  title="Rollen & Rechte"
+  title={pageLabel("/admin/roles")}
   sub="Rollen aus dem Rechte-Katalog zusammenstellen und Personen zuweisen"
   {tabs}
   bind:activeTab

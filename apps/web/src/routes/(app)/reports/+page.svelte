@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, tick, untrack } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
@@ -759,13 +760,12 @@
 </script>
 
 <svelte:head>
-  <title>Berichte – Clokr</title>
+  <title>{pageLabel("/reports")} – Clokr</title>
 </svelte:head>
 
 <PageHead
   eyebrow={showTeamArea ? "Team" : "Mein Bereich"}
-  title="Berichte & Auswertungen"
-  accent="Auswertungen"
+  title={pageLabel("/reports")}
   sub={showTeamArea
     ? "Zeiten, Konten und Urlaub für einen Zeitraum – bis zu 12 Monate."
     : "Persönliche Monatsabschlüsse — als PDF zum Download."}

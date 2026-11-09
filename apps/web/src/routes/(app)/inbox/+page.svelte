@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, tick } from "svelte";
   import { goto, replaceState } from "$app/navigation";
   import { page } from "$app/stores";
@@ -567,10 +568,10 @@
 </script>
 
 <svelte:head>
-  <title>Inbox – Clokr</title>
+  <title>{pageLabel("/inbox")} – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow="Team" title="Inbox" />
+<PageHead eyebrow="Team" title={pageLabel("/inbox")} />
 
 {#if error}
   <div class="callout error" role="alert" style="margin-bottom: 16px;">

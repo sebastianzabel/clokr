@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
@@ -181,12 +182,12 @@
 </script>
 
 <svelte:head>
-  <title>Audit & Log – Clokr</title>
+  <title>{pageLabel("/admin/audit")} – Clokr</title>
 </svelte:head>
 
 <SectionStack
   eyebrow="Compliance"
-  title="Audit & Log"
+  title={pageLabel("/admin/audit")}
   sub="Audit-Trail, Aufbewahrung und DSGVO"
   tabs={TABS}
   bind:activeTab

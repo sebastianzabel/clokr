@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
@@ -560,7 +561,7 @@
 </script>
 
 <svelte:head>
-  <title>Mitarbeitende – Clokr</title>
+  <title>{pageLabel("/admin/employees")} – Clokr</title>
 </svelte:head>
 
 <!-- Phase 73-05 (D-05): data-testid surface for admin-employees flows.
@@ -570,7 +571,7 @@
   <ListDetail
     view="list"
     eyebrow="Personal"
-    title="Mitarbeitende"
+    title={pageLabel("/admin/employees")}
     sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
   >
     {#snippet actions()}

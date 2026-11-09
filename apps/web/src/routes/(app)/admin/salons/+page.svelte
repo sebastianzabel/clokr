@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
@@ -52,7 +53,7 @@
 
 <ListDetail
   eyebrow="Administration"
-  title="Salons"
+  title={pageLabel("/admin/salons")}
   sub="Standorte Ihres Unternehmens mit Adresse und Öffnungszeiten."
   view="list"
 >

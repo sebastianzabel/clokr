@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, tick, untrack } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
@@ -976,7 +977,7 @@
 </script>
 
 <svelte:head>
-  <title>Abwesenheiten – Clokr</title>
+  <title>{pageLabel("/leave")} – Clokr</title>
 </svelte:head>
 
 <svelte:window onmouseup={handleDayMouseUp} />
@@ -987,7 +988,7 @@
      root without keying off CSS class hashes. -->
 <div data-testid="leave-page" style="display: contents">
   <!-- ── Header ─────────────────────────────────────────────────────────────── -->
-  <PageHead eyebrow="Mein Bereich" title="Abwesenheiten">
+  <PageHead eyebrow="Mein Bereich" title={pageLabel("/leave")}>
     {#snippet actions()}
       {#if !showForm && activeTab !== "planung"}
         <button

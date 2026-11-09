@@ -510,6 +510,7 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
       "reports-grid",
       "report-card",
       "DATEV Export",
+      "DATEV-Export", // Issue #574 spelling — the card must not return under the new name either
     ]) {
       expect(PAGE, gone).not.toContain(gone);
     }

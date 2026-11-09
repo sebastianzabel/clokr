@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { leaveTypeColor, FALLBACK } from "$lib/leave/leave-colors"; // Issue #840 (D-840-12)
   import { onDestroy, onMount, tick } from "svelte";
   import { page } from "$app/stores";
@@ -1897,14 +1898,14 @@
   );
 </script>
 
-<svelte:head><title>Zeiterfassung – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/time-entries")} – Clokr</title></svelte:head>
 <svelte:window
   onkeydown={(e) => {
     if (e.key === "Escape" && modalOpen) closeModal();
   }}
 />
 
-<PageHead eyebrow="Mein Bereich" title="Zeiterfassung">
+<PageHead eyebrow="Mein Bereich" title={pageLabel("/time-entries")}>
   {#snippet actions()}
     <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt users see no
          "+ Neuer Eintrag" CTA. Full HIDE, NOT disabled — don't teach

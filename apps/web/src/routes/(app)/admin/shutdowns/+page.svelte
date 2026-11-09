@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { api } from "$api/client";
   import { format } from "date-fns";
@@ -224,7 +225,7 @@
 
 <ListDetail
   eyebrow="Personal"
-  title="Betriebsurlaub"
+  title={pageLabel("/admin/shutdowns")}
   sub="Verwaltung von Betriebsurlaubs-Perioden"
   view="list"
 >
