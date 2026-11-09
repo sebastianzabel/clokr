@@ -6,6 +6,9 @@
 // cases so `readInitial()` runs again against the seeded storage.
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 vi.mock("$api/preferences", () => ({
   savePreferences: vi.fn(() => Promise.resolve({})),
@@ -168,5 +171,52 @@ describe("#842 T-842-06 - normalizeTheme is the allow-list in front of data-them
     theme.set("wald" as never);
     expect(document.documentElement.getAttribute("data-theme")).toBe("petrol");
     expect(localStorage.getItem("theme")).toBe("petrol");
+  });
+});
+
+describe("#842 IN-06 - the web legacy map agrees with the API's", () => {
+  // The API normalises the stored preference (`normalizeUiTheme`), the web normalises localStorage
+  // (`normalizeTheme`). They are hand-kept twins; this pins that they send the retired ids the API
+  // knows to the same current theme. The API source is read as text (the web cannot import it).
+  const API_SOURCE = readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../../../api/src/contexts/platform/ui-theme.ts",
+    ),
+    "utf8",
+  );
+
+  /** `LEGACY_THEME_TARGET` entries of the API file: `nacht: "salz",` -> { nacht: "salz" }. */
+  function apiLegacyTargets(): Record<string, string> {
+    const block = /LEGACY_THEME_TARGET[^=]*=\s*\{([^}]*)\}/.exec(API_SOURCE)?.[1] ?? "";
+    return Object.fromEntries(
+      [...block.matchAll(/([a-z]+)\s*:\s*"([a-z]+)"/g)].map((m) => [m[1], m[2]]),
+    );
+  }
+
+  it("reads exactly the three retired ids of the API (anti-vacuity)", () => {
+    expect(apiLegacyTargets()).toEqual({ nacht: "salz", schiefer: "salz", wald: "petrol" });
+  });
+
+  it("maps every retired id of the API to the same current theme", async () => {
+    const { normalizeTheme } = await bootWith({});
+    for (const [legacy, target] of Object.entries(apiLegacyTargets())) {
+      expect(normalizeTheme(legacy), legacy).toBe(target);
+    }
+  });
+
+  it("control: a hard-coded table of the web mapping, including its web-only ids", async () => {
+    const { normalizeTheme } = await bootWith({});
+    const expected = {
+      nacht: "salz",
+      schiefer: "salz",
+      wald: "petrol",
+      dunkel: "salz",
+      lila: "pflaume",
+      hell: "pflaume",
+    };
+    for (const [legacy, target] of Object.entries(expected)) {
+      expect(normalizeTheme(legacy), legacy).toBe(target);
+    }
   });
 });
