@@ -855,9 +855,9 @@
   .absence-timeline {
     position: relative;
     width: 100%;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
   }
 
   /* Issue 840 G-5: the day viewport and the forecast pane are two columns of one body row. */
@@ -883,7 +883,7 @@
   .tl-line {
     display: flex;
     align-items: stretch;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   /* The load line is exactly as high as its forecast cell: no padded name cell stretches it. */
@@ -902,8 +902,8 @@
     flex: none;
     width: var(--tl-name-w);
     padding: 0.35rem 0.75rem;
-    background: var(--bg-card);
-    border-right: 1px solid var(--border);
+    background: var(--card);
+    border-right: 1px solid var(--line);
     font-size: 0.875rem;
     color: var(--text);
     white-space: nowrap;
@@ -925,8 +925,8 @@
       to right,
       transparent 0,
       transparent calc(var(--tl-col-w) - 1px),
-      var(--border) calc(var(--tl-col-w) - 1px),
-      var(--border) var(--tl-col-w)
+      var(--line) calc(var(--tl-col-w) - 1px),
+      var(--line) var(--tl-col-w)
     );
     background-size: 100% 100%;
     touch-action: pan-y;
@@ -951,7 +951,7 @@
     position: absolute;
     top: 0;
     height: 22px;
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--line);
     font-size: 0.8125rem;
     font-weight: 500;
     color: var(--text);
@@ -982,10 +982,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--line);
     font-size: 0.6875rem;
     font-variant-numeric: tabular-nums;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .tl-weekhead--today {
@@ -1010,7 +1010,7 @@
     justify-content: center;
     font-size: 0.6875rem;
     line-height: 1.1;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   button.absence-day {
@@ -1032,8 +1032,8 @@
   .absence-day--closed {
     background-image: repeating-linear-gradient(
       135deg,
-      var(--border) 0,
-      var(--border) 1px,
+      var(--line) 0,
+      var(--line) 1px,
       transparent 1px,
       transparent 5px
     );
@@ -1072,15 +1072,15 @@
   .tl-closed {
     background-image: repeating-linear-gradient(
       135deg,
-      var(--border) 0,
-      var(--border) 1px,
+      var(--line) 0,
+      var(--line) 1px,
       transparent 1px,
       transparent 5px
     );
   }
 
   .tl-away {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     opacity: 0.8;
   }
 
@@ -1110,12 +1110,12 @@
     font-variant-numeric: tabular-nums;
     color: var(--text);
     background: color-mix(in srgb, var(--brand) var(--tl-load-share), transparent);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
 
   .tl-load-cell--exceeded {
     background: var(--bad-soft);
-    color: var(--bad-text);
+    color: var(--bad);
     outline: 2px solid var(--bad);
     outline-offset: -2px;
     font-weight: 600;
@@ -1130,8 +1130,8 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--card);
+    border: 1px solid var(--line);
     cursor: pointer;
   }
 
@@ -1193,10 +1193,10 @@
     left: 0;
     background: repeating-linear-gradient(
       135deg,
-      var(--text-faint) 0,
-      var(--text-faint) 1px,
-      var(--bg-subtle) 1px,
-      var(--bg-subtle) 4px
+      var(--text-3) 0,
+      var(--text-3) 1px,
+      var(--sunk) 1px,
+      var(--sunk) 4px
     );
     pointer-events: none;
   }
@@ -1212,7 +1212,7 @@
     height: 20px;
     box-sizing: border-box;
     margin: 0;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     font: inherit;
     font-size: 0.75rem;
     line-height: 16px;
@@ -1281,7 +1281,7 @@
 
   .absence-wish--dragging {
     opacity: 0.85;
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow);
     z-index: 4;
   }
 
@@ -1322,7 +1322,7 @@
     bottom: -2px;
     width: 8px;
     background: var(--brand);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     cursor: ew-resize;
     touch-action: none;
   }
@@ -1339,14 +1339,14 @@
   .tl-forecast-pane {
     flex: none;
     width: var(--tl-forecast-w);
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--line);
   }
 
   .tl-forecast {
     box-sizing: content-box;
     padding: 0 0.75rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-card);
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
     font-size: 0.8125rem;
     color: var(--text);
     overflow: hidden;
@@ -1371,7 +1371,7 @@
     right: 0;
     bottom: 0;
     width: 48px;
-    background: linear-gradient(to right, transparent, var(--bg-card));
+    background: linear-gradient(to right, transparent, var(--card));
     pointer-events: none;
     z-index: 4;
   }
@@ -1381,12 +1381,12 @@
     justify-content: flex-end;
     min-height: 1.5rem;
     padding: 0.125rem 0.5rem;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
 
   .tl-more {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     pointer-events: none;
   }
 </style>

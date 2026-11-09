@@ -1061,8 +1061,8 @@
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 0.875rem 1rem;
   }
@@ -1071,7 +1071,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0 0 0.5rem;
   }
   .overlap-empty {
@@ -1094,19 +1094,19 @@
     font-weight: 600;
   }
   .overlap-type {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
   .overlap-dates {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 0.875rem;
     margin-left: auto;
   }
 
   /* ── Balance Box ──────────────────────────────────────────────────── */
   .balance-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 0.875rem 1rem;
     display: flex;
@@ -1121,27 +1121,27 @@
     font-size: 0.9375rem;
   }
   .balance-label {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-value {
     font-weight: 600;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .balance-meta {
     font-size: 0.8125rem;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-left: 0.25rem;
   }
   .balance-deduct {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-warn {
     color: var(--bad);
   }
   .balance-divider {
     height: 1px;
-    background: var(--border);
+    background: var(--line);
     margin: 0.125rem 0;
   }
   .balance-hint-warn {
@@ -1155,11 +1155,11 @@
     margin: 0.25rem 0 0;
   }
   .balance-value--muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-hint-muted {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0.25rem 0 0;
   }
 
@@ -1195,7 +1195,7 @@
   }
   .section9-movement {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   @media (max-width: 700px) {

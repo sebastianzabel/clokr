@@ -291,8 +291,7 @@
         </div>
         <div class="review-field">
           <span class="review-label">Zeitraum</span>
-          <span class="review-value font-mono"
-            >{fmtDate(request.startDate)} – {fmtDate(request.endDate)}</span
+          <span class="review-value">{fmtDate(request.startDate)} – {fmtDate(request.endDate)}</span
           >
         </div>
         <div class="review-field">
@@ -474,9 +473,9 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem 1.5rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 1rem 1.25rem;
   }
   .review-field {
@@ -492,7 +491,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .review-value {
     font-size: 0.9375rem;
@@ -507,9 +506,9 @@
 
   /* ── Overlap — exclusive to this dialog on both former pages (RESEARCH.md § Scoped Styles). */
   .overlap-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 0.875rem 1rem;
   }
   .overlap-title {
@@ -517,7 +516,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0 0 0.5rem;
   }
   .overlap-empty {
@@ -540,7 +539,7 @@
     font-weight: 600;
   }
   .overlap-dates {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 0.875rem;
     margin-left: auto;
   }
@@ -551,7 +550,7 @@
   /* Value from inbox/+page.svelte:1121-1124 (D-04 — the inbox footer wins). */
   .footer-note {
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   @media (max-width: 700px) {

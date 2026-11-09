@@ -152,13 +152,12 @@
     align-items: center;
     gap: 0.3rem;
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .legend-hint {
     font-size: 0.75rem;
-    font-style: italic;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .legend-swatch {
@@ -210,12 +209,12 @@
 
   .legend-swatch--weekend {
     background: var(--weekend-shade);
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
   }
 
   .legend-swatch--holiday-timeline {
     background: var(--warn-soft);
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
   }
 
   .legend-swatch--holiday-calendar {
@@ -226,12 +225,12 @@
   .legend-swatch--closed {
     background-image: repeating-linear-gradient(
       135deg,
-      var(--border) 0,
-      var(--border) 1px,
+      var(--line) 0,
+      var(--line) 1px,
       transparent 1px,
       transparent 4px
     );
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
   }
 
   .legend-swatch--today {
