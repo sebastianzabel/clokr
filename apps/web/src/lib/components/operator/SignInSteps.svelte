@@ -390,7 +390,7 @@
     margin: 0;
     font-size: 16px;
     line-height: 1.5;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .op-form {
@@ -416,11 +416,11 @@
     margin: 0;
     font-size: 14px;
     line-height: 1.5;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .op-recovery {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     text-transform: uppercase;
   }
 

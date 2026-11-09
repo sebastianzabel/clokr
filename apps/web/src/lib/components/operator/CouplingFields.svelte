@@ -160,7 +160,7 @@
     margin: 0;
     padding: 16px 0 0;
     border: 0;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
 
   .group-label {
@@ -176,7 +176,7 @@
   }
 
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
   }
 
   .problem,

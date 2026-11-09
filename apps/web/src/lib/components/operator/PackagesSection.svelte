@@ -224,7 +224,7 @@
     margin-bottom: 8px;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .module {
@@ -277,7 +277,7 @@
   .facts dt {
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .facts dd {

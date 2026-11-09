@@ -86,7 +86,7 @@
     margin: 0;
     padding: 16px 0 0;
     border: 0;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
 
   .legend {
@@ -126,13 +126,13 @@
 
   .state {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .closed {
     grid-column: 1 / -1;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .time {
