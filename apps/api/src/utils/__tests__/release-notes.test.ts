@@ -2,7 +2,13 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, readdirSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { parseReleaseNote, loadReleaseNotes, RELEASE_NOTES_DIR } from "../release-notes";
+import {
+  parseReleaseNote,
+  loadReleaseNotes,
+  RELEASE_NOTES_DIR,
+  RELEASE_NOTE_SECTION_AUDIENCE,
+  sectionAudience,
+} from "../release-notes";
 
 describe("parseReleaseNote", () => {
   it("parses a bare headline with no body into empty intro/sections/footnote", () => {
@@ -265,5 +271,66 @@ describe("release-notes corpus (AK-16 backfill)", () => {
     for (let i = 1; i < notes.length; i++) {
       expect(tupleOf(notes[i - 1].version)).toBeGreaterThanOrEqual(tupleOf(notes[i].version));
     }
+  });
+});
+
+describe("section audience (Issue #576, D-576-01)", () => {
+  it("tags operator sections admin and every other section all", () => {
+    const md = [
+      "## v2.0.0 — Titel",
+      "### Neue Funktionen",
+      "- a",
+      "### Betrieb & Migration",
+      "- b",
+      "### Sicherheit",
+      "- c",
+      "### Wartung",
+      "- d",
+    ].join("\n");
+    expect(parseReleaseNote("2.0.0", md).sections.map((s) => [s.heading, s.audience])).toEqual([
+      ["Neue Funktionen", "all"],
+      ["Betrieb & Migration", "admin"],
+      ["Sicherheit", "admin"],
+      ["Wartung", "all"],
+    ]);
+  });
+
+  it("classifies exactly the headings of the template, in both directions", () => {
+    const template = readFileSync(
+      join(RELEASE_NOTES_DIR, "..", "RELEASE_NOTES_TEMPLATE.md"),
+      "utf8",
+    );
+    // The structure block is the FIRST fenced block of the template (the second is an example).
+    const structure: string[] = [];
+    let fences = 0;
+    for (const line of template.split("\n")) {
+      if (line.startsWith("```")) {
+        fences++;
+        if (fences === 2) break;
+        continue;
+      }
+      const m = /^### (.+)$/.exec(line);
+      if (fences === 1 && m) structure.push(m[1].trim());
+    }
+    expect(structure.length).toBeGreaterThanOrEqual(7);
+    expect([...new Set(structure)].sort()).toEqual(
+      Object.keys(RELEASE_NOTE_SECTION_AUDIENCE).sort(),
+    );
+  });
+
+  it("every corpus heading is a template heading or a known legacy one, with its audience", () => {
+    const LEGACY = new Set(["Achtung", "Wartung"]);
+    const notes = loadReleaseNotes();
+    expect(notes.length).toBeGreaterThan(20);
+    const unknown: string[] = [];
+    for (const note of notes) {
+      for (const section of note.sections) {
+        expect(section.audience).toBe(sectionAudience(section.heading));
+        if (!(section.heading in RELEASE_NOTE_SECTION_AUDIENCE) && !LEGACY.has(section.heading)) {
+          unknown.push(`v${note.version}: ${section.heading}`);
+        }
+      }
+    }
+    expect(unknown, "use a heading of docs/RELEASE_NOTES_TEMPLATE.md").toEqual([]);
   });
 });

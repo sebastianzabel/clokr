@@ -290,7 +290,10 @@ Current: recalculated from hire date on every request (does not scale). Target a
   Stundennachweis, the leave overview (JSON; one population, one order: last name, first name,
   id), the Monatsabschluss status and year status, the
   Saldo-Übersicht (facade W9 with a required period), today's attendance, the team week, the team
-  trend and the overtime trend. DATEV and the Monatsexport read the employment core `employedInPeriodWhere` WITHOUT the
+  trend and the overtime trend. The team week and today's attendance additionally list only persons holding a
+  contract valid by the period end (`hasWorkScheduleInPeriodWhere`, same module, Issue #576; its two callers are pinned by
+  `contract-population-readers-576.test.ts`) - an account without any WorkSchedule row is no team member, while the
+  period reports keep it. DATEV and the Monatsexport read the employment core `employedInPeriodWhere` WITHOUT the
   anonymisation clause (§ 41 EStG: the Lohnkonto of a month of employment stays complete). The
   carry-over warning list and its cron keep their BUrlG `exitDate: null` rule and only exclude
   anonymised persons. `user.isActive` is a LOGIN state and never selects persons:

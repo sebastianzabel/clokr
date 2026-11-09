@@ -7,6 +7,7 @@ import {
   accessContextFromRequest,
   employeeScopeFor,
   reportPopulationWhere, // Issue #613 — the one period-population rule
+  hasWorkScheduleInPeriodWhere, // Issue #576 — team week and attendance need a contract
   isEmployedInPeriod, // Issue #613 — the one period-population rule (in-memory twin)
   type WorkLocationEntry,
   type HolidaysByEmployee,
@@ -703,6 +704,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
           tenantId,
           AND: [
             reportPopulationWhere(weekStart, weekEnd),
+            // Issue #576 (D-576-07/08): and a work contract in the week — for the whole
+            // population, Stammsalon persons and persons listed through an in-scope entry alike.
+            hasWorkScheduleInPeriodWhere(weekStart, weekEnd),
             ...(populationIds !== "all" ? [{ id: { in: populationIds } }] : []),
           ],
         },
@@ -1065,6 +1069,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
           tenantId,
           AND: [
             reportPopulationWhere(attendanceDay.start, attendanceDay.end),
+            // Issue #576 (D-576-07/08): and a work contract on the day, for the whole population.
+            hasWorkScheduleInPeriodWhere(attendanceDay.start, attendanceDay.end),
             ...(attendancePopulationIds !== "all" ? [{ id: { in: attendancePopulationIds } }] : []),
           ],
         },

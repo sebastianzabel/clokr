@@ -143,7 +143,7 @@ describe("the Rückfrage names its consequence (acceptance criterion #4)", () =>
     expect(PAGE).toContain("onConfirm={confirmReopen}");
   });
 
-  it("confirmReopen re-checks the day — the 5 s poll can change it under an open dialog", () => {
+  it("confirmReopen re-checks the day — the 30 s poll can change it under an open dialog", () => {
     expect(PAGE).toContain("if (!canReopenFinishedDay(day)) {");
   });
 });

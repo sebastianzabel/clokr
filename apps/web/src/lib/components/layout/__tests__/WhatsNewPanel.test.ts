@@ -23,7 +23,16 @@ import { renderWithTheme } from "$tests/test-utils";
 import { releaseNotesStore, whatsNewOpen } from "$stores/release-notes";
 import WhatsNewPanel from "../WhatsNewPanel.svelte";
 
-vi.mock("$stores/auth", () => ({ authStore: { subscribe: () => () => {} } }));
+// Issue #576: the panel shows the reader's view, so the auth store must emit a user. Existing cases
+// render as a holder of the system-settings permission (every section); the audience cases switch it.
+const authUser = vi.hoisted(() => ({
+  value: { permissions: ["tenant-settings:update:ZUGEWIESEN"] } as { permissions: string[] },
+}));
+vi.mock("$stores/auth", async () => {
+  const { writable } = await import("svelte/store");
+  const store = writable({ user: authUser.value });
+  return { authStore: { subscribe: store.subscribe, set: store.set } };
+});
 
 function note(overrides: Record<string, unknown> = {}) {
   return {
@@ -218,5 +227,48 @@ describe("N-07 — the panel must not block the clock-in path", () => {
     } finally {
       clockIn.remove();
     }
+  });
+});
+
+describe("WhatsNewPanel — sections by audience (Issue #576)", () => {
+  const AUDIENCE_NOTE = {
+    version: "2.0.0",
+    title: "Ruhiger",
+    intro: [],
+    footnote: null,
+    sections: [
+      {
+        heading: "Neue Funktionen",
+        audience: "all" as const,
+        bullets: [{ spans: [{ text: "Für alle", bold: false }] }],
+      },
+      {
+        heading: "Betrieb & Migration",
+        audience: "admin" as const,
+        bullets: [{ spans: [{ text: "Skript laufen lassen", bold: false }] }],
+      },
+    ],
+  };
+
+  it("a reader without the system-settings permission sees no operator section", async () => {
+    const { authStore } = (await import("$stores/auth")) as unknown as {
+      authStore: { set: (v: unknown) => void };
+    };
+    authStore.set({ user: { permissions: [] } });
+    releaseNotesStore.set([AUDIENCE_NOTE]);
+    whatsNewOpen.set(true);
+    renderWithTheme(WhatsNewPanel, {});
+    expect(screen.getByText("Für alle")).toBeInTheDocument();
+    expect(screen.queryByText("Betrieb & Migration")).toBeNull();
+    expect(screen.queryByText("Skript laufen lassen")).toBeNull();
+    authStore.set({ user: authUser.value });
+  });
+
+  it("a holder of the permission sees both", async () => {
+    releaseNotesStore.set([AUDIENCE_NOTE]);
+    whatsNewOpen.set(true);
+    renderWithTheme(WhatsNewPanel, {});
+    expect(screen.getByText("Betrieb & Migration")).toBeInTheDocument();
+    expect(screen.getByText("Skript laufen lassen")).toBeInTheDocument();
   });
 });

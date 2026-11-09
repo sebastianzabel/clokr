@@ -619,6 +619,22 @@ describe("dashboard /team-week leaveTypeCode/absenceType (Issue #205, finding 3)
       },
     });
     await grantSystemRole(prisma, { tenantId, userId: userMaternity.id, role: "EMPLOYEE" });
+    // Issue #576: a member of the team week / attendance holds a contract
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: employeeMaternity.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01"),
+      },
+    });
     await prisma.absence.create({
       data: {
         employeeId: employeeMaternity.id,

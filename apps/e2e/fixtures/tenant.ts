@@ -47,9 +47,9 @@ const KEEP = process.env.KEEP_TEST_TENANTS === "true";
  * a side endpoint is stubbed. This fixture bootstraps a brand-new tenant/admin for
  * EVERY test, which means every test is a first-run for that user — a state the specs
  * were never written to handle. The What's-New drawer (`WhatsNewPanel.svelte`) only
- * renders when the release-notes corpus is non-empty and auto-opens on first login,
- * then sits over the page and intercepts pointer events for anything driving the real
- * UI. Serving an empty corpus keeps it out of the way deterministically (dismissing it
+ * renders when the release-notes corpus is non-empty (since Issue #576 it opens only on
+ * click, but an unseen corpus shows an unread badge in the sidebar), and an open drawer
+ * intercepts pointer events for anything driving the real UI. Serving an empty corpus keeps it out of the way deterministically (dismissing it
  * by click races its entrance animation). Copied in spirit from the proven
  * `suppressWhatsNew()` in `apps/e2e/tests/leave-overlap-masking.spec.ts:105-113` —
  * moved here, once, so every spec using this fixture gets it for free instead of each

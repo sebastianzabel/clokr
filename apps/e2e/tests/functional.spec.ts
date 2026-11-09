@@ -329,40 +329,57 @@ test.describe("Functional — happy paths across primary surfaces", () => {
     });
   });
 
-  // Phase 110 follow-up: the visual-regression suite (visual.spec.ts) now seeds every test
-  // tenant's admin as "already acknowledged the newest release note" so the auto-opening
-  // WhatsNewPanel drawer doesn't sit over every screenshot baseline (see visual-seed.ts's
-  // "2b. Acknowledge the newest release note" step). That means the drawer's auto-open behavior
-  // itself is no longer exercised anywhere at the browser level — this describe block is that
-  // coverage. Kept out of visual.spec.ts on purpose: asserting on a mid-animation drawer via
-  // `toHaveScreenshot()` would be flaky (the drawer slides in), so this only checks visibility
-  // via `getByRole`/`aria-label`, which Playwright's auto-waiting handles independently of the
-  // open/close transition.
-  test.describe("What's-New drawer (Phase 110)", () => {
-    test("auto-opens once for a fresh user and can be dismissed", async ({ page, tenant }) => {
-      // `tenant` fixture creates a brand-new admin per test (Plan 73-02, D-04 isolation), so
-      // `User.lastSeenReleaseVersion` is null here — exactly the "never seen a release" state
-      // the auto-open `$effect` in `(app)/+layout.svelte` reacts to.
+  // Issue #576: the What's-New panel opens only on click; an unread release shows a „Neu“ badge
+  // on the sidebar's version entry. The tenant fixture stubs an empty corpus, so this test serves
+  // its own synthetic release (one section for everyone, one operator section) — Playwright applies
+  // the later route over the fixture's stub. The tenant admin holds tenant-settings:update and
+  // therefore sees the operator section too.
+  test.describe("What's-New nur auf Klick (Issue #576)", () => {
+    test("no automatic opening; the badge leads to the panel", async ({ page, tenant }) => {
+      await page.route("**/api/v1/release-notes*", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            releases: [
+              {
+                version: "1.99.0",
+                title: "Ruhigere Oberfläche",
+                intro: [],
+                footnote: null,
+                sections: [
+                  {
+                    heading: "Neue Funktionen",
+                    audience: "all",
+                    bullets: [{ spans: [{ text: "Neues für alle", bold: false }] }],
+                  },
+                  {
+                    heading: "Betrieb & Migration",
+                    audience: "admin",
+                    bullets: [{ spans: [{ text: "Hinweis für den Betrieb", bold: false }] }],
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+      );
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/dashboard");
 
+      const entry = page.getByTestId("sidebar-whats-new");
+      await expect(entry).toBeVisible();
+      await expect(entry.getByText("Neu", { exact: true })).toBeVisible();
       const panel = page.getByRole("complementary", { name: "Was ist neu" });
-      // An older/local API image can serve an empty release-notes corpus (AK-06 fail-silent
-      // contract in release-notes.ts) — in that case there is nothing to auto-open and this
-      // assertion would hang. Skip gracefully rather than asserting a false negative.
-      const opened = await panel
-        .waitFor({ state: "visible", timeout: 10_000 })
-        .then(() => true)
-        .catch(() => false);
-      test.skip(!opened, "No release notes baked into this image — nothing to auto-open.");
+      await expect(panel).not.toBeVisible();
 
+      await entry.click();
+      await expect(panel).toBeVisible();
+      await expect(panel.getByText("Neues für alle")).toBeVisible();
+      await expect(panel.getByText("Hinweis für den Betrieb")).toBeVisible();
       await page.getByRole("button", { name: "Schließen" }).click();
       await expect(panel).not.toBeVisible();
-      // Not asserting on a post-dismiss reload here: markReleaseNotesSeen() persists the
-      // acknowledgement via a fire-and-forget PUT (apps/web/src/lib/stores/release-notes.ts),
-      // so reloading immediately after the click races that request rather than testing
-      // anything deterministic. Server-side persistence of the marker is covered by
-      // apps/api/src/__tests__/release-notes.test.ts.
+      await expect(entry.getByText("Neu", { exact: true })).toHaveCount(0);
     });
   });
 });

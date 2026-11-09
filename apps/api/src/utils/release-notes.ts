@@ -37,9 +37,39 @@ export interface ReleaseNoteBullet {
   spans: ReleaseNoteSpan[];
 }
 
+/** Who sees a section in the What's-New panel (Issue #576, D-576-01). */
+export type ReleaseNoteAudience = "all" | "admin";
+
 export interface ReleaseNoteSection {
   heading: string; // e.g. "Neue Funktionen"
+  audience: ReleaseNoteAudience;
   bullets: ReleaseNoteBullet[];
+}
+
+/**
+ * Issue #576 (D-576-01) — the ONE classification of the template's fixed section headings
+ * (docs/RELEASE_NOTES_TEMPLATE.md) by audience. „Sicherheit“ and „Betrieb & Migration“ carry
+ * script names, GHSA ids, deploy steps and backfills — operator content shown only to persons who
+ * may change system settings; every other section is for everyone. These headings are part of the
+ * documented grammar the parser already relies on, not a display string reused as a control value;
+ * a test pins the map to the template's headings in both directions.
+ */
+export const RELEASE_NOTE_SECTION_AUDIENCE: Readonly<Record<string, ReleaseNoteAudience>> =
+  Object.freeze({
+    "Neue Funktionen": "all",
+    Verbesserungen: "all",
+    Fehlerbehebungen: "all",
+    "Anzeige & Bedienung": "all",
+    Sicherheit: "admin",
+    "Betrieb & Migration": "admin",
+    "Achtung / Breaking Changes": "all",
+  });
+
+/** The audience of a section heading; a heading the template does not name is for everyone. */
+export function sectionAudience(heading: string): ReleaseNoteAudience {
+  return Object.hasOwn(RELEASE_NOTE_SECTION_AUDIENCE, heading)
+    ? RELEASE_NOTE_SECTION_AUDIENCE[heading]
+    : "all";
 }
 
 export interface ReleaseNote {
@@ -190,7 +220,11 @@ export function parseReleaseNote(version: string, markdown: string): ReleaseNote
     if (headingMatch) {
       flushParagraph();
       sawFirstHeading = true;
-      currentSection = { heading: headingMatch[1], bullets: [] };
+      currentSection = {
+        heading: headingMatch[1],
+        audience: sectionAudience(headingMatch[1]),
+        bullets: [],
+      };
       sections.push(currentSection);
       continue;
     }

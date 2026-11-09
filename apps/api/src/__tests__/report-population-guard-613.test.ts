@@ -303,8 +303,8 @@ const READERS: readonly ReaderEntry[] = [
   // produce, so an overdue month can always be opened and closed in the UI.
   route(OVERTIME, "/close-month/status", ["monthClosePopulationWhere"]),
   route(OVERTIME, "/close-month/year-status", ["monthClosePopulationWhere"]),
-  route(DASHBOARD, "/team-week", ["reportPopulationWhere"]),
-  route(DASHBOARD, "/today-attendance", ["reportPopulationWhere"]),
+  route(DASHBOARD, "/team-week", ["reportPopulationWhere", "hasWorkScheduleInPeriodWhere"]),
+  route(DASHBOARD, "/today-attendance", ["reportPopulationWhere", "hasWorkScheduleInPeriodWhere"]),
   route(DASHBOARD, "/team-trend", ["reportPopulationWhere"]),
   route(DASHBOARD, "/overtime-trend", ["reportPopulationWhere"]),
   route(DASHBOARD, "/overtime-overview", ["listOvertimeAccountsForTenant", "isEmployedInPeriod"]),

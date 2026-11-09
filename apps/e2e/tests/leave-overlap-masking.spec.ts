@@ -103,7 +103,8 @@ async function login(page: Page, email: string) {
 }
 
 /**
- * The What's-New drawer auto-opens after login and swallows pointer events over the page beneath.
+ * The What's-New drawer opens only on click since Issue #576, but an unseen corpus shows an unread
+ * badge, and an open drawer swallows pointer events over the page beneath.
  * It renders only when the release-notes corpus is non-empty (`WhatsNewPanel.svelte:38`), so
  * serving an empty corpus to the browser keeps it out of the way deterministically — dismissing
  * it by click races its entrance animation. Nothing in this phase touches release notes.

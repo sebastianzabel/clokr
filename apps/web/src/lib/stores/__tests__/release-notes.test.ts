@@ -18,6 +18,21 @@ vi.mock("$api/client", () => ({
   },
 }));
 
+// Issue #576: the store reads the reader's permissions; a writable stands in for the auth store.
+const authState = vi.hoisted(() => ({
+  user: { permissions: [] as string[] } as { permissions?: string[] } | null,
+}));
+vi.mock("$stores/auth", async () => {
+  const { writable } = await import("svelte/store");
+  return {
+    authStore: writable({
+      get user() {
+        return authState.user;
+      },
+    }),
+  };
+});
+
 async function freshModule() {
   vi.resetModules();
   return import("../release-notes");
@@ -272,5 +287,76 @@ describe("release-notes store (Phase 110)", () => {
     expect(get(mod.hasUnreadReleaseNotes)).toBe(false);
     expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(consoleWarnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("release notes by audience (Issue #576)", () => {
+  const sec = (heading: string, audience?: "all" | "admin") => ({ heading, audience, bullets: [] });
+  const rel = (version: string, sections: ReturnType<typeof sec>[]) => note({ version, sections });
+
+  it("a non-admin keeps only sections for everyone; an unknown audience is hidden from them", async () => {
+    const { releasesForReader } = await freshModule();
+    const notes = [
+      rel("1.20.0", [
+        sec("Neue Funktionen", "all"),
+        sec("Betrieb & Migration", "admin"),
+        sec("Alt"),
+      ]),
+    ];
+    expect(releasesForReader(notes, false)[0].sections.map((s) => s.heading)).toEqual([
+      "Neue Funktionen",
+    ]);
+    expect(releasesForReader(notes, true)[0].sections).toHaveLength(3);
+  });
+
+  it("drops a release that has nothing left for the reader, keeps one without sections", async () => {
+    const { releasesForReader } = await freshModule();
+    const notes = [rel("1.20.0", [sec("Sicherheit", "admin")]), rel("1.19.0", [])];
+    expect(releasesForReader(notes, false).map((n) => n.version)).toEqual(["1.19.0"]);
+  });
+
+  it("judges unread on visible releases, numerically", async () => {
+    const { hasUnreadForReader } = await freshModule();
+    const visible = [rel("1.10.0", [sec("Verbesserungen", "all")])];
+    expect(hasUnreadForReader(visible, null, false)).toBe(true);
+    expect(hasUnreadForReader(visible, "1.9.18", false)).toBe(true);
+    expect(hasUnreadForReader(visible, "1.10.0", false)).toBe(false);
+    expect(hasUnreadForReader(visible, "1.11.0", false)).toBe(false);
+    expect(hasUnreadForReader([], null, false)).toBe(false);
+  });
+
+  it("an admin-only release raises the badge for an admin, not for anyone else", async () => {
+    const { hasUnreadForReader } = await freshModule();
+    const notes = [
+      rel("1.20.0", [sec("Betrieb & Migration", "admin")]),
+      rel("1.19.0", [sec("Neue Funktionen", "all")]),
+    ];
+    expect(hasUnreadForReader(notes, "1.19.0", false)).toBe(false);
+    expect(hasUnreadForReader(notes, "1.19.0", true)).toBe(true);
+    expect(hasUnreadForReader(notes, "1.20.0", false)).toBe(false);
+  });
+
+  it("a reader without a permission list sees no admin section", async () => {
+    const { readerSeesAdminSections } = await freshModule();
+    expect(readerSeesAdminSections({})).toBe(false);
+    expect(readerSeesAdminSections(null)).toBe(false);
+    expect(readerSeesAdminSections({ permissions: ["tenant-settings:update:ZUGEWIESEN"] })).toBe(
+      true,
+    );
+  });
+
+  it("marks one version seen once, and opening the panel marks it", async () => {
+    apiPut.mockResolvedValue(undefined);
+    apiPut.mockClear();
+    const mod = await freshModule();
+    mod.releaseNotesStore.set([note({ version: "1.9.18" })]);
+    mod.markReleaseNotesSeen();
+    mod.markReleaseNotesSeen();
+    expect(apiPut).toHaveBeenCalledTimes(1);
+    mod.lastSeenStore.set(null);
+    apiPut.mockClear();
+    mod.openWhatsNew();
+    expect(get(mod.whatsNewOpen)).toBe(true);
+    expect(apiPut).toHaveBeenCalledWith("/me/release-notes-seen", { version: "1.9.18" });
   });
 });

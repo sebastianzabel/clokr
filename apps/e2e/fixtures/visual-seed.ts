@@ -22,8 +22,8 @@
  *     → returns `{ tenantId, adminToken, baseUrl }` (see test-bootstrap.ts:213-217)
  *   * Login (to get refreshToken + user for localStorage hydration):
  *     POST /api/v1/auth/login → `{ accessToken, refreshToken, user }`
- *   * Release notes seen (Phase 110 follow-up, suppresses the What's-New auto-open drawer
- *     from covering visual baselines): GET /api/v1/release-notes (public) → `{ releases }`,
+ *   * Release notes seen (Phase 110 follow-up; since Issue #576 an unseen release shows an unread
+ *     badge in the sidebar, which must not enter the visual baselines): GET /api/v1/release-notes (public) → `{ releases }`,
  *     then PUT /api/v1/me/release-notes-seen → `{ version }`.
  *   * Employee create: POST /api/v1/employees
  *     Body schema in employees.ts:38-99 is FLAT (no nested workSchedule);
@@ -328,9 +328,8 @@ export async function seedDeterministicTenant(
   // 2b. Acknowledge the newest release note for this fresh admin user (Phase 110 follow-up).
   //     Without this, `hasUnreadReleaseNotes` (apps/web/src/lib/stores/release-notes.ts) is true
   //     for every seeded visual-tenant admin because a brand-new User row has
-  //     `lastSeenReleaseVersion: null`, and `(app)/+layout.svelte`'s auto-open `$effect` opens
-  //     the WhatsNewPanel over the very first page load — covering ~1-2% of pixels on the
-  //     dashboard and calendar baselines. Seeding the "seen" marker via the same PUT the panel's
+  //     `lastSeenReleaseVersion: null`, and the sidebar then shows the unread „Neu“ badge (the
+  //     panel itself opens only on click since Issue #576) — pixels the baselines must not carry. Seeding the "seen" marker via the same PUT the panel's
   //     own dismiss button calls (`markReleaseNotesSeen()`) is deterministic and does not depend
   //     on the drawer's open/close animation timing, unlike waiting for it to render and
   //     dismissing it from the page. `GET /release-notes` is unauthenticated and public

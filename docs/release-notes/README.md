@@ -60,6 +60,14 @@ any HTML — it only removes delimiter characters — so it does not weaken the 
 guarantee above. A genuinely unrecognised construct (`[link](url)`, `> [!CAUTION]`) is still left
 completely untouched, punctuation and all.
 
+## Audience
+
+Each section carries an audience (Issue #576): „Sicherheit“ and „Betrieb & Migration“ are operator
+content (script names, GHSA ids, deploy steps) and are shown in the What's-New panel only to persons
+who may change system settings (`tenant-settings:update`); every other section is shown to everyone.
+The classification lives once in `apps/api/src/utils/release-notes.ts`
+(`RELEASE_NOTE_SECTION_AUDIENCE`), pinned to the headings of `docs/RELEASE_NOTES_TEMPLATE.md`.
+
 ## When to write one
 
 Write the file **before** merging the release-please PR — see `docs/release-process.md` for where

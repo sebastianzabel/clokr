@@ -59,6 +59,22 @@ export function reportPopulationWhere(start: Date, end: Date): Prisma.EmployeeWh
 }
 
 /**
+ * Issue #576 (D-576-07) — the persons of the team week and of today's attendance additionally need
+ * a work contract in the period, so an account without one (a technical account) is no team member
+ * there. A contract row has no end date (the newest row before the period still applies), so "a
+ * WorkSchedule that starts on or before the period end" is the whole rule. `start` is part of the
+ * signature for symmetry with {@link reportPopulationWhere} so a caller cannot pass the start as the
+ * end. Instants as for the #613 rule (`WorkSchedule.validFrom` is a Timestamptz).
+ *
+ * Read ONLY by `GET /dashboard/team-week` and `GET /dashboard/today-attendance`, AND-ed with
+ * {@link reportPopulationWhere}; no report, DATEV, Monatsabschluss or saldo overview reads it
+ * (`contract-population-readers-576.test.ts`).
+ */
+export function hasWorkScheduleInPeriodWhere(start: Date, end: Date): Prisma.EmployeeWhereInput {
+  return { workSchedules: { some: { validFrom: { lte: end } } } };
+}
+
+/**
  * In-memory twin of {@link employedInPeriodWhere} for callers that already hold the rows. Same
  * inclusive bounds, same instants.
  */
