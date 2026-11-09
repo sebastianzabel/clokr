@@ -1,4 +1,5 @@
 <script lang="ts">
+  import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
   import { preventDefault } from "svelte/legacy";
 
   import { goto } from "$app/navigation";
@@ -6,7 +7,6 @@
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
   import { authPathWithNext, safeAppNext } from "$lib/nav/login-next";
-  import LogoMark from "$lib/components/layout/LogoMark.svelte";
 
   // Issue #608 (D-20): the page a notification tap (or a lost session) was heading to.
   const next = safeAppNext($page.url.searchParams.get("next"));
@@ -72,10 +72,7 @@
     <!-- Left brand panel (desktop only) -->
     <div class="login-brand-panel">
       <div class="login-brand-content">
-        <div class="login-brand-wordmark">
-          <LogoMark size={28} />
-          <span>Clokr</span>
-        </div>
+        <span class="login-brand-logo"><BrandLogo size={40} color="currentColor" /></span>
         <h1 class="login-brand-title">Zeiterfassung, die einfach funktioniert.</h1>
         <ul class="login-brand-features">
           <li>
@@ -142,7 +139,7 @@
     <div class="login-form-panel">
       <div class="login-card">
         <div class="login-logo">
-          <img src="/clokr-wordmark.png" alt="Clokr" class="login-logo-img" />
+          <BrandLogo size={36} />
         </div>
         <h2 class="login-heading">Willkommen zurück</h2>
         <p class="login-subtitle">Bitte melde dich an</p>
@@ -382,13 +379,10 @@
     max-width: 400px;
   }
 
-  .login-brand-wordmark {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
+  .login-brand-logo {
+    /* the panel is brand-coloured, so mark and wordmark are drawn in brand-ink */
+    display: inline-flex;
     margin-bottom: 2rem;
-    font-size: 1.5rem;
-    font-weight: 700;
     color: var(--brand-ink);
   }
 
@@ -454,13 +448,6 @@
     align-items: center;
     gap: 0.625rem;
     margin-bottom: 2rem;
-  }
-
-  .login-logo-img {
-    height: 44px;
-    width: auto;
-    max-width: 200px;
-    object-fit: contain;
   }
 
   .login-heading {

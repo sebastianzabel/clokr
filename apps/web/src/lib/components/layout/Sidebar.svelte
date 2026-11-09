@@ -1,4 +1,5 @@
 <script lang="ts">
+  import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
   import { authStore } from "$stores/auth";
   import { salonContext, roleNamesLabel } from "$stores/salon-context";
   import { tenantFeatures } from "$stores/tenant-features";
@@ -13,7 +14,6 @@
   import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
-  import LogoMark from "$lib/components/layout/LogoMark.svelte";
   import { visibleNavSections } from "$lib/nav/app-nav";
   import { activeNavHref } from "$lib/nav/active-route";
   import { removeThisDevicePush } from "$lib/push/logout";
@@ -88,14 +88,8 @@
 </script>
 
 <aside class="sidebar" aria-label="Hauptnavigation" data-testid="sidebar">
-  <a
-    href="/dashboard"
-    class="sidebar-brand"
-    data-testid="sidebar-brand"
-    aria-label="Clokr Zeiterfassung"
-  >
-    <LogoMark size={22} />
-    <span class="wordmark">Clokr</span>
+  <a href="/dashboard" class="sidebar-brand" data-testid="sidebar-brand">
+    <BrandLogo size={32} label="Clokr Zeiterfassung" />
   </a>
 
   <div class="sidebar-scroll">
@@ -186,21 +180,19 @@
   .sidebar-brand,
   .sidebar-brand:hover,
   .sidebar-brand:focus {
-    padding: 44px 20px 22px;
-    margin-bottom: 14px;
+    /* Issue #852: the brand row is exactly as tall as the Topbar (60px), so mark and wordmark sit
+       centred on the same line as the Topbar content. */
+    box-sizing: border-box;
+    height: 60px;
+    min-height: 60px;
+    padding: 0 20px;
+    margin-bottom: 22px;
     display: flex;
-    flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: var(--s-2);
     text-decoration: none;
     border: 0;
-    color: var(--brand);
-  }
-
-  .sidebar-brand .wordmark {
-    font-weight: 700;
-    font-size: 20px;
+    /* the mark takes the brand colour inside BrandLogo; the wordmark is text-coloured (#852) */
     color: var(--text);
   }
 

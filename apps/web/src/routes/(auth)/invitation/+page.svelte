@@ -1,4 +1,5 @@
 <script lang="ts">
+  import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { api } from "$api/client";
@@ -69,7 +70,7 @@
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
-      <img src="/clokr-logo.png" alt="Clokr" class="login-logo-img" />
+      <BrandLogo size={36} />
     </div>
 
     {#if pageState === "invalid"}
@@ -187,11 +188,6 @@
   .login-logo {
     text-align: center;
     margin-bottom: 1.5rem;
-  }
-  .login-logo-img {
-    max-width: 160px;
-    height: auto;
-    margin-bottom: 0.75rem;
   }
   .login-subtitle {
     font-size: 0.9375rem;
