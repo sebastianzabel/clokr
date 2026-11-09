@@ -141,7 +141,7 @@
           <img src="/clokr-wordmark.png" alt="Clokr" class="login-logo-img" />
         </div>
         <h2 class="login-heading">Willkommen zurück</h2>
-        <p class="login-subtitle">Bitte melden Sie sich an</p>
+        <p class="login-subtitle">Bitte melde dich an</p>
 
         <form onsubmit={preventDefault(handleLogin)} class="login-form">
           {#if error}

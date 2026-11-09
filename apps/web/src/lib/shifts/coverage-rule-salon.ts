@@ -14,7 +14,7 @@ export interface CoverageRuleSalonFields {
   salonActive: boolean | null;
 }
 
-export const COVERAGE_RULE_ALL_SALONS_OPTION = "Alle Salons (mandantenweit)";
+export const COVERAGE_RULE_ALL_SALONS_OPTION = "Alle Salons (ganzes Unternehmen)";
 export const COVERAGE_RULE_ALL_SALONS_CELL = "Alle Salons";
 export const COVERAGE_RULE_SALON_INACTIVE_BADGE = "Salon deaktiviert";
 

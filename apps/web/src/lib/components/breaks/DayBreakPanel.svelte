@@ -168,8 +168,8 @@
       : action?.kind === "revoke"
         ? "Der Pausenverstoß dieses Tages gilt danach wieder als offen."
         : placementFinding
-          ? "Die Quittung ändert keinen Eintrag und ersetzt keine Pause. Sie hält fest, dass der Befund geprüft und begründet wurde; der Verstoß bleibt dokumentiert."
-          : "Die Quittung ersetzt keine Pause. Sie hält fest, dass der Tag ohne ausreichende Pause geleistet wurde.",
+          ? "Die Quittung ändert keinen Eintrag und ersetzt keine Pause. Die Quittung hält fest, dass der Befund geprüft und begründet wurde; der Verstoß bleibt dokumentiert."
+          : "Die Quittung ersetzt keine Pause, hält aber fest, dass der Tag ohne ausreichende Pause geleistet wurde.",
   );
   const dialogConfirmLabel = $derived(
     action?.kind === "delete" ? "Löschen" : action?.kind === "revoke" ? "Widerrufen" : "Quittieren",

@@ -194,7 +194,7 @@
   {:else}
     {#if salonNamesUnavailable}
       <p class="hint" data-testid="salon-names-hint">
-        Die Salonnamen sind für Sie nicht einsehbar; die Zuordnungen werden ohne Namen angezeigt.
+        Die Salonnamen kannst du nicht einsehen; die Zuordnungen erscheinen ohne Namen.
       </p>
     {/if}
     {#if rows.length === 0}

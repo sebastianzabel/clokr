@@ -149,8 +149,10 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     expect(PAGE).toContain(`let ${name} = $derived(`);
   });
 
-  it("all eight footer Sections receive a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(8);
+  // Issue #580 removed the footer of the Berechtigungen tab: role assignments save in their own
+  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1), so seven footer Sections remain.
+  it("all seven footer Sections receive a dirty prop", () => {
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(7);
   });
 
   it("registers under its own id and de-registers on unmount", () => {

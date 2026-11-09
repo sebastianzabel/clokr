@@ -98,7 +98,7 @@ describe("/admin/roles page (Issue #83)", () => {
     asUser(["time-entry:read:EIGENE"]);
     renderWithTheme(RolesPage, {});
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Für diese Seite fehlen Ihnen die Berechtigungen.",
+      "Für diese Seite fehlen dir die Berechtigungen.",
     );
     expect(apiGet).not.toHaveBeenCalled();
   });

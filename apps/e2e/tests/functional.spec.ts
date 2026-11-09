@@ -56,7 +56,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await expect(stempelBtn.first()).toBeVisible({ timeout: 10_000 });
 
       // Greeting at the top of the page proves the auth-store hydrated and
-      // the user data resolved (Guten Morgen/Tag/Abend, ...).
+      // the user data resolved (the PageHead sub line "Guten Morgen/Tag/Abend, ...", Issue #574).
       await expect(page.getByText(/Guten (Morgen|Tag|Abend)/)).toBeVisible();
     });
 
@@ -92,7 +92,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await expect(card.getByText("Salden", { exact: true })).toBeInViewport();
       const firstFigure = card
         .getByTestId("team-saldo-median")
-        .or(card.getByText("Keine Salden in Ihrer Reichweite"));
+        .or(card.getByText("Keine Salden in deiner Reichweite"));
       // The figure arrives with the overview request, which starts after the team block loaded; the
       // wait is for that load under a busy full run (a single run needs about 3 s), the assertion
       // itself - the figure lies inside the viewport - is unchanged.

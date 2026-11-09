@@ -15,7 +15,7 @@ describe("vacationBaseDefaultFor (Issue #482)", () => {
   });
 
   it.each(["VOLLZEIT", "TEILZEIT", "MINIJOB"] as const)(
-    "%s -> the Mandanten-Standard",
+    "%s -> the Unternehmensstandard",
     (classification) => {
       expect(vacationBaseDefaultFor(classification, 30, 22.5)).toBe(30);
     },
@@ -58,7 +58,7 @@ describe("vacationBaseDefaultPlaceholder (Issue #482, AC-6)", () => {
     expect(vacationBaseDefaultPlaceholder("AZUBI", 30, 22.5)).toBe("Azubi-Standard (22,5)");
   });
 
-  it("VOLLZEIT, 30, 22.5 -> 'Mandanten-Standard (30)'", () => {
-    expect(vacationBaseDefaultPlaceholder("VOLLZEIT", 30, 22.5)).toBe("Mandanten-Standard (30)");
+  it("VOLLZEIT, 30, 22.5 -> 'Unternehmensstandard (30)'", () => {
+    expect(vacationBaseDefaultPlaceholder("VOLLZEIT", 30, 22.5)).toBe("Unternehmensstandard (30)");
   });
 });

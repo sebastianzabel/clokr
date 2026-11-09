@@ -11,6 +11,7 @@
   (review WR-06).
 -->
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { get } from "svelte/store";
   import { page } from "$app/stores";
   import { replaceState } from "$app/navigation";
@@ -30,12 +31,12 @@
   }
 </script>
 
-<svelte:head><title>Handy koppeln – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/settings/geraet-koppeln")} – Clokr</title></svelte:head>
 
 <div class="pairing-page">
   <PageHead
     eyebrow="Mein Bereich"
-    title="Handy koppeln"
+    title={pageLabel("/settings/geraet-koppeln")}
     accent="koppeln"
     sub="Dein Handy im Salon-WLAN erkennen lassen"
   />

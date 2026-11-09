@@ -71,7 +71,7 @@
 
   function messageOf(err: unknown): string {
     if (err instanceof ApiError) return err.message;
-    return "Die Anfrage ist fehlgeschlagen. Bitte versuchen Sie es erneut.";
+    return "Die Anfrage ist fehlgeschlagen. Bitte versuch es noch einmal.";
   }
 
   async function reloadRoles() {
@@ -247,7 +247,7 @@
 {#if loadError}
   <div class="callout error" role="alert">{loadError}</div>
 {:else}
-  <Section title="ROLLEN" sub="Systemrollen und die eigenen Rollen des Mandanten">
+  <Section title="ROLLEN" sub="Systemrollen und die eigenen Rollen des Unternehmens">
     {#snippet actions()}
       {#if createHint}
         {@render createHint()}
@@ -300,7 +300,7 @@
                   ? "Eine Kopie ist eine neue Rolle und braucht das Ketten-Paket."
                   : canManage
                     ? undefined
-                    : "Dafür fehlt Ihnen das Recht, Rollen zu verwalten."}
+                    : "Dafür fehlt dir das Recht, Rollen zu verwalten."}
                 onclick={() => copy(role)}
               >
                 Kopieren
@@ -313,7 +313,7 @@
                   ? "Systemrollen können nicht gelöscht werden."
                   : canManage
                     ? undefined
-                    : "Dafür fehlt Ihnen das Recht, Rollen zu verwalten."}
+                    : "Dafür fehlt dir das Recht, Rollen zu verwalten."}
                 onclick={() => askDelete(role)}
               >
                 Löschen

@@ -72,10 +72,10 @@ test.describe("Error Handling + UX Plausibility", () => {
   test("dashboard provides clear information hierarchy", async ({ page }, testInfo) => {
     await page.goto("/dashboard");
 
-    // 1. The page greets the user (PageHead h1 "Guten Morgen/Tag/Abend, <name>").
-    await expect(page.getByTestId("dashboard-page").getByRole("heading", { level: 1 })).toHaveText(
-      /Guten (Morgen|Tag|Abend)/,
-    );
+    // 1. The H1 is the page name (Issue #574: H1 = menu name); the greeting is the PageHead sub.
+    const dashboardHead = page.getByTestId("dashboard-page").locator(".page-head");
+    await expect(dashboardHead.getByRole("heading", { level: 1 })).toHaveText("Übersicht");
+    await expect(dashboardHead.locator(".sub")).toHaveText(/Guten (Morgen|Tag|Abend)/);
 
     // 2. The hero clock is prominent.
     const clock = page.locator(".timer-card-wrap .timer-display");
@@ -230,7 +230,7 @@ test.describe("Error Handling + UX Plausibility", () => {
       { route: "/availability", heading: "Mein Bereich", name: "Verfügbarkeit" },
       { route: "/admin/availability", heading: "PLANUNG", name: "Verfügbarkeit" },
       { route: "/admin/phorest", heading: "SYSTEM", name: "Phorest" },
-      { route: "/admin/audit", heading: "COMPLIANCE", name: "Audit & Log" },
+      { route: "/admin/audit", heading: "COMPLIANCE", name: "Protokoll" },
     ];
     for (const { route, heading, name } of targets) {
       await page.goto(route);

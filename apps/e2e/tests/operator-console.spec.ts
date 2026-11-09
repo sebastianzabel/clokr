@@ -3088,7 +3088,7 @@ test.describe("operator console - support access (#93)", () => {
     await expect(page.getByTestId("op-support-banner-reason")).toContainText(SUPPORT_REASON);
     await expect(page.getByTestId("op-support-banner-remaining")).toContainText("Noch");
     await expect(page.getByTestId(`op-support-employee-row-${SUPPORT_EMPLOYEE_ID}`)).toContainText(
-      "Feste Arbeitszeiten",
+      "Feste Arbeitszeit",
     );
 
     // Month view: the banner stays, the month navigation changes `monat` in the URL.

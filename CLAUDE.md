@@ -105,6 +105,8 @@ Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `doc
 - UI labels and user-facing text: **German**
 - Code, comments, commit messages, docs: **English**
 - API descriptions (Swagger): English
+- User-facing texts address the reader with **du**; the binding vocabulary is `docs/glossar.md`, checked by
+  `pnpm --filter @clokr/web lint:ui-terms` (Issue #574)
 
 ## Context Boundaries (ADR 0001, ADR 0002)
 
@@ -829,6 +831,15 @@ FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()
   through it at all. The audit that established the normalisation was Phase 61; its artefacts were
   archived with the milestone and are not in the repo.
 
+- **FIXED_SCHEDULE: `weeklyHours` = Σ `{day}Hours` on every write (Issue #848).**
+  `contexts/platform/fixed-schedule-hours.ts` is the ONE place: `POST /employees` (which takes no
+  day hours) derives them from `weeklyHours` over the resolved `workDays` (hundredths, remainder on
+  the last workday of the week; no `weeklyHours` = 8 h per workday, the old default), and so does
+  the CSV import (over the column-default Mo–Fr);
+  `PUT /settings/work/:employeeId` (an omitted `weeklyHours` takes the day sum) and the bulk apply
+  (preview and apply) refuse a mismatch with 400 `WEEKLY_HOURS_MISMATCH` before any write. A
+  write-path guard only — no reader changes, other types are never compared, and divergent rows
+  are listed by `scripts/audit-848-weekly-vs-day-hours.ts` (read-only, ids only), never corrected.
 - **Divergent legacy rows MUST NOT be "corrected" (Phase 95b, D-01).** Surface them with
   `pnpm --filter @clokr/api exec tsx scripts/audit-workdays-vs-day-hours.ts` — then leave them
   alone. `workDays` is the source of truth for leave consumption (`calculateWorkDays`) and pro-rata
@@ -935,6 +946,8 @@ Read these before modifying any page in `apps/web` — they are checked in, unli
 | `apps/web/scripts/lint-ui-classes.mjs`  | Which class names are allowed in the scoped primitive directories, and where that scope ends                                                      |
 | `docs/ADMIN_STRUCTURE.md §3.2.1`        | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02)                                                    |
 | `apps/web/src/lib/utils/chart-theme.ts` | The one chart style source — colours from tokens, tension 0, unit axis titles, zero line, chart kinds and their aria-labels (Issue #591)          |
+| `docs/glossar.md` | The binding vocabulary and the address form „du“ for every web-app text (Issue #574) |
+| `apps/web/src/lib/nav/page-labels.ts` | The one source of every page name — Sidebar, Mehr sheet, crumb, Schnellsuche and H1 (Issue #574) |
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
 
@@ -943,7 +956,8 @@ re-enabled and nothing is rethrown, so a refusal is no unhandled rejection and n
 `process.on("unhandledRejection")` allow-list in a test. `ReasonDialog` still throws to its
 `ConfirmDialog` to keep its inline error.
 
-Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern`. Note
+Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern` +
+`lint:ui-terms` (forbidden terms in shown text, `docs/glossar.md`, Issue #574). Note
 that `lint:ui-classes` only scans `lib/components/ui/` and `lib/components/layout/` — components
 elsewhere (`lib/components/saldo/`, `calendar/`, `breaks/`, …) are outside that gate and need their
 own mounted test instead.
@@ -1161,6 +1175,14 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 ## Error Handling
 
 - Global error handler in `apps/api/src/app.ts` catches ZodErrors and converts them to `{ error: string, message: string, details: [] }` with HTTP 400
+- **Validation and duplicate answers are German, centrally (Issue #573).** Zod's DEFAULT texts come only from
+  `apps/api/src/utils/zod-german.ts` (`z.config({ customError })`, registered in `buildApp`; a schema's own message keeps
+  precedence). A 400 carries `details[]` = `{ path, field, code, message }` and a `message` summary that names fields by
+  German label (`FIELD_LABELS`) and NEVER by key; the keys go to `details[].path` and the info log. An unhandled Prisma
+  `P2002` answers 409 `{ error, code: "DUPLICATE" }` with the text of `DUPLICATE_MESSAGES`
+  (`apps/api/src/utils/duplicate-conflict.ts`, keyed by the unique index, never echoing a value), a `P2034` 409
+  `WRITE_CONFLICT`. A new unique index needs its entry (`duplicate-conflict-573.test.ts` fails otherwise); a response
+  with an English Zod default fails `api-error-messages-573.test.ts`. Never add a per-route Zod text mapping.
 - All other errors return `{ error: string }` with appropriate status code
 - German error messages for user-facing responses: `"Validierungsfehler"`, `"Interner Serverfehler"`
 - Return early with `reply.code(XXX).send({ error: "German message" })` — no `throw`
@@ -1815,7 +1837,7 @@ to new leave audit rows. Since Release B (#641) the column `User.role` and the P
 longer exist (migration `*_drop_user_role`; the rollback to an image below v1.18.0 is data-preserving and rehearsed —
 recreate type and column with the default, delete the `_prisma_migrations` row, see
 `docs/migrations.md` „Phase 641“, step 5; a `pg_dump` restore is only the fallback): the role lives only in stored role assignments. The requested role
-of the employee form, `POST /employees` and the CSV import (the API contract stays
+of `POST /employees` and the CSV import (the web form sends no role since #580; the API contract stays
 `"ADMIN" | "MANAGER" | "EMPLOYEE"`) is the type `SystemRoleName` of
 `apps/api/src/contexts/platform/system-role-assignment.ts` and only ever becomes a stored TENANT
 assignment; the employee responses serve the DERIVED `user.role` (`deriveFormRole()`, `null` without an
@@ -1857,6 +1879,16 @@ a hit is converted, never excepted.
 
 ### Role management UI and the admin area (Issue #83)
 
+- **Roles are assigned in one way (Issue #580).** The building block
+  `lib/components/admin/roles/PersonRoleAssignments.svelte` (role + scope, several assignments) is used by
+  `/admin/roles` „Zuweisungen“, the employee tab „Berechtigungen“ and the create dialog (draft mode). The
+  wording lives only in `apps/web/src/lib/roles/assignment-label.ts` (guard
+  `role-assignment-wording-one-place-580.test.ts`); role names come only from the stored roles (the
+  administrator role reads „Admin“ everywhere). The create dialog sends no `role` (API default „Mitarbeiter“
+  for the whole company; the API field stays for the CSV import and API clients); its drafts go through
+  `POST /role-assignments` after the 201 (`lib/roles/assignment-drafts.ts`), a refusal keeps the person and
+  opens `/admin/employees/<id>#berechtigungen`. Without `role-assignment:manage` nothing is requested (no read
+  path exists without it). Escape closes only the top-most Modal.
 - **Permission labels live once, on the server.** `contexts/platform/permission-labels.ts` holds the
   German heading per resource (the `docs/permissions.md` headings) and the German label per catalog
   key; `GET /api/v1/roles/permission-catalog` (`role:read`) serves them. `permission-labels.test.ts`
