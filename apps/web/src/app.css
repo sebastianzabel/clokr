@@ -418,7 +418,7 @@ button {
 
 /* iOS Safari zooms inputs that resolve to < 16px font-size on focus.
    Anchor the size on mobile so this never regresses if root font-size
-   shifts (e.g. via density tokens). */
+   shifts (e.g. via a type-scale change). */
 @media (max-width: 640px) {
   .form-input,
   textarea {
@@ -1765,7 +1765,7 @@ textarea.form-input {
    centre loses its 200 px floor, "Heute" gets its own centred row (never hidden or
    abbreviated); the .vac-stats row keeps wrapping below as before. The nav row spans the
    bar so the grid has the full width. Without nowrap the title wraps onto two lines at
-   360 px in the modern skin (measured 52 px tall); the primitive's label is always nowrap. */
+   360 px (measured 52 px tall in the former modern skin); the primitive's label is always nowrap. */
 @media (max-width: 640px) {
   .cal-monthbar-nav {
     display: grid;
@@ -1797,9 +1797,9 @@ textarea.form-input {
     font-size: 20px;
   }
 }
-/* 320 px (Issue #564): at 20px the modern skin's title plus its picker chevron is 172 px wide
+/* 320 px (Issue #564): at 20px the title plus its picker chevron (measured in the former modern skin) is 172 px wide
    but only ~146 px lie between the arrows (bar padding 24 px), so it overlapped them by up to
-   13 px. Less side padding and an 18px title leave ~12 px clearance in both skins. Same values
+   13 px. Less side padding and an 18px title leave ~12 px clearance. Same values
    as the MonthBar primitive's 360 px block. */
 @media (max-width: 360px) {
   /* Compound selector (0,2,0): the v1.5 `.card { padding: var(--s-6) }` further down would
