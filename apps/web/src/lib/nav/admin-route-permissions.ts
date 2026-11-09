@@ -9,6 +9,7 @@
  */
 import { hasPermission, type PermissionHolder } from "$lib/permissions";
 import { activeNavHref, matchesRoute } from "$lib/nav/active-route";
+import { pageLabel, type PageHref } from "$lib/nav/page-labels";
 
 export type PermissionAlternatives = readonly (readonly string[])[];
 
@@ -23,15 +24,15 @@ export interface AdminRoutePermission {
 
 const Z = (resourceAction: string) => `${resourceAction}:ZUGEWIESEN`;
 
-/** One navigable route: group, label, icon and the alternatives (each an all-of key set). */
+/** One navigable route: group, icon and the alternatives (each an all-of key set). The label is
+ *  the page's name from page-labels.ts (Issue #574), never spelled here. */
 function navRoute(
-  href: string,
+  href: PageHref,
   group: string,
-  label: string,
   icon: string,
   ...requires: string[][]
 ): AdminRoutePermission {
-  return { href, requires, inNav: true, nav: { group, label, icon } };
+  return { href, requires, inNav: true, nav: { group, label: pageLabel(href), icon } };
 }
 
 /** An alias route that only redirects; never shown in a navigation. */
@@ -42,31 +43,27 @@ function aliasRoute(href: string, ...requires: string[][]): AdminRoutePermission
 // Each line names the API guard(s) its page calls.
 export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   // GET /employees
-  navRoute("/admin/employees", "PERSONAL", "Mitarbeitende", "users", [Z("employee:read")]),
+  navRoute("/admin/employees", "PERSONAL", "users", [Z("employee:read")]),
   // no read guard; the page's writes decide (PUT /settings/work, /settings/leave-types)
   navRoute(
     "/admin/vacation",
     "PERSONAL",
-    "Urlaubsverwaltung",
     "umbrella",
     [Z("tenant-settings:update")],
     [Z("leave-config:manage")],
   ),
   // writes /company-shutdowns
-  navRoute("/admin/shutdowns", "PERSONAL", "Betriebsurlaub", "calendar", [
-    Z("company-shutdown:manage"),
-  ]),
+  navRoute("/admin/shutdowns", "PERSONAL", "calendar", [Z("company-shutdown:manage")]),
   // GET /leave/limits (handler checks: leave-limit:manage or leave-request:approve)
   navRoute(
     "/admin/leave-limits",
     "PERSONAL",
-    "Urlaubsgrenzen & Sperren",
     "umbrella",
     [Z("leave-limit:manage")],
     [Z("leave-request:approve")],
   ),
   // Promise.all of templates/coverage, week, patterns
-  navRoute("/admin/shifts", "PLANUNG", "Schichtplan", "grid", [
+  navRoute("/admin/shifts", "PLANUNG", "grid", [
     Z("shift-config:manage"),
     Z("shift:read"),
     Z("shift-pattern:read"),
@@ -75,37 +72,26 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   navRoute(
     "/admin/availability",
     "PLANUNG",
-    "Verfügbarkeit",
     "calendar-check",
     [Z("employee:read"), Z("availability:read")],
     [Z("employee:read"), Z("availability:update")],
   ),
   // GET /salons (writes: salon:manage, decided by the API, hidden via salonAdminRights)
-  navRoute("/admin/salons", "PLANUNG", "Salons", "store", [Z("salon:read")]),
+  navRoute("/admin/salons", "PLANUNG", "store", [Z("salon:read")]),
   // GET /overtime/close-month/status
-  navRoute("/admin/month-close", "COMPLIANCE", "Monatsabschluss", "lock", [Z("month-close:read")]),
+  navRoute("/admin/month-close", "COMPLIANCE", "lock", [Z("month-close:read")]),
   // GET /audit-logs
-  navRoute("/admin/audit", "COMPLIANCE", "Audit & Log", "shield", [Z("audit-log:read")]),
+  navRoute("/admin/audit", "COMPLIANCE", "shield", [Z("audit-log:read")]),
   // GET /support-accesses (the end action's extra permission is checked in the page; the API decides)
-  navRoute("/admin/support-access", "COMPLIANCE", "Support-Zugriffe", "shield", [
-    Z("audit-log:read"),
-  ]),
+  navRoute("/admin/support-access", "COMPLIANCE", "shield", [Z("audit-log:read")]),
   // POST /imports/employees, POST /imports/time-entries
-  navRoute(
-    "/admin/import",
-    "DATEN",
-    "CSV Import",
-    "upload",
-    [Z("employee:import")],
-    [Z("time-entry:import")],
-  ),
+  navRoute("/admin/import", "DATEN", "upload", [Z("employee:import")], [Z("time-entry:import")]),
   // GET /reports/datev
-  navRoute("/admin/export", "DATEN", "DATEV Export", "download", [Z("report:export")]),
+  navRoute("/admin/export", "DATEN", "download", [Z("report:export")]),
   // tabs: settings, terminals, API keys
   navRoute(
     "/admin/system",
     "SYSTEM",
-    "Allgemein",
     "settings",
     [Z("tenant-settings:read")],
     [Z("tenant-settings:update")],
@@ -116,24 +102,16 @@ export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
   navRoute(
     "/admin/themes",
     "SYSTEM",
-    "Branding & Themes",
     "palette",
     [Z("tenant-settings:read")],
     [Z("tenant-settings:update")],
   ),
   // /presence-sources
-  navRoute("/admin/integrations", "SYSTEM", "Integrationen", "wifi", [Z("presence-source:manage")]),
+  navRoute("/admin/integrations", "SYSTEM", "wifi", [Z("presence-source:manage")]),
   // /integrations/phorest
-  navRoute("/admin/phorest", "SYSTEM", "Phorest", "calendar", [Z("integration:manage")]),
+  navRoute("/admin/phorest", "SYSTEM", "calendar", [Z("integration:manage")]),
   // GET /roles, GET /role-assignments
-  navRoute(
-    "/admin/roles",
-    "SYSTEM",
-    "Rollen & Rechte",
-    "key",
-    [Z("role:read")],
-    [Z("role-assignment:manage")],
-  ),
+  navRoute("/admin/roles", "SYSTEM", "key", [Z("role:read")], [Z("role-assignment:manage")]),
   // aliases that redirect to a route above
   aliasRoute("/admin/special-leave", [Z("tenant-settings:update")], [Z("leave-config:manage")]),
   aliasRoute("/admin/wifi-presence", [Z("presence-source:manage")]),

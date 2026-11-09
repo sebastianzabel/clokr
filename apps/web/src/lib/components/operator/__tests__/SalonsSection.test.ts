@@ -404,7 +404,7 @@ describe("SalonsSection", () => {
       expect(quota).not.toHaveTextContent("Ihr Anbieter");
 
       onActivate.mockRejectedValueOnce(
-        refusal("MODULE_NOT_BOOKED", "Ihr Anbieter schaltet es frei."),
+        refusal("MODULE_NOT_BOOKED", "Dein Anbieter schaltet es frei."),
       );
       await fireEvent.click(el("op-salon-activate-s3"));
       await settle();

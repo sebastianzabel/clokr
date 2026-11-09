@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   // Phase 46 — MA-Self-Service availability page.
   // EMPLOYEE-only view: edit own recurring + one-off availability via
   // GET/PUT /api/v1/me/availability. Save sends the merged entries array
@@ -138,8 +139,7 @@
 
 <PageHead
   eyebrow="Mein Bereich"
-  title="Meine Verfügbarkeit"
-  accent="Verfügbarkeit"
+  title={pageLabel("/availability")}
   sub="Trage ein, wann du arbeiten kannst, nicht kannst oder bevorzugst zu arbeiten."
 >
   {#snippet actions()}

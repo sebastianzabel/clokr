@@ -46,7 +46,7 @@
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Ungültiger Code";
       if (msg.includes("abgelaufen")) {
-        error = "Der Code ist abgelaufen. Bitte melden Sie sich erneut an.";
+        error = "Der Code ist abgelaufen. Bitte melde dich noch einmal an.";
         setTimeout(() => goto(authPathWithNext("/login", next)), 3000);
       } else {
         error = msg;
@@ -94,7 +94,7 @@
         style="max-width: 64px;"
       />
       <h1 class="login-title">Zwei-Faktor-Authentifizierung</h1>
-      <p class="login-subtitle">Wir haben einen Code an Ihre E-Mail-Adresse gesendet.</p>
+      <p class="login-subtitle">Wir haben dir einen Code an deine E-Mail-Adresse geschickt.</p>
     </div>
 
     <form onsubmit={preventDefault(handleVerify)} class="login-form">

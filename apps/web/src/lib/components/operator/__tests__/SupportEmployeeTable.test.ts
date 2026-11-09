@@ -70,11 +70,11 @@ describe("SupportEmployeeTable", () => {
     expect(first).toHaveTextContent("1001");
     expect(first).toHaveTextContent("Nachname, Vorname");
     expect(first).toHaveTextContent("Hauptsalon");
-    expect(first).toHaveTextContent("Feste Arbeitszeiten");
+    expect(first).toHaveTextContent("Feste Arbeitszeit");
     expect(first).toHaveTextContent("01.03.2024");
 
     const exited = el("op-support-employee-row-emp-2");
-    expect(exited).toHaveTextContent("Schichtbasiert");
+    expect(exited).toHaveTextContent("Nach Schichtplan");
     expect(exited).toHaveTextContent("30.06.2026");
   });
 

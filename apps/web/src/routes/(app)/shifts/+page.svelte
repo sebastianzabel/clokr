@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
@@ -1152,11 +1153,13 @@
   function coverageTooltip(c: CoverageEntry | undefined): string {
     if (!c) return "";
     const parts: string[] = [];
-    parts.push(`Σ Schicht-Gewicht: ${c.effectiveStaff.toFixed(2)} von ${c.minStaff.toFixed(2)}`);
+    parts.push(
+      `Summe der Schicht-Gewichte: ${c.effectiveStaff.toFixed(2)} von ${c.minStaff.toFixed(2)}`,
+    );
     if (c.unsupervisedAzubis > 0 && !c.hasSupervisor) {
-      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige(r) MA ohne Aufsicht`);
+      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige Person(en) ohne Aufsicht`);
     } else if (c.unsupervisedAzubis > 0) {
-      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige(r) MA, Aufsicht vorhanden`);
+      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige Person(en), Aufsicht vorhanden`);
     }
     if (c.coverageStatus === "under") parts.push("⚠ Unterbesetzt");
     if (c.coverageStatus === "supervision-missing") parts.push("⚠ Aufsicht fehlt");
@@ -1420,7 +1423,7 @@
 </script>
 
 <svelte:head>
-  <title>Schichtplanung – Clokr</title>
+  <title>{pageLabel("/shifts")} – Clokr</title>
 </svelte:head>
 
 <!-- Phase 75-02 (D-01): data-testid surface for the Schichtplanung visual baseline.
@@ -1428,9 +1431,9 @@
 <div class="page" data-testid="shifts-page">
   <PageHead
     eyebrow="Team"
-    title="Schichtplanung"
+    title={pageLabel("/shifts")}
     accent="Schicht"
-    sub="Wöchentliche Schichten zuweisen — mit Verfügbarkeit und Coverage-Heatmap. Vorlagen und Bedarfsregeln pflegt die Administration."
+    sub="Wöchentliche Schichten zuweisen — mit Verfügbarkeit und Besetzungs-Übersicht. Vorlagen und Bedarfsregeln pflegt die Administration."
   >
     {#snippet actions()}
       <!-- Phase 430 (D-11/D-14, Issue #430): sibling links to the conflict overview and the
@@ -1559,8 +1562,8 @@
         <div class="callout info card-animate sp-empty-shift-roster" role="status">
           <strong>Keine Mitarbeiter im Schichtsystem.</strong>
           <p class="sp-empty-sub">
-            Um hier Schichten zu planen, weise mindestens einem Mitarbeiter den Schichtplan-Modus
-            (SHIFT_BASED) zu. Wechsle das Arbeitszeitmodell in
+            Um hier Schichten zu planen, stell bei mindestens einer Person das Arbeitszeitmodell
+            „Nach Schichtplan“ ein — in
             <a href="/admin/vacation">Administration → Personal &amp; Urlaub</a>.
           </p>
         </div>
@@ -1739,21 +1742,21 @@
               {@const reductionH = sr.leaveH + sr.absenceH}
               <div
                 class="sp-soll-label"
-                aria-label="Soll-Korrelation für {u.firstName} {u.lastName}"
+                aria-label="Geplant gegen Soll für {u.firstName} {u.lastName}"
               >
                 <div
                   class="sp-soll-sublabel"
                   title="Soll = Ø-Methode − Urlaub/Abwesenheit/Feiertag + Berufsschule (Berufsschule zählt als erfüllte Arbeitszeit)"
                 >
-                  ↳ Soll-Korrelation
+                  ↳ Geplant gegen Soll
                 </div>
               </div>
               <div
                 class="sp-soll-cell sp-soll-cell--{sr.klass}"
                 class:sp-soll-cell--under-coverage={sr.underCoverage}
-                title="{u.firstName} {u.lastName}: Σ {formatHours(sr.assignedH)}h ({formatHours(
-                  sr.shiftH,
-                )}h Schicht{sr.bsH > 0
+                title="{u.firstName} {u.lastName}: geplant {formatHours(
+                  sr.assignedH,
+                )}h ({formatHours(sr.shiftH)}h Schicht{sr.bsH > 0
                   ? ` + ${formatHours(sr.bsH)}h Berufsschule`
                   : ''}), Soll {formatHours(sr.contractSollH)}h{reductionH > 0
                   ? ` (${formatHours(sr.weeklyH)}h − ${formatHours(
@@ -1761,7 +1764,7 @@
                     )}h Urlaub/Abwesenheit)`
                   : ''}, Abweichung {sr.diff >= 0 ? '+' : ''}{formatHours(sr.diff)}h"
               >
-                <span class="sp-soll-num">Σ {formatHours(sr.assignedH)}h</span>
+                <span class="sp-soll-num">Geplant {formatHours(sr.assignedH)}h</span>
                 {#if reductionH > 0}
                   <span class="sp-soll-soll">
                     / Soll {formatHours(sr.contractSollH)}h
@@ -1790,7 +1793,7 @@
           {/each}
 
           <!-- Coverage heatmap row -->
-          <div class="sp-coverage-label">Coverage</div>
+          <div class="sp-coverage-label">Besetzung</div>
           {#each week.weekDays as d (d)}
             {@const iso = d.slice(0, 10)}
             {@const c = coverageByDate.get(iso)}
@@ -1820,8 +1823,8 @@
         </div>
 
         <p class="sp-legend">
-          Coverage = Σ Schicht-Gewicht der verfügbaren zugewiesenen MA. Default Min = 2.0 (oder
-          Bedarfsregel aus Schicht-Konfiguration).
+          Besetzung = Summe der Schicht-Gewichte der verfügbaren eingeplanten Mitarbeitenden.
+          Standard-Minimum 2,0 (oder die Bedarfsregel aus den Schichteinstellungen).
         </p>
       {/if}
     </div>
@@ -1953,7 +1956,7 @@
     {#if pageSalonId !== null}
       <!-- Issue #558 D-10 — the bulk action keeps acting on the caller's whole reach. -->
       <p class="form-hint sp-bulk-scope" role="note">
-        Diese Aktion gilt für alle Salons Ihrer Reichweite, nicht nur für den gewählten Salon.
+        Diese Aktion gilt für alle Salons deiner Reichweite, nicht nur für den gewählten Salon.
       </p>
     {/if}
     {#if generating && !generateDiff}
@@ -2021,7 +2024,7 @@
     {#if pageSalonId !== null}
       <!-- Issue #558 D-10 — the bulk action keeps acting on the caller's whole reach. -->
       <p class="form-hint sp-bulk-scope" role="note">
-        Diese Aktion gilt für alle Salons Ihrer Reichweite, nicht nur für den gewählten Salon.
+        Diese Aktion gilt für alle Salons deiner Reichweite, nicht nur für den gewählten Salon.
       </p>
     {/if}
 

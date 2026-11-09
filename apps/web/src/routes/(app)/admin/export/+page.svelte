@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
@@ -7,7 +8,9 @@
   import ToolPage from "$lib/components/admin/ToolPage.svelte";
   import Section from "$lib/components/admin/Section.svelte";
 
-  type ExportFormat = "datev" | "pdf" | "ical";
+  // Issue #593: only formats that work are offered here. The PDF documents live under
+  // „Berichte“, the iCal feed under „Abwesenheiten“; the former „Bald“ tiles are gone.
+  type ExportFormat = "datev";
 
   // ── Tabs (Phase 58: separate "run an export" from "configure Lohnarten") ───
   const TABS = [
@@ -169,10 +172,6 @@
   const exportStep = $derived(lastExportLabel ? 3 : format ? 2 : period ? 1 : 0);
 
   async function doExport() {
-    if (format !== "datev") {
-      toasts.info("Dieses Format folgt in einem späteren Milestone.");
-      return;
-    }
     exporting = true;
     try {
       const token = $authStore.accessToken;
@@ -219,11 +218,11 @@
   });
 </script>
 
-<svelte:head><title>DATEV Export – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/admin/export")} – Clokr</title></svelte:head>
 
 <ToolPage
   eyebrow="Daten"
-  title="DATEV Export"
+  title={pageLabel("/admin/export")}
   sub="Lohnabrechnungs-Daten für DATEV exportieren"
   tabs={TABS}
   bind:activeTab
@@ -376,26 +375,6 @@
                   <div class="format-name" translate="no">DATEV-LODAS</div>
                   <div class="format-meta">Lohnabrechnung · <span class="tabular">.csv</span></div>
                 </button>
-                <button
-                  type="button"
-                  class="format-tile disabled"
-                  onclick={() => toasts.info("Bald verfügbar")}
-                >
-                  <div class="format-name">PDF-Bericht</div>
-                  <div class="format-meta">
-                    <span translate="no">Monatsabschluss</span> · <span class="tabular">.pdf</span>
-                  </div>
-                  <span class="chip chip-warn"><span class="dot"></span>Bald</span>
-                </button>
-                <button
-                  type="button"
-                  class="format-tile disabled"
-                  onclick={() => toasts.info("Bald verfügbar")}
-                >
-                  <div class="format-name">iCal</div>
-                  <div class="format-meta">Abwesenheiten · <span class="tabular">.ics</span></div>
-                  <span class="chip chip-warn"><span class="dot"></span>Bald</span>
-                </button>
               </div>
             </div>
 
@@ -491,11 +470,7 @@ Stringbegrenzer='
     border: 1.5px solid var(--brand);
     background: var(--brand-soft);
   }
-  .format-tile.disabled {
-    opacity: 0.7;
-    cursor: default;
-  }
-  .format-tile:hover:not(.disabled) {
+  .format-tile:hover {
     transform: translateY(-1px);
   }
   .format-name {
@@ -506,11 +481,6 @@ Stringbegrenzer='
   .format-meta {
     font-size: 11.5px;
     color: var(--text-2);
-  }
-  .format-tile .chip {
-    align-self: flex-start;
-    margin-top: 4px;
-    font-size: 10px;
   }
 
   .field-row {

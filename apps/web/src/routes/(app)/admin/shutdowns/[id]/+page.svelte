@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
@@ -248,7 +249,10 @@
     title={shutdown.name}
     sub="Betriebsurlaub bearbeiten"
     view="detail"
-    crumbs={[{ label: "Betriebsurlaub", href: "/admin/shutdowns" }, { label: shutdown.name }]}
+    crumbs={[
+      { label: pageLabel("/admin/shutdowns"), href: "/admin/shutdowns" },
+      { label: shutdown.name },
+    ]}
   >
     {#snippet tabContent(_tab)}
       <!-- ── Zeitraum & Einstellungen ──────────────────────────────────────── -->

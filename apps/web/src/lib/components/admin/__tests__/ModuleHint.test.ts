@@ -13,7 +13,7 @@ describe("ModuleHint", () => {
     renderWithTheme(ModuleHint, { module, subject: "NFC-Terminals" });
     const hint = screen.getByTestId("module-hint");
     expect(hint.textContent?.replace(/\s+/g, " ").trim()).toBe(
-      `NFC-Terminals sind mit dem Zusatzmodul ${TENANT_MODULE_LABELS[module]} verfügbar. Ihr Anbieter schaltet es frei.`,
+      `NFC-Terminals sind mit dem Zusatzmodul ${TENANT_MODULE_LABELS[module]} verfügbar. Dein Anbieter schaltet es frei.`,
     );
     expect(hint.getAttribute("data-module")).toBe(module);
   });

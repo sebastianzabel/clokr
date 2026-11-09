@@ -3,6 +3,8 @@
   the whole tenant, selected salons, or selected people. Rejections show the server's German text
   inside the dialog (D-08). A role holding tenant-only rights gets an explanation for a salon or
   person scope (D-03) — a hint, never a block; the API stays the authority.
+  Draft mode (Issue #580, D-580-03): with `onDraft` the dialog stores nothing — it hands the chosen
+  role and scope back (the create dialog posts them once the person exists).
 -->
 <script lang="ts">
   import Modal from "$components/ui/Modal.svelte";
@@ -16,6 +18,11 @@
     type AssignmentScope,
     type RoleAssignment,
   } from "$lib/api/roles";
+  import {
+    SCOPE_TENANT_LABEL,
+    UNKNOWN_PERSON_LABEL,
+    UNKNOWN_SALON_LABEL,
+  } from "$lib/roles/assignment-label";
 
   interface Props {
     open: boolean;
@@ -28,6 +35,10 @@
     salonsLoaded: boolean;
     people: AssignablePerson[];
     onSaved: () => void;
+    /** Draft mode: receives the choice instead of saving it. */
+    onDraft?: (choice: { accessRoleId: string; scope: AssignmentScope }) => void;
+    /** Draft mode: the draft being edited, or null for a new one. */
+    draft?: { accessRoleId: string; scope: AssignmentScope } | null;
   }
 
   let {
@@ -41,7 +52,12 @@
     salonsLoaded,
     people,
     onSaved,
+    onDraft,
+    draft = null,
   }: Props = $props();
+
+  let draftMode = $derived(onDraft !== undefined);
+  let prefill = $derived(draftMode ? draft : assignment);
 
   type ScopeType = AssignmentScope["type"];
 
@@ -56,10 +72,11 @@
   // Reset the form each time the dialog opens, from the assignment being edited (if any).
   $effect(() => {
     if (!open) return;
-    roleId = assignment?.accessRoleId ?? "";
-    scopeType = assignment?.scope.type ?? "TENANT";
-    salonIds = assignment?.scope.type === "SALONS" ? [...assignment.scope.salonIds] : [];
-    employeeIds = assignment?.scope.type === "PERSONS" ? [...assignment.scope.employeeIds] : [];
+    const source = prefill;
+    roleId = source?.accessRoleId ?? "";
+    scopeType = source?.scope.type ?? "TENANT";
+    salonIds = source?.scope.type === "SALONS" ? [...source.scope.salonIds] : [];
+    employeeIds = source?.scope.type === "PERSONS" ? [...source.scope.employeeIds] : [];
     personFilter = "";
     errorText = null;
   });
@@ -100,6 +117,11 @@
 
   async function save() {
     if (!canSave) return;
+    if (onDraft) {
+      onDraft({ accessRoleId: roleId, scope: scope() });
+      open = false;
+      return;
+    }
     saving = true;
     errorText = null;
     try {
@@ -116,14 +138,14 @@
       errorText =
         err instanceof ApiError
           ? err.message
-          : "Die Anfrage ist fehlgeschlagen. Bitte erneut versuchen.";
+          : "Die Anfrage ist fehlgeschlagen. Bitte versuch es noch einmal.";
     } finally {
       saving = false;
     }
   }
 </script>
 
-<Modal bind:open eyebrow={personName} title={assignment ? "Zuweisung ändern" : "Rolle zuweisen"}>
+<Modal bind:open eyebrow={personName} title={prefill ? "Zuweisung ändern" : "Rolle zuweisen"}>
   <div class="assignment-form">
     {#if errorText}
       <div class="callout error" role="alert">{errorText}</div>
@@ -144,7 +166,7 @@
       <legend class="form-label">Geltungsbereich</legend>
       <label class="assignment-choice">
         <input type="radio" name="assignment-scope" value="TENANT" bind:group={scopeType} />
-        <span>Ganzer Mandant</span>
+        <span>{SCOPE_TENANT_LABEL}</span>
       </label>
       <label class="assignment-choice">
         <input type="radio" name="assignment-scope" value="SALONS" bind:group={scopeType} />
@@ -179,7 +201,7 @@
                 checked
                 onchange={(e) => (salonIds = toggle(salonIds, id, e.currentTarget.checked))}
               />
-              <span>Salon nicht mehr aktiv</span>
+              <span>{UNKNOWN_SALON_LABEL}</span>
             </label>
           {/each}
           {#if salons.length === 0 && unknownSalonIds.length === 0}
@@ -217,7 +239,7 @@
               checked
               onchange={(e) => (employeeIds = toggle(employeeIds, id, e.currentTarget.checked))}
             />
-            <span>Person nicht mehr verfügbar</span>
+            <span>{UNKNOWN_PERSON_LABEL}</span>
           </label>
         {/each}
       </fieldset>
@@ -225,8 +247,8 @@
 
     {#if showMandantHint}
       <div class="callout brand" role="note">
-        Diese Rolle enthält Rechte, die nur bei einer Zuweisung für den ganzen Mandanten wirken. Für
-        Salons oder Personen gelten diese Rechte nicht.
+        Diese Rolle enthält Rechte, die nur bei einer Zuweisung für das ganze Unternehmen wirken.
+        Für Salons oder Personen gelten diese Rechte nicht.
       </div>
     {/if}
   </div>
@@ -234,7 +256,7 @@
   {#snippet footer()}
     <button type="button" class="btn btn-ghost" onclick={() => (open = false)}>Abbrechen</button>
     <button type="button" class="btn btn-primary" disabled={!canSave} onclick={save}>
-      Speichern
+      {draftMode ? "Übernehmen" : "Speichern"}
     </button>
   {/snippet}
 </Modal>

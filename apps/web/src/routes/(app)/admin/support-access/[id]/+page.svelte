@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
@@ -17,7 +18,7 @@
   const accessId = $derived($page.params.id);
 
   const crumbs = $derived([
-    { label: "Support-Zugriffe", href: "/admin/support-access" },
+    { label: pageLabel("/admin/support-access"), href: "/admin/support-access" },
     {
       label: detail ? formatInZone(detail.access.startedAt, detail.timezone) : "Support-Zugriff",
     },

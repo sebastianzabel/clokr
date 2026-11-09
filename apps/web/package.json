@@ -12,6 +12,7 @@
     "lint:ui": "node scripts/lint-ui.mjs",
     "lint:ui-classes": "node scripts/lint-ui-classes.mjs",
     "lint:save-pattern": "node scripts/lint-save-pattern.mjs",
+    "lint:ui-terms": "node scripts/lint-ui-terms.mjs",
     "lint:role-checks": "node scripts/lint-role-checks.mjs",
     "check:svelte": "node scripts/svelte-check-gate.mjs",
     "typecheck": "svelte-kit sync && tsc --noEmit && node scripts/svelte-check-gate.mjs",
@@ -21,7 +22,7 @@
   },
   "dependencies": {
     "@clokr/types": "workspace:*",
-    "@tanstack/svelte-query": "^6.3.6",
+    "@tanstack/svelte-query": "^6.3.11",
     "chart.js": "^4.6.1",
     "date-fns": "^4.4.0",
     "svelte-dnd-action": "^0.9.79",
@@ -40,9 +41,9 @@
     "postcss": "^8.5.32",
     "svelte": "^5.57.1",
     "svelte-check": "^4.7.6",
-    "tailwindcss": "^4.3.3",
+    "tailwindcss": "^4.3.4",
     "typescript": "^6.0.3",
-    "vite": "^8.3.5",
+    "vite": "^8.3.6",
     "vitest": "^4.1.10"
   }
 }

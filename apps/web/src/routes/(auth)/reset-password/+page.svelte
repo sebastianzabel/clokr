@@ -61,13 +61,13 @@
     <div class="login-logo">
       <span class="login-logo-icon">⏱️</span>
       <h1 class="login-title">Passwort zurücksetzen</h1>
-      <p class="login-subtitle">Vergeben Sie ein neues Passwort für Ihr Konto.</p>
+      <p class="login-subtitle">Leg ein neues Passwort für dein Konto fest.</p>
     </div>
 
     {#if success}
       <div class="alert alert-success" role="alert">
         <span>✓</span>
-        <span>Ihr Passwort wurde erfolgreich zurückgesetzt.</span>
+        <span>Dein Passwort ist zurückgesetzt.</span>
       </div>
       <div class="back-footer">
         <a href="/login" class="btn btn-primary login-submit">Zur Anmeldung</a>
@@ -75,7 +75,7 @@
     {:else if !token}
       <div class="alert alert-error" role="alert">
         <span>⚠</span>
-        <span>Ungültiger Link. Bitte fordern Sie einen neuen Link an.</span>
+        <span>Ungültiger Link. Bitte fordere einen neuen Link an.</span>
       </div>
       <div class="back-footer">
         <a href="/forgot-password" class="back-link">Neuen Link anfordern</a>

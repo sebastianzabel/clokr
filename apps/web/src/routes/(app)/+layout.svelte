@@ -15,7 +15,7 @@
   import WhatsNewPanel from "$lib/components/layout/WhatsNewPanel.svelte";
   import { hasUnreadReleaseNotes, whatsNewOpen } from "$stores/release-notes";
   import { isMobileViewport } from "$lib/utils/viewport";
-  import { activeNavHref } from "$lib/nav/active-route";
+  import { labelForPath } from "$lib/nav/page-labels";
   import { loginPathWithNext } from "$lib/nav/login-next";
   import { installPushNavigateListener } from "$lib/push/navigate-message";
 
@@ -25,53 +25,7 @@
 
   let { children }: Props = $props();
 
-  // ── Page label mapping (longest-prefix match) ──────────────────
-  // German labels match docs/design/reference/i18n.js DE entries verbatim.
-  const PAGE_LABELS: Record<string, string> = {
-    "/dashboard": "Übersicht",
-    "/time-entries": "Zeiterfassung",
-    // #840 (D-840-06): one „Abwesenheiten“ label per area; /teamcal and /leave/planung are
-    // redirects and have no title of their own.
-    "/leave": "Abwesenheiten",
-    "/reports": "Berichte",
-    // v1.5 Phase 30 manager screens — primary nav targets.
-    "/inbox": "Inbox",
-    "/shifts": "Schichtplanung",
-    // Pre-v1.5 team pages kept for direct-link compatibility (no longer in nav).
-    "/team/leave": "Abwesenheiten",
-    "/team/time-entries": "Team-Zeiten",
-    "/admin/employees": "Mitarbeitende",
-    "/admin/month-close": "Monatsabschluss",
-    "/admin/audit": "Compliance & Audit",
-    "/admin/support-access": "Support-Zugriffe",
-    "/admin/themes": "Branding & Themes",
-    "/admin/import": "CSV Import",
-    "/admin/export": "DATEV Export",
-    "/admin/shifts": "Schichtplanung",
-    "/admin/system": "Allgemein",
-    // /admin/wifi-presence 301-redirects to /admin/integrations (Phase 52 rename)
-    "/admin/wifi-presence": "Integrationen",
-    "/admin/integrations": "Integrationen",
-    "/admin/shutdowns": "Betriebsurlaub",
-    "/admin/special-leave": "Sonderurlaub",
-    "/admin/leave-limits": "Urlaubsgrenzen & Sperren",
-    "/admin/vacation": "Urlaub",
-    "/admin/roles": "Rollen & Rechte",
-    "/admin/availability": "Verfügbarkeit",
-    "/admin/salons": "Salons",
-    "/admin/phorest": "Phorest",
-    "/admin": "Administration",
-    "/settings/geraet-koppeln": "Handy koppeln",
-    "/settings": "Mein Profil",
-  };
-  const PAGE_LABEL_KEYS = Object.keys(PAGE_LABELS);
-
-  // Longest matching key wins, so '/admin/employees' beats '/admin' (shared rule, $lib/nav/active-route).
-  function labelForPath(path: string): string {
-    const key = activeNavHref(PAGE_LABEL_KEYS, path);
-    return key === null ? "" : PAGE_LABELS[key];
-  }
-
+  // ── Page label: the one table in $lib/nav/page-labels (Issue #574) ──
   let currentPath = $derived($page.url.pathname);
   let currentPageLabel = $derived(labelForPath(currentPath));
 

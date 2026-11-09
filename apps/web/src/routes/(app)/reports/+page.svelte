@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, tick, untrack } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
@@ -697,7 +698,7 @@
       );
     } catch {
       toasts.error(
-        "Der Stundennachweis konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
+        "Der Stundennachweis konnte nicht erstellt werden. Bitte versuch es noch einmal.",
       );
     }
   }
@@ -734,7 +735,7 @@
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch {
-      toasts.error("Die DATEV-Datei konnte nicht erstellt werden. Bitte versuchen Sie es erneut.");
+      toasts.error("Die DATEV-Datei konnte nicht erstellt werden. Bitte versuch es noch einmal.");
     }
   }
 
@@ -759,13 +760,12 @@
 </script>
 
 <svelte:head>
-  <title>Berichte – Clokr</title>
+  <title>{pageLabel("/reports")} – Clokr</title>
 </svelte:head>
 
 <PageHead
   eyebrow={showTeamArea ? "Team" : "Mein Bereich"}
-  title="Berichte & Auswertungen"
-  accent="Auswertungen"
+  title={pageLabel("/reports")}
   sub={showTeamArea
     ? "Zeiten, Konten und Urlaub für einen Zeitraum – bis zu 12 Monate."
     : "Persönliche Monatsabschlüsse — als PDF zum Download."}
@@ -835,8 +835,7 @@
       {:else if periodFailure === "FAILED"}
         <div class="callout error" role="alert" data-testid="period-error">
           <p>
-            Der Bericht konnte nicht geladen werden. Prüfen Sie die Verbindung und versuchen Sie es
-            erneut.
+            Der Bericht konnte nicht geladen werden. Prüf die Verbindung und versuch es noch einmal.
           </p>
           <button
             type="button"

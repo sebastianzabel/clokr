@@ -88,6 +88,8 @@ describe("PUT /api/v1/settings/work/:employeeId — maxNegativeBalanceMinutes pa
       payload: {
         type: "FIXED_SCHEDULE",
         weeklyHours: 42, // the "unrelated change"
+        // Issue #848: a FIXED_SCHEDULE contract is consistent (weekly = Σ day hours).
+        fridayHours: 10,
         validFrom,
         // maxNegativeBalanceMinutes intentionally omitted
       },

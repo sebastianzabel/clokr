@@ -1,3 +1,11 @@
+<script module lang="ts">
+  // Issue #580: open Modals in opening order. A dialog opened from inside another dialog (the
+  // role draft dialog over the employee create dialog) must close alone on Escape. Within one
+  // keydown dispatch the closing instance's token is still in this list, so the outer instance
+  // ignores that same key event whatever the listener order.
+  const openStack: symbol[] = [];
+</script>
+
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { focusTrap } from "$lib/utils/focus-trap";
@@ -35,8 +43,19 @@
   // Bound to the .scrim element so the inert effect can exclude it by reference.
   let scrimEl: HTMLDivElement | undefined = $state();
 
+  const stackToken = Symbol("modal");
+
+  $effect(() => {
+    if (!open) return;
+    openStack.push(stackToken);
+    return () => {
+      const at = openStack.lastIndexOf(stackToken);
+      if (at !== -1) openStack.splice(at, 1);
+    };
+  });
+
   function onKeyDown(e: KeyboardEvent) {
-    if (e.key === "Escape" && open) {
+    if (e.key === "Escape" && open && openStack[openStack.length - 1] === stackToken) {
       e.preventDefault();
       open = false;
     }

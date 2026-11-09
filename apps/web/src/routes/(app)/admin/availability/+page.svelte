@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   // Phase 55 — Admin availability list page.
   // Shows all employees as clickable rows linking to /admin/availability/[employeeId].
   // ADMIN + MANAGER only (server enforces 403; client redirects EMPLOYEE to /availability).
@@ -50,7 +51,12 @@
   });
 </script>
 
-<ListDetail view="list" eyebrow="Planung" title="Verfügbarkeit" sub="Wer kann wann arbeiten?">
+<ListDetail
+  view="list"
+  eyebrow="Planung"
+  title={pageLabel("/admin/availability")}
+  sub="Wer kann wann arbeiten?"
+>
   {#snippet list()}
     <Section
       title="Mitarbeiter"

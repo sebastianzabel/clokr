@@ -42,7 +42,7 @@ function functionBody(name: string): string {
 describe("Issue #840 E-01 - one page, one toolbar, one timeline", () => {
   it("[vacuity gate] the page source is loaded and is the host page", () => {
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain('<PageHead eyebrow="Team" title="Abwesenheiten">');
+    expect(PAGE).toContain('<PageHead eyebrow="Team" title={pageLabel("/team/leave")}>');
   });
 
   it("[one toolbar] exactly one LeaveToolbar carries tabs, period, zoom and the person filter", () => {

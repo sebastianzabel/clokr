@@ -38,9 +38,9 @@
 
   const LOCK_TEXT = {
     system:
-      "Systemrollen sind sichtbar, aber gesperrt. Kopieren Sie die Rolle, um eine eigene, änderbare Fassung anzulegen.",
+      "Systemrollen sind sichtbar, aber gesperrt. Kopier die Rolle, um eine eigene, änderbare Fassung anzulegen.",
     "read-only":
-      "Sie können Rollen ansehen, aber nicht ändern. Dafür fehlt Ihnen das Recht, Rollen zu verwalten.",
+      "Du kannst Rollen ansehen, aber nicht ändern. Dafür fehlt dir das Recht, Rollen zu verwalten.",
   } as const;
 
   let dirty = $derived(draftDirty(draft));
@@ -111,7 +111,7 @@
         <legend class="role-editor-legend">
           {group.label}
           {#if hasMandant(group)}
-            <span class="chip chip-warn">wirkt nur bei Zuweisung für den ganzen Mandanten</span>
+            <span class="chip chip-warn">wirkt nur bei Zuweisung für das ganze Unternehmen</span>
           {/if}
         </legend>
         {#each group.permissions as permission (permission.key)}

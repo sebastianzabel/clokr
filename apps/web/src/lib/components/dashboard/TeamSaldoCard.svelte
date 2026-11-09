@@ -80,7 +80,7 @@
   {#if loading}
     <div class="saldo-skeleton" aria-hidden="true"></div>
   {:else if !hasAnyone}
-    <p class="saldo-empty">Keine Salden in Ihrer Reichweite</p>
+    <p class="saldo-empty">Keine Salden in deiner Reichweite</p>
   {:else}
     <div data-testid="team-saldo-values">
       <p class="saldo-median" data-testid="team-saldo-median">

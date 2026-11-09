@@ -1,10 +1,38 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
   import { employeeAdminRights, salonAdminRights } from "$lib/page-rights";
   import { api } from "$api/client";
   import { salonContext } from "$stores/salon-context";
+  import {
+    listAssignablePeople,
+    listRoleAssignments,
+    loadAssignmentChoices,
+    type AccessRole,
+    type AssignablePerson,
+    type AssignmentDraft,
+    type AssignmentScope,
+    type RoleAssignment,
+  } from "$lib/api/roles";
+  import PersonRoleAssignments from "$lib/components/admin/roles/PersonRoleAssignments.svelte";
+  import {
+    berechtigungenTabHref,
+    draftFailureMessage,
+    draftLabel,
+    draftsSavedMessage,
+    postAssignmentDrafts,
+  } from "$lib/roles/assignment-drafts";
+  import { toasts } from "$stores/toast";
+  import { hasPermission } from "$lib/permissions";
+  import {
+    CREATE_DEFAULT_ROLE_NAME,
+    NO_ASSIGNMENT_LABEL,
+    assignedRoleNames,
+    assignmentLabel,
+    groupAssignmentsByUser,
+  } from "$lib/roles/assignment-label";
   import {
     isSalonFilterRejected,
     salonPageFilter,
@@ -51,7 +79,6 @@
   } from "$lib/employees/employment-state";
 
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
-  type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
 
   interface Employee {
     id: string;
@@ -99,7 +126,18 @@
   let cEmail = $state("");
   let cEmployeeNumber = $state("");
   let cHireDate = $state(new Date().toISOString().split("T")[0]);
-  let cRole: Role = $state("EMPLOYEE");
+  // Role drafts of the create dialog (Issue #580, D-580-03): every new person gets the default
+  // role for the whole company from the API; further roles are drafted here and posted once the
+  // person exists.
+  const CREATE_FIXED_ROWS: { roleName: string; scope: AssignmentScope }[] = [
+    { roleName: CREATE_DEFAULT_ROLE_NAME, scope: { type: "TENANT" } },
+  ];
+  let cDrafts = $state<AssignmentDraft[]>([]);
+  let createRoles = $state<AccessRole[]>([]);
+  let createMandantRoleIds = $state<string[]>([]);
+  let createPeople = $state<AssignablePerson[]>([]);
+  let createRoleChoicesFailed = $state(false);
+  let createPersonName = $derived(`${cFirstName} ${cLastName}`.trim() || "Neue Person");
   let cScheduleType = $state<"FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED">(
     "FIXED_SCHEDULE",
   );
@@ -165,7 +203,7 @@
   );
 
   // Issue #482 (G-7 display mirror) — proposes the classification's own Standard (Azubi-Standard
-  // or Mandanten-Standard), raised to the legal minimum (§ 19 JArbSchG with a birth date, else
+  // or Unternehmensstandard), raised to the legal minimum (§ 19 JArbSchG with a birth date, else
   // § 3 BUrlG); never overwrites a value the admin typed.
   function refreshVacationPrefill() {
     const base = vacationBaseDefaultFor(
@@ -198,6 +236,7 @@
   let canCreate = $derived(rights.canCreate);
   let canManageAccess = $derived(rights.canManageAccess);
   let canAssignRoles = $derived(rights.canAssignRoles);
+  let canReadRoles = $derived(hasPermission($authStore.user, "role:read:ZUGEWIESEN"));
   let showActions = $derived(rights.showActions);
   let canReadSalons = $derived(salonAdminRights($authStore.user).canRead);
 
@@ -221,10 +260,17 @@
     return emp.firstName === "Gelöscht" && emp.lastName.startsWith("GELÖSCHT-");
   }
 
-  // Assigned role names per user id (Issue #538), loaded from the role-assignment resource only
-  // for a caller who may manage role assignments; null = not offered (chip, filter and count are
-  // hidden). GET /employees itself carries no role data.
-  let roleNamesByUser = $state<Record<string, string[]> | null>(null);
+  // The stored role assignments per user id, with their scope (Issue #538, #580 D-580-05), loaded
+  // only for a caller who may manage role assignments; null = not offered (column, filter and count
+  // are hidden). GET /employees itself carries no role data. Labels come from the one formatter.
+  let assignmentsByUser = $state<Record<string, RoleAssignment[]> | null>(null);
+  let assignmentPeople = $state<AssignablePerson[]>([]);
+  // Names of a person scope come from the whole-tenant people list, never from the filtered list.
+  let assignmentCtx = $derived({
+    salons: $salonContext.salons,
+    salonsLoaded: $salonContext.loaded,
+    people: assignmentPeople,
+  });
 
   // Filters
   let filterSearch = $state("");
@@ -279,7 +325,7 @@
   let statTotal = $derived(employees.filter((e) => !isAnonymized(e)).length);
   let statActive = $derived(employees.filter((e) => e.user.isActive && !isAnonymized(e)).length);
   // Role chip, filter and count exist only when the names were loaded (Issue #538).
-  let showRoles = $derived(roleNamesByUser !== null);
+  let showRoles = $derived(assignmentsByUser !== null);
   let roleOptions = $derived(
     [...new Set(employees.flatMap((e) => (isAnonymized(e) ? [] : (roleNamesOf(e) ?? []))))].sort(
       (a, b) => a.localeCompare(b, "de"),
@@ -327,22 +373,49 @@
   });
 
   function roleNamesOf(emp: Employee): string[] | null {
-    return roleNamesByUser === null ? null : (roleNamesByUser[emp.userId] ?? []);
+    return assignmentsByUser === null ? null : assignedRoleNames(assignmentsOf(emp));
   }
 
-  async function loadRoleNames() {
+  function assignmentsOf(emp: Employee): RoleAssignment[] {
+    return assignmentsByUser?.[emp.userId] ?? [];
+  }
+
+  // Only with role-assignment:manage — HR and other readers must see no request refused.
+  async function loadCreateRoleChoices() {
     if (!canAssignRoles) {
-      roleNamesByUser = null;
+      createRoles = [];
+      createMandantRoleIds = [];
+      createPeople = [];
       return;
     }
     try {
-      const res = await api.get<{ roleNames: Record<string, string[]> }>(
-        "/role-assignments/role-names",
-      );
-      roleNamesByUser = res.roleNames;
+      const [choices, people] = await Promise.all([
+        loadAssignmentChoices(canReadRoles),
+        listAssignablePeople(),
+      ]);
+      createRoles = choices.roles;
+      createMandantRoleIds = choices.mandantRoleIds;
+      createPeople = people;
     } catch {
-      // The chip is decoration; a failed read hides it instead of blocking the list.
-      roleNamesByUser = null;
+      createRoleChoicesFailed = true;
+    }
+  }
+
+  async function loadRoleAssignments() {
+    if (!canAssignRoles) {
+      assignmentsByUser = null;
+      return;
+    }
+    try {
+      const [assignments, people] = await Promise.all([
+        listRoleAssignments(),
+        listAssignablePeople(),
+      ]);
+      assignmentPeople = people;
+      assignmentsByUser = groupAssignmentsByUser(assignments);
+    } catch {
+      // The column is decoration; a failed read hides it instead of blocking the list.
+      assignmentsByUser = null;
     }
   }
 
@@ -355,7 +428,7 @@
       // "Anonymisierte anzeigen" toggle then filters them client-side (isAnonymized).
       const [list] = await Promise.all([
         api.get<Employee[]>(withSalonId("/employees?includeAnonymized=true", pageSalonId)),
-        loadRoleNames(),
+        loadRoleAssignments(),
       ]);
       if (generation !== listGeneration) return;
       employees = list;
@@ -380,7 +453,9 @@
     cEmail = "";
     cEmployeeNumber = "";
     cHireDate = new Date().toISOString().split("T")[0];
-    cRole = "EMPLOYEE";
+    cDrafts = [];
+    createRoleChoicesFailed = false;
+    void loadCreateRoleChoices();
     cScheduleType = "FIXED_SCHEDULE";
     cWeeklyHours = 40;
     cMonthlyHours = null;
@@ -439,7 +514,6 @@
         lastName: cLastName,
         employeeNumber: cEmployeeNumber,
         hireDate: new Date(cHireDate).toISOString(),
-        role: cRole,
         scheduleType: cScheduleType,
         weeklyHours:
           cScheduleType === "FIXED_SCHEDULE" ||
@@ -462,7 +536,7 @@
         // Issue #435 (D-11/D-12) — optional, drives the statutory-minimum pre-fill/hint only.
         birthDate: cBirthDate ? new Date(cBirthDate).toISOString() : null,
         // Issue #482 (G-5, mirrors #435 D-13): a value equal to the classification's OWN
-        // Standard (AZUBI -> Azubi-Standard, everyone else -> Mandanten-Standard) is sent as
+        // Standard (AZUBI -> Azubi-Standard, everyone else -> Unternehmensstandard) is sent as
         // null, so the person keeps following later changes of that Standard instead of
         // freezing today's number as an explicit override. A floor-raised minor suggestion
         // stays explicit (unchanged #435 D-11 behaviour).
@@ -478,11 +552,37 @@
       const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
       employees = [...employees, res].sort((a, b) => a.lastName.localeCompare(b.lastName));
       createOpen = false;
+      const drafts = cDrafts;
+      let failed = false;
+      try {
+        const failures = await postAssignmentDrafts(res.userId, drafts);
+        if (failures.length > 0) {
+          failed = true;
+          toasts.error(
+            draftFailureMessage(
+              failures.map((f) => ({
+                label: draftLabel(f.draft, createRoles, assignmentCtx),
+                message: f.message,
+              })),
+            ),
+            10000,
+          );
+        } else if (drafts.length > 0) {
+          toasts.success(draftsSavedMessage(drafts.length));
+        }
+      } catch {
+        failed = drafts.length > 0;
+      }
       if (res.emailError) {
         alert(
           `Mitarbeiter angelegt, aber Einladungsmail konnte nicht gesendet werden: ${res.emailError}`,
         );
       }
+      if (failed) {
+        await goto(berechtigungenTabHref(res.id));
+        return;
+      }
+      void loadRoleAssignments();
     } catch (e: unknown) {
       createError = e instanceof Error ? e.message : "Fehler beim Anlegen";
     } finally {
@@ -532,13 +632,13 @@
   function scheduleLabel(type: string | null | undefined): string {
     switch (type) {
       case "FIXED_SCHEDULE":
-        return "Fester Stundenplan";
+        return "Feste Arbeitszeit";
       case "FLEXTIME":
         return "Gleitzeit";
       case "MONTHLY_HOURS":
-        return "Monatsstunden (Minijob)";
+        return "Monatsstunden";
       case "SHIFT_BASED":
-        return "Schichtplan";
+        return "Nach Schichtplan";
       default:
         return "—";
     }
@@ -560,7 +660,7 @@
 </script>
 
 <svelte:head>
-  <title>Mitarbeitende – Clokr</title>
+  <title>{pageLabel("/admin/employees")} – Clokr</title>
 </svelte:head>
 
 <!-- Phase 73-05 (D-05): data-testid surface for admin-employees flows.
@@ -570,8 +670,8 @@
   <ListDetail
     view="list"
     eyebrow="Personal"
-    title="Mitarbeitende"
-    sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
+    title={pageLabel("/admin/employees")}
+    sub="Lege Personen an, lade sie ein und verwalte ihre Daten."
   >
     {#snippet actions()}
       {#if canCreate}
@@ -707,10 +807,16 @@
                     <td class="col-email">{emp.user.email}</td>
                     {#if showRoles}
                       <td>
-                        {#if (roleNamesOf(emp) ?? []).length > 0}
-                          <span class="chip chip-brand">
-                            <span class="dot"></span>{(roleNamesOf(emp) ?? []).join(", ")}
+                        {#if assignmentsOf(emp).length > 0}
+                          <span class="role-chips">
+                            {#each assignmentsOf(emp) as assignment (assignment.id)}
+                              <span class="chip chip-brand"
+                                >{assignmentLabel(assignment, assignmentCtx)}</span
+                              >
+                            {/each}
                           </span>
+                        {:else}
+                          <span class="text-muted">{NO_ASSIGNMENT_LABEL}</span>
                         {/if}
                       </td>
                     {/if}
@@ -842,16 +948,37 @@
         />
       </div>
       <HomeSalonField salons={createSalons} bind:value={cHomeSalonId} />
-      {#if canAssignRoles}
-        <div class="form-group">
-          <label class="form-label" for="c-role">Rolle</label>
-          <select id="c-role" bind:value={cRole} class="select">
-            <option value="EMPLOYEE">Mitarbeiter</option>
-            <option value="MANAGER">Manager</option>
-            <option value="ADMIN">Administrator</option>
-          </select>
-        </div>
-      {/if}
+      <!-- ── Rollen (Issue #580, D-580-03) ──────────────────────────────── -->
+      <div class="form-group form-group--full form-subhead">
+        <h4 class="form-subhead-title">Rollen</h4>
+      </div>
+      <div class="form-group form-group--full">
+        {#if canAssignRoles}
+          <PersonRoleAssignments
+            personName={createPersonName}
+            bind:drafts={cDrafts}
+            fixedRows={CREATE_FIXED_ROWS}
+            roles={createRoles}
+            mandantRoleIds={createMandantRoleIds}
+            salons={$salonContext.salons}
+            salonsLoaded={$salonContext.loaded}
+            people={createPeople}
+            canManage={canAssignRoles}
+            {canReadRoles}
+            allowGrant={!createRoleChoicesFailed}
+          />
+          {#if createRoleChoicesFailed}
+            <div class="callout">
+              Rollen konnten nicht geladen werden. Weitere Rollen kannst du nach dem Anlegen im Tab
+              „Berechtigungen“ zuweisen.
+            </div>
+          {/if}
+        {/if}
+        <p class="form-hint">
+          Jede neue Person erhält die Rolle „{CREATE_DEFAULT_ROLE_NAME}“ für das ganze Unternehmen.
+          Weitere Rollen werden gespeichert, sobald die Person angelegt ist.
+        </p>
+      </div>
       <!-- ── Personalstruktur (Phase 41) ────────────────────────────────── -->
       <div class="form-group form-group--full form-subhead">
         <h4 class="form-subhead-title">Personalstruktur</h4>
@@ -936,10 +1063,10 @@
           data-testid="admin-employees-create-annual-vacation-days"
         />
         <p class="form-hint">
-          Vorschlag aus den Mandanten-Einstellungen (Azubis: „Urlaubstage Azubis"). Entspricht der
-          Wert dem Standard, wird kein eigener Wert gespeichert – die Person folgt dann auch
-          späteren Änderungen des Standards. Wird auf die vertraglichen Arbeitstage umgerechnet und
-          im Eintrittsjahr anteilig berechnet.
+          Vorschlag aus den Einstellungen des Unternehmens (Azubis: „Urlaubstage Azubis").
+          Entspricht der Wert dem Standard, wird kein eigener Wert gespeichert – die Person folgt
+          dann auch späteren Änderungen des Standards. Wird auf die vertraglichen Arbeitstage
+          umgerechnet und im Eintrittsjahr anteilig berechnet.
         </p>
         {#if cBirthMinimum && cAnnualVacationDays !== null && cAnnualVacationDays < cBirthMinimum.days}
           <div class="callout error">
@@ -963,10 +1090,10 @@
             )}
           class="select"
         >
-          <option value="FIXED_SCHEDULE">Fester Stundenplan</option>
+          <option value="FIXED_SCHEDULE">Feste Arbeitszeit</option>
           <option value="FLEXTIME">Gleitzeit</option>
-          <option value="MONTHLY_HOURS">Monatsstunden (Minijob)</option>
-          <option value="SHIFT_BASED">Schichtplan</option>
+          <option value="MONTHLY_HOURS">Monatsstunden</option>
+          <option value="SHIFT_BASED">Nach Schichtplan</option>
         </select>
       </div>
       {#if cScheduleType === "FIXED_SCHEDULE" || cScheduleType === "FLEXTIME" || cScheduleType === "SHIFT_BASED"}
@@ -1447,5 +1574,10 @@
   .wd-chip:hover:not(.wd-chip--active) {
     border-color: var(--brand);
     color: var(--brand);
+  }
+  .role-chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
   }
 </style>

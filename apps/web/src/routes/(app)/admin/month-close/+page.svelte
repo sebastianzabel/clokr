@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
   import { page } from "$app/stores";
   import Modal from "$components/ui/Modal.svelte";
@@ -630,7 +631,7 @@
   });
 </script>
 
-<svelte:head><title>Monatsabschluss – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/admin/month-close")} – Clokr</title></svelte:head>
 
 <!-- Phase 73-05 (D-05): data-testid surface for admin Monatsabschluss flows.
      `display: contents` keeps ToolPage's layout intact while exposing a
@@ -638,7 +639,7 @@
 <div data-testid="month-close-page" style="display: contents;">
   <ToolPage
     eyebrow="Compliance"
-    title="Monatsabschluss"
+    title={pageLabel("/admin/month-close")}
     sub="Monat prüfen, korrigieren und sperren"
     steps={["Prüfen", "Korrigieren", "Bestätigen", "Sperren"]}
     currentStep={activeStepIndex}

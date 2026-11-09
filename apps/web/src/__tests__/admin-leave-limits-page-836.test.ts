@@ -81,9 +81,12 @@ describe("Issue #836 - /admin/leave-limits", () => {
   });
 
   it("the nav label equals the page title and the title map entry", () => {
-    expect(PAGE).toContain('title="Urlaubsgrenzen & Sperren"');
-    expect(
-      readRouteFile("../routes/(app)/+layout.svelte", "src/routes/(app)/+layout.svelte"),
-    ).toContain('"/admin/leave-limits": "Urlaubsgrenzen & Sperren"');
+    // Issue #574: the page H1 reads the one page-name table (or still spells the same name)
+    expect(PAGE).toMatch(
+      /title=(?:"Urlaubsgrenzen & Sperren"|\{pageLabel\("\/admin\/leave-limits"\)\})/,
+    );
+    expect(readRouteFile("../lib/nav/page-labels.ts", "src/lib/nav/page-labels.ts")).toContain(
+      '"/admin/leave-limits": "Urlaubsgrenzen & Sperren"',
+    );
   });
 });

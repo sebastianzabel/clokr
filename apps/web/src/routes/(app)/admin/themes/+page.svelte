@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { theme, themes, type Theme } from "$stores/theme";
   import { mode, type Mode } from "$stores/mode";
   import { applyPreferences } from "$stores/apply-preferences";
@@ -31,12 +32,12 @@
 </script>
 
 <svelte:head>
-  <title>Branding & Themes – Clokr</title>
+  <title>{pageLabel("/admin/themes")} – Clokr</title>
 </svelte:head>
 
 <SectionStack
   eyebrow="System"
-  title="Branding & Themes"
+  title={pageLabel("/admin/themes")}
   sub="Dein Erscheinungsbild: Es wird für dein Konto gespeichert und gilt auf all deinen Geräten."
   animate
 >

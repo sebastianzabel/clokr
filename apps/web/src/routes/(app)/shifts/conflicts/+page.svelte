@@ -148,8 +148,8 @@
     <header class="conflict-section-head">
       <h2>Automatisch entfernte Schichten</h2>
       <p class="conflict-section-hint">
-        Schichten, die der Generator beim Anlegen neuer Berufsschultage automatisch entfernt hat.
-        Per "Wiederherstellen" zurückholbar — eine SHIFT_RESTORED-Audit-Spur wird erzeugt.
+        Schichten, die beim Anlegen neuer Berufsschultage automatisch entfernt wurden. Mit
+        „Wiederherstellen“ holst du sie zurück; das wird protokolliert.
       </p>
     </header>
 
@@ -195,9 +195,9 @@
     <header class="conflict-section-head">
       <h2>Wochenkapazität überschritten</h2>
       <p class="conflict-section-hint">
-        SHIFT_BASED-Mitarbeiter mit mehr geplanten Schichttagen in einer Woche als Vertrag abzüglich
-        genehmigtem Urlaub und sonstigen Abwesenheiten erlaubt. Rein informativ — nichts zum
-        Wiederherstellen; die volle Übersicht gibt es unter
+        Mitarbeitende mit Arbeitszeitmodell „Nach Schichtplan“, die in einer Woche mehr Schichttage
+        geplant haben, als ihr Vertrag nach Urlaub und sonstigen Abwesenheiten zulässt. Rein
+        informativ — nichts zum Wiederherstellen; die volle Übersicht gibt es unter
         <a href="/shifts/planning">Planungsbedarf</a>.
       </p>
     </header>

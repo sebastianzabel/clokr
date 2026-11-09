@@ -17,6 +17,7 @@
 </script>
 
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { goto, afterNavigate, replaceState } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person; #609: reminder arrival
   import { page } from "$app/stores"; // Issue #609: the ?clock=1 reminder parameter
@@ -1508,7 +1509,7 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard – Clokr</title>
+  <title>{pageLabel("/dashboard")} – Clokr</title>
 </svelte:head>
 
 {#snippet teamCellContent(day: TeamDay)}
@@ -1594,8 +1595,8 @@
   <!-- Page Header -->
   <PageHead
     eyebrow="Mein Bereich"
-    title={`${greeting()}, ${capitalizedName}`}
-    accent={capitalizedName}
+    title={pageLabel("/dashboard")}
+    sub={`${greeting()}, ${capitalizedName}`}
   />
 
   <!-- Phase 49.4 (rearrange): two-column stack — LEFT (Timer → Heutiger Eintrag → Aktivität),

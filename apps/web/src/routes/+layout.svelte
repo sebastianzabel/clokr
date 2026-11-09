@@ -15,6 +15,8 @@
   import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
   import { onMount } from "svelte";
   import { clientLogger } from "$lib/utils/logger";
+  import { dev } from "$app/environment";
+  import { registerServiceWorker } from "$lib/push/register-service-worker";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -28,6 +30,19 @@
   // idempotent, so an extra call from a nested layout stays harmless.
   onMount(() => {
     clientLogger.install();
+    // Issue #849 (6): the push worker (#608), registered with a caught failure.
+    let storage: Storage | undefined;
+    try {
+      storage = window.sessionStorage;
+    } catch {
+      storage = undefined;
+    }
+    void registerServiceWorker({
+      nav: navigator,
+      storage,
+      dev,
+      warn: (message, extra) => clientLogger.warn(message, extra),
+    });
   });
 </script>
 

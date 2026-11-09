@@ -112,13 +112,13 @@ describe("SupportContracts", () => {
   it("renders the columns of a fixed schedule in German", () => {
     mount([FIXED]);
     const row = el("op-support-contract-row-c-fixed");
-    expect(row).toHaveTextContent("Feste Arbeitszeiten");
+    expect(row).toHaveTextContent("Feste Arbeitszeit");
     expect(row).toHaveTextContent("01.09.2026");
     expect(row).toHaveTextContent("Wochenstunden");
     expect(row).toHaveTextContent("40");
     expect(row).toHaveTextContent("Mo, Di, Mi, Do, Fr");
     expect(row).toHaveTextContent("Überstunden übertragen");
-    expect(row).toHaveTextContent("Mandanten-Standard");
+    expect(row).toHaveTextContent("Unternehmensstandard");
     // The seven day columns, Monday to Sunday, with the stored values.
     const cells = Array.from(row.querySelectorAll("table tbody td")).map((td) => td.textContent);
     expect(cells?.map((text) => text?.trim())).toEqual(["8", "8", "8", "8", "8", "0", "0"]);
@@ -129,7 +129,7 @@ describe("SupportContracts", () => {
   it("renders the shift-based columns and keeps the stored day hours as they are", () => {
     mount([SHIFT]);
     const row = el("op-support-contract-row-c-shift");
-    expect(row).toHaveTextContent("Schichtbasiert");
+    expect(row).toHaveTextContent("Nach Schichtplan");
     expect(row).toHaveTextContent("Mo, Mi, So");
     expect(row).toHaveTextContent("Di, Do, Sa");
     expect(row).toHaveTextContent("Vertragstage je Woche");

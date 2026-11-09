@@ -96,8 +96,37 @@ export function deleteRole(id: string) {
 
 // ── Role assignments ──────────────────────────────────────────────────────────
 
-export function listRoleAssignments() {
-  return api.get<RoleAssignment[]>("/role-assignments");
+/** The tenant's role assignments, optionally of one user (the API's `?userId=` filter). */
+export function listRoleAssignments(userId?: string) {
+  const query = userId ? `?userId=${encodeURIComponent(userId)}` : "";
+  return api.get<RoleAssignment[]>(`/role-assignments${query}`);
+}
+
+/** A role assignment chosen before its person exists — the create dialog (Issue #580, D-580-03). */
+export interface AssignmentDraft {
+  key: string;
+  accessRoleId: string;
+  scope: AssignmentScope;
+}
+
+/**
+ * The roles a picker offers and the ids of roles holding company-wide (MANDANT) rights, for the
+ * hint of a salon or person scope. Without `role:read` nothing is requested (the API would refuse).
+ */
+export async function loadAssignmentChoices(
+  canReadRoles: boolean,
+): Promise<{ roles: AccessRole[]; mandantRoleIds: string[] }> {
+  if (!canReadRoles) return { roles: [], mandantRoleIds: [] };
+  const [roles, catalog] = await Promise.all([listRoles(), fetchPermissionCatalog()]);
+  const mandantKeys = catalog.flatMap((group) =>
+    group.permissions.filter((p) => p.relation === "MANDANT").map((p) => p.key),
+  );
+  return {
+    roles,
+    mandantRoleIds: roles
+      .filter((r) => r.permissions.some((key) => mandantKeys.includes(key)))
+      .map((r) => r.id),
+  };
 }
 
 export function listAssignablePeople() {

@@ -132,7 +132,7 @@ export function validateSalonForm(form: SalonFormValues, mode: "create" | "edit"
     errors.federalState = "Bitte ein Bundesland wählen.";
   }
   if (Object.keys(validateOpeningHours(form.openingHours)).length > 0) {
-    errors.openingHours = "Bitte prüfen Sie die markierten Tage.";
+    errors.openingHours = "Bitte prüf die markierten Tage.";
   }
   return errors;
 }

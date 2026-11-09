@@ -38,7 +38,7 @@
 
   {#if summary.deepLink}
     <a class="collision-deeplink" href={summary.deepLink} target="_blank" rel="noopener noreferrer">
-      In Phorest-Kalender öffnen ↗
+      Im Terminkalender öffnen ↗
     </a>
   {/if}
 </div>
