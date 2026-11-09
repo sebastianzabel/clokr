@@ -1095,7 +1095,8 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     // ── G-3 / G-8: the inbox ─────────────────────────────────────────────────────────────────
     await page.goto("/inbox");
     const head = page.locator(".page-head");
-    await expect(head.locator(".eyebrow")).toHaveText("Team");
+    // #843 D-843-14 -> D-843-22 (owner 10.11.): the Seitenkopf renders no eyebrow (was "Team").
+    await expect(head.locator(".eyebrow")).toHaveCount(0);
     await expect(head.getByRole("heading", { level: 1 })).toHaveText("Aufgaben"); // Issue #574: one page name
     await expect(head.locator("h1 em")).toHaveCount(0);
     const inboxChip = page.locator(".approval-row .leave-type-chip").first();

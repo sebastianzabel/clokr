@@ -56,7 +56,10 @@ Examples:
 | Schichtplanung                                     |                                         | The team page `/shifts` (the weekly plan).                                                                                   |
 | plain words                                        | enum values, error codes, env variables | Never `SHIFT_BASED`, `TRACK_ONLY`, `PAIRING_ENABLED` in a text.                                                              |
 | Phorest                                            |                                         | Only in Verwaltung, Schichtplanung and the operator console — never in texts for Mitarbeitende.                              |
-| say what is compared                               | Korrelation                             | „Geplant im Vergleich zum Soll“.                                                                                             |
+| say what is compared                               | Korrelation                             | Schichtplanung: „Geplant / Vertrag“ (Issue #850).                                                                            |
+| Hinweis, markiert                                  | Konflikt-Flag, Flag                     | Schichtplanung: a shift or week that needs a look (Issue #850; lint-checked only there).                                     |
+| Muster anwenden                                    | Generator, generieren                   | Applies the Schicht-Muster to a week. „Vorlagen“ are the shift templates — a different thing (Issue #850).                   |
+| wird protokolliert                                 | Audit-Spur                              | Schichtplanung (Issue #850).                                                                                                 |
 
 Spelling: CSV-Import, DATEV-Export (hyphenated compounds), WLAN.
 
@@ -85,6 +88,9 @@ here: the module is the one source.
 | `schedule`    | Arbeitszeitmodell                     |
 | `inbox`       | Aufgaben                              |
 | `phorest`     | Phorest (area-scoped)                 |
+| `flag`        | Hinweis (Schichtplanung only)         |
+| `generator`   | Muster anwenden (Schichtplanung only) |
+| `audit-spur`  | wird protokolliert (Schichtplanung)   |
 | `sie-form`    | Address form „du“                     |
 
 `lint:api-terms` adds one term of its own: `permission-key` (no permission key in a text).

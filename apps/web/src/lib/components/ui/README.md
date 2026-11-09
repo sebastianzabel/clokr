@@ -56,7 +56,7 @@ Every block is a Svelte 5 component built on bits-ui (the only primitive library
 
 ### `<PageHeader>` and `<PageTabs>`
 
-Source: `$components/ui/PageHeader.svelte`, `PageTabs.svelte`. Props: `title`, `subtitle?`, `eyebrow?` (the legacy `PageHead` line), `accent?` (same `autoAccent` rule as `PageHead`), `actions?` (one or two buttons, at most one primary), `tabs?` + `tab` (bindable) + `panel?` + `onTabChange?` (bits-ui Tabs, arrow keys loop, every trigger controls a rendered panel), `headingLevel?` (1 or 2). The `<PageHead>` section below documents the unchanged public contract; `layout/PageHead.svelte` has no markup of its own.
+Source: `$components/ui/PageHeader.svelte`, `PageTabs.svelte`. Props: `title`, `subtitle?`, `eyebrow?` and `accent?` (both inert since D-843-22: accepted so `PageHead` callers compile, never rendered), `actions?` (one or two buttons, at most one primary), `tabs?` + `tab` (bindable) + `panel?` + `onTabChange?` (bits-ui Tabs, arrow keys loop, every trigger controls a rendered panel), `headingLevel?` (1 or 2). The `<PageHead>` section below documents the legacy props and the look; `layout/PageHead.svelte` has no markup of its own.
 
 ### `<Dialog>`
 
@@ -102,17 +102,15 @@ named exemptions of `lint:ui` `no-raw-h1`. `auth-frame-855.test.ts` pins that ev
 
 Source: `$components/layout/PageHead.svelte` — since Issue #843 a delegate without markup of its own: it renders `ui/PageHeader.svelte` with the same props (D-843-14). New code may import `PageHeader` directly.
 
+**Look (D-843-22, owner request 10.11., design concept 3/4):** title (H1, `--fs-h1` = 20 px, weight 600, plain text) and an optional subtitle (`--fs-base` = 13.5 px, `--text-2`) on the left, one or two actions on the right, below the text on a phone (the block's 760 px container query). There is NO accent rule, NO eyebrow line and NO colour-set accent word. `eyebrow` and `accent` stay in the props only so the 50+ callers and the tests that pin `<PageHead eyebrow=… title=…>` compile and pass unchanged; they are inert and render nothing.
+
 ```ts
 interface Props {
-  /** Eyebrow line (Figtree, upright), e.g. "Mein Bereich". */
-  eyebrow: string;
-  /** Main heading, e.g. "Guten Tag, Lena". */
+  /** Inert (D-843-22): accepted, never rendered. */
+  eyebrow?: string;
+  /** Main heading, e.g. "Guten Tag, Lena". Plain text. */
   title: string;
-  /**
-   * Optional explicit accent word. When provided AND found in `title`,
-   * the first occurrence is wrapped in `<em>` (upright, --brand).
-   * Matching is case-sensitive; only the first occurrence is wrapped.
-   */
+  /** Inert (D-843-22): accepted, never rendered; the title has no accent word. */
   accent?: string;
   /** Optional muted sub-paragraph, max-width 560 px, below the H1. */
   sub?: string;
@@ -120,16 +118,6 @@ interface Props {
   actions?: Snippet;
 }
 ```
-
-**`autoAccent` behavior (D-01):** When no explicit `accent` prop is passed, `PageHead` automatically wraps the LAST word of `title` in `<em>` (rendered upright in the brand colour), where words are split on whitespace or `-`. Single-word titles render WITHOUT an `<em>` wrapper. Explicit `accent="X"` always wins.
-
-| `title`                | `accent` | Rendered                           |
-| ---------------------- | -------- | ---------------------------------- |
-| `Team-Zeiten`          | (none)   | `Team-` + <em>Zeiten</em>          |
-| `Mein Profil`          | (none)   | `Mein ` + <em>Profil</em>          |
-| `Urlaub & Abwesenheit` | (none)   | `Urlaub & ` + <em>Abwesenheit</em> |
-| `Zeiterfassung`        | (none)   | `Zeiterfassung` (plain)            |
-| `Mein Profil`          | `Mein`   | <em>Mein</em> + ` Profil`          |
 
 Usage:
 
