@@ -52,7 +52,9 @@ const MANDANT_ALLOWED = [
   "src/lib/operator/",
   "src/routes/(app)/admin/export/", // DATEV's own field name „Mandantennummer“
 ];
-const inArea = (areas) => (file) => !areas.some((prefix) => file.startsWith(prefix));
+/** @param {string[]} areas */
+const inArea = (areas) => (/** @type {string} */ file) =>
+  !areas.some((prefix) => file.startsWith(prefix));
 
 /**
  * The forbidden terms. `where` narrows a term to part of the app (default: everywhere);
@@ -97,6 +99,7 @@ export const FORBIDDEN_TERMS = [
 ];
 
 /** Exact (file, term, text) triples that are not a finding, each with its reason. Stays empty. */
+/** @type {{ file: string; term: string; text: string }[]} */
 export const ALLOWED = [];
 
 const SKIP_ATTRS = new Set([
@@ -129,6 +132,11 @@ const SKIP_ATTRS = new Set([
   "aria-controls",
 ]);
 
+/**
+ * @param {string} dir
+ * @param {string[]} [out]
+ * @returns {string[]}
+ */
 function walkFiles(dir, out = []) {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
@@ -148,19 +156,31 @@ function walkFiles(dir, out = []) {
 
 /** Every file the gate reads (absolute paths). The CLI aborts when this is empty. */
 export function listScannedFiles() {
+  /** @type {string[]} */
   const files = [];
   for (const dir of SCAN_DIRS) walkFiles(join(WEB_ROOT, dir), files);
   return files;
 }
 
-const looksLikeProse = (text) => /\s/.test(text.trim()) && /\p{L}/u.test(text);
+const looksLikeProse = (/** @type {string} */ text) =>
+  /\s/.test(text.trim()) && /\p{L}/u.test(text);
 /** One capitalized word ("Inbox", "Team-Zeiten") — a label, even without whitespace. */
-const isCapitalizedWord = (text) => /^\p{Lu}\p{Ll}[\p{L}-]*$/u.test(text.trim());
-const isShownLiteral = (text) => looksLikeProse(text) || isCapitalizedWord(text);
+const isCapitalizedWord = (/** @type {string} */ text) =>
+  /^\p{Lu}\p{Ll}[\p{L}-]*$/u.test(text.trim());
+const isShownLiteral = (/** @type {string} */ text) =>
+  looksLikeProse(text) || isCapitalizedWord(text);
 
 /** Shown literals of a TypeScript source; `lineBase` is the 1-based line of the source's first line. */
+/** @typedef {(line: number, text: string) => void} Push */
+
+/**
+ * @param {string} code
+ * @param {number} lineBase
+ * @param {Push} push
+ */
 function tsLiterals(code, lineBase, push) {
   const sf = ts.createSourceFile("x.ts", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  /** @param {import("typescript").Node} node */
   const visit = (node) => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
     if (
@@ -172,7 +192,8 @@ function tsLiterals(code, lineBase, push) {
       return;
     }
     if (ts.isLiteralTypeNode(node) || ts.isImportTypeNode(node)) return; // types are never shown
-    const lineOfNode = (n) => sf.getLineAndCharacterOfPosition(n.getStart()).line + lineBase;
+    const lineOfNode = (/** @type {import("typescript").Node} */ n) =>
+      sf.getLineAndCharacterOfPosition(n.getStart()).line + lineBase;
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       if (isShownLiteral(node.text)) push(lineOfNode(node), node.text);
       return;
@@ -193,6 +214,11 @@ function tsLiterals(code, lineBase, push) {
 }
 
 /** String literals inside a template expression (ESTree). */
+/**
+ * @param {any} node an ESTree node (svelte/compiler's expression AST)
+ * @param {Push} push
+ * @param {(offset: number) => number} lineOf
+ */
 function estreeLiterals(node, push, lineOf) {
   if (!node || typeof node !== "object") return;
   if (Array.isArray(node)) {
@@ -206,7 +232,9 @@ function estreeLiterals(node, push, lineOf) {
     return;
   }
   if (node.type === "TemplateLiteral") {
-    const text = node.quasis.map((q) => q.value?.cooked ?? q.value?.raw ?? "").join("…");
+    const text = node.quasis
+      .map((/** @type {any} */ q) => q.value?.cooked ?? q.value?.raw ?? "")
+      .join("…");
     if (looksLikeProse(text)) push(lineOf(node.start), text);
     estreeLiterals(node.expressions, push, lineOf);
     return;
@@ -218,8 +246,12 @@ function estreeLiterals(node, push, lineOf) {
 }
 
 /** Every shown text of a .svelte file. */
+/**
+ * @param {string} source
+ * @param {Push} push
+ */
 function svelteTexts(source, push) {
-  const lineOf = (offset) => source.slice(0, offset).split("\n").length;
+  const lineOf = (/** @type {number} */ offset) => source.slice(0, offset).split("\n").length;
   // scripts: scanned as TypeScript, line numbers offset to the script's position
   for (const match of source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
     const start = match.index + match[0].indexOf(">") + 1;
@@ -231,9 +263,10 @@ function svelteTexts(source, push) {
   try {
     ast = parse(source, { modern: true });
   } catch (err) {
-    push(1, `__PARSE_ERROR__ ${err.message}`);
+    push(1, `__PARSE_ERROR__ ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
+  /** @param {any} node a svelte/compiler template node */
   const visit = (node) => {
     if (!node || typeof node !== "object") return;
     if (Array.isArray(node)) {
@@ -284,12 +317,19 @@ function svelteTexts(source, push) {
   visit(ast.fragment);
 }
 
+/** @typedef {{ file: string; line: number; term: string; text: string; reason: string }} Finding */
+
 /**
  * The findings of one source. `file` is the path relative to apps/web with forward slashes; its
  * extension decides between .svelte and .ts extraction, its prefix decides the area scoping.
+ * @param {string} file
+ * @param {string} source
+ * @returns {Finding[]}
  */
 export function scanSource(file, source) {
+  /** @type {Finding[]} */
   const findings = [];
+  /** @type {Push} */
   const push = (line, text) => {
     if (text.startsWith("__PARSE_ERROR__")) {
       findings.push({ file, line, term: "parse-error", text, reason: "file could not be parsed" });
@@ -310,7 +350,11 @@ export function scanSource(file, source) {
   return findings;
 }
 
-/** The findings of the given files (absolute paths); defaults to the whole scanned tree. */
+/**
+ * The findings of the given files (absolute paths); defaults to the whole scanned tree.
+ * @param {string[]} [files]
+ * @returns {Finding[]}
+ */
 export function scan(files = listScannedFiles()) {
   return files.flatMap((full) =>
     scanSource(relative(WEB_ROOT, full).split("\\").join("/"), readFileSync(full, "utf8")),
@@ -318,6 +362,7 @@ export function scan(files = listScannedFiles()) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  /** @type {string[]} */
   const only = [];
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i++) {

@@ -24,18 +24,18 @@ PERSONAL
   Urlaubsgrenzen & Sperren
 
 PLANUNG
-  Schichtplan
+  Schichteinstellungen
   Verfügbarkeit
   Salons
 
 COMPLIANCE
   Monatsabschluss
-  Audit & Log
+  Protokoll
   Support-Zugriffe
 
 DATEN
-  CSV Import
-  DATEV Export
+  CSV-Import
+  DATEV-Export
 
 SYSTEM
   Allgemein
@@ -67,14 +67,14 @@ These 5 groups and their exact entries are the authoritative target structure fo
 | PERSONAL   | Urlaubsverwaltung        | /admin/vacation       | — (global view + Sonderurlaubs-Typen tab; per-MA editor moved to /admin/employees/[id]) |
 | PERSONAL   | Betriebsurlaub           | /admin/shutdowns      | —                                                                                       |
 | PERSONAL   | Urlaubsgrenzen & Sperren | /admin/leave-limits   | — (new in Issue #836)                                                                   |
-| PLANUNG    | Schichtplan              | /admin/shifts         | —                                                                                       |
+| PLANUNG    | Schichteinstellungen     | /admin/shifts         | —                                                                                       |
 | PLANUNG    | Verfügbarkeit            | /admin/availability   | —                                                                                       |
 | PLANUNG    | Salons                   | /admin/salons         | — (new in Issue #563)                                                                   |
 | COMPLIANCE | Monatsabschluss          | /admin/month-close    | —                                                                                       |
-| COMPLIANCE | Audit & Log              | /admin/audit          | —                                                                                       |
+| COMPLIANCE | Protokoll                | /admin/audit          | —                                                                                       |
 | COMPLIANCE | Support-Zugriffe         | /admin/support-access | — (new in Issue #93)                                                                    |
-| DATEN      | CSV Import               | /admin/import         | —                                                                                       |
-| DATEN      | DATEV Export             | /admin/export         | —                                                                                       |
+| DATEN      | CSV-Import               | /admin/import         | —                                                                                       |
+| DATEN      | DATEV-Export             | /admin/export         | —                                                                                       |
 | SYSTEM     | Allgemein                | /admin/system         | — (feature flags + defaults; theme picker moved to Branding)                            |
 | SYSTEM     | Branding & Themes        | /admin/themes         | —                                                                                       |
 | SYSTEM     | Integrationen            | /admin/integrations   | /admin/wifi-presence (renamed in Phase 52; 301 redirect — see §8)                       |
@@ -99,7 +99,7 @@ Examples of valid matches:
 | Mitarbeitende     | Mitarbeitende            |
 | Urlaubsverwaltung | Urlaubsverwaltung        |
 | Branding & Themes | Branding & Themes        |
-| Audit & Log       | Audit & Log              |
+| Protokoll         | Protokoll                |
 
 Any mismatch between sidebar label and PageHead title is a **Regulatorium violation**. The planned `lint:admin-layout` script (ADMIN-LINT-01, v2 backlog) will automatically detect this; until that script ships, Regulatorium compliance is self-enforced by phase executors.
 
@@ -153,7 +153,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 +------------------------------------------+
 ```
 
-**Pages using Template A:** Allgemein, Branding & Themes, Integrationen, Schichtplan, Urlaubsverwaltung (see Appendix A for full table).
+**Pages using Template A:** Allgemein, Branding & Themes, Integrationen, Schichteinstellungen, Urlaubsverwaltung (see Appendix A for full table).
 
 **Full reference implementation (Template A):**
 
@@ -297,7 +297,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 +------------------------------------------+
 ```
 
-**Pages using Template B:** Mitarbeitende, Sonderurlaubs-Typen, Betriebsurlaub, Audit & Log, Verfügbarkeit, Salons (see Appendix A).
+**Pages using Template B:** Mitarbeitende, Sonderurlaubs-Typen, Betriebsurlaub, Protokoll, Verfügbarkeit, Salons (see Appendix A).
 
 **Full reference implementation — list mode:**
 
@@ -451,7 +451,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 ```
 +------------------------------------------+
 | eyebrow (e.g. "Daten")                  |
-| <PageHead title="CSV Import">           |
+| <PageHead title="CSV-Import">           |
 | optional sub paragraph                   |
 +------------------------------------------+
 | Step indicator (if multi-step):          |
@@ -466,7 +466,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 +------------------------------------------+
 ```
 
-**Pages using Template C:** Monatsabschluss, CSV Import, DATEV Export (see Appendix A).
+**Pages using Template C:** Monatsabschluss, CSV-Import, DATEV-Export (see Appendix A).
 
 **Full reference implementation — without steps (Monatsabschluss):**
 
@@ -552,7 +552,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 </ToolPage>
 ```
 
-**Full reference implementation — with steps (CSV Import):**
+**Full reference implementation — with steps (CSV-Import):**
 
 ```svelte
 <!-- apps/web/src/routes/(app)/admin/import/+page.svelte -->
@@ -589,7 +589,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 
 <ToolPage
   eyebrow="Daten"
-  title="CSV Import"
+  title="CSV-Import"
   sub="Mitarbeiterdaten aus einer CSV-Datei importieren."
   {steps}
   {currentStep}
@@ -1148,14 +1148,14 @@ All 16 admin pages, their template assignment, migration phase, and requirement 
 | PERSONAL   | Urlaubsverwaltung        | /admin/vacation       | Section-Stack                                                                    | 57    | ADMIN-MIG-11, ADMIN-MIG-12 (Sonderurlaubs-Typen tab) |
 | PERSONAL   | Betriebsurlaub           | /admin/shutdowns      | List + Detail                                                                    | 57    | ADMIN-MIG-13                                         |
 | PERSONAL   | Urlaubsgrenzen & Sperren | /admin/leave-limits   | List (rule Modal)                                                                | 836   | AC-836-2                                             |
-| PLANUNG    | Schichtplan              | /admin/shifts         | Section-Stack                                                                    | 55    | ADMIN-MIG-08                                         |
+| PLANUNG    | Schichteinstellungen     | /admin/shifts         | Section-Stack                                                                    | 55    | ADMIN-MIG-08                                         |
 | PLANUNG    | Verfügbarkeit            | /admin/availability   | List + Detail                                                                    | 55    | ADMIN-MIG-09                                         |
 | PLANUNG    | Salons                   | /admin/salons         | List + Detail (per-salon via /admin/salons/[id], create via /admin/salons/neu)   | 563   | AC-563-1                                             |
 | COMPLIANCE | Monatsabschluss          | /admin/month-close    | Tool / Wizard                                                                    | 53    | ADMIN-MIG-04                                         |
-| COMPLIANCE | Audit & Log              | /admin/audit          | Section-Stack (list with tabs) + List + Detail (per-entry via /admin/audit/[id]) | 53    | ADMIN-MIG-05                                         |
+| COMPLIANCE | Protokoll                | /admin/audit          | Section-Stack (list with tabs) + List + Detail (per-entry via /admin/audit/[id]) | 53    | ADMIN-MIG-05                                         |
 | COMPLIANCE | Support-Zugriffe         | /admin/support-access | Section-Stack (list) + List + Detail (per-access via /admin/support-access/[id]) | 93b   | AC-93-7                                              |
-| DATEN      | CSV Import               | /admin/import         | Tool / Wizard                                                                    | 54    | ADMIN-MIG-06                                         |
-| DATEN      | DATEV Export             | /admin/export         | Tool / Wizard                                                                    | 54    | ADMIN-MIG-07                                         |
+| DATEN      | CSV-Import               | /admin/import         | Tool / Wizard                                                                    | 54    | ADMIN-MIG-06                                         |
+| DATEN      | DATEV-Export             | /admin/export         | Tool / Wizard                                                                    | 54    | ADMIN-MIG-07                                         |
 | SYSTEM     | Allgemein                | /admin/system         | Section-Stack                                                                    | 52    | ADMIN-MIG-01                                         |
 | SYSTEM     | Branding & Themes        | /admin/themes         | Section-Stack                                                                    | 52    | ADMIN-MIG-02                                         |
 | SYSTEM     | Integrationen            | /admin/integrations   | Section-Stack                                                                    | 52    | ADMIN-MIG-03                                         |
@@ -1170,7 +1170,7 @@ All 16 admin pages, their template assignment, migration phase, and requirement 
 
 **Closing decisions (v1.6.1 audit, 2026-05-23):**
 
-- **Audit & Log**: list page uses Section-Stack with tab-strip filter — Template B (List + Detail) only applies to the per-entry detail route `/admin/audit/[id]`. Original Appendix A entry "List + Detail" was over-broad; clarified above.
+- **Protokoll**: list page uses Section-Stack with tab-strip filter — Template B (List + Detail) only applies to the per-entry detail route `/admin/audit/[id]`. Original Appendix A entry "List + Detail" was over-broad; clarified above.
 - **Sonderurlaubs-Typen**: ADMIN-MIG-12 satisfied by the `#sonderurlaub` tab inside `/admin/vacation`. The standalone `/admin/special-leave` route remains as a redirect stub (no UI).
 
 ---

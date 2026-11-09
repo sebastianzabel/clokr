@@ -22,7 +22,8 @@ const ROUTE = readSource(
   "../routes/(app)/settings/geraet-koppeln/+page.svelte",
   "src/routes/(app)/settings/geraet-koppeln/+page.svelte",
 );
-const LAYOUT = readSource("../routes/(app)/+layout.svelte", "src/routes/(app)/+layout.svelte");
+// Issue #574: the top bar's page label comes from the one page-name table
+const LAYOUT = readSource("../lib/nav/page-labels.ts", "src/lib/nav/page-labels.ts");
 const COMPONENT = readSource(
   "../lib/components/settings/DevicePairing.svelte",
   "src/lib/components/settings/DevicePairing.svelte",

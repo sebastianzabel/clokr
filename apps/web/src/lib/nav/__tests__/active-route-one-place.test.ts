@@ -39,9 +39,10 @@ const CONSUMERS: { name: string; fromHere: string; fromCwd: string }[] = [
     fromCwd: "src/lib/components/layout/MobileMoreSheet.svelte",
   },
   {
-    name: "routes/(app)/+layout.svelte",
-    fromHere: "../../../routes/(app)/+layout.svelte",
-    fromCwd: "src/routes/(app)/+layout.svelte",
+    // Issue #574: the (app) layout's page-label lookup moved here (the layout imports it)
+    name: "lib/nav/page-labels.ts",
+    fromHere: "../page-labels.ts",
+    fromCwd: "src/lib/nav/page-labels.ts",
   },
 ];
 
@@ -73,6 +74,15 @@ describe("active-route is the one place the current navigation item is decided (
       });
     });
   }
+
+  it("the (app) layout takes its page label from page-labels.ts and matches no routes itself", () => {
+    const layout = readSource(
+      "../../../routes/(app)/+layout.svelte",
+      "src/routes/(app)/+layout.svelte",
+    );
+    expect(layout).toContain('from "$lib/nav/page-labels"');
+    expect(layout).not.toContain(MATCH_NEEDLE);
+  });
 
   it("the helper itself contains the one prefix comparison", () => {
     const helper = readSource("../active-route.ts", "src/lib/nav/active-route.ts");

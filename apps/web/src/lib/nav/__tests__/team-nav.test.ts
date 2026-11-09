@@ -66,14 +66,14 @@ const PERSONALABTEILUNG_PERMISSIONS = [
 ];
 
 describe("visibleTeamNavItems", () => {
-  it("AK-378-1: Salonmanager sees Inbox, Team-Zeiten, Abwesenheiten, Schichtplanung — not Berichte", () => {
+  it("AK-378-1: Salonmanager sees Aufgaben, Team-Zeiten, Abwesenheiten, Schichtplanung — not Berichte", () => {
     const items = visibleTeamNavItems({ permissions: SALONMANAGER_PERMISSIONS });
     const hrefs = items.map((i) => i.href);
     expect(hrefs).toEqual(["/inbox", "/team/time-entries", "/team/leave", "/shifts"]);
     expect(hrefs).not.toContain("/reports");
   });
 
-  it("AK-378-2: Ausbilder sees only Team-Zeiten, Abwesenheiten — no Inbox, no Schichtplanung, no Berichte", () => {
+  it("AK-378-2: Ausbilder sees only Team-Zeiten, Abwesenheiten — no Aufgaben, no Schichtplanung, no Berichte", () => {
     const items = visibleTeamNavItems({ permissions: AUSBILDER_PERMISSIONS });
     const hrefs = items.map((i) => i.href);
     expect(hrefs).toEqual(["/team/time-entries", "/team/leave"]);
@@ -138,11 +138,11 @@ describe("visibleTeamNavItems", () => {
 });
 
 describe("Issue #840 (D-840-06, E-01): one leave entry per area", () => {
-  it("labels the leave entry „Abwesenheiten“ and the inbox „Inbox“; the team calendar entry is gone", () => {
+  it("labels the leave entry „Abwesenheiten“ and the inbox „Aufgaben“ (Issue #574); the team calendar entry is gone", () => {
     const items = visibleTeamNavItems({ permissions: SALONMANAGER_PERMISSIONS });
     const byHref = Object.fromEntries(items.map((i) => [i.href, i.label]));
     expect(byHref["/team/leave"]).toBe("Abwesenheiten");
-    expect(byHref["/inbox"]).toBe("Inbox");
+    expect(byHref["/inbox"]).toBe("Aufgaben");
     expect(Object.keys(byHref)).not.toContain("/teamcal");
     expect(mayOpenTeamPage("/teamcal", { permissions: SALONMANAGER_PERMISSIONS })).toBe(false);
   });

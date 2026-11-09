@@ -1096,7 +1096,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await page.goto("/inbox");
     const head = page.locator(".page-head");
     await expect(head.locator(".eyebrow")).toHaveText("Team");
-    await expect(head.getByRole("heading", { level: 1 })).toHaveText("Inbox");
+    await expect(head.getByRole("heading", { level: 1 })).toHaveText("Aufgaben"); // Issue #574: one page name
     await expect(head.locator("h1 em")).toHaveCount(0);
     const inboxChip = page.locator(".approval-row .leave-type-chip").first();
     await expect(inboxChip).toBeVisible();

@@ -501,7 +501,7 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await page.getByRole("tab", { name: "Urlaub & Abwesenheit" }).click();
     await expect(page.getByText("Urlaubsübersicht", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Lade Urlaubsübersicht…")).toHaveCount(0);
-    await expect(page.getByText("DATEV Export", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("DATEV-Export", { exact: true })).toHaveCount(0);
     // Issue #617: the Monatsexport card replaces the removed vacation-PDF card as the export control
     // the Personalabteilung (report:read, no report:export) must not see.
     await expect(page.getByText("Monatsexport", { exact: true })).toHaveCount(0);

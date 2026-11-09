@@ -77,7 +77,7 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
 
     // Admin sees the full overflow nav — at minimum these manager + admin items
     // are present in the sheet.
-    for (const label of ["Anträge", "Team-Zeiten", "Mitarbeitende", "Audit & Log"]) {
+    for (const label of ["Aufgaben", "Team-Zeiten", "Mitarbeitende", "Protokoll"]) {
       await expect(sheet.getByText(label, { exact: false }).first()).toBeVisible();
     }
 

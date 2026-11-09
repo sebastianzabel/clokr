@@ -230,7 +230,7 @@ test.describe("Error Handling + UX Plausibility", () => {
       { route: "/availability", heading: "Mein Bereich", name: "Verfügbarkeit" },
       { route: "/admin/availability", heading: "PLANUNG", name: "Verfügbarkeit" },
       { route: "/admin/phorest", heading: "SYSTEM", name: "Phorest" },
-      { route: "/admin/audit", heading: "COMPLIANCE", name: "Audit & Log" },
+      { route: "/admin/audit", heading: "COMPLIANCE", name: "Protokoll" },
     ];
     for (const { route, heading, name } of targets) {
       await page.goto(route);
