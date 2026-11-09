@@ -56,7 +56,7 @@ const PAGE_HREFS = Object.keys(PAGE_LABELS);
 export function pageLabel(href: PageHref): string {
   const label = (PAGE_LABELS as Record<string, string>)[href];
   if (label === undefined) {
-    throw new Error(`page-labels: no page name for "${href}" — add it to PAGE_LABELS`);
+    throw new Error(`page-labels: no page name for "${href}" — add it to the page-name table`);
   }
   return label;
 }
