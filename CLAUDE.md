@@ -829,6 +829,14 @@ FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()
   through it at all. The audit that established the normalisation was Phase 61; its artefacts were
   archived with the milestone and are not in the repo.
 
+- **FIXED_SCHEDULE: `weeklyHours` = Σ `{day}Hours` on every write (Issue #848).**
+  `contexts/platform/fixed-schedule-hours.ts` is the ONE place: `POST /employees` (which takes no
+  day hours) derives them from `weeklyHours` over the resolved `workDays` (hundredths, remainder on
+  the last workday of the week; no `weeklyHours` = 8 h per workday, the old default);
+  `PUT /settings/work/:employeeId` (an omitted `weeklyHours` takes the day sum) and the bulk apply
+  (preview and apply) refuse a mismatch with 400 `WEEKLY_HOURS_MISMATCH` before any write. A
+  write-path guard only — no reader changes, other types are never compared, and divergent rows
+  are listed by `scripts/audit-848-weekly-vs-day-hours.ts` (read-only, ids only), never corrected.
 - **Divergent legacy rows MUST NOT be "corrected" (Phase 95b, D-01).** Surface them with
   `pnpm --filter @clokr/api exec tsx scripts/audit-workdays-vs-day-hours.ts` — then leave them
   alone. `workDays` is the source of truth for leave consumption (`calculateWorkDays`) and pro-rata

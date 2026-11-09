@@ -43,7 +43,8 @@ export type BulkApplyRejectionCode =
   | "BULK_APPLY_NOT_MONTH_FIRST"
   | "BULK_APPLY_RETROACTIVE"
   | "BULK_APPLY_TOO_FAR"
-  | "BULK_APPLY_PREVIEW_STALE";
+  | "BULK_APPLY_PREVIEW_STALE"
+  | "WEEKLY_HOURS_MISMATCH";
 
 /** A business-rule refusal of the preview or the apply; the caller maps it to `{ error, code }`. */
 export class BulkApplyRejection extends Error {
