@@ -209,7 +209,8 @@ describe("PersonDrilldown - header and figures", () => {
       ["Saldo Zeitraum", "+5:00"],
       ["Saldo am Ende", "+12:15"],
     ]);
-    await waitFor(() => expect(screen.queryByText("Wird geladen")).toBeNull());
+    // #843 D-843-07: the pending state is the Skeleton status; its absence proves the days arrived.
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Wird geladen" })).toBeNull());
   });
 
   it("a withheld saldo reads a dash in the figures and shows no SaldoAnzeige", () => {
