@@ -301,7 +301,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(xRow).toBeVisible();
     await expect(xRow).toContainText(x.lastName);
 
-    await xRow.getByRole("link", { name: new RegExp(x.lastName) }).click();
+    // #843 D-843-11: the list is a DataTable; the name cell is the row's keyboard control (a button).
+    await xRow.getByRole("button", { name: new RegExp(x.lastName) }).click();
     await expect(page).toHaveURL(new RegExp(`/admin/employees/${x.id}`));
     await expect(
       page.getByRole("tabpanel").getByText("Persönliche Daten", { exact: true }),
@@ -400,7 +401,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     ]);
 
     // ── 2. AC-86-2: change the contract from the next month-first ─────────────────────────────
-    await page.getByTestId(`admin-employees-row-${x.id}`).getByRole("link").first().click();
+    // #843 D-843-11: the name cell of the DataTable row is a button, not a link.
+    await page.getByTestId(`admin-employees-row-${x.id}`).getByRole("button").first().click();
     await expect(page).toHaveURL(new RegExp(`/admin/employees/${x.id}`));
     await page.getByRole("tab", { name: "Arbeitszeit" }).click();
     const contractHistory = page.getByTestId("contract-history");

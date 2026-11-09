@@ -60,6 +60,8 @@
     /** Makes rows clickable; the primary cell becomes the keyboard-focusable control. */
     onRowClick?: (row: Row) => void;
     toolbar?: Snippet;
+    /** Optional stable `data-testid` of a row (a page whose e2e addresses its rows by id). */
+    rowTestId?: (row: Row) => string | undefined;
     /** Accessible table caption (visually hidden). */
     caption: string;
     loading?: boolean;
@@ -76,6 +78,7 @@
     onResetFilters,
     onRowClick,
     toolbar,
+    rowTestId,
     caption,
     loading = false,
   }: Props = $props();
@@ -144,7 +147,11 @@
               <!-- The keyboard path is the primary cell's button; the row click is the pointer
                    convenience of the same action, so the row itself needs no role or tabindex. -->
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-              <tr class="dt-row--click" onclick={(e) => onRowActivate(e, row)}>
+              <tr
+                class="dt-row--click"
+                data-testid={rowTestId?.(row)}
+                onclick={(e) => onRowActivate(e, row)}
+              >
                 {#each columns as column (column.key)}
                   <td
                     data-label={column.label}
@@ -168,7 +175,7 @@
                 {/each}
               </tr>
             {:else}
-              <tr>
+              <tr data-testid={rowTestId?.(row)}>
                 {#each columns as column (column.key)}
                   <td
                     data-label={column.label}
