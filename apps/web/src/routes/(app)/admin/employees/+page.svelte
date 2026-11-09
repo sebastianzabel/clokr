@@ -1167,13 +1167,13 @@
   .loading {
     padding: 48px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .empty-state {
     text-align: center;
     padding: 64px 32px;
-    color: var(--text-muted);
+    color: var(--text-2);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1196,8 +1196,8 @@
     align-items: center;
     flex-wrap: wrap;
     padding: 14px 18px;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
   }
   .filter-search {
     flex: 0 1 280px;
@@ -1214,13 +1214,13 @@
     flex: 0 0 auto;
     font-size: 13px;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
     white-space: nowrap;
     cursor: pointer;
     padding: 6px 12px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
     border-radius: 999px;
-    background: var(--bg-card);
+    background: var(--card);
     transition:
       background 0.15s ease,
       color 0.15s ease,
@@ -1237,14 +1237,14 @@
   .filter-toggle--on {
     background: var(--brand);
     border-color: var(--brand);
-    color: #fff;
+    color: var(--brand-ink);
   }
   .filter-toggle--on:hover {
-    color: #fff;
+    color: var(--brand-ink);
   }
   .filter-count {
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .spacer {
     flex: 1;
@@ -1272,19 +1272,19 @@
     font-size: 14px;
   }
   .table th {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     padding: 12px 16px;
     text-align: left;
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border);
+    color: var(--text-2);
+    border-bottom: 1px solid var(--line);
   }
   .table td {
     padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     vertical-align: middle;
     color: var(--text);
   }
@@ -1292,7 +1292,7 @@
     border-bottom: none;
   }
   .table tbody tr:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 
   .row-inactive {
@@ -1317,15 +1317,15 @@
   }
 
   .col-number {
-    color: var(--text-muted);
+    color: var(--text-2);
     width: 80px;
   }
   .col-email {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .col-date,
   .col-login {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13px;
   }
   .col-actions {
@@ -1379,18 +1379,18 @@
 
   .hint {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 4px 0 0;
   }
   .text-muted {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-weight: 400;
   }
 
   /* ── Personalstruktur (Phase 41) — subhead + override row ─────────────── */
   .form-subhead {
     margin-top: 6px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding-top: 14px;
   }
   .form-subhead-title {
@@ -1398,7 +1398,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0;
   }
   .override-row {
@@ -1433,15 +1433,15 @@
       background 0.15s,
       color 0.15s,
       border-color 0.15s;
-    border: 1.5px solid var(--border);
+    border: 1.5px solid var(--line);
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .wd-chip--active {
     background: var(--brand);
     border-color: var(--brand);
-    color: #fff;
+    color: var(--brand-ink);
   }
 
   .wd-chip:hover:not(.wd-chip--active) {

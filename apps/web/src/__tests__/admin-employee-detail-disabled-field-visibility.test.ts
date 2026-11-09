@@ -4,7 +4,7 @@
 // `color`, same `background-color`, only `cursor: not-allowed` differed (invisible until hover).
 //
 // Root cause: `apps/web/src/app.css` already defines the shared `.form-input:disabled` recipe
-// (`--bg-subtle` / `--text-muted` / `not-allowed`), but this route file has its own SCOPED
+// (`--sunk` / `--text-2` / `not-allowed`), but this route file has its own SCOPED
 // `.input, .select, .form-input { ... }` rule that unconditionally sets `background`/`color`.
 // Svelte's compiled scoped selector (`.form-input.svelte-xxxxx`) ties the CSS specificity of
 // app.css's `.form-input:disabled` (both are exactly one class + one pseudo-class / one class),
@@ -53,7 +53,7 @@ expect(STYLE_MATCH, "no <style> block found in +page.svelte").not.toBeNull();
 const STYLE = STYLE_MATCH![1];
 
 // The base (non-disabled) rule this file defines for .input/.select/.form-input. This MUST
-// keep using --bg-card / --text — those are the "editable" look the disabled state must differ
+// keep using --card / --text — those are the "editable" look the disabled state must differ
 // from. If a future edit changes these, the test below re-derives its expectations from the
 // actual tokens found here instead of hardcoding them, so it still pins the *distinction*.
 const BASE_BLOCK_MATCH = STYLE.match(/\.input,\s*\n\s*\.select,\s*\n\s*\.form-input\s*\{([^}]*)\}/);
@@ -65,13 +65,13 @@ const DISABLED_BLOCK_MATCH = STYLE.match(
 );
 
 describe("admin employee detail — disabled .form-input visibility (issue #94)", () => {
-  it("defines a base (editable) .input/.select/.form-input rule using --bg-card and --text", () => {
+  it("defines a base (editable) .input/.select/.form-input rule using --card and --text", () => {
     expect(
       BASE_BLOCK_MATCH,
       "base .form-input rule not found — page structure changed",
     ).not.toBeNull();
     const base = BASE_BLOCK_MATCH![1];
-    expect(base).toMatch(/background:\s*var\(--bg-card\)/);
+    expect(base).toMatch(/background:\s*var\(--card\)/);
     expect(base).toMatch(/color:\s*var\(--text\)/);
   });
 
@@ -87,17 +87,18 @@ describe("admin employee detail — disabled .form-input visibility (issue #94)"
 
   it("the :disabled override reuses the SAME shared tokens app.css's recipe uses — no new class or token", () => {
     const disabled = DISABLED_BLOCK_MATCH![1];
-    expect(disabled).toMatch(/background:\s*var\(--bg-subtle\)/);
-    expect(disabled).toMatch(/color:\s*var\(--text-muted\)/);
+    expect(disabled).toMatch(/background:\s*var\(--sunk\)/);
+    expect(disabled).toMatch(/color:\s*var\(--text-2\)/);
     expect(disabled).toMatch(/cursor:\s*not-allowed/);
   });
 
   it("the disabled treatment resolves to DIFFERENT tokens than the editable base rule", () => {
-    // --bg-subtle !== --bg-card and --text-muted !== --text are true by construction in every
-    // theme/skin/mode combination defined in tokens.css (checked: pflaume/nacht/wald light+dark,
-    // editorial+modern skins) — they are always distinct token DECLARATIONS, never aliases of
-    // each other. Pinning that the disabled rule references the "-subtle"/"-muted" siblings
-    // rather than re-declaring --bg-card/--text is what actually fixes AC-FE-04: it guarantees
+    // #842 D-842-11: the expected names follow the renamed roles (card, sunk, text-2); the
+    // assertion that disabled and editable resolve to DIFFERENT tokens is unchanged.
+    // --sunk !== --card and --text-2 !== --text are true by construction in every theme and
+    // mode combination of tokens.css — they are always distinct token DECLARATIONS, never
+    // aliases of each other. Pinning that the disabled rule references --sunk and --text-2
+    // rather than re-declaring --card/--text is what actually fixes AC-FE-04: it guarantees
     // a real value delta in every theme, not just the one theme this bug was measured in.
     const base = BASE_BLOCK_MATCH![1];
     const disabled = DISABLED_BLOCK_MATCH![1];
@@ -107,10 +108,10 @@ describe("admin employee detail — disabled .form-input visibility (issue #94)"
     const baseColor = base.match(/color:\s*var\((--[\w-]+)\)/)?.[1];
     const disabledColor = disabled.match(/color:\s*var\((--[\w-]+)\)/)?.[1];
 
-    expect(baseBg).toBe("--bg-card");
-    expect(disabledBg).toBe("--bg-subtle");
+    expect(baseBg).toBe("--card");
+    expect(disabledBg).toBe("--sunk");
     expect(baseColor).toBe("--text");
-    expect(disabledColor).toBe("--text-muted");
+    expect(disabledColor).toBe("--text-2");
 
     expect(disabledBg).not.toBe(baseBg);
     expect(disabledColor).not.toBe(baseColor);
