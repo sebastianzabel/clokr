@@ -264,11 +264,34 @@ Usage:
 </MonthBar>
 ```
 
+### `<PeriodPicker>`
+
+Source: `$components/ui/PeriodPicker.svelte`
+
+Issue #843 (D-843-01 block 2): the one period control. Controlled: prev / label / next with 44 px targets, optional „Heute“, optional zoom Segment (`zooms` in display order from `jahr`, `quartal`, `monat`, `woche`; shown from two levels on, `zoom` bindable, `onZoom`). It emits the legacy `.month-bar` DOM and the `{prefix}`, `{prefix}-prev|next|today|label` test ids; `MonthBar` and `PeriodSwitcher` render it and keep their props. `aside` takes content that is not the period (MonthBar's stats), `extra` trailing actions of the nav row, `onLabelClick` + `labelOverlay` turn the label into a button with an overlay (MonthBar's month grid).
+
+```ts
+interface Props {
+  label: string;
+  onPrev: () => void;
+  onNext: () => void;
+  onToday?: () => void;
+  prevLabel?: string; // default "Vorheriger Zeitraum"
+  nextLabel?: string; // default "Nächster Zeitraum"
+  nextDisabled?: boolean;
+  testIdPrefix?: string; // default "month-bar"
+  eyebrow?: string;
+  zooms?: ("jahr" | "quartal" | "monat" | "woche")[];
+  zoom?: "jahr" | "quartal" | "monat" | "woche"; // bindable
+  onZoom?: (zoom) => void;
+}
+```
+
 ### `<PeriodSwitcher>`
 
 Source: `$components/ui/PeriodSwitcher.svelte`
 
-Phase 840 (Issue #840, D-840-13): one period control for all leave views; a wrapper around MonthBar, no new recipe. It renders ‹ label › Heute for a year, a quarter or a month and emits no markup or class of its own, so every `.month-bar` rule and the narrow-viewport proofs (Issue #553/#564) apply unchanged.
+Phase 840 (Issue #840, D-840-13): one period control for all leave views; a wrapper around PeriodPicker (Issue #843), no new recipe. It renders ‹ label › Heute for a year, a quarter or a month and emits no markup or class of its own, so every `.month-bar` rule and the narrow-viewport proofs (Issue #553/#564) apply unchanged.
 
 ```ts
 interface Props {
@@ -278,9 +301,9 @@ interface Props {
   onShift: (step: -1 | 1) => void;
   /** "Heute" jump-to-today handler. */
   onToday: () => void;
-  /** Real disabled next arrow (MonthBar `nextDisabled`). */
+  /** Real disabled next arrow (PeriodPicker `nextDisabled`). */
   nextDisabled?: boolean;
-  /** MonthBar test-id prefix (default "month-bar"). */
+  /** PeriodPicker test-id prefix (default "month-bar"). */
   testIdPrefix?: string;
 }
 ```
