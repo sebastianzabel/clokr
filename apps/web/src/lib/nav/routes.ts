@@ -504,15 +504,16 @@ export const APP_ROUTES: readonly AppRoute[] = [
  * guard used (the admin layout guards them before their own redirect runs; it lands on an old URL, which then
  * redirects once more).
  */
-export const LEGACY_ALIASES: readonly { href: string; requires: PermissionAlternatives }[] = [
-  // → /admin/vacation#sonderurlaub (its own onMount redirect)
-  {
-    href: "/admin/special-leave",
-    requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
-  },
-  // → /admin/integrations (301 from its +page.server.ts)
-  { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },
-];
+export const LEGACY_ROUTE_REDIRECTS: readonly { href: string; requires: PermissionAlternatives }[] =
+  [
+    // → /admin/vacation#sonderurlaub (its own onMount redirect)
+    {
+      href: "/admin/special-leave",
+      requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
+    },
+    // → /admin/integrations (301 from its +page.server.ts)
+    { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },
+  ];
 
 const ROUTE_HREFS = APP_ROUTES.map((route) => route.href);
 const FILE_ROUTES = APP_ROUTES.filter(
@@ -594,7 +595,7 @@ export function visibleRoute(
 
 /** May `user` open the page at `pathname`? Fail-closed for an unknown path. Aliases use their old guard. */
 export function mayOpenPath(user: PermissionHolder | null | undefined, pathname: string): boolean {
-  const alias = LEGACY_ALIASES.find((entry) => matchesRoute(entry.href, pathname));
+  const alias = LEGACY_ROUTE_REDIRECTS.find((entry) => matchesRoute(entry.href, pathname));
   if (alias !== undefined) return holdsAlternatives(user, alias.requires);
   const route = routeFor(pathname);
   if (route === null) return false;
