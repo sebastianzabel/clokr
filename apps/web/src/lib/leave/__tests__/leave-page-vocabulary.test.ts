@@ -42,22 +42,37 @@ try {
   );
 }
 
-// Issue #851 (D-851-04): the Urlaubsjahr tiles are the items of one KpiStrip now (`vacYearItems`),
-// so the labels are read from that list instead of from tile markup. Same claims, new place.
-const ITEMS_START = PAGE.indexOf("let vacYearItems = $derived<KpiItem[]>([");
-const ITEMS = ITEMS_START < 0 ? "" : PAGE.slice(ITEMS_START, PAGE.indexOf("]);", ITEMS_START));
-const tile = (label: string) => `label: "${label}"`;
+// Phase 851 (owner acceptance, prototype): the Urlaubsjahr strip left /leave - the yearly figures are
+// the Urlaubskonto ledger of Ich › Konto now (#594). The tile claims below therefore read that ledger;
+// the retired terms stay pinned on /leave AND on Konto.
+const KONTO_URL = new URL("../../../routes/(app)/ich/konto/+page.svelte", import.meta.url);
+let KONTO: string;
+try {
+  KONTO = readFileSync(fileURLToPath(KONTO_URL), "utf8");
+} catch {
+  KONTO = readFileSync(resolve(process.cwd(), "src/routes/(app)/ich/konto/+page.svelte"), "utf8");
+}
+const LEDGER_START = KONTO.indexOf('<dl class="ledger">');
+const LEDGER =
+  LEDGER_START < 0 ? "" : KONTO.slice(LEDGER_START, KONTO.indexOf("</dl>", LEDGER_START));
+const row = (label: string) => new RegExp(`<dt>${label.replace(/[()]/g, "\\$&")}</dt>`);
 
-describe("leave page vocabulary — the tile list is found", () => {
-  it("vacYearItems exists and is non-empty", () => {
-    expect(ITEMS_START).toBeGreaterThan(-1);
-    expect(ITEMS.length).toBeGreaterThan(0);
+describe("leave page vocabulary — the ledger is found", () => {
+  it("the Urlaubskonto ledger of Ich › Konto exists and is non-empty", () => {
+    expect(LEDGER_START).toBeGreaterThan(-1);
+    expect(LEDGER.length).toBeGreaterThan(0);
+  });
+
+  it("/leave has no Urlaubsjahr strip of its own any more", () => {
+    expect(PAGE).not.toContain("vacYearItems");
+    expect(PAGE).not.toContain("Urlaubsjahr {calYear}");
   });
 });
 
 describe("leave page vocabulary — RETIRED terms must not come back", () => {
   it("no strip tile is called `Resturlaub` — that tile meant carryOverRemaining (0), not the balance", () => {
-    expect(ITEMS).not.toContain(tile("Resturlaub"));
+    expect(LEDGER).not.toMatch(row("Resturlaub"));
+    expect(PAGE).not.toContain('label: "Resturlaub"');
   });
 
   it("`Resturlaub Vorjahr` is gone — it meant the GROSS carry-over (14), a third meaning of the word", () => {
@@ -69,7 +84,8 @@ describe("leave page vocabulary — RETIRED terms must not come back", () => {
   });
 
   it("no strip tile is called `Geplant` — the days are submitted and awaiting approval, i.e. beantragt", () => {
-    expect(ITEMS).not.toContain(tile("Geplant"));
+    expect(LEDGER).not.toMatch(row("Geplant"));
+    expect(PAGE).not.toContain('label: "Geplant"');
   });
 
   it("the old `von N verfügbar` template literal is gone", () => {
@@ -82,22 +98,14 @@ describe("leave page vocabulary — RETIRED terms must not come back", () => {
 });
 
 describe("leave page vocabulary — the new terms must be PRESENT", () => {
-  it("names the gross Vorjahresübertrag in its own strip tile", () => {
-    expect(ITEMS).toContain(tile("Übertrag Vorjahr"));
+  it("names the Vorjahresübertrag in its own ledger row, never as „Resturlaub“", () => {
+    expect(LEDGER).toMatch(/<dt>Übertrag aus \{today\.year - 1\}<\/dt>/);
   });
 
-  it("names the unused rest of that Übertrag distinctly", () => {
-    expect(ITEMS).toContain(tile("Übertrag Vorjahr (Rest)"));
-  });
-
-  it("calls the pending days `Beantragt` — the same stem the card's qualifier uses", () => {
-    expect(ITEMS).toContain(tile("Beantragt"));
-  });
-
-  it("keeps the three unchanged strip tiles, so a later edit cannot quietly rename them either", () => {
-    expect(ITEMS).toContain(tile("Anspruch"));
-    expect(ITEMS).toContain(tile("Genommen"));
-    expect(ITEMS).toContain(tile("Verbleibend"));
+  it("keeps the entitlement, the taken days and the remainder as their own rows", () => {
+    expect(LEDGER).toMatch(row("Jahresanspruch"));
+    expect(LEDGER).toMatch(row("Genommen und genehmigt"));
+    expect(LEDGER).toMatch(row("Verbleibend"));
   });
 
   it("takes the card's label from the tested conditional, not from a template literal", () => {
@@ -124,29 +132,15 @@ describe("leave page vocabulary — the new terms must be PRESENT", () => {
 });
 
 describe("leave page vocabulary — structure", () => {
-  it("has exactly six strip tiles (five before, plus the gross Übertrag)", () => {
-    expect(ITEMS.match(/\blabel: "/g)!.length).toBe(6);
+  it("has exactly four ledger rows on Konto", () => {
+    expect(LEDGER.match(/<div class="ledger-row/g) ?? []).toHaveLength(4);
   });
 
-  it("keeps the two Übertrag tiles adjacent — separated, `(Rest) 0` would be an orphaned number again", () => {
-    const grossIdx = ITEMS.indexOf(tile("Übertrag Vorjahr"));
-    const restIdx = ITEMS.indexOf(tile("Übertrag Vorjahr (Rest)"));
-    expect(grossIdx).toBeGreaterThan(-1);
-    expect(restIdx).toBeGreaterThan(grossIdx);
-    // No other tile sits between them.
-    expect(ITEMS.slice(grossIdx + 1, restIdx).match(/\blabel: "/g) ?? []).toHaveLength(0);
-  });
-
-  it("builds the tiles from the block only — no page-own tile markup or bespoke selector", () => {
-    expect(PAGE).not.toMatch(/class="vac-stat/);
-    expect(PAGE).not.toContain(".vac-stat");
-    expect(PAGE).toContain('<KpiStrip ariaLabel="Urlaubsjahr {calYear}" items={vacYearItems} />');
-  });
-
-  it("does not interpolate a year into any Urlaubs-label", () => {
-    // loadVacationSummary() always fetches the CURRENT year regardless of the viewed calYear
-    // (see deferred-items.md #1), so a year in a tile label would be an outright false statement.
-    expect(ITEMS).not.toMatch(/label: `[^`]*\{calYear\}/);
-    expect(ITEMS).not.toMatch(/label: "[^"]*\d{4}/);
+  it("does not interpolate a year into any /leave Kennzahl label", () => {
+    // loadVacationSummary() fetches the CURRENT year (deferred-items.md #1); a year in a label would lie.
+    const items = PAGE.slice(PAGE.indexOf("let balanceItems = $derived<KpiItem[]>(["));
+    const block = items.slice(0, items.indexOf("]);"));
+    expect(block).not.toMatch(/label: `[^`]*\{calYear\}/);
+    expect(block).not.toMatch(/label: "[^"]*\d{4}/);
   });
 });

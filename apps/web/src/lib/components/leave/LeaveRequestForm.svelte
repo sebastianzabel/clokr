@@ -103,6 +103,8 @@
      *  in edit mode (the request's own dates win) and left blank when omitted. */
     initialStartDate?: string;
     initialEndDate?: string;
+    /** Issue #851 (additive): the type a new request opens with („Krank melden“ opens SICK). */
+    initialType?: CalendarTypeCode;
     /** The year `/leave/entitlements/:employeeId` is queried with — the calendar year the PAGE
      *  is currently showing (`calYear` on both `/leave` and `/team/leave`), not necessarily the
      *  real-world current year. Defaults to the real-world current year when omitted. This
@@ -125,6 +127,7 @@
     editingRequest = null,
     initialStartDate = "",
     initialEndDate = "",
+    initialType = "VACATION",
     entitlementYear = new Date().getFullYear(),
     onSaved,
     personPicker,
@@ -395,7 +398,7 @@
 
   // ── Form lifecycle ───────────────────────────────────────────────────────
   function resetFormFields() {
-    formType = "VACATION";
+    formType = initialType;
     formStart = initialStartDate;
     formEnd = initialEndDate;
     formHalfDay = false;

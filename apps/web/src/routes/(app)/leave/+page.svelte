@@ -9,14 +9,14 @@
   import Pagination from "$components/ui/Pagination.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
+  import { isEffectiveLeaveStatus } from "$lib/leave/effective-leave-statuses";
   import Card from "$components/ui/Card.svelte";
   import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
   import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import { matchesSearch } from "$lib/table/search";
-  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-06
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
   import LeaveLimitNotice from "$lib/components/leave/LeaveLimitNotice.svelte";
@@ -166,20 +166,18 @@
   // Seeds the dialog's date fields on a fresh CREATE open (calendar drag-select / day click /
   // Enter-Space). Reset to "" by the plain "+ Neue Abwesenheit" button.
   let pendingInitialStart = $state("");
+  // Phase 851: „Krank melden“ opens the dialog on SICK, „Urlaub beantragen“ on VACATION.
+  let pendingInitialType = $state<"VACATION" | "SICK">("VACATION");
+
+  function openNewRequest(type: "VACATION" | "SICK") {
+    editingRequest = null;
+    pendingInitialStart = "";
+    pendingInitialEnd = "";
+    pendingInitialType = type;
+    showForm = true;
+  }
   let pendingInitialEnd = $state("");
 
-  // Überstunden- / Urlaubskontostand
-  let overtimeBalance: number | null = $state(null);
-  // Phase 97-06 (SALDO-DISP-01/04) — split fields from GET /leave/overtime-balance,
-  // alongside the pre-existing lifetime `overtimeBalance`. Default `undefined` (not
-  // null) so "not yet loaded" and "older cached response without the split fields"
-  // both read as `confirmedMinutes === undefined` — the same fallback-to-legacy
-  // check the dashboard's SaldoAnzeige tile already uses (97-04).
-  let confirmedMinutes: number | undefined = $state(undefined);
-  let openMonthMinutes: number | null | undefined = $state(undefined);
-  let hasClosedMonth = $state(false);
-  let unconfirmedMonths: number | null | undefined = $state(undefined);
-  let rosterIncomplete: boolean | undefined = $state(undefined);
   // Phase 104-10 (D-31): one movement per CONFIRMED § 9 credit in this entitlement year —
   // rendered verbatim (server-authored label), never re-derived on the client.
   // Types + the mapper live in $lib/leave/vacation-balance.ts (dev-pass fix, see that
@@ -283,12 +281,28 @@
   );
   const TAB_IDS: readonly MyLeaveTab[] = ["kalender", "antraege", "team", "planung"];
   // The tabs of the one toolbar; `testId` keeps the names the e2e specs know.
-  const toolbarTabs = [
+  let openRequestCount = $derived(
+    myRequests.filter((r) => r.status === "PENDING" || r.status === "CANCELLATION_REQUESTED")
+      .length,
+  );
+
+  const toolbarTabs = $derived([
     { id: "kalender", label: "Kalender", testId: "calendar" },
-    { id: "antraege", label: "Meine Anträge", testId: "list" },
+    {
+      id: "antraege",
+      label: "Anträge",
+      testId: "list",
+      // Phase 851 (prototype): the own requests still waiting for a decision.
+      ...(openRequestCount > 0
+        ? {
+            badge: openRequestCount,
+            badgeLabel: `${openRequestCount} ${openRequestCount === 1 ? "Antrag wartet" : "Anträge warten"} auf eine Entscheidung`,
+          }
+        : {}),
+    },
     { id: "team", label: "Team" },
     { id: "planung", label: "Planung" },
-  ];
+  ]);
   const TIMELINE_ZOOMS: Zoom[] = ["jahr", "quartal", "monat"];
 
   /** The zoom a tab opens with; read from the one parser, so the defaults live only in `area-tabs`. */
@@ -550,7 +564,6 @@
 
   onMount(() => {
     deepLinkRequestId = urlState.requestId;
-    loadOvertimeBalance();
     loadKarenzOverrun();
   });
 
@@ -711,42 +724,6 @@
       // Only the response for the year currently on screen may clear the skeleton; a superseded
       // response must leave it up for the request that is still in flight.
       if (year === calYear) vacSummaryLoading = false;
-    }
-  }
-
-  // Phase 97-06 — response shape widened additively; balanceHours keeps its
-  // existing meaning (lifetime total) for any consumer that still needs it.
-  interface OvertimeBalanceResponse {
-    balanceHours: number;
-    confirmedMinutes?: number;
-    openMonthMinutes?: number | null;
-    hasClosedMonth?: boolean;
-    // Issue #588 (P-14): how many calendar months the forecast spans; null = unknown.
-    unconfirmedMonths?: number | null;
-    rosterIncomplete?: boolean;
-    // Phase 100 (OTC-03/OTC-05) — resolved negative-balance tolerance, alongside
-    // the Phase-97 split fields above. Optional so an older cached response
-    // degrades to "unconfigured" (no Toleranz row, no warn hint).
-    maxNegativeBalanceMinutes?: number | null;
-    isNegativeLimitExceeded?: boolean;
-  }
-
-  async function loadOvertimeBalance() {
-    try {
-      const r = await api.get<OvertimeBalanceResponse>("/leave/overtime-balance");
-      overtimeBalance = r.balanceHours;
-      confirmedMinutes = r.confirmedMinutes;
-      openMonthMinutes = r.openMonthMinutes;
-      hasClosedMonth = r.hasClosedMonth ?? false;
-      unconfirmedMonths = r.unconfirmedMonths ?? null;
-      rosterIncomplete = r.rosterIncomplete;
-    } catch {
-      overtimeBalance = null;
-      confirmedMinutes = undefined;
-      openMonthMinutes = undefined;
-      hasClosedMonth = false;
-      unconfirmedMonths = undefined;
-      rosterIncomplete = undefined;
     }
   }
 
@@ -921,42 +898,6 @@
   let vacSummaryCarryOverRemaining = $derived(vacSummary.carryOverRemaining);
   let vacSummaryLeft = $derived(vacSummary.left);
 
-  /** „Tag“ / „Tage“ for an entitlement figure. */
-  function daysUnit(n: number): string {
-    return n === 1 ? "Tag" : "Tage";
-  }
-
-  // Issue #851 (D-851-04): the Urlaubsjahr figures - same labels, same conditions as the former tiles.
-  let vacYearItems = $derived<KpiItem[]>([
-    { label: "Anspruch", value: vacSummaryTotal, unit: daysUnit(vacSummaryTotal) },
-    ...(vacSummaryCarryOver > 0
-      ? [
-          {
-            label: "Übertrag Vorjahr",
-            value: `+${vacSummaryCarryOver}`,
-            unit: daysUnit(vacSummaryCarryOver),
-            testId: "vac-stat-carryover",
-          },
-          {
-            label: "Übertrag Vorjahr (Rest)",
-            value: vacSummaryCarryOverRemaining === 0 ? "0" : `+${vacSummaryCarryOverRemaining}`,
-            unit: daysUnit(vacSummaryCarryOverRemaining),
-            testId: "vac-stat-carryover-rest",
-          },
-        ]
-      : []),
-    { label: "Genommen", value: vacSummaryUsed, unit: daysUnit(vacSummaryUsed) },
-    ...(vacSummaryPlanned > 0
-      ? [{ label: "Beantragt", value: vacSummaryPlanned, unit: daysUnit(vacSummaryPlanned) }]
-      : []),
-    {
-      label: "Verbleibend",
-      value: vacSummaryLeft,
-      unit: daysUnit(vacSummaryLeft),
-      deltaTone: vacSummaryLeft < 0 ? "bad" : "neutral",
-      delta: vacSummaryLeft < 0 ? "mehr genommen als verfügbar" : undefined,
-    },
-  ]);
   let showVacSummary = $state(true);
   // Phase 114: `vacSummary.remaining` is `number | null` — the null branch is what makes the
   // Urlaubskonto-Karte render "–" instead of a fake "0". Do NOT add `?? 0`. Declared here
@@ -968,6 +909,31 @@
 
   // Issue #851 (D-851-04): the figures of the Kennzahlenleiste - the same values and wording the former
   // three cards showed (vacationCardLabel / vacationCardDelta, calendarDaysUnit for sick days, #595).
+  // Phase 851 (prototype): the next own approved vacation, for the „Genommen“ cell.
+  let nextVacation = $derived(
+    myRequests
+      .filter(
+        (r) =>
+          r.typeCode === "VACATION" &&
+          isEffectiveLeaveStatus(r.status) &&
+          r.startDate.slice(0, 10) >= today,
+      )
+      .sort((x, y) => x.startDate.localeCompare(y.startDate))[0] ?? null,
+  );
+  // A carry-over deadline is only news while it lies ahead.
+  let carryDeadlineAhead = $derived(
+    vacationBalance?.carryOverDeadline && vacationBalance.carryOverDeadline.slice(0, 10) >= today
+      ? vacationBalance.carryOverDeadline.slice(0, 10)
+      : null,
+  );
+  function shortDate(iso: string): string {
+    const [, m, d] = iso.slice(0, 10).split("-");
+    return `${Number(d)}.${Number(m)}.`;
+  }
+
+  // Issue #851 (D-851-04, prototype): the four figures of the Kennzahlenleiste. Resturlaub keeps the
+  // tested wording (vacationCardLabel / vacationCardDelta), the others read the same summary
+  // (deriveVacationSummary) and the sick-day kernel (#595) - nothing is recomputed here.
   let balanceItems = $derived<KpiItem[]>([
     {
       label: vacationCardLabel(vacSummaryPlanned),
@@ -976,6 +942,23 @@
       delta: vacationBalance
         ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
         : undefined,
+    },
+    {
+      // `used` counts approved days still ahead as well, so the label says so.
+      label: "Genommen & genehmigt",
+      value: vacationBalance ? vacSummaryUsed : "–",
+      unit: vacSummaryUsed === 1 ? "Tag" : "Tage",
+      explanation: nextVacation
+        ? `nächster: ${shortDate(nextVacation.startDate)}–${shortDate(nextVacation.endDate)}`
+        : "kein Urlaub geplant",
+    },
+    {
+      label: "Verfällt",
+      value: !vacationBalance ? "–" : carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0,
+      unit: (carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0) === 1 ? "Tag" : "Tage",
+      explanation: carryDeadlineAhead
+        ? `Übertrag verfällt am ${shortDate(carryDeadlineAhead)}${carryDeadlineAhead.slice(0, 4)}`
+        : "kein Übertrag offen",
     },
     {
       label: "Krankheitstage",
@@ -1069,9 +1052,8 @@
 
   const MY_REQ_COLUMNS: DataTableColumn[] = [
     { key: "type", label: "Art", primary: true },
-    { key: "start", label: "Von" },
-    { key: "end", label: "Bis" },
-    { key: "days", label: "Umfang", align: "end" },
+    { key: "period", label: "Zeitraum" },
+    { key: "days", label: "Tage", align: "end" },
     { key: "status", label: "Status" },
     { key: "note", label: "Anmerkung" },
     { key: "actions", label: "Aktionen", align: "end" },
@@ -1098,23 +1080,26 @@
      but Playwright (and future visual-regression specs) can address the page
      root without keying off CSS class hashes. -->
 <div data-testid="leave-page" style="display: contents">
-  <!-- ── Header ─────────────────────────────────────────────────────────────── -->
-  <PageHead eyebrow="Ich" title={pageLabel("/leave")}>
+  <!-- ── Header — Phase 851 (prototype „Ich › Abwesenheiten“): the two things a person files ─── -->
+  <PageHeader
+    title={pageLabel("/leave")}
+    subtitle="Urlaub, Krankmeldungen und deine Wünsche für die Urlaubsplanung"
+  >
     {#snippet actions()}
-      {#if !showForm && activeTab !== "planung"}
+      {#if !showForm}
+        <button
+          data-testid="leave-report-sick"
+          class="btn btn-secondary btn-sm"
+          onclick={() => openNewRequest("SICK")}>Krank melden</button
+        >
         <button
           data-testid="leave-new-request"
           class="btn btn-primary btn-sm"
-          onclick={() => {
-            editingRequest = null;
-            pendingInitialStart = "";
-            pendingInitialEnd = "";
-            showForm = true;
-          }}>+ Neue Abwesenheit</button
+          onclick={() => openNewRequest("VACATION")}>Urlaub beantragen</button
         >
       {/if}
     {/snippet}
-  </PageHead>
+  </PageHeader>
 
   {#if error}
     <div class="alert alert-error" role="alert" data-testid="leave-page-error">
@@ -1122,37 +1107,11 @@
     </div>
   {/if}
 
-  <!-- ── Kennzahlen (Resturlaub, Krankheitstage, Überstundenkonto) — Issue #851 (D-851-04): one
-       Kennzahlenleiste instead of three page-own cards. `Resturlaub` keeps its one meaning on /leave
-       (Phase 114, RU-01/02/04): the label comes from vacationCardLabel(), the delta line from
-       vacationCardDelta(). The two-figure saldo cannot be a label/value cell, so SaldoAnzeige sits in
-       the strip's extra cell (Phase 97-06; forecast wording from forecastLabel(), Issue #588). -->
+  <!-- ── Kennzahlen — Phase 851 (prototype): Resturlaub, Genommen, Verfällt, Krankheitstage. The
+       hours account lives in Ich › Konto now (#594), so this page shows no saldo. `Resturlaub` keeps its
+       one meaning (Phase 114, RU-01/02/04): label from vacationCardLabel(). -->
   <div data-testid="leave-balance">
-    <KpiStrip ariaLabel="Urlaub, Krankheitstage und Überstundenkonto" items={balanceItems}>
-      {#snippet extra()}
-        {#if confirmedMinutes !== undefined}
-          <SaldoAnzeige
-            variant="expanded"
-            label="Überstundenkonto"
-            confirmedMinutes={confirmedMinutes ?? 0}
-            openMonthMinutes={openMonthMinutes ?? null}
-            hasClosedMonth={hasClosedMonth ?? false}
-            {unconfirmedMonths}
-            {rosterIncomplete}
-            {loading}
-          />
-        {:else}
-          <!-- Fallback: an older cached response without the split fields — degrade
-               to the primitive's single-value rendering instead of blanking. -->
-          <SaldoAnzeige
-            variant="expanded"
-            label="Überstundenkonto"
-            saldoMinutes={overtimeBalance !== null ? Math.round(overtimeBalance * 60) : null}
-            {loading}
-          />
-        {/if}
-      {/snippet}
-    </KpiStrip>
+    <KpiStrip ariaLabel="Urlaub und Krankheitstage" items={balanceItems} />
   </div>
 
   <!-- ── The one toolbar: tabs, period, zoom (Issue #840, E-01, D-840-13) ─────────────────── -->
@@ -1189,6 +1148,7 @@
     {editingRequest}
     initialStartDate={pendingInitialStart}
     initialEndDate={pendingInitialEnd}
+    initialType={pendingInitialType}
     entitlementYear={calYear}
     onSaved={async (result) => {
       // Issue #836: limit warnings of the create — shown, never blocking.
@@ -1218,32 +1178,12 @@
        from app.css, aria-hidden, only the geometry is page-scoped. Four tiles is the strip's
        usual width; the two Übertrag tiles are conditional, so the placeholder count is
        deliberately approximate — it is a shimmer, not a claim. -->
-  {#snippet vacStatsSkeleton()}
-    <div data-testid="vac-summary-skeleton"><Skeleton shape="block" height="72px" /></div>
-  {/snippet}
-  {#snippet vacStats()}
-    <!-- Issue #851 (D-851-04): the entitlement figures as one Kennzahlenleiste. Phase 114 (RU-01/RU-03)
-         stays: the gross carry-over and its unused rest are two cells side by side, and none is
-         called „Resturlaub“; no year in the label (the figures always come from the running year,
-         see deferred-items.md). -->
-    <KpiStrip ariaLabel="Urlaubsjahr {calYear}" items={vacYearItems} />
-  {/snippet}
 
   <!-- ── Kalender (Issue #840, E-03): the caller's own absences and the holidays ────────────── -->
   {#if activeTab === "kalender"}
     <div role="tabpanel" id="leave-panel-kalender" aria-labelledby="leave-tab-kalender">
       <!-- The entitlement figures of the viewed year; a year switch shows the skeleton, never the
            numbers of the year just left (issue #122). -->
-      <div class="vac-strip card-animate" data-testid="leave-vac-strip">
-        <h2 class="leave-section-title">Urlaubsjahr {calYear}</h2>
-        {#if showVacSummary}
-          {#if vacSummaryLoading}
-            {@render vacStatsSkeleton()}
-          {:else}
-            {@render vacStats()}
-          {/if}
-        {/if}
-      </div>
 
       <div class="cal-section card card-animate">
         <!-- Wochentag-Header -->
@@ -1429,17 +1369,6 @@
   <!-- ── Meine Anträge: the year's own requests (Issue #840) ─────────────────────────────────── -->
   {#if activeTab === "antraege"}
     <div role="tabpanel" id="leave-panel-antraege" aria-labelledby="leave-tab-antraege">
-      <div class="vac-strip card-animate">
-        <h2 class="leave-section-title">Urlaubsjahr {calYear}</h2>
-        {#if showVacSummary}
-          {#if vacSummaryLoading}
-            {@render vacStatsSkeleton()}
-          {:else}
-            {@render vacStats()}
-          {/if}
-        {/if}
-      </div>
-
       <!-- ── Anträge-Tabelle — Issue #851 (D-851-04): toolbar and table from the blocks ──────── -->
       <h2 class="leave-section-title card-animate">Meine Anträge</h2>
 
@@ -1483,10 +1412,10 @@
                 {@const isOwn = req.employeeId === $authStore.user?.employeeId}
                 {#if column.key === "type"}
                   {typeName(req.typeCode)}
-                {:else if column.key === "start"}
-                  {fmtDate(req.startDate)}
-                {:else if column.key === "end"}
-                  {fmtDate(req.endDate)}
+                {:else if column.key === "period"}
+                  {req.startDate === req.endDate
+                    ? fmtDate(req.startDate)
+                    : `${fmtDate(req.startDate)} – ${fmtDate(req.endDate)}`}
                 {:else if column.key === "days"}
                   {leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}
                 {:else if column.key === "status"}
@@ -1877,12 +1806,6 @@
     font-weight: 600;
     color: var(--text);
     margin: 0;
-  }
-  .vac-strip {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 16px;
   }
 
   /* The Team tab's card around the legend and the read-only timeline (same recipe as the team area). */

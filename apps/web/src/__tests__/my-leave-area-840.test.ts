@@ -58,7 +58,9 @@ function between(from: string, to: string): string {
 describe("Issue #840 E-01 - one page, one toolbar", () => {
   it("[vacuity gate] the page source is loaded and is the personal host page", () => {
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain('<PageHead eyebrow="Ich" title={pageLabel("/leave")}>'); // #844: area „Ich“
+    // #851 (prototype): the Seitenkopf block with the page's two filing actions.
+    expect(PAGE).toContain('<PageHeader\n    title={pageLabel("/leave")}');
+    expect(PAGE).toContain('data-testid="leave-report-sick"');
     expect(PAGE).toContain('<title>{pageLabel("/leave")} – Clokr</title>'); // Issue #574
     // The old title is gone from the page.
     expect(PAGE).not.toContain("Urlaub & Abwesenheit");
@@ -72,9 +74,10 @@ describe("Issue #840 E-01 - one page, one toolbar", () => {
     expect(PAGE).toContain("period={activePeriod}");
   });
 
-  it("[tabs] Kalender / Meine Anträge / Team / Planung, with the test ids the e2e specs know", () => {
+  it("[tabs] Kalender / Anträge / Team / Planung, with the test ids the e2e specs know", () => {
     expect(PAGE).toContain('{ id: "kalender", label: "Kalender", testId: "calendar" }');
-    expect(PAGE).toContain('{ id: "antraege", label: "Meine Anträge", testId: "list" }');
+    // #851 (prototype): „Meine Anträge“ is „Anträge“ in the personal area.
+    expect(PAGE).toMatch(/id: "antraege",\s+label: "Anträge",\s+testId: "list",/);
     expect(PAGE).toContain('{ id: "team", label: "Team" }');
     expect(PAGE).toContain('{ id: "planung", label: "Planung" }');
     // The toolbar draws the tablist; the page has no hand-rolled one any more.

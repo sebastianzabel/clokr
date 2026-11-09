@@ -59,18 +59,15 @@ describe("personal saldo views pass the data to the forecast label (Issue #588, 
     expect(tile).toContain("hasClosedMonth={stats.overtime.hasClosedMonth");
   });
 
-  it("/leave: the KPI reads the count from /leave/overtime-balance and passes it", () => {
+  it("/leave shows no saldo; Ich › Konto words its forecast from forecastLabel (#851)", () => {
+    // Phase 851 (prototype): the hours account moved to Ich › Konto (#594); /leave keeps no saldo
+    // view, so it cannot word a forecast differently.
     const text = read(LEAVE);
-    expect(text).toMatch(/unconfirmedMonths\?: number \| null;/);
-    expect(text).toMatch(/unconfirmedMonths = r\.unconfirmedMonths/);
-    const kpi = elementAfter(
-      text,
-      "<SaldoAnzeige",
-      text.indexOf("{#if confirmedMinutes !== undefined}"),
-    );
-    expect(kpi).toContain("confirmedMinutes={confirmedMinutes ?? 0}");
-    expect(kpi).toContain("{unconfirmedMonths}");
-    expect(kpi).toContain("hasClosedMonth={hasClosedMonth ?? false}");
+    expect(text).not.toContain("<SaldoAnzeige");
+    expect(text).not.toContain("/leave/overtime-balance");
+    const konto = read("routes/(app)/ich/konto/+page.svelte");
+    expect(konto).toContain("forecastLabel(overtime.unconfirmedMonths, overtime.hasClosedMonth)");
+    expect(konto).toMatch(/unconfirmedMonths\?: number \| null;/);
   });
 
   it("leave form: the forecast row label comes from forecastLabel() and the masked branch clears the count", () => {
