@@ -776,7 +776,7 @@
 <style>
   .cfg-loading {
     padding: var(--s-6) 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 14px;
   }
 
@@ -792,7 +792,7 @@
     align-items: center;
     gap: 12px;
     padding: 8px 4px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 14px;
   }
   .cfg-row--rules {
@@ -806,10 +806,10 @@
   .cfg-row--head {
     font-size: 12.5px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .cfg-row:last-child {
     border-bottom: none;
@@ -825,28 +825,25 @@
   }
   .cfg-cell-num {
     font-variant-numeric: tabular-nums;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .cfg-swatch {
     display: inline-block;
     width: 24px;
     height: 24px;
-    border-radius: var(--r-sm);
-    border: 1px solid var(--border);
+    border-radius: var(--r-control);
+    border: 1px solid var(--line);
   }
   .cfg-muted {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13.5px;
   }
-  .cfg-msg {
-    font-style: italic;
-  }
   .cfg-help {
-    background: var(--bg-subtle);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     padding: 10px 12px;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0 0 12px;
   }
   .cfg-hint {
@@ -871,8 +868,8 @@
   .cfg-swatch-btn {
     width: 24px;
     height: 24px;
-    border-radius: var(--r-sm);
-    border: 1px solid var(--border);
+    border-radius: var(--r-control);
+    border: 1px solid var(--line);
     cursor: pointer;
     padding: 0;
   }
@@ -922,7 +919,7 @@
     gap: 8px;
     align-items: center;
     padding: 6px 4px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 14px;
   }
   .pat-row:last-child {
@@ -931,13 +928,13 @@
   .pat-row--head {
     font-size: 12.5px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
   .pat-row--dirty {
     background: var(--brand-soft);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
   .pat-col-head {
     display: flex;
@@ -945,13 +942,13 @@
     gap: 2px;
   }
   .pat-dow {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .pat-soll {
     font-size: 11px;
     font-weight: 500;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    color: var(--text-2);
+    font-family: var(--font-ui);
     text-transform: none;
     letter-spacing: 0;
   }

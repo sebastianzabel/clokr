@@ -946,7 +946,7 @@
   .ph-subtitle {
     font-size: 0.875rem;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin: 0 0 0.5rem;
@@ -975,9 +975,9 @@
     flex-wrap: wrap;
   }
   .ph-run-time {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .ph-toggle {
@@ -1019,7 +1019,7 @@
   .ph-divider {
     margin: 1.5rem 0;
     border: none;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
   .ph-alert {
     margin-bottom: 1rem;
@@ -1041,9 +1041,9 @@
     font-size: 0.8125rem;
   }
   .mono-sm {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .ph-map-select {
     min-width: 200px;

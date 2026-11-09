@@ -271,7 +271,7 @@
   .av-loading-dot {
     width: 32px;
     height: 32px;
-    border: 3px solid var(--border);
+    border: 3px solid var(--line);
     border-top-color: var(--brand);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
@@ -304,9 +304,9 @@
     text-align: center;
     gap: var(--s-3);
     padding: var(--s-8) var(--s-4);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
     color: var(--text);
   }
 
@@ -316,7 +316,7 @@
   }
 
   .av-feature-disabled-title {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     font-size: 24px;
     margin: 0;
@@ -326,7 +326,7 @@
   .av-feature-disabled-body {
     margin: 0;
     max-width: 480px;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.9375rem;
     line-height: 1.55;
   }

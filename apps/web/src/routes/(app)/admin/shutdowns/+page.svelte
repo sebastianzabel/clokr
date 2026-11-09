@@ -500,9 +500,9 @@
   }
 
   .shutdown-row {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 1rem 1.25rem;
     display: flex;
     align-items: flex-start;
@@ -533,7 +533,7 @@
 
   .shutdown-row__dates {
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -542,8 +542,7 @@
 
   .shutdown-row__notes {
     font-size: 0.8125rem;
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
 
   .shutdown-row__meta {
@@ -569,18 +568,18 @@
     width: 100%;
     padding-top: 0.75rem;
     margin-top: 0.25rem;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
 
   .exception-list__label {
     font-size: 0.8125rem;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .exception-chip {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+    background: var(--card);
+    border: 1px solid var(--line);
     border-radius: 999px;
     padding: 0.125rem 0.625rem;
     font-size: 0.8125rem;
@@ -588,7 +587,7 @@
   }
 
   .exception-chip__reason {
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-left: 0.25rem;
   }
 
@@ -596,7 +595,7 @@
   .empty-state {
     text-align: center;
     padding: 3rem 1rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .empty-icon {
@@ -619,13 +618,13 @@
   }
 
   .badge-neutral {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    color: var(--text-2);
+    border: 1px solid var(--line);
   }
 
   .badge-warning {
-    background: var(--warn-soft, var(--bg-subtle));
+    background: var(--warn-soft, var(--sunk));
     color: var(--warn);
     border: 1px solid var(--warn);
   }
@@ -652,7 +651,7 @@
 
   .form-hint {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0.25rem 0 0;
   }
 
@@ -688,18 +687,18 @@
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
-    border-bottom: 2px solid var(--border);
+    color: var(--text-2);
+    border-bottom: 2px solid var(--line);
   }
 
   .data-table td {
     padding: 0.75rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     vertical-align: middle;
   }
 
   .exception-add {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding-top: 1rem;
     display: flex;
     flex-direction: column;
@@ -722,25 +721,25 @@
   }
 
   :global(.btn-danger:hover) {
-    background: var(--bg-subtle) !important;
+    background: var(--sunk) !important;
   }
 
   /* ── Alert ── */
   .alert {
     padding: 0.75rem 1rem;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     margin-bottom: 1rem;
     font-size: 0.875rem;
   }
 
   .alert-error {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--bad);
     border: 1px solid var(--bad);
   }
 
   .text-muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .sr-only {

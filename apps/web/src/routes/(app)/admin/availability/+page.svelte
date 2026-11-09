@@ -126,15 +126,15 @@
   }
 
   .av-table thead th {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-muted);
+    color: var(--text-2);
     padding: var(--s-2) var(--s-3);
     text-align: left;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .av-row {
@@ -143,7 +143,7 @@
   }
 
   .av-row:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 
   .av-row:focus-visible {
@@ -153,7 +153,7 @@
 
   .av-cell {
     padding: var(--s-3);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     color: var(--text);
     font-size: 0.9375rem;
   }
@@ -163,15 +163,15 @@
   }
 
   .av-cell--number {
-    color: var(--text-muted);
-    font-family: var(--font-mono);
+    color: var(--text-2);
+    font-family: var(--font-ui);
     font-size: 0.875rem;
   }
 
   .av-cell--arrow {
     width: 32px;
     text-align: right;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 1.25rem;
     line-height: 1;
   }
@@ -182,7 +182,7 @@
   }
 
   .av-empty-title {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 1.25rem;
     font-weight: 500;
     color: var(--text);
@@ -190,7 +190,7 @@
   }
 
   .av-empty-body {
-    color: var(--text-muted);
+    color: var(--text-2);
     max-width: 420px;
     margin: 0 auto;
     line-height: 1.5;
