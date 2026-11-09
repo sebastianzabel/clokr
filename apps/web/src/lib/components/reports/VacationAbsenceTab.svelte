@@ -10,6 +10,7 @@
   import CardHeader from "$components/ui/CardHeader.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import { leaveTypeColor } from "$lib/leave/leave-colors";
@@ -328,10 +329,8 @@
 
   {#if vacation === null}
     {#if loading}
-      <div class="vac-skeleton" data-testid="vacation-skeleton" aria-busy="true">
-        {#each Array.from({ length: 5 }, (_, i) => i) as i (i)}
-          <div class="skeleton skeleton-text"></div>
-        {/each}
+      <div data-testid="vacation-skeleton">
+        <Skeleton shape="row" count={3} />
       </div>
     {/if}
   {:else if yearRows.length === 0}
@@ -493,11 +492,7 @@
 
   {#if absences === null}
     {#if loading}
-      <div class="vac-skeleton" aria-busy="true">
-        {#each Array.from({ length: 3 }, (_, i) => i) as i (i)}
-          <div class="skeleton skeleton-text"></div>
-        {/each}
-      </div>
+      <Skeleton shape="row" count={3} />
     {/if}
   {:else if shownAbsences.length === 0}
     <p class="vac-empty">Keine Abwesenheiten im Zeitraum.</p>
@@ -531,12 +526,6 @@
 </Card>
 
 <style>
-  .vac-skeleton {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-3);
-  }
-
   .vac-empty {
     margin: 0;
     font-size: 15px;
