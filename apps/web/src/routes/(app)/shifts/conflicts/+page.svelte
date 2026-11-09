@@ -75,7 +75,7 @@
   <title>{pageLabel("/shifts/conflicts")} – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow={pageLabel("/shifts")} title={pageLabel("/shifts/conflicts")} />
+<PageHead title={pageLabel("/shifts/conflicts")} />
 
 <section class="page">
   <div class="card-animate filter-card">
