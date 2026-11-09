@@ -122,7 +122,7 @@ describe("Issue #84 — the Team block follows the salon context through team-vi
     expect(found).toBeGreaterThanOrEqual(3);
   });
 
-  it("D-16: the 5 s poll stops requesting team-week for a rejected selection", () => {
+  it("D-16: the 30 s poll stops requesting team-week for a rejected selection", () => {
     const poll = functionBody("pollDashboard");
     expect(poll).toContain("teamUnavailable");
     expect(poll).toContain("teamContextReady");

@@ -18,6 +18,7 @@
 
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
+  import { startVisiblePoll } from "$lib/dashboard/visible-poll";
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { goto, afterNavigate, replaceState } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person; #609: reminder arrival
   import { page } from "$app/stores"; // Issue #609: the ?clock=1 reminder parameter
@@ -268,7 +269,7 @@
     day.kind === "running" && day.entry ? new Date(day.entry.startTime) : null,
   );
 
-  // Issue #87: re-fetched only when the day state changes, never by the 5 s poll (a pick survives it).
+  // Issue #87: re-fetched only when the day state changes, never by the 30 s poll (a pick survives it).
   let clockSalon = $state<ClockSalonChoice | null>(null);
   let clockSalonId = $state<string | null>(null);
   let dayKind = $derived(day.kind);
@@ -428,7 +429,7 @@
   // Issue #84 (D-01, D-11): the Team block follows the salon context of #82 through ONE guarded
   // decision. `teamFilter` is a primitive (a salon id or null), so a navigation reload that sets an
   // equal context state re-runs nothing. `teamGeneration` lets every loader drop a result that
-  // belongs to an older selection (also the 5 s poll).
+  // belongs to an older selection (also the 30 s poll).
   const teamFilter = $derived(teamSalonFilter($salonContext));
   const teamContextReady = $derived($salonContext.loaded);
   let teamGeneration = 0;
@@ -452,7 +453,8 @@
   }
 
   let timer: ReturnType<typeof setInterval>;
-  let pollInterval: ReturnType<typeof setInterval>;
+  // Issue #576: calm refresh — every 30 s, paused while the tab is hidden ($lib/dashboard/visible-poll).
+  let stopPoll: (() => void) | undefined;
 
   // Phase 378 (#378): permission-based, not role-based — a Salonmanager (Salon-Scope role
   // assignment, #76) holds `team-overview:read:ZUGEWIESEN` but resolves to compat role EMPLOYEE
@@ -515,12 +517,12 @@
     timer = setInterval(() => {
       currentTime = new Date();
     }, 1000);
-    pollInterval = setInterval(pollDashboard, 5000); // refresh team-week + clock status every 5s
+    stopPoll = startVisiblePoll(pollDashboard);
   });
 
   onDestroy(() => {
     clearInterval(timer);
-    if (pollInterval) clearInterval(pollInterval);
+    stopPoll?.();
     weeklyChart?.destroy();
     overtimeChart?.destroy();
     sickChart?.destroy();
@@ -653,7 +655,7 @@
   }
 
   // Issue #84 (D-01): reloads the whole Team block for the current salon selection. Bumping the
-  // generation makes every loader still in flight drop its result (also the 5 s poll).
+  // generation makes every loader still in flight drop its result (also the 30 s poll).
   async function reloadTeam() {
     teamGeneration++;
     teamUnavailable = false;
@@ -715,7 +717,7 @@
 
   // Issue #588 (P-10, D-588-3): one read of the overview for the card, in the caller's saldo reach and
   // the team block's salon selection. Follows the loader idiom of loadTeamWeek (generation, calm 404);
-  // a 403 hides the card silently. The 5 s poll never calls it.
+  // a 403 hides the card silently. The 30 s poll never calls it.
   async function loadTeamSaldo() {
     const filter = teamFilter;
     const generation = teamGeneration;
@@ -1140,7 +1142,7 @@
 
   async function confirmReopen(): Promise<void> {
     if (clockLoading) return;
-    // The 5 s poll can change the day underneath an open dialog. Re-check before sending.
+    // The 30 s poll can change the day underneath an open dialog. Re-check before sending.
     if (!canReopenFinishedDay(day)) {
       reopenDialogOpen = false;
       return;

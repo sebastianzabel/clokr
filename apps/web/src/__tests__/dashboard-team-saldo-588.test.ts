@@ -1,6 +1,6 @@
 // Issue #588 (AC-588-1, D-588-3, D-588-7, P-10, P-11) - source pins of the dashboard wiring of the
 // card "Salden": placement (the first block of the team area), the permission gate, the loader
-// idiom (generation, calm 404, silent 403), the salon filter, no part in the 5 s poll, the person
+// idiom (generation, calm 404, silent 403), the salon filter, no part in the 30 s poll, the person
 // links gated by the Team-Zeiten page right and the filter flag of the LOADED request.
 //
 // Why source-read: the page itself is covered by dashboard-team-saldo-pending-588.test.ts (mounted,
@@ -114,7 +114,7 @@ describe("Issue #588 - the dashboard card Salden is wired into the Team block", 
     expect(allList).not.toContain("loadTeamSaldo");
   });
 
-  it("P-10: a reload resets the card state and the 5 s poll never reads the overview", () => {
+  it("P-10: a reload resets the card state and the 30 s poll never reads the overview", () => {
     const reload = functionBody("reloadTeam");
     expect(reload).toContain("teamSaldoRows = [];");
     expect(reload).toContain("teamSaldoHidden = false;");
