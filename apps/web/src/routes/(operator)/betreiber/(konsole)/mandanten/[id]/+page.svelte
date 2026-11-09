@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import PageHead from "$components/layout/PageHead.svelte";
@@ -148,11 +149,8 @@
     <PageHead eyebrow="Betreiber" title="Mandant" />
 
     {#if loadState === "loading"}
-      <div aria-busy="true" data-testid="op-tenant-loading">
-        <span class="sr-only" role="status">Wird geladen …</span>
-        <div class="skeleton row"></div>
-        <div class="skeleton row"></div>
-        <div class="skeleton row"></div>
+      <div data-testid="op-tenant-loading">
+        <Skeleton shape="block" count={3} height="48px" />
       </div>
     {:else if loadState === "not-found"}
       <div data-testid="op-tenant-not-found">
@@ -174,10 +172,5 @@
   .message {
     margin: 0 0 16px;
     font-size: 16px;
-  }
-
-  .row {
-    height: 48px;
-    margin-bottom: 8px;
   }
 </style>

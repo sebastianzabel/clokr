@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { clearSession, loadSession, operatorSession } from "$stores/operator-auth";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import OperatorBar from "$lib/components/operator/OperatorBar.svelte";
   import { operatorApi, setUnauthorizedHandler } from "$lib/operator/client";
   import { remainingMs, sessionState } from "$lib/operator/countdown";
@@ -93,7 +94,7 @@
   {#if ready}
     {@render children?.()}
   {:else}
-    <p class="op-loading" role="status">Wird geladen …</p>
+    <Skeleton shape="block" />
   {/if}
 </main>
 
@@ -107,12 +108,6 @@
 
   .page-fade {
     animation: fadeUp 400ms var(--ease-out);
-  }
-
-  .op-loading {
-    margin: 0;
-    font-size: 16px;
-    color: var(--text-2);
   }
 
   @media (max-width: 640px) {
