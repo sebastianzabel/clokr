@@ -663,9 +663,9 @@ jobs:
           category: "/language:javascript-typescript"
 
   # ── Secret scan (DEVOPS-V8-04) ───────────────────────────────────────
-  # The repository lives in the getclokr organisation since 09.11.2026. gitleaks/gitleaks-action
-  # demands a GITLEAKS_LICENSE for organisation repos and does not know the merge_group event, so
-  # the job runs the gitleaks CLI (MIT) from its pinned image over exactly the commits the PR or
+  # gitleaks/gitleaks-action handles only push, pull_request, workflow_dispatch and schedule
+  # events, so it would not report in the merge queue (and documents a licence requirement for
+  # organisation repos, where this repository lives since 09.11.2026). The job therefore runs the gitleaks CLI (MIT) from its pinned image over exactly the commits the PR or
   # the queued merge adds. `.gitleaks.toml` and `.gitleaksignore` in the repo root are read as before.
   secret-scan:
     runs-on: ubuntu-latest
