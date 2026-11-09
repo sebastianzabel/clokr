@@ -10,7 +10,7 @@ and in the pre-commit hook.
 
 Not yet covered: error messages produced by the API and the e-mail templates
 (`apps/api/src`). They follow the same rules, but the lint does not see them; their conversion is
-a follow-up issue (D-574-03).
+issue #861 (D-574-03).
 
 ## 2. Address form: „du“
 
