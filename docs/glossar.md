@@ -60,6 +60,10 @@ Examples:
 | Hinweis, markiert                                  | Konflikt-Flag, Flag                     | Schichtplanung: a shift or week that needs a look (Issue #850; lint-checked only there).                                     |
 | Muster anwenden                                    | Generator, generieren                   | Applies the Schicht-Muster to a week. „Vorlagen“ are the shift templates — a different thing (Issue #850).                   |
 | wird protokolliert                                 | Audit-Spur                              | Schichtplanung (Issue #850).                                                                                                 |
+| Personen                                           |                                         | Team › Personen: the read view of the team for leaders. Editing persons stays in Verwalten › Personen (Issue #853).          |
+| Pausenbefund                                       |                                         | An open break finding of a person's day; it is decided on Zeiten (Issue #853).                                               |
+| Woche, Bedarf, Hinweise, Verfügbarkeit             |                                         | The four tabs of Dienstplan (Issue #853); the page itself is always „Dienstplan“.                                            |
+| Personenkreis, Alle Salons                         |                                         | The filter of Team › Abwesenheiten: your own circle by default, „Alle Salons“ adds the others (Issue #853).                  |
 
 Spelling: CSV-Import, DATEV-Export (hyphenated compounds), WLAN.
 

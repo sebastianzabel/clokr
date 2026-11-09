@@ -8,12 +8,16 @@ import {
   mayOpenPath,
   mayOpenRoute,
   mobileTabs,
+  navCurrentPath,
   pageWidthForPath,
   rerouteTarget,
+  rosterTabs,
   routeFor,
   visibleChildren,
 } from "$lib/nav/routes";
 import { visibleNavSections } from "$lib/nav/app-nav";
+import { labelForPath } from "$lib/nav/page-labels";
+import { activeNavHref } from "$lib/nav/active-route";
 import personas from "./fixtures/system-role-permissions.json";
 import pre844 from "./fixtures/pre-844-route-permissions.json";
 
@@ -327,6 +331,87 @@ describe("Personen: exactly one entry per person (#853, D-853-15 revised)", () =
     const updateOnly = { permissions: ["employee:update:ZUGEWIESEN"] };
     expect(mayOpenPath(updateOnly, "/verwalten/personen")).toBe(false);
     expect(mayOpenPath(updateOnly, "/team/personen")).toBe(false);
+  });
+});
+
+describe("Dienstplan: four roster pages, one name, four tabs (#853, D-853-04/05 revised)", () => {
+  const ROSTER = [
+    "/team/dienstplan",
+    "/team/dienstplan/planung",
+    "/team/dienstplan/konflikte",
+    "/team/verfuegbarkeit",
+  ];
+  const entries = ROSTER.map((href) => APP_ROUTES.find((r) => r.href === href)!);
+
+  it("finds the four roster entries (non-vacuity)", () => {
+    expect(entries.every((entry) => entry !== undefined)).toBe(true);
+    expect(entries).toHaveLength(4);
+  });
+
+  it("share the label „Dienstplan“ (H1, title, crumb) and name their tab separately", () => {
+    expect(entries.map((e) => e.label)).toEqual([
+      "Dienstplan",
+      "Dienstplan",
+      "Dienstplan",
+      "Dienstplan",
+    ]);
+    expect(entries.map((e) => e.tabLabel)).toEqual([
+      "Woche",
+      "Bedarf",
+      "Hinweise",
+      "Verfügbarkeit",
+    ]);
+    for (const href of ROSTER) expect(labelForPath(href), href).toBe("Dienstplan");
+  });
+
+  it("only the roster page is a rail entry; the three others are its children", () => {
+    expect(entries.map((e) => e.inNav)).toEqual([true, false, false, false]);
+    for (const entry of entries.slice(1)) expect(entry.parent).toBe("/team/dienstplan");
+    // permissions and feature are unchanged (the pre-#844 pin covers the Verfügbarkeit alternatives)
+    expect(entries[3].feature).toBe("availability");
+    expect(entries[3].file).toBe("/admin/availability");
+  });
+
+  it("rosterTabs returns the four tabs in order for a Salonmanager, three with the feature off", () => {
+    const all = rosterTabs(user("SALON_MANAGER"), ALL);
+    expect(all.map((t) => t.label)).toEqual(["Woche", "Bedarf", "Hinweise", "Verfügbarkeit"]);
+    expect(all.map((t) => t.href)).toEqual(ROSTER);
+    expect(all.map((t) => t.value)).toEqual(ROSTER);
+    const off = rosterTabs(user("SALON_MANAGER"), { availabilityEnabled: false });
+    expect(off.map((t) => t.label)).toEqual(["Woche", "Bedarf", "Hinweise"]);
+  });
+
+  it("a person without shift:plan gets no Woche, Bedarf or Hinweise tab", () => {
+    const readers = { permissions: ["employee:read:ZUGEWIESEN", "availability:read:ZUGEWIESEN"] };
+    expect(rosterTabs(readers, ALL).map((t) => t.label)).toEqual(["Verfügbarkeit"]);
+    expect(rosterTabs(user("EMPLOYEE"), ALL)).toEqual([]);
+    expect(rosterTabs(null, ALL)).toEqual([]);
+  });
+
+  it("no roster sub-page is a rail entry for any persona, and no name repeats within an area", () => {
+    for (const persona of Object.keys(P)) {
+      const sections = visibleNavSections(user(persona), ALL);
+      const hrefs = sections.flatMap((s) => s.items.map((i) => i.href));
+      for (const href of ROSTER.slice(1)) expect(hrefs, `${persona} ${href}`).not.toContain(href);
+      for (const section of sections) {
+        const names = section.items.map((i) => i.label);
+        expect(new Set(names).size, `${persona}/${section.label}`).toBe(names.length);
+      }
+    }
+  });
+
+  it("the rail marks „Dienstplan“ on every roster tab (navCurrentPath + the one current-item rule)", () => {
+    const rail = ["/team/zeiten", "/team/dienstplan", "/team/personen", "/verwalten/regeln"];
+    for (const href of ROSTER) {
+      expect(activeNavHref(rail, navCurrentPath(href)), href).toBe("/team/dienstplan");
+    }
+    expect(activeNavHref(rail, navCurrentPath("/team/verfuegbarkeit/abc"))).toBe(
+      "/team/dienstplan",
+    );
+    // any other path is unchanged
+    for (const href of ["/team/zeiten", "/verwalten/regeln/urlaub", "/ich/profil", "/nowhere"]) {
+      expect(navCurrentPath(href), href).toBe(href);
+    }
   });
 });
 
