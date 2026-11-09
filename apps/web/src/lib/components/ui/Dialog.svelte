@@ -144,6 +144,18 @@
 {/if}
 
 <style>
+  /* The z-scale of the app, written once (D-843-16, #636). The topbar is sticky at 1000 and used
+     to paint over the old overlay (200); the dialog now covers it, and the toast still covers the
+     dialog:
+       sidebar 100 - mobile bottom bar 90 - mobile sheet 500 - topbar 1000 - skip link 1000
+       dialog overlay 1500 - dialog content 1501 - What's-New 2000 - command palette 9000
+       toast 9999 */
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+  }
+
   /* The content is a sibling of the overlay inside the portal, so it centres itself: inset 0 plus
      margin auto and a fit-content height, never a transform (#570: a transform would make the
      element the containing block of any fixed descendant). */
@@ -152,7 +164,7 @@
     inset: 0;
     margin: auto;
     height: fit-content;
-    z-index: 201;
+    z-index: 1501;
     width: min(520px, calc(100vw - 32px));
     max-height: calc(100vh - 64px);
   }

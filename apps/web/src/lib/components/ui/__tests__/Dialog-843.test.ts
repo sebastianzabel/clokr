@@ -7,6 +7,8 @@ import { createRawSnippet } from "svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import Dialog from "../Dialog.svelte";
 import dialogSource from "../Dialog.svelte?raw";
+import topbarSource from "../../layout/Topbar.svelte?raw";
+import toastSource from "../Toast.svelte?raw";
 
 const children = createRawSnippet(() => ({ render: () => "<p>Inhalt</p>" }));
 const footer = createRawSnippet(() => ({
@@ -209,5 +211,52 @@ describe("Dialog - inert page", () => {
     expect(app.hasAttribute("inert")).toBe(true);
     outer.unmount();
     await waitFor(() => expect(app.hasAttribute("inert")).toBe(false));
+  });
+});
+
+// D-843-16 (#636): the dialog stacks above the topbar and below the toast. The numbers of the
+// neighbours are read from their sources, so a change there turns this red.
+describe("Dialog - z-scale", () => {
+  const style = dialogSource.slice(dialogSource.lastIndexOf("<style>"));
+  const zOf = (source: string, selector: RegExp) => {
+    const block = selector.exec(source)?.[1] ?? "";
+    return Number(/z-index:\s*(\d+)/.exec(block)?.[1]);
+  };
+
+  it("puts the overlay at 1500 and the content at 1501", () => {
+    expect(zOf(style, /\n\s*\.scrim\s*\{([^}]*)\}/)).toBe(1500);
+    expect(zOf(style, /\n\s*\.modal\s*\{([^}]*)\}/)).toBe(1501);
+  });
+
+  it("stacks above the topbar (1000) and below the toast container (9999)", () => {
+    const topbar = Number(/position:\s*sticky[\s\S]*?z-index:\s*(1000);/.exec(topbarSource)?.[1]);
+    const toast = Number(/z-index:\s*(9999)/.exec(toastSource)?.[1]);
+    expect(topbar).toBe(1000);
+    expect(toast).toBe(9999);
+    expect(1500).toBeGreaterThan(topbar);
+    expect(1501).toBeLessThan(toast);
+  });
+
+  it("carries the scale as one comment block", () => {
+    const comment = /\/\* The z-scale of the app[\s\S]*?\*\//.exec(style)?.[0] ?? "";
+    for (const part of [
+      "sidebar 100",
+      "mobile sheet 500",
+      "topbar 1000",
+      "dialog overlay 1500",
+      "dialog content 1501",
+      "What's-New 2000",
+      "command palette 9000",
+      "toast 9999",
+    ]) {
+      expect(comment, part).toContain(part);
+    }
+  });
+
+  it("gives the overlay a full-screen fixed box with no flex centring", () => {
+    const rule = /\n\s*\.scrim\s*\{([^}]*)\}/.exec(style)?.[1] ?? "";
+    expect(rule).toMatch(/position:\s*fixed/);
+    expect(rule).toMatch(/inset:\s*0/);
+    expect(rule).not.toMatch(/flex|grid/);
   });
 });
