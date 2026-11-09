@@ -215,16 +215,22 @@
     font-size: var(--fs-base);
   }
 
+  /* Table mode: a value stays on one line (a name is never broken, D-03) and the table scrolls
+     inside .dt-scroll only when its single-line width genuinely exceeds the container. A head may
+     still wrap at a space ("Letzter Login"), it carries no value. The card layout below is the
+     only place that lets a value wrap. */
   .dt-table :global(th) {
     height: var(--h-th);
-    padding: 0 var(--s-4);
+    padding: 0 var(--s-3);
     font-size: var(--fs-th);
     vertical-align: middle;
+    white-space: normal;
   }
 
   .dt-table td {
     height: var(--h-row);
-    padding: 0 var(--s-4);
+    padding: 0 var(--s-3);
+    white-space: nowrap;
   }
 
   .dt-table :global(tbody tr:nth-child(even)) {
@@ -303,6 +309,7 @@
     .dt-table td {
       display: flex;
       flex-wrap: wrap;
+      white-space: normal;
       align-items: baseline;
       justify-content: space-between;
       gap: var(--s-1) var(--s-3);

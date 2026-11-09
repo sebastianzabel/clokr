@@ -1575,4 +1575,14 @@
     flex-wrap: wrap;
     gap: 4px;
   }
+  /* The one value of this table that may take two lines: "Rolle · Geltungsbereich" is the widest
+     cell, and wrapping it (the action buttons already stack to two lines, so the row does not grow)
+     keeps the nine columns inside the card at 1440 px without a sideways scroll. A wrapped pill
+     would turn into an oval, hence the control radius. */
+  .role-chips .chip {
+    white-space: normal;
+    padding-block: 3px;
+    line-height: 1.25;
+    border-radius: var(--r-control);
+  }
 </style>

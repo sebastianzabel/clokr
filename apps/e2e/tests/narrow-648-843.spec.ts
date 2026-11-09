@@ -6,7 +6,8 @@
  *      the viewport (an unclipped element beyond it is a failure; a scrolling grid is not).
  *   2. /admin/employees: the person table is a DataTable whose rows become cards below a 760 px
  *      container width. At 360 px the e-mail value of the fixture admin is visible inside the
- *      viewport (before, it sat in a column that scrolled out of sight).
+ *      viewport (before, it sat in a column that scrolled out of sight). At 1440 px (the visual
+ *      viewport) the nine columns fit their box on one line each, Aktionen included (843-37).
  *
  * The employee list also keeps its search text and sort in the URL (urlState): the spec types a
  * search, reads it from the URL and reloads to prove the filtered list survives; at desktop width it
@@ -124,6 +125,84 @@ test.describe("/admin/employees on the DataTable", () => {
       (box?.x ?? 0) + (box?.width ?? 0),
       "the e-mail value ends right of the viewport",
     ).toBeLessThanOrEqual(360 + TOLERANCE_PX);
+  });
+
+  // 843-37: at the visual-test viewport the nine columns lie inside the card. Found by the visual
+  // baseline of /admin/employees: the cells wrapped ("VIS-/004") and the Aktionen column was cut at
+  // the card edge. A value stays on one line in table mode, the table scrolls inside its own box only
+  // when it genuinely does not fit, and here it must fit.
+  test("at 1440 px the table fits its box: Aktionen and the action buttons are not clipped", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const email = await signIn(page, request, tenant);
+    await page.goto("/admin/employees");
+    await expect(page.getByTestId("admin-employees-page")).toBeVisible();
+    const emailValue = page.locator(".col-email").filter({ hasText: email });
+    await expect(emailValue).toBeVisible();
+    // Webfonts change the column widths; measure only after they are loaded.
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
+
+    const scroll = page.locator(".dt-scroll");
+    const overflow = await scroll.evaluate((el) => ({
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+    }));
+    expect(
+      overflow.scrollWidth,
+      "the table scrolls sideways inside its box at 1440 px",
+    ).toBeLessThanOrEqual(overflow.clientWidth + TOLERANCE_PX);
+
+    const frame = await scroll.boundingBox();
+    expect(frame, "the table box has no box").not.toBeNull();
+    const right = (frame?.x ?? 0) + (frame?.width ?? 0);
+    const inside = async (
+      label: string,
+      box: Awaited<ReturnType<typeof emailValue.boundingBox>>,
+    ) => {
+      expect(box, `${label} has no box`).not.toBeNull();
+      expect(box?.x ?? -1, `${label} starts left of the table box`).toBeGreaterThanOrEqual(
+        (frame?.x ?? 0) - TOLERANCE_PX,
+      );
+      expect(
+        (box?.x ?? 0) + (box?.width ?? 0),
+        `${label} ends right of the table box (clipped)`,
+      ).toBeLessThanOrEqual(right + TOLERANCE_PX);
+    };
+
+    await inside(
+      "the Aktionen header",
+      await page.getByRole("columnheader", { name: "Aktionen" }).boundingBox(),
+    );
+    const edit = page.locator("[data-testid$='-edit']").last();
+    await expect(edit).toBeVisible();
+    await inside("the Bearbeiten button of the last row", await edit.boundingBox());
+    const deactivate = page.locator("[data-testid$='-deactivate']").last();
+    await expect(deactivate).toBeVisible();
+    await inside("the Deaktivieren button of the last row", await deactivate.boundingBox());
+
+    // Names and values stay on one line in table mode (before: "VIS-/004", an e-mail over two lines).
+    const lines = await page.evaluate(() => {
+      const oneLine = (el: Element) => {
+        const style = getComputedStyle(el);
+        const line = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.4;
+        return el.getBoundingClientRect().height <= line * 1.5;
+      };
+      return {
+        email: [...document.querySelectorAll(".col-email")].every(oneLine),
+        number: [...document.querySelectorAll(".col-number")].every(oneLine),
+        name: [...document.querySelectorAll(".dt-primary")].every(oneLine),
+      };
+    });
+    expect(lines, "a value wraps onto a second line in table mode").toEqual({
+      email: true,
+      number: true,
+      name: true,
+    });
   });
 
   test("the search text is in the URL and survives a reload", async ({ page, request, tenant }) => {
