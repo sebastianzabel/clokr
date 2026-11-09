@@ -58,6 +58,12 @@ Every block is a Svelte 5 component built on bits-ui (the only primitive library
 
 Source: `$components/ui/PageHeader.svelte`, `PageTabs.svelte`. Props: `title`, `subtitle?`, `eyebrow?` and `accent?` (both inert since D-843-22: accepted so `PageHead` callers compile, never rendered), `actions?` (one or two buttons, at most one primary), `tabs?` + `tab` (bindable) + `panel?` + `onTabChange?` (bits-ui Tabs, arrow keys loop, every trigger controls a rendered panel), `headingLevel?` (1 or 2). The `<PageHead>` section below documents the legacy props and the look; `layout/PageHead.svelte` has no markup of its own.
 
+`PageTabs` can also be used on its own (Issue #853, D-853-05, D-853-11): a page places it **directly after its `PageHead`** (PageHead has no tabs prop). Tab items take `value`, `label` and the optional `href`, `testId`, `badge`, `badgeLabel`, `onBadgeSelect`; the component takes `tabsLabel` and the optional `testIdPrefix`.
+
+- **Link mode:** every tab has an `href` and no `panel` is passed. The strip is a `<nav aria-label={tabsLabel}>` of anchors, the tab whose `value` equals `tab` carries `aria-current="page"`; there is no ARIA tablist and no panel. Use it when each tab is a route of its own.
+- **Panel mode** (unchanged): bits-ui Tabs with the panels on the page.
+- **Test-id contract (#840):** with `testIdPrefix` the strip is `<prefix>-tabs`, a tab `<prefix>-<testId ?? value>`, its count `<prefix>-<tab>-badge`. The count is a `[data-tab-count]` span (plus the visually hidden `badgeLabel`); a pointer click on it selects the tab and then calls `onBadgeSelect` (keyboard activation does not).
+
 ### `<Dialog>`
 
 Source: `$components/ui/Dialog.svelte`. Props: `open` (bindable), `title`, `eyebrow?`, `ariaLabel?`, `size?` (`"md"` 520 px, `"wide"` 880 px), `children`, `footer?` (secondary first, primary last), `onOpenChange?`. The legacy class names (`scrim`, `modal`, `modal-hd`, `modal-body`, `modal-foot`, `modal--wide`) are still emitted. A parent binding that refuses a closing (`ConfirmDialog` while a confirm is pending) keeps the dialog open. `Modal`, `ConfirmDialog` and `ReasonDialog` render it; their props, the Phase 89 refusal behaviour of `ConfirmDialog` and all callers are unchanged.
