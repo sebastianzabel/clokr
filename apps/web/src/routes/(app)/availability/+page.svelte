@@ -13,6 +13,8 @@
   import Skeleton from "$components/ui/Skeleton.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import MyShiftAgenda from "$lib/components/me/MyShiftAgenda.svelte";
+  import CalendarFeedDialog from "$lib/components/me/CalendarFeedDialog.svelte";
+  import { loadCalendarFeed, type CalendarFeedState } from "$lib/me/calendar-feed";
   import { tenantFeatures } from "$stores/tenant-features";
   import Card from "$components/ui/Card.svelte";
   import AvailabilityWeekGrid, {
@@ -175,6 +177,16 @@
   }
 
   onMount(load);
+
+  // Issue #597 (prototype): „Kalender abonnieren“ in the head. Offered only while the API serves
+  // the own feed (null = route absent, no person or no own read right); a failed read hides it.
+  let feed = $state<CalendarFeedState | null>(null);
+  let feedOpen = $state(false);
+  onMount(() => {
+    loadCalendarFeed()
+      .then((s) => (feed = s))
+      .catch(() => (feed = null));
+  });
 </script>
 
 <PageHeader
@@ -183,6 +195,16 @@
   tabs={TABS}
   bind:tab={view}
 >
+  {#snippet actions()}
+    {#if feed}
+      <button
+        type="button"
+        class="btn btn-secondary btn-sm"
+        onclick={() => (feedOpen = true)}
+        data-testid="calendar-feed-open">Kalender abonnieren</button
+      >
+    {/if}
+  {/snippet}
   {#snippet panel(value)}
     {#if value === "plan"}
       <MyShiftAgenda />
@@ -218,6 +240,10 @@
     {/if}
   {/snippet}
 </PageHeader>
+
+{#if feed}
+  <CalendarFeedDialog bind:open={feedOpen} {feed} onChange={(s) => (feed = s)} />
+{/if}
 
 <SaveBar
   {changes}
