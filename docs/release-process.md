@@ -221,7 +221,7 @@ returns unnoticed.
 - Write nothing, list the commits without a run:
   `gh workflow run build-push-reconcile.yml -f dry_run=true -f lookback=40`
 - The same locally:
-  `GITHUB_REPOSITORY=sebastianzabel/clokr node .github/scripts/build-push-reconcile.mjs --lookback 40 --dry-run`
+  `GITHUB_REPOSITORY=getclokr/clokr node .github/scripts/build-push-reconcile.mjs --lookback 40 --dry-run`
 - Replay how `main` looked at an earlier commit (`--dry-run` is mandatory with `--tip`):
   `node .github/scripts/build-push-reconcile.mjs --tip <sha> --dry-run`
 - `gh workflow run build-push.yml --ref main` rebuilds and re-scans the tip of `main`; the newest run

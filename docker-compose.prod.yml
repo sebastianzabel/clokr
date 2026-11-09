@@ -78,7 +78,7 @@ services:
     # Pitfall #8: pinned image, NO build directive (no source tree on prod-host). The
     # image refs are the same CLOKR_API_IMAGE / CLOKR_WEB_IMAGE that docs/prod-deploy.md
     # and scripts/prod-deploy.sh write.
-    image: "${CLOKR_API_IMAGE:?CLOKR_API_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/sebastianzabel/clokr-api:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
+    image: "${CLOKR_API_IMAGE:?CLOKR_API_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/getclokr/clokr-api:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
     restart: unless-stopped
     # D-01: NO Traefik labels — HAProxy on OPNsense handles TLS + SNI routing.
     ports:
@@ -128,7 +128,7 @@ services:
       retries: 5
 
   web:
-    image: "${CLOKR_WEB_IMAGE:?CLOKR_WEB_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/sebastianzabel/clokr-web:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
+    image: "${CLOKR_WEB_IMAGE:?CLOKR_WEB_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/getclokr/clokr-web:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
     restart: unless-stopped
     # D-01: NO Traefik labels — HAProxy on OPNsense terminates TLS.
     ports:
@@ -177,7 +177,7 @@ services:
   fritzbox-adapter:
     # NOTE: kept as `build:` because prod-host has the source tree
     # (single-tenant utility). If multi-tenant prod is added later, publish
-    # as ghcr.io/sebastianzabel/clokr-fritzbox-adapter and switch to `image:`.
+    # as ghcr.io/getclokr/clokr-fritzbox-adapter and switch to `image:`.
     build:
       context: apps/fritzbox-adapter
       dockerfile: Dockerfile

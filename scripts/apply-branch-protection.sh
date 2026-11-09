@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-REPO="${CLOKR_REPO:-sebastianzabel/clokr}"
+REPO="${CLOKR_REPO:-getclokr/clokr}"
 
 # Branches that carry releases and therefore must be protected.
 #

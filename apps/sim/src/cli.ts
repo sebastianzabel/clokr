@@ -89,7 +89,7 @@ async function main(argv: string[]): Promise<number> {
         args: rest,
         options: {
           "create-issues": { type: "boolean", default: false },
-          repo: { type: "string", default: process.env.SIM_ISSUE_REPO ?? "sebastianzabel/clokr" },
+          repo: { type: "string", default: process.env.SIM_ISSUE_REPO ?? "getclokr/clokr" },
           "skip-perf": { type: "boolean", default: false },
           rebaseline: { type: "boolean", default: false },
         },
