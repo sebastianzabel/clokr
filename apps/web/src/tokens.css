@@ -1,31 +1,47 @@
-/* Modern skin layer fonts — self-hosted (DSGVO Art. 44 compliant).
-   Variable fonts cover all weights with a single file per subset, matching
-   the DM Sans / Jost / Cormorant pattern in app.css. */
+/* Clokr design system v2 - the one file that declares design tokens (Issue #842, D-842-01).
+   Imported BEFORE app.css in the root layout.
 
-/* Inter Tight — weights 400-800 (variable axis). Used under [data-skin="modern"]. */
+   Attribute contract: the theme attribute (pflaume, salz, petrol) and the mode attribute
+   (light, dark) can sit on ANY element, not only on the document element. A small preview
+   element that carries both gets the real tokens of that combination (D-842-02). A
+   themed element must carry BOTH attributes, otherwise it falls back to the light roles of
+   the document and becomes a light island inside a dark page.
+
+   Cascade order is the contract: theme light overrides, then the shared dark roles, then the
+   theme-and-dark overrides, so a combination always wins over its parts. The mode stays
+   explicit from the stored preference, so the file has no media query for the OS colour
+   scheme (D-842-03).
+
+   Values are the prototype values (Issue #842) except the contrast corrections of D-842-06;
+   every one of those carries the prototype value in a comment. Contrast is pinned by
+   token-contrast-842.test.ts for all six combinations. */
+
+/* ─── Fonts (self-hosted, no CDN) ─────────────────────────────────────── */
+
+/* Figtree - variable weight axis 300-900 (D-842-13). */
 @font-face {
-  font-family: "Inter Tight";
+  font-family: "Figtree";
   font-style: normal;
-  font-weight: 400 800;
+  font-weight: 300 900;
   font-display: swap;
-  src: url("/fonts/inter-tight-v9-latin-ext.woff2") format("woff2");
+  src: url("/fonts/figtree-latin-ext-wght-normal.woff2") format("woff2");
   unicode-range:
     U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
     U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
     U+A720-A7FF;
 }
 @font-face {
-  font-family: "Inter Tight";
+  font-family: "Figtree";
   font-style: normal;
-  font-weight: 400 800;
+  font-weight: 300 900;
   font-display: swap;
-  src: url("/fonts/inter-tight-v9-latin.woff2") format("woff2");
+  src: url("/fonts/figtree-latin-wght-normal.woff2") format("woff2");
   unicode-range:
     U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* JetBrains Mono — weights 400-600 (variable axis). Used for numerals under Modern skin. */
+/* JetBrains Mono - code and raw data only (the code font token). */
 @font-face {
   font-family: "JetBrains Mono";
   font-style: normal;
@@ -48,33 +64,93 @@
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* Color-scheme — drives UA-rendered controls (scrollbars, form widgets, etc.)
-   to match the user's selected light/dark mode (independent of OS preference). */
-html {
-  color-scheme: light;
-}
-html[data-mode="dark"] {
-  color-scheme: dark;
-}
+/* ─── Pflaume, light - also every role the other combinations inherit ─── */
+/* The mode selector is listed here as well so a light preview element stays light under a dark
+   page (it re-declares every role on itself instead of inheriting the dark ones). */
+:root,
+[data-theme="pflaume"],
+[data-mode="light"] {
+  /* Brand */
+  --brand: #7a3f6c;
+  --brand-hover: #672f5a;
+  --brand-soft: #f3e8ef;
+  --brand-tint: #fbf6f9;
+  --brand-ink: #ffffff;
 
-/* clokr v1.5 — design tokens (single source of truth).
-   Imported BEFORE app.css in +layout.svelte.
-   Theme via data-theme + data-mode + data-density on <html>. */
+  /* Honey accent: a fill or indicator for "now" and "break" only. NEVER a text colour and never
+     a surface that carries text - it does not reach 4.5:1 as text on any surface (D-842-07). */
+  --accent: #d9a441;
 
-:root {
-  /* Type */
-  --font-sans: "Jost", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-serif: "Cormorant Garamond", "Cormorant", Georgia, serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  /* Surfaces and lines */
+  --bg: #faf8f7;
+  --card: #ffffff;
+  --rail: #f4eff2;
+  --sunk: #f3eef1;
+  --hover: #f1ebee;
+  --line: #e9e1e5;
+  --line-2: #d6cbd1;
+
+  /* Text */
+  --text: #221c1f;
+  --text-2: #6a5f65;
+  /* D-842-06: prototype value #9a8f95 measured 2.9:1 on the card; raised toward --text. */
+  --text-3: #72686d;
+
+  /* Status */
+  --ok: #257a4f;
+  --ok-soft: #e4f3ea;
+  /* D-842-06: prototype value #b2701a measured 3.5:1 to 4.0:1 on the neutral surfaces. */
+  --warn: #975f16;
+  --warn-soft: #fbefd8;
+  --bad: #bc3c2f;
+  --bad-soft: #fbe7e4;
+  --info: #2f6391;
+  --info-soft: #e6eef7;
+
+  /* Avatars: fill and text colour (D-842-04) */
+  --a1: #f3d9d0;
+  --a1-t: #7a3b2a;
+  --a2: #f6e3c3;
+  --a2-t: #7a5213;
+  --a3: #dfe8cf;
+  --a3-t: #3f5a1f;
+  --a4: #cfe6e3;
+  --a4-t: #1d5d59;
+  --a5: #e2dcf0;
+  --a5-t: #4b3a7a;
+  --a6: #f2d8e4;
+  --a6-t: #7a2f55;
+
+  /* Elevation */
+  --shadow: 0 1px 2px rgba(40, 20, 30, 0.05), 0 12px 32px -20px rgba(40, 20, 30, 0.25);
+  --shadow-pop: 0 4px 12px rgba(40, 20, 30, 0.08), 0 24px 48px -16px rgba(40, 20, 30, 0.3);
+
+  /* Type (D-842-09) */
+  --font-ui: "Figtree", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs-base: 13.5px;
+  --fs-sm: 12.5px;
+  --fs-xs: 12px;
+  --fs-th: 11.5px;
+  --fs-h1: 20px;
+  --fs-h2: 13.5px;
+  --fs-kpi: 20px;
+  --fs-hero: 38px;
+
+  /* Heights */
+  --h-control: 32px;
+  --h-control-sm: 28px;
+  --h-stage: 40px;
+  --h-row: 44px;
+  --h-th: 34px;
 
   /* Radii */
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 16px;
-  --r-xl: 24px;
-  --r-pill: 999px;
+  --r-card: 14px;
+  --r-control: 9px;
+  --r-stage: 18px;
+  --r-pill: 99px;
 
-  /* Spacing scale (4pt) */
+  /* Spacing scale (4px grid) */
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
@@ -86,64 +162,15 @@ html[data-mode="dark"] {
   --s-12: 48px;
   --s-16: 64px;
 
-  /* Theme: PFLAUME (default) */
-  --brand: #80377b;
-  --brand-light: #a85ca3;
-  --brand-dark: #5c2858;
-  --brand-soft: rgba(168, 92, 163, 0.14);
-
-  /* Light surfaces */
-  --bg: #faf9f7;
-  --bg-alt: #f3eff0;
-  --bg-card: #ffffff;
-  --bg-elevated: #ffffff;
-  --bg-subtle: #f7f4f5;
-  --border: #e8e0ea;
-  --border-strong: #d9cfdc;
-  --text: #29232a;
-  --text-muted: #6e6470;
-  --text-faint: #9a8fa0;
-  --text-on-brand: #ffffff;
-
-  --good: #2d6a4f;
-  --good-soft: rgba(45, 106, 79, 0.12);
-  --warn: #b45309;
-  --warn-soft: rgba(180, 83, 9, 0.12);
-  --bad: #b42318;
-  --bad-soft: rgba(180, 35, 24, 0.1);
-  --star: #f59e0b;
-
-  /* Foreground-only variants of --good/--bad. Identical to --good/--bad in light mode, so
-     nothing changes here; the dark block below brightens them for text on --bg-card. They
-     exist as separate tokens because --good/--bad are ALSO used as backgrounds under white
-     text (.btn-danger, .tab-badge, app.css:400/999) — brightening those would break
-     white-on-red. Use these two for `color:`; keep the fill tokens above for backgrounds. */
-  --good-text: #2d6a4f;
-  --bad-text: #b42318;
-
-  /* quick 260820-elk — Soll/Ist bar deficit hatch. The ONLY two colours in variant 1c
-     with no existing token equivalent. Derived from --bad (#b42318) rather than a new
-     hue so the deficit reads as the same "you are behind" signal as .mstat-value.neg. */
-  --bar-hatch-line: rgba(180, 35, 24, 0.42);
-  --bar-hatch-bg: rgba(180, 35, 24, 0.1);
-
-  --shadow-sm: 0 1px 2px rgba(40, 25, 45, 0.05);
-  --shadow-md: 0 4px 14px rgba(40, 25, 45, 0.08);
-  --shadow-lg: 0 18px 40px rgba(40, 25, 45, 0.1);
-  --shadow-brand: 0 4px 16px rgba(128, 55, 123, 0.28);
-  --shadow-brand-lg: 0 12px 32px rgba(128, 55, 123, 0.3);
-
+  /* Motion */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
 
+  /* Layout (kept until the navigation rework) */
   --sidebar-w: 232px;
   --topbar-h: 60px;
 
-  /* Density */
-  --row-h: 44px;
-  --pad-card: 24px;
-
-  /* Shift template palette — fixed across themes (chosen per template, stored in DB) */
+  /* Shift template palette - fixed across themes (chosen per template, stored in the database) */
   --shift-blue: #3b82f6;
   --shift-green: #2d6a4f;
   --shift-amber: #b45309;
@@ -151,275 +178,189 @@ html[data-mode="dark"] {
   --shift-violet: #80377b;
   --shift-slate: #6e6470;
 
-  /* #840 G-2 — the weekend band of the absence timeline (header cell, person tracks, legend swatch).
-     A 12 % tint of the ink colour, declared once: it re-resolves in every skin and mode because the
-     mode attributes sit on the same <html> element as :root. The earlier --bg-subtle at 0.8 opacity
-     measured 1.09:1 on the editorial card and about 1:1 on the translucent modern card, so the
-     weekend was invisible. Measured by leave-looks-840-gaps.test.ts in all four surface modes
-     (>= 1.2:1 against the card); a quiet background, clearly below any leave-type fill. */
+  /* Soll/Ist bar deficit hatch: derived from --bad (D-842-10) */
+  --bar-hatch-line: rgba(188, 60, 47, 0.42);
+  --bar-hatch-bg: rgba(188, 60, 47, 0.1);
+
+  color-scheme: light;
+}
+
+/* ─── Salz, light ─────────────────────────────────────────────────────── */
+[data-theme="salz"] {
+  --brand: #2b2a30;
+  --brand-hover: #121216;
+  --brand-soft: #ebe8e3;
+  --brand-tint: #f6f3ee;
+  /* Salz honey is a touch deeper than the Pflaume one (D-842-05). */
+  --accent: #c98a3a;
+  --bg: #f9f7f3;
+  --card: #fffefc;
+  --rail: #f1eee8;
+  --sunk: #f1eee8;
+  --hover: #eeeae3;
+  --line: #e6e1d9;
+  --line-2: #d2cbc0;
+  --text: #1e1d20;
+  --text-2: #67636b;
+  /* D-842-06: prototype value #98949b. */
+  --text-3: #6b686d;
+}
+
+/* ─── Petrol, light ───────────────────────────────────────────────────── */
+[data-theme="petrol"] {
+  --brand: #1f6c6f;
+  --brand-hover: #165557;
+  --brand-soft: #dcecea;
+  --brand-tint: #f0f6f5;
+  --bg: #f8faf9;
+  --card: #ffffff;
+  --rail: #eef4f2;
+  --sunk: #eef3f2;
+  --hover: #e9f0ee;
+  --line: #e0e8e6;
+  --line-2: #c8d5d2;
+  --text: #192423;
+  /* D-842-06: prototype value #5e6c6a measured 4.49:1 on --brand-soft. */
+  --text-2: #5c6a68;
+  /* D-842-06: prototype value #91a09d. */
+  --text-3: #616e6c;
+}
+
+/* ─── Shared dark roles - Pflaume, dark ───────────────────────────────── */
+[data-mode="dark"] {
+  --brand: #cf93c1;
+  --brand-hover: #e2b0d6;
+  --brand-soft: #3a2334;
+  --brand-tint: #221a1f;
+  --brand-ink: #1a1017;
+  --bg: #17141a;
+  --card: #1f1b22;
+  --rail: #1c181f;
+  --sunk: #211c25;
+  --hover: #26202a;
+  --line: #2e2731;
+  --line-2: #463c4a;
+  --text: #f2ecf0;
+  --text-2: #b3a8b0;
+  /* D-842-06: prototype value #7d737a. */
+  --text-3: #90878d;
+
+  --ok: #74c895;
+  --ok-soft: #1e3427;
+  --warn: #e5b45a;
+  --warn-soft: #3a2f17;
+  --bad: #f28d80;
+  --bad-soft: #3f1f1b;
+  --info: #83b6e0;
+  --info-soft: #1c2f41;
+
+  --a1: #4a2a22;
+  --a1-t: #f3c9bd;
+  --a2: #4a3a1c;
+  --a2-t: #f1d6a3;
+  --a3: #30401e;
+  --a3-t: #cfe0ac;
+  --a4: #1e3d3a;
+  --a4-t: #a9dcd6;
+  --a5: #332b4d;
+  --a5-t: #d3c8f0;
+  --a6: #4a2538;
+  --a6-t: #f0c2d9;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -18px rgba(0, 0, 0, 0.8);
+  --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.5), 0 24px 48px -16px rgba(0, 0, 0, 0.8);
+
+  /* Soll/Ist bar deficit hatch on a dark card, derived from the dark --bad */
+  --bar-hatch-line: rgba(242, 141, 128, 0.55);
+  --bar-hatch-bg: rgba(242, 141, 128, 0.16);
+
+  color-scheme: dark;
+}
+
+/* ─── Salz, dark ──────────────────────────────────────────────────────── */
+[data-theme="salz"][data-mode="dark"] {
+  --card: #1e1e21;
+  --brand: #ecebe6;
+  --brand-hover: #ffffff;
+  --brand-soft: #34333a;
+  --brand-ink: #141418;
+  --brand-tint: #1f1f23;
+  --bg: #151517;
+  --rail: #19191c;
+  --sunk: #1f1f23;
+  --hover: #242428;
+  --line: #2b2b30;
+  --line-2: #45454c;
+  --text: #f1f0ed;
+  --text-2: #aeacb3;
+  /* D-842-06: prototype value #7a787f. */
+  --text-3: #8c8b90;
+}
+
+/* ─── Petrol, dark ────────────────────────────────────────────────────── */
+[data-theme="petrol"][data-mode="dark"] {
+  --card: #1a2221;
+  --brand: #74c6c4;
+  --brand-hover: #a3dedc;
+  --brand-soft: #1e3a3b;
+  --brand-ink: #0f1f1f;
+  --brand-tint: #182424;
+  --bg: #121818;
+  --rail: #161d1d;
+  --sunk: #1c2424;
+  --hover: #212b2b;
+  --line: #263131;
+  --line-2: #3b4a4a;
+  --text: #edf3f2;
+  --text-2: #a8b7b5;
+  /* D-842-06: prototype value #71807e. */
+  --text-3: #859391;
+}
+
+/* ─── Domain aliases (D-842-10) ───────────────────────────────────────────
+   The leave-type tokens keep their names but hold no colour of their own: each is an alias of a
+   role above. Declared on every themed element because a var() alias resolves where it is
+   declared, so a themed preview element recomputes it. Fill = the strong colour, text colour =
+   the card colour (white in light, dark in dark mode), on the brand fill the brand ink. */
+:root,
+[data-theme],
+[data-mode] {
+  /* The weekend band of the absence timeline: a 12 percent tint of the ink colour (Issue #840) */
   --weekend-shade: color-mix(in srgb, var(--text) 12%, transparent);
 
-  /* Leave-type palette — referenced by app.css .cal-abs-* and by inline
-     style:background bindings in /leave + /team/leave legend dots.
-     Theme-independent: hand-picked to read on --bg-card (light) at 100% and
-     on .cal-cell backgrounds at 15% color-mix. Dark-mode overrides below. */
-  --leave-type-vacation: #4caf6f; /* green — Urlaub */
-  --leave-type-sick: #d97706; /* amber — Krank */
-  --leave-type-sick-child: #ea580c; /* deeper orange — Kind krank */
-  --leave-type-special: #4f46e5; /* indigo — Sonderurlaub */
-  --leave-type-overtime: #0891b2; /* teal — Überstundenausgleich */
-  --leave-type-education: #2563eb; /* blue — Fortbildung */
-  --leave-type-unpaid: #6b7280; /* gray — Unbezahlt */
-  --leave-type-holiday: #7c3aed; /* violet — Feiertag */
-  --leave-type-maternity: #db2777; /* pink — Mutterschutz */
-  --leave-type-parental: #be185d; /* rose — Elternzeit */
-  --leave-type-absent: #475569; /* slate — Abwesend (APPROVED) */
-  --leave-type-absent-muted: #94a3b8; /* light slate — Abwesend (PENDING) */
-  /* Unknown-type look (G-4 of issue 840): „Andere Abwesenheit“ in the leave legend, „Sonstige
-     Abwesenheit“ in the Zeiterfassung legends. It was #6b7280, the very value of --leave-type-unpaid,
-     so two legend entries shared one colour. Now a dark brown, a hue none of the greys has:
-     2.28:1 from unpaid, 1.45:1 from absent, 4.30:1 from absent-muted. */
-  --leave-type-default: #5a321b; /* brown — Fallback (unknown type) */
+  --leave-type-vacation: var(--ok);
+  --leave-type-sick: var(--warn);
+  --leave-type-sick-child: var(--a2-t);
+  --leave-type-special: var(--a5-t);
+  --leave-type-overtime: var(--a4-t);
+  --leave-type-education: var(--info);
+  --leave-type-unpaid: var(--a3-t);
+  --leave-type-holiday: var(--brand);
+  --leave-type-maternity: var(--a6-t);
+  --leave-type-parental: var(--a1-t);
+  --leave-type-absent: var(--text-2);
+  --leave-type-absent-muted: var(--text-3);
+  --leave-type-default: var(--text-2);
 
-  /* Foreground colours for text sitting ON a --leave-type-* fill (Phase 257, D-12).
-     Each is whichever of #ffffff / #0f172a scores higher against the fill above, measured with
-     the WCAG 2.x formula; all clear 4.5:1. These are for `color:` only — the fills above stay
-     the background everywhere, including the .cal-abs-* color-mix cell tints in app.css, which
-     is why the fills were not darkened instead. Pinned by
-     apps/web/src/__tests__/leave-chip-contrast.test.ts. */
-  --leave-type-vacation-text: #0f172a; /* 6.52:1 */
-  --leave-type-sick-text: #0f172a; /* 5.60:1 */
-  --leave-type-sick-child-text: #0f172a; /* 5.02:1 */
-  --leave-type-special-text: #ffffff; /* 6.29:1 */
-  --leave-type-overtime-text: #0f172a; /* 4.85:1 */
-  --leave-type-education-text: #ffffff; /* 5.17:1 */
-  --leave-type-unpaid-text: #ffffff; /* 4.83:1 */
-  --leave-type-holiday-text: #ffffff; /* 5.70:1 */
-  --leave-type-maternity-text: #ffffff; /* 4.60:1 */
-  --leave-type-parental-text: #ffffff; /* 6.04:1 */
-  --leave-type-absent-text: #ffffff; /* 7.58:1 */
-  --leave-type-absent-muted-text: #0f172a; /* 6.96:1 */
-  --leave-type-default-text: #ffffff; /* 11.01:1 */
+  --leave-type-vacation-text: var(--card);
+  --leave-type-sick-text: var(--card);
+  --leave-type-sick-child-text: var(--card);
+  --leave-type-special-text: var(--card);
+  --leave-type-overtime-text: var(--card);
+  --leave-type-education-text: var(--card);
+  --leave-type-unpaid-text: var(--card);
+  --leave-type-holiday-text: var(--brand-ink);
+  --leave-type-maternity-text: var(--card);
+  --leave-type-parental-text: var(--card);
+  --leave-type-absent-text: var(--card);
+  --leave-type-absent-muted-text: var(--card);
+  --leave-type-default-text: var(--card);
 }
 
-[data-theme="nacht"] {
-  --brand: #3d4dad;
-  --brand-light: #6b7bd8;
-  --brand-dark: #232e78;
-  --brand-soft: rgba(107, 123, 216, 0.14);
-  --shadow-brand: 0 4px 16px rgba(61, 77, 173, 0.28);
-  --shadow-brand-lg: 0 12px 32px rgba(61, 77, 173, 0.3);
-}
-
-[data-theme="wald"] {
-  --brand: #2d6a4f;
-  --brand-light: #52b788;
-  --brand-dark: #1b4332;
-  --brand-soft: rgba(82, 183, 136, 0.16);
-  --shadow-brand: 0 4px 16px rgba(45, 106, 79, 0.3);
-  --shadow-brand-lg: 0 12px 32px rgba(45, 106, 79, 0.3);
-}
-
-[data-mode="dark"] {
-  --bg: #14101a;
-  --bg-alt: #1a1320;
-  --bg-card: #1f1827;
-  --bg-elevated: #261e30;
-  --bg-subtle: #1a1320;
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --text: #f0ece6;
-  --text-muted: rgba(240, 236, 230, 0.62);
-  --text-faint: rgba(240, 236, 230, 0.36);
-
-  --good-soft: rgba(82, 183, 136, 0.16);
-  --warn-soft: rgba(245, 158, 11, 0.16);
-  --bad-soft: rgba(248, 113, 113, 0.14);
-
-  /* Phase 258 (D-05c) — --good/--bad are tuned for a white background and are NOT
-     redeclared in dark mode (they are background fills under white text). Their text
-     variants are: #2d6a4f on --bg-card #1f1827 measures 2.70:1 and #b42318 measures 2.62:1,
-     below WCAG's 3:1 large-text and 4.5:1 normal-text floors. The base colours below are the
-     ones this block already uses for --good-soft (#52b788) and --bad-soft (#f87171), so no
-     new hue enters the palette. Computed: 6.97:1 and 6.23:1 on #1f1827. */
-  --good-text: #52b788;
-  --bad-text: #f87171;
-
-  /* quick 260820-elk — dark-mode hatch override. --bad itself is NOT re-declared in
-     dark mode, so the light-mode hatch would be near-invisible on --bg-card: #1f1827.
-     Base colour (#f87171) matches the existing --bad-soft dark override above. */
-  --bar-hatch-line: rgba(248, 113, 113, 0.55);
-  --bar-hatch-bg: rgba(248, 113, 113, 0.16);
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 18px 40px rgba(0, 0, 0, 0.55);
-
-  /* Leave-type palette — lighter / more saturated for dark surfaces.
-     Calibrated against --bg-card (#1f1827) so legend dots stay readable
-     and color-mix(..., 15%, --bg-card) cell backgrounds still tint. */
-  --leave-type-vacation: #5ec78a;
-  --leave-type-sick: #fbbf24;
-  --leave-type-sick-child: #fb923c;
-  --leave-type-special: #818cf8;
-  --leave-type-overtime: #22d3ee;
-  --leave-type-education: #60a5fa;
-  --leave-type-unpaid: #9ca3af;
-  --leave-type-holiday: #a78bfa;
-  --leave-type-maternity: #f472b6;
-  --leave-type-parental: #f9a8d4;
-  --leave-type-absent: #cbd5e1;
-  --leave-type-absent-muted: #64748b;
-  /* Unknown-type look (G-4 of issue 840), see the light block: was #9ca3af, equal to
-     --leave-type-unpaid. Now a mid brown: 2.72:1 from unpaid, 4.65:1 from absent, 1.45:1 from
-     absent-muted (a light fill cannot reach 1.4:1 from the light dark-mode absent #cbd5e1). */
-  --leave-type-default: #874a29;
-
-  /* Foreground colours for text sitting ON a --leave-type-* fill (Phase 257, D-12).
-     Each is whichever of #ffffff / #0f172a scores higher against the fill above, measured with
-     the WCAG 2.x formula; all clear 4.5:1. These are for `color:` only — the fills above stay
-     the background everywhere, including the .cal-abs-* color-mix cell tints in app.css, which
-     is why the fills were not darkened instead. Pinned by
-     apps/web/src/__tests__/leave-chip-contrast.test.ts. */
-  --leave-type-vacation-text: #0f172a; /* 8.51:1 */
-  --leave-type-sick-text: #0f172a; /* 10.69:1 */
-  --leave-type-sick-child-text: #0f172a; /* 7.89:1 */
-  --leave-type-special-text: #0f172a; /* 5.98:1 */
-  --leave-type-overtime-text: #0f172a; /* 9.88:1 */
-  --leave-type-education-text: #0f172a; /* 7.02:1 */
-  --leave-type-unpaid-text: #0f172a; /* 7.03:1 */
-  --leave-type-holiday-text: #0f172a; /* 6.56:1 */
-  --leave-type-maternity-text: #0f172a; /* 6.74:1 */
-  --leave-type-parental-text: #0f172a; /* 9.84:1 */
-  --leave-type-absent-text: #0f172a; /* 12.02:1 */
-  --leave-type-absent-muted-text: #ffffff; /* 4.76:1 */
-  --leave-type-default-text: #ffffff; /* 6.90:1 */
-}
-
-[data-density="compact"] {
-  --row-h: 36px;
-  --pad-card: 16px;
-}
-
-@keyframes fadeUp {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
+@media (max-width: 639px) {
+  :root,
+  [data-theme],
+  [data-mode] {
+    --fs-hero: 34px;
   }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-/* ─── Typographic recipes ─────────────────
-   Base recipes consumed by Phases 29 (timer card) and 32 (NFC terminal) per FONT-05.
-   Each consumer composes this with explicit font-size (64px / 96px) and positioning.
-*/
-.clock {
-  font-family: var(--font-serif);
-  font-variant-numeric: tabular-nums;
-  font-weight: 300;
-  line-height: 1;
-  letter-spacing: 0;
-}
-
-/* ─── Modern skin layer ──────────────────────────────────────────────
-   Activated by `<html data-skin="modern">`. Overrides token values only;
-   component-level surface treatments live at the bottom of app.css.
-   The editorial skin remains the default with NO data-skin attribute set.
-*/
-[data-skin="modern"] {
-  /* Type — Inter Tight everywhere, JetBrains Mono for numerals */
-  --font-sans: "Inter Tight", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-serif: "Inter Tight", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-
-  /* Radii — slightly larger to feel like rounded glass panes */
-  --r-sm: 8px;
-  --r-md: 14px;
-  --r-lg: 20px;
-  --r-xl: 28px;
-
-  /* Pad-card — modern surfaces breathe more */
-  --pad-card: 28px;
-
-  /* Text on the primary button gradient. Issue #840 G-7: the modern brand colours are light neon
-     fills (--brand-light / --brand), so white text on them measured 1.4:1 to 2.1:1 in light mode.
-     This dark ink is >= 6.6:1 on every stop of every theme in both modes. --text-on-brand itself
-     stays white on purpose: it is also used as a BACKGROUND (the dashboard timer card's inverted
-     primary, Issue #546) and by step circles, the operator layout and the wish colour pair, so
-     changing the token would invert those. Pinned by btn-primary-contrast-840.test.ts. */
-  --text-on-brand-modern: #0a0a10;
-}
-
-/* Density compact still wins under Modern skin — restore 16 px override at higher specificity */
-[data-skin="modern"][data-density="compact"] {
-  --pad-card: 16px;
-}
-
-/* Modern × Pflaume — neon violet */
-[data-skin="modern"][data-theme="pflaume"] {
-  --brand: #b879f0;
-  --brand-light: #d9a5ff;
-  --brand-dark: #6f3fa8;
-  --brand-soft: rgba(184, 121, 240, 0.16);
-  --shadow-brand: 0 4px 24px rgba(184, 121, 240, 0.32);
-  --shadow-brand-lg: 0 16px 48px rgba(184, 121, 240, 0.36);
-}
-
-/* Modern × Nacht — neon indigo */
-[data-skin="modern"][data-theme="nacht"] {
-  --brand: #7c8cff;
-  --brand-light: #a3afff;
-  --brand-dark: #4d5bd8;
-  --brand-soft: rgba(124, 140, 255, 0.16);
-  --shadow-brand: 0 4px 24px rgba(124, 140, 255, 0.32);
-  --shadow-brand-lg: 0 16px 48px rgba(124, 140, 255, 0.36);
-}
-
-/* Modern × Wald — neon mint */
-[data-skin="modern"][data-theme="wald"] {
-  --brand: #4ade80;
-  --brand-light: #86efac;
-  --brand-dark: #16a34a;
-  --brand-soft: rgba(74, 222, 128, 0.16);
-  --shadow-brand: 0 4px 24px rgba(74, 222, 128, 0.32);
-  --shadow-brand-lg: 0 16px 48px rgba(74, 222, 128, 0.36);
-}
-
-/* Modern × Dark — near-black with translucent glass surfaces */
-[data-skin="modern"][data-mode="dark"] {
-  --bg: #050507;
-  --bg-alt: #0a0a0d;
-  --bg-card: rgba(255, 255, 255, 0.04);
-  --bg-elevated: rgba(255, 255, 255, 0.06);
-  --bg-subtle: rgba(255, 255, 255, 0.03);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --text: #f4f4f7;
-  --text-muted: rgba(244, 244, 247, 0.66);
-  --text-faint: rgba(244, 244, 247, 0.4);
-  --text-on-brand: #ffffff;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.6);
-}
-
-/* Modern × Light — soft off-white with translucent glass surfaces */
-[data-skin="modern"][data-mode="light"] {
-  --bg: #f7f7f8;
-  --bg-alt: #efeff1;
-  --bg-card: rgba(255, 255, 255, 0.72);
-  --bg-elevated: rgba(255, 255, 255, 0.92);
-  --bg-subtle: rgba(255, 255, 255, 0.5);
-  --border: rgba(20, 20, 30, 0.08);
-  --border-strong: rgba(20, 20, 30, 0.16);
-  --text: #14141a;
-  --text-muted: rgba(20, 20, 26, 0.64);
-  --text-faint: rgba(20, 20, 26, 0.4);
-  --text-on-brand: #ffffff;
-  --shadow-sm: 0 1px 2px rgba(20, 20, 30, 0.06);
-  --shadow-md: 0 8px 24px rgba(20, 20, 30, 0.08);
-  --shadow-lg: 0 24px 64px rgba(20, 20, 30, 0.12);
 }

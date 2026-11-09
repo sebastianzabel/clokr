@@ -2382,8 +2382,29 @@ textarea.form-input {
   box-shadow: var(--shadow-md);
 }
 
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Clock figure recipe: Figtree tabular, weight 500 (Issue #842, D-842-14). Consumers compose it
+   with their own font size and positioning. */
+.clock {
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
 /* card-animate: fadeUp 400 ms ease-out applied to any primary content block.
-   fadeUp keyframe is declared once in tokens.css (Phase 26). Staggered delays via
+   fadeUp keyframe is declared just above (moved out of the token file, Issue #842). Staggered delays via
    :nth-child for natural cascade. Reduced-motion users see no animation (universal
    guard at line ~1660 sets animation-duration: 0.01ms). */
 /* Issue #570: `backwards`, never `both`. A forwards fill keeps the interpolated end transform
