@@ -6,6 +6,7 @@
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
   import { authPathWithNext, safeAppNext } from "$lib/nav/login-next";
+  import LogoMark from "$lib/components/layout/LogoMark.svelte";
 
   // Issue #608 (D-20): the page a notification tap (or a lost session) was heading to.
   const next = safeAppNext($page.url.searchParams.get("next"));
@@ -71,7 +72,10 @@
     <!-- Left brand panel (desktop only) -->
     <div class="login-brand-panel">
       <div class="login-brand-content">
-        <img src="/clokr-logo.png" alt="Clokr" class="login-brand-logo" />
+        <div class="login-brand-wordmark">
+          <LogoMark size={28} />
+          <span>Clokr</span>
+        </div>
         <h1 class="login-brand-title">Zeiterfassung, die einfach funktioniert.</h1>
         <ul class="login-brand-features">
           <li>
@@ -325,7 +329,7 @@
   .login-page::after {
     width: 400px;
     height: 400px;
-    background: var(--brand-light);
+    background: var(--brand);
     bottom: -100px;
     left: -50px;
     animation: float-orb 15s ease-in-out infinite reverse;
@@ -359,8 +363,8 @@
     align-items: center;
     justify-content: center;
     padding: 3rem;
-    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-dark) 100%);
-    color: #fff;
+    background: linear-gradient(135deg, var(--brand-hover) 0%, var(--brand) 100%);
+    color: var(--brand-ink);
     position: relative;
     overflow: hidden;
   }
@@ -378,15 +382,14 @@
     max-width: 400px;
   }
 
-  .login-brand-logo {
-    width: 200px;
-    max-width: 60%;
-    height: auto;
+  .login-brand-wordmark {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
     margin-bottom: 2rem;
-    background: #fff;
-    padding: 1.5rem 1.75rem;
-    border-radius: 16px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--brand-ink);
   }
 
   .login-brand-title {
@@ -394,7 +397,7 @@
     font-weight: 700;
     line-height: 1.2;
     margin-bottom: 2rem;
-    color: #fff;
+    color: var(--brand-ink);
     text-wrap: balance;
   }
 
@@ -469,7 +472,7 @@
 
   .login-subtitle {
     font-size: 0.9375rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-bottom: 2rem;
   }
 
@@ -489,7 +492,7 @@
   .input-icon {
     position: absolute;
     left: 0.875rem;
-    color: var(--text-faint);
+    color: var(--text-3);
     pointer-events: none;
     z-index: 1;
   }
@@ -509,8 +512,8 @@
     border: none;
     cursor: pointer;
     padding: 0.375rem;
-    border-radius: var(--r-sm);
-    color: var(--text-faint);
+    border-radius: var(--r-control);
+    color: var(--text-3);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -521,7 +524,7 @@
 
   .password-toggle:hover {
     color: var(--text);
-    background-color: var(--bg-subtle);
+    background-color: var(--sunk);
   }
 
   .login-submit {
@@ -535,8 +538,8 @@
     display: inline-block;
     width: 1rem;
     height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-top-color: #fff;
+    border: 2px solid color-mix(in srgb, var(--brand-ink) 40%, transparent);
+    border-top-color: var(--brand-ink);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
@@ -558,7 +561,7 @@
     align-items: center;
     gap: 0.375rem;
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
   }
   .remember-me input {
