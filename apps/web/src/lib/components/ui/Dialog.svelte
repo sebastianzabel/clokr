@@ -117,29 +117,34 @@
   </div>
 {:else}
   <Dialog.Root {open} onOpenChange={setOpen}>
-    <Dialog.Portal>
-      <Dialog.Overlay>
-        {#snippet child({ props })}
-          <div {...props} class="scrim" role="presentation" onclick={onScrimClick}></div>
-        {/snippet}
-      </Dialog.Overlay>
-      <Dialog.Content bind:ref={contentEl} interactOutsideBehavior="ignore" {onOpenAutoFocus}>
-        {#snippet child({ props })}
-          <!-- The accessible name is the aria-label (legacy contract); bits-ui's labelledby and
-               describedby are dropped because there is no description element to point at. -->
-          <div
-            {...props}
-            class="modal"
-            class:modal--wide={size === "wide"}
-            aria-label={ariaLabel ?? title}
-            aria-labelledby={undefined}
-            aria-describedby={undefined}
-          >
-            {@render panel(true)}
-          </div>
-        {/snippet}
-      </Dialog.Content>
-    </Dialog.Portal>
+    <!-- Unmounted together with the state, not after bits-ui's presence delay (two animation
+         frames): a closed dialog leaves no DOM behind in the same flush, as the old Modal did, and
+         no exit animation exists. Mounted open, so bits-ui's presence starts present. -->
+    {#if open}
+      <Dialog.Portal>
+        <Dialog.Overlay>
+          {#snippet child({ props })}
+            <div {...props} class="scrim" role="presentation" onclick={onScrimClick}></div>
+          {/snippet}
+        </Dialog.Overlay>
+        <Dialog.Content bind:ref={contentEl} interactOutsideBehavior="ignore" {onOpenAutoFocus}>
+          {#snippet child({ props })}
+            <!-- The accessible name is the aria-label (legacy contract); bits-ui's labelledby and
+                 describedby are dropped because there is no description element to point at. -->
+            <div
+              {...props}
+              class="modal"
+              class:modal--wide={size === "wide"}
+              aria-label={ariaLabel ?? title}
+              aria-labelledby={undefined}
+              aria-describedby={undefined}
+            >
+              {@render panel(true)}
+            </div>
+          {/snippet}
+        </Dialog.Content>
+      </Dialog.Portal>
+    {/if}
   </Dialog.Root>
 {/if}
 
