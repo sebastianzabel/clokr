@@ -929,8 +929,10 @@ Read these before modifying any page in `apps/web` — they are checked in, unli
 
 | Source                                  | What it governs                                                                                                                                   |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web/src/tokens.css`               | The canonical v1.5 token set — every colour, radius and surface variable                                                                          |
-| `apps/web/.lintrc-tokens.txt`           | The banned legacy patterns (`--color-*` / `--glass-*` / `--radius-*` / `--gray-*`) plus a replacement cheat sheet                                 |
+| `apps/web/src/tokens.css`               | The one token source — the D-05 colour roles and the non-colour tokens for pflaume\|salz\|petrol × light\|dark (`data-theme` × `data-mode` on any element), the Figtree and JetBrains Mono `@font-face`, the leave-type aliases |
+| `apps/web/.lintrc-tokens.txt`           | The deny list `scripts/lint-tokens.mjs` parses (retired names, old fonts, the retired axes) plus the old → new cheat sheet                        |
+| `apps/web/scripts/lint-tokens.mjs`      | `lint:tokens`: fails on a retired name (referenced or declared) and on any `var(--x)` nothing in `src` declares; aborts on zero files or an empty deny list (Issue #842) |
+| `apps/web/src/__tests__/token-contrast-842.test.ts` + `token-cascade.ts` | Every role pair ≥ 4.5:1 in all six combinations, parsed from the real `tokens.css`; `token-cascade.ts` is the one cascade resolver of the CSS proofs |
 | `apps/web/src/app.css`                  | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
 | `apps/web/scripts/lint-ui-classes.mjs`  | Which class names are allowed in the scoped primitive directories, and where that scope ends                                                      |
 | `docs/ADMIN_STRUCTURE.md §3.2.1`        | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02)                                                    |
@@ -938,12 +940,21 @@ Read these before modifying any page in `apps/web` — they are checked in, unli
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
 
+Design system v2 (Issue #842), as built: `tokens.css` is the only file that declares a colour role
+(`design-guards-842.test.ts` fails on a second declaration site). Type is Figtree (UI, tabular numerals
+global) and JetBrains Mono for code and raw data only, both self-hosted; there are no italics, and the
+shared `app.css` label recipes carry no uppercase or letter-spacing. `--accent` is a fill, never a text
+colour (guarded). Text on a solid status fill uses `--card`, on a brand fill `--brand-ink` (guarded). The
+retired v1.5/v1.2 names, the old font families and the former skin and density axes are denied by
+`lint:tokens`, `fonts-842` and `no-skin-density-842`. Tailwind 4 is installed but not wired (#843 wires it
+from `tokens.css`); no per-route old/new token flag exists.
+
 `ConfirmDialog` swallows a refused `onConfirm` (Phase 89): the dialog stays open, the button is
 re-enabled and nothing is rethrown, so a refusal is no unhandled rejection and needs no
 `process.on("unhandledRejection")` allow-list in a test. `ReasonDialog` still throws to its
 `ConfirmDialog` to keep its inline error.
 
-Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern`. Note
+Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern` (`lint:tokens` also runs in the pre-commit hook). Note
 that `lint:ui-classes` only scans `lib/components/ui/` and `lib/components/layout/` — components
 elsewhere (`lib/components/saldo/`, `calendar/`, `breaks/`, …) are outside that gate and need their
 own mounted test instead.
@@ -1214,9 +1225,9 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - `@tanstack/svelte-query` is listed as a dependency but not currently used in routes (direct fetch pattern prevalent)
 - Loading/error state managed locally per page
 - Scoped `<style>` blocks in each component — no Tailwind utility classes in markup (Tailwind v4 installed but CSS is primarily custom)
-- CSS custom properties for theming (v1.5): `var(--brand)`, `var(--text)`, `var(--bg-card)` — defined in `apps/web/src/tokens.css`. Legacy `--color-*` / `--glass-*` / `--radius-*` / `--gray-*` are banned (see UI Consistency Rules).
-- Global styles in `apps/web/src/app.css` (~1476 lines) with theme system (`data-theme` attribute)
-- Four themes: `pflaume` (default), `nacht`, `wald`, `schiefer`
+- CSS custom properties for theming (v2): `var(--brand)`, `var(--text)`, `var(--card)` — defined only in `apps/web/src/tokens.css`. Retired v1.5/v1.2 names are denied by `lint:tokens` (see UI Consistency Rules).
+- Global styles in `apps/web/src/app.css` (~2800 lines) over the token layer (`data-theme` × `data-mode` attributes)
+- Three themes: `pflaume` (default), `salz`, `petrol`, each in `data-mode` light|dark. A personal preference (`/admin/themes`, saved through `PUT /me/preferences`); no skin axis, no density axis, no tenant default
 - BEM-like class naming: `.admin-tab`, `.admin-tab--active`, `.toast-container`, `.empty-state-title`
 - Responsive via `@media` queries in component styles
 
@@ -1499,7 +1510,7 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   tenant session, client, logger or salon context. `hooks.server.ts` sets `frame-ancestors 'none'`
   and `X-Frame-Options: DENY` on `/betreiber`; the client logger drops its queue there, so operator
   errors never reach the tenant log endpoint. Nothing in the tenant app links to `/betreiber`, and
-  the console pins theme nacht / skin editorial / comfortable without writing the device's stored
+  the console pins theme salz on `<html>` (the mode follows the device) without writing the device's stored
   preferences (it restores them on leaving). Since Issue #90 the start page shows an „Übersicht“
   and the tenant list the columns Salons, Mitarbeitende and Letzte Aktivität with an „Inaktiv“
   badge, loaded with one `GET /operator/dashboard` next to the tenant list request. Logout clears the tab's session but cannot revoke the
