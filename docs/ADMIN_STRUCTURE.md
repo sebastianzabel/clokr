@@ -147,7 +147,7 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 |   ─────────────────────────────────────  |
 |   footer: [Speichern]                   |
 +------------------------------------------+
-| Danger Zone (red-tinted, always last)   |
+| Kritische Aktionen (red, always last)   |
 |   description                           |
 |   [Destructive action button]           |
 +------------------------------------------+
@@ -662,9 +662,9 @@ Only **three page templates** are sanctioned for admin pages. Every admin `+page
 
 ## 3. Sub-Patterns
 
-### 3.1 Danger Zone
+### 3.1 Kritische Aktionen (DangerZone component)
 
-The **Danger Zone** is a distinct card section for irreversible or high-impact destructive actions (DSGVO anonymization, data resets, deletion). It follows the pattern popularized by GitHub's repository settings page.
+The **Kritische Aktionen** card (component `DangerZone`) is a distinct card section for irreversible or high-impact destructive actions (DSGVO anonymization, data resets, deletion). It follows the pattern popularized by GitHub's repository settings page.
 
 **Placement rules:**
 
@@ -677,7 +677,7 @@ The **Danger Zone** is a distinct card section for irreversible or high-impact d
 - Background: `var(--bad-soft)` (red-tinted surface)
 - Border: `1px solid var(--bad)` (red border)
 - No `box-shadow` (flat, to emphasize the warning)
-- Title default: **"Danger Zone"** (English — recognized industry term; not translated to German)
+- Title default: **„Kritische Aktionen“** (docs/glossar.md — the English pattern name is never shown in the UI, Issue #574)
 
 **Confirmation mechanisms:**
 

@@ -96,7 +96,11 @@ describe("lint-ui-terms: what is never shown is never read", () => {
       MODULE,
       `export const isShift = (t: string) => t === "SHIFT_BASED";`,
     ],
-    ["a string in a type position", MODULE, `export type Mode = "Danger Zone" | "Tenant Sie";`],
+    [
+      "a string in a type position",
+      MODULE,
+      `export type Mode = "Kritische Aktionen" | "Tenant Sie";`,
+    ],
   ];
   for (const [label, file, source] of negatives) {
     it(`ignores ${label}`, () => {

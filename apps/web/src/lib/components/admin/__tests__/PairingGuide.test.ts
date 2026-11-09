@@ -86,9 +86,12 @@ describe("PairingGuide", () => {
     expect(text).toContain("WPA3");
     expect(text).toContain("Gast-WLAN");
     expect(text).toContain("Geräteisolation");
-    expect(text).toContain("PAIRING_ENABLED=true");
-    expect(text).toContain("CLOKR_APP_URL");
-    expect(text).toContain("PAIRING_HOST_BIND");
+    // Issue #574 (D-574-08): plain instructions that point to the operator guide, no variable names
+    expect(text).toContain("Kopplung eingeschaltet");
+    expect(text).toMatch(/https-Adresse\s+deiner\s+Clokr-Installation/);
+    expect(text).toMatch(/LAN-Adresse\s+im\s+Salon-WLAN/);
+    expect(text).toMatch(/WLAN-Kopplung\s+per\s+QR-Code/);
+    expect(text).not.toMatch(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/);
     expect(text).toContain("mit dem Salon-WLAN verbunden");
     expect(text).toMatch(/nicht gespeichert/);
     const guest = [...container.querySelectorAll("li")].find((li) =>

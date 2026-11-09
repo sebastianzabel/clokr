@@ -21,6 +21,6 @@
 </script>
 
 <p class="form-hint" role="note" data-testid="module-hint" data-module={module}>
-  {subject} sind mit dem Zusatzmodul {TENANT_MODULE_LABELS[module]} verfügbar. Ihr Anbieter schaltet es
-  frei.
+  {subject} sind mit dem Zusatzmodul {TENANT_MODULE_LABELS[module]} verfügbar. Dein Anbieter schaltet
+  es frei.
 </p>

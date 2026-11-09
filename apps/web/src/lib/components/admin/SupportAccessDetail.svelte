@@ -79,7 +79,7 @@
   }
 </script>
 
-<Section title="Zugriff" sub="Wer wann und warum auf Ihre Daten zugegriffen hat">
+<Section title="Zugriff" sub="Wer wann und warum auf die Daten deines Unternehmens zugegriffen hat">
   {#snippet actions()}
     {#if canEnd}
       <button class="btn btn-danger sm" type="button" onclick={openConfirm}>Zugriff beenden</button>

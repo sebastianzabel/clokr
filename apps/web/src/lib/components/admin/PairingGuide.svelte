@@ -109,17 +109,14 @@
         auf, in dem auch der Adapter hängt.
       </li>
       <li>
-        <strong>Der Adapter ist eingeschaltet.</strong> Setze am Adapter
-        <code>PAIRING_ENABLED=true</code>
-        und
-        <code>CLOKR_APP_URL</code>
-        auf die https-Adresse deiner Clokr-Installation.
+        <strong>Der Adapter ist eingeschaltet.</strong> Am Adapter ist die Kopplung eingeschaltet und
+        die https-Adresse deiner Clokr-Installation hinterlegt. Das richtet ein, wer den Adapter betreibt
+        — nach der Anleitung „WLAN-Kopplung per QR-Code“.
       </li>
       <li>
-        <strong>Der Kopplungs-Port ist im WLAN freigegeben.</strong> Standardmäßig lauscht der
-        Adapter nur auf dem Rechner selbst. Mit
-        <code>PAIRING_HOST_BIND</code>
-        legst du die LAN-Adresse fest, unter der die Handys ihn erreichen.
+        <strong>Der Kopplungs-Port ist im WLAN freigegeben.</strong> Standardmäßig lauscht der Adapter
+        nur auf dem Rechner selbst. Damit die Handys ihn erreichen, muss er unter seiner LAN-Adresse im
+        Salon-WLAN erreichbar sein — auch das steht in der Anleitung.
       </li>
       <li>
         <strong>Das Handy ist mit dem Salon-WLAN verbunden</strong>, nicht über Mobilfunk. Nur dann

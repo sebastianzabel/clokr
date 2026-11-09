@@ -83,7 +83,7 @@ const SALONS = [
   { id: "s1", name: "Salon Nord" },
   { id: "s2", name: "Salon Süd" },
 ];
-const MANDANT_HINT = /nur bei einer Zuweisung für den ganzen Mandanten wirken/;
+const MANDANT_HINT = /nur bei einer Zuweisung für das ganze Unternehmen wirken/;
 
 let assignments: unknown[] = [];
 
@@ -140,7 +140,7 @@ describe("AssignmentsTab (Issue #83)", () => {
     await mount();
     expect(screen.getAllByText("Keine gespeicherte Zuweisung")).toHaveLength(2);
     const dialog = await openGrant();
-    expect(within(dialog).getByRole("radio", { name: "Ganzer Mandant" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: "Ganzes Unternehmen" })).toBeChecked();
     await chooseRole(dialog, "r-probe");
     apiPost.mockImplementationOnce(() => {
       assignments = [assignment("a1", "u1", PROBE, { type: "TENANT" })];
@@ -156,7 +156,7 @@ describe("AssignmentsTab (Issue #83)", () => {
     );
     expect(apiPost).toHaveBeenCalledTimes(1);
     await waitFor(() =>
-      expect(within(personBlock("Probe Eins")).getByText("Ganzer Mandant")).toBeInTheDocument(),
+      expect(within(personBlock("Probe Eins")).getByText("Ganzes Unternehmen")).toBeInTheDocument(),
     );
   });
 
@@ -321,7 +321,7 @@ describe("AssignmentsTab (Issue #83)", () => {
     expect(paths).not.toContain("/roles");
     expect(paths).not.toContain("/roles/permission-catalog");
     expect(
-      screen.getByText(/brauchen Sie zusätzlich das Recht, Rollen zu lesen/),
+      screen.getByText(/brauchst du zusätzlich das Recht, Rollen zu lesen/),
     ).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", { name: "Rolle zuweisen" })) {
       expect(button).toBeDisabled();

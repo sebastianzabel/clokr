@@ -176,7 +176,7 @@ describe("RolesTab (Issue #83)", () => {
     }
     await fireEvent.click(within(row("Teamleitung")).getByRole("button", { name: "Ansehen" }));
     expect(screen.getByLabelText("Name der Rolle")).toBeDisabled();
-    expect(screen.getByText(/Sie können Rollen ansehen, aber nicht ändern/)).toBeInTheDocument();
+    expect(screen.getByText(/Du kannst Rollen ansehen, aber nicht ändern/)).toBeInTheDocument();
   });
 
   it("copying a system role opens the editable copy; saving it patches the copy", async () => {
@@ -307,7 +307,7 @@ describe("RolesTab (Issue #83)", () => {
   it("only a group with MANDANT permissions carries the tenant-scope chip (D-03)", async () => {
     await mount();
     await fireEvent.click(screen.getByRole("button", { name: "Neue Rolle" }));
-    const chips = screen.getAllByText("wirkt nur bei Zuweisung für den ganzen Mandanten");
+    const chips = screen.getAllByText("wirkt nur bei Zuweisung für das ganze Unternehmen");
     expect(chips).toHaveLength(1);
     expect(chips[0].closest("legend")).toHaveTextContent("Gruppe Mandant");
   });

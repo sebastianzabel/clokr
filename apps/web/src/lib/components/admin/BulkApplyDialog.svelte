@@ -137,7 +137,7 @@
         const reloaded = await load(selection.effectiveFrom);
         if (reloaded) {
           staleText =
-            "Die Vorschau ist veraltet, weil sich Verträge oder Vorgaben geändert haben. Sie wurde neu geladen – bitte prüfen Sie die Auswahl erneut.";
+            "Die Vorschau ist veraltet, weil sich Verträge oder Vorgaben geändert haben. Die Vorschau wurde neu geladen – bitte prüf die Auswahl noch einmal.";
         }
       } else {
         errorText = messageOf(err);
@@ -164,7 +164,7 @@
     {:else}
       <div class="callout brand" role="note">
         Die Änderung gilt nie rückwirkend (§ 3 NachwG). Individuelle Verträge werden nur geändert,
-        wenn Sie sie ausdrücklich ankreuzen.
+        wenn du sie ausdrücklich ankreuzt.
       </div>
 
       <div class="form-group">
@@ -190,7 +190,7 @@
         <div class="bulk-empty">
           <p class="bulk-empty-title">Keine Verträge zu ändern</p>
           <p class="form-hint">
-            Kein Vertrag ist betroffen. Mit „Nur Vorgaben speichern“ übernehmen Sie die neuen
+            Kein Vertrag ist betroffen. Mit „Nur Vorgaben speichern“ übernimmst du die neuen
             Vorgaben, ohne bestehende Verträge anzufassen.
           </p>
         </div>

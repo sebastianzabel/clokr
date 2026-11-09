@@ -40,11 +40,11 @@ function props(overrides: Record<string, unknown> = {}) {
 }
 
 describe("SupportAccessList", () => {
-  it("explains the page in the Sie form", () => {
+  it("explains the page in the du form (Issue #574)", () => {
     renderWithTheme(SupportAccessList, props());
     expect(
       screen.getByText(
-        "Hier sehen Sie, wann der Betreiber im Rahmen des Supports auf Ihre Daten zugegriffen hat, mit welcher Begründung und welche Daten abgerufen wurden. Einen laufenden Zugriff können Sie jederzeit beenden.",
+        "Hier siehst du, wann der Betreiber im Rahmen des Supports auf die Daten deines Unternehmens zugegriffen hat, mit welcher Begründung und welche Daten abgerufen wurden. Einen laufenden Zugriff kannst du jederzeit beenden.",
       ),
     ).toBeTruthy();
   });
@@ -116,7 +116,9 @@ describe("SupportAccessList", () => {
   it("shows the empty state when nobody has accessed the data", () => {
     renderWithTheme(SupportAccessList, props({ items: [], total: 0 }));
     expect(
-      screen.getByText("Bisher hat der Betreiber nicht auf Ihre Daten zugegriffen."),
+      screen.getByText(
+        "Bisher hat der Betreiber nicht auf die Daten deines Unternehmens zugegriffen.",
+      ),
     ).toBeTruthy();
     expect(screen.queryByRole("link")).toBeNull();
   });
@@ -124,7 +126,9 @@ describe("SupportAccessList", () => {
   it("does not claim emptiness while loading", () => {
     renderWithTheme(SupportAccessList, props({ items: [], total: 0, loading: true }));
     expect(
-      screen.queryByText("Bisher hat der Betreiber nicht auf Ihre Daten zugegriffen."),
+      screen.queryByText(
+        "Bisher hat der Betreiber nicht auf die Daten deines Unternehmens zugegriffen.",
+      ),
     ).toBeNull();
     expect(screen.getByRole("status", { name: "Support-Zugriffe werden geladen" })).toBeTruthy();
   });
@@ -136,7 +140,9 @@ describe("SupportAccessList", () => {
       "Fehler beim Laden der Support-Zugriffe.",
     );
     expect(
-      screen.queryByText("Bisher hat der Betreiber nicht auf Ihre Daten zugegriffen."),
+      screen.queryByText(
+        "Bisher hat der Betreiber nicht auf die Daten deines Unternehmens zugegriffen.",
+      ),
     ).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Erneut laden" }));
     expect(p.onRetry).toHaveBeenCalledTimes(1);

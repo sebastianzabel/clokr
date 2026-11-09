@@ -88,8 +88,8 @@ Usage:
 
 Source: `apps/web/src/lib/components/admin/DangerZone.svelte`
 
-DangerZone is a thin wrapper around `<Section tone="danger">` that adopts GitHub's Danger Zone
-pattern. It renders a red-tinted card with a default title of "Danger Zone" and is meant to be placed
+DangerZone is a thin wrapper around `<Section tone="danger">` for irreversible actions. It renders a
+red-tinted card with the default title „Kritische Aktionen“ (docs/glossar.md) and is meant to be placed
 as the **last child** in a `SectionStack` or as the **last tab panel** in a `ListDetail`. Callers
 compose `ConfirmDialog` (from `$lib/components/ui/ConfirmDialog.svelte`) or a type-to-confirm input
 around each destructive action — `DangerZone` itself does NOT render a dialog.
