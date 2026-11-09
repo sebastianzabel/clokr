@@ -84,7 +84,7 @@
 
 <aside class="sidebar" aria-label="Hauptnavigation" data-testid="sidebar">
   <a href="/dashboard" class="sidebar-brand" data-testid="sidebar-brand">
-    <BrandLogo size={26} label="Clokr Zeiterfassung" />
+    <BrandLogo size={32} label="Clokr Zeiterfassung" />
   </a>
 
   <div class="sidebar-scroll">
@@ -175,10 +175,14 @@
   .sidebar-brand,
   .sidebar-brand:hover,
   .sidebar-brand:focus {
-    padding: 44px 20px 22px;
-    margin-bottom: 14px;
+    /* Issue #852: the brand row is exactly as tall as the Topbar (60px), so mark and wordmark sit
+       centred on the same line as the Topbar content. */
+    box-sizing: border-box;
+    height: 60px;
+    min-height: 60px;
+    padding: 0 20px;
+    margin-bottom: 22px;
     display: flex;
-    flex-direction: row;
     align-items: center;
     justify-content: center;
     text-decoration: none;
