@@ -297,11 +297,16 @@
       background: var(--card);
     }
 
+    /* A card is as wide as its container, never wider: a cell with several parts (a status and
+       its chip) wraps them onto another line, and a long name breaks inside the card instead of
+       forcing it open (found by the 390/360 px matrix of hr-view-86, #648). */
     .dt-table td {
       display: flex;
+      flex-wrap: wrap;
       align-items: baseline;
       justify-content: space-between;
-      gap: var(--s-3);
+      gap: var(--s-1) var(--s-3);
+      min-width: 0;
       height: auto;
       min-height: var(--h-control);
       padding: var(--s-1) 0;
@@ -327,6 +332,17 @@
 
     .dt-table td.dt-primary-cell::before {
       display: none;
+    }
+
+    .dt-table td.dt-primary-cell,
+    .dt-primary {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .dt-primary {
+      min-width: 0;
+      max-width: 100%;
     }
   }
 </style>
