@@ -804,6 +804,22 @@ The create dialog collects further assignments as drafts and posts them through 
 once the person exists; drafts are modal state like every other field of that dialog, so the
 employee list stays outside the unsaved registry.
 
+**The section button is the `SaveBar` block (Issue #843).** The form-group rule above is implemented once as
+`apps/web/src/lib/components/ui/SaveBar.svelte`: it is hidden at zero changes, otherwise it reads „Nicht
+gespeichert · n Änderungen · n Fehler“ with „Verwerfen“ and a save button whose label says what happens
+(„Vertrag speichern“, never a bare „OK“). The save button is disabled while `errors > 0` or while a save is
+running; the German phrase and the `canSave` rule live only in `save-bar.ts`. A page that adopts it passes the
+change and error counts it derives from its own snapshot comparison (D-11 below) and keeps the success-path
+re-snapshot; the block replaces the markup, not the audit or the unsaved registry. Existing `Section` footers
+stay valid until their page ticket migrates them.
+
+**A write that touches many records uses `BulkPreviewDialog` (Issue #843, #582).** `SaveBar` (or the page's
+own button) hands off to `apps/web/src/lib/components/ui/BulkPreviewDialog.svelte`: a wide dialog that shows the
+count („Betrifft 12 Personen“), the list of affected records and the effective date („Gilt ab …“) taken from the
+server's preview, with „Abbrechen“ and a confirm button that says what happens. The block computes no date and
+no candidate set; the server's preview and its fingerprint decide (§ 3 NachwG, #568). First adopter:
+`admin/BulkApplyDialog.svelte`.
+
 **Instant-save handler shape.** `toggleWifi()`
 (`apps/web/src/routes/(app)/settings/+page.svelte:113-125`) is the reference: `await` the
 request, write back the _server's_ value, then `toasts.success(...)`; in `catch`, revert the
