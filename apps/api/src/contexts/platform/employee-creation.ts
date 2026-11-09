@@ -26,6 +26,7 @@ import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { DEFAULT_PASSWORD_POLICY, validatePassword, type PasswordPolicy } from "./password-policy";
 import { normalizeWorkDays, type PerDayHours } from "./calculate-work-days";
+import { fixedScheduleCreateHours } from "./fixed-schedule-hours";
 import { replaceSystemRoleAssignment } from "./system-role-assignment";
 import { lockTenantForRoleChanges } from "./facade/role-assignments";
 import {
@@ -549,6 +550,10 @@ export async function createEmployeeInTransaction(
   audit: EmployeeCreationAudit,
 ) {
   const { passwordHash, directPassword, resolvedWorkDays, usualWorkDays, tz } = prepared;
+  const fixedCreateHours =
+    body.scheduleType === "FIXED_SCHEDULE"
+      ? fixedScheduleCreateHours(body.weeklyHours, resolvedWorkDays)
+      : null;
 
   // D-22/D-02: the FIRST statement in the transaction — a rejected outcome below returns
   // before any write, so a 400 never leaves behind a User, Employee or assignment row.
@@ -616,7 +621,16 @@ export async function createEmployeeInTransaction(
       employeeId: emp.id,
       type: body.scheduleType,
       // For SHIFT_BASED: default to 40h if caller omits weeklyHours (null/0/undefined)
-      weeklyHours: body.scheduleType === "SHIFT_BASED" ? body.weeklyHours || 40 : body.weeklyHours,
+      weeklyHours:
+        body.scheduleType === "SHIFT_BASED"
+          ? body.weeklyHours || 40
+          : fixedCreateHours
+            ? fixedCreateHours.weeklyHours
+            : body.weeklyHours,
+      // Issue #848: a FIXED_SCHEDULE contract's day hours follow weeklyHours over its workDays
+      // (they used to fall to the column defaults Mo–Fr 8 h, whatever weeklyHours said).
+      // Other types keep the column defaults: their {day}Hours are placeholders.
+      ...(fixedCreateHours ? fixedCreateHours.dayHours : {}),
       monthlyHours: body.monthlyHours ?? null,
       // Phase 49.2 — FLEXTIME Kernarbeitszeit (only persisted when FLEXTIME)
       coreStart: body.scheduleType === "FLEXTIME" ? (body.coreStart ?? null) : null,
@@ -656,21 +670,29 @@ export async function createEmployeeInTransaction(
   // Issue #482: the ONE base-value resolution — the classification-aware base value from
   // resolveVacationBaseDays() — on `tx` since `emp` already exists inside this transaction.
   const vacationBaseDays = await resolveVacationBaseDays(tx, emp.id, tenantId);
-  await ensureVacationEntitlementForYear(
-    tx,
-    emp.id,
-    tenantId,
-    emp.hireDate.getFullYear(),
-    emp.hireDate,
-    emp.birthDate,
-    // Issue #447 (D-05): the create schema has no exitDate field, so this is always null at
-    // hire time — passed anyway, truthfully, now that the parameter is required.
-    emp.exitDate,
-    workDaysPerWeek,
-    vacationBaseDays,
-    "Automatisch angelegt bei Mitarbeiteranlage",
-    (entry) => audit.vacationEntitlement(entry, tx),
-  );
+  // Issue #849 (1): a person entered with a hire date in an earlier year also gets the CURRENT
+  // year's entitlement at creation — before, only the hire year existed, so the dashboard read
+  // "Resturlaub 0 / 0" until the first leave request created the current year on the fly.
+  const hireYear = emp.hireDate.getFullYear();
+  const currentYear = Number(tenantLocalDay(new Date(), tz).slice(0, 4));
+  const entitlementYears = currentYear > hireYear ? [hireYear, currentYear] : [hireYear];
+  for (const year of entitlementYears) {
+    await ensureVacationEntitlementForYear(
+      tx,
+      emp.id,
+      tenantId,
+      year,
+      emp.hireDate,
+      emp.birthDate,
+      // Issue #447 (D-05): the create schema has no exitDate field, so this is always null at
+      // hire time — passed anyway, truthfully, now that the parameter is required.
+      emp.exitDate,
+      workDaysPerWeek,
+      vacationBaseDays,
+      "Automatisch angelegt bei Mitarbeiteranlage",
+      (entry) => audit.vacationEntitlement(entry, tx),
+    );
+  }
 
   // Phase 75b (D-15): the new user's system-role assignment and its audit row, in this same
   // transaction. A grant cannot lower any holder count, so it takes the tenant lock (which

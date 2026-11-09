@@ -1298,7 +1298,7 @@ describe("reject and reopen — Phase 104-06 Task 2", () => {
     // (D-11) — never .optional(), never .nullable().
     const empty = await reject(creditId, { reason: "" });
     expect(empty.statusCode).toBe(400);
-    const germanMessage = "reason: Begründung ist erforderlich";
+    const germanMessage = "Begründung ist erforderlich";
     for (const res of [missing, nullReason, empty]) {
       const body = JSON.parse(res.body) as { error: string; message: string };
       expect(body.error).toBe("Validierungsfehler");

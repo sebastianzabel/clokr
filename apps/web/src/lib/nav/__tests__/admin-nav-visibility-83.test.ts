@@ -27,6 +27,9 @@ const SRC = webSrc();
 const read = (rel: string) => readFileSync(join(SRC, rel), "utf8");
 const p = personas as Record<string, string[]>;
 const on = { availabilityEnabled: true };
+/** The page H1: the label literally, or (Issue #574) the page-labels lookup of the same href. */
+const titleOf = (href: string, label: string) =>
+  new RegExp(`title=(?:"${label}"|\\{pageLabel\\("${href}"\\)\\})`);
 
 describe("admin navigation (Issue #83)", () => {
   it("the nav groups list exactly the navigable route-map entries, in the same order", () => {
@@ -42,12 +45,12 @@ describe("admin navigation (Issue #83)", () => {
     for (const group of ADMIN_NAV_GROUPS) expect(group.items.length).toBeLessThanOrEqual(5);
   });
 
-  it("COMPLIANCE is one group of three, Support-Zugriffe directly after Audit & Log (Issue #93)", () => {
+  it("COMPLIANCE is one group of three, Support-Zugriffe directly after Protokoll (Issue #93, #574)", () => {
     const compliance = ADMIN_NAV_GROUPS.filter((g) => g.label === "COMPLIANCE");
     expect(compliance).toHaveLength(1);
     expect(compliance[0].items.map((i) => i.label)).toEqual([
       "Monatsabschluss",
-      "Audit & Log",
+      "Protokoll",
       "Support-Zugriffe",
     ]);
     expect(compliance[0].items[2]).toEqual({
@@ -59,17 +62,15 @@ describe("admin navigation (Issue #83)", () => {
 
   it("the nav label equals the list page's PageHead title character for character (Issue #93)", () => {
     const page = read("routes/(app)/admin/support-access/+page.svelte");
-    expect(page).toContain('title="Support-Zugriffe"');
-    expect(read("routes/(app)/+layout.svelte")).toContain(
-      '"/admin/support-access": "Support-Zugriffe"',
-    );
+    expect(page).toMatch(titleOf("/admin/support-access", "Support-Zugriffe"));
+    expect(read("lib/nav/page-labels.ts")).toContain('"/admin/support-access": "Support-Zugriffe"');
   });
 
   it("PLANUNG is one group of three, Salons directly after Verfügbarkeit (Issue #563)", () => {
     const planung = ADMIN_NAV_GROUPS.filter((g) => g.label === "PLANUNG");
     expect(planung).toHaveLength(1);
     expect(planung[0].items.map((i) => i.label)).toEqual([
-      "Schichtplan",
+      "Schichteinstellungen",
       "Verfügbarkeit",
       "Salons",
     ]);
@@ -82,8 +83,8 @@ describe("admin navigation (Issue #83)", () => {
     )?.label;
     expect(label).toBe("Salons");
     const page = read("routes/(app)/admin/salons/+page.svelte");
-    expect(page).toContain(`title="${label}"`);
-    expect(read("routes/(app)/+layout.svelte")).toContain(`"/admin/salons": "${label}"`);
+    expect(page).toMatch(titleOf("/admin/salons", label ?? ""));
+    expect(read("lib/nav/page-labels.ts")).toContain(`"/admin/salons": "${label}"`);
   });
 
   it("filters per item, drops empty groups and the availability item when the feature is off", () => {

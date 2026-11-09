@@ -242,7 +242,7 @@ test.describe("admin salons (Issue #563)", () => {
     ]);
     expect(await documentIsMarked(page), "the page was not reloaded by the create").toBe(true);
 
-    // Deactivate through the Danger Zone and its confirmation.
+    // Deactivate through „Kritische Aktionen“ and its confirmation.
     await page.getByRole("button", { name: "Salon deaktivieren" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Deaktivieren" }).click();
 
@@ -386,7 +386,7 @@ test.describe("admin salons (Issue #563)", () => {
 
     await dialog.getByRole("button", { name: "Abbrechen" }).click();
     await expect(dialog).toHaveCount(0);
-    // Still active: the Danger Zone is offered and the list shows both salons as "Aktiv".
+    // Still active: the „Kritische Aktionen“ card is offered and the list shows both salons as "Aktiv".
     await expect(page.getByRole("button", { name: "Salon deaktivieren" })).toBeVisible();
     await page.goto("/admin/salons");
     await expect(page.getByRole("row", { name: new RegExp(SECOND_SALON_NAME) })).toContainText(

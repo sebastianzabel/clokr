@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { leaveTypeColor, FALLBACK } from "$lib/leave/leave-colors"; // Issue #840 (D-840-12)
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { page } from "$app/stores";
@@ -1750,14 +1751,14 @@
   );
 </script>
 
-<svelte:head><title>Team-Zeiten – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/team/time-entries")} – Clokr</title></svelte:head>
 <svelte:window
   onkeydown={(e) => {
     if (e.key === "Escape" && modalOpen) closeModal();
   }}
 />
 
-<PageHead eyebrow="Team" title="Team-Zeiten" accent="Zeiten">
+<PageHead eyebrow="Team" title={pageLabel("/team/time-entries")} accent="Zeiten">
   {#snippet actions()}
     {#if teamMode === "person" && selectedEmployee}
       <!-- quick 260820-fkz — Gesamt-Saldo moved OUT of the page head entirely, into the

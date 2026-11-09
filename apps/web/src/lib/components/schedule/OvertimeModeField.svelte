@@ -31,8 +31,8 @@
       if (!locked) onchange(e.currentTarget.value as Mode);
     }}
   >
-    <option value="CARRY_FORWARD">Übertragen (CARRY_FORWARD)</option>
-    <option value="TRACK_ONLY">Nur erfassen (TRACK_ONLY)</option>
+    <option value="CARRY_FORWARD">Übertragen</option>
+    <option value="TRACK_ONLY">Nur erfassen</option>
   </select>
   {#if locked}
     <p class="form-hint" id="{id}-hint">{OVERTIME_MODE_LOCKED_HINT}</p>

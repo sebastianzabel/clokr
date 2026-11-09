@@ -58,9 +58,9 @@
 </script>
 
 <p class="sa-intro">
-  Hier sehen Sie, wann der Betreiber im Rahmen des Supports auf Ihre Daten zugegriffen hat, mit
-  welcher Begründung und welche Daten abgerufen wurden. Einen laufenden Zugriff können Sie jederzeit
-  beenden.
+  Hier siehst du, wann der Betreiber im Rahmen des Supports auf die Daten deines Unternehmens
+  zugegriffen hat, mit welcher Begründung und welche Daten abgerufen wurden. Einen laufenden Zugriff
+  kannst du jederzeit beenden.
 </p>
 
 {#if loadError}
@@ -77,7 +77,10 @@
     <div class="skeleton sa-skel-row"></div>
   </div>
 {:else if items.length === 0}
-  <EmptyState icon="search" title="Bisher hat der Betreiber nicht auf Ihre Daten zugegriffen." />
+  <EmptyState
+    icon="search"
+    title="Bisher hat der Betreiber nicht auf die Daten deines Unternehmens zugegriffen."
+  />
 {:else}
   <ul class="sa-list" aria-label="Support-Zugriffe">
     {#each items as item (item.id)}

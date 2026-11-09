@@ -1,7 +1,7 @@
 <!--
   DangerZone — Standalone red-tinted card for destructive actions.
 
-  Adopts GitHub's Danger Zone pattern. Thin wrapper around
+  The card of irreversible actions (title "Kritische Aktionen", docs/glossar.md). Thin wrapper around
   <Section tone="danger"> with a default title and required actions snippet.
 
   Place as the LAST child in a SectionStack or as the LAST tab panel in a ListDetail.
@@ -9,13 +9,13 @@
   around each destructive action — DangerZone does NOT compose ConfirmDialog itself.
 
   Props:
-    title       — section title (default: "Danger Zone")
+    title       — section title (default: "Kritische Aktionen")
     description — muted sub below title
     animate     — opt-in card-animate entrance
     actions     — destructive action buttons + confirmation flows (required snippet)
 
   Example:
-    <DangerZone description="Irreversible Aktionen für diesen Mandanten.">
+    <DangerZone description="Irreversible Aktionen für dein Unternehmen.">
       {#snippet actions()}
         <button class="btn btn-danger" onclick={confirmDelete}>
           Daten zurücksetzen
@@ -34,7 +34,7 @@
     actions: Snippet;
   }
 
-  let { title = "Danger Zone", description, animate, actions }: Props = $props();
+  let { title = "Kritische Aktionen", description, animate, actions }: Props = $props();
 </script>
 
 <Section tone="danger" {title} sub={description} {animate}>

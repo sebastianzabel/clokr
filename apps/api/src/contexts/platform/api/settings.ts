@@ -13,6 +13,11 @@ import {
   snapToMonthFirstUtc,
 } from "../month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
+import {
+  fixedScheduleDaySum,
+  fixedScheduleHoursMismatch,
+  WEEKLY_HOURS_MISMATCH_CODE,
+} from "../fixed-schedule-hours";
 import { accessContextFromRequest, employeeScopeFor } from "../access-context";
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-10/D-14
 import { isShiftInScope, isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14; #86 (D-02)
@@ -965,6 +970,17 @@ export async function settingsRoutes(app: FastifyInstance) {
                 bulkTimeZone,
                 configBody,
               );
+              // Issue #848: the defaults become FIXED_SCHEDULE contracts, so their weekly hours
+              // must equal Σ default day hours — refused before anything is written.
+              const proposedWeekly = proposedContractValues(state.proposed);
+              const weeklyMismatch = fixedScheduleHoursMismatch(
+                "FIXED_SCHEDULE",
+                proposedWeekly.weeklyHours,
+                proposedWeekly,
+              );
+              if (weeklyMismatch) {
+                throw new BulkApplyRejection(400, WEEKLY_HOURS_MISMATCH_CODE, weeklyMismatch);
+              }
               if (state.fingerprint !== previewFingerprint) {
                 throw new BulkApplyRejection(
                   409,
@@ -1219,6 +1235,16 @@ export async function settingsRoutes(app: FastifyInstance) {
         tz,
         proposedBody,
       );
+      // Issue #848: the preview refuses inconsistent defaults the same way the apply does.
+      const proposedWeekly = proposedContractValues(state.proposed);
+      const weeklyMismatch = fixedScheduleHoursMismatch(
+        "FIXED_SCHEDULE",
+        proposedWeekly.weeklyHours,
+        proposedWeekly,
+      );
+      if (weeklyMismatch) {
+        return reply.code(400).send({ error: weeklyMismatch, code: WEEKLY_HOURS_MISMATCH_CODE });
+      }
       return {
         effectiveFrom,
         earliestEffectiveFrom: window.earliest,
@@ -1316,6 +1342,22 @@ export async function settingsRoutes(app: FastifyInstance) {
       const access = accessContextFromRequest(req);
       const { employeeId } = req.params as { employeeId: string };
       const body = employeeScheduleSchema.parse(req.body);
+      // Issue #848: for FIXED_SCHEDULE weeklyHours must equal Σ {day}Hours. A body that names no
+      // weeklyHours takes the day sum (the Zod default of 40 would otherwise contradict it).
+      if (
+        body.type === "FIXED_SCHEDULE" &&
+        (req.body as { weeklyHours?: unknown } | null)?.weeklyHours === undefined
+      ) {
+        body.weeklyHours = fixedScheduleDaySum(body as PerDayHours);
+      }
+      const weeklyMismatch = fixedScheduleHoursMismatch(
+        body.type,
+        body.weeklyHours,
+        body as PerDayHours,
+      );
+      if (weeklyMismatch) {
+        return reply.code(400).send({ error: weeklyMismatch, code: WEEKLY_HOURS_MISMATCH_CODE });
+      }
 
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { untrack } from "svelte";
   import { ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
@@ -185,7 +186,7 @@
   function removeDescription(rule: LeaveLimitRuleDto | null): string {
     if (!rule) return "";
     const what = rule.name ? `„${rule.name}“` : `Die Regel für ${groupPluralLabel(rule)}`;
-    return `${what} gilt danach nicht mehr. Sie bleibt nachvollziehbar und wird nicht gelöscht.`;
+    return `${what} gilt danach nicht mehr. Die Regel bleibt nachvollziehbar und wird nicht gelöscht.`;
   }
 
   function salonCell(rule: LeaveLimitRuleDto): string {
@@ -196,12 +197,12 @@
 </script>
 
 <svelte:head>
-  <title>Urlaubsgrenzen &amp; Sperren – Clokr</title>
+  <title>{pageLabel("/admin/leave-limits")} – Clokr</title>
 </svelte:head>
 
 <ListDetail
   eyebrow="Personal"
-  title="Urlaubsgrenzen & Sperren"
+  title={pageLabel("/admin/leave-limits")}
   sub="Lege fest, wie viele Personen gleichzeitig im Urlaub sein dürfen, oder sperre einen Zeitraum."
   view="list"
 >

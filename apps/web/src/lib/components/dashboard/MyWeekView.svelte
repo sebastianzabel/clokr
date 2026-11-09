@@ -199,11 +199,11 @@
       case "FIXED_SCHEDULE":
         return "Festes Wochenpensum";
       case "FLEXTIME":
-        return "Gleitzeit · freie Verteilung";
+        return "Gleitzeit";
       case "MONTHLY_HOURS":
         return "Monatsstunden";
       case "SHIFT_BASED":
-        return "Schichtbasiert";
+        return "Nach Schichtplan";
       default:
         return "";
     }

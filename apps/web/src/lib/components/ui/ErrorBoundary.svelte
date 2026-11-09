@@ -16,11 +16,11 @@
     view: {
       title: "Diese Ansicht konnte nicht geladen werden.",
       detail:
-        "Der Fehler wurde protokolliert. Über die Navigation erreichen Sie alle anderen Bereiche weiterhin.",
+        "Der Fehler wurde protokolliert. Über die Navigation erreichst du alle anderen Bereiche weiterhin.",
     },
     app: {
       title: "Die Anwendung konnte nicht geladen werden.",
-      detail: "Der Fehler wurde protokolliert. Bitte laden Sie die Seite neu.",
+      detail: "Der Fehler wurde protokolliert. Bitte lade die Seite neu.",
     },
   } as const;
 

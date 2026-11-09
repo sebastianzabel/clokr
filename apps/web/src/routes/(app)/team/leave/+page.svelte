@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, tick, untrack } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
@@ -970,13 +971,13 @@
 </script>
 
 <svelte:head>
-  <title>Abwesenheiten – Clokr</title>
+  <title>{pageLabel("/team/leave")} – Clokr</title>
 </svelte:head>
 
 <!-- Modal primitive owns Escape handling. -->
 
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
-<PageHead eyebrow="Team" title="Abwesenheiten">
+<PageHead eyebrow="Team" title={pageLabel("/team/leave")}>
   {#snippet actions()}
     {#if activeTab === "planung"}
       {#if canManagePlan}

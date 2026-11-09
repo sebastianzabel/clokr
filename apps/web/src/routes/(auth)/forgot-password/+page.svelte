@@ -32,7 +32,7 @@
       <span class="login-logo-icon">⏱️</span>
       <h1 class="login-title">Passwort vergessen</h1>
       <p class="login-subtitle">
-        Geben Sie Ihre E-Mail-Adresse ein, um einen Link zum Zurücksetzen zu erhalten.
+        Gib deine E-Mail-Adresse ein, dann schicken wir dir einen Link zum Zurücksetzen.
       </p>
     </div>
 
