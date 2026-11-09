@@ -16,7 +16,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import { visibleNavSections } from "$lib/nav/app-nav";
   import { activeNavHref } from "$lib/nav/active-route";
-  import { homeHref } from "$lib/nav/routes";
+  import { homeHref, navCurrentPath } from "$lib/nav/routes";
   import { removeThisDevicePush } from "$lib/push/logout";
   import { onMount } from "svelte";
 
@@ -55,7 +55,7 @@
   const currentHref = $derived(
     activeNavHref(
       sections.flatMap((section) => section.items.map((item) => item.href)),
-      currentPath,
+      navCurrentPath(currentPath),
     ),
   );
 

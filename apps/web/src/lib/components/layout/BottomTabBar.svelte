@@ -4,7 +4,7 @@
   import { activeNavHref } from "$lib/nav/active-route";
   import { visibleNavSections, type NavSection } from "$lib/nav/app-nav";
   import { pageLabel } from "$lib/nav/page-labels";
-  import { mobileTabs } from "$lib/nav/routes";
+  import { mobileTabs, navCurrentPath } from "$lib/nav/routes";
   import MobileMoreSheet from "./MobileMoreSheet.svelte";
   import Icon from "$lib/components/Icon.svelte";
 
@@ -51,7 +51,7 @@
   const currentHref = $derived(
     activeNavHref(
       [...primaryTabs, ...moreItems].map((it) => it.href),
-      currentPath,
+      navCurrentPath(currentPath),
     ),
   );
   // The overflow item that is the current page, if any - it is held by the "Mehr" trigger.
