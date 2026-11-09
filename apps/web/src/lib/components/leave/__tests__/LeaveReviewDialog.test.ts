@@ -482,3 +482,226 @@ describe("LeaveReviewDialog - result toast (#853)", () => {
     expect(success).not.toHaveBeenCalled();
   });
 });
+
+// Issue #853 (D-853-08) - the optional decision facts: shown only behind their prop AND the API's
+// answer, absent without a request when the prop is false, silent when the read is refused.
+describe("LeaveReviewDialog - decision facts (#853)", () => {
+  const ENTITLEMENTS = [
+    {
+      typeCode: "VACATION",
+      leaveType: { name: "Urlaub" },
+      totalDays: 28,
+      usedDays: 10,
+      carriedOverDays: 4,
+      effectiveCarryOverDays: 4,
+    },
+  ];
+  const ASSIGNMENTS = {
+    assignments: [
+      {
+        id: "a1",
+        employeeId: "emp-1",
+        salonId: "salon-nord",
+        kind: "HOME",
+        validFrom: "2026-01-01",
+        validUntil: null,
+        weekdays: [],
+      },
+    ],
+  };
+  const CONTEXT = {
+    isMultiSalon: true,
+    salons: [
+      { id: "salon-nord", name: "Salon Nord" },
+      { id: "salon-ost", name: "Salon Ost" },
+    ],
+  };
+  const SHIFTS = [
+    { date: "2026-09-02", startTime: "10:00", endTime: "18:30" },
+    { date: "2026-09-01", startTime: "09:00", endTime: "17:00" },
+  ];
+
+  type Answers = Record<string, unknown | (() => Promise<unknown>)>;
+
+  /** Answers by path prefix; an unlisted path resolves like the default mock. */
+  function answerWith(answers: Answers) {
+    apiGet.mockImplementation((path: string) => {
+      for (const [prefix, answer] of Object.entries(answers)) {
+        if (path.startsWith(prefix)) {
+          return typeof answer === "function"
+            ? (answer as () => Promise<unknown>)()
+            : Promise.resolve(answer);
+        }
+      }
+      return Promise.resolve([]);
+    });
+  }
+
+  function renderFacts(
+    flags: { canReadEntitlement?: boolean; canReadShifts?: boolean; canReadEmployee?: boolean },
+    overrides: Partial<LeaveReviewRequest> = {},
+  ) {
+    return renderWithTheme(LeaveReviewDialog, {
+      open: true,
+      request: baseRequest(overrides),
+      currentEmployeeId: "manager-1",
+      onReviewed: vi.fn(),
+      ...flags,
+    });
+  }
+
+  const paths = () => apiGet.mock.calls.map((c) => String(c[0]));
+
+  it("with all three props false only /leave/overlap is read and no fact line renders", async () => {
+    answerWith({});
+    renderFacts({});
+    await waitFor(() => expect(paths().some((p) => p.startsWith("/leave/overlap"))).toBe(true));
+    expect(paths().every((p) => p.startsWith("/leave/overlap"))).toBe(true);
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+    expect(screen.queryByTestId("review-fact-vacation")).toBeNull();
+    expect(screen.queryByTestId("review-fact-shifts")).toBeNull();
+  });
+
+  it("Stammsalon: shown with canReadEmployee when the name resolves in a multi-salon tenant", async () => {
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS, "/me/context": CONTEXT });
+    renderFacts({ canReadEmployee: true });
+    const line = await screen.findByTestId("review-fact-home-salon");
+    expect(line.textContent).toContain("Stammsalon");
+    expect(line.textContent).toContain("Salon Nord");
+  });
+
+  it("Stammsalon: absent in a single-salon tenant", async () => {
+    answerWith({
+      "/employees/emp-1/salon-assignments": ASSIGNMENTS,
+      "/me/context": { ...CONTEXT, isMultiSalon: false },
+    });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/me/context"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+  });
+
+  it("Stammsalon: absent when the salon is outside the caller's reachable list", async () => {
+    answerWith({
+      "/employees/emp-1/salon-assignments": ASSIGNMENTS,
+      "/me/context": { ...CONTEXT, salons: [{ id: "salon-ost", name: "Salon Ost" }] },
+    });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/me/context"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+  });
+
+  it("Stammsalon: absent after a 404 answer, and no error text appears", async () => {
+    answerWith({
+      "/employees/emp-1/salon-assignments": () => Promise.reject({ status: 404 }),
+      "/me/context": CONTEXT,
+    });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("Resturlaub: PENDING vacation inside one year shows before -> after, from the entitlement of the start year", async () => {
+    answerWith({ "/leave/entitlements/emp-1": ENTITLEMENTS });
+    renderFacts({ canReadEntitlement: true });
+    const line = await screen.findByTestId("review-fact-vacation");
+    // 28 + 4 - 10 = 22 remaining; the request costs 5 days.
+    expect(line.textContent).toContain("Resturlaub 2026");
+    expect(line.textContent).toContain("22 → 17 Tage");
+    expect(paths()).toContain("/leave/entitlements/emp-1?year=2026");
+  });
+
+  it("Resturlaub: a request across the turn of the year shows the current figure only", async () => {
+    answerWith({ "/leave/entitlements/emp-1": ENTITLEMENTS });
+    renderFacts({ canReadEntitlement: true }, { startDate: "2026-12-29", endDate: "2027-01-02" });
+    const line = await screen.findByTestId("review-fact-vacation");
+    expect(line.textContent).toContain("22 Tage");
+    expect(line.textContent).not.toContain("→");
+  });
+
+  it("Resturlaub: a cancellation request shows the current figure only", async () => {
+    answerWith({ "/leave/entitlements/emp-1": ENTITLEMENTS });
+    renderFacts({ canReadEntitlement: true }, { status: "CANCELLATION_REQUESTED" });
+    const line = await screen.findByTestId("review-fact-vacation");
+    expect(line.textContent).not.toContain("→");
+  });
+
+  it("Resturlaub: no read and no line for a sick-leave request", async () => {
+    answerWith({ "/leave/entitlements/emp-1": ENTITLEMENTS });
+    renderFacts({ canReadEntitlement: true }, { typeCode: "SICK" });
+    await waitFor(() => expect(paths().some((p) => p.startsWith("/leave/overlap"))).toBe(true));
+    expect(paths().some((p) => p.startsWith("/leave/entitlements"))).toBe(false);
+    expect(screen.queryByTestId("review-fact-vacation")).toBeNull();
+  });
+
+  it("Resturlaub: absent after a 403 answer", async () => {
+    answerWith({ "/leave/entitlements/emp-1": () => Promise.reject({ status: 403 }) });
+    renderFacts({ canReadEntitlement: true });
+    await waitFor(() =>
+      expect(paths().some((p) => p.startsWith("/leave/entitlements"))).toBe(true),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-vacation")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("Schichten: lists the shifts in date order and asks with the employee id", async () => {
+    answerWith({ "/shifts/range": SHIFTS });
+    renderFacts({ canReadShifts: true });
+    const block = await screen.findByTestId("review-fact-shifts");
+    const items = Array.from(block.querySelectorAll("li")).map((li) => li.textContent);
+    expect(items).toEqual(["Di 01.09. · 09:00–17:00", "Mi 02.09. · 10:00–18:30"]);
+    expect(paths()).toContain("/shifts/range?from=2026-09-01&to=2026-09-05&employeeId=emp-1");
+  });
+
+  it("Schichten: an empty answer reads as the neutral sentence", async () => {
+    answerWith({ "/shifts/range": [] });
+    renderFacts({ canReadShifts: true });
+    const block = await screen.findByTestId("review-fact-shifts");
+    expect(block.textContent).toContain("Keine geplanten Schichten sichtbar");
+    expect(block.querySelectorAll("li").length).toBe(0);
+  });
+
+  it("Schichten: absent after a 403 answer", async () => {
+    answerWith({ "/shifts/range": () => Promise.reject({ status: 403 }) });
+    renderFacts({ canReadShifts: true });
+    await waitFor(() => expect(paths().some((p) => p.startsWith("/shifts/range"))).toBe(true));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-shifts")).toBeNull();
+  });
+
+  it("a late answer for a previous request is discarded (T-853-15)", async () => {
+    let releaseFirst: (rows: unknown) => void = () => {};
+    const first = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/shifts/range") && path.includes("employeeId=emp-1")) return first;
+      if (path.startsWith("/shifts/range")) {
+        return Promise.resolve([{ date: "2026-10-05", startTime: "08:00", endTime: "12:00" }]);
+      }
+      return Promise.resolve([]);
+    });
+    const view = renderFacts({ canReadShifts: true });
+    await waitFor(() => expect(paths().some((p) => p.includes("employeeId=emp-1"))).toBe(true));
+    await view.rerender({
+      request: baseRequest({
+        id: "req-2",
+        employeeId: "emp-2",
+        startDate: "2026-10-05",
+        endDate: "2026-10-09",
+      }),
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("review-fact-shifts").textContent).toContain("Mo 05.10."),
+    );
+    releaseFirst([{ date: "2026-09-01", startTime: "09:00", endTime: "17:00" }]);
+    await new Promise((r) => setTimeout(r, 0));
+    const text = screen.getByTestId("review-fact-shifts").textContent ?? "";
+    expect(text).toContain("Mo 05.10.");
+    expect(text).not.toContain("01.09.");
+  });
+});

@@ -56,6 +56,8 @@ describe("vacationBeforeAfter", () => {
       year: 2026,
       before: 12,
       after: 7,
+      label: "Resturlaub 2026",
+      value: "12 → 7 Tage",
       text: "Resturlaub 2026: 12 → 7 Tage",
     });
   });
@@ -72,7 +74,14 @@ describe("vacationBeforeAfter", () => {
 
   it("derives no number for a request that spans the turn of the year (Pitfall 6)", () => {
     const fact = vacationBeforeAfter({ ...base, startDate: "2026-12-29", endDate: "2027-01-02" });
-    expect(fact).toEqual({ year: 2026, before: 12, after: null, text: "Resturlaub 2026: 12 Tage" });
+    expect(fact).toEqual({
+      year: 2026,
+      before: 12,
+      after: null,
+      label: "Resturlaub 2026",
+      value: "12 Tage",
+      text: "Resturlaub 2026: 12 Tage",
+    });
   });
 
   it("derives no number for a request that is no longer pending (already deducted)", () => {

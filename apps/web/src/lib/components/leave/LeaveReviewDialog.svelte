@@ -54,7 +54,16 @@
     type LeaveReviewRequest,
     type LeaveOverlapEntry,
   } from "$lib/leave/leave-review";
-  import { reviewResultToast } from "$lib/leave/review-facts"; // Issue #853 (S-29)
+  import {
+    NO_SHIFTS_TEXT,
+    reviewResultToast,
+    shiftLines,
+    vacationBeforeAfter,
+    type RangeShift,
+  } from "$lib/leave/review-facts"; // Issue #853 (S-29, D-853-08)
+  import { mapVacationBalance, type VacationEntitlementRow } from "$lib/leave/vacation-balance";
+  import { deriveVacationSummary } from "$lib/leave/vacation-summary";
+  import { homeSalonIdOn, type SalonAssignment } from "$lib/employees/salon-assignments";
   import Skeleton from "$components/ui/Skeleton.svelte";
 
   interface Props {
@@ -66,9 +75,25 @@
     currentEmployeeId: string | null;
     /** D-02: the page-specific reload after a successful review (each page loads different data). */
     onReviewed: () => void | Promise<void>;
+    /**
+     * Issue #853 (D-853-08): what the caller may read, passed in by the page (this file imports no
+     * auth store). Each default is false: a fact line is shown only when its flag is set AND the
+     * API answers; the API stays the guard, a missing permission only omits the line.
+     */
+    canReadEntitlement?: boolean;
+    canReadShifts?: boolean;
+    canReadEmployee?: boolean;
   }
 
-  let { open = $bindable(), request, currentEmployeeId, onReviewed }: Props = $props();
+  let {
+    open = $bindable(),
+    request,
+    currentEmployeeId,
+    onReviewed,
+    canReadEntitlement = false,
+    canReadShifts = false,
+    canReadEmployee = false,
+  }: Props = $props();
 
   // ── Local state ──────────────────────────────────────────────────────────
   let note = $state("");
@@ -79,6 +104,15 @@
   let attestPresent = $state(false);
   let attestFrom = $state("");
   let attestTo = $state("");
+
+  // ── Issue #853 (D-853-08): optional decision facts ──────────────────────────
+  // `null` = not shown (flag off, not loaded yet, or the read was refused). A refusal or a network
+  // error omits the line silently; no error text is ever rendered for these lines.
+  let homeSalonName = $state<string | null>(null);
+  let vacationFact = $state<{ label: string; value: string } | null>(null);
+  let shiftFactLines = $state<string[] | null>(null);
+  // The request the facts belong to; a late answer for another request is discarded (T-853-15).
+  let factsFor: string | null = null;
 
   // ── Phase 87: appointment-collision warn-and-confirm on APPROVE (D-05) ─────
   let collisionOpen = $state(false);
@@ -122,6 +156,72 @@
         .finally(() => {
           loadingOverlap = false;
         });
+    }
+  });
+
+  // Issue #853 (D-853-08): the optional facts. One effect per open request; each read runs only
+  // behind its own flag, and every answer is compared with the request id it was asked for.
+  $effect(() => {
+    homeSalonName = null;
+    vacationFact = null;
+    shiftFactLines = null;
+    if (!open || !request) {
+      factsFor = null;
+      return;
+    }
+    const rid = request.id;
+    const employeeId = request.employeeId;
+    const startDate = request.startDate;
+    const endDate = request.endDate;
+    const status = request.status;
+    const days = Number(request.days);
+    const isVacation = request.typeCode === "VACATION";
+    const wantEmployee = canReadEmployee;
+    const wantEntitlement = canReadEntitlement && isVacation;
+    const wantShifts = canReadShifts;
+    factsFor = rid;
+    const current = () => factsFor === rid;
+
+    if (wantEmployee) {
+      Promise.all([
+        api.get<{ assignments: SalonAssignment[] }>(`/employees/${employeeId}/salon-assignments`),
+        api.get<{ isMultiSalon: boolean; salons: { id: string; name: string }[] }>("/me/context"),
+      ])
+        .then(([assigned, context]) => {
+          if (!current() || context.isMultiSalon !== true) return;
+          const salonId = homeSalonIdOn(assigned.assignments, startDate);
+          const name = context.salons.find((x) => x.id === salonId)?.name;
+          if (name) homeSalonName = name;
+        })
+        .catch(() => {});
+    }
+
+    if (wantEntitlement) {
+      const year = startDate.slice(0, 4);
+      api
+        .get<VacationEntitlementRow[]>(`/leave/entitlements/${employeeId}?year=${year}`)
+        .then((rows) => {
+          if (!current()) return;
+          const balance = mapVacationBalance(rows.find((r) => r.typeCode === "VACATION"));
+          const fact = vacationBeforeAfter({
+            remaining: deriveVacationSummary(balance, 0).remaining,
+            days,
+            status,
+            startDate,
+            endDate,
+          });
+          if (fact) vacationFact = { label: fact.label, value: fact.value };
+        })
+        .catch(() => {});
+    }
+
+    if (wantShifts) {
+      api
+        .get<RangeShift[]>(`/shifts/range?from=${startDate}&to=${endDate}&employeeId=${employeeId}`)
+        .then((rows) => {
+          if (current()) shiftFactLines = shiftLines(rows);
+        })
+        .catch(() => {});
     }
   });
 
@@ -310,6 +410,34 @@
           <dt>Umfang</dt>
           <dd>{leaveDaysLabel(Number(request.days), request.halfDay, request.typeCode)}</dd>
         </div>
+        {#if homeSalonName}
+          <div class="fact" data-testid="review-fact-home-salon">
+            <dt>Stammsalon</dt>
+            <dd>{homeSalonName}</dd>
+          </div>
+        {/if}
+        {#if vacationFact}
+          <div class="fact" data-testid="review-fact-vacation">
+            <dt>{vacationFact.label}</dt>
+            <dd>{vacationFact.value}</dd>
+          </div>
+        {/if}
+        {#if shiftFactLines}
+          <div class="fact fact--full" data-testid="review-fact-shifts">
+            <dt>Schichten im Zeitraum</dt>
+            <dd>
+              {#if shiftFactLines.length === 0}
+                {NO_SHIFTS_TEXT}
+              {:else}
+                <ul class="shift-lines">
+                  {#each shiftFactLines as line, i (i)}
+                    <li>{line}</li>
+                  {/each}
+                </ul>
+              {/if}
+            </dd>
+          </div>
+        {/if}
         {#if request.note}
           <div class="fact fact--full">
             <dt>Anmerkung Mitarbeiter</dt>
@@ -510,6 +638,13 @@
     font-size: var(--fs-base);
     font-weight: 500;
     overflow-wrap: anywhere;
+  }
+  .shift-lines {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 9.5rem;
+    overflow-y: auto;
   }
   .review-section {
     margin-top: var(--s-5);

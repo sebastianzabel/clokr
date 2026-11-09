@@ -50,6 +50,11 @@ export interface VacationFact {
   before: number;
   /** `before - days`; `null` when the "after" figure must not be derived. */
   after: number | null;
+  /** "Resturlaub 2026" - the dialog's term. */
+  label: string;
+  /** "12 → 7 Tage" or "12 Tage". */
+  value: string;
+  /** The whole line, `label: value`. */
   text: string;
 }
 
@@ -66,16 +71,14 @@ export function vacationBeforeAfter(input: VacationFactInput): VacationFact | nu
   const before = input.remaining;
   const sameYear = yearOf(input.endDate) === year;
   const derive = input.status === "PENDING" && sameYear;
+  const label = `Resturlaub ${year}`;
   if (!derive) {
-    return { year, before, after: null, text: `Resturlaub ${year}: ${formatDays(before)} Tage` };
+    const value = `${formatDays(before)} Tage`;
+    return { year, before, after: null, label, value, text: `${label}: ${value}` };
   }
   const after = before - input.days;
-  return {
-    year,
-    before,
-    after,
-    text: `Resturlaub ${year}: ${formatDays(before)} → ${formatDays(after)} Tage`,
-  };
+  const value = `${formatDays(before)} → ${formatDays(after)} Tage`;
+  return { year, before, after, label, value, text: `${label}: ${value}` };
 }
 
 const WEEKDAYS = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
