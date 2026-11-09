@@ -6,14 +6,28 @@
 //
 // It recomputes every ratio from tokens.css with the WCAG 2.x relative-luminance formula — no
 // number is copied from the plan. jsdom resolves no custom properties and computes no contrast,
-// so the source is parsed directly; that is the same approach Phase 258 used for
-// --good-text/--bad-text, including its parser trap (see extractBlock below).
+// so the source is parsed directly.
+//
+// #842 (D-842-10, revised): the leave-type tokens are no longer literal colours but `var()`
+// ALIASES of the v2 roles, declared once on `:root, [data-theme], [data-mode]`. The proof
+// therefore resolves them through the one cascade resolver (`token-css.ts` on `token-cascade.ts`)
+// in all six theme x mode combinations, and Test 5 pins the alias table instead of hex values.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, it, expect } from "vitest";
+
+import { parseTokenRules } from "./token-cascade";
+import {
+  COMBINATION_NAMES,
+  contrast,
+  cardSurface,
+  over,
+  resolveColor,
+  type CombinationName,
+} from "./token-css";
 
 function readRepoFile(relativeFromHere: string, relativeFromCwd: string): string {
   try {
@@ -31,119 +45,98 @@ const TIMELINE = readRepoFile(
   "src/lib/components/leave/timeline/AbsenceTimeline.svelte",
 );
 
-// ── WCAG 2.x relative-luminance / contrast-ratio formula ────────────────────
-function srgb(c: number): number {
-  const v = c / 255;
-  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-}
+// ── The alias block of tokens.css (D-842-10) ────────────────────────────────
+// The rule that declares the leave-type tokens, found by content (not by a selector substring, so
+// the identifier-prefix trap of the earlier block extraction cannot come back).
+const ALIAS_RULES = parseTokenRules(TOKENS_CSS).filter((rule) =>
+  rule.decls.some((d) => d.prop.startsWith("--leave-type-")),
+);
+const ALIAS_SELECTORS = ALIAS_RULES.map((rule) => rule.selector).sort();
+const ALIAS_DECLS = new Map(
+  ALIAS_RULES.flatMap((rule) => rule.decls)
+    .filter((d) => d.prop.startsWith("--leave-type-"))
+    .map((d) => [d.prop, d.value] as const),
+);
+const FILLS = [...ALIAS_DECLS.keys()].filter((k) => !k.endsWith("-text")).sort();
+const COMBINATIONS_UNDER_TEST = COMBINATION_NAMES as CombinationName[];
 
-function hexToRgb(hex: string): [number, number, number] {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) throw new Error(`Not a 6-digit hex colour: ${hex}`);
-  const int = parseInt(m[1], 16);
-  return [(int >> 16) & 0xff, (int >> 8) & 0xff, int & 0xff];
-}
+/** The D-842-10 alias table: fill token -> the role it is an alias of. The -text partner is --card, except HOLIDAY. */
+const EXPECTED_FILL_ALIASES: Record<string, string> = {
+  "--leave-type-vacation": "var(--ok)",
+  "--leave-type-sick": "var(--warn)",
+  "--leave-type-sick-child": "var(--a2-t)",
+  "--leave-type-special": "var(--a5-t)",
+  "--leave-type-overtime": "var(--a4-t)",
+  "--leave-type-education": "var(--info)",
+  "--leave-type-unpaid": "var(--a3-t)",
+  "--leave-type-holiday": "var(--brand)",
+  "--leave-type-maternity": "var(--a6-t)",
+  "--leave-type-parental": "var(--a1-t)",
+  "--leave-type-absent": "var(--text-2)",
+  "--leave-type-absent-muted": "var(--text-3)",
+  "--leave-type-default": "var(--text-2)",
+};
 
-function luminance(hex: string): number {
-  const [r, g, b] = hexToRgb(hex);
-  return 0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);
-}
-
-function contrastRatio(hexA: string, hexB: string): number {
-  const lA = luminance(hexA);
-  const lB = luminance(hexB);
-  const lMax = Math.max(lA, lB);
-  const lMin = Math.min(lA, lB);
-  return (lMax + 0.05) / (lMin + 0.05);
-}
-
-// ── Block extraction — the Phase 258 parser trap, closed ────────────────────
-// `[data-mode="dark"] {` is a SUBSTRING of `html[data-mode="dark"] {` (tokens.css:56), which
-// holds only `color-scheme: dark`. Phase 258's first draft matched that one, extracted zero
-// tokens, and passed every assertion having checked nothing. Reject a match preceded by an
-// identifier character.
-function extractBlock(css: string, selector: string): string {
-  const idChar = /[A-Za-z0-9_-]/;
-  let searchFrom = 0;
-  while (true) {
-    const idx = css.indexOf(selector, searchFrom);
-    if (idx === -1) {
-      throw new Error(`Selector not found in tokens.css: ${selector}`);
-    }
-    const before = idx > 0 ? css[idx - 1] : "";
-    if (idChar.test(before)) {
-      // This match is a suffix of a longer selector (e.g. html[data-mode="dark"]) — reject it.
-      searchFrom = idx + selector.length;
-      continue;
-    }
-    const braceOpen = css.indexOf("{", idx);
-    if (braceOpen === -1) throw new Error(`No opening brace found for selector: ${selector}`);
-    const braceClose = css.indexOf("}", braceOpen);
-    if (braceClose === -1) throw new Error(`No closing brace found for selector: ${selector}`);
-    return css.slice(braceOpen + 1, braceClose);
-  }
-}
-
-function tokensIn(block: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const re = /(--leave-type-[a-z-]+):\s*(#[0-9a-fA-F]{6})/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(block)) !== null) {
-    out[m[1]] = m[2].toLowerCase();
-  }
-  return out;
-}
-
-const LIGHT = tokensIn(extractBlock(TOKENS_CSS, ":root"));
-const DARK = tokensIn(extractBlock(TOKENS_CSS, '[data-mode="dark"]'));
-
-describe("leave-chip-contrast — WCAG AA for every --leave-type-* fill/text pair (Phase 257, D-12)", () => {
-  it("Test 0: both token blocks parsed and are non-empty", () => {
-    expect(Object.keys(LIGHT).length).toBeGreaterThanOrEqual(13);
-    expect(Object.keys(DARK).length).toBeGreaterThanOrEqual(13);
-    expect(LIGHT["--leave-type-vacation"]).toBe("#4caf6f"); // proves :root, not another block
-    expect(DARK["--leave-type-vacation"]).toBe("#5ec78a"); // proves the REAL dark block
+describe("leave-chip-contrast — WCAG AA for every --leave-type-* fill/text pair (Phase 257, D-12; #842 D-842-10)", () => {
+  it("Test 0: the alias block is parsed, holds all 26 leave tokens and is declared on every themed element", () => {
+    expect(ALIAS_RULES.length).toBeGreaterThan(0);
+    expect(ALIAS_DECLS.size).toBe(26);
+    expect(FILLS).toHaveLength(13);
+    // A var() alias resolves where it is declared: it has to be declared on the root, on a themed
+    // element and on a moded element, otherwise a preview element would keep the document's colours.
+    expect(ALIAS_SELECTORS).toEqual([":root", "[data-mode]", "[data-theme]"]);
+    expect(COMBINATIONS_UNDER_TEST).toHaveLength(6);
   });
 
-  it("Test 1: every fill token has a -text partner, in both modes", () => {
-    const fills = (t: Record<string, string>) =>
-      Object.keys(t)
-        .filter((k) => !k.endsWith("-text"))
-        .sort();
-    const texts = (t: Record<string, string>) =>
-      Object.keys(t)
-        .filter((k) => k.endsWith("-text"))
-        .map((k) => k.replace(/-text$/, ""))
-        .sort();
-    expect(texts(LIGHT)).toEqual(fills(LIGHT));
-    expect(texts(DARK)).toEqual(fills(DARK));
-    expect(fills(LIGHT)).toEqual(fills(DARK)); // the two modes declare the same token set
-  });
-
-  it("Test 2: every fill/text pair reaches WCAG AA (>= 4.5:1), in both modes — generated", () => {
-    const fills = (t: Record<string, string>) =>
-      Object.keys(t)
-        .filter((k) => !k.endsWith("-text"))
-        .sort();
-
-    const modes: Array<[string, Record<string, string>]> = [
-      ["light", LIGHT],
-      ["dark", DARK],
-    ];
-
-    let caseCount = 0;
-    for (const [modeName, tokens] of modes) {
-      for (const fill of fills(tokens)) {
-        const textKey = `${fill}-text`;
-        caseCount++;
-        const fillHex = tokens[fill];
-        const textHex = tokens[textKey];
-        expect(textHex, `${fill} in ${modeName}: no -text partner declared`).toBeDefined();
-        const ratio = contrastRatio(textHex, fillHex);
-        expect(ratio, `${fill} in ${modeName}: ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+  it("Test 1: every fill token has a -text partner, resolvable in all six combinations", () => {
+    const texts = [...ALIAS_DECLS.keys()]
+      .filter((k) => k.endsWith("-text"))
+      .map((k) => k.replace(/-text$/, ""))
+      .sort();
+    expect(texts).toEqual(FILLS);
+    let resolved = 0;
+    for (const combination of COMBINATIONS_UNDER_TEST) {
+      for (const fill of FILLS) {
+        expect(
+          () => resolveColor(TOKENS_CSS, combination, `var(${fill})`),
+          `${fill} in ${combination}`,
+        ).not.toThrow();
+        expect(
+          () => resolveColor(TOKENS_CSS, combination, `var(${fill}-text)`),
+          `${fill}-text in ${combination}`,
+        ).not.toThrow();
+        resolved += 2;
       }
     }
-    expect(caseCount).toBeGreaterThanOrEqual(26);
+    expect(resolved).toBe(13 * 2 * 6);
+  });
+
+  it("Test 2: every fill/text pair reaches WCAG AA (>= 4.5:1), in all six combinations — generated", () => {
+    let caseCount = 0;
+    for (const combination of COMBINATIONS_UNDER_TEST) {
+      const card = cardSurface(TOKENS_CSS, combination);
+      for (const fill of FILLS) {
+        caseCount++;
+        const fillColor = over(resolveColor(TOKENS_CSS, combination, `var(${fill})`), card);
+        const textColor = over(
+          resolveColor(TOKENS_CSS, combination, `var(${fill}-text)`),
+          fillColor,
+        );
+        const ratio = contrast(textColor, fillColor);
+        expect(ratio, `${fill} in ${combination}: ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+    }
+    expect(caseCount).toBe(13 * 6);
+  });
+
+  it("Test 2b: the checker can fail — a role that is not a text pair measures below the floor", () => {
+    // Negative control: the honey accent is a fill only (D-842-07) and does not reach 4.5:1 on the card.
+    const combination: CombinationName = "pflaume-light";
+    const card = cardSurface(TOKENS_CSS, combination);
+    const accent = over(resolveColor(TOKENS_CSS, combination, "var(--accent)"), card);
+    expect(contrast(accent, card)).toBeLessThan(4.5);
   });
 
   it("Test 3: -text tokens are foreground only — never a background", () => {
@@ -198,47 +191,21 @@ describe("leave-chip-contrast — WCAG AA for every --leave-type-* fill/text pai
     expect(BAR_CSS.length).toBeGreaterThan(200); // the slice actually found the block
   });
 
-  it("Test 5: no existing fill token changed value", () => {
-    // Pins the plan's own recomputed table as literals. This is the one place hardcoding is
-    // right: it is the assertion that the plan did NOT redefine a shared token, and it must fail
-    // loudly if someone "fixes" contrast the forbidden way.
-    const EXPECTED_LIGHT: Record<string, string> = {
-      "--leave-type-vacation": "#4caf6f",
-      "--leave-type-sick": "#d97706",
-      "--leave-type-sick-child": "#ea580c",
-      "--leave-type-special": "#4f46e5",
-      "--leave-type-overtime": "#0891b2",
-      "--leave-type-education": "#2563eb",
-      "--leave-type-unpaid": "#6b7280",
-      "--leave-type-holiday": "#7c3aed",
-      "--leave-type-maternity": "#db2777",
-      "--leave-type-parental": "#be185d",
-      "--leave-type-absent": "#475569",
-      "--leave-type-absent-muted": "#94a3b8",
-      // #840 G-4: the unknown-type look equalled --leave-type-unpaid (two legend entries, one colour); now brown
-      "--leave-type-default": "#5a321b",
-    };
-    const EXPECTED_DARK: Record<string, string> = {
-      "--leave-type-vacation": "#5ec78a",
-      "--leave-type-sick": "#fbbf24",
-      "--leave-type-sick-child": "#fb923c",
-      "--leave-type-special": "#818cf8",
-      "--leave-type-overtime": "#22d3ee",
-      "--leave-type-education": "#60a5fa",
-      "--leave-type-unpaid": "#9ca3af",
-      "--leave-type-holiday": "#a78bfa",
-      "--leave-type-maternity": "#f472b6",
-      "--leave-type-parental": "#f9a8d4",
-      "--leave-type-absent": "#cbd5e1",
-      "--leave-type-absent-muted": "#64748b",
-      // #840 G-4: the unknown-type look equalled --leave-type-unpaid (two legend entries, one colour); now brown
-      "--leave-type-default": "#874a29",
-    };
-    for (const [key, hex] of Object.entries(EXPECTED_LIGHT)) {
-      expect(LIGHT[key], `light ${key}`).toBe(hex);
+  it("Test 5: the alias table is exactly D-842-10 — no colour literal, no value of its own", () => {
+    // Pins the alias table as `var()` references. This is the one place hardcoding is right: it is
+    // the assertion that the leave palette stays an alias of the roles and that nobody "fixes"
+    // contrast by writing a hex value into the alias block.
+    for (const [fill, alias] of Object.entries(EXPECTED_FILL_ALIASES)) {
+      expect(ALIAS_DECLS.get(fill), fill).toBe(alias);
+      const expectedText = fill === "--leave-type-holiday" ? "var(--brand-ink)" : "var(--card)";
+      expect(ALIAS_DECLS.get(`${fill}-text`), `${fill} text partner`).toBe(expectedText);
     }
-    for (const [key, hex] of Object.entries(EXPECTED_DARK)) {
-      expect(DARK[key], `dark ${key}`).toBe(hex);
+    for (const rule of ALIAS_RULES) {
+      for (const decl of rule.decls) {
+        expect(decl.value, `${decl.prop} in ${rule.selector}`).not.toMatch(
+          /#[0-9a-f]{3,8}\b|rgba?\(/i,
+        );
+      }
     }
   });
 });

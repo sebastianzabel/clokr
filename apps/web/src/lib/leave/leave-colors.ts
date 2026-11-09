@@ -4,6 +4,9 @@
  * and the `.cal-abs-*` recipes of `app.css`, which cannot import a module).
  * `leave-colors-one-place-840.test.ts` fails on any other reader.
  *
+ * #842 (D-842-10): the `--leave-type-*` token NAMES stay, their values are aliases of the v2 roles
+ * (declared in `tokens.css`, pinned by `leave-chip-contrast.test.ts`); this mapping did not change.
+ *
  * Values are CSS custom-property NAMES (the caller wraps them in `var(...)`); the `-text` partner of
  * a fill is the colour that sits ON it and reaches WCAG AA (`leave-chip-contrast.test.ts`). A
  * `-text` token is a foreground only, never a background. The code union is imported as a TYPE only —
@@ -53,7 +56,7 @@ export const ABSENT_MUTED: LeaveColor = pair("--leave-type-absent-muted");
  * A wish of the planner (not yet a request). It is drawn in the brand colour and never gets a
  * `--leave-type-*` token of its own: a wish is a plan, not a type.
  */
-export const WISH: LeaveColor = { fill: "--brand", text: "--text-on-brand" };
+export const WISH: LeaveColor = { fill: "--brand", text: "--brand-ink" };
 
 /** The colour of a code the mapping does not know. */
 export const FALLBACK: LeaveColor = pair("--leave-type-default");
