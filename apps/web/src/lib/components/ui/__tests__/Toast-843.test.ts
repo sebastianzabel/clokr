@@ -186,3 +186,20 @@ describe("Toast - source contracts", () => {
 });
 
 beforeEach(() => clearStore());
+
+describe("feedback demo", () => {
+  it("is block 9 and lists the two Toast files as entries", async () => {
+    const demo = await import("../../../../routes/(app)/admin/bausteine/demos/09-feedback.svelte");
+    expect(demo.block).toEqual({
+      id: 9,
+      name: "Rückmeldung",
+      entries: ["components/ui/Toast.svelte", "components/ui/ToastItem.svelte"],
+    });
+    const { container } = render(demo.default);
+    expect(container.querySelector('[data-block="9"]')).not.toBeNull();
+    expect(container.querySelector(".toast-success")).not.toBeNull();
+    expect(container.querySelector(".toast-error .toast-close")).not.toBeNull();
+    // Static items only: the live regions are not part of the demo.
+    expect(container.querySelector('[data-testid^="toast-region"]')).toBeNull();
+  });
+});
