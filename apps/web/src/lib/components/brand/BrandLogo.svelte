@@ -3,7 +3,7 @@
   app. The mark is the ONE file /brand/mark.svg, drawn as a CSS mask in the current text colour, so it
   takes each theme's brand colour (default var(--brand)) and a logo change only swaps that file
   (`pnpm --filter @clokr/web run brand:icons` regenerates the rasters). The wordmark is text in
-  Figtree 700 (an SVG in an <img> could not load the web font).
+  the UI font (Figtree) 700 (an SVG in an <img> could not load the web font).
 -->
 <script lang="ts">
   interface Props {
@@ -49,7 +49,7 @@
     mask: url("/brand/mark.svg") center / contain no-repeat;
   }
   .brand-logo-word {
-    font-family: "Figtree", var(--font-sans, system-ui), sans-serif;
+    font-family: var(--font-ui);
     font-weight: 700;
     font-size: calc(var(--brand-logo-size) * 0.72);
     letter-spacing: -0.02em;
