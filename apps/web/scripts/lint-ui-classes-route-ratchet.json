@@ -64,14 +64,6 @@
       }
     },
     "own-period-control": {
-      "apps/web/src/lib/components/dashboard/MyShiftsWeek.svelte": {
-        "count": 2,
-        "ticket": "#845"
-      },
-      "apps/web/src/lib/components/dashboard/MyWeekView.svelte": {
-        "count": 2,
-        "ticket": "#845"
-      },
       "apps/web/src/routes/(operator)/betreiber/(konsole)/mandanten/[id]/support/mitarbeitende/[employeeId]/+page.svelte": {
         "count": 1,
         "ticket": null,

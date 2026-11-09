@@ -125,7 +125,10 @@
   // Federal state + tenant name
   let gFederalState = $state("NIEDERSACHSEN");
   let gTenantName = $state("");
-  let _gOtherFields: Omit<TenantConfig, "federalState"> | null = null;
+  // Issue #878: a section saves only the fields it edits. This flag only says that the settings
+  // were loaded; it carries no copy of them, because sending a copy read at load time overwrote
+  // changes saved in the meantime (another tab, another person) with the old values (N-09).
+  let settingsLoaded = false;
   let stateSaving = $state(false);
   let stateSaved = $state(false);
   let stateError = $state("");
@@ -138,8 +141,8 @@
   let shiftHoursModeSaving = $state(false);
   let shiftHoursModeMsg = $state("");
 
-  // Minimal payload on purpose: only the changed field, never the `_gOtherFields` full spread
-  // (a snapshot read once at load — copying it widens the lost-update race N-09).
+  // Minimal payload on purpose: only the changed field (Issue #878, N-09 — every section of this
+  // page does the same).
   async function saveShiftHoursMode() {
     shiftHoursModeSaving = true;
     shiftHoursModeMsg = "";
@@ -324,9 +327,8 @@
   // Phase 109 (D-01/D-03/D-04, AK-01/AK-03/AK-05) — the eight E-Mail-Benachrichtigungs-Toggles are
   // atomic single values: each one is independently meaningful, so each one saves on flip.
   // Keys are the `PUT /settings/security` field names verbatim, so the payload is `{ [flag]: next }`
-  // with no mapping layer. Deliberately NOT the `_gOtherFields` full spread used elsewhere in this
-  // file — that snapshot is read once at load and never refreshed, and copying it into a new handler
-  // would widen a known lost-update race (N-09).
+  // with no mapping layer — like every other save of this page, never a copy of the loaded
+  // settings (N-09, fixed in Issue #878).
   type EmailFlag =
     | "emailNotificationsEnabled"
     | "emailOnLeaveRequest"
@@ -537,22 +539,7 @@
       gFederalState = cfg.federalState ?? "NIEDERSACHSEN";
       gTenantName = cfg.tenantName ?? "";
       gTimezone = cfg.timezone ?? "Europe/Berlin";
-      _gOtherFields = {
-        timezone: gTimezone,
-        defaultWeeklyHours: Number(cfg.defaultWeeklyHours),
-        defaultMondayHours: Number(cfg.defaultMondayHours),
-        defaultTuesdayHours: Number(cfg.defaultTuesdayHours),
-        defaultWednesdayHours: Number(cfg.defaultWednesdayHours),
-        defaultThursdayHours: Number(cfg.defaultThursdayHours),
-        defaultFridayHours: Number(cfg.defaultFridayHours),
-        defaultSaturdayHours: Number(cfg.defaultSaturdayHours),
-        defaultSundayHours: Number(cfg.defaultSundayHours),
-        overtimeThreshold: Number(cfg.overtimeThreshold),
-        allowOvertimePayout: cfg.allowOvertimePayout,
-        defaultVacationDays: Number(cfg.defaultVacationDays),
-        carryOverDeadlineDay: cfg.carryOverDeadlineDay,
-        carryOverDeadlineMonth: cfg.carryOverDeadlineMonth,
-      };
+      settingsLoaded = true;
       // ArbZG § 4 — Auto-Pausen (moved from /admin/vacation in v1.6.5)
       autoBreakEnabled = cfg.autoBreakEnabled ?? false;
       defaultBreakStart = cfg.defaultBreakStart ?? "12:00";
@@ -694,13 +681,12 @@
   });
 
   async function saveFederalState() {
-    if (!_gOtherFields) return;
+    if (!settingsLoaded) return;
     stateSaving = true;
     stateError = "";
     stateSaved = false;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
         tenantName: gTenantName,
         federalState: gFederalState,
         timezone: gTimezone,
@@ -726,7 +712,7 @@
     // auto-deduction, so the checkbox must never outlive a failed save. Error feedback stays the
     // section's own inline banner (autoBreakError, rendered above the toggle).
     const previous = !autoBreakEnabled;
-    if (!_gOtherFields) {
+    if (!settingsLoaded) {
       autoBreakEnabled = previous;
       autoBreakError = "Einstellungen sind noch nicht geladen.";
       return;
@@ -736,9 +722,6 @@
     autoBreakSaved = false;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
         autoBreakEnabled,
         defaultBreakStart: autoBreakEnabled ? defaultBreakStart : null,
       });
@@ -753,7 +736,7 @@
   }
 
   async function saveDefaultBreakStart() {
-    if (!_gOtherFields) return;
+    if (!settingsLoaded) return;
     if (!autoBreakEnabled) return; // No-op when toggle is off — field would be cleared anyway.
     if (!/^\d{2}:\d{2}$/.test(defaultBreakStart)) {
       autoBreakError = "Format HH:MM erwartet.";
@@ -764,9 +747,6 @@
     autoBreakSaved = false;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
         autoBreakEnabled: true,
         defaultBreakStart,
       });
@@ -781,7 +761,7 @@
 
   // Phase 65 — Persist Tenant-Default Pausendauer (BREAK-05, mirrors saveDefaultBreakStart pattern)
   async function saveBreakDefaults() {
-    if (!_gOtherFields) return;
+    if (!settingsLoaded) return;
     // Client-side native range check; server is authoritative (Phase 64 D-07)
     if (
       !Number.isFinite(defaultBreakOver6h) ||
@@ -804,11 +784,6 @@
     breakDefaultsSaved = false;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
-        autoBreakEnabled,
-        defaultBreakStart: autoBreakEnabled ? defaultBreakStart : null,
         defaultBreakOver6h: Math.trunc(defaultBreakOver6h),
         defaultBreakOver9h: Math.trunc(defaultBreakOver9h),
       });
@@ -824,13 +799,13 @@
   }
 
   // Phase 93.06 — v1.9.3 Pausen-Bestätigung toggles (BREAK-05 / BREAK-01).
-  // Both flags are sent on every write (mirrors toggleAutoBreak) so toggling
-  // one never clobbers the other. blockMonthCloseOnUnconfirmedBreak is only
+  // Each toggle sends only its own flag (Issue #878): sending the other one from the page state
+  // could overwrite a change saved in the meantime. blockMonthCloseOnUnconfirmedBreak is only
   // meaningful while enforceBreakConfirmation is on (UI disables toggle #2).
   async function toggleEnforceBreakConfirmation() {
     // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
     const previous = !enforceBreakConfirmation;
-    if (!_gOtherFields) {
+    if (!settingsLoaded) {
       enforceBreakConfirmation = previous;
       breakConfirmError = "Einstellungen sind noch nicht geladen.";
       return;
@@ -840,11 +815,7 @@
     breakConfirmSaved = false;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
         enforceBreakConfirmation,
-        blockMonthCloseOnUnconfirmedBreak,
       });
       breakConfirmSaved = true;
       setTimeout(() => (breakConfirmSaved = false), 2500);
@@ -859,7 +830,7 @@
   async function toggleBlockMonthCloseOnUnconfirmedBreak() {
     // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
     const previous = !blockMonthCloseOnUnconfirmedBreak;
-    if (!_gOtherFields) {
+    if (!settingsLoaded) {
       blockMonthCloseOnUnconfirmedBreak = previous;
       breakConfirmError = "Einstellungen sind noch nicht geladen.";
       return;
@@ -875,10 +846,6 @@
     breakConfirmSaved = false;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
-        enforceBreakConfirmation,
         blockMonthCloseOnUnconfirmedBreak,
       });
       breakConfirmSaved = true;
@@ -895,7 +862,7 @@
   async function saveAvailabilityEnabled() {
     // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
     const previous = !availabilityEnabled;
-    if (!_gOtherFields) {
+    if (!settingsLoaded) {
       availabilityEnabled = previous;
       toasts.error("Einstellungen sind noch nicht geladen.");
       return;
@@ -903,9 +870,6 @@
     availabilitySaving = true;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
         availabilityEnabled,
       });
       tenantFeatures.applyLocal(availabilityEnabled); // propagate to Sidebar + BottomTabBar
@@ -924,7 +888,7 @@
   async function saveVocationalSchoolAutoCleanupShifts() {
     // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
     const previous = !vocationalSchoolAutoCleanupShifts;
-    if (!_gOtherFields) {
+    if (!settingsLoaded) {
       vocationalSchoolAutoCleanupShifts = previous;
       toasts.error("Einstellungen sind noch nicht geladen.");
       return;
@@ -932,9 +896,6 @@
     vsAutoCleanupSaving = true;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
         vocationalSchoolAutoCleanupShifts,
       });
       toasts.success("Einstellung gespeichert.");
@@ -952,7 +913,7 @@
     // gates Monatsabschluss with missing entries, so a silently-wrong checkbox is a compliance
     // problem, not just a cosmetic one.
     const previous = !closeMonthWithGapsAllowed;
-    if (!_gOtherFields) {
+    if (!settingsLoaded) {
       closeMonthWithGapsAllowed = previous;
       toasts.error("Einstellungen sind noch nicht geladen.");
       return;
@@ -960,9 +921,6 @@
     closeMonthWithGapsSaving = true;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
         closeMonthWithGapsAllowed,
       });
       toasts.success("Einstellung gespeichert.");
@@ -977,7 +935,7 @@
   // Phase 76.29 — Rückwirkende Einträge Selbstbearbeitungsfenster (Phase 109 D-02: button-gated
   // — a number field never writes on its own)
   async function saveRetroEntryWindowDays() {
-    if (!_gOtherFields) return;
+    if (!settingsLoaded) return;
     retroWindowError = "";
     retroWindowSaved = false;
     const val = Math.trunc(retroEntryWindowDays);
@@ -988,9 +946,6 @@
     retroWindowSaving = true;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
         retroEntryWindowDays: val,
       });
       retroEntryWindowDays = val;
@@ -1009,7 +964,7 @@
   // An empty string field sends explicit null → clears the tenant override so resolution
   // delegates down to the per-employee daily-Soll fallback.
   async function saveBsSlots() {
-    if (!_gOtherFields) return;
+    if (!settingsLoaded) return;
     bsSlotError = "";
     bsSlotSaved = false;
     bsSlotWarnings = [];
@@ -1053,9 +1008,6 @@
         bsSlotShortDayMinutes?: number | null;
         bsSlotBlockWeekMinutes?: number | null;
       }>("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
         bsSlotFirstLongDayMinutes: v1,
         bsSlotSecondLongDayMinutes: v2,
         bsSlotShortDayMinutes: v3,
@@ -1083,7 +1035,7 @@
   }
 
   async function saveDefaultWorkDays() {
-    if (!_gOtherFields) return;
+    if (!settingsLoaded) return;
     workDaysError = "";
     workDaysSaved = false;
     if (defaultWorkDays.length === 0) {
@@ -1093,9 +1045,6 @@
     workDaysSaving = true;
     try {
       await api.put("/settings/work", {
-        ..._gOtherFields,
-        federalState: gFederalState,
-        timezone: gTimezone,
         defaultWorkDays,
       });
       workDaysSaved = true;

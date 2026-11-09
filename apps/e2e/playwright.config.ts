@@ -301,6 +301,7 @@ export default defineConfig({
         /all-routes-overflow-843\.spec\.ts/,
         /mein-tag-845\.spec\.ts/,
         /heute-im-salon-846\.spec\.ts/,
+        /shift-notices-850\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

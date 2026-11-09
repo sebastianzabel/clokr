@@ -194,11 +194,6 @@ const RECIPES: Recipe[] = [
 
   // Eyebrows: brand-coloured lines on the page or the card they are placed on.
   {
-    name: ".eyebrow (PageHeader)",
-    rules: [{ file: PAGE_HEADER, selector: ".eyebrow" }],
-    surfaces: ["bg", "card"],
-  },
-  {
     name: ".serif-eyebrow",
     rules: [{ file: APP, selector: ".serif-eyebrow" }],
     surfaces: ["bg", "card"],
@@ -214,15 +209,11 @@ const RECIPES: Recipe[] = [
     surfaces: ["bg", "card"],
   },
 
-  // The rest of the page head text.
+  // The page head text (D-843-22: the PageHeader renders no eyebrow and no accent word any more, so
+  // only the subtitle is a recipe; the title is --text on the page).
   {
     name: ".page-head .sub",
     rules: [{ file: PAGE_HEADER, selector: ".page-head .sub" }],
-    surfaces: ["bg", "card"],
-  },
-  {
-    name: ".page-head em",
-    rules: [{ file: PAGE_HEADER, selector: ".page-head :is(h1, h2) :global(em)" }],
     surfaces: ["bg", "card"],
   },
 

@@ -287,7 +287,8 @@ describe("the page wires every new element behind the server's answer (source ga
     expect(PAGE.length).toBeGreaterThan(50_000);
     expect(PAGE).not.toContain("let arbzgCallout");
     expect(PAGE).not.toMatch(/§ 4 ArbZG: /);
-    expect(PAGE).toContain("breakNudgeHref(breakNudge)");
+    // each break day links through the one href builder of the server summary (#845: one row per day)
+    expect(PAGE).toContain("breakNudgeHref(summarizeUnconfirmedBreakDays([d]))");
   });
 
   it("the entry count keeps its words together on a narrow card (no-break spaces)", () => {

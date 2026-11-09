@@ -45,6 +45,7 @@
   }: Props = $props();
 
   let contentEl: HTMLElement | null = $state(null);
+  let overlayEl: HTMLElement | null = $state(null);
 
   /** One path for every change, so `onOpenChange` fires for the overlay click as well. */
   function setOpen(next: boolean) {
@@ -58,24 +59,42 @@
   }
 
   // D-843-16 (#636): bits-ui sets aria-modal but makes nothing inert. While open, every direct child
-  // of <body> that neither contains the dialog content (the portal container holds overlay and
-  // content) nor is a toast region gets `inert`. The effect remembers exactly the nodes it changed
-  // and restores them on close and on destroy; a node that is inert already (page state before
-  // opening, or an outer dialog's work for a nested one) is left alone.
+  // of <body> that is neither the dialog content, nor this dialog's own overlay, nor a toast region
+  // gets `inert`. bits-ui portals the overlay and the content as two separate children of <body>,
+  // and an inert overlay receives no pointer events, so inerting it would leave the page behind
+  // clickable. The effect remembers exactly the nodes it changed and restores them on close and on
+  // destroy; a node that is inert already (page state before opening, or an outer dialog's work
+  // for a nested one) is left alone.
+  //
+  // The restore also runs from `onCloseAutoFocus` (below): bits-ui's focus scope returns the focus
+  // to the opener while it is torn down, and that happens BEFORE this effect's cleanup runs. A
+  // still-inert opener cannot take the focus, so the cleanup alone left the focus on <body>.
+  let releaseInert: (() => void) | null = null;
+
   $effect(() => {
     if (staticPanel || !open || !contentEl) return;
     const content = contentEl;
+    const overlay = overlayEl;
     const changed: Element[] = [];
     for (const child of Array.from(document.body.children)) {
-      if (child.contains(content) || child.matches("[data-toast-root]")) continue;
+      if (child.contains(content) || (overlay && child.contains(overlay))) continue;
+      if (child.matches("[data-toast-root]")) continue;
       if (child.hasAttribute("inert")) continue;
       child.setAttribute("inert", "");
       changed.push(child);
     }
-    return () => {
-      for (const el of changed) el.removeAttribute("inert");
+    const release = () => {
+      for (const el of changed.splice(0)) el.removeAttribute("inert");
+      if (releaseInert === release) releaseInert = null;
     };
+    releaseInert = release;
+    return release;
   });
+
+  /** Make the page focusable again before bits-ui returns the focus to the opener. */
+  function onCloseAutoFocus() {
+    releaseInert?.();
+  }
 
   /** Focus the first [data-autofocus] element instead of bits-ui's first tabbable. */
   function onOpenAutoFocus(e: Event) {
@@ -125,12 +144,17 @@
          no exit animation exists. Mounted open, so bits-ui's presence starts present. -->
     {#if open}
       <Dialog.Portal>
-        <Dialog.Overlay>
+        <Dialog.Overlay bind:ref={overlayEl}>
           {#snippet child({ props })}
             <div {...props} class="scrim" role="presentation" onclick={onScrimClick}></div>
           {/snippet}
         </Dialog.Overlay>
-        <Dialog.Content bind:ref={contentEl} interactOutsideBehavior="ignore" {onOpenAutoFocus}>
+        <Dialog.Content
+          bind:ref={contentEl}
+          interactOutsideBehavior="ignore"
+          {onOpenAutoFocus}
+          {onCloseAutoFocus}
+        >
           {#snippet child({ props })}
             <!-- The accessible name is the aria-label (legacy contract); bits-ui's labelledby and
                  describedby are dropped because there is no description element to point at. -->

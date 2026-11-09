@@ -110,3 +110,28 @@ export function dedupeActivitySentences<T extends { who: string; what: string; c
     return true;
   });
 }
+
+/**
+ * Issue #845 (D-05) — the history sentence of an own leave request: one complete sentence in the
+ * second person that names the request by its type and period, e.g. „Dein Antrag (Urlaub,
+ * 21.12.–23.12.) wurde genehmigt.“ The type name is display text only (never compared here).
+ */
+export function leaveActivitySentence(lr: {
+  status: string;
+  startDate: Date;
+  endDate: Date;
+  typeName: string;
+}): { who: string; what: string } {
+  // @db.Date columns are calendar days: read in UTC, never shifted by the tenant zone (#493)
+  const start = formatInTimeZone(lr.startDate, "UTC", "dd.MM.");
+  const end = formatInTimeZone(lr.endDate, "UTC", "dd.MM.");
+  const period = start === end ? start : `${start}–${end}`;
+  const subject = `(${lr.typeName}, ${period})`;
+  const tail: Record<string, string> = {
+    APPROVED: "wurde genehmigt.",
+    REJECTED: "wurde abgelehnt.",
+    CANCELLED: "wurde storniert.",
+    CANCELLATION_REQUESTED: "soll storniert werden – die Stornierung ist beantragt.",
+  };
+  return { who: "Dein Antrag", what: `${subject} ${tail[lr.status] ?? "ist eingereicht."}` };
+}

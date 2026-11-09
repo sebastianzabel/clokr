@@ -404,6 +404,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // ── Soll-Stunden ──────────────────────────────────────────────────
 
       let weekSollMinutes = 0;
+      let todaySollMinutes: number | null = null;
       let monthSollMinutes = 0;
       // Issue #451 (D-06) — the to-date Soll/Ist pair (through yesterday, issue #438); stays
       // undefined (never a fabricated 0) for MONTHLY_HOURS and for a null computeWeekProgress
@@ -476,6 +477,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const weekProgress = await computeWeekProgress(app, employeeId, now);
         if (weekProgress) {
           weekSollMinutes = weekProgress.weekSollMinutes;
+          todaySollMinutes = weekProgress.todaySollMinutes;
           weekWorkedToDateHours = round(weekProgress.toDateWorkedMinutes / 60);
           weekTargetToDateHours = round(weekProgress.toDateSollMinutes / 60);
         }
@@ -569,7 +571,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // ── Resturlaub ────────────────────────────────────────────────────
       // WR-01: computed only when the caller holds leave-entitlement:read:EIGENE — Ausbilder
       // (D-08) holds no leave-entitlement permission at all.
-      let vacationResult: { remaining: number; total: number; used: number } | null = null;
+      let vacationResult: {
+        remaining: number;
+        total: number;
+        used: number;
+        pending?: number;
+      } | null = null;
 
       if (canReadOwnVacation) {
         // Issue #451 (D-07) — the ONE Resturlaub facade in contexts/absence/facade/vacation-balance.ts,
@@ -585,12 +592,20 @@ export async function dashboardRoutes(app: FastifyInstance) {
               remaining: balance.remainingDays,
               total: balance.entitlementDays + balance.carriedOverEffectiveDays,
               used: balance.usedDays,
+              // Issue #845: requested, not yet decided days of the year (same facade, additive)
+              pending: balance.pendingDays,
             }
-          : { remaining: 0, total: 0, used: 0 };
+          : { remaining: 0, total: 0, used: 0, pending: 0 };
       }
 
       return {
-        today: { workedHours: round(todayMinutes / 60), entries: todayEntries.length },
+        // Issue #596 (#845): `sollMinutes` = today's Soll from the account core (the clock's day
+        // goal); null where the account answers no day question (MONTHLY_HOURS, exempt)
+        today: {
+          workedHours: round(todayMinutes / 60),
+          entries: todayEntries.length,
+          sollMinutes: todaySollMinutes,
+        },
         week: {
           workedHours: round(weekMinutes / 60),
           targetHours: round(weekSollMinutes / 60),
