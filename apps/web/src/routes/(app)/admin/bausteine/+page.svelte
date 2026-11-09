@@ -7,6 +7,7 @@
   import { pageLabel } from "$lib/nav/page-labels";
   import PageHead from "$components/layout/PageHead.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
 
   interface DemoBlock {
     id: number;
@@ -42,6 +43,9 @@
   );
 
   let dialogOpen = $state(false);
+  // The live confirmation of the page head (D-843-04, D-843-12): the e2e of the #636 finding opens
+  // it at 1440 px and checks that the scrim covers the topbar and that the focus is trapped.
+  let confirmOpen = $state(false);
 </script>
 
 <svelte:head>
@@ -55,6 +59,14 @@
     sub="Alle Bausteine des Designsystems in den sechs Kombinationen aus Thema und Modus."
   >
     {#snippet actions()}
+      <button
+        type="button"
+        class="btn btn-secondary"
+        data-testid="bausteine-open-confirm"
+        onclick={() => (confirmOpen = true)}
+      >
+        Bestätigung öffnen
+      </button>
       <button
         type="button"
         class="btn btn-primary"
@@ -85,6 +97,17 @@
     {/each}
   </div>
 </div>
+
+<ConfirmDialog
+  bind:open={confirmOpen}
+  title="Eintrag löschen?"
+  description="Der Eintrag ist danach nicht mehr in der Liste zu sehen."
+  confirmLabel="Löschen"
+  danger
+  onConfirm={() => {
+    // Example only: confirming just closes the dialog, nothing is deleted.
+  }}
+/>
 
 <Dialog bind:open={dialogOpen} title="Beispieldialog">
   <p>Dieser Dialog liegt über der Seite und hält den Fokus in sich, bis du ihn schließt.</p>
