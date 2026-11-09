@@ -196,10 +196,10 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--s-4);
-    padding: var(--pad-card);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
+    padding: var(--s-6);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
   }
 
   .week-pager-label {
@@ -208,7 +208,6 @@
   }
 
   .empty {
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
 </style>

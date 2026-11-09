@@ -2123,7 +2123,7 @@
     font-size: 13px;
   }
   .sp-tpl-name {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 20px;
     font-weight: 400;
     margin-top: 4px;
@@ -2131,7 +2131,7 @@
   }
   .sp-tpl-time {
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: 4px;
   }
   /* Card-Wrapper-Padding ist auf 0 gesetzt, damit der Header sein eigenes
@@ -2145,7 +2145,7 @@
     justify-content: space-between;
     gap: 24px;
     padding: 18px 24px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     flex-wrap: wrap;
   }
   .week-header-nav {
@@ -2167,7 +2167,7 @@
     margin-bottom: 4px;
   }
   .week-header-title {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     font-size: 26px;
     line-height: 1.1;
@@ -2191,7 +2191,7 @@
   .state-msg {
     padding: 40px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .head-date {
     font-weight: 700;
@@ -2204,7 +2204,7 @@
 
   /* Per-cell availability dimming + badges */
   .sp-cell--unavailable {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     opacity: 0.85;
   }
 
@@ -2228,7 +2228,7 @@
     font-weight: 600;
     line-height: 1.2;
     color: var(--shift-blue);
-    background: var(--bg-card);
+    background: var(--card);
     border: 1px solid color-mix(in srgb, var(--shift-blue) 30%, transparent);
     pointer-events: none;
     z-index: 1;
@@ -2246,9 +2246,9 @@
     border-radius: var(--r-pill);
     font-size: 11.5px;
     font-weight: 500;
-    background: var(--bg-card);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-2);
+    border: 1px solid var(--line);
   }
   .sp-avail-badge--vacation {
     color: var(--brand);
@@ -2263,14 +2263,14 @@
     border-color: var(--warn);
   }
   .sp-avail-badge--other {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   /* Phase 63 D-20 — brand-tinted Berufsschule badge with lock icon. v1.5
      tokens only; renders inside the existing .sp-cell--unavailable cell. */
   .sp-avail-badge--vocational-school {
     background: var(--brand-soft);
     color: var(--brand);
-    border-color: var(--border);
+    border-color: var(--line);
     font-weight: 600;
   }
 
@@ -2283,7 +2283,7 @@
   .sp-cell--vs-removable:focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: 2px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
 
   /* Phase 65 follow-up: who-cell layout simplified — the row-action menu
@@ -2302,15 +2302,15 @@
     background: transparent;
     border: none;
     cursor: pointer;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13px;
     padding: 6px 10px;
     width: 100%;
     height: 100%;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
   .sp-cell-empty:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
 
@@ -2336,11 +2336,11 @@
     grid-column: 1;
     font-weight: 600;
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
     padding: 12px 8px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    border-top: 2px solid var(--border);
+    border-top: 2px solid var(--line);
   }
   .sp-coverage-cell {
     display: flex;
@@ -2349,14 +2349,14 @@
     justify-content: center;
     gap: 4px;
     padding: 10px 6px;
-    border-radius: var(--r-sm);
-    border-top: 2px solid var(--border);
+    border-radius: var(--r-control);
+    border-top: 2px solid var(--line);
     text-align: center;
     font-size: 12px;
   }
   .sp-coverage-cell--ok {
-    background: color-mix(in srgb, var(--good) 12%, transparent);
-    color: var(--good);
+    background: color-mix(in srgb, var(--ok) 12%, transparent);
+    color: var(--ok);
   }
   .sp-coverage-cell--under,
   .sp-coverage-cell--supervision {
@@ -2364,7 +2364,7 @@
     color: var(--bad);
   }
   .sp-coverage-num {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-weight: 700;
   }
@@ -2380,8 +2380,7 @@
   .sp-legend {
     margin: 12px 0 0;
     font-size: 12.5px;
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
 
   .sp-modal-context {
@@ -2404,7 +2403,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 16px 0 8px;
   }
   .sp-gen-list {
@@ -2413,10 +2412,10 @@
     gap: 4px;
     max-height: 240px;
     overflow-y: auto;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 8px;
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .sp-gen-list--skip {
     background: transparent;
@@ -2428,38 +2427,37 @@
     align-items: center;
     font-size: 13px;
     padding: 4px 6px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
   .sp-gen-row:hover {
-    background: var(--bg-card);
+    background: var(--card);
   }
   .sp-gen-emp {
     font-weight: 600;
     color: var(--text);
   }
   .sp-gen-date {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .sp-gen-time {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 12.5px;
     color: var(--text);
   }
   .sp-gen-label {
     font-size: 12.5px;
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
   .sp-gen-reason {
     font-size: 11.5px;
     font-weight: 600;
     padding: 2px 8px;
-    border-radius: var(--r-sm);
-    background: var(--bg-card);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
+    border-radius: var(--r-control);
+    background: var(--card);
+    color: var(--text-2);
+    border: 1px solid var(--line);
   }
   .sp-gen-reason--leave {
     color: var(--bad);
@@ -2470,11 +2468,10 @@
     border-color: var(--warn);
   }
   .sp-gen-reason--existing {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .sp-gen-reason--open-day {
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
   .sp-gen-reason--availability-unavailable {
     color: var(--bad);
@@ -2501,7 +2498,7 @@
   /* Phase 45: SHIFT_BASED Soll-Row */
   .sp-soll-label {
     padding: 8px 8px 12px;
-    border-top: 2px solid var(--border-strong);
+    border-top: 2px solid var(--line-2);
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -2517,7 +2514,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
   .sp-soll-cell {
     grid-column: 2 / -1;
@@ -2526,31 +2523,31 @@
     justify-content: center;
     gap: 12px;
     padding: 8px 16px;
-    border-radius: var(--r-sm);
-    border-top: 2px solid var(--border-strong);
+    border-radius: var(--r-control);
+    border-top: 2px solid var(--line-2);
     font-size: 13px;
   }
   .sp-soll-num {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-weight: 600;
     font-size: 12.5px;
   }
   .sp-soll-soll {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .sp-soll-diff {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-weight: 600;
     font-size: 12.5px;
   }
   .sp-soll-cell--ok {
-    background: color-mix(in srgb, var(--good) 12%, transparent);
-    color: var(--good);
+    background: color-mix(in srgb, var(--ok) 12%, transparent);
+    color: var(--ok);
   }
   .sp-soll-cell--warn {
     background: color-mix(in srgb, var(--warn) 12%, transparent);
@@ -2579,10 +2576,10 @@
     font-weight: 600;
     color: var(--warn);
     background: color-mix(in srgb, var(--warn) 10%, transparent);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     padding: 2px 8px;
     margin-top: 2px;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
   }
   @media (max-width: 640px) {
@@ -2596,8 +2593,8 @@
   .sp-cell--closed {
     background: repeating-linear-gradient(
       45deg,
-      var(--bg-subtle),
-      var(--bg-subtle) 6px,
+      var(--sunk),
+      var(--sunk) 6px,
       transparent 6px,
       transparent 12px
     );
@@ -2606,9 +2603,8 @@
   .sp-cell--closed .sp-closed-label {
     display: block;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.8125rem;
-    font-style: italic;
     user-select: none;
   }
 
@@ -2620,7 +2616,7 @@
   .sp-cell--past .sp-past-dash {
     display: block;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 1.25rem;
     user-select: none;
   }
@@ -2647,7 +2643,7 @@
   .sp-empty-sub {
     margin: 0;
     font-size: 0.9375rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     line-height: 1.5;
   }
   .sp-empty-sub a {

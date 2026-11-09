@@ -234,10 +234,10 @@
     flex-wrap: wrap;
     gap: var(--s-4);
     align-items: end;
-    padding: var(--pad-card);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
+    padding: var(--s-6);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
   }
 
   .filter-field {
@@ -249,14 +249,14 @@
   .filter-label {
     font-size: 0.8125rem;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .conflict-section {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: var(--pad-card);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    padding: var(--s-6);
     display: flex;
     flex-direction: column;
     gap: var(--s-4);
@@ -271,14 +271,13 @@
 
   .conflict-section-hint {
     margin: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
   .empty {
     margin: 0;
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
 
   .rows {
@@ -307,7 +306,7 @@
   }
 
   .week-overbooked-week {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -316,7 +315,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--s-3);
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 </style>
