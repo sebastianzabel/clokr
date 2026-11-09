@@ -1,4 +1,11 @@
 import crypto from "crypto";
+import { GENERIC_INVALID, registerGermanZodErrors, validationSummary } from "./utils/zod-german"; // Issue #573
+import {
+  WRITE_CONFLICT,
+  duplicateConflictMessage,
+  isWriteConflict,
+} from "./utils/duplicate-conflict"; // Issue #573
+import { uniqueViolationTarget } from "./utils/prisma-unique-violation"; // Issue #573
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -102,6 +109,8 @@ const PKG_VERSION = (() => {
 })();
 
 export async function buildApp() {
+  // Issue #573 (D-01): Zod's default validation texts are German for every schema (idempotent).
+  registerGermanZodErrors();
   // ── Logger configuration ──────────────────────────────────
   const logLevel = config.LOG_LEVEL ?? (config.NODE_ENV === "production" ? "info" : "debug");
   const logFormat = config.LOG_FORMAT ?? (config.NODE_ENV === "production" ? "json" : "pretty");
@@ -177,20 +186,58 @@ export async function buildApp() {
       reply,
     ) => {
       if (error.name === "ZodError" || error.issues) {
-        let parsed: { path: string[]; message: string }[];
-        try {
-          parsed = JSON.parse(error.message);
-        } catch {
-          parsed = [{ path: [], message: error.message }];
-        }
-        const fieldErrors = parsed.map(
-          (i: { path: string[]; message: string }) => `${i.path.join(".") || "Feld"}: ${i.message}`,
+        // Issue #573 (D-04…D-07): German texts come from the global Zod map (utils/zod-german.ts);
+        // `details[]` keeps the machine-readable path for the web's field mapping, `message` names
+        // fields by German label only. The keys go to the log, never into the summary.
+        const issues = (Array.isArray(error.issues) ? error.issues : []) as Array<{
+          path?: PropertyKey[];
+          code?: string;
+          message?: string;
+        }>;
+        const details = issues.map((i) => {
+          const path = (i.path ?? []).map((p) => (typeof p === "symbol" ? String(p) : p));
+          return {
+            path,
+            field: path.join("."),
+            code: i.code ?? "custom",
+            message: i.message || GENERIC_INVALID,
+          };
+        });
+        req.log.info(
+          {
+            route: req.routeOptions?.url,
+            method: req.method,
+            issues: details.map((d) => ({ field: d.field, code: d.code })),
+          },
+          "validation failed",
         );
         return reply.code(400).send({
           error: "Validierungsfehler",
-          message: fieldErrors.join("; "),
-          details: parsed,
+          message: validationSummary(details),
+          details,
         });
+      }
+      // Issue #573 (D-08, D-10): a duplicate or a write conflict nobody handled is a 409 with plain
+      // German text from ONE table (utils/duplicate-conflict.ts), never a 500. A route that knows
+      // its conflict still answers it itself; only unhandled ones reach this point.
+      const duplicate = duplicateConflictMessage(error);
+      if (duplicate !== null) {
+        req.log.warn(
+          {
+            route: req.routeOptions?.url,
+            method: req.method,
+            target: uniqueViolationTarget(error),
+          },
+          "unhandled unique violation answered 409",
+        );
+        return reply.code(409).send({ error: duplicate, code: "DUPLICATE" });
+      }
+      if (isWriteConflict(error)) {
+        req.log.warn(
+          { route: req.routeOptions?.url, method: req.method },
+          "write conflict answered 409",
+        );
+        return reply.code(409).send({ error: WRITE_CONFLICT, code: "WRITE_CONFLICT" });
       }
       // Phase 77b (Issue #77, D-10): a missing tenant frame is a programming error. Fail closed
       // with a fixed body and its own log line naming the route, so the unguarded caller can be
