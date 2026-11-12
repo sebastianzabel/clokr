@@ -67,8 +67,18 @@ async function navigateToMonth(page: Page, targetDate: string): Promise<void> {
   const targetYear = parseInt(targetDate.substring(0, 4));
   const targetMonth = parseInt(targetDate.substring(5, 7)); // 1-based
   const monthNames = [
-    "Januar", "Februar", "März", "April", "Mai", "Juni",
-    "Juli", "August", "September", "Oktober", "November", "Dezember",
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
   ];
   const targetMonthName = monthNames[targetMonth - 1];
 
@@ -84,9 +94,7 @@ async function navigateToMonth(page: Page, targetDate: string): Promise<void> {
     // Wait for the label to update — the page re-renders the cells too.
     await expect(label).not.toHaveText(text);
   }
-  throw new Error(
-    `navigateToMonth: could not reach ${targetMonthName} ${targetYear} in 24 hops`,
-  );
+  throw new Error(`navigateToMonth: could not reach ${targetMonthName} ${targetYear} in 24 hops`);
 }
 
 test.describe("Zeiterfassung — Complete Flow", () => {
@@ -112,6 +120,8 @@ test.describe("Zeiterfassung — Complete Flow", () => {
 
     // Click the day cell directly via its date-pinned testid.
     await page.getByTestId(`calendar-cell-${TEST_DATE}`).click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
 
     const modal = page.getByTestId("time-entry-modal");
     await expect(modal).toBeVisible();
@@ -136,9 +146,7 @@ test.describe("Zeiterfassung — Complete Flow", () => {
     // pre-73-03 static sleep. The endpoint shape comes from
     // apps/api/src/routes/time-entries.ts (POST /api/v1/time-entries).
     const postResponse = page.waitForResponse(
-      (res) =>
-        res.url().includes("/api/v1/time-entries") &&
-        res.request().method() === "POST",
+      (res) => res.url().includes("/api/v1/time-entries") && res.request().method() === "POST",
     );
     await page.getByTestId("time-entry-modal-save").click();
     await postResponse;
@@ -148,6 +156,8 @@ test.describe("Zeiterfassung — Complete Flow", () => {
   test("edit an existing time entry", async ({ page }) => {
     await navigateToMonth(page, TEST_DATE);
     await page.getByTestId(`calendar-cell-${TEST_DATE}`).click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
 
     const modal = page.getByTestId("time-entry-modal");
     await expect(modal).toBeVisible();
@@ -168,14 +178,12 @@ test.describe("Zeiterfassung — Complete Flow", () => {
 
   test("delete a time entry from the list view", async ({ page }) => {
     // Switch to list view — the calendar view doesn't expose row controls.
-    await page.getByTestId("time-entries-view-list").click();
+    await page.getByTestId("time-entries-view-tabs").getByRole("radio", { name: "Liste" }).click();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
 
     // Pick the first non-locked row's delete button. The page renders both
     // disabled (locked) and active variants — the latter has no `disabled`.
-    const firstDelete = page
-      .locator("[data-testid$='-delete']:not([disabled])")
-      .first();
+    const firstDelete = page.locator("[data-testid$='-delete']:not([disabled])").first();
 
     // A freshly bootstrapped tenant has no entries — skip the test as a
     // contract-only run (the testid surface is what 74-01 will exercise).
@@ -195,9 +203,7 @@ test.describe("Zeiterfassung — Complete Flow", () => {
 
     // DELETE wait — see comment on the POST/PUT version above.
     await page.waitForResponse(
-      (res) =>
-        res.url().includes("/api/v1/time-entries") &&
-        res.request().method() === "DELETE",
+      (res) => res.url().includes("/api/v1/time-entries") && res.request().method() === "DELETE",
     );
   });
 
@@ -262,6 +268,8 @@ test.describe("Zeiterfassung — Complete Flow", () => {
     // testid contract documented in 73-03 plan Task 2.
     await navigateToMonth(page, TEST_DATE);
     await page.getByTestId(`calendar-cell-${TEST_DATE}`).click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
 
     const modal = page.getByTestId("time-entry-modal");
     await expect(modal).toBeVisible();

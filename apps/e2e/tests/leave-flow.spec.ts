@@ -147,8 +147,10 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await page.goto("/leave");
 
     await page.getByTestId("leave-view-list").click();
-    await expect(page.getByTestId("leave-filter-status")).toBeVisible();
-    await expect(page.getByTestId("leave-filter-type")).toBeVisible();
+    // #851: the status and type filters live in the TableToolbar block („+ Filter“ popover).
+    const filters = page.getByTestId("leave-filters");
+    await expect(filters).toBeVisible();
+    await expect(filters.getByRole("button", { name: "+ Filter" })).toBeVisible();
   });
 
   test("opens form modal with full leave-form-* testid coverage", async ({ page, tenant }) => {
@@ -292,13 +294,19 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await page.goto("/leave");
     await page.getByTestId("leave-view-list").click();
 
-    // Select the "Genehmigt" option via the testid wired on the <option>.
-    // Playwright's selectOption resolves either by value or by label; here
-    // we use value because the testid lives on the option element itself.
-    await page.getByTestId("leave-filter-status").selectOption("APPROVED");
+    // #851: pick „Genehmigt“ in the Status group of the toolbar popover.
     // No assertion on row count — the empty-tenant state has no rows.
-    // The contract proven here is "filter-status is addressable + driveable
-    // via testid"; row-state behavior is covered by the SICK-create test.
-    await expect(page.getByTestId("leave-filter-status")).toHaveValue("APPROVED");
+    // The contract proven here is "the status filter is addressable + driveable";
+    // row-state behavior is covered by the SICK-create test.
+    const filters = page.getByTestId("leave-filters");
+    await filters.getByRole("button", { name: "+ Filter" }).click();
+    const status = page.getByRole("radiogroup", { name: "Status" });
+    await status.getByRole("radio", { name: "Genehmigt" }).click();
+    await expect(status.getByRole("radio", { name: "Genehmigt" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await page.keyboard.press("Escape");
+    await expect(filters.getByText("Status: Genehmigt")).toBeVisible();
   });
 });

@@ -91,7 +91,7 @@ const NO_HEADING: Record<string, string> = {
     "renders from the dashboard file with a view prop; pinned by the dashboard test below",
   "/team/heute": "renders the dashboard file with view=team; pinned by the dashboard test below",
 };
-const HEADING_TAG = /<(PageHead|SectionStack|ListDetail|ToolPage|HubPage)\b[\s\S]*?\/?>/;
+const HEADING_TAG = /<(PageHead|PageHeader|SectionStack|ListDetail|ToolPage|HubPage)\b[\s\S]*?\/?>/;
 
 function routeSource(fileOrHref: string): string {
   return read(`routes/(app)${fileOrHref}/+page.svelte`);

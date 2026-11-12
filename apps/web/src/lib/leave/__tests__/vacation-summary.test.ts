@@ -419,13 +419,13 @@ describe("every year-changing path reloads the figures (D-02, issue #122)", () =
 
   it("shows a loading state instead of the previous year's numbers while refetching (D-03)", () => {
     expect(PAGE).toContain("let vacSummaryLoading = $state(true)");
-    // Whitespace-robust on purpose: prettier owns the line breaks around the {#if}.
-    const sites = [...PAGE.matchAll(/\{@render vacStats\(\)\}/g)];
-    expect(sites.length).toBe(2);
-    for (const site of sites) {
-      expect(PAGE.slice(Math.max(0, site.index - 160), site.index)).toContain("vacSummaryLoading");
-    }
-    expect((PAGE.match(/\{@render vacStatsSkeleton\(\)\}/g) ?? []).length).toBe(2);
+    // #851: the figures live in the Kennzahlenleiste; while the year's balance is being fetched
+    // (`vacationBalance = null` first), every vacation cell reads „–“, never the left year's value.
+    expect(fnBody("async function loadVacationSummary(")).toContain("vacationBalance = null;");
+    const items = PAGE.slice(PAGE.indexOf("let balanceItems = $derived<KpiItem[]>(["));
+    expect(items).toContain('value: vacRemaining === null ? "–" : vacRemaining');
+    expect(items).toContain('value: vacationBalance ? vacSummaryUsed : "–"');
+    expect(items).toContain('value: !vacationBalance ? "–" :');
   });
 });
 

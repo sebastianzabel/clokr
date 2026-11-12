@@ -173,6 +173,11 @@ describe("leave-request decision core (Issue #835)", () => {
         where: { type: "LEAVE_APPROVED", userId: d.empUser.id },
       });
       expect(notice.link).toBe(`/leave?request=${request.id}`);
+      // Issue #602 (Phase 851): the notice names the process and its period.
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const de = (x: Date) =>
+        `${pad(x.getUTCDate())}.${pad(x.getUTCMonth() + 1)}.${x.getUTCFullYear()}`;
+      expect(notice.message).toContain(`vom ${de(request.startDate)} bis ${de(request.endDate)}`);
 
       expect(await usedDays(d)).toBe(before + 5);
     });

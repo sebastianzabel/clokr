@@ -94,8 +94,9 @@ test.describe("Issue #608 — Web-Push plumbing", () => {
     await signInForWalkthrough(page, request, tenant, "light");
     await page.goto("/settings");
 
-    // Control: the page rendered, so the absence below is not an empty page.
-    await expect(page.getByRole("heading", { name: "Passwort ändern" })).toBeVisible();
+    // Control: the page rendered, so the absence below is not an empty page. Since #851 the password
+    // change opens from the „Sicherheit“ section's button instead of an inline form.
+    await expect(page.getByRole("button", { name: "Passwort ändern" })).toBeVisible();
     await expect(page.getByText("Push-Benachrichtigungen")).toHaveCount(0);
   });
 });

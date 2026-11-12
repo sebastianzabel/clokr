@@ -83,7 +83,8 @@ const violations = [];
 // onMount(() => goto(...)) call with no template markup) are exempt.
 const REDIRECT_STUB_RE = /onMount\(\s*\(\s*\)\s*=>\s*goto\(/;
 // HubPage (#844) renders <PageHead> internally, like the admin templates.
-const HEAD_PROVIDER_RE = /<(?:PageHead|ListDetail|SectionStack|ToolPage|HubPage)\b/;
+// #851: the Seitenkopf block itself (ui/PageHeader) counts like its PageHead delegate.
+const HEAD_PROVIDER_RE = /<(?:PageHead|PageHeader|ListDetail|SectionStack|ToolPage|HubPage)\b/;
 // A page that renders another route's page component, whose <PageHead> names it (#844: Heute im Salon is the
 // dashboard file read at /team/heute until #846). The target must itself pass this rule.
 const RENDERS_ROUTE_PAGE = {

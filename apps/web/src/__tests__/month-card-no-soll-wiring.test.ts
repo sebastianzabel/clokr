@@ -1,5 +1,6 @@
-// Issue #495 — pins that both month-card pages pass `noSollTarget` to MonatSaldoCard and set it
-// only for a MONTHLY_HOURS contract without monthly hours.
+// Issue #495 — pins that both month pages hand `noSollTarget` to their month figure (MonatSaldoCard
+// on /team/time-entries, the Kennzahlen of zeitenKpis() on /time-entries since Issue #851) and set
+// it only for a MONTHLY_HOURS contract without monthly hours.
 //
 // This is a source-read PIN, not a behaviour test: route pages cannot be mounted here because
 // `apps/web/vitest.config.ts` has no `$app` alias. Without the pin, a page that stops passing the
@@ -24,6 +25,8 @@ function readRouteFile(relativeFromHere: string, relativeFromCwd: string): strin
 const PAGES = [
   {
     name: "/time-entries",
+    consumer: "zeitenKpis(",
+    passes: "month: monthMetrics,",
     source: readRouteFile(
       "../routes/(app)/time-entries/+page.svelte",
       "src/routes/(app)/time-entries/+page.svelte",
@@ -31,6 +34,8 @@ const PAGES = [
   },
   {
     name: "/team/time-entries",
+    consumer: "<MonatSaldoCard",
+    passes: "noSollTarget={monthMetrics.noSollTarget}",
     source: readRouteFile(
       "../routes/(app)/team/time-entries/+page.svelte",
       "src/routes/(app)/team/time-entries/+page.svelte",
@@ -38,17 +43,17 @@ const PAGES = [
   },
 ];
 
-describe.each(PAGES)("month card no-Soll wiring — $name", ({ source }) => {
+describe.each(PAGES)("month card no-Soll wiring — $name", ({ source, consumer, passes }) => {
   it("reads a non-empty page source", () => {
     expect(source.length).toBeGreaterThan(0);
   });
 
-  it("passes noSollTarget from monthMetrics to <MonatSaldoCard>", () => {
-    const start = source.indexOf("<MonatSaldoCard");
+  it("hands noSollTarget from monthMetrics to the month figure", () => {
+    const start = source.indexOf(consumer);
     expect(start).toBeGreaterThan(-1);
-    const end = source.indexOf("onRetry={loadAll}", start);
+    const end = source.indexOf(consumer === "<MonatSaldoCard" ? "onRetry={loadAll}" : "}),", start);
     expect(end).toBeGreaterThan(start);
-    expect(source.slice(start, end)).toContain("noSollTarget={monthMetrics.noSollTarget}");
+    expect(source.slice(start, end)).toContain(passes);
   });
 
   it("sets noSollTarget: true exactly once, inside the no-monthly-target branch", () => {

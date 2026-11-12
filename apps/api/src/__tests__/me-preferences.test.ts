@@ -19,11 +19,13 @@ import { Prisma } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { JwtPayload } from "../middleware/auth";
 
-// #842 D-842-18: the response carries exactly theme, mode, language.
+// #842 D-842-18: the response carries exactly theme, mode, language - and since #602 (Phase 851) the
+// list of e-mail groups the person switched off.
 const DEFAULTS = {
   theme: "pflaume",
   mode: "light",
   language: "de",
+  emailOptOut: [],
 };
 
 const SET_A = { theme: "petrol", mode: "dark", language: "en" };
@@ -79,12 +81,16 @@ describe("PUT /api/v1/me/preferences (Issue #392, lost-update race)", () => {
         });
         expect(getRes.statusCode).toBe(200);
         const body = JSON.parse(getRes.body);
-        expect(body, `round ${round} (target set ${round % 2 === 0 ? "A" : "B"})`).toEqual(target);
+        // #602: the answer also names the (unchanged, empty) e-mail opt-out list.
+        expect(body, `round ${round} (target set ${round % 2 === 0 ? "A" : "B"})`).toEqual({
+          ...target,
+          emailOptOut: [],
+        });
       }
     },
   );
 
-  it("a single partial PUT on a fresh state returns 200 with exactly the 3 default-merged keys", async () => {
+  it("a single partial PUT on a fresh state returns 200 with exactly the 4 default-merged keys", async () => {
     const res = await app.inject({
       method: "PUT",
       url: "/api/v1/me/preferences",
@@ -94,7 +100,7 @@ describe("PUT /api/v1/me/preferences (Issue #392, lost-update race)", () => {
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
-    expect(Object.keys(body).sort()).toEqual(["language", "mode", "theme"]);
+    expect(Object.keys(body).sort()).toEqual(["emailOptOut", "language", "mode", "theme"]);
     expect(body).toEqual({ ...DEFAULTS, theme: "petrol" });
   });
 
@@ -154,8 +160,8 @@ describe("PUT /api/v1/me/preferences (Issue #392, lost-update race)", () => {
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
-    expect(Object.keys(body).sort()).toEqual(["language", "mode", "theme"]);
-    expect(body).toEqual({ theme: "petrol", mode: "dark", language: "de" });
+    expect(Object.keys(body).sort()).toEqual(["emailOptOut", "language", "mode", "theme"]);
+    expect(body).toEqual({ theme: "petrol", mode: "dark", language: "de", emailOptOut: [] });
   });
 
   it("an unknown theme id (lila) still returns 400", async () => {
@@ -212,6 +218,36 @@ describe("PUT /api/v1/me/preferences (Issue #392, lost-update race)", () => {
       select: { uiPreferences: true },
     });
     expect(stored?.uiPreferences).toEqual({ theme: "petrol" });
+  });
+
+  it("#602: the e-mail opt-out is stored as a whole list of known groups, unknown groups are 400", async () => {
+    const put = await app.inject({
+      method: "PUT",
+      url: "/api/v1/me/preferences",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { emailOptOut: ["emailOnMissingEntries", "emailOnLeaveDecision"] },
+    });
+    expect(put.statusCode).toBe(200);
+    expect(JSON.parse(put.body).emailOptOut).toEqual([
+      "emailOnMissingEntries",
+      "emailOnLeaveDecision",
+    ]);
+
+    const bad = await app.inject({
+      method: "PUT",
+      url: "/api/v1/me/preferences",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { emailOptOut: ["ACCOUNT_LOCKED"] },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    const cleared = await app.inject({
+      method: "PUT",
+      url: "/api/v1/me/preferences",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { emailOptOut: [] },
+    });
+    expect(JSON.parse(cleared.body).emailOptOut).toEqual([]);
   });
 
   it("an unknown user id (valid JWT, nonexistent user) returns 404", async () => {
