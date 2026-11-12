@@ -34,6 +34,10 @@ const CONNECTION = read(
   "../lib/components/admin/phorest/PhorestConnectionPanel.svelte",
   "src/lib/components/admin/phorest/PhorestConnectionPanel.svelte",
 );
+const SYNC = read(
+  "../lib/components/admin/phorest/PhorestSyncPanel.svelte",
+  "src/lib/components/admin/phorest/PhorestSyncPanel.svelte",
+);
 const RULES = read("../lib/settings/phorest.ts", "src/lib/settings/phorest.ts");
 
 /** Script and markup without comments, so prose in a comment can never trip or hide a pin. */
@@ -46,6 +50,7 @@ function code(source: string): string {
 
 const PANEL_CODE = code(CONNECTION);
 const PAGE_CODE = code(PAGE);
+const SYNC_CODE = code(SYNC);
 
 describe("D-07 - Phorest credentials stay button-gated", () => {
   // Phorest credentials are security configuration and stay behind a button whatever the control looks
@@ -161,6 +166,7 @@ describe("AK-02 - no text/number input writes inline on this page", () => {
   it("no text/number input of the page or the panel carries an inline write handler", () => {
     expect(textOrNumberInputHandlers(PAGE_CODE)).toEqual([]);
     expect(textOrNumberInputHandlers(PANEL_CODE)).toEqual([]);
+    expect(textOrNumberInputHandlers(SYNC_CODE)).toEqual([]);
   });
 });
 
@@ -199,5 +205,23 @@ describe("D-11/D-12 - unsaved markers and guard registration on admin/phorest", 
   it("removing a mapping moves the row's baseline", () => {
     const body = PANEL_CODE.slice(PANEL_CODE.indexOf("async function confirmRemove"));
     expect(body).toContain("row.baselineEmployeeId = row.selectedEmployeeId");
+  });
+});
+
+describe("the Abgleich tab (plan 854-16)", () => {
+  it("the sync runs from a button, is disabled while it runs and posts the shift sync", () => {
+    expect(SYNC_CODE).toContain("onclick={syncNow}");
+    expect(SYNC_CODE).toMatch(/onclick=\{syncNow\}\s+disabled=\{syncing\}/);
+    expect(SYNC_CODE).toContain('"/integrations/phorest/sync-shifts"');
+  });
+
+  it("the page keeps both panels mounted and wires the sync to the mapping reload", () => {
+    expect(PAGE_CODE).toContain("PhorestSyncPanel");
+    expect(PAGE_CODE).toContain("onsynced={() => connection?.reloadMapping()}");
+    expect(PAGE_CODE).toContain("bind:status");
+  });
+
+  it("the sync panel registers no unsaved marker (it has no form to lose)", () => {
+    expect(SYNC_CODE).not.toContain("markUnsaved");
   });
 });

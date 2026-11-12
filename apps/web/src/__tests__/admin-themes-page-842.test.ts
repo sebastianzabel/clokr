@@ -2,6 +2,8 @@
 // cards, each with a light and a dark preview element that carries data-theme and data-mode so the
 // real tokens render, a Modus control, no skin/density/Modern leftovers, and a subtitle that does
 // not claim the choice applies to every employee.
+// Issue #854 (plan 16): the page is built from a PageHead and three `.settings-group` sections (Farbwelt, Modus,
+// Sprache) and promises no version; the choice is still saved through the preference stores only.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/svelte";
 import { get } from "svelte/store";
@@ -76,6 +78,31 @@ describe("#842 D-842-22 - theme cards with light and dark previews", () => {
     const pressed = cards(container).map((c) => c.getAttribute("aria-pressed"));
     expect(pressed).toEqual(["true", "false", "false"]);
     expect(container.querySelectorAll(".chip-brand")).toHaveLength(1);
+  });
+});
+
+describe("#854 plan 16 - the page is built from blocks", () => {
+  it("has one H1 and the three settings groups Farbwelt, Modus and Sprache", () => {
+    const { container } = render(Page);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Branding & Themes");
+    const groups = [...container.querySelectorAll("section.settings-group")];
+    expect(groups.map((g) => g.querySelector("h2")?.textContent)).toEqual([
+      "Farbwelt",
+      "Modus",
+      "Sprache",
+    ]);
+  });
+
+  it("has no SaveBar (a theme or mode click saves at once) and no legacy section chrome", () => {
+    const { container } = render(Page);
+    expect(screen.queryByRole("region", { name: "Speicherleiste" })).toBeNull();
+    expect(container.querySelector(".section-title, .section-stack")).toBeNull();
+  });
+
+  it("promises no release version for the English UI", () => {
+    const { container } = render(Page);
+    expect(container.textContent).toContain("Englisch folgt später.");
+    expect(container.textContent).not.toMatch(/v\d+\.\d+/);
   });
 });
 
