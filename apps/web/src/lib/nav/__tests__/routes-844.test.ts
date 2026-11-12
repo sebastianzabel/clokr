@@ -15,6 +15,7 @@ import {
   visibleChildren,
 } from "$lib/nav/routes";
 import { visibleNavSections } from "$lib/nav/app-nav";
+import { sectionsOfPage } from "$lib/settings/settings-pages";
 import personas from "./fixtures/system-role-permissions.json";
 import pre844 from "./fixtures/pre-844-route-permissions.json";
 
@@ -177,6 +178,18 @@ describe("no permission change (D-06, AC: keine Berechtigungsänderung)", () => 
     it(`${file} keeps its alternatives`, () => {
       const route = APP_ROUTES.find((r) => r.file === file);
       const alias = LEGACY_ROUTE_REDIRECTS.find((a) => a.href === file);
+      // A page that RECEIVES settings sections from other old pages opens under the union of their gates
+      // (D-854-05): nobody loses access, so every pinned alternative must still be there; the exact value is
+      // pinned by settings-pages-854.test.ts. Every other page keeps the equality pin.
+      if (
+        route !== undefined &&
+        sectionsOfPage(route.href).length > 0 &&
+        Array.isArray(route.requires)
+      ) {
+        for (const alternative of requires)
+          expect(route.requires, file).toContainEqual(alternative);
+        return;
+      }
       expect(route?.requires ?? alias?.requires, file).toEqual(requires);
     });
   }

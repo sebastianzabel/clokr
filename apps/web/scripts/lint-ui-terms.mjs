@@ -45,6 +45,7 @@ const PHOREST_ALLOWED = [
   "src/lib/components/operator/",
   "src/lib/operator/",
   "src/lib/nav/routes.ts", // the page names (#844): the Phorest entry is shown only under Verwalten › System
+  "src/lib/settings/settings-pages.ts", // the settings registry (#854) names the Phorest page file of its section
 ];
 /** Areas where "Mandant" may be named (D-574-04): the operator console speaks to the operator. */
 const MANDANT_ALLOWED = [
