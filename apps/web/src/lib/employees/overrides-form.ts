@@ -6,6 +6,7 @@
 // (#878), never a spread of the whole record.
 
 import { minutesAsHours } from "$lib/settings/arbeitszeit";
+import type { ContractSchedule } from "$lib/employees/vertrag-form";
 
 // ── Keys ─────────────────────────────────────────────────────────────────────
 
@@ -228,4 +229,42 @@ export function overCreditNotice(
   if (effectiveFirst === null || !Number.isFinite(effectiveFirst)) return "";
   if (secondLong <= effectiveFirst) return "";
   return `Der 2. Langtag (${secondLong} Min = ${hoursLabel(secondLong)} h) übersteigt den 1. Langtag (${effectiveFirst} Min = ${hoursLabel(effectiveFirst)} h). Prüf, ob der zweite Berufsschul-Langtag so hoch gutgeschrieben werden soll.`;
+}
+
+// ── Daily Soll (the lowest layer of the Berufsschule slots) ──────────────────
+
+/**
+ * The daily Soll of a schedule in minutes: the weekly hours spread over the contractual workdays
+ * (`workDays`, else the weekdays with hours, else 5). null while the weekly hours are unknown or zero.
+ * Display only: it names where an empty slot inherits from; the server decides the credit.
+ */
+export function dailySollMinutes(
+  schedule: Pick<
+    ContractSchedule,
+    | "weeklyHours"
+    | "workDays"
+    | "mondayHours"
+    | "tuesdayHours"
+    | "wednesdayHours"
+    | "thursdayHours"
+    | "fridayHours"
+    | "saturdayHours"
+    | "sundayHours"
+  > | null,
+): number | null {
+  if (!schedule) return null;
+  const weekly = Number(schedule.weeklyHours ?? 0);
+  if (!Number.isFinite(weekly) || weekly <= 0) return null;
+  const workDays = schedule.workDays ?? [];
+  const withHours = [
+    schedule.mondayHours,
+    schedule.tuesdayHours,
+    schedule.wednesdayHours,
+    schedule.thursdayHours,
+    schedule.fridayHours,
+    schedule.saturdayHours,
+    schedule.sundayHours,
+  ].filter((hours) => Number(hours) > 0).length;
+  const count = workDays.length > 0 ? workDays.length : withHours || 5;
+  return Math.round((weekly * 60) / count);
 }

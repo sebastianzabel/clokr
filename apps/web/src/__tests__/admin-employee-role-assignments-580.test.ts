@@ -57,7 +57,8 @@ function fnBody(source: string, name: string): string {
 
 describe("/admin/employees/[id] — Berechtigungen (#580)", () => {
   it("[vacuity gate] both pages are loaded", () => {
-    expect(DETAIL.length).toBeGreaterThan(80_000);
+    // #854: the page is a shell over the tab components (plan 854-22); the floor only proves the read.
+    expect(DETAIL.length).toBeGreaterThan(8_000);
     expect(LIST.length).toBeGreaterThan(20_000);
   });
 

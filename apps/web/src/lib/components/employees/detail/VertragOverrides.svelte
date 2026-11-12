@@ -121,7 +121,7 @@
     pauseError = "";
   }
 
-  // ── Phorest Vor- und Nachbereitung ───────────────────────────────────────────
+  // ── Phorest prep and wrap-up buffers ─────────────────────────────────────────
 
   let phorestSnapshot = $state<PhorestValues>(
     untrack(() => $state.snapshot(phorestValuesOf(employee)) as PhorestValues),

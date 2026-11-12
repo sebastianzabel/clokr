@@ -64,6 +64,12 @@ const VERTRAG_OVERRIDES = readRouteFile(
   "src/lib/components/employees/detail/VertragOverrides.svelte",
 );
 
+// The Berufsschule section (plan 854-22): the patterns (one PUT) and the person's slots (one PATCH).
+const BERUFSSCHULE = readRouteFile(
+  "../lib/components/employees/detail/BerufsschuleSection.svelte",
+  "src/lib/components/employees/detail/BerufsschuleSection.svelte",
+);
+
 // The plan's reference slicer (`vacation-summary.test.ts:47-55`) finds a function's end by
 // searching for the next "\n  }" (a two-space-indented closing brace) after the marker. That
 // heuristic breaks on this page: several save functions take an optional object-typed
@@ -128,11 +134,23 @@ describe("D-08/AK-10 — Vertragsdaten mit validFrom stay button-gated", () => {
 });
 
 describe("N-02 — every save path on this page is already button-gated", () => {
-  const BUTTON_GATED = ["saveBsSlotEmp", "savePatterns"] as const;
+  it("the page owns no save of its own any more: every write sits in a tab component", () => {
+    expect(PAGE).not.toMatch(/async function save\w+/);
+    expect(PAGE).not.toContain("api.put(");
+    expect(PAGE).not.toContain("api.patch(");
+  });
 
-  it.each(BUTTON_GATED)("%s is wired via onclick=, never onchange=", (name) => {
-    expect(PAGE).toContain(`onclick={${name}}`);
-    expect(PAGE).not.toContain(`onchange={${name}}`);
+  it("the Berufsschule groups save through their SaveBar, never through a change handler", () => {
+    for (const name of ["savePatterns", "saveSlots"]) {
+      expect(BERUFSSCHULE, name).toContain(`onSave={${name}}`);
+      expect(BERUFSSCHULE, name).not.toContain(`onchange={${name}}`);
+    }
+    // the slots send exactly their own four keys (#878), the patterns replace the list in one PUT
+    const slots = fnBody("async function saveSlots", BERUFSSCHULE);
+    expect(slots).toContain("pickSection(");
+    expect(slots).toContain("BS_SLOT_KEYS");
+    expect(slots).toContain("api.patch");
+    expect(fnBody("async function savePatterns", BERUFSSCHULE)).toContain("api.put<");
   });
 
   it("the override groups save through their SaveBar, never through a change handler", () => {
@@ -193,19 +211,21 @@ describe("AK-02 — no text/number input writes inline on this page", () => {
 });
 
 describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
-  const FLAGS = ["patternsDirty", "bsSlotEmpDirty"] as const;
-
-  it.each(FLAGS)("%s is derived from a snapshot", (name) => {
-    expect(PAGE).toContain(`let ${name} = $derived(`);
+  it("every group counts its changes against its own snapshot, the page keeps no snapshot", () => {
+    expect(PAGE).not.toMatch(/Snapshot\s*=\s*snap\(/);
+    expect(PAGE).not.toMatch(/Dirty\s*=\s*\$derived\(/);
+    expect(BERUFSSCHULE).toContain("patternChangeCount(saved, drafts)");
+    expect(BERUFSSCHULE).toContain("countChanges(slotSnapshot, slots, BS_SLOT_KEYS)");
+    expect(VERTRAG_OVERRIDES).toContain("countChanges(pauseSnapshot, pause, PAUSE_KEYS)");
+    expect(VERTRAG_OVERRIDES).toContain("countChanges(phorestSnapshot, phorest, PHOREST_KEYS)");
   });
 
   // Issue #580 removed the footer of the Berechtigungen tab: role assignments save in their own
-  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1). Since #854 the Person, Vertrag and Urlaub tabs and the
-  // Pausendauer / Phorest override groups own their groups and report their change count
-  // (`bind:changes`), so two footer Sections remain on this page (the Berufsschule ones, until the
-  // next commit of plan 854-22).
-  it("both remaining footer Sections receive a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(2);
+  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1). Since #854 every tab and override group owns its groups
+  // and reports its change count (`bind:changes`); no footer Section is left on this page.
+  it("no footer Section is left on the page", () => {
+    expect(PAGE).not.toContain("dirty={");
+    expect(PAGE).not.toMatch(/<Section\b/);
   });
 
   it("the Person, Vertrag and Urlaub tabs' unsaved changes are summed into the one registration", () => {
@@ -213,7 +233,9 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     expect(PAGE).toContain("bind:changes={vertragChanges}");
     expect(PAGE).toContain("bind:changes={vacationChanges}");
     expect(PAGE).toContain("bind:changes={overrideChanges}");
+    expect(PAGE).toContain("bind:changes={berufsschuleChanges}");
     expect(PAGE).toContain("overrideChanges > 0");
+    expect(PAGE).toContain("berufsschuleChanges > 0");
     expect(PAGE).toContain("vertragChanges > 0");
     expect(PAGE).toMatch(/let anyUnsaved = \$derived\(\s*personChanges > 0/);
     expect(PAGE).toContain("vacationChanges > 0");
@@ -224,7 +246,7 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     expect(PAGE).toContain('return () => markUnsaved("admin-employee-detail", false)');
   });
 
-  // WR-01: every snapshot starts as "" and only gets its baseline at the end of onMount's try.
+  // WR-01: the page hydrates at the end of onMount's try (the tabs take their baselines from it).
   // The early `if (empRes.status === "rejected") { loadError = …; return; }` skips that block, so
   // registering the bare `anyUnsaved` traps the operator on a stale bookmark to a deleted employee
   // behind a discard dialog — on a page that renders only an error and shows no marker.
@@ -233,12 +255,12 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     expect(PAGE).toContain("let snapshotsReady = $state(false)");
   });
 
-  it("WR-01: snapshotsReady is set only after the last baseline snapshot, inside the try", () => {
-    const iVacation = PAGE.indexOf("bsSlotEmpSnapshot = snap(");
+  it("WR-01: snapshotsReady is set only after the record is hydrated, inside the try", () => {
+    const iVacation = PAGE.indexOf("tenantBreakConfig = cfgRes.status");
     const iReady = PAGE.indexOf("snapshotsReady = true");
     const iCatch = PAGE.indexOf('loadError = "Fehler beim Laden des Mitarbeiters."');
     expect(iVacation).toBeGreaterThan(-1);
-    // After the last snapshot assignment...
+    // After the last hydration of page state...
     expect(iReady).toBeGreaterThan(iVacation);
     // ...and before the catch, i.e. still inside the try that a load failure short-circuits.
     expect(iReady).toBeLessThan(iCatch);

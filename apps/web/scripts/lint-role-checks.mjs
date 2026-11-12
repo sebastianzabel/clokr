@@ -156,6 +156,8 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/components/employees/detail/VertragTab.svelte",
   // Issue #854 (plan 854-22): the override groups show their fields by employee:update (`canEdit`).
   "apps/web/src/lib/components/employees/detail/VertragOverrides.svelte",
+  // Issue #854 (plan 854-22): the patterns follow vocational-school:manage, the slots employee:update.
+  "apps/web/src/lib/components/employees/detail/BerufsschuleSection.svelte",
 ];
 
 /** (file, exact trimmed line text) pairs that may keep a flagged line. Empty since #538: the last

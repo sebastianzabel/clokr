@@ -113,6 +113,7 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/employees/detail/VertragTab.svelte",
   // Plan 854-22 (Person detail, part III): the per-person override groups of the Vertrag tab.
   "lib/components/employees/detail/VertragOverrides.svelte",
+  "lib/components/employees/detail/BerufsschuleSection.svelte",
   // The Zugang tab opens it (deactivation with a last working day); it renders Dialog directly.
   "lib/components/admin/DeactivateEmployeeDialog.svelte",
 ];
