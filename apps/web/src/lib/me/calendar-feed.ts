@@ -2,6 +2,22 @@
 // /api/v1/me/calendar-feed (Unterbau token, API #903). The secret URL exists only in the answer to
 // create/rotate; the web never stores it and the status read never contains it.
 import { api, ApiError } from "$api/client";
+import { hasAnyPermission, type PermissionHolder } from "$lib/permissions";
+
+/** The own-read permissions the feed is built from; creating a feed needs at least one of them,
+ *  exactly as `POST /me/calendar-feed` and every poll of the feed check (API #903). */
+export const CALENDAR_FEED_PERMISSIONS = [
+  "shift:read:EIGENE",
+  "leave-request:read:EIGENE",
+] as const;
+
+/** May this person set up the subscription? The API's rule: an employee profile and at least one
+ *  of the feed permissions. Decided by permission only, never by a role. */
+export function canSubscribeCalendar(
+  user: (PermissionHolder & { employeeId?: string | null }) | null | undefined,
+): boolean {
+  return !!user?.employeeId && hasAnyPermission(user, CALENDAR_FEED_PERMISSIONS);
+}
 
 export interface CalendarFeedState {
   active: boolean;

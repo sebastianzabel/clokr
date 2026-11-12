@@ -14,7 +14,12 @@
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import MyShiftAgenda from "$lib/components/me/MyShiftAgenda.svelte";
   import CalendarFeedDialog from "$lib/components/me/CalendarFeedDialog.svelte";
-  import { loadCalendarFeed, type CalendarFeedState } from "$lib/me/calendar-feed";
+  import {
+    canSubscribeCalendar,
+    loadCalendarFeed,
+    type CalendarFeedState,
+  } from "$lib/me/calendar-feed";
+  import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
   import Card from "$components/ui/Card.svelte";
   import AvailabilityWeekGrid, {
@@ -182,7 +187,10 @@
   // the own feed (null = route absent, no person or no own read right); a failed read hides it.
   let feed = $state<CalendarFeedState | null>(null);
   let feedOpen = $state(false);
+  // Only with the rights the feed API asks for (#597): a custom role may lack both own-read keys.
+  const mayShowFeed = $derived(canSubscribeCalendar($authStore.user));
   onMount(() => {
+    if (!canSubscribeCalendar($authStore.user)) return;
     loadCalendarFeed()
       .then((s) => (feed = s))
       .catch(() => (feed = null));
@@ -196,7 +204,7 @@
   bind:tab={view}
 >
   {#snippet actions()}
-    {#if feed}
+    {#if feed && mayShowFeed}
       <button
         type="button"
         class="btn btn-secondary btn-sm"
@@ -241,7 +249,7 @@
   {/snippet}
 </PageHeader>
 
-{#if feed}
+{#if feed && mayShowFeed}
   <CalendarFeedDialog bind:open={feedOpen} {feed} onChange={(s) => (feed = s)} />
 {/if}
 
