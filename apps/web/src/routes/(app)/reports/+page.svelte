@@ -54,6 +54,7 @@
   import type { TodayAttendanceData } from "$lib/reports/today-attendance"; // Issue #612
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
   import { fmtBalance } from "$lib/utils/format-minutes"; // Issue #588
+  import { MONTH_STATUS_LABEL } from "$lib/saldo/month-status"; // Issue #598: one status wording
   import {
     buildEmployeeMonthRows,
     type EmployeeMonthRow,
@@ -971,7 +972,7 @@
 {:else}
   <div class="kpi-row">
     <Card animate>
-      <KPIStat label="Abgeschlossen" value={String(kpiClosedMonths)} unit="Monate" />
+      <KPIStat label={MONTH_STATUS_LABEL.CLOSED} value={String(kpiClosedMonths)} unit="Monate" />
     </Card>
     <Card animate>
       <KPIStat label="Soll" value={fmtHoursFromMin(kpiTotalExpectedMin)} unit="h" />
@@ -1055,10 +1056,12 @@
                           <rect x="3" y="11" width="18" height="11" rx="2" />
                           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
-                        Abgeschlossen
+                        {MONTH_STATUS_LABEL.CLOSED}
                       </span>
                     {:else}
-                      <span class="chip chip-warn"><span class="dot"></span> Offen</span>
+                      <span class="chip chip-warn"
+                        ><span class="dot"></span> {MONTH_STATUS_LABEL.OPEN}</span
+                      >
                     {/if}
                   </td>
                   <td class="emp-pdf-cell">

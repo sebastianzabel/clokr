@@ -25,14 +25,16 @@
   import { forecastLabel } from "$lib/saldo/forecast-label";
   import { mapVacationBalance, type VacationEntitlementRow } from "$lib/leave/vacation-balance";
   import {
+    kontoDayRows,
     kontoMonthRows,
     openMonthsAfter,
-    MONTH_STATUS_LABEL,
     type KontoMonthRow,
+    type MonthSaldoDay,
     type KontoSnapshot,
     type OpenMonthSaldo,
   } from "$lib/me/konto";
   import { downloadStundennachweis } from "$lib/me/stundennachweis";
+  import { MONTH_STATUS_LABEL } from "$lib/saldo/month-status"; // Issue #598: one status wording
 
   interface OvertimeAnswer {
     balanceHours: number;
@@ -47,7 +49,7 @@
     expectedMinutes: number;
     balanceMinutes: number;
     closed: boolean;
-    days: { date: string; cumulativeSaldoMinutes: number }[];
+    days: MonthSaldoDay[];
   }
 
   interface OwnEmployee {
@@ -69,6 +71,15 @@
   let hireDate = $state<Date | null>(null);
   let vacation = $state<ReturnType<typeof mapVacationBalance>>(null);
   let downloading = $state<string | null>(null);
+  // Issue #594: the days of every fetched open month, and the month whose days are open.
+  let monthDays = $state<Record<string, MonthSaldoDay[]>>({});
+  let openMonthKey = $state<string | null>(null);
+  const openMonth = $derived(rows.find((r) => r.key === openMonthKey) ?? null);
+  const openDayRows = $derived(openMonthKey ? kontoDayRows(monthDays[openMonthKey] ?? []) : []);
+
+  function toggleMonth(row: KontoMonthRow) {
+    openMonthKey = openMonthKey === row.key ? null : row.key;
+  }
 
   const employeeId = $derived($authStore.user?.employeeId ?? null);
 
@@ -123,6 +134,14 @@
     { key: "status", label: "Status" },
   ];
 
+  const DAY_COLUMNS: DataTableColumn[] = [
+    { key: "day", label: "Tag", primary: true },
+    { key: "soll", label: "Soll", align: "end" },
+    { key: "ist", label: "Ist", align: "end" },
+    { key: "diff", label: "Differenz", align: "end" },
+    { key: "stand", label: "Stand", align: "end" },
+  ];
+
   /** One tap to the day level (#594): the month in Ich › Zeiten shows every day with its difference. */
   function monthHref(row: KontoMonthRow): string {
     return `/ich/zeiten?date=${row.year}-${String(row.month).padStart(2, "0")}-01`;
@@ -153,18 +172,20 @@
       hireDate = me?.hireDate ? new Date(me.hireDate) : null;
       vacation = mapVacationBalance(ent.find((e) => e.typeCode === "VACATION"));
 
-      const closed = kontoMonthRows(snaps, [], today);
+      const closed = kontoMonthRows(snaps, []);
       const newestClosed = closed[0] ? { year: closed[0].year, month: closed[0].month } : null;
       const first = hireDate
         ? { year: hireDate.getFullYear(), month: hireDate.getMonth() + 1 }
         : { year: today.year, month: 1 };
       const months = openMonthsAfter(newestClosed, first, today);
+      const days: Record<string, MonthSaldoDay[]> = {};
       const open: OpenMonthSaldo[] = await Promise.all(
         months.map(async ({ year, month }) => {
           const r = await api.get<MonthSaldoAnswer>(
             `/overtime/month-saldo/${id}?year=${year}&month=${month}`,
           );
           const last = r.days.length > 0 ? r.days[r.days.length - 1] : null;
+          days[`${year}-${String(month).padStart(2, "0")}`] = r.days;
           return {
             year,
             month,
@@ -176,7 +197,8 @@
           };
         }),
       );
-      rows = kontoMonthRows(snaps, open, today);
+      monthDays = days;
+      rows = kontoMonthRows(snaps, open);
     } catch {
       failed = true;
     } finally {
@@ -243,7 +265,14 @@
       >
         {#snippet cell(row, column)}
           {#if column.key === "month"}
-            <a href={monthHref(row)} class="konto-link">{row.label}</a>
+            <button
+              type="button"
+              class="konto-month-btn"
+              aria-expanded={openMonthKey === row.key}
+              aria-controls="konto-days"
+              onclick={() => toggleMonth(row)}
+              data-testid="konto-month-toggle-{row.key}">{row.label}</button
+            >
           {:else if column.key === "soll"}
             {fmtMin(row.sollMinutes)}
           {:else if column.key === "ist"}
@@ -259,6 +288,45 @@
           {/if}
         {/snippet}
       </DataTable>
+      {#if openMonth}
+        <div id="konto-days" class="konto-days" data-testid="konto-days">
+          <h3 class="konto-h3">Tage im {openMonth.label}</h3>
+          {#if openMonth.status === "CLOSED"}
+            <p class="konto-hint">
+              Der Monat ist abgeschlossen; gespeichert sind seine Monatswerte. Die einzelnen Tage
+              siehst du unter <a class="konto-link" href={monthHref(openMonth)}>Zeiten</a> und im Stundennachweis.
+            </p>
+          {:else if openDayRows.length === 0}
+            <p class="konto-hint">
+              In diesem Monat gibt es bis gestern keinen Tag mit Soll oder Zeit.
+            </p>
+          {:else}
+            <DataTable
+              caption="Tage im {openMonth.label}"
+              columns={DAY_COLUMNS}
+              rows={openDayRows}
+              rowKey={(d) => d.date}
+              rowTestId={(d) => `konto-day-${d.date}`}
+            >
+              {#snippet cell(day, column)}
+                {#if column.key === "day"}
+                  <a class="konto-link" href="/ich/zeiten?date={day.date}">{day.label}</a>
+                {:else if column.key === "soll"}
+                  {fmtMin(day.sollMinutes)}
+                {:else if column.key === "ist"}
+                  {fmtMin(day.istMinutes)}
+                {:else if column.key === "diff"}
+                  <span class:pos={day.diffMinutes > 0} class:neg={day.diffMinutes < 0}
+                    >{signed(day.diffMinutes)}</span
+                  >
+                {:else}
+                  {signed(day.standMinutes)}
+                {/if}
+              {/snippet}
+            </DataTable>
+          {/if}
+        </div>
+      {/if}
       {#if hireDate}
         <p class="konto-hint">Eintritt am {hireDate.toLocaleDateString("de-DE")}.</p>
       {/if}
@@ -269,8 +337,8 @@
         >
       {/if}
       <p class="konto-hint">
-        Tippe auf einen Monat, um jeden Tag mit seiner Differenz zu sehen. Das Stundenkonto zählt
-        bis gestern; der heutige Tag kommt morgen dazu.
+        Tippe auf einen Monat, um seine Tage mit Soll, Ist und Differenz zu sehen. Das Stundenkonto
+        zählt bis gestern; der heutige Tag kommt morgen dazu.
       </p>
     </section>
 
@@ -404,6 +472,51 @@
   }
   .konto-link:hover {
     text-decoration: underline;
+  }
+  /* Issue #594: the month opens its days in place; it reads like the link it replaces. */
+  .konto-month-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    font-weight: 500;
+    color: var(--brand);
+    cursor: pointer;
+    text-align: start;
+  }
+  .konto-month-btn::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(45deg) translateY(-2px);
+    transition: transform 120ms var(--ease);
+  }
+  .konto-month-btn[aria-expanded="true"]::after {
+    transform: rotate(-135deg) translate(-2px, 0);
+  }
+  .konto-month-btn:hover {
+    text-decoration: underline;
+  }
+  .konto-month-btn:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  .konto-days {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+  .konto-h3 {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
   }
   .konto-row-end {
     display: inline-flex;

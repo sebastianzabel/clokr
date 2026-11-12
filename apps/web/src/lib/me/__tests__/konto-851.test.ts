@@ -1,6 +1,12 @@
 // Issue #594 / #598 (Phase 851) - the Konto rows sort and label, they never recompute.
 import { describe, expect, it } from "vitest";
-import { kontoMonthRows, monthLabel, openMonthsAfter, MONTH_STATUS_LABEL } from "../konto";
+import {
+  kontoDayRows,
+  kontoMonthRows,
+  monthLabel,
+  openMonthsAfter,
+  MONTH_STATUS_LABEL,
+} from "../konto";
 
 const today = { year: 2026, month: 11 };
 
@@ -39,10 +45,9 @@ describe("kontoMonthRows", () => {
           standMinutes: 115,
         },
       ],
-      today,
     );
     expect(rows.map((r) => r.key)).toEqual(["2026-11", "2026-10"]);
-    expect(rows[0]).toMatchObject({ status: "RUNNING", diffMinutes: 115, standMinutes: 115 });
+    expect(rows[0]).toMatchObject({ status: "OPEN", diffMinutes: 115, standMinutes: 115 });
     expect(rows[1]).toMatchObject({ status: "CLOSED", sollMinutes: 3840, standMinutes: 0 });
   });
 
@@ -70,7 +75,6 @@ describe("kontoMonthRows", () => {
           standMinutes: 99,
         },
       ],
-      today,
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].standMinutes).toBe(5);
@@ -81,7 +85,6 @@ describe("kontoMonthRows", () => {
     expect(MONTH_STATUS_LABEL).toEqual({
       CLOSED: "Abgeschlossen",
       OPEN: "Offen",
-      RUNNING: "Bis gestern",
     });
   });
 });
@@ -101,5 +104,55 @@ describe("openMonthsAfter", () => {
   });
   it("is empty when the last close is the current month", () => {
     expect(openMonthsAfter({ year: 2026, month: 11 }, { year: 2026, month: 1 }, today)).toEqual([]);
+  });
+});
+
+describe("kontoDayRows (#594)", () => {
+  it("takes the account's own day shares and leaves free days out", () => {
+    const rows = kontoDayRows([
+      {
+        date: "2026-06-01",
+        cumulativeSaldoMinutes: 60,
+        expectedMinutes: 480,
+        workedMinutes: 540,
+        balanceMinutes: 60,
+      },
+      {
+        date: "2026-06-06",
+        cumulativeSaldoMinutes: 60,
+        expectedMinutes: 0,
+        workedMinutes: 0,
+        balanceMinutes: 0,
+      },
+      {
+        date: "2026-06-08",
+        cumulativeSaldoMinutes: -420,
+        expectedMinutes: 480,
+        workedMinutes: 0,
+        balanceMinutes: -480,
+      },
+    ]);
+    expect(rows).toEqual([
+      {
+        date: "2026-06-01",
+        label: "Mo 01.06.",
+        sollMinutes: 480,
+        istMinutes: 540,
+        diffMinutes: 60,
+        standMinutes: 60,
+      },
+      {
+        date: "2026-06-08",
+        label: "Mo 08.06.",
+        sollMinutes: 480,
+        istMinutes: 0,
+        diffMinutes: -480,
+        standMinutes: -420,
+      },
+    ]);
+  });
+
+  it("a closed month's terminal entry carries no shares and yields no day", () => {
+    expect(kontoDayRows([{ date: "2026-05-31", cumulativeSaldoMinutes: 30 }])).toEqual([]);
   });
 });
