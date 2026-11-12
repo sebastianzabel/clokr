@@ -99,6 +99,8 @@ export const PERMISSION_RESOURCES = {
   // ── Arbeitszeitkonto ──
   overtime: { context: "working-time-account", relation: "PERSON" },
   "month-close": { context: "working-time-account", relation: "PERSON" },
+  // Issue #599: a correction request for a day of a closed month, booked in the running month.
+  "month-correction": { context: "working-time-account", relation: "PERSON" },
   // ── Scheduling ──
   shift: { context: "scheduling", relation: "PERSON" },
   "shift-config": { context: "scheduling", relation: "MANDANT" },
@@ -200,6 +202,11 @@ export const PERMISSIONS: readonly Permission[] = [
   { resource: "month-close", action: "close", reach: "ZUGEWIESEN" },
   { resource: "month-close", action: "unlock", reach: "ZUGEWIESEN" },
   { resource: "month-close", action: "close-year", reach: "ZUGEWIESEN" },
+  { resource: "month-correction", action: "read", reach: "EIGENE" },
+  { resource: "month-correction", action: "read", reach: "ZUGEWIESEN" },
+  { resource: "month-correction", action: "create", reach: "EIGENE" },
+  { resource: "month-correction", action: "create", reach: "ZUGEWIESEN" },
+  { resource: "month-correction", action: "approve", reach: "ZUGEWIESEN" },
   // ── Scheduling ──
   { resource: "shift", action: "read", reach: "EIGENE" },
   { resource: "shift", action: "read", reach: "ZUGEWIESEN" },

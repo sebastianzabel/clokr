@@ -461,6 +461,60 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "gone. Proven by `leave-plan-tracer-835.test.ts`.",
   },
   {
+    route: "POST /api/v1/month-corrections",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, `month-correction:create` reach EIGENE or ZUGEWIESEN) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "GET /api/v1/month-corrections",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, `month-correction:read:EIGENE` for scope=own, `month-correction:read:ZUGEWIESEN` for scope=team) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "GET /api/v1/month-corrections/:id",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, `month-correction:read` EIGENE for the own request or the ZUGEWIESEN reach at the target day) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "POST /api/v1/month-corrections/:id/approve",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, the four-eyes lock, then `month-correction:approve:ZUGEWIESEN` with reach at the target day) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "POST /api/v1/month-corrections/:id/reject",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, the four-eyes lock, then `month-correction:approve:ZUGEWIESEN` with reach at the target day) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "POST /api/v1/month-corrections/:id/withdraw",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, a `month-correction:create` reach and only the own filed request) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
     route: "PATCH /api/v1/terminals/:id",
     reason:
       "New route added in Issue #541, long after the role guard (`requireRole`) was deleted from " +
