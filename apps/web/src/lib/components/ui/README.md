@@ -387,7 +387,7 @@ Source: `$components/ui/BulkPreviewDialog.svelte` (Issue #843, D-843-01 block 7)
 
 Sources: `$components/ui/Combobox.svelte`, `DatePicker.svelte`, `$lib/table/search.ts` (Issue #843, D-843-01 block 7). Import them only where used, never through a barrel (bundle, D-843-17).
 
-- `Combobox` (`items: { value, label }[]`, `value` bindable string, `label?`, `placeholder?`, `disabled?`, FormField attrs `id`, `describedBy`, `invalid`): the first ArrowDown opens the list (it does not select), arrows move, Enter selects. The list is filtered by `matchesSearch()` of `lib/table/search.ts`, the one search normaliser (trim + `toLocaleLowerCase("de")`), also used by the table toolbar. No match says „Keine Treffer“.
+- `Combobox` (`items: { value, label }[]`, `value` bindable string, `label?`, `placeholder?`, `disabled?`, FormField attrs `id`, `describedBy`, `invalid`): the first ArrowDown opens the list (it does not select), and so does typed text that arrives without a key press (paste, IME, autofill; #853 - bits-ui opens on keydown only); arrows move, Enter selects. The list is filtered by `matchesSearch()` of `lib/table/search.ts`, the one search normaliser (trim + `toLocaleLowerCase("de")`), also used by the table toolbar. No match says „Keine Treffer“.
 - `DatePicker` (`value` bindable ISO `YYYY-MM-DD` or `null`, `label`, `min?`, `max?`, `disabled?`, FormField attrs, `open?`): German segments, weeks start on Monday, weekday heads keyed by index. `@internationalized/date` is used inside only; the page sees ISO strings. An unparsable string reads as empty. The popover cannot be opened by a synthetic click in jsdom; unit tests pass `open`, the real opening is proven in the e2e.
 
 ### `<KPIStat>`
