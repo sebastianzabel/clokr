@@ -42,6 +42,7 @@ export const PERMISSION_RESOURCE_LABELS: Readonly<Record<PermissionResource, str
   "vocational-school": "Berufsschule",
   overtime: "Saldo und Überstundenkonto",
   "month-close": "Monats- und Jahresabschluss",
+  "month-correction": "Korrekturen abgeschlossener Monate",
   shift: "Schichten",
   "shift-config": "Schichtvorlagen und Besetzungsregeln",
   "shift-pattern": "Schicht-Wochenmuster",
@@ -133,6 +134,14 @@ export const PERMISSION_LABELS: Readonly<Record<PermissionKey, string>> = {
   "month-close:close:ZUGEWIESEN": "Monate im zugewiesenen Bereich abschließen",
   "month-close:unlock:ZUGEWIESEN": "Abgeschlossene Monate wieder entsperren",
   "month-close:close-year:ZUGEWIESEN": "Jahresübertrag im zugewiesenen Bereich erstellen",
+  "month-correction:read:EIGENE": "Eigene Korrekturanfragen für abgeschlossene Monate sehen",
+  "month-correction:read:ZUGEWIESEN":
+    "Korrekturanfragen für abgeschlossene Monate im zugewiesenen Bereich sehen",
+  "month-correction:create:EIGENE": "Korrektur für einen abgeschlossenen Monat anfragen",
+  "month-correction:create:ZUGEWIESEN":
+    "Korrekturen abgeschlossener Monate für Personen im zugewiesenen Bereich anfragen",
+  "month-correction:approve:ZUGEWIESEN":
+    "Korrekturanfragen für abgeschlossene Monate im zugewiesenen Bereich entscheiden",
   // ── Schichtplanung ──
   "shift:read:EIGENE": "Eigene Schichten lesen",
   "shift:read:ZUGEWIESEN": "Schichten im zugewiesenen Bereich lesen",

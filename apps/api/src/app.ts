@@ -37,6 +37,7 @@ import { leaveRoutes } from "./contexts/absence/api/leave";
 import { leaveLimitRoutes } from "./contexts/absence/api/leave-limits"; // Issue #836
 import { leavePlanRoutes } from "./contexts/absence/api/leave-plans"; // Issue #835
 import { overtimeRoutes } from "./contexts/working-time-account/api/overtime";
+import { monthCorrectionRoutes } from "./contexts/working-time-account/api/month-corrections"; // Issue #599
 import { reportRoutes } from "./composition/reports";
 import { reportsPeriodRoutes } from "./composition/reports-period"; // Issue #612
 import { settingsRoutes } from "./contexts/platform/api/settings";
@@ -443,6 +444,7 @@ export async function buildApp() {
   await app.register(leavePlanRoutes, { prefix: "/api/v1/leave/plans" }); // Issue #835
   await app.register(retroEntryRequestRoutes, { prefix: "/api/v1/retro-entry-requests" });
   await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });
+  await app.register(monthCorrectionRoutes, { prefix: "/api/v1/month-corrections" }); // Issue #599
   await app.register(reportRoutes, { prefix: "/api/v1/reports" });
   await app.register(reportsPeriodRoutes, { prefix: "/api/v1/reports" }); // Issue #612
   await app.register(settingsRoutes, { prefix: "/api/v1/settings" });
