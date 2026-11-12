@@ -2313,12 +2313,12 @@
     font-size: 12px;
   }
   .sp-coverage-cell--ok {
-    background: color-mix(in srgb, var(--ok) 12%, transparent);
+    background: var(--ok-soft);
     color: var(--ok);
   }
   .sp-coverage-cell--under,
   .sp-coverage-cell--supervision {
-    background: color-mix(in srgb, var(--bad) 14%, transparent);
+    background: var(--bad-soft);
     color: var(--bad);
   }
   .sp-coverage-num {
@@ -2482,7 +2482,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-3);
+    color: var(--text-2);
   }
   .sp-soll-cell {
     grid-column: 2 / -1;
@@ -2514,15 +2514,15 @@
     font-size: 12.5px;
   }
   .sp-soll-cell--ok {
-    background: color-mix(in srgb, var(--ok) 12%, transparent);
+    background: var(--ok-soft);
     color: var(--ok);
   }
   .sp-soll-cell--warn {
-    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    background: var(--warn-soft);
     color: var(--warn);
   }
   .sp-soll-cell--bad {
-    background: color-mix(in srgb, var(--bad) 14%, transparent);
+    background: var(--bad-soft);
     color: var(--bad);
   }
   /* Phase 76.23 — Unterdeckung (per-employee under-coverage vs contract Soll).
@@ -2543,7 +2543,7 @@
     font-size: 11.5px;
     font-weight: 600;
     color: var(--warn);
-    background: color-mix(in srgb, var(--warn) 10%, transparent);
+    background: var(--warn-soft);
     border-radius: var(--r-control);
     padding: 2px 8px;
     margin-top: 2px;
