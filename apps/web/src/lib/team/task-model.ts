@@ -63,6 +63,8 @@ export interface RetroTaskSource {
   startTime: string | null;
   endTime: string | null;
   entryAgeInDays?: number;
+  /** The reason the person gave (the row's context line, in quotes). */
+  reason?: string | null;
   createdAt: string;
 }
 
@@ -144,6 +146,13 @@ export interface TaskRowModel {
   label?: string;
   /** Same-origin app path of the row's „Klären“ / „Korrigieren“ link; `null` = the row has no link. */
   href?: string | null;
+  /**
+   * The row's one context line under the title (Issue #853-19, prototype „Aufgaben“): a Zeitnachtrag
+   * carries the person's reason in quotes. A leave row's line (Resturlaub danach, who else is away)
+   * is read per row by the page within the caller's permissions and passed to the row component; it
+   * is not part of this pure model. The other kinds' subtitle already is their one line.
+   */
+  context?: string | null;
 }
 
 // ── Mapping ──────────────────────────────────────────────────────────────────
@@ -196,6 +205,7 @@ function retroRow(r: RetroTaskSource): TaskRowModel | null {
     status: r.status,
     decided: !open,
     typeCode: null,
+    context: r.reason?.trim() ? `„${r.reason.trim()}“` : null,
   };
 }
 

@@ -10,6 +10,17 @@
 export type ReviewDecision = "APPROVED" | "REJECTED";
 
 /**
+ * The answer of the dialog's `decide()` (Issue #853-19): `ok` = the server answered and the toast was
+ * shown; `handedOver` = the decision continues in one of the dialog's follow-up dialogs (a booked
+ * appointment to confirm, a limit exception to give a reason for), which is not a failure; otherwise
+ * `message` is the server's (German) refusal.
+ */
+export type DirectDecision =
+  | { ok: true }
+  | { ok: false; handedOver: true }
+  | { ok: false; handedOver: false; message: string };
+
+/**
  * The toast after a decision was answered by the server. It names the person and the decision,
  * never the leave type: a sick-leave decision on a lock screen or a shared screen would be health
  * data (Art. 9 DSGVO, T-853-12).

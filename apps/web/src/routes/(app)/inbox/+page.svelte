@@ -37,8 +37,15 @@
     type TaskRowModel,
   } from "$lib/team/task-model"; // Issue #853 (D-853-06)
   import { urlState, oneOf } from "$lib/table/url-state"; // Issue #853 (D-853-06)
-  import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
+  import LeaveReviewDialog, {
+    SELF_APPROVAL_TEXT,
+  } from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
   import { parseInboxDeepLink, type InboxDeepLink } from "$lib/leave/inbox-deep-link"; // Issue #840 (D-840-05)
+  import { reviewResultToast } from "$lib/leave/review-facts"; // Issue #853-19: the toast after a decision
+  import TaskRowActions from "$lib/components/team/aufgaben/TaskRowActions.svelte"; // Issue #853-19
+  import type { VacationEntitlementRow } from "$lib/leave/vacation-balance";
+  import type { LeaveOverlapEntry } from "$lib/leave/leave-review";
+  import { createLeaveContextLoader } from "$lib/team/task-row-facts"; // Issue #853-19: the row's context line
 
   // ── Types ────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -116,6 +123,15 @@
   // under review.
   let detailRequest: LeaveRequest | null = $state(null);
   let detailOpen = $state(false);
+  // Issue #853-19: the dialog also decides a row straight from the list (`decide()`), so the page
+  // keeps a handle on it; `busyKey` is the row whose decision is under way.
+  let reviewDialog = $state<ReturnType<typeof LeaveReviewDialog> | null>(null);
+  let busyKey = $state<string | null>(null);
+  // The row whose „Ablehnen“ asks for the reason (the reason is required, D-853-09).
+  type RowRejectTarget =
+    { kind: "urlaub"; request: LeaveRequest } | { kind: "nachtrag"; retro: RetroEntryRequest };
+  let rowRejectTarget = $state<RowRejectTarget | null>(null);
+  let rowRejectOpen = $state(false);
 
   // ── RetroEntryRequest state ──────────────────────────────────────────────
   let retroRequests: RetroEntryRequest[] = $state([]);
@@ -273,6 +289,9 @@
     } finally {
       loading = false;
     }
+    // Every decision reloads through here, and a decision changes the figures of the other rows'
+    // context lines (Resturlaub, who is away): read them again.
+    resetRowContext();
   }
 
   // ── Deep links (Issue #840, D-840-05) ─────────────────────────────────────
@@ -479,6 +498,143 @@
   function section9Of(row: TaskRowModel): Section9Case | null {
     if (row.kind !== "paragraf9") return null;
     return section9Cases.find((c) => c.id === row.sourceId) ?? null;
+  }
+
+  // ── The context line of a leave row (Issue #853-19, prototype „Aufgaben“) ──────────────────────
+  // „Resturlaub danach 11 · niemand sonst ...“ (the sentence lives in task-row-facts.ts), read per open leave row of the current list from
+  // the two reads the decision dialog makes, within the caller's permissions (a fact the caller may
+  // not read is left out, `lib/team/task-row-facts.ts`). Only the rows in view are read, at most
+  // `CONTEXT_ROWS` of them, with cached reads (one per person and year / per period) and four reads
+  // in flight at most. A decision changes the figures of the other rows, so it starts a new epoch.
+  const CONTEXT_ROWS = 40;
+  const canReadEntitlementFact = $derived(
+    hasPermission($authStore.user, "leave-entitlement:read:ZUGEWIESEN"),
+  );
+  let contextEpoch = $state(0);
+  let rowContext = $state<Record<string, string>>({});
+  const contextReads = $derived.by(() => {
+    void contextEpoch;
+    return {
+      loader: createLeaveContextLoader(
+        {
+          entitlements: (employeeId, year) =>
+            api.get<VacationEntitlementRow[]>(`/leave/entitlements/${employeeId}?year=${year}`),
+          overlap: (startDate, endDate) =>
+            api.get<LeaveOverlapEntry[]>(
+              `/leave/overlap?startDate=${startDate}&endDate=${endDate}`,
+            ),
+        },
+        { canReadEntitlement: canReadEntitlementFact },
+      ),
+      requested: new Set<string>(),
+    };
+  });
+
+  $effect(() => {
+    const reads = contextReads;
+    if (taskView.ansicht !== "offen") return;
+    const rows = visibleTaskRows.filter((r) => r.kind === "urlaub" && !r.decided);
+    for (const row of rows.slice(0, CONTEXT_ROWS)) {
+      const req = leaveOf(row);
+      if (!req || reads.requested.has(req.id)) continue;
+      reads.requested.add(req.id);
+      void reads.loader.load(req).then((line) => {
+        // An answer of an older epoch is dropped.
+        if (line && reads === contextReads) rowContext = { ...rowContext, [req.id]: line };
+      });
+    }
+  });
+
+  /** After a decision the figures of the other rows are stale: forget them and read again. */
+  function resetRowContext() {
+    rowContext = {};
+    contextEpoch += 1;
+  }
+
+  // ── Deciding straight from the row (Issue #853-19) ───────────────────────────────────────────
+  // „Genehmigen“ acts at once through the existing approve call. A dialog appears only where one is
+  // needed: „Ablehnen“ asks for the required reason (`ReasonDialog`), and an approval that needs an
+  // explicit step (an appointment to confirm, a limit exception) continues in the dialog's own
+  // follow-up dialogs. Every refusal of the server is shown as it is worded.
+  function errorText(e: unknown): string {
+    const apiErr = e as { data?: { error?: string }; message?: string };
+    return apiErr?.data?.error ?? apiErr?.message ?? "Fehler";
+  }
+
+  /** Points the shared dialog at the row's request (it works on its `request` prop). */
+  async function aimDialog(req: LeaveRequest) {
+    detailRequest = req;
+    detailOpen = false;
+    await tick();
+  }
+
+  async function approveRow(row: TaskRowModel) {
+    if (busyKey) return;
+    const request = leaveOf(row);
+    const retro = retroOf(row);
+    busyKey = row.key;
+    try {
+      if (request) {
+        await aimDialog(request);
+        // A failure is toasted by the dialog, a hand-over continues in its follow-up dialog, and a
+        // success reloads through `onReviewed`.
+        await reviewDialog?.decide("APPROVED");
+      } else if (retro) {
+        await decideRetroRow(retro, "APPROVED");
+      }
+    } catch (e: unknown) {
+      toasts.error(errorText(e));
+    } finally {
+      busyKey = null;
+    }
+  }
+
+  function askRejectReason(row: TaskRowModel) {
+    if (busyKey) return;
+    const request = leaveOf(row);
+    const retro = retroOf(row);
+    if (request) rowRejectTarget = { kind: "urlaub", request };
+    else if (retro) rowRejectTarget = { kind: "nachtrag", retro };
+    else return;
+    rowRejectOpen = true;
+  }
+
+  /** The ReasonDialog's confirm: it throws to stay open and show the refusal inline. */
+  async function confirmRowReject(reason: string) {
+    const target = rowRejectTarget;
+    if (!target) return;
+    if (target.kind === "urlaub") {
+      await aimDialog(target.request);
+      const result = await reviewDialog?.decide("REJECTED", reason, { toastErrors: false });
+      if (!result) throw new Error("Fehler");
+      if (!result.ok && !result.handedOver) throw new Error(result.message);
+    } else {
+      await decideRetroRow(target.retro, "REJECTED", reason);
+    }
+    rowRejectTarget = null;
+  }
+
+  /** The Zeitnachtrag decision of a row: the dialog's own PATCH, without a manager correction. */
+  async function decideRetroRow(
+    retro: RetroEntryRequest,
+    status: "APPROVED" | "REJECTED",
+    reason?: string,
+  ) {
+    await api.patch(`/retro-entry-requests/${retro.id}/review`, {
+      status,
+      reviewNote: reason?.trim() ? reason : null,
+    });
+    toasts.success(
+      reviewResultToast(status, `${retro.employee.firstName} ${retro.employee.lastName}`),
+    );
+    await loadRetroRequests();
+  }
+
+  /** The caller's own request: nobody decides it for themselves (four eyes, as in the dialog). */
+  function isOwnRow(row: TaskRowModel): boolean {
+    const own = $authStore.user?.employeeId;
+    if (!own) return false;
+    return (leaveOf(row) ?? retroOf(row))?.employeeId === own;
   }
 
   // ── Detail modal ─────────────────────────────────────────────────────────
@@ -779,6 +935,7 @@
           <TaskRow
             {row}
             typeLabel={row.typeCode ? typeName(row.typeCode) : undefined}
+            context={request ? (rowContext[request.id] ?? null) : null}
             rowId={c ? `section9-${c.id}` : undefined}
             highlight={c !== null && highlightSection9Id === c.id}
             onOpen={request
@@ -789,10 +946,10 @@
           >
             {#snippet actions()}
               <!--
-                One neutral „Prüfen“ button on an open row: the approve/reject controls live inside
-                the dialog, behind an explicit confirmation step (REVIEW WR-02), so the row never
-                offers an immediate decision. A decided row has no button; its title opens the
-                details.
+                An open leave or Zeitnachtrag row decides in the row (Issue #853-19): „Ablehnen“ (ghost)
+                asks for the required reason, „Genehmigen“ (primary) acts through the existing approve
+                call; the title still opens the full dialog. A decided row has no button. The caller's
+                own request shows the four-eyes note instead of the buttons.
               -->
               {#if c}
                 <!-- § 9 (Phase 104-10, R6/D-11): the three existing actions, unchanged handlers -->
@@ -826,7 +983,7 @@
                   the existing dialogs. A row whose stored link is not a same-origin app path has no link.
                 -->
                 {#if row.href}
-                  <a class="btn btn-primary btn-sm" href={row.href}>
+                  <a class="btn btn-secondary btn-sm" href={row.href}>
                     {row.kind === "pausenbefund"
                       ? "Klären"
                       : row.kind === "ausstempeln"
@@ -834,13 +991,19 @@
                         : "Prüfen"}
                   </a>
                 {/if}
-              {:else if !row.decided}
-                <button
-                  class="btn btn-primary btn-sm"
-                  onclick={() => (request ? openDetail(request) : retro && openRetroDetail(retro))}
-                >
-                  Prüfen
-                </button>
+              {:else if !row.decided && (request || retro)}
+                <TaskRowActions
+                  kind={row.kind}
+                  sourceId={row.sourceId}
+                  personName={row.personName}
+                  cancellation={row.status === "CANCELLATION_REQUESTED"}
+                  own={isOwnRow(row)}
+                  ownNote={SELF_APPROVAL_TEXT}
+                  busy={busyKey !== null}
+                  deciding={busyKey === row.key}
+                  onApprove={() => approveRow(row)}
+                  onReject={() => askRejectReason(row)}
+                />
               {/if}
             {/snippet}
           </TaskRow>
@@ -1020,8 +1183,26 @@
   />
 {/if}
 
+<!-- ── Issue #853-19: „Ablehnen“ in a row asks for the required reason ─────────────────── -->
+{#if rowRejectTarget}
+  <ReasonDialog
+    bind:open={rowRejectOpen}
+    title={rowRejectTarget.kind === "nachtrag"
+      ? "Zeitnachtrag ablehnen"
+      : rowRejectTarget.request.status === "CANCELLATION_REQUESTED"
+        ? "Stornierung ablehnen"
+        : "Antrag ablehnen"}
+    description="Die Begründung wird zur Nachvollziehbarkeit mit der Ablehnung gespeichert."
+    confirmLabel="Ablehnen"
+    danger
+    onConfirm={confirmRowReject}
+    onCancel={() => (rowRejectTarget = null)}
+  />
+{/if}
+
 <!-- ── Leave detail modal (Phase 255: the shared LeaveReviewDialog component) ──────── -->
 <LeaveReviewDialog
+  bind:this={reviewDialog}
   bind:open={detailOpen}
   request={detailRequest}
   currentEmployeeId={$authStore.user?.employeeId ?? null}

@@ -902,8 +902,8 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
 
   // The inbox is the one place requests are decided (D-840-03). Since #853 its rows are `TaskRow`s
   // (test id `task-row-<kind>-<id>`) in the list `inbox-task-list`; they keep the `onPrimary` mode of
-  // `ListRow`: the name is the one row button and the „Prüfen“ button is its sibling, so axe
-  // `nested-interactive` has nothing to report.
+  // `ListRow`: the name is the one row button and the „Ablehnen“ / „Genehmigen“ buttons (#853-19) are
+  // its siblings, so axe `nested-interactive` has nothing to report.
   test("5b. axe: the inbox with an open request", async ({ page, request, tenant }) => {
     const first = firstOfNextMonth();
     const employee = await createEmployee(request, tenant, {
@@ -1049,10 +1049,14 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(head.locator(".eyebrow")).toHaveCount(0);
     await expect(head.getByRole("heading", { level: 1 })).toHaveText("Aufgaben"); // Issue #574: one page name
     await expect(head.locator("h1 em")).toHaveCount(0);
-    const inboxChip = page.locator('[data-testid^="task-row-urlaub-"] .leave-type-chip').first();
+    // #853-19 (prototype „Aufgaben“): the inbox row names its type with the plain Chip - the dashed
+    // LeaveTypeChip of G-3 stays on the Anträge list, where the timeline style belongs.
+    const inboxRow = page.locator('[data-testid^="task-row-urlaub-"]').first();
+    await expect(inboxRow).toBeVisible();
+    await expect(inboxRow.locator(".leave-type-chip")).toHaveCount(0);
+    const inboxChip = inboxRow.locator(".chip", { hasText: "Urlaub" }).first();
     await expect(inboxChip).toBeVisible();
-    expect(await borderStyleOf(inboxChip)).toBe("dashed");
-    expect(await inboxChip.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(vacation);
+    expect(await borderStyleOf(inboxChip)).not.toBe("dashed");
   });
 
   test("8. Abwesenheit eintragen: Für wen? + Art, then Von + Bis; stacked on a phone", async ({

@@ -1,5 +1,6 @@
-// Issue #853 (D-853-06) - the Aufgaben row: person as title, period as subtitle, the type as the one
-// LeaveTypeChip (dashed while the request waits), the status as a Chip, test id and kind on the li.
+// Issue #853 (D-853-06, #853-19) - the Aufgaben row: person as title, period as subtitle, one context
+// line, the type as a plain Chip (no dashed LeaveTypeChip any more), the status as a Chip, test id and
+// kind on the li.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen } from "@testing-library/svelte";
 import { createRawSnippet } from "svelte";
@@ -32,34 +33,35 @@ const retroRow: TaskRowModel = {
 };
 
 const actions = createRawSnippet(() => ({
-  render: () => '<button type="button" data-testid="act">Prüfen</button>',
+  render: () => '<button type="button" data-testid="act">Genehmigen</button>',
 }));
 
 describe("TaskRow - leave row", () => {
-  it("shows title, subtitle, the type chip with the passed label and the status chip", () => {
+  it("shows title, subtitle, the type as a plain chip with the passed label and the status chip", () => {
     const { container } = renderWithTheme(TaskRow, { row: leaveRow, typeLabel: "Urlaub" });
     expect(screen.getByText("Mia Muster")).toBeTruthy();
     expect(screen.getByText("14.12.2026 – 18.12.2026 · 4 Arbeitstage")).toBeTruthy();
-    const chip = container.querySelector(".leave-type-chip")!;
-    expect(chip.textContent).toBe("Urlaub");
+    const chips = Array.from(container.querySelectorAll(".chip"));
+    expect(chips.map((c) => c.textContent?.trim())).toEqual(["Urlaub", "Ausstehend"]);
     expect(screen.getByText("Ausstehend")).toBeTruthy();
   });
 
-  it("draws a waiting request dashed and a cancellation request as such", () => {
+  it("draws NO dashed type chip (#853-19): a waiting and a cancelled request both get the plain chip", () => {
     const { container } = renderWithTheme(TaskRow, { row: leaveRow, typeLabel: "Urlaub" });
-    expect(container.querySelector(".leave-type-chip--requested")).not.toBeNull();
+    expect(container.querySelector(".leave-type-chip")).toBeNull();
+    expect(container.querySelector(".leave-type-chip--requested")).toBeNull();
     cleanup();
     const cancel = renderWithTheme(TaskRow, {
       row: { ...leaveRow, status: "CANCELLATION_REQUESTED" },
       typeLabel: "Urlaub",
     });
-    expect(cancel.container.querySelector(".leave-type-chip--requested")).toBeNull();
+    expect(cancel.container.querySelector(".leave-type-chip")).toBeNull();
     expect(screen.getByText("Stornierung beantragt")).toBeTruthy();
   });
 
   it("falls back to the code when no label is passed", () => {
     const { container } = renderWithTheme(TaskRow, { row: leaveRow });
-    expect(container.querySelector(".leave-type-chip")!.textContent).toBe("VACATION");
+    expect(container.querySelector(".chip")!.textContent?.trim()).toBe("VACATION");
   });
 
   it("puts a decided status chip on a decided row", () => {
@@ -158,7 +160,7 @@ describe("TaskRow - test id, kind, row id, highlight, actions", () => {
   it("renders the passed buttons under the text and makes the title the open button", async () => {
     const onOpen = vi.fn();
     renderWithTheme(TaskRow, { row: leaveRow, actions, onOpen });
-    expect(screen.getByTestId("act").textContent).toBe("Prüfen");
+    expect(screen.getByTestId("act").textContent).toBe("Genehmigen");
     await fireEvent.click(screen.getByRole("button", { name: "Mia Muster" }));
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
@@ -166,5 +168,37 @@ describe("TaskRow - test id, kind, row id, highlight, actions", () => {
   it("renders no button of its own without actions and without an open handler", () => {
     const { container } = renderWithTheme(TaskRow, { row: leaveRow });
     expect(container.querySelector("button")).toBeNull();
+  });
+});
+
+describe("TaskRow - the one context line (#853-19)", () => {
+  it("shows the context the page passes for a leave row, between the subtitle and the chips", () => {
+    const { container } = renderWithTheme(TaskRow, {
+      row: leaveRow,
+      typeLabel: "Urlaub",
+      context: "Resturlaub danach 11 · niemand sonst abwesend",
+    });
+    const line = screen.getByTestId("list-row-context");
+    expect(line.textContent).toBe("Resturlaub danach 11 · niemand sonst abwesend");
+    const text = container.querySelector(".list-text")!;
+    const order = Array.from(text.children).map((c) => c.className.split(" ")[0]);
+    expect(order).toEqual(["list-title", "list-subtitle", "list-subtitle", "list-meta"]);
+  });
+
+  it("shows the model's own context (the reason of a Zeitnachtrag, in quotes)", () => {
+    renderWithTheme(TaskRow, {
+      row: { ...retroRow, context: "„Kasse hat beim Ausstempeln gehakt“" },
+    });
+    expect(screen.getByTestId("list-row-context").textContent).toBe(
+      "„Kasse hat beim Ausstempeln gehakt“",
+    );
+  });
+
+  it("the page's line wins over the model's, and no line means no extra element", () => {
+    renderWithTheme(TaskRow, { row: { ...retroRow, context: "alt" }, context: "neu" });
+    expect(screen.getByTestId("list-row-context").textContent).toBe("neu");
+    cleanup();
+    renderWithTheme(TaskRow, { row: leaveRow });
+    expect(screen.queryByTestId("list-row-context")).toBeNull();
   });
 });

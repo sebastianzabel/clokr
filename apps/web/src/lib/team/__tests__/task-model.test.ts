@@ -488,3 +488,33 @@ describe("availableTaskKinds", () => {
     ).toEqual(["ausstempeln", "zeitkorrektur"]);
   });
 });
+
+// Issue #853-19 - the one context line under the title (prototype „Aufgaben“).
+describe("taskRowsFrom - context line (#853-19)", () => {
+  it("a Zeitnachtrag carries the person's reason in quotes, trimmed", () => {
+    const [row] = taskRowsFrom(
+      { retro: [retro({ id: "n", reason: "  Kasse hat beim Ausstempeln gehakt " })] },
+      { leaveDays },
+    );
+    expect(row.context).toBe("„Kasse hat beim Ausstempeln gehakt“");
+  });
+
+  it("a Zeitnachtrag without a reason has no context line (never an empty pair of quotes)", () => {
+    const rows = taskRowsFrom(
+      {
+        retro: [
+          retro({ id: "a", reason: null }),
+          retro({ id: "b", reason: "   " }),
+          retro({ id: "c" }),
+        ],
+      },
+      { leaveDays },
+    );
+    expect(rows.map((r) => r.context)).toEqual([null, null, null]);
+  });
+
+  it("a leave row has no context in the pure model: the page reads it within the caller's permissions", () => {
+    const [row] = taskRowsFrom({ leave: [leave({ id: "a" })] }, { leaveDays });
+    expect(row.context).toBeUndefined();
+  });
+});

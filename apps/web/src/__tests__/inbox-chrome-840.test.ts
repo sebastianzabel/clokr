@@ -1,10 +1,10 @@
 // Issue #840 G-3, G-8 - source pins of the inbox chrome: the header follows the leave pages'
-// PageHead pattern and the type chip of a leave row is the one LeaveTypeChip (colour from the
-// mapping, never the brand colour). The #558 constraints of this exempt page are re-asserted.
+// PageHead pattern and (since #853-19) the type of a leave row is a plain Chip, not the dashed
+// LeaveTypeChip of #840 G-3. The #558 constraints of this exempt page are re-asserted.
 //
 // Source-read for the same reason as `inbox-section9-840.test.ts`: the page imports `$app/*`,
-// mounts several dialogs and fires its requests on mount. The chip itself is proven mounted in
-// `lib/components/leave/__tests__/LeaveTypeChip.test.ts`, the colours in the browser by
+// mounts several dialogs and fires its requests on mount. The row chip is proven mounted in
+// `lib/components/team/aufgaben/__tests__/TaskRow.test.ts`, the look in the browser by
 // `apps/e2e/tests/leave-area-840.spec.ts` (test 7).
 
 import { readFileSync } from "node:fs";
@@ -48,14 +48,14 @@ describe("Issue #840 G-8 / G-3 - the inbox chrome", () => {
     expect(INBOX).not.toMatch(/<PageHead[^>]*accent=/);
   });
 
-  it("[G-3] the type chip of a leave row is LeaveTypeChip, dashed for a PENDING request", () => {
-    expect(TASK_ROW).toContain(
-      'import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"',
-    );
-    expect(TASK_ROW).toContain("<LeaveTypeChip");
-    expect(TASK_ROW).toContain("code={row.typeCode}");
-    expect(TASK_ROW).toContain("label={typeLabel ?? row.typeCode}");
-    expect(TASK_ROW).toContain('requested={row.status === "PENDING"}');
+  it("[G-3, #853-19] the type chip of a leave row is a plain Chip: no LeaveTypeChip, no dashed border, the label comes from the type rule", () => {
+    // #853-19 (prototype „Aufgaben“): the dashed LeaveTypeChip of #840 G-3 is replaced by the normal
+    // Chip - the waiting state is said by the status chip and the list itself, not by a dashed border.
+    expect(TASK_ROW).not.toContain("LeaveTypeChip");
+    expect(TASK_ROW).not.toContain("requested=");
+    expect(TASK_ROW).not.toContain("dashed");
+    expect(TASK_ROW).toContain('{#if row.kind === "urlaub" && row.typeCode}');
+    expect(TASK_ROW).toContain('<Chip tone="neutral">{typeLabel ?? row.typeCode}</Chip>');
     // The page hands the row the label of the existing type rule, never the code or the brand colour.
     expect(INBOX).toContain("typeLabel={row.typeCode ? typeName(row.typeCode) : undefined}");
     expect(INBOX).not.toMatch(/chip-brand">\{typeName\(/);

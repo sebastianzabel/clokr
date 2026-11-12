@@ -34,6 +34,8 @@
   interface Props {
     title: string;
     subtitle?: string;
+    /** A second muted line under the subtitle (Issue #853-19: the task context line). Text only. */
+    context?: string;
     /** Key of the stable avatar colour; defaults to the title. */
     avatarKey?: string;
     /** Set false for a row without avatar. */
@@ -60,6 +62,7 @@
   let {
     title,
     subtitle,
+    context,
     avatarKey,
     avatar = true,
     variant = "default",
@@ -105,6 +108,7 @@
       <span class="list-title">{title}</span>
     {/if}
     {#if subtitle}<span class="list-subtitle">{subtitle}</span>{/if}
+    {#if context}<span class="list-subtitle" data-testid="list-row-context">{context}</span>{/if}
     {#if meta}<div class="list-meta">{@render meta()}</div>{/if}
   </div>
   {#if variant === "task"}

@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** Shown instead of the decision buttons on the caller's own request (the dialog and the task row). */
+  export const SELF_APPROVAL_TEXT = "Eigene Anträge können nicht selbst genehmigt werden.";
+</script>
+
 <script lang="ts">
   /**
    * LeaveReviewDialog — Phase 255 (GitHub issue #255).
@@ -60,6 +65,7 @@
     reviewResultToast,
     shiftLines,
     vacationBeforeAfter,
+    type DirectDecision,
     type RangeShift,
   } from "$lib/leave/review-facts"; // Issue #853 (S-29, D-853-08)
   import { mapVacationBalance, type VacationEntitlementRow } from "$lib/leave/vacation-balance";
@@ -254,8 +260,49 @@
   );
 
   // ── Mutation ─────────────────────────────────────────────────────────────
-  async function submitReview(status: "APPROVED" | "REJECTED") {
-    if (!request) return;
+  /**
+   * Issue #853-19: the decision of a task row, without the dialog being opened. The page sets
+   * `request` to the row's request first; this runs EXACTLY the path of the dialog's buttons
+   * (`submitReview`: appointment-collision warning on a leave approval, `runReview`: the PATCH, the
+   * sick-leave attest write, the toast, the reload, the limit-exception hand-over), so a row decision
+   * and a dialog decision can never differ. The attest fields are initialised from the request like
+   * the open-effect does, so a sick-leave approval writes back exactly what is stored.
+   *
+   * A rejection needs its reason (D-853-09): the row asks for it in a `ReasonDialog` and passes it in;
+   * an empty reason is refused here a second time. With `toastErrors: false` the caller shows the
+   * refusal itself (the reason dialog keeps it inline).
+   */
+  export async function decide(
+    status: "APPROVED" | "REJECTED",
+    reason?: string,
+    options?: { toastErrors?: boolean },
+  ): Promise<DirectDecision> {
+    const req = request;
+    if (!req) return { ok: false, handedOver: false, message: "Kein Antrag ausgewählt." };
+    if (isSelfApproval) return { ok: false, handedOver: false, message: SELF_APPROVAL_TEXT };
+    if (!isDecidable) {
+      return { ok: false, handedOver: false, message: "Antrag bereits entschieden." };
+    }
+    const text = reason?.trim() ?? "";
+    if (status === "REJECTED" && text === "") {
+      return { ok: false, handedOver: false, message: "Bitte nenne einen Grund." };
+    }
+    note = text;
+    error = "";
+    attestPresent = req.attestPresent ?? false;
+    attestFrom = req.attestValidFrom ?? "";
+    attestTo = req.attestValidTo ?? "";
+    const outcome = await submitReview(status, options?.toastErrors ?? true);
+    if (outcome === "done") return { ok: true };
+    if (outcome === "handover") return { ok: false, handedOver: true };
+    return { ok: false, handedOver: false, message: error || "Fehler" };
+  }
+
+  async function submitReview(
+    status: "APPROVED" | "REJECTED",
+    toastErrors = true,
+  ): Promise<"done" | "failed" | "handover"> {
+    if (!request) return "failed";
     // Pre-check only a genuine leave APPROVAL. A CANCELLATION_REQUESTED review shares this
     // "APPROVED" path, but approving a cancellation makes the employee present again — booked
     // appointments are a reason TO cancel, not a risk of proceeding — so the collision warning
@@ -273,14 +320,24 @@
         // two Modal instances, their `inert`-on-siblings logic would fight over focus).
         open = false;
         collisionOpen = true;
-        return;
+        return "handover";
       }
       if (summary === null) {
         // Fail-open: proceed with the approval, surface a non-blocking notice.
         toasts.error(COLLISION_UNAVAILABLE_TOAST);
       }
     }
-    await runReview(status, { id: request.id, typeCode: request.typeCode });
+    // A new decision supersedes an exception step left over from an earlier refused one.
+    pendingException = null;
+    const ok = await runReview(
+      status,
+      { id: request.id, typeCode: request.typeCode },
+      undefined,
+      toastErrors,
+    );
+    if (ok) return "done";
+    // The server asked for a limit exception: the reason dialog took over.
+    return pendingException !== null ? "handover" : "failed";
   }
 
   // Confirm handler for the collision dialog on the approve path. Throws on failure so
@@ -321,6 +378,7 @@
     status: "APPROVED" | "REJECTED",
     ctx: { id: string; typeCode: CalendarTypeCode },
     extra?: { limitException?: { reason: string } },
+    toastErrors = true,
   ): Promise<boolean> {
     saving = true;
     error = "";
@@ -368,7 +426,7 @@
       error = apiErr?.data?.error ?? apiErr?.message ?? "Fehler";
       // If the review Modal was already closed (collision-confirm path), the inline error above
       // is not visible — surface it via a toast instead.
-      if (!open) toasts.error(error);
+      if (!open && toastErrors) toasts.error(error);
       return false;
     } finally {
       saving = false;
@@ -535,7 +593,7 @@
       <span class="spacer"></span>
       {#if isSelfApproval}
         <p class="text-muted self-approval-note" data-testid="leave-approval-modal-self-block">
-          Eigene Anträge können nicht selbst genehmigt werden.
+          {SELF_APPROVAL_TEXT}
         </p>
       {:else if isDecidable}
         {#if reasonMissing}

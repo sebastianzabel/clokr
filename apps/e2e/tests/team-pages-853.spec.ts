@@ -312,9 +312,10 @@ test.describe("Team-Seiten: Barrierefreiheit und Kopf (AC-4)", () => {
 
 const dialogOf = (page: Page) => page.getByRole("dialog");
 
-// Aufgaben: „Prüfen“ on the first open task opens the decision dialog in view.
+// Aufgaben: an open leave task decides in its row (#853-19); „Ablehnen“ asks for the required reason
+// in a dialog, which must open in view (it replaced „Prüfen“, which opened the decision dialog).
 defineVisibilityWalkthrough({
-  title: "Team Aufgaben Prüfen",
+  title: "Team Aufgaben Ablehnen",
   path: "/team/aufgaben",
   seed: async ({ request, tenant }) => {
     const person = await createEmployee(request, tenant, {
@@ -329,11 +330,11 @@ defineVisibilityWalkthrough({
   },
   steps: [
     {
-      name: "Prüfen",
+      name: "Ablehnen",
       act: async (page) => {
         await page
           .getByTestId("inbox-task-list")
-          .getByRole("button", { name: "Prüfen", exact: true })
+          .getByRole("button", { name: /^Ablehnen: Antrag von / })
           .first()
           .click();
       },

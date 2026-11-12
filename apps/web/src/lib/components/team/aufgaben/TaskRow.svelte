@@ -1,18 +1,21 @@
 <script lang="ts">
   // Issue #853 (D-853-06, D-853-18) - one row of the Aufgaben list: a `ListRow` of the task variant.
   // Template only: the page decides which row exists, what the title button opens and which buttons
-  // sit under the text. A leave row shows its type as the one `LeaveTypeChip` (dashed while the
-  // request waits, #840 G-3) and the status as a `Chip`; the other kinds show the kind as a chip.
+  // sit under the text. Issue #853-19 (prototype „Aufgaben“): every row has ONE context line under the
+  // title (`row.context`, or the `context` prop the page read for a leave row within the caller's
+  // permissions), and a leave row names its type as a plain `Chip` (a plain pill); the status
+  // stays a `Chip` next to it.
   import type { Snippet } from "svelte";
   import ListRow from "$components/ui/ListRow.svelte";
   import Chip, { type ChipTone } from "$components/ui/Chip.svelte";
-  import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte";
   import { taskKindLabel, type TaskRowModel } from "$lib/team/task-model";
 
   interface Props {
     row: TaskRowModel;
     /** The label of the leave type (only read for a leave row). */
     typeLabel?: string;
+    /** The context line the page read for this row (a leave row); wins over the model's own. */
+    context?: string | null;
     /** The `id` of the `li` (a deep link target). */
     rowId?: string;
     /** Tints the row (a deep-linked entry). */
@@ -23,7 +26,7 @@
     actions?: Snippet;
   }
 
-  let { row, typeLabel, rowId, highlight = false, onOpen, actions }: Props = $props();
+  let { row, typeLabel, context, rowId, highlight = false, onOpen, actions }: Props = $props();
 
   const STATUS: Record<string, { label: string; tone: ChipTone }> = {
     PENDING: { label: "Ausstehend", tone: "warn" },
@@ -37,12 +40,14 @@
   };
 
   const status = $derived(STATUS[row.status]);
+  const contextLine = $derived(context ?? row.context ?? undefined);
 </script>
 
 <ListRow
   variant="task"
   title={row.title}
   subtitle={row.subtitle}
+  context={contextLine}
   avatarKey={row.personName}
   testId={`task-row-${row.kind}-${row.sourceId}`}
   kind={row.kind}
@@ -53,11 +58,7 @@
 >
   {#snippet meta()}
     {#if row.kind === "urlaub" && row.typeCode}
-      <LeaveTypeChip
-        code={row.typeCode}
-        label={typeLabel ?? row.typeCode}
-        requested={row.status === "PENDING"}
-      />
+      <Chip tone="neutral">{typeLabel ?? row.typeCode}</Chip>
     {:else}
       <Chip tone="info">{row.label ?? taskKindLabel(row.kind)}</Chip>
     {/if}
