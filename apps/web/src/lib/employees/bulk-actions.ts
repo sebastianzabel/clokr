@@ -75,7 +75,8 @@ export function bulkSummaryText(
 
   if (failed === 0) return `${doneText}.`;
   if (done === 0) {
-    const none = kind === "invitation" ? "Keine Einladung gesendet" : "Keine Rolle zugewiesen";
+    const none =
+      kind === "invitation" ? "Keine Einladung gesendet" : "Die Rolle wurde niemandem zugewiesen";
     return `${none}: ${failureList(result, nameOf)}.`;
   }
   return `${doneText}, ${failed} nicht: ${failureList(result, nameOf)}.`;

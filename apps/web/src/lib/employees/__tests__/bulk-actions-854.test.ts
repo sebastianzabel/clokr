@@ -100,7 +100,7 @@ describe("bulkSummaryText", () => {
       { id: "b", message: "Bereits zugewiesen." },
     ];
     expect(bulkSummaryText("role", { ok: [], failed }, nameOf)).toBe(
-      "Keine Rolle zugewiesen: Muster, Max (Nicht erlaubt.); Beispiel, Eva (Bereits zugewiesen.).",
+      "Die Rolle wurde niemandem zugewiesen: Muster, Max (Nicht erlaubt.); Beispiel, Eva (Bereits zugewiesen.).",
     );
     expect(bulkSummaryText("invitation", { ok: ["c"], failed }, nameOf)).toBe(
       "1 Einladung gesendet, 2 nicht: Muster, Max (Nicht erlaubt.); Beispiel, Eva (Bereits zugewiesen.).",

@@ -1,7 +1,7 @@
 <!--
   BulkRoleDialog - the choice of ONE role and scope for several selected persons (Issue #854,
   D-854-09). It stores nothing: it is the AssignmentDialog in its draft mode, so the role list, the
-  scope choice (Ganzes Unternehmen / Ausgewählte Salons / Ausgewählte Personen), the wording and the
+  scope choice (whole company, selected salons, selected persons), the wording and the
   hint for company-wide rights are exactly those of a single assignment. The page then previews the
   persons and posts one assignment per person through the existing endpoint.
 -->

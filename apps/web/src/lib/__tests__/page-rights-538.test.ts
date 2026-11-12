@@ -428,7 +428,9 @@ describe("the employee list shows roles only from the stored assignments (Issue 
     expect(src).toContain("listRoleAssignments(");
     expect(src).toContain("let showRoles = $derived(assignmentsByUser !== null);");
     expect(src).toContain("if (!canAssignRoles)");
-    expect(src).toContain("{#if showRoles}");
+    // #854: the role column, the role filter and the „Rollen“ figure each wait for the names.
+    expect(src.match(/\.\.\.\(showRoles/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(src).toMatch(/key: "role",\s*label: "Rolle"/);
   });
 
   it("the team absence page (formerly the team calendar) no longer renders a role under a name", () => {

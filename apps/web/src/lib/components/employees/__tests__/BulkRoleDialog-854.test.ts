@@ -19,6 +19,7 @@ vi.mock("$api/client", () => {
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
+import { SCOPE_TENANT_LABEL } from "$lib/roles/assignment-label";
 import BulkRoleDialog from "../BulkRoleDialog.svelte";
 
 const ROLE = {
@@ -50,7 +51,7 @@ describe("BulkRoleDialog", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("3 ausgewählte Personen")).toBeInTheDocument();
     expect(within(dialog).getByRole("option", { name: "Probe-Rolle" })).toBeInTheDocument();
-    for (const name of ["Ganzes Unternehmen", "Ausgewählte Salons", "Ausgewählte Personen"]) {
+    for (const name of [SCOPE_TENANT_LABEL, "Ausgewählte Salons", "Ausgewählte Personen"]) {
       expect(within(dialog).getByRole("radio", { name })).toBeInTheDocument();
     }
   });

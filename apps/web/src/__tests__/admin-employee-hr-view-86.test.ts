@@ -86,14 +86,10 @@ describe("/admin/employees - employment state and filter (Issue #86, AC-86-6)", 
     expect(LIST).toMatch(/employmentState\([^)]*exitDate/);
   });
 
-  it("offers the Beschäftigung select with the four options and filters by kind only", () => {
-    expect(LIST).toMatch(/aria-label="Nach Beschäftigung filtern"/);
-    for (const label of [
-      "Alle Beschäftigungen",
-      "Beschäftigt",
-      "Austritt geplant",
-      "Ausgeschieden",
-    ]) {
+  it("offers the Beschäftigung filter with the three kinds and filters by kind only", () => {
+    // #854: the filter is a group of the toolbar popover („Alle“ is the toolbar's own option).
+    expect(LIST).toMatch(/key: "employment",\s*label: "Beschäftigung"/);
+    for (const label of ["Beschäftigt", "Austritt geplant", "Ausgeschieden"]) {
       expect(LIST, label).toContain(label);
     }
     expect(LIST).toMatch(/filterEmployment/);
