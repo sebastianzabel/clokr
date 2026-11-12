@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import auditLabels from "@clokr/types/audit-labels.json";
+import { actionLabel, actorKindLabel, entityLabel, exportTypeLabel, fieldLabel } from "../labels";
 
 function webSrcRoot(): string {
   try {
@@ -477,5 +478,41 @@ describe("audit vocabulary covers the API's writers", () => {
     }
     expect(Object.keys(labels.fields["*"]).length).toBeGreaterThan(10);
     expect(Object.keys(labels.fields.TenantConfig).length).toBeGreaterThan(100);
+  });
+});
+
+// ── The web accessor is total ────────────────────────────────────────────────────────────────
+
+describe("audit label accessors", () => {
+  it("pass known codes through", () => {
+    expect(actionLabel("CREATE")).toBe("Angelegt");
+    expect(actionLabel("EXPORT")).toBe("Exportiert");
+    expect(entityLabel("TimeEntry")).toBe("Zeiteintrag");
+    expect(exportTypeLabel("DATEV")).toBe("DATEV-Export");
+    expect(actorKindLabel("operator")).toBe("Betreiber");
+    expect(actorKindLabel("system")).toBe("System");
+  });
+
+  it("never show an unknown code raw: they read the fallback", () => {
+    expect(actionLabel("SOME_NEW_ACTION")).toBe("Sonstige Änderung");
+    expect(entityLabel("SomeNewEntity")).toBe("Sonstige Änderung");
+    expect(exportTypeLabel("SOME_NEW_EXPORT")).toBe("Sonstige Änderung");
+    expect(actionLabel("")).toBe("Sonstige Änderung");
+  });
+
+  it("does not read inherited object members as codes", () => {
+    for (const code of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(actionLabel(code)).toBe("Sonstige Änderung");
+      expect(entityLabel(code)).toBe("Sonstige Änderung");
+      expect(fieldLabel(code, code)).toBe(labels.fieldFallback);
+    }
+  });
+
+  it("resolves a field from its entity, then from the common fields, then neutrally", () => {
+    expect(fieldLabel("TimeEntry", "breakMinutes")).toBe("Pause in Minuten");
+    expect(fieldLabel("TimeEntry", "note")).toBe("Notiz");
+    expect(fieldLabel("UnknownEntity", "note")).toBe("Notiz");
+    expect(fieldLabel("TimeEntry", "someNewColumn")).toBe(labels.fieldFallback);
+    expect(fieldLabel("UnknownEntity", "someNewColumn")).toBe("Weiteres Feld");
   });
 });
