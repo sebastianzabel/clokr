@@ -133,9 +133,6 @@
     .page-head-actions {
       width: 100%;
       justify-content: flex-start;
-      /* Two actions with long German labels ("Abwesenheit eintragen" + "Kalender abonnieren") are wider
-         than a 320 px phone: the second one wraps to its own line instead of widening the page. */
-      flex-wrap: wrap;
     }
   }
 </style>
