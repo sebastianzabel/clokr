@@ -26,8 +26,9 @@
  *      (also on a directly opened Planung) and leads to the „Offen“ filter, the type chips of the
  *      Anträge list and the inbox use the colours of the one mapping, the inbox header reads
  *      „Aufgaben“ without an eyebrow (#843 D-843-22, #853 D-853-19);
- *   8. (gap round, plan 840-18, G-9) „Neue Abwesenheit“ lays out as Mitarbeiter + Art, then
- *      Von + Bis, with no select cut off and no type eyebrow, and stacks on a phone;
+ *   8. (gap round, plan 840-18, G-9; #853 re-pointed) „Abwesenheit eintragen“ asks „Für wen?“
+ *      first, then lays out as Für wen? + Art, then Von + Bis, with no field cut off and no type
+ *      eyebrow, and stacks on a phone;
  *   9. (gap round, plan 840-18, G-7) the primary buttons of the leave pages compute exactly the
  *      colours of the reference primary (`/admin/employees`) and reach 4.5:1 in every theme (pflaume,
  *      salz, petrol; #842 D-842-16), mode and state (rest and hover), read from the computed styles in the real browser.
@@ -1112,7 +1113,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     expect(await inboxChip.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(vacation);
   });
 
-  test("8. Neue Abwesenheit: Mitarbeiter + Art, then Von + Bis; stacked on a phone", async ({
+  test("8. Abwesenheit eintragen: Für wen? + Art, then Von + Bis; stacked on a phone", async ({
     page,
     request,
     tenant,
@@ -1122,22 +1123,30 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await createEmployee(request, tenant, { key: "frm", firstName: "Formular", lastName: "Zeile" });
     await loginAsTenantAdmin(page, tenant);
 
-    // Team: „+ Neue Abwesenheit“ — row 1 Mitarbeiter + Art, row 2 Von + Bis, no eyebrow.
+    // Team: „Abwesenheit eintragen“ — „Für wen?“ comes first and nothing else is offered until a
+    // person is chosen; then row 1 Für wen? + Art, row 2 Von + Bis, no eyebrow.
     await page.goto("/team/leave?tab=uebersicht");
-    await page
-      .locator(".page-head")
-      .getByRole("button", { name: /Neue Abwesenheit/ })
-      .click();
+    await page.locator(".page-head").getByRole("button", { name: "Abwesenheit eintragen" }).click();
     const dialog = page.getByTestId("leave-form-modal");
     await expect(dialog).toBeVisible();
     await animationsSettled(page);
+    const who = dialog.getByRole("combobox", { name: "Für wen?" });
+    await expect(who).toBeVisible();
+    await expect(who).toHaveValue("");
+    await expect(page.locator("#f-type")).toBeHidden();
+    await expect(page.locator("#f-start")).toBeHidden();
+    await who.fill("Zeile");
+    await page.getByRole("option", { name: /Zeile, Formular/ }).click();
+    await expect(who).toHaveValue(/Zeile, Formular/);
+    await expect(page.locator("#f-type")).toBeVisible();
+    await animationsSettled(page);
     const topOf = async (selector: string) => (await page.locator(selector).boundingBox())!;
-    const emp = await topOf("#create-emp");
+    const emp = (await who.boundingBox())!;
     const type = await topOf("#f-type");
     const from = await topOf("#f-start");
     const to = await topOf("#f-end");
-    expect(Math.abs(emp.y - type.y), "Mitarbeiter and Art share their top").toBeLessThanOrEqual(2);
-    expect(emp.width, "the Mitarbeiter select is wide enough").toBeGreaterThanOrEqual(200);
+    expect(Math.abs(emp.y - type.y), "Für wen? and Art share their top").toBeLessThanOrEqual(2);
+    expect(emp.width, "the Für wen? field is wide enough").toBeGreaterThanOrEqual(200);
     expect(type.width, "the Art select is wide enough").toBeGreaterThanOrEqual(200);
     expect(Math.abs(from.y - to.y), "Von and Bis share their top").toBeLessThanOrEqual(2);
     expect(from.y, "the dates row is below the who row").toBeGreaterThan(emp.y + emp.height - 1);
@@ -1150,9 +1159,9 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     expect(phoneTo.y, "Bis lies below Von on a phone").toBeGreaterThanOrEqual(
       phoneFrom.y + phoneFrom.height - 1,
     );
-    const phoneEmp = await topOf("#create-emp");
+    const phoneEmp = (await who.boundingBox())!;
     const phoneType = await topOf("#f-type");
-    expect(phoneType.y, "Art lies below Mitarbeiter on a phone").toBeGreaterThanOrEqual(
+    expect(phoneType.y, "Art lies below Für wen? on a phone").toBeGreaterThanOrEqual(
       phoneEmp.y + phoneEmp.height - 1,
     );
 
@@ -1243,9 +1252,9 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
         url: "/team/leave?tab=uebersicht",
         buttons: [
           {
-            name: "team: + Neue Abwesenheit",
+            name: "team: Abwesenheit eintragen",
             locate: () =>
-              page.locator(".page-head").getByRole("button", { name: /Neue Abwesenheit/ }),
+              page.locator(".page-head").getByRole("button", { name: "Abwesenheit eintragen" }),
           },
         ],
       },

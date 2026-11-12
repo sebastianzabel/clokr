@@ -799,3 +799,50 @@ describe("LeaveRequestForm — #840 G-9 layout and eyebrow", () => {
     });
   });
 });
+
+// Issue #853 (D-853-12, S-15) - „Abwesenheit eintragen“ asks „Für wen?“ first: with
+// `deferUntilPerson` the form shows only the picker until a person is chosen. The scoped CSS that
+// hides the rest is not injected into jsdom (see whats-new-stacking.test.ts), so the contract
+// pinned here is the marker attribute the rule keys on and the DOM order it relies on.
+describe("LeaveRequestForm — #853 deferUntilPerson", () => {
+  const picker = createRawSnippet(() => ({
+    render: () =>
+      '<div class="form-group"><label class="form-label" for="create-emp">Für wen?</label><select id="create-emp" class="form-input"></select></div>',
+  }));
+  const awaiting = () => screen.getByTestId("leave-form").hasAttribute("data-awaiting-person");
+
+  it("a create without a person is marked as awaiting one, the picker is the first field", () => {
+    renderForm({ personPicker: picker, deferUntilPerson: true, employeeId: "" });
+    expect(awaiting()).toBe(true);
+    const who = document.querySelector('[data-form-row="who"]')!;
+    expect(who.firstElementChild?.querySelector("#create-emp")).toBeTruthy();
+    expect(who.querySelector("#f-type")).toBeTruthy();
+  });
+
+  it("with a person chosen the form is no longer marked", () => {
+    renderForm({ personPicker: picker, deferUntilPerson: true, employeeId: EMPLOYEE_ID });
+    expect(awaiting()).toBe(false);
+  });
+
+  it("without the prop nothing changes, also without a person (the default is off)", () => {
+    renderForm({ personPicker: picker, employeeId: "" });
+    expect(awaiting()).toBe(false);
+  });
+
+  it("an edit is never awaiting a person", () => {
+    renderForm({
+      personPicker: picker,
+      deferUntilPerson: true,
+      employeeId: "",
+      editingRequest: {
+        id: "req-9",
+        typeCode: "VACATION",
+        startDate: "2026-11-01",
+        endDate: "2026-11-03",
+        halfDay: false,
+        note: "",
+      },
+    });
+    expect(awaiting()).toBe(false);
+  });
+});

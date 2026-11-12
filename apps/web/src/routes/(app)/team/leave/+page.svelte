@@ -17,6 +17,8 @@
     type DataTableRowTone,
   } from "$components/ui/DataTable.svelte"; // Issue #853 (D-853-18)
   import Chip, { type ChipTone } from "$components/ui/Chip.svelte";
+  import PersonPicker from "$lib/components/team/zeiten/PersonPicker.svelte"; // Issue #853 (D-853-12)
+  import { personOptions } from "$lib/team/person-options";
   import Dialog from "$components/ui/Dialog.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Note from "$components/ui/Note.svelte";
@@ -146,6 +148,7 @@
     id: string;
     firstName: string;
     lastName: string;
+    employeeNumber?: string | null;
   }
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -1045,8 +1048,17 @@
     }
   }
 
+  // Issue #853 (D-853-12, S-15): a caller who may file for others is asked whom the request is for first; every
+  // other caller files their own request. Presentation only: the server's create permission and
+  // reach decide (`createLeaveRequestCore`), and the picker lists the page's reach-narrowed roster.
+  const canCreateForOthers = $derived(
+    hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN"),
+  );
+  const canCreateOwn = $derived(hasPermission($authStore.user, "leave-request:create:EIGENE"));
+  const createPersonItems = $derived(personOptions(employees));
+
   function openCreate() {
-    createEmployeeId = "";
+    createEmployeeId = canCreateForOthers ? "" : ($authStore.user?.employeeId ?? "");
     createInitialDate = new Date().toISOString().slice(0, 10);
     createModalOpen = true;
   }
@@ -1075,7 +1087,7 @@
           Planung verwalten
         </button>
       {/if}
-    {:else if hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN")}
+    {:else if canCreateForOthers || canCreateOwn}
       <button class="btn btn-primary btn-sm" onclick={openCreate}>Abwesenheit eintragen</button>
     {/if}
     <button
@@ -1617,24 +1629,19 @@
   initialStartDate={createInitialDate}
   initialEndDate={createInitialDate}
   entitlementYear={listYear}
+  personPicker={canCreateForOthers ? personPicker : undefined}
+  deferUntilPerson={canCreateForOthers}
   onSaved={async (result) => {
     // Issue #836: limit warnings of the create — shown, never blocking.
     limitSentences = warningSentences(result?.leaveLimitWarnings ?? []);
     await reloadAll();
   }}
->
-  {#snippet personPicker()}
-    <div class="form-group">
-      <label class="form-label" for="create-emp">Mitarbeiter</label>
-      <select id="create-emp" class="form-input" bind:value={createEmployeeId} required>
-        <option value="" disabled>— Mitarbeiter wählen —</option>
-        {#each employees as emp (emp.id)}
-          <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
-        {/each}
-      </select>
-    </div>
-  {/snippet}
-</LeaveRequestForm>
+/>
+
+<!-- The person question (Issue #853, S-15): the first field of the create dialog; nothing is preselected. -->
+{#snippet personPicker()}
+  <PersonPicker items={createPersonItems} bind:value={createEmployeeId} label="Für wen?" />
+{/snippet}
 
 <!-- ── Quick 260824-ef6: Storno-Begründung (Zurückziehen / Stornierung) ────── -->
 {#if stornoCopy}

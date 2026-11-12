@@ -126,10 +126,6 @@
         "count": 1,
         "ticket": "#854"
       },
-      "apps/web/src/lib/components/leave/ParentalReductionDialog.svelte": {
-        "count": 1,
-        "ticket": "#853"
-      },
       "apps/web/src/lib/components/operator/SalonTable.svelte": {
         "count": 1,
         "ticket": null,

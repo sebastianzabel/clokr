@@ -117,6 +117,10 @@
     /** Team-context-only addition (Phase 415, D-03): the person picker. Rendered above this
      *  component's own first field. Omitted on `/leave` — nothing extra renders there. */
     personPicker?: Snippet;
+    /** Issue #853 (D-853-12, S-15): with a `personPicker`, show only the picker until a person is
+     *  chosen (`employeeId` is empty); type, dates and the rest follow after the choice. Off by
+     *  default - an omitted prop changes nothing. */
+    deferUntilPerson?: boolean;
   }
 
   let {
@@ -128,7 +132,11 @@
     entitlementYear = new Date().getFullYear(),
     onSaved,
     personPicker,
+    deferUntilPerson = false,
   }: Props = $props();
+
+  // Only a create can wait for a person: an edit always has one.
+  const awaitingPerson = $derived(deferUntilPerson && !editingRequest && !employeeId);
 
   // ── Form state ───────────────────────────────────────────────────────────
   let formType: CalendarTypeCode = $state("VACATION");
@@ -614,6 +622,7 @@
     <form
       id="leave-form"
       data-testid="leave-form"
+      data-awaiting-person={awaitingPerson ? "" : undefined}
       onsubmit={preventDefault(submitRequest)}
       class="form-grid"
     >
@@ -1031,6 +1040,14 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1rem;
+  }
+  /* Issue #853: before a person is chosen only the picker (the first field) and the form actions
+     are shown. */
+  .form-grid[data-awaiting-person] > :not([data-form-row="who"]):not(.form-actions) {
+    display: none;
+  }
+  .form-grid[data-awaiting-person] [data-form-row="who"] > :not(:first-child) {
+    display: none;
   }
   .form-row--single {
     grid-template-columns: minmax(0, 1fr);

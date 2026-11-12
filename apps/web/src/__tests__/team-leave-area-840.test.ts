@@ -430,3 +430,45 @@ describe("review IN-03 - the Anträge empty state follows the filtered list", ()
     expect(PAGE).not.toContain("<h3>Keine Anträge in {listYear}.</h3>");
   });
 });
+
+describe("Issue #853 (853-13) - the Anträge table and the create flow ask for whom first", () => {
+  it("[Anträge table] one DataTable over the paged requests, the toolbar searches by person name", () => {
+    expect(count(PAGE, "<DataTable")).toBe(2); // the loading skeleton and the rows
+    expect(PAGE).toContain("pagedTeamRequests.map((req) => ({ id: req.id, req }))");
+    expect(PAGE).toContain(
+      "matchesSearch(`${req.employee.firstName} ${req.employee.lastName}`, requestQuery)",
+    );
+    expect(PAGE).toContain("rowTestId={requestRowTestId}");
+    expect(PAGE).toContain("`leave-team-row-${row.id}`");
+    // The tab badge jump and a bar click leave no search behind that could hide a counted row.
+    expect(functionBody("openOpenRequests")).toContain('requestQuery = ""');
+    expect(functionBody("selectBar")).toContain('requestQuery = ""');
+  });
+
+  it("[Für wen?] the picker is the first field, offered only to a caller who may file for others", () => {
+    expect(count(PAGE, "Für wen?")).toBe(1);
+    expect(PAGE).toContain("<PersonPicker items={createPersonItems} bind:value={createEmployeeId}");
+    expect(PAGE).toContain("personPicker={canCreateForOthers ? personPicker : undefined}");
+    expect(PAGE).toContain("deferUntilPerson={canCreateForOthers}");
+    expect(PAGE).toContain(
+      'const canCreateForOthers = $derived(\n    hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN"),',
+    );
+    // Nobody is preselected for a caller who may file for others; everyone else files their own.
+    expect(functionBody("openCreate")).toContain(
+      'createEmployeeId = canCreateForOthers ? "" : ($authStore.user?.employeeId ?? "")',
+    );
+    // The picker lists the page's own reach-narrowed roster, never a second read.
+    expect(PAGE).toContain("const createPersonItems = $derived(personOptions(employees))");
+    // The old select is gone.
+    expect(PAGE).not.toContain('id="create-emp"');
+  });
+
+  it("[deep link] ?create=1 still preselects the person from the roster, only with the create-for-others key", () => {
+    const run = functionBody("runDeepLink");
+    expect(run).toContain('hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN")');
+    expect(run).toContain(
+      "employees.find((emp) => emp.id.toLowerCase() === createLink.employeeId)",
+    );
+    expect(run).toContain('createEmployeeId = person ? person.id : ""');
+  });
+});
