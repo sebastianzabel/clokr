@@ -65,6 +65,7 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/abwesenheiten/SonderurlaubPanel.svelte",
   // Plan 854-12 (Regeln › Abwesenheiten, part II): the Betriebsurlaub tab.
   "lib/components/admin/abwesenheiten/BetriebsurlaubPanel.svelte",
+  "routes/(app)/admin/shutdowns/[id]/+page.svelte",
 ];
 
 export interface VerwaltenFile {

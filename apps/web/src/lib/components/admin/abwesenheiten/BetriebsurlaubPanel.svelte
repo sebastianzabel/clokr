@@ -31,6 +31,7 @@
     dayCountLabel,
     exceptionCountLabel,
     formatShutdownDate,
+    SHUTDOWN_NAME_MAX,
     shutdownFormMessage,
     shutdownYears,
     type CompanyShutdown,
@@ -254,7 +255,7 @@
           {id}
           class="form-input"
           type="text"
-          maxlength={200}
+          maxlength={SHUTDOWN_NAME_MAX}
           placeholder="z. B. Weihnachtsschließung 2026"
           bind:value={name}
           data-testid="abwesenheiten-betriebsurlaub-name"

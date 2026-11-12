@@ -207,10 +207,6 @@
         "count": 2,
         "ticket": "#854"
       },
-      "apps/web/src/routes/(app)/admin/shutdowns/[id]/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/admin/system/+page.svelte": {
         "count": 2,
         "ticket": "#854"

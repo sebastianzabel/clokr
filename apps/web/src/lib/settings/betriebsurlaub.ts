@@ -40,12 +40,32 @@ export type ShutdownForm = {
   endDate: string;
 };
 
+/** The longest name the API accepts. */
+export const SHUTDOWN_NAME_MAX = 100;
+
 /** The first problem of the form, or null. Dates are `YYYY-MM-DD`, which compare as text. */
 export function shutdownFormMessage(form: ShutdownForm): string | null {
   if (!form.name.trim() || !form.startDate || !form.endDate)
     return "Bezeichnung, Start- und Enddatum sind Pflichtfelder.";
   if (form.startDate > form.endDate) return "Das Startdatum muss vor dem Enddatum liegen.";
   return null;
+}
+
+/** The message of each field of the detail form, "" for a valid one. The API limits the name to 100 characters. */
+export function shutdownFieldMessages(form: ShutdownForm): Record<keyof ShutdownForm, string> {
+  return {
+    name: !form.name.trim()
+      ? "Gib eine Bezeichnung an."
+      : form.name.trim().length > SHUTDOWN_NAME_MAX
+        ? `Die Bezeichnung darf höchstens ${SHUTDOWN_NAME_MAX} Zeichen lang sein.`
+        : "",
+    startDate: form.startDate ? "" : "Gib das Startdatum an.",
+    endDate: !form.endDate
+      ? "Gib das Enddatum an."
+      : form.startDate && form.startDate > form.endDate
+        ? "Das Enddatum darf nicht vor dem Startdatum liegen."
+        : "",
+  };
 }
 
 /** The body of `POST /company-shutdowns`. */

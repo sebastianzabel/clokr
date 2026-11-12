@@ -90,6 +90,8 @@ const NO_HEADING: Record<string, string> = {
   "/ich/tag":
     "renders from the dashboard file with a view prop; pinned by the dashboard test below",
   "/team/heute": "renders the dashboard file with view=team; pinned by the dashboard test below",
+  "/verwalten/regeln/betriebsurlaub":
+    "a redirect stub since #854 (plan 854-12): the list is the Betriebsurlaub tab of Abwesenheiten; the detail sub-route below names the shutdown itself",
 };
 const HEADING_TAG = /<(PageHead|SectionStack|ListDetail|ToolPage|HubPage)\b[\s\S]*?\/?>/;
 
