@@ -1898,6 +1898,17 @@ und `density` eines veralteten Browser-Tabs werden ignoriert (200, nicht gespeic
 `pflaume` zurückfallen lässt (kein Fehler, keine Sperre). Der Verlust ist rein kosmetisch (die Wahl der Person muss neu getroffen
 werden); eine Rückabbildung ist nicht möglich, weil `nacht` und `schiefer` auf `salz` zusammenfallen.
 
+## Phase 597 — Kalender-Abo „Mein Dienstplan“ (Issue #597)
+
+**Was die Migration tut.** `20261109201652_calendar_feed_token` (mit `prisma migrate diff` gegen eine Schatten-DB erzeugt, rein
+additiv): neue Tabelle `CalendarFeedToken` (FK auf `Tenant` RESTRICT, auf `User` CASCADE, eindeutig je Nutzer und je Token-Hash).
+Keine bestehende Tabelle oder Zeile wird verändert; `prisma migrate deploy` wendet sie auf jeder Stufe an, ohne manuellen Schritt.
+
+**Int-Refresh.** `pseudonymize-dump.ts` löscht alle `CalendarFeedToken`-Zeilen, damit kein Abo-Link von prod auf int funktioniert.
+
+**Rollback.** Ein Image-Rollback lässt die Tabelle stehen; der alte Code kennt die Route nicht, die Links liefern dann 404. Keine
+Datenkorrektur nötig.
+
 ## Phase 599 — Korrekturanfrage für abgeschlossene Monate (Issue #599)
 
 **Was die Migrationen tun.** Zwei Verzeichnisse in `packages/db/prisma/migrations/`:
