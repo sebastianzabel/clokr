@@ -9,10 +9,16 @@
   import { untrack } from "svelte";
   import { api } from "$api/client";
   import { salonContext } from "$stores/salon-context";
+  import { authStore } from "$stores/auth";
+  import { tenantFeatures } from "$stores/tenant-features";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import { pageLabel } from "$lib/nav/page-labels";
+  import { rosterTabs } from "$lib/nav/routes";
   import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
-  import Skeleton from "$components/ui/Skeleton.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
+  import PeriodPicker from "$components/ui/PeriodPicker.svelte";
   import {
     isSalonFilterRejected,
     salonPageFilter,
@@ -57,6 +63,40 @@
 
   const hasPlannedColumns = $derived(employees.some((e) => e.plannedDays !== undefined));
 
+  // Issue #853 (D-853-05): the four roster tabs are the link tabs of the route table; a tab the caller
+  // may not open (Verfügbarkeit without the feature or its permissions) is not part of the list.
+  const rosterTabsList = $derived(
+    rosterTabs($authStore.user, { availabilityEnabled: $tenantFeatures.availabilityEnabled }),
+  );
+
+  // Issue #853 (D-853-13): one block table. The two plan columns exist only once a row carries them.
+  const PLANNING_COLUMNS: DataTableColumn[] = [
+    { key: "name", label: "Person", primary: true },
+    { key: "contract", label: "Vertrag" },
+    { key: "leave", label: "Urlaub diese Woche (Tage)" },
+    { key: "toPlan", label: "noch einzuplanen" },
+  ];
+  const PLANNED_COLUMNS: DataTableColumn[] = [
+    { key: "planned", label: "geplant" },
+    { key: "difference", label: "Differenz" },
+  ];
+  const columns = $derived(
+    hasPlannedColumns ? [...PLANNING_COLUMNS, ...PLANNED_COLUMNS] : PLANNING_COLUMNS,
+  );
+
+  /** One table row per person; the cells read the figures through `cellText()`. */
+  const tableRows = $derived(
+    employees.map((e) => ({
+      key: e.employeeId,
+      name: e.name,
+      contract: `${e.contractDays} Tage`,
+      leave: leaveCell(e),
+      toPlan: `${e.stillToPlan} Tage`,
+      planned: e.plannedDays ?? "–",
+      difference: e.difference ?? "–",
+    })),
+  );
+
   async function load() {
     const salonId = pageSalonId;
     const generation = ++loadGeneration;
@@ -100,6 +140,10 @@
   function nextWeek() {
     shiftWeek(7);
   }
+  function goToToday() {
+    weekStart = mondayOfWeek(new Date());
+    load();
+  }
 
   function leaveCell(row: PlanningRow): string {
     if (row.leaveDays === 0) return "0";
@@ -121,93 +165,58 @@
 </svelte:head>
 
 <PageHead
-  eyebrow={pageLabel("/shifts")}
   title={pageLabel("/shifts/planning")}
-  accent={pageLabel("/shifts/planning")}
+  sub="Wie viele Tage pro Person in dieser Woche noch einzuplanen sind: Vertrag, Urlaub und, sobald Schichten bestehen, der Plan."
 />
 <SalonScopeLabel label={scopeLabel} rejected={salonRejected} />
+<PageTabs tabs={rosterTabsList} tab="/team/dienstplan/planung" tabsLabel="Dienstplan" />
 
-<section class="page">
-  <div class="card-animate week-pager">
-    <button type="button" class="btn btn-ghost btn-sm" onclick={prevWeek} disabled={loading}>
-      ← Vorherige Woche
-    </button>
-    <div class="week-pager-label">
-      {planningWeekLabel(weekStart, weekEnd)}
-    </div>
-    <button type="button" class="btn btn-ghost btn-sm" onclick={nextWeek} disabled={loading}>
-      Nächste Woche →
-    </button>
+<div class="page" data-testid="shifts-planning-page">
+  <!-- One toolbar row (prototype .toolbar2): the week on the left. The scope label sits right under the head. -->
+  <div class="planning-period-row">
+    <PeriodPicker
+      label={planningWeekLabel(weekStart, weekEnd)}
+      onPrev={prevWeek}
+      onNext={nextWeek}
+      onToday={goToToday}
+      zooms={["woche"]}
+      zoom="woche"
+      prevLabel="Vorherige Woche"
+      nextLabel="Nächste Woche"
+      testIdPrefix="planning-week"
+    />
   </div>
 
   {#if loadError}
     <div class="callout error">{loadError}</div>
   {/if}
 
-  <!-- A rejected salon shows only the calm text of the scope label, not an empty-state row. -->
+  <!-- A rejected salon shows only the calm text of the scope label, not an empty state. -->
   {#if !salonRejected}
-    <div class="card-animate table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Person</th>
-            <th>Vertrag</th>
-            <th>Urlaub diese Woche (Tage)</th>
-            <th>noch einzuplanen</th>
-            {#if hasPlannedColumns}
-              <th>geplant</th>
-              <th>Differenz</th>
-            {/if}
-          </tr>
-        </thead>
-        <tbody>
-          {#if loading}
-            <tr><td colspan={hasPlannedColumns ? 6 : 4}><Skeleton shape="row" count={3} /></td></tr>
-          {:else if employees.length === 0}
-            <tr>
-              <td colspan={hasPlannedColumns ? 6 : 4} class="empty">
-                In deiner Reichweite arbeitet niemand nach Schichtplan.
-              </td>
-            </tr>
-          {:else}
-            {#each employees as row (row.employeeId)}
-              <tr>
-                <td>{row.name}</td>
-                <td>{row.contractDays} Tage</td>
-                <td>{leaveCell(row)}</td>
-                <td>{row.stillToPlan} Tage</td>
-                {#if hasPlannedColumns}
-                  <td>{row.plannedDays ?? "–"}</td>
-                  <td>{row.difference ?? "–"}</td>
-                {/if}
-              </tr>
-            {/each}
-          {/if}
-        </tbody>
-      </table>
-    </div>
+    {#if !loading && employees.length === 0}
+      <EmptyState icon="calendar" title="In deiner Reichweite arbeitet niemand nach Schichtplan." />
+    {:else}
+      <DataTable
+        caption="Planungsbedarf der Woche"
+        {columns}
+        rows={tableRows}
+        rowKey={(row) => row.key}
+        {loading}
+      />
+    {/if}
   {/if}
-</section>
+</div>
 
 <style>
-  .week-pager {
+  .planning-period-row {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--s-4);
-    padding: var(--s-6);
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-card);
+    flex-wrap: wrap;
+    gap: 10px;
   }
-
-  .week-pager-label {
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .empty {
-    color: var(--text-2);
+  /* The picker keeps its own label and arrows (block); only its page-sized padding goes, so the week
+     starts at the page edge like the prototype's .period. */
+  .planning-period-row :global(.month-bar) {
+    padding: 0;
   }
 </style>

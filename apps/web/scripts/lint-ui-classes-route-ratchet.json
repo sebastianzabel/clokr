@@ -219,10 +219,6 @@
         "count": 1,
         "ticket": "#851"
       },
-      "apps/web/src/routes/(app)/shifts/planning/+page.svelte": {
-        "count": 1,
-        "ticket": "#853"
-      },
       "apps/web/src/routes/(app)/time-entries/+page.svelte": {
         "count": 1,
         "ticket": "#851"
