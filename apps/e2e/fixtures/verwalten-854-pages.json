@@ -194,6 +194,18 @@
       "path": "/verwalten/daten/export",
       "heading": "Export",
       "tabs": []
+    },
+    {
+      "slug": "daten-import",
+      "path": "/verwalten/daten/import",
+      "heading": "CSV-Import",
+      "tabs": []
+    },
+    {
+      "slug": "daten-support-zugriffe",
+      "path": "/verwalten/daten/support-zugriffe",
+      "heading": "Support-Zugriffe",
+      "tabs": []
     }
   ]
 }

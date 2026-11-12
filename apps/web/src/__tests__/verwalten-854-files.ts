@@ -123,6 +123,10 @@ export const MIGRATED_854: readonly string[] = [
   "routes/(app)/admin/export/+page.svelte",
   // Plan 854-25 (Daten › CSV-Import, Support-Zugriffe): the import operation page, then the two support-access pages.
   "routes/(app)/admin/import/+page.svelte",
+  "routes/(app)/admin/support-access/+page.svelte",
+  "routes/(app)/admin/support-access/[id]/+page.svelte",
+  "lib/components/admin/SupportAccessList.svelte",
+  "lib/components/admin/SupportAccessDetail.svelte",
   // The Zugang tab opens it (deactivation with a last working day); it renders Dialog directly.
   "lib/components/admin/DeactivateEmployeeDialog.svelte",
 ];
