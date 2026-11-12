@@ -28,11 +28,12 @@
   type DayRow = { id: string; name: string; entry: SalonViewEntry };
 
   const COLUMNS: DataTableColumn[] = [
-    { key: "name", label: "Mitarbeiter", primary: true },
-    { key: "start", label: "Beginn" },
-    { key: "end", label: "Ende" },
-    { key: "break", label: "Pause" },
-    { key: "work", label: "Arbeitszeit" },
+    // Fixed shares so the columns of the per-day tables line up from one day to the next.
+    { key: "name", label: "Mitarbeiter", primary: true, width: "36%" },
+    { key: "start", label: "Beginn", width: "14%" },
+    { key: "end", label: "Ende", width: "14%" },
+    { key: "break", label: "Pause", width: "16%" },
+    { key: "work", label: "Arbeitszeit", width: "20%" },
   ];
 
   function rowsOf(day: SalonViewDay): DayRow[] {
