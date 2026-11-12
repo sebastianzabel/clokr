@@ -61,9 +61,10 @@
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import DeactivateEmployeeDialog from "$lib/components/admin/DeactivateEmployeeDialog.svelte";
-  import KPIStat from "$components/ui/KPIStat.svelte";
-  import ListDetail from "$lib/components/admin/ListDetail.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
+  import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
   import HomeSalonField from "$lib/components/employees/HomeSalonField.svelte";
   import {
     homeSalonOptions,
@@ -541,7 +542,12 @@
     return bulkChoice ? draftLabel({ key: "bulk", ...bulkChoice }, createRoles, assignmentCtx) : "";
   }
 
-  // KPI mini-stats (exclude anonymized)
+  // The persons the list holds before search and filters: anonymized ones only when asked for.
+  let baseEmployees = $derived(
+    showAnonymized ? employees : employees.filter((e) => !isAnonymized(e)),
+  );
+
+  // KPI figures (exclude anonymized)
   let statTotal = $derived(employees.filter((e) => !isAnonymized(e)).length);
   let statActive = $derived(employees.filter((e) => e.user.isActive && !isAnonymized(e)).length);
   // Role chip, filter and count exist only when the names were loaded (Issue #538).
@@ -563,6 +569,57 @@
       (a, b) => a.localeCompare(b, "de"),
     ),
   );
+
+  // The figures of the Kennzahlenleiste; „Rollen“ only when the role names were loaded (#538).
+  let kpiItems = $derived<KpiItem[]>([
+    { label: "Mitarbeitende", value: statTotal, unit: "gesamt" },
+    { label: "Aktiv", value: statActive, unit: "angemeldet" },
+    ...(showRoles
+      ? [{ label: "Rollen", value: roleOptions.length, unit: "vergeben" } satisfies KpiItem]
+      : []),
+  ]);
+
+  // The filters of the toolbar: same options and same state as the former selects. Search and sort
+  // keep their URL keys (q, sort, dir); the three filters were never part of the URL.
+  let toolbarFilters = $derived<ToolbarFilter[]>([
+    ...(showRoles
+      ? [
+          {
+            key: "role",
+            label: "Rolle",
+            value: filterRole,
+            options: roleOptions.map((name) => ({ value: name, label: name })),
+          },
+        ]
+      : []),
+    {
+      key: "status",
+      label: "Status",
+      value: filterStatus,
+      options: [
+        { value: "active", label: "Aktiv" },
+        { value: "pending", label: "Einladung ausstehend" },
+        { value: "expired", label: "Einladung abgelaufen" },
+        { value: "inactive", label: "Inaktiv" },
+      ],
+    },
+    {
+      key: "employment",
+      label: "Beschäftigung",
+      value: filterEmployment,
+      options: [
+        { value: "EMPLOYED", label: "Beschäftigt" },
+        { value: "EXIT_PLANNED", label: "Austritt geplant" },
+        { value: "ENDED", label: "Ausgeschieden" },
+      ],
+    },
+  ]);
+
+  function onToolbarFilter(key: string, value: string) {
+    if (key === "role") filterRole = value;
+    else if (key === "status") filterStatus = value as typeof filterStatus;
+    else if (key === "employment") filterEmployment = value as typeof filterEmployment;
+  }
 
   $effect(() => {
     filteredEmployees.length;
@@ -905,13 +962,9 @@
   <title>{pageLabel("/admin/employees")} – Clokr</title>
 </svelte:head>
 
-<!-- Phase 73-05 (D-05): data-testid surface for admin-employees flows.
-     `display: contents` keeps the existing ListDetail layout untouched while
-     giving E2E specs a stable page-root selector. -->
-<div data-testid="admin-employees-page" style="display: contents;">
-  <ListDetail
-    view="list"
-    eyebrow="Verwalten"
+<!-- Phase 73-05 (D-05): data-testid surface for admin-employees flows (stable page-root selector). -->
+<div class="page" data-testid="admin-employees-page">
+  <PageHead
     title={pageLabel("/admin/employees")}
     sub="Lege Personen an, lade sie ein und verwalte ihre Daten."
   >
@@ -922,236 +975,177 @@
         >
       {/if}
     {/snippet}
+  </PageHead>
 
-    {#snippet list()}
-      <SalonScopeLabel label={scopeLabel} rejected={salonRejected} />
-      {#if error}
-        <div class="callout error">{error}</div>
-      {:else if salonRejected}
-        <!-- The calm text is rendered by the scope label above. -->
-      {:else if !loading && employees.length === 0}
-        <div class="empty-state">
-          <p>Noch keine Mitarbeiter angelegt.</p>
-          {#if canCreate}<button class="btn btn-primary" onclick={openCreate}>Jetzt anlegen</button
-            >{/if}
-        </div>
-      {:else}
-        <!-- ── KPI cluster ──────────────────────────────────────────────────── -->
-        {#if !loading}
-          <Section title="Übersicht" sub="Belegschaft auf einen Blick">
-            <div class="kpi-row">
-              <KPIStat label="Mitarbeitende" value={String(statTotal)} unit="gesamt" />
-              <KPIStat label="Aktiv" value={String(statActive)} unit="angemeldet" />
-              {#if showRoles}
-                <KPIStat label="Rollen" value={String(roleOptions.length)} unit="vergeben" />
-              {/if}
-            </div>
-          </Section>
-        {/if}
+  <SalonScopeLabel label={scopeLabel} rejected={salonRejected} />
+  {#if error}
+    <div role="alert"><Note tone="bad">{error}</Note></div>
+  {:else if salonRejected}
+    <!-- The calm text is rendered by the scope label above. -->
+  {:else if !loading && employees.length === 0}
+    <EmptyState
+      icon="inbox"
+      title="Noch keine Mitarbeiter angelegt"
+      actionLabel={canCreate ? "Jetzt anlegen" : undefined}
+      onaction={canCreate ? openCreate : undefined}
+    />
+  {:else}
+    {#if !loading}
+      <KpiStrip items={kpiItems} ariaLabel="Belegschaft auf einen Blick" />
+    {/if}
 
-        <Section title="Personenverzeichnis" sub="Filter · Rollenwechsel · Einladungen">
-          {#if !loading}
-            <div class="table-toolbar">
-              <input
-                type="search"
-                class="input filter-search"
-                placeholder="Person suchen…"
-                value={filterSearch}
-                oninput={(e) => onSearchInput(e.currentTarget.value)}
-                aria-label="Mitarbeiter suchen"
-                data-testid="admin-employees-search"
-              />
-              {#if showRoles}
-                <select
-                  class="select filter-select"
-                  bind:value={filterRole}
-                  aria-label="Nach Rolle filtern"
-                >
-                  <option value="">Alle Rollen</option>
-                  {#each roleOptions as name (name)}
-                    <option value={name}>{name}</option>
-                  {/each}
-                </select>
-              {/if}
-              <select
-                class="select filter-select"
-                bind:value={filterStatus}
-                aria-label="Nach Status filtern"
-              >
-                <option value="">Alle Status</option>
-                <option value="active">Aktiv</option>
-                <option value="pending">Einladung ausstehend</option>
-                <option value="expired">Einladung abgelaufen</option>
-                <option value="inactive">Inaktiv</option>
-              </select>
-              <select
-                class="select filter-select"
-                bind:value={filterEmployment}
-                aria-label="Nach Beschäftigung filtern"
-              >
-                <option value="">Alle Beschäftigungen</option>
-                <option value="EMPLOYED">Beschäftigt</option>
-                <option value="EXIT_PLANNED">Austritt geplant</option>
-                <option value="ENDED">Ausgeschieden</option>
-              </select>
+    <DataTable
+      {columns}
+      rows={pagedEmployees}
+      rowKey={(emp) => emp.id}
+      rowTestId={(emp) => `admin-employees-row-${emp.id}`}
+      sort={tableSort}
+      {onSort}
+      filtered={filtersActive}
+      onResetFilters={resetFilters}
+      onRowClick={(emp) => goto(`/admin/employees/${emp.id}`)}
+      {loading}
+      caption="Personen"
+      selectable
+      bind:selectedKeys={selectedIds}
+      selectionLabel={(emp) => `${emp.lastName}, ${emp.firstName} auswählen`}
+    >
+      {#snippet toolbar()}
+        <div class="list-controls">
+          <TableToolbar
+            bind:query={() => filterSearch, onSearchInput}
+            count={filteredEmployees.length}
+            total={baseEmployees.length}
+            filters={toolbarFilters}
+            onFilterChange={onToolbarFilter}
+            onReset={resetFilters}
+            searchLabel="Personen suchen"
+          />
+          <label class="anon-toggle">
+            <input type="checkbox" bind:checked={showAnonymized} />
+            <span>Anonymisierte anzeigen</span>
+          </label>
+          {#if selectedCount > 0}
+            <div class="bulk-bar" data-testid="admin-employees-bulk-bar">
+              <span class="bulk-count" aria-live="polite">{selectedCount} ausgewählt</span>
               <button
                 type="button"
-                class="filter-toggle"
-                class:filter-toggle--on={showAnonymized}
-                aria-pressed={showAnonymized}
-                onclick={() => (showAnonymized = !showAnonymized)}
+                class="btn btn-ghost btn-sm"
+                onclick={exportSelectedCsv}
+                data-testid="admin-employees-export-csv">Als CSV exportieren</button
               >
-                Anonymisierte anzeigen
-              </button>
-              <span class="spacer"></span>
-              <span class="filter-count">{filteredEmployees.length} von {employees.length}</span>
+              {#if canManageAccess}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  onclick={askResendInvitations}
+                  data-testid="admin-employees-bulk-invite">Einladung erneut senden</button
+                >
+              {/if}
+              {#if canAssignRoles && canReadRoles}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  onclick={askAssignRole}
+                  data-testid="admin-employees-bulk-role">Rolle zuweisen</button
+                >
+              {/if}
+              <button type="button" class="btn btn-ghost btn-sm" onclick={() => (selectedIds = [])}
+                >Auswahl aufheben</button
+              >
             </div>
           {/if}
-
-          <DataTable
-            {columns}
-            rows={pagedEmployees}
-            rowKey={(emp) => emp.id}
-            rowTestId={(emp) => `admin-employees-row-${emp.id}`}
-            sort={tableSort}
-            {onSort}
-            filtered={filtersActive}
-            onResetFilters={resetFilters}
-            onRowClick={(emp) => goto(`/admin/employees/${emp.id}`)}
-            {loading}
-            caption="Personen"
-            selectable
-            bind:selectedKeys={selectedIds}
-            selectionLabel={(emp) => `${emp.lastName}, ${emp.firstName} auswählen`}
-          >
-            {#snippet toolbar()}
-              {#if selectedCount > 0}
-                <div class="bulk-bar" data-testid="admin-employees-bulk-bar">
-                  <span class="bulk-count" aria-live="polite">{selectedCount} ausgewählt</span>
-                  <button
-                    type="button"
-                    class="btn btn-ghost btn-sm"
-                    onclick={exportSelectedCsv}
-                    data-testid="admin-employees-export-csv">Als CSV exportieren</button
-                  >
-                  {#if canManageAccess}
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-sm"
-                      onclick={askResendInvitations}
-                      data-testid="admin-employees-bulk-invite">Einladung erneut senden</button
-                    >
-                  {/if}
-                  {#if canAssignRoles && canReadRoles}
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-sm"
-                      onclick={askAssignRole}
-                      data-testid="admin-employees-bulk-role">Rolle zuweisen</button
-                    >
-                  {/if}
-                  <button
-                    type="button"
-                    class="btn btn-ghost btn-sm"
-                    onclick={() => (selectedIds = [])}>Auswahl aufheben</button
-                  >
-                </div>
-              {/if}
-            {/snippet}
-            {#snippet cell(emp, column)}
-              {#if column.key === "number"}
-                <span class="col-number">{emp.employeeNumber}</span>
-              {:else if column.key === "name"}
-                <strong>{emp.lastName}, {emp.firstName}</strong>
-                {#if emp.classification === "AZUBI" && !emp.birthDate}
-                  <span
-                    class="chip chip-warn"
-                    data-testid={`admin-employees-row-${emp.id}-birthdate-hint`}
-                    >{MISSING_BIRTH_DATE_HINT}</span
-                  >
-                {/if}
-              {:else if column.key === "email"}
-                <span class="col-email">{emp.user.email}</span>
-              {:else if column.key === "role"}
-                {#if assignmentsOf(emp).length > 0}
-                  <span class="role-chips">
-                    {#each assignmentsOf(emp) as assignment (assignment.id)}
-                      <span class="chip chip-brand"
-                        >{assignmentLabel(assignment, assignmentCtx)}</span
-                      >
-                    {/each}
-                  </span>
-                {:else}
-                  <span class="text-muted">{NO_ASSIGNMENT_LABEL}</span>
-                {/if}
-              {:else if column.key === "hire"}
-                <span class="col-date">{dayText(emp.hireDate)}</span>
-              {:else if column.key === "schedule"}
-                <span class="chip">{scheduleLabel(emp.workSchedule?.type)}</span>
-              {:else if column.key === "status"}
-                <span class={statusClass(emp)}>
-                  <span class="dot"></span>{statusLabel(emp)}
-                </span>
-                {#if employmentState(emp.exitDate, today).kind !== "EMPLOYED"}
-                  <span
-                    class={employmentState(emp.exitDate, today).kind === "ENDED"
-                      ? "chip"
-                      : "chip chip-warn"}
-                    data-testid={`admin-employees-row-${emp.id}-employment`}
-                    >{employmentState(emp.exitDate, today).label}</span
-                  >
-                {/if}
-              {:else if column.key === "login"}
-                <span class="col-login">{dayText(emp.user.lastLoginAt)}</span>
-              {:else if column.key === "actions"}
-                <div class="action-group">
-                  {#if canManageAccess && !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
-                    <button
-                      class="btn btn-ghost btn-sm"
-                      onclick={() => resendInvitation(emp)}
-                      title="Einladung erneut senden"
-                      data-testid={`admin-employees-row-${emp.id}-invite`}
-                    >
-                      Einladen
-                    </button>
-                  {/if}
-                  <a
-                    href="/admin/employees/{emp.id}"
-                    class="btn btn-ghost btn-sm"
-                    data-testid={`admin-employees-row-${emp.id}-edit`}
-                  >
-                    Bearbeiten
-                  </a>
-                  {#if !canManageAccess}
-                    <!-- no access-management right: no (de)activation control -->
-                  {:else if emp.user.isActive}
-                    <button
-                      class="btn btn-ghost btn-sm"
-                      onclick={() => askDeactivate(emp)}
-                      data-testid={`admin-employees-row-${emp.id}-deactivate`}>Deaktivieren</button
-                    >
-                  {:else}
-                    <button
-                      class="btn btn-ghost btn-sm"
-                      onclick={() => askReactivate(emp)}
-                      data-testid={`admin-employees-row-${emp.id}-reactivate`}>Reaktivieren</button
-                    >
-                  {/if}
-                </div>
-              {/if}
-            {/snippet}
-          </DataTable>
-          {#if !loading}
-            <Pagination
-              total={filteredEmployees.length}
-              bind:page={empPage}
-              bind:pageSize={empPageSize}
-            />
+        </div>
+      {/snippet}
+      {#snippet cell(emp, column)}
+        {#if column.key === "number"}
+          <span class="col-number">{emp.employeeNumber}</span>
+        {:else if column.key === "name"}
+          <strong>{emp.lastName}, {emp.firstName}</strong>
+          {#if emp.classification === "AZUBI" && !emp.birthDate}
+            <span
+              class="chip chip-warn"
+              data-testid={`admin-employees-row-${emp.id}-birthdate-hint`}
+              >{MISSING_BIRTH_DATE_HINT}</span
+            >
           {/if}
-        </Section>
-      {/if}
-    {/snippet}
-  </ListDetail>
+        {:else if column.key === "email"}
+          <span class="col-email">{emp.user.email}</span>
+        {:else if column.key === "role"}
+          {#if assignmentsOf(emp).length > 0}
+            <span class="role-chips">
+              {#each assignmentsOf(emp) as assignment (assignment.id)}
+                <span class="chip chip-brand">{assignmentLabel(assignment, assignmentCtx)}</span>
+              {/each}
+            </span>
+          {:else}
+            <span class="text-muted">{NO_ASSIGNMENT_LABEL}</span>
+          {/if}
+        {:else if column.key === "hire"}
+          <span class="col-date">{dayText(emp.hireDate)}</span>
+        {:else if column.key === "schedule"}
+          <span class="chip">{scheduleLabel(emp.workSchedule?.type)}</span>
+        {:else if column.key === "status"}
+          <span class={statusClass(emp)}>
+            <span class="dot"></span>{statusLabel(emp)}
+          </span>
+          {#if employmentState(emp.exitDate, today).kind !== "EMPLOYED"}
+            <span
+              class={employmentState(emp.exitDate, today).kind === "ENDED"
+                ? "chip"
+                : "chip chip-warn"}
+              data-testid={`admin-employees-row-${emp.id}-employment`}
+              >{employmentState(emp.exitDate, today).label}</span
+            >
+          {/if}
+        {:else if column.key === "login"}
+          <span class="col-login">{dayText(emp.user.lastLoginAt)}</span>
+        {:else if column.key === "actions"}
+          <div class="action-group">
+            {#if canManageAccess && !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
+              <button
+                class="btn btn-ghost btn-sm"
+                onclick={() => resendInvitation(emp)}
+                title="Einladung erneut senden"
+                data-testid={`admin-employees-row-${emp.id}-invite`}
+              >
+                Einladen
+              </button>
+            {/if}
+            <a
+              href="/admin/employees/{emp.id}"
+              class="btn btn-ghost btn-sm"
+              data-testid={`admin-employees-row-${emp.id}-edit`}
+            >
+              Bearbeiten
+            </a>
+            {#if !canManageAccess}
+              <!-- no access-management right: no (de)activation control -->
+            {:else if emp.user.isActive}
+              <button
+                class="btn btn-ghost btn-sm"
+                onclick={() => askDeactivate(emp)}
+                data-testid={`admin-employees-row-${emp.id}-deactivate`}>Deaktivieren</button
+              >
+            {:else}
+              <button
+                class="btn btn-ghost btn-sm"
+                onclick={() => askReactivate(emp)}
+                data-testid={`admin-employees-row-${emp.id}-reactivate`}>Reaktivieren</button
+              >
+            {/if}
+          </div>
+        {/if}
+      {/snippet}
+    </DataTable>
+    {#if !loading}
+      <Pagination
+        total={filteredEmployees.length}
+        bind:page={empPage}
+        bind:pageSize={empPageSize}
+      />
+    {/if}
+  {/if}
 </div>
 
 <!-- ── Anlegen Modal ──────────────────────────────────────────────────────── -->
@@ -1515,7 +1509,7 @@
   {/snippet}
 </Modal>
 
-<!-- ── Sammeländerungen: Rolle wählen, Vorschau, ein Lauf (Issue #854) ───────────────────── -->
+<!-- ── Bulk changes: choose the role, preview, one run (Issue #854) ──────────────────────── -->
 {#if canAssignRoles}
   <BulkRoleDialog
     bind:open={bulkRoleOpen}
@@ -1585,95 +1579,22 @@
 {/if}
 
 <style>
-  .empty-state {
-    text-align: center;
-    padding: 64px 32px;
-    color: var(--text-2);
+  .list-controls {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 16px;
+    gap: var(--s-3);
   }
-
-  /* ── KPI cluster ────────────────────────────────────────────────────── */
-  .kpi-row {
-    display: flex;
-    align-items: flex-end;
-    gap: 32px;
-    flex-wrap: wrap;
-    margin-top: 4px;
-  }
-
-  /* Table section */
-  .table-toolbar {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    flex-wrap: wrap;
-    padding: 14px 18px;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-  }
-  .filter-search {
-    flex: 0 1 280px;
-    min-width: 200px;
-  }
-  .filter-select {
-    flex: 0 0 auto;
-    min-width: 170px;
-  }
-  .filter-toggle {
+  .anon-toggle {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    flex: 0 0 auto;
-    font-size: 13px;
-    font-weight: 500;
+    gap: var(--s-2);
+    align-self: flex-start;
+    font-size: var(--fs-sm);
     color: var(--text-2);
-    white-space: nowrap;
     cursor: pointer;
-    padding: 6px 12px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    background: var(--card);
-    transition:
-      background 0.15s ease,
-      color 0.15s ease,
-      border-color 0.15s ease;
   }
-  .filter-toggle:hover {
-    border-color: var(--brand);
-    color: var(--text);
-  }
-  .filter-toggle:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
-  }
-  .filter-toggle--on {
-    background: var(--brand);
-    border-color: var(--brand);
-    color: var(--brand-ink);
-  }
-  .filter-toggle--on:hover {
-    color: var(--brand-ink);
-  }
-  .filter-count {
-    font-size: 12.5px;
-    color: var(--text-2);
-  }
-  .spacer {
-    flex: 1;
-  }
-
-  /* Phase 39 (UI-15) — 390px viewport: the search input + role select have
-     min-widths that overflow on narrow phones. Drop both to 100% so they
-     stack cleanly below the count/checkbox row. */
-  @media (max-width: 480px) {
-    .filter-search,
-    .filter-select {
-      flex: 1 1 100%;
-      min-width: 0;
-    }
+  .anon-toggle input {
+    accent-color: var(--brand);
   }
 
   .col-number {

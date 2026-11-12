@@ -37,7 +37,8 @@ function functionBody(name: string): string {
 describe("Issue #558 — the admin employee list follows the header salon", () => {
   it("[vacuity gate] the page source is loaded and still carries the person directory", () => {
     expect(PAGE.length).toBeGreaterThan(30_000);
-    expect(PAGE).toContain("Personenverzeichnis");
+    // #854: the former „Personenverzeichnis“ section head is gone; the table caption names the list.
+    expect(PAGE).toContain('caption="Personen"');
   });
 
   it("[filter] the list request is built by withSalonId from the page filter", () => {

@@ -66,6 +66,20 @@ describe("#648 /admin/employees person table is the DataTable block (#843 D-843-
     expect(PAGE).toMatch(/urlState\(\s*listUrlSchema\s*\)/);
   });
 
+  // #854 (plan 854-18): the filter bar and the KPI row of the list are blocks too.
+  it("[toolbar] the filter bar is the TableToolbar block and the KPI row the KpiStrip", () => {
+    expect(PAGE).toContain('from "$components/ui/TableToolbar.svelte"');
+    expect(PAGE).toContain("<TableToolbar");
+    expect(PAGE).toContain('from "$components/ui/KpiStrip.svelte"');
+    expect(PAGE).toContain("<KpiStrip");
+    expect(PAGE).toContain("<PageHead");
+    // The former hand-built bar: a search input, selects and a „x von y“ count of its own.
+    expect(PAGE).not.toMatch(
+      /class="[^"]*\b(filter-search|filter-select|filter-toggle|filter-count)\b/,
+    );
+    expect(PAGE).not.toContain("<KPIStat");
+  });
+
   it("[control] positive control: a raw table of the page's own is reported", () => {
     const fixture = '<div class="table-wrap"><table class="table"><thead></thead></table></div>';
     expect(ownTableMarkup(fixture)).toEqual(["<table", "table-wrap"]);

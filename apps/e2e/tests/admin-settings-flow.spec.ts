@@ -103,13 +103,13 @@ test.describe("Admin Settings — Complete Flow", () => {
     await page.goto("/admin/employees");
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
     await expect(page.getByTestId("admin-employees-add")).toBeVisible();
-    await expect(page.getByTestId("admin-employees-search")).toBeVisible();
+    await expect(page.getByRole("searchbox", { name: "Personen suchen" })).toBeVisible();
   });
 
   test("admin employees — search input narrows the list", async ({ page, tenant }) => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/employees");
-    const search = page.getByTestId("admin-employees-search");
+    const search = page.getByRole("searchbox", { name: "Personen suchen" });
     await search.fill("zzzz-no-such-person");
     // Filter is reactive (Svelte $derived) — the row count drops on the
     // next render frame. Asserting the empty body avoids a timeout-based

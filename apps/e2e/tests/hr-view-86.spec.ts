@@ -481,7 +481,13 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     // ── 5. the ended employee is found with the filter „Ausgeschieden“ ───────────────────────
     await page.goto(`${tenant.baseUrl}/admin/employees`);
     await expect(page.getByTestId(`admin-employees-row-${hr.id}`)).toBeVisible();
-    await page.getByLabel("Nach Beschäftigung filtern").selectOption({ label: "Ausgeschieden" });
+    // #854: the filters sit behind the toolbar's „+ Filter“ popover (a radio group per filter).
+    await page.getByRole("button", { name: "+ Filter" }).click();
+    await page
+      .getByRole("radiogroup", { name: "Beschäftigung" })
+      .getByRole("radio", { name: "Ausgeschieden" })
+      .click();
+    await page.keyboard.press("Escape");
     await expect(page.getByTestId(`admin-employees-row-${x.id}`)).toBeVisible();
     await expect(page.getByTestId(`admin-employees-row-${x.id}-employment`)).toHaveText(
       `Ausgeschieden am ${deDate(exitDay)}`,

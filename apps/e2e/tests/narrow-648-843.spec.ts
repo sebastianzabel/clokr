@@ -209,7 +209,7 @@ test.describe("/admin/employees on the DataTable", () => {
     await page.setViewportSize({ width: 360, height: 800 });
     const email = await signIn(page, request, tenant);
     await page.goto("/admin/employees");
-    const search = page.getByTestId("admin-employees-search");
+    const search = page.getByRole("searchbox", { name: "Personen suchen" });
     const row = page.locator(".col-email").filter({ hasText: email });
     await expect(row).toBeVisible();
 

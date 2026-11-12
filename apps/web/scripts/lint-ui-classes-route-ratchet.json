@@ -42,10 +42,6 @@
         "count": 1,
         "ticket": "#853"
       },
-      "apps/web/src/routes/(app)/admin/employees/+page.svelte": {
-        "count": 7,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/leave/+page.svelte": {
         "count": 4,
         "ticket": "#851"
@@ -74,10 +70,6 @@
       },
       "apps/web/src/lib/components/reports/PersonDrilldown.svelte": {
         "count": 4,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/employees/+page.svelte": {
-        "count": 1,
         "ticket": "#854"
       },
       "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte": {
