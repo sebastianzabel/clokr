@@ -60,10 +60,26 @@
   import { mayFileRetroRequest } from "$lib/page-rights";
   import { toasts } from "$stores/toast";
   import { correctionSaved } from "$lib/feedback/action-messages"; // #843 (D-843-08)
-  import PageHead from "$lib/components/layout/PageHead.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
-  import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-elk
-  import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-elk
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import DaySheet from "$lib/components/me/DaySheet.svelte";
+  import MonthCorrectionDialog from "$lib/components/me/MonthCorrectionDialog.svelte";
+  import {
+    correctionForDay,
+    listOwnMonthCorrections,
+    MONTH_CORRECTION_STATUS_LABEL,
+    type MonthCorrection,
+  } from "$lib/me/month-corrections";
+  import PageHeader from "$components/ui/PageHeader.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
+  import { downloadStundennachweis } from "$lib/me/stundennachweis";
+  import KpiStrip from "$components/ui/KpiStrip.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import { zeitenKpis, zeitenStatus } from "$lib/me/zeiten-kpis";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import {
@@ -269,22 +285,6 @@
   // 260611-ly6 — BS-Tage (Berufsschultage) merged into the list view client-side.
   // Self-scope is enforced server-side from req.user.employeeId.
   let bsAbsences: BsAbsence[] = $state([]);
-  let overtimeTotalHours: number | null = $state(null);
-  // Phase 97-01 (TRACER, SALDO-DISP-01/03) — additive split fields from GET /overtime/:id.
-  // undefined when the endpoint didn't return the split (older cached response / fail-safe
-  // branch) — the Gesamt-Saldo snippet below falls back to the pre-existing single-value
-  // SaldoAnzeige rendering (via overtimeTotalHours) in that case.
-  let overtimeConfirmedMinutes: number | undefined = $state(undefined);
-  let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
-  let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
-  // Issue #588 (P-14): how many calendar months the forecast spans; words the card caption.
-  let overtimeUnconfirmedMonths: number | null | undefined = $state(undefined);
-  let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
-  // Phase 100 (OTC-03) — additive tolerance fields from GET /overtime/:id, mirroring the
-  // Phase-97-01 split fields above: undefined on fetch failure / older cached response
-  // (via rawOvertime?.field below), which KontoSaldoCard renders as "unconfigured".
-  let overtimeNegativeLimitExceeded: boolean | undefined = $state(undefined);
-  let overtimeMaxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
 
@@ -494,7 +494,6 @@
         rawSchedule,
         rawHolidays,
         rawAbsences,
-        rawOvertime,
         rawEmployee,
         rawConfig,
         rawBsAbsences,
@@ -510,23 +509,6 @@
               .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${activeEmpId}`)
               .catch(() => [] as Absence[])
           : Promise.resolve([] as Absence[]),
-        activeEmpId
-          ? settled(
-              api.get<{
-                balanceHours: number;
-                // Phase 97-01 (TRACER, SALDO-DISP-01/03/07) — additive split fields.
-                confirmedMinutes?: number;
-                openMonthMinutes?: number | null;
-                hasClosedMonth?: boolean;
-                unconfirmedMonths?: number | null;
-                rosterIncomplete?: boolean;
-                // Phase 100 (OTC-03) — additive tolerance fields, already returned by the
-                // endpoint (overtime.ts:172-173); only the client-side type was missing them.
-                maxNegativeBalanceMinutes?: number | null;
-                isNegativeLimitExceeded?: boolean;
-              }>(`/overtime/${activeEmpId}`),
-            )
-          : Promise.resolve(SKIPPED),
         activeEmpId
           ? api
               .get<{
@@ -579,22 +561,11 @@
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
       bsAbsences = rawBsAbsences;
-      const overtimeValue = valueOr(rawOvertime, null);
-      overtimeTotalHours = overtimeValue ? Number(overtimeValue.balanceHours) : null;
-      // Phase 97-01 — split fields, undefined when the endpoint didn't return them (older
-      // cached response / fail-safe branch); the Gesamt-Saldo snippet falls back accordingly.
-      overtimeConfirmedMinutes = overtimeValue?.confirmedMinutes;
-      overtimeOpenMonthMinutes = overtimeValue?.openMonthMinutes;
-      overtimeHasClosedMonth = overtimeValue?.hasClosedMonth;
-      overtimeUnconfirmedMonths = overtimeValue?.unconfirmedMonths;
-      overtimeRosterIncomplete = overtimeValue?.rosterIncomplete;
-      // Phase 100 (OTC-03) — same undefined-on-failure contract as the siblings above.
-      overtimeNegativeLimitExceeded = overtimeValue?.isNegativeLimitExceeded;
-      overtimeMaxNegativeBalanceMinutes = overtimeValue?.maxNegativeBalanceMinutes;
       // Phase 116 (issue #119) — a 500 here used to become `schedule = null`, which monthMetrics
       // turns into `sollToDateMin: 0`, which SollIstBar prints as "noch keine Sollzeit in diesem
-      // Monat". Now it reaches MonatSaldoCard's error branch instead.
-      saldoFetchFailed = anyFailed(rawSchedule, rawOvertime);
+      // Monat". Now it reaches the summary's error state instead (Issue #851: the account total
+      // left this page for /ich/konto, so only the contract read decides it).
+      saldoFetchFailed = anyFailed(rawSchedule);
       // Phase 97-05 — now consumed by gesamtSaldoStat below. 97-01/97-03 built the "Restmonat
       // unverplant" badge and stored this signal but never wired it into the snippet; fixed
       // here so this page renders identically to Team-Zeiten (97-05 Task 3 wires the same
@@ -1142,7 +1113,105 @@
 
   // Issue #70: a calendar cell with one entry still opens it for editing, a cell with several
   // switches to the list focused on that day, an empty cell opens the new form.
-  async function onCellClick(day: string) {
+  // Issue #599 (Phase 851): a calendar cell first opens the day to read; the sheet's primary action
+  // runs what the cell click did before (edit, list, add). In a closed month it is the correction
+  // request, which has no target until its API exists.
+  // Issue #598 (Phase 851): the own Stundennachweis of the month on screen.
+  let pdfBusy = $state(false);
+  async function downloadMonthPdf() {
+    const id = $authStore.user?.employeeId;
+    if (!id) return;
+    pdfBusy = true;
+    try {
+      await downloadStundennachweis(id, calMonth.getFullYear(), calMonth.getMonth() + 1);
+      toasts.success("Stundennachweis heruntergeladen");
+    } catch (e) {
+      toasts.error(
+        e instanceof Error
+          ? e.message
+          : "Der Stundennachweis ließ sich nicht erstellen. Bitte versuche es noch einmal.",
+      );
+    } finally {
+      pdfBusy = false;
+    }
+  }
+
+  let sheetOpen = $state(false);
+  let sheetDay = $state<CalDay | null>(null);
+
+  function onCellClick(day: string) {
+    sheetDay = calendarDays.find((d) => d.dateStr === day) ?? null;
+    sheetOpen = true;
+  }
+
+  const sheetRows = $derived(sheetDay ? rowsOfDay(sheetDay.dateStr) : []);
+  const sheetLocked = $derived(sheetRows.some((e) => e.isLocked === true));
+  const sheetTitle = $derived(
+    sheetDay
+      ? format(new Date(sheetDay.dateStr + "T12:00:00"), "EEEE, d. MMMM", { locale: de })
+      : "",
+  );
+  const sheetReason = $derived.by(() => {
+    if (!sheetDay) return undefined;
+    if (sheetDay.isHoliday) return `${sheetDay.holidayName}.`;
+    if (sheetDay.absenceType)
+      return absenceLabel(sheetDay.absenceType) + (sheetDay.absenceHalf ? " (halber Tag)" : "");
+    if (sheetDay.isVocationalSchool) return "Berufsschule";
+    return undefined;
+  });
+  const sheetPrimary = $derived.by((): { label: string | null; enabled: boolean } => {
+    if (!sheetDay || isExempt || sheetDay.isBeforeHire) return { label: null, enabled: false };
+    if (sheetLocked)
+      // Issue #599: one open request per day; a decided one may be followed by a new request.
+      return sheetRequest?.status === "PENDING"
+        ? { label: null, enabled: false }
+        : { label: "Korrektur anfragen", enabled: true };
+    if (sheetDay.isFuture) return { label: null, enabled: false };
+    return { label: sheetRows.length > 0 ? "Bearbeiten" : "Zeit nachtragen", enabled: true };
+  });
+
+  // Issue #599 (Phase 851): the own correction requests of closed months, read when a locked day is
+  // opened; the sheet shows the day's request status and the dialog files a new one (API #902).
+  let ownCorrections = $state<MonthCorrection[]>([]);
+  let correctionsLoaded = false;
+  let correctionOpen = $state(false);
+  const sheetRequest = $derived(
+    sheetDay ? correctionForDay(ownCorrections, sheetDay.dateStr) : null,
+  );
+  const sheetRequestStatus = $derived(
+    sheetRequest
+      ? {
+          label: MONTH_CORRECTION_STATUS_LABEL[sheetRequest.status],
+          tone:
+            sheetRequest.status === "APPROVED"
+              ? ("ok" as const)
+              : sheetRequest.status === "REJECTED"
+                ? ("bad" as const)
+                : ("info" as const),
+          note: sheetRequest.reviewNote,
+        }
+      : null,
+  );
+
+  $effect(() => {
+    if (sheetOpen && sheetLocked && !correctionsLoaded) {
+      correctionsLoaded = true;
+      void listOwnMonthCorrections()
+        .then((list) => (ownCorrections = list))
+        .catch(() => {});
+    }
+  });
+
+  function onSheetPrimary() {
+    if (!sheetDay) return;
+    if (sheetLocked) {
+      correctionOpen = true;
+      return;
+    }
+    void runCellAction(sheetDay.dateStr);
+  }
+
+  async function runCellAction(day: string) {
     const action = cellClickAction(rowsOfDay(day));
     if (action.kind === "edit") {
       openEdit(action.entry);
@@ -1828,6 +1897,20 @@
   let arbzgDayMap = $derived(
     arbzgEnabled ? dayChecksToArbzgMap(dayChecks) : new Map<string, DayWarning[]>(),
   );
+  // Issue #851: the Kennzahlen of the prototype. Breaks are the recorded ones of the counted
+  // entries (closed, valid, through yesterday - the same set as Ist); findings come from the
+  // server's day check (#80/#511), never from a browser rule.
+  let breakMinutesToDate = $derived(entriesToDate.reduce((s, e) => s + (e.breakMinutes ?? 0), 0));
+  let zeitenItems = $derived(
+    zeitenKpis({
+      month: monthMetrics,
+      locked: monthIsLocked || monthMetrics.closed,
+      breakMinutes: breakMinutesToDate,
+      findingDays: arbzgEnabled ? arbzgDayMap.size : null,
+      runningCount,
+    }),
+  );
+  let zeitenMonthStatus = $derived(zeitenStatus(monthIsLocked || monthMetrics.closed));
 
   // Legend is derived from what the displayed month actually contains, and split by the
   // three encoding channels — quick task 260820-1i7. Colour = Soll status (left edge),
@@ -1876,6 +1959,41 @@
   // 260611-ly6 — merges TimeEntries (kind="TE") with own BS-Absences (kind="BS")
   // for the list view. BS rows are read-only synthetic rows; lifecycle stays on
   // /shifts. Self-scope is enforced server-side from req.user.employeeId.
+  // Issue #851 (D-851-05): the list columns. „Salon“ only with salon choice (#70 gate), the
+  // SHIFT_BASED day column only with a month saldo (#291: its name and tooltip say what it holds).
+  let listColumns = $derived<DataTableColumn[]>([
+    { key: "date", label: "Datum", primary: true },
+    ...(multiEntryUi ? [{ key: "salon", label: "Salon" }] : []),
+    { key: "from", label: "Von" },
+    { key: "to", label: "Bis" },
+    { key: "break", label: "Pause" },
+    { key: "net", label: "Netto" },
+    ...(isShiftBased && monthSaldo
+      ? [
+          {
+            key: "saldo",
+            label: "Saldo seit Abschluss",
+            title:
+              "Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kachel „Konto“.",
+          },
+        ]
+      : []),
+    { key: "source", label: "Quelle" },
+    { key: "note", label: "Notiz" },
+    { key: "actions", label: "Aktionen", align: "end" as const },
+  ]);
+
+  /** The row marks of the list: invalid entry, focused entry, focused day, Berufsschule row. */
+  function listRowClass(slot: ListRow): string | undefined {
+    if (slot.kind !== "TE") return "row-bs";
+    const slotDate = (slot.date ?? slot.startTime).split("T")[0];
+    const marks: string[] = [];
+    if (slot.isInvalid) marks.push("row-invalid");
+    if (slot.id === focusedEntryId) marks.push("row-focus");
+    else if (slotDate === selectedDate) marks.push("row-day-focus");
+    return marks.join(" ") || undefined;
+  }
+
   let allEntries = $derived.by<ListRow[]>(() => {
     const teRows: ListRow[] = entries.map((e) => ({ ...e, kind: "TE" as const }));
     const bsRows: ListRow[] = bsAbsences.map((b) => ({
@@ -1916,43 +2034,60 @@
   }}
 />
 
-<PageHead eyebrow="Ich" title={pageLabel("/time-entries")}>
+<PageHeader
+  title={pageLabel("/time-entries")}
+  subtitle="Deine erfassten Arbeitszeiten, Tag für Tag"
+>
   {#snippet actions()}
-    <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt users see no
-         "+ Neuer Eintrag" CTA. Full HIDE, NOT disabled — don't teach
-         exempt users to click a disabled control. -->
-    <!-- quick 260820-elk — Gesamt-Saldo moved OUT of the page head entirely, into the
-         quiet Konto card in the metrics row below (see KontoSaldoCard). -->
+    <!-- Phase 851 (prototype): the Stundennachweis of the month on screen (#598) and the one way to
+         add a time. Phase 76.7 (D-16): § 18 ArbZG-exempt users see no add action at all. -->
+    {#if $authStore.user?.employeeId}
+      <button
+        class="btn btn-secondary btn-sm"
+        data-testid="time-entries-pdf"
+        disabled={pdfBusy}
+        onclick={downloadMonthPdf}
+      >
+        {#if pdfBusy}<Spinner size={14} label="Wird erstellt" />{/if}
+        Stundennachweis (PDF)
+      </button>
+    {/if}
     {#if !isExempt}
       <button
         class="btn btn-primary btn-sm"
         onclick={() => openAdd()}
-        data-testid="time-entries-add">+ Neuer Eintrag</button
+        data-testid="time-entries-add">Zeit nachtragen</button
       >
     {/if}
   {/snippet}
-</PageHead>
+</PageHeader>
 
 <div data-testid="time-entries-page">
-  <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
-  <div class="view-tabs" data-testid="time-entries-view-tabs">
-    <button
-      class="view-tab"
-      class:view-tab--active={teView === "calendar"}
-      onclick={() => (teView = "calendar")}
-      data-testid="time-entries-view-calendar"
-    >
-      Kalender
-    </button>
-    <button
-      class="view-tab"
-      class:view-tab--active={teView === "list"}
-      onclick={() => (teView = "list")}
-      data-testid="time-entries-view-list"
-    >
-      Liste
-    </button>
-  </div>
+  <!-- Issue #851 (prototype „Zeiten“): one toolbar - the month (the page's only month navigation)
+       and the view switch. -->
+  <MonthBar
+    date={calMonth}
+    onPrev={() => gotoMonth(-1)}
+    onNext={() => gotoMonth(1)}
+    onToday={gotoToday}
+    onSelectMonth={gotoMonthYear}
+    testIdPrefix="calendar-month-header"
+  >
+    {#snippet extraActions()}
+      <div data-testid="time-entries-view-tabs">
+        <SegmentedControl
+          size="sm"
+          name="time-entries-view"
+          ariaLabel="Ansicht"
+          options={[
+            { value: "calendar", label: "Kalender" },
+            { value: "list", label: "Liste" },
+          ]}
+          bind:value={teView}
+        />
+      </div>
+    {/snippet}
+  </MonthBar>
 
   {#if error}
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
@@ -1973,48 +2108,27 @@
     </div>
   {/if}
 
-  <!-- ── Metrics row (design variant 1c "Fortschritt", quick 260820-elk) ───────
-       Month card (nav + progress bar) + quiet Konto card. The metrics have left the
-       month bar entirely — MonthBar is called WITHOUT `stats`/`statRenders` below, so it
-       renders as pure navigation (D-NAV): this stays the page's ONE AND ONLY month nav. -->
-  <div class="te-metrics" data-testid="time-entries-summary">
-    <MonatSaldoCard
-      sollToDateMin={monthMetrics.sollToDateMin}
-      istMin={monthMetrics.istMin}
-      saldoMin={monthMetrics.saldoMin}
-      noSollTarget={monthMetrics.noSollTarget}
-      sollLabel={monthMetrics.sollLabel}
-      extraNote={monthMetrics.extraNote}
-      workdaysSoFar={monthMetrics.workdaysSoFar}
-      {runningCount}
-      isLocked={monthIsLocked || monthMetrics.closed}
-      loading={saldoCardState === "loading"}
-      error={saldoCardState === "error"}
-      onRetry={loadAll}
-    >
-      {#snippet monthNav()}
-        <MonthBar
-          eyebrow="Buchungsmonat"
-          date={calMonth}
-          onPrev={() => gotoMonth(-1)}
-          onNext={() => gotoMonth(1)}
-          onToday={gotoToday}
-          onSelectMonth={gotoMonthYear}
-          testIdPrefix="calendar-month-header"
-        />
-      {/snippet}
-    </MonatSaldoCard>
-    <KontoSaldoCard
-      totalHours={overtimeTotalHours}
-      confirmedMinutes={overtimeConfirmedMinutes}
-      openMonthMinutes={overtimeOpenMonthMinutes}
-      hasClosedMonth={overtimeHasClosedMonth}
-      unconfirmedMonths={overtimeUnconfirmedMonths}
-      rosterIncomplete={overtimeRosterIncomplete}
-      isNegativeLimitExceeded={overtimeNegativeLimitExceeded}
-      maxNegativeBalanceMinutes={overtimeMaxNegativeBalanceMinutes}
-      {loading}
-    />
+  <!-- Issue #851 (prototype „Zeiten“): four Kennzahlen of the displayed month. The figures are the
+       page's MonthMetrics (#125, #433, #495) - zeitenKpis() only words them; the account total lives
+       on /ich/konto. -->
+  <div data-testid="time-entries-summary">
+    {#if saldoCardState === "loading"}
+      <Skeleton shape="block" height="96px" />
+    {:else if saldoCardState === "error"}
+      <ErrorState message="Werte konnten nicht geladen werden." onRetry={loadAll} />
+    {:else}
+      <KpiStrip ariaLabel="Dein Monat in Zahlen" items={zeitenItems}>
+        {#snippet extra()}
+          <div class="te-status" data-testid="zeiten-kpi-status">
+            <span class="te-status-label">Status</span>
+            <span class="te-status-value"
+              ><Chip tone={zeitenMonthStatus.tone}>{zeitenMonthStatus.label}</Chip></span
+            >
+            <span class="te-status-note">{zeitenMonthStatus.explanation}</span>
+          </div>
+        {/snippet}
+      </KpiStrip>
+    {/if}
   </div>
 
   <!-- Phase 112 — § 4 ArbZG explanation + the mobile route into the confirm modal. Rendered
@@ -2201,230 +2315,236 @@
             </div>
           {/if}
         {/if}
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Datum</th>
-                {#if multiEntryUi}<th>Salon</th>{/if}
-                <th>Von</th>
-                <th>Bis</th>
-                <th>Pause</th>
-                <th>Netto</th>
-                {#if isShiftBased && monthSaldo}
-                  <th
-                    title="Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kachel „Konto“."
-                    >Saldo seit Abschluss</th
-                  >
-                {/if}
-                <th>Quelle</th>
-                <th>Notiz</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each allEntries as slot (slot.id)}
-                {#if slot.kind === "TE"}
-                  {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-                  {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                  <tr
-                    class:row-invalid={slot.isInvalid}
-                    class:row-focus={slot.id === focusedEntryId}
-                    class:row-day-focus={slotDate === selectedDate && slot.id !== focusedEntryId}
-                    data-testid={`time-entry-row-${slot.id}`}
-                  >
-                    <td
-                      >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })}{#if slotArbzg}
-                        <span class="list-arbzg-hint"
-                          >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                            class="arbzg-tooltip"
-                            >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                                />{/if}{/each}</span
-                          ></span
-                        >
-                      {/if}</td
+        <!-- Issue #851 (D-851-05): the list is the DataTable block. Row kinds, test ids, row marks (invalid,
+             focused entry, focused day, Berufsschule) and actions are unchanged; the marks are page classes on
+             the block's rows (`rowClass`), styled below through :global. -->
+        {#if allEntries.length > 0}
+          <DataTable
+            caption="Zeiteinträge {format(calMonth, 'MMMM yyyy', { locale: de })}"
+            columns={listColumns}
+            rows={allEntries}
+            rowKey={(slot) => slot.id}
+            rowTestId={(slot) =>
+              slot.kind === "TE" ? `time-entry-row-${slot.id}` : `bs-row-${slot.id}`}
+            rowClass={listRowClass}
+          >
+            {#snippet cell(slot, column)}
+              {#if slot.kind === "TE"}
+                {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+                {@const slotArbzg = arbzgDayMap.get(slotDate)}
+                {#if column.key === "date"}
+                  {new Date(slot.startTime).toLocaleDateString("de-DE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  })}{#if slotArbzg}
+                    <span class="list-arbzg-hint"
+                      >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                        class="arbzg-tooltip"
+                        >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
+                            />{/if}{/each}</span
+                      ></span
                     >
-                    {#if multiEntryUi}<td data-testid={`time-entry-row-${slot.id}-salon`}
-                        >{#if isTravelRow(slot)}<span
-                            class="badge badge-gray"
-                            data-testid={`time-entry-row-${slot.id}-travel-badge`}
-                            >{TRAVEL_TEXTS.badge}</span
-                          >
-                          <span
-                            class="travel-route"
-                            data-testid={`time-entry-row-${slot.id}-travel-route`}
-                            >{travelRouteLabel(slot)}</span
-                          >{:else}{slot.salonName ?? "—"}{/if}</td
-                      >{/if}
-                    <td>{fmtTime(slot.startTime)}</td>
-                    <td>
-                      {#if slot.endTime}{fmtTime(slot.endTime)}
-                      {:else}<span class="badge badge-green">Aktiv</span>{/if}
-                    </td>
-                    <td>
-                      {fmtBreaks(slot)}
-                      {#if enforceBreakConfirmation && isUnconfirmedBreak(slot)}
-                        <!-- Phase 112 — only AUTO is badged here. breakStatus is @default(CONFIRMED)
+                  {/if}
+                {:else if column.key === "salon"}
+                  <!-- #70 gate: the column exists only with salon choice; the gate stays visible here too. -->
+                  {#if multiEntryUi}
+                    <span data-testid={`time-entry-row-${slot.id}-salon`}
+                      >{#if isTravelRow(slot)}<span
+                          class="badge badge-gray"
+                          data-testid={`time-entry-row-${slot.id}-travel-badge`}
+                          >{TRAVEL_TEXTS.badge}</span
+                        >
+                        <span
+                          class="travel-route"
+                          data-testid={`time-entry-row-${slot.id}-travel-route`}
+                          >{travelRouteLabel(slot)}</span
+                        >{:else}{slot.salonName ?? "—"}{/if}</span
+                    >
+                  {/if}
+                {:else if column.key === "from"}
+                  {fmtTime(slot.startTime)}
+                {:else if column.key === "to"}
+                  {#if slot.endTime}{fmtTime(slot.endTime)}
+                  {:else}<span class="badge badge-green">Aktiv</span>{/if}
+                {:else if column.key === "break"}
+                  {fmtBreaks(slot)}
+                  {#if enforceBreakConfirmation && isUnconfirmedBreak(slot)}
+                    <!-- Phase 112 — only AUTO is badged here. breakStatus is @default(CONFIRMED)
                              in the schema, so badging every state would put a pill on every row of
                              every month and destroy the signal. The modal still shows all three. -->
-                        <span
-                          class="badge {breakBadgeClass(slot.breakStatus)} break-cell-badge"
-                          data-testid={`time-entry-row-${slot.id}-break-badge`}
-                          title="Automatisch eingetragene Pflichtpause nach § 4 ArbZG — bitte bestätigen"
-                          >{breakBadgeLabel(slot.breakStatus)}</span
-                        >
-                      {/if}
-                    </td>
-                    <td class="font-medium">{slotNet(slot)}</td>
-                    {#if isShiftBased && monthSaldo}
-                      {@const cum = monthSaldoDayMap.get(slotDate)}
-                      <td class={cum != null ? balClass(cum) : ""}>
-                        {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
-                      </td>
-                    {/if}
-                    <td
-                      ><span class="badge {sourceBadge(slot.source)}"
-                        >{sourceLabel(slot.source)}</span
-                      ></td
+                    <span
+                      class="badge {breakBadgeClass(slot.breakStatus)} break-cell-badge"
+                      data-testid={`time-entry-row-${slot.id}-break-badge`}
+                      title="Automatisch eingetragene Pflichtpause nach § 4 ArbZG — bitte bestätigen"
+                      >{breakBadgeLabel(slot.breakStatus)}</span
                     >
-                    <td class="note-cell text-muted">
-                      {#if slot.isInvalid && slot.invalidReason}
-                        <span class="invalid-reason">{slot.invalidReason}</span>
-                      {:else}
-                        {slot.note ?? "---"}
-                      {/if}
-                    </td>
-                    <td class="action-cell">
-                      {#if slot.isLocked}
-                        <!-- Locked entries are read-only (D-08). Per Phase 73-03 +
+                  {/if}
+                {:else if column.key === "net"}
+                  <span class="font-medium">{slotNet(slot)}</span>
+                {:else if column.key === "saldo"}
+                  <!-- #291/#433: the SHIFT_BASED day column, gated exactly like its column declaration. -->
+                  {#if isShiftBased && monthSaldo}
+                    {@const cum = monthSaldoDayMap.get(slotDate)}
+                    <span class={cum != null ? balClass(cum) : ""}>
+                      {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
+                    </span>
+                  {/if}
+                {:else if column.key === "source"}
+                  <span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span>
+                {:else if column.key === "note"}
+                  <span class="note-cell text-muted">
+                    {#if slot.isInvalid && slot.invalidReason}
+                      <span class="invalid-reason">{slot.invalidReason}</span>
+                    {:else}
+                      {slot.note ?? "---"}
+                    {/if}
+                  </span>
+                {:else if slot.isLocked}
+                  <!-- Locked entries are read-only (D-08). Per Phase 73-03 +
                            74-01: render the buttons as disabled instead of
                            hiding so the row testids stay queryable for the
                            locked-month spec — matches the
                            `getByTestId(...-edit).toBeDisabled()` contract. -->
-                        <span class="row-actions row-actions--visible">
-                          <span
-                            class="badge badge-locked"
-                            title="Monat ist abgeschlossen"
-                            data-testid={`time-entry-row-${slot.id}-locked-badge`}>🔒 Gesperrt</span
-                          >
-                          <button
-                            class="btn-icon"
-                            disabled
-                            title="Eintrag gesperrt"
-                            data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
-                          >
-                          <button
-                            class="btn-icon btn-icon-danger"
-                            disabled
-                            title="Eintrag gesperrt"
-                            data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
-                          >
-                        </span>
-                      {:else if withdrawConfirmId === slot.id}
-                        <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
+                  <span class="row-actions row-actions--visible">
+                    <span
+                      class="badge badge-locked"
+                      title="Monat ist abgeschlossen"
+                      data-testid={`time-entry-row-${slot.id}-locked-badge`}>🔒 Gesperrt</span
+                    >
+                    <button
+                      class="btn-icon"
+                      disabled
+                      title="Eintrag gesperrt"
+                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
+                    >
+                    <button
+                      class="btn-icon btn-icon-danger"
+                      disabled
+                      title="Eintrag gesperrt"
+                      data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                    >
+                  </span>
+                {:else if withdrawConfirmId === slot.id}
+                  <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
                              delete-confirm pattern above with its own label/testids. -->
-                        <span class="del-confirm">
-                          <span class="text-muted" style="font-size:0.8rem;">Zurückziehen?</span>
-                          <button
-                            class="btn btn-sm btn-danger"
-                            onclick={() => withdrawRetroRequest(slot)}
-                            data-testid={`time-entry-row-${slot.id}-confirm-withdraw`}>Ja</button
-                          >
-                          <button
-                            class="btn btn-sm btn-ghost"
-                            onclick={() => (withdrawConfirmId = "")}
-                            data-testid={`time-entry-row-${slot.id}-cancel-withdraw`}>Nein</button
-                          >
-                        </span>
-                      {:else}
-                        <span class="row-actions row-actions--visible">
-                          <button
-                            class="btn-icon"
-                            onclick={() => openEdit(slot)}
-                            title="Bearbeiten"
-                            data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
-                          >
-                          {#if isPendingNachtrag(slot)}
-                            <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is
+                  <span class="del-confirm">
+                    <span class="text-muted" style="font-size:0.8rem;">Zurückziehen?</span>
+                    <button
+                      class="btn btn-sm btn-danger"
+                      onclick={() => withdrawRetroRequest(slot)}
+                      data-testid={`time-entry-row-${slot.id}-confirm-withdraw`}>Ja</button
+                    >
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      onclick={() => (withdrawConfirmId = "")}
+                      data-testid={`time-entry-row-${slot.id}-cancel-withdraw`}>Nein</button
+                    >
+                  </span>
+                {:else}
+                  <span class="row-actions row-actions--visible">
+                    <button
+                      class="btn-icon"
+                      onclick={() => openEdit(slot)}
+                      title="Bearbeiten"
+                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
+                    >
+                    {#if isPendingNachtrag(slot)}
+                      <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is
                                  withdrawn via DELETE /retro-entry-requests/:id
                                  (soft-deletes request + coupled entry), not the
                                  plain DELETE /time-entries/:id (which would
                                  re-run the retro-window guard and 403). -->
-                            <button
-                              class="btn-icon btn-icon-danger"
-                              onclick={() => (withdrawConfirmId = slot.id)}
-                              title="Zurückziehen"
-                              data-testid={`time-entry-row-${slot.id}-withdraw`}>↩️</button
-                            >
-                          {:else}
-                            <button
-                              class="btn-icon btn-icon-danger"
-                              onclick={() => openDeleteDialog(slot.id)}
-                              title="Löschen"
-                              data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
-                            >
-                          {/if}
-                        </span>
-                      {/if}
-                    </td>
-                  </tr>
-                {:else}
-                  <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions.
-                       Distinct data-testid namespace (`bs-row-*`) so it never collides with the
-                       existing `time-entry-row-*` testids used by E2E specs. -->
-                  <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
-                    <td
-                      >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })}</td
-                    >
-                    {#if multiEntryUi}<td class="text-muted">—</td>{/if}
-                    <td class="text-muted">—</td>
-                    <td class="text-muted">—</td>
-                    <td class="text-muted">—</td>
-                    <td class="font-medium text-muted">—</td>
-                    <td><span class="badge badge-blue">Berufsschule</span></td>
-                    <td class="note-cell text-muted"
-                      >{slot.source === "PATTERN"
-                        ? "Automatisch (Muster)"
-                        : "Manuell eingefügt"}</td
-                    >
-                    <td class="action-cell">
-                      <span
-                        class="text-muted"
-                        style="font-size: 0.75rem;"
-                        title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
+                      <button
+                        class="btn-icon btn-icon-danger"
+                        onclick={() => (withdrawConfirmId = slot.id)}
+                        title="Zurückziehen"
+                        data-testid={`time-entry-row-${slot.id}-withdraw`}>↩️</button
                       >
-                    </td>
-                  </tr>
+                    {:else}
+                      <button
+                        class="btn-icon btn-icon-danger"
+                        onclick={() => openDeleteDialog(slot.id)}
+                        title="Löschen"
+                        data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                      >
+                    {/if}
+                  </span>
                 {/if}
-              {/each}
-            </tbody>
-          </table>
-        </div>
+              {:else if column.key === "date"}
+                {new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                })}
+              {:else if column.key === "source"}
+                <span class="badge badge-blue">Berufsschule</span>
+              {:else if column.key === "note"}
+                <span class="note-cell text-muted"
+                  >{slot.source === "PATTERN" ? "Automatisch (Muster)" : "Manuell eingefügt"}</span
+                >
+              {:else if column.key === "actions"}
+                <span
+                  class="text-muted bs-hint"
+                  title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
+                >
+              {:else}
+                <span class="text-muted">—</span>
+              {/if}
+            {/snippet}
+          </DataTable>
+        {/if}
         {#if listState === "no-employee"}
-          <div class="empty-state" data-testid="time-entries-list-no-employee">
-            <span class="empty-icon">👤</span>
-            <h3>Kein Mitarbeiterprofil</h3>
-            <p class="text-muted">
-              Ohne verknüpftes Mitarbeiterprofil können keine Zeiteinträge angezeigt werden.
-            </p>
+          <div data-testid="time-entries-list-no-employee">
+            <EmptyState
+              icon="users"
+              title="Kein Mitarbeiterprofil"
+              description="Ohne verknüpftes Mitarbeiterprofil können keine Zeiteinträge angezeigt werden."
+            />
           </div>
         {:else if listState === "empty"}
-          <div class="empty-state">
-            <span class="empty-icon">📋</span>
-            <h3>Keine Einträge</h3>
-            <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
-          </div>
+          <EmptyState title="Keine Einträge" description="Keine Zeiteinträge in diesem Monat." />
         {/if}
       {/if}
     </div>
+  {/if}
+
+  <DaySheet
+    bind:open={sheetOpen}
+    title={sheetTitle}
+    subtitle={sheetRows.find((e) => e.salonName)?.salonName
+      ? `Erfasst in ${sheetRows.find((e) => e.salonName)?.salonName}`
+      : undefined}
+    sollMin={sheetDay && sheetDay.expectedMin > 0 ? sheetDay.expectedMin : null}
+    istMin={sheetDay?.workedMin ?? 0}
+    entries={sheetRows.map((e) => ({
+      id: e.id,
+      from: fmtTime(e.startTime),
+      to: e.endTime ? fmtTime(e.endTime) : "läuft",
+      pause: fmtBreaks(e),
+      net: slotNet(e),
+      salon: multiEntryUi ? (e.salonName ?? null) : null,
+    }))}
+    reason={sheetReason}
+    locked={sheetLocked}
+    future={sheetDay?.isFuture ?? false}
+    primaryLabel={sheetPrimary.label}
+    primaryEnabled={sheetPrimary.enabled}
+    onPrimary={onSheetPrimary}
+    requestStatus={sheetRequestStatus}
+  />
+
+  {#if sheetDay}
+    <MonthCorrectionDialog
+      bind:open={correctionOpen}
+      day={sheetDay.dateStr}
+      dayLabel={sheetTitle}
+      initialStart={sheetRows[0] ? fmtTime(sheetRows[0].startTime) : ""}
+      initialEnd={sheetRows.at(-1)?.endTime ? fmtTime(sheetRows.at(-1)?.endTime ?? null) : ""}
+      initialBreak={sheetRows.reduce((sum, e) => sum + (e.breakMinutes ?? 0), 0) || undefined}
+      onCreated={(created) => (ownCorrections = [...ownCorrections, created])}
+      onMonthOpen={() => sheetDay && runCellAction(sheetDay.dateStr)}
+    />
   {/if}
 
   <!-- ── Modal (Modal primitive — owns backdrop/escape/focus-trap) ────────── -->
@@ -2903,6 +3023,22 @@
 <!-- /data-testid="time-entries-page" -->
 
 <style>
+  .te-status {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+  }
+  .te-status-label {
+    font-size: var(--fs-sm, 12.5px);
+    color: var(--text-2);
+  }
+  .te-status-value {
+    margin-top: var(--s-1);
+  }
+  .te-status-note {
+    font-size: var(--fs-sm, 12.5px);
+    color: var(--text-3);
+  }
   /* ── Phase 93 (BREAK-07) — break-confirmation status + actions ──────────── */
   .break-confirm-section {
     display: flex;
@@ -3096,28 +3232,6 @@
   .list-card .list-skel-row {
     height: 2.25rem;
     border-radius: var(--r-control);
-  }
-  .list-card .empty-state {
-    padding: 48px 24px;
-    text-align: center;
-    color: var(--text-2);
-  }
-  .list-card .empty-state .empty-icon {
-    font-size: 32px;
-    display: block;
-    margin-bottom: 8px;
-    opacity: 0.6;
-  }
-  .list-card .empty-state h3 {
-    font-family: var(--font-ui);
-    font-weight: 400;
-    font-size: 18px;
-    margin: 0 0 4px;
-    color: var(--text);
-  }
-  .list-card .empty-state p {
-    margin: 0;
-    font-size: 13px;
   }
 
   /* ── List view actions always visible ────────────────── */
@@ -3430,7 +3544,8 @@
     opacity: 0;
     transition: opacity 0.15s;
   }
-  tr:hover .row-actions {
+  /* #851: the rows belong to the DataTable block; the page marks reach them through :global. */
+  .list-card :global(tr:hover .row-actions) {
     opacity: 1;
   }
   .del-confirm {
@@ -3450,26 +3565,26 @@
 
   /* Phase 112 — the row an arriving deep link points at. Ring, not a background swap, so it
      composes with .row-invalid instead of fighting it. */
-  .data-table tbody tr.row-focus {
+  .list-card :global(tbody tr.row-focus) {
     outline: 2px solid var(--brand);
     outline-offset: -2px;
     background: var(--brand-soft);
   }
-  .data-table tbody tr.row-day-focus {
+  .list-card :global(tbody tr.row-day-focus) {
     background: var(--sunk);
   }
 
-  .row-invalid {
+  .list-card :global(tr.row-invalid) {
     opacity: 0.5;
   }
-  .row-invalid td {
+  .list-card :global(tr.row-invalid td) {
     text-decoration: line-through;
     background: var(--bad-soft);
   }
-  .row-invalid td:last-child {
+  .list-card :global(tr.row-invalid td:last-child) {
     text-decoration: none;
   }
-  .row-invalid .invalid-reason {
+  .list-card :global(tr.row-invalid .invalid-reason) {
     color: var(--bad);
     font-size: 0.8rem;
     font-weight: 500;
@@ -3477,7 +3592,7 @@
   }
 
   /* 260611-ly6 — Berufsschultag list-row tint. UI Style Guide v1.5: only var(--brand) via color-mix; no legacy tokens. */
-  .row-bs td {
+  .list-card :global(tr.row-bs td) {
     background: color-mix(in srgb, var(--brand) 6%, transparent);
   }
 

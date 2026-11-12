@@ -30,7 +30,8 @@ export interface ContractHistoryDisplayRow {
   endDay: string | null;
 }
 
-const MODEL_LABELS: Record<string, string> = {
+/** The one German name of each Arbeitszeitmodell (#574), shared with Ich › Profil „Meine Arbeit“. */
+export const MODEL_LABELS: Record<string, string> = {
   FIXED_SCHEDULE: "Feste Arbeitszeit",
   FLEXTIME: "Gleitzeit",
   MONTHLY_HOURS: "Monatsstunden",

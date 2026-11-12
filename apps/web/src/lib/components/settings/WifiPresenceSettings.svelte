@@ -21,7 +21,7 @@
   } from "$lib/api/presence";
   import { lastSeenLabel, pairedViaLabel } from "$lib/presence/device-labels";
   import { toasts } from "$stores/toast";
-  import Card from "$components/ui/Card.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
 
@@ -125,9 +125,7 @@
   }
 </script>
 
-<Card animate class="settings-card wifi-card">
-  <h3 class="section-title">Meine Geräte</h3>
-
+<Section title="Stempeln mit dem Handy">
   <!-- GDPR notice - always visible, not dismissible -->
   <div class="alert alert-info wifi-gdpr-note" role="note">
     <svg
@@ -270,7 +268,7 @@
       <p class="form-error" role="alert">{macError}</p>
     {/if}
   </details>
-</Card>
+</Section>
 
 <ConfirmDialog
   bind:open={withdrawOpen}
@@ -282,11 +280,6 @@
 />
 
 <style>
-  .section-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-  }
   :global(.wifi-card) {
     box-shadow: var(--shadow);
     margin-bottom: 1.5rem;

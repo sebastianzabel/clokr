@@ -100,10 +100,16 @@ describe.each(PAGES)("multi-entry wiring (#70) — $name", ({ source }) => {
     const ungated = withoutGatedBlocks(source);
     // The words may appear in comments of the script; the markup pins below name the elements.
     expect(source).toContain('for="f-salon"');
-    expect(source).toContain("<th>Salon</th>");
+    // #851: /time-entries renders its list through the DataTable block, whose „Salon“ column is
+    // declared only under the gate; /team/time-entries still has its own table head.
+    const dataTableColumn = '...(multiEntryUi ? [{ key: "salon", label: "Salon" }] : [])';
+    expect(source.includes("<th>Salon</th>") || source.includes(dataTableColumn)).toBe(true);
     expect(source).toContain("Weiteren Eintrag an diesem Tag");
     expect(ungated).not.toContain('for="f-salon"');
     expect(ungated).not.toContain("<th>Salon</th>");
+    expect(source.match(/label: "Salon"/g) ?? []).toHaveLength(
+      source.includes(dataTableColumn) ? 1 : 0,
+    );
     expect(ungated).not.toContain("Weiteren Eintrag an diesem Tag");
     expect(ungated).not.toContain("slot.salonName");
   });

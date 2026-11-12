@@ -258,51 +258,54 @@ describe("#442 — /team/leave source pin", () => {
 });
 
 // ── Group B: /leave (own requests) ──────────────────────────────────────────
+// Issue #851 (D-851-04): the own-requests table is the DataTable block now. The <td> belongs to the
+// block (DataTable.svelte), the flex wrapper of the action column to the page. Both style blocks are
+// injected, the markup is the block's own table DOM, so the #442 property is measured on what renders.
+const DATA_TABLE = readRepoFile(
+  "../lib/components/ui/DataTable.svelte",
+  "src/lib/components/ui/DataTable.svelte",
+);
+
 function leaveStyleBlock(): string {
-  return styleBlockOf(LEAVE_PAGE);
+  return `${styleBlockOf(DATA_TABLE)}\n${styleBlockOf(LEAVE_PAGE)}`;
 }
 
 function leaveTableMarkup(): string {
   return `
-    <table class="data-table">
+    <div class="dt-root"><div class="dt-scroll">
+    <table class="data-table dt-table">
       <tbody>
         <tr>
-          <td>Row with action</td>
-          <td class="action-cell">
+          <td data-label="Art" class="dt-primary-cell">Row with action</td>
+          <td data-label="Aktionen" class="dt-end">
             <div class="action-cell__group">
               <button class="btn btn-sm btn-ghost">Bearbeiten</button>
             </div>
           </td>
         </tr>
         <tr>
-          <td>Row without action</td>
-          <td class="action-cell">
+          <td data-label="Art" class="dt-primary-cell">Row without action</td>
+          <td data-label="Aktionen" class="dt-end">
             <div class="action-cell__group"></div>
           </td>
         </tr>
       </tbody>
     </table>
+    </div></div>
   `;
 }
 
 describe.each([PHONE_WIDTH, DESKTOP_WIDTH])(
   "#442 — /leave action cell at %ipx (measured)",
   (width) => {
-    it("td.action-cell stays table-cell, with and without an action", () => {
+    it("the action td of the DataTable stays table-cell, with and without an action", () => {
       probeAt(width, cssForViewport(leaveStyleBlock(), width));
       document.body.innerHTML = leaveTableMarkup();
-      const cells = document.querySelectorAll("td.action-cell");
+      const cells = document.querySelectorAll('td[data-label="Aktionen"]');
       expect(cells.length).toBe(2);
       cells.forEach((cell) => {
         expect(getComputedStyle(cell).display).toBe("table-cell");
       });
-    });
-
-    it("positive control: td.action-cell still reads white-space nowrap", () => {
-      probeAt(width, cssForViewport(leaveStyleBlock(), width));
-      document.body.innerHTML = leaveTableMarkup();
-      const cell = document.querySelector("td.action-cell")!;
-      expect(getComputedStyle(cell).whiteSpace).toBe("nowrap");
     });
 
     it("the inner .action-cell__group carries the flex layout", () => {
@@ -314,14 +317,21 @@ describe.each([PHONE_WIDTH, DESKTOP_WIDTH])(
   },
 );
 
+describe("#442 — /leave style blocks really loaded — anti-vacuity", () => {
+  it("both the DataTable and the page rules are in the injected block", () => {
+    const block = leaveStyleBlock();
+    expect(block).toContain(".dt-table");
+    expect(block).toContain(".action-cell__group {");
+  });
+});
+
 describe("#442 — /leave source pin", () => {
-  it("exactly one td.action-cell wraps its content in a single div.action-cell__group", () => {
-    const matches = LEAVE_PAGE.match(/<td class="action-cell">/g) ?? [];
-    expect(matches).toHaveLength(1);
-    const start = LEAVE_PAGE.indexOf('<td class="action-cell">');
-    const end = LEAVE_PAGE.indexOf("</td>", start);
+  it("the action column of the DataTable wraps its content in a single div.action-cell__group", () => {
+    const start = LEAVE_PAGE.indexOf('{:else}\n                  <div class="action-cell__group">');
+    expect(start, "action column branch found").toBeGreaterThan(-1);
+    const end = LEAVE_PAGE.indexOf("{/if}\n              {/snippet}", start);
     const cellBody = LEAVE_PAGE.slice(start, end);
-    expect(cellBody).toContain('<div class="action-cell__group">');
+    expect(cellBody.match(/<div class="action-cell__group">/g) ?? []).toHaveLength(1);
     expect(cellBody).toContain(`leave-mine-row-\${req.id}-edit`);
     expect(cellBody).toContain(`leave-mine-row-\${req.id}-withdraw`);
     expect(cellBody).toContain(`leave-mine-row-\${req.id}-cancel`);

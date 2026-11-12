@@ -6,7 +6,7 @@
   NOT a replacement for `ui/Card.svelte` (used outside admin).
 
   Props:
-    title    — section heading in sentence case (h2 token, Issue #854)
+    title    — section heading in sentence case (h2 token; Phase 851, Issue #854)
     sub      — 13px muted description
     actions  — right-aligned header actions (snippet)
     footer   — per-card save area stripe (snippet)
@@ -109,9 +109,10 @@
     min-width: 0;
   }
 
+  /* Phase 851 (design concept § 3, owner acceptance 09.11.2026): a section title is an H2 of
+     13.5 px / 600 in sentence case - no small-caps label, no letter-spacing. */
   .section-title {
     font-family: var(--font-ui);
-    /* Sentence case at the h2 token (Issue #854, D-854-15): no capitals, no letter-spacing. */
     font-size: var(--fs-h2);
     font-weight: 600;
     color: var(--text);

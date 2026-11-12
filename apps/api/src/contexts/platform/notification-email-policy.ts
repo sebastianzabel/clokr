@@ -171,6 +171,20 @@ const NEVER_ENTRIES: Record<string, EmailPolicy> = {
   },
 };
 
+/**
+ * Issue #602 (Phase 851): the e-mail groups a person may switch off for themself - exactly the
+ * tenant toggle fields of the "toggle" policies above. An "always" type (security, legal information
+ * such as expiring vacation) is never in this list and therefore never switched off by a person; a
+ * "never" type is not mailed at all. The person's choice is stored as `uiPreferences.emailOptOut`.
+ */
+export const PERSONAL_EMAIL_OPT_OUT_FIELDS = [
+  "emailOnLeaveDecision",
+  "emailOnRetroEntry",
+  "emailOnMissingEntries",
+  "emailOnLeaveRequest",
+] as const;
+export type PersonalEmailOptOutField = (typeof PERSONAL_EMAIL_OPT_OUT_FIELDS)[number];
+
 export const NOTIFICATION_EMAIL_POLICY: Record<string, EmailPolicy> = {
   ...TOGGLE_ENTRIES,
   ...RETRO_ENTRY_ENTRIES,

@@ -42,9 +42,37 @@ try {
   );
 }
 
+// Phase 851 (owner acceptance, prototype): the Urlaubsjahr strip left /leave - the yearly figures are
+// the Urlaubskonto ledger of Ich › Konto now (#594). The tile claims below therefore read that ledger;
+// the retired terms stay pinned on /leave AND on Konto.
+const KONTO_URL = new URL("../../../routes/(app)/ich/konto/+page.svelte", import.meta.url);
+let KONTO: string;
+try {
+  KONTO = readFileSync(fileURLToPath(KONTO_URL), "utf8");
+} catch {
+  KONTO = readFileSync(resolve(process.cwd(), "src/routes/(app)/ich/konto/+page.svelte"), "utf8");
+}
+const LEDGER_START = KONTO.indexOf('<dl class="ledger">');
+const LEDGER =
+  LEDGER_START < 0 ? "" : KONTO.slice(LEDGER_START, KONTO.indexOf("</dl>", LEDGER_START));
+const row = (label: string) => new RegExp(`<dt>${label.replace(/[()]/g, "\\$&")}</dt>`);
+
+describe("leave page vocabulary — the ledger is found", () => {
+  it("the Urlaubskonto ledger of Ich › Konto exists and is non-empty", () => {
+    expect(LEDGER_START).toBeGreaterThan(-1);
+    expect(LEDGER.length).toBeGreaterThan(0);
+  });
+
+  it("/leave has no Urlaubsjahr strip of its own any more", () => {
+    expect(PAGE).not.toContain("vacYearItems");
+    expect(PAGE).not.toContain("Urlaubsjahr {calYear}");
+  });
+});
+
 describe("leave page vocabulary — RETIRED terms must not come back", () => {
   it("no strip tile is called `Resturlaub` — that tile meant carryOverRemaining (0), not the balance", () => {
-    expect(PAGE).not.toContain('<div class="vac-stat-label">Resturlaub</div>');
+    expect(LEDGER).not.toMatch(row("Resturlaub"));
+    expect(PAGE).not.toContain('label: "Resturlaub"');
   });
 
   it("`Resturlaub Vorjahr` is gone — it meant the GROSS carry-over (14), a third meaning of the word", () => {
@@ -56,7 +84,8 @@ describe("leave page vocabulary — RETIRED terms must not come back", () => {
   });
 
   it("no strip tile is called `Geplant` — the days are submitted and awaiting approval, i.e. beantragt", () => {
-    expect(PAGE).not.toContain('<div class="vac-stat-label">Geplant</div>');
+    expect(LEDGER).not.toMatch(row("Geplant"));
+    expect(PAGE).not.toContain('label: "Geplant"');
   });
 
   it("the old `von N verfügbar` template literal is gone", () => {
@@ -69,22 +98,14 @@ describe("leave page vocabulary — RETIRED terms must not come back", () => {
 });
 
 describe("leave page vocabulary — the new terms must be PRESENT", () => {
-  it("names the gross Vorjahresübertrag in its own strip tile", () => {
-    expect(PAGE).toContain('<div class="vac-stat-label">Übertrag Vorjahr</div>');
+  it("names the Vorjahresübertrag in its own ledger row, never as „Resturlaub“", () => {
+    expect(LEDGER).toMatch(/<dt>Übertrag aus \{today\.year - 1\}<\/dt>/);
   });
 
-  it("names the unused rest of that Übertrag distinctly", () => {
-    expect(PAGE).toContain('<div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>');
-  });
-
-  it("calls the pending days `Beantragt` — the same stem the card's qualifier uses", () => {
-    expect(PAGE).toContain('<div class="vac-stat-label">Beantragt</div>');
-  });
-
-  it("keeps the three unchanged strip tiles, so a later edit cannot quietly rename them either", () => {
-    expect(PAGE).toContain('<div class="vac-stat-label">Anspruch</div>');
-    expect(PAGE).toContain('<div class="vac-stat-label">Genommen</div>');
-    expect(PAGE).toContain('<div class="vac-stat-label">Verbleibend</div>');
+  it("keeps the entitlement, the taken days and the remainder as their own rows", () => {
+    expect(LEDGER).toMatch(row("Jahresanspruch"));
+    expect(LEDGER).toMatch(row("Genommen und genehmigt"));
+    expect(LEDGER).toMatch(row("Verbleibend"));
   });
 
   it("takes the card's label from the tested conditional, not from a template literal", () => {
@@ -111,56 +132,15 @@ describe("leave page vocabulary — the new terms must be PRESENT", () => {
 });
 
 describe("leave page vocabulary — structure", () => {
-  it("has exactly six strip tiles (five before, plus the gross Übertrag)", () => {
-    // Counts TILE MARKUP only. A bare /vac-stat-label/ scan would also hit the two
-    // `.vac-stat-label` selectors in the <style> block and report 8 — a number that would
-    // silently drift with any CSS edit and would not be measuring "how many tiles".
-    expect(PAGE.match(/<div class="vac-stat-label">/g)!.length).toBe(6);
+  it("has exactly four ledger rows on Konto", () => {
+    expect(LEDGER.match(/<div class="ledger-row/g) ?? []).toHaveLength(4);
   });
 
-  it("keeps the two Übertrag tiles adjacent — separated, `(Rest) 0` would be an orphaned number again", () => {
-    const grossIdx = PAGE.indexOf('<div class="vac-stat-label">Übertrag Vorjahr</div>');
-    const restIdx = PAGE.indexOf('<div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>');
-    expect(grossIdx).toBeGreaterThan(-1);
-    expect(restIdx).toBeGreaterThan(grossIdx);
-    expect(restIdx - grossIdx).toBeLessThan(400);
-  });
-
-  it("introduces no new CSS class — the new tiles reuse the existing recipe only", () => {
-    expect(PAGE).not.toContain("vac-stat-carryover-value");
-    // Window bounded EXACTLY to the two Übertrag tiles: from the gross tile's opening <div>
-    // to the {/if} that closes the carry-over branch. A fixed-width slice would spill into
-    // the neighbouring `Beantragt` tile and flag its legitimate, pre-existing
-    // `vac-stat-planned` class — i.e. fail on markup that is correct.
-    const blockStart = PAGE.indexOf('<div class="vac-stat" data-testid="vac-stat-carryover">');
-    const restIdx = PAGE.indexOf('<div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>');
-    const blockEnd = PAGE.indexOf("{/if}", restIdx);
-    expect(blockStart).toBeGreaterThan(-1);
-    expect(blockEnd).toBeGreaterThan(blockStart);
-    const block = PAGE.slice(blockStart, blockEnd);
-    const allowed = new Set([
-      "vac-stat",
-      "vac-stat-label",
-      "vac-stat-value",
-      "vac-stat-unit",
-      "vac-stat-carry",
-    ]);
-    // Scan CLASS ATTRIBUTES only. A bare token scan over the block would also match the
-    // `data-testid="vac-stat-carryover"` hooks, which are test selectors, not CSS classes —
-    // it would fail on markup that is in fact correct while proving nothing about styling.
-    for (const attr of block.matchAll(/class="([^"]*)"/g)) {
-      for (const cls of attr[1].match(/vac-stat[a-z-]*/g) ?? []) {
-        expect(allowed.has(cls), `unexpected class "${cls}" in the Übertrag tiles`).toBe(true);
-      }
-    }
-    // And the tiles must not have grown a bespoke selector in <style> either.
-    expect(PAGE).not.toContain(".vac-stat-carryover");
-  });
-
-  it("does not interpolate a year into any Urlaubs-label", () => {
-    // loadVacationSummary() always fetches the CURRENT year regardless of the viewed calYear
-    // (see deferred-items.md #1), so a year in a label would be an outright false statement.
-    expect(PAGE).not.toMatch(/vac-stat-label">[^<]*\{calYear\}/);
-    expect(PAGE).not.toMatch(/vac-stat-label">[^<]*\d{4}/);
+  it("does not interpolate a year into any /leave Kennzahl label", () => {
+    // loadVacationSummary() fetches the CURRENT year (deferred-items.md #1); a year in a label would lie.
+    const items = PAGE.slice(PAGE.indexOf("let balanceItems = $derived<KpiItem[]>(["));
+    const block = items.slice(0, items.indexOf("]);"));
+    expect(block).not.toMatch(/label: `[^`]*\{calYear\}/);
+    expect(block).not.toMatch(/label: "[^"]*\d{4}/);
   });
 });

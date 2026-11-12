@@ -12,6 +12,8 @@
     align?: "start" | "end";
     /** Any CSS width for the head cell. */
     width?: string;
+    /** Issue #851 (additive): an explanation of the column on its head cell (title attribute). */
+    title?: string;
   }
 
   export interface DataTableSort {
@@ -34,7 +36,7 @@
   }
 </script>
 
-<script lang="ts" generics="Row extends Record<string, unknown>">
+<script lang="ts" generics="Row extends object">
   // Issue #843 (D-843-01 block 6, #575, #616) - the table. ONE DOM at every width: a classic table
   // that scrolls horizontally inside its own container, and below 760 px of container width the same
   // cells are restyled into cards that print their column label (`data-label`). The component keeps
@@ -62,6 +64,12 @@
     toolbar?: Snippet;
     /** Optional stable `data-testid` of a row (a page whose e2e addresses its rows by id). */
     rowTestId?: (row: Row) => string | undefined;
+    /** Issue #851 (additive): an element id per row, e.g. the scroll target of a notification deep link. */
+    rowId?: (row: Row) => string | undefined;
+    /** Issue #851 (additive): marks a row as the one a deep link points at (tinted background). */
+    rowHighlight?: (row: Row) => boolean;
+    /** Issue #851 (additive): extra class names of a row the page styles itself (`:global`). */
+    rowClass?: (row: Row) => string | undefined;
     /** Accessible table caption (visually hidden). */
     caption: string;
     loading?: boolean;
@@ -89,6 +97,9 @@
     onRowClick,
     toolbar,
     rowTestId,
+    rowId,
+    rowHighlight,
+    rowClass,
     caption,
     loading = false,
     selectable = false,
@@ -134,7 +145,8 @@
   }
 
   function textOf(row: Row, column: DataTableColumn): string {
-    const value = row[column.key];
+    // #851: rows may be any object type (an interface has no index signature); read by key.
+    const value = (row as Record<string, unknown>)[column.key];
     return value === null || value === undefined ? "" : String(value);
   }
 
@@ -196,6 +208,7 @@
               {:else}
                 <th
                   scope="col"
+                  title={column.title}
                   class:dt-end={column.align === "end"}
                   style={column.width ? `width: ${column.width}` : undefined}>{column.label}</th
                 >
@@ -210,7 +223,9 @@
                    convenience of the same action, so the row itself needs no role or tabindex. -->
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
               <tr
-                class="dt-row--click"
+                class="dt-row--click {rowClass?.(row) ?? ''}"
+                class:dt-row--highlight={rowHighlight?.(row) ?? false}
+                id={rowId?.(row)}
                 data-testid={rowTestId?.(row)}
                 onclick={(e) => onRowActivate(e, row)}
               >
@@ -248,7 +263,12 @@
                 {/each}
               </tr>
             {:else}
-              <tr data-testid={rowTestId?.(row)}>
+              <tr
+                id={rowId?.(row)}
+                class={rowClass?.(row)}
+                class:dt-row--highlight={rowHighlight?.(row) ?? false}
+                data-testid={rowTestId?.(row)}
+              >
                 {#if selectable}
                   <td class="dt-select-cell" data-label="Auswahl">
                     <input
@@ -279,6 +299,11 @@
 </div>
 
 <style>
+  /* #851: the row a deep link points at. */
+  .dt-row--highlight > td {
+    background: var(--brand-tint);
+  }
+
   .dt-root {
     container-type: inline-size;
     min-width: 0;

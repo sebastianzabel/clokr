@@ -93,7 +93,7 @@ const NO_HEADING: Record<string, string> = {
   "/verwalten/regeln/betriebsurlaub":
     "a redirect stub since #854 (plan 854-12): the list is the Betriebsurlaub tab of Abwesenheiten; the detail sub-route below names the shutdown itself",
 };
-const HEADING_TAG = /<(PageHead|SectionStack|ListDetail|ToolPage|HubPage)\b[\s\S]*?\/?>/;
+const HEADING_TAG = /<(PageHead|PageHeader|SectionStack|ListDetail|ToolPage|HubPage)\b[\s\S]*?\/?>/;
 
 function routeSource(fileOrHref: string): string {
   return read(`routes/(app)${fileOrHref}/+page.svelte`);

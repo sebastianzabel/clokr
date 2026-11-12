@@ -138,3 +138,18 @@ describe("KPIStat delegates to the cell", () => {
     expect([...delta.classList].filter((c) => c.startsWith("kpi-"))).toEqual(["kpi-delta"]);
   });
 });
+
+// Issue #851 (additive `extra` snippet): one more cell after the items, counted in the row.
+describe("KpiStrip extra cell (#851)", () => {
+  it("renders the extra snippet inside the grid after the items and counts it", async () => {
+    const { createRawSnippet } = await import("svelte");
+    const extra = createRawSnippet(() => ({ render: () => `<p data-testid="extra">Saldo</p>` }));
+    const { container } = renderWithTheme(KpiStrip, {
+      items: [{ label: "Resturlaub", value: "3" }],
+      extra,
+    });
+    const grid = container.querySelector(".kpi-strip-grid") as HTMLElement;
+    expect(grid.lastElementChild?.querySelector('[data-testid="extra"]')).not.toBeNull();
+    expect(grid.getAttribute("style")).toContain("--kpi-count: 2");
+  });
+});

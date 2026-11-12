@@ -8,7 +8,19 @@
   import { onMount } from "svelte";
   import { api, ApiError } from "$api/client";
   import { toasts } from "$stores/toast";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
+  import SaveBar from "$components/ui/SaveBar.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import MyShiftAgenda from "$lib/components/me/MyShiftAgenda.svelte";
+  import CalendarFeedDialog from "$lib/components/me/CalendarFeedDialog.svelte";
+  import {
+    canSubscribeCalendar,
+    loadCalendarFeed,
+    type CalendarFeedState,
+  } from "$lib/me/calendar-feed";
+  import { authStore } from "$stores/auth";
+  import { tenantFeatures } from "$stores/tenant-features";
   import Card from "$components/ui/Card.svelte";
   import AvailabilityWeekGrid, {
     type RecurringEntry,
@@ -41,7 +53,7 @@
     return new Date().toISOString().slice(0, 10);
   }
 
-  let view = $state<"recurring" | "oneoff">("recurring");
+  let view = $state<string>("plan");
   let recurringEntries = $state<RecurringEntry[]>([]);
   let oneOffEntries = $state<OneOffEntry[]>([]);
   let loading = $state(true);
@@ -54,6 +66,40 @@
   const currentSnapshot = $derived(JSON.stringify({ r: recurringEntries, o: oneOffEntries }));
 
   const dirty = $derived(!loading && currentSnapshot !== lastSnapshot);
+
+  // Issue #851 (D-851-03): the number of unsaved changes for the save bar. An entry is compared as a
+  // whole; a changed entry counts once (added and removed pair up), an added or removed entry once.
+  function countChanges(current: string, saved: string): number {
+    if (current === saved || saved === "") return 0;
+    const parse = (raw: string) => {
+      const v = JSON.parse(raw) as { r: unknown[]; o: unknown[] };
+      return [...v.r, ...v.o].map((e) => JSON.stringify(e));
+    };
+    const now = parse(current);
+    const before = parse(saved);
+    const added = now.filter((e) => !before.includes(e)).length;
+    const removed = before.filter((e) => !now.includes(e)).length;
+    return Math.max(added, removed, 1);
+  }
+
+  const changes = $derived(dirty ? countChanges(currentSnapshot, lastSnapshot) : 0);
+
+  // Issue #597 (Phase 851, prototype): „Nächste 14 Tage“ first; the own availability is the second
+  // tab, offered only while the tenant uses the availability system.
+  const TABS = $derived([
+    { value: "plan", label: "Nächste 14 Tage" },
+    ...($tenantFeatures.availabilityEnabled
+      ? [{ value: "verfuegbarkeit", label: "Meine Verfügbarkeit" }]
+      : []),
+  ]);
+  let availabilityView = $state<"recurring" | "oneoff">("recurring");
+
+  /** Verwerfen: back to the last saved state. */
+  function discard(): void {
+    const saved = JSON.parse(lastSnapshot) as { r: RecurringEntry[]; o: OneOffEntry[] };
+    recurringEntries = saved.r;
+    oneOffEntries = saved.o;
+  }
 
   function applyEntries(api_entries: ApiAvailabilityEntry[]): void {
     const recurring: RecurringEntry[] = [];
@@ -124,9 +170,10 @@
     try {
       const res = await api.put<AvailabilityListResponse>("/me/availability", buildPayload());
       applyEntries(res.entries ?? []);
-      toasts.success("Verfügbarkeit gespeichert.");
+      toasts.success("Verfügbarkeit gespeichert");
     } catch (err) {
-      const fallback = "Die Verfügbarkeit konnte nicht gespeichert werden. Bitte erneut versuchen.";
+      const fallback =
+        "Die Verfügbarkeit ließ sich nicht speichern. Bitte versuche es noch einmal.";
       const msg = err instanceof ApiError && err.status < 500 ? err.message : fallback;
       toasts.error(msg);
     } finally {
@@ -135,47 +182,92 @@
   }
 
   onMount(load);
+
+  // Issue #597 (prototype): „Kalender abonnieren“ in the head. Offered only while the API serves
+  // the own feed (null = route absent, no person or no own read right); a failed read hides it.
+  let feed = $state<CalendarFeedState | null>(null);
+  let feedOpen = $state(false);
+  // Only with the rights the feed API asks for (#597): a custom role may lack both own-read keys.
+  const mayShowFeed = $derived(canSubscribeCalendar($authStore.user));
+  onMount(() => {
+    if (!canSubscribeCalendar($authStore.user)) return;
+    loadCalendarFeed()
+      .then((s) => (feed = s))
+      .catch(() => (feed = null));
+  });
 </script>
 
-<PageHead
-  eyebrow="Ich"
+<PageHeader
   title={pageLabel("/availability")}
-  sub="Trage ein, wann du arbeiten kannst, nicht kannst oder bevorzugst zu arbeiten."
+  subtitle="Wann und wo du arbeitest"
+  tabs={TABS}
+  bind:tab={view}
 >
   {#snippet actions()}
-    <button class="btn btn-primary btn-sm" disabled={!dirty || saving} onclick={save}>
-      {saving ? "Speichert…" : "Speichern"}
-    </button>
+    {#if feed && mayShowFeed}
+      <button
+        type="button"
+        class="btn btn-secondary btn-sm"
+        onclick={() => (feedOpen = true)}
+        data-testid="calendar-feed-open">Kalender abonnieren</button
+      >
+    {/if}
   {/snippet}
-</PageHead>
+  {#snippet panel(value)}
+    {#if value === "plan"}
+      <MyShiftAgenda />
+    {:else if loading}
+      <Skeleton shape="card" />
+    {:else}
+      <p class="availability-hint">
+        Sag deiner Salonleitung, wann du arbeiten kannst, wann nicht und wann du lieber arbeitest.
+        Deine Angaben siehst du hier, die Salonleitung bei der Planung.
+      </p>
+      <div class="availability-switch">
+        <SegmentedControl
+          options={[
+            { value: "recurring", label: "Jede Woche" },
+            { value: "oneoff", label: "Einzelne Tage" },
+          ]}
+          value={availabilityView}
+          name="availability-view"
+          ariaLabel="Art der Angabe"
+          size="sm"
+          onchange={(v) => (availabilityView = v === "oneoff" ? "oneoff" : "recurring")}
+        />
+      </div>
+      {#if availabilityView === "recurring"}
+        <Card animate class="card-animate availability-card">
+          <AvailabilityWeekGrid bind:entries={recurringEntries} />
+        </Card>
+      {:else}
+        <Card animate class="card-animate availability-card">
+          <AvailabilityOneOffList bind:entries={oneOffEntries} />
+        </Card>
+      {/if}
+    {/if}
+  {/snippet}
+</PageHeader>
 
-<section class="page">
-  <div class="view-tabs">
-    <button
-      type="button"
-      class="view-tab"
-      class:view-tab--active={view === "recurring"}
-      onclick={() => (view = "recurring")}
-    >
-      Wochenraster
-    </button>
-    <button
-      type="button"
-      class="view-tab"
-      class:view-tab--active={view === "oneoff"}
-      onclick={() => (view = "oneoff")}
-    >
-      Einmaltermine
-    </button>
-  </div>
+{#if feed && mayShowFeed}
+  <CalendarFeedDialog bind:open={feedOpen} {feed} onChange={(s) => (feed = s)} />
+{/if}
 
-  {#if view === "recurring"}
-    <Card animate class="card-animate">
-      <AvailabilityWeekGrid bind:entries={recurringEntries} />
-    </Card>
-  {:else}
-    <Card animate class="card-animate">
-      <AvailabilityOneOffList bind:entries={oneOffEntries} />
-    </Card>
-  {/if}
-</section>
+<SaveBar
+  {changes}
+  errors={0}
+  {saving}
+  saveLabel="Verfügbarkeit speichern"
+  onSave={save}
+  onDiscard={discard}
+/>
+
+<style>
+  .availability-hint {
+    margin: 0 0 var(--s-3);
+    color: var(--text-2);
+  }
+  .availability-switch {
+    margin-bottom: var(--s-3);
+  }
+</style>

@@ -86,12 +86,14 @@ describe("Stundenkonto parity (AC: same figure as GET /overtime/:id on /time-ent
     );
     expect(src).toMatch(/derivationHref: kontoHref/);
   });
-  it("the Zeiten page reads the same endpoint", () => {
-    const te = readFileSync(
-      resolve(__dirname, "../../../routes/(app)/time-entries/+page.svelte"),
+  // Issue #851 moved the own Stundenkonto from Zeiten to Ich › Konto (the derivation link above), so
+  // the parity partner of Mein Tag is that page: it must read the same lifetime endpoint.
+  it("the Konto page, home of the own total since #851, reads the same endpoint", () => {
+    const konto = readFileSync(
+      resolve(__dirname, "../../../routes/(app)/ich/konto/+page.svelte"),
       "utf8",
     );
-    expect(te).toMatch(/`\/overtime\/\$\{activeEmpId\}`/);
+    expect(konto).toMatch(/api\.get<OvertimeAnswer>\(`\/overtime\/\$\{id\}`\)/);
   });
 });
 

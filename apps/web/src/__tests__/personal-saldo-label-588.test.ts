@@ -35,6 +35,7 @@ const LEAVE = "routes/(app)/leave/+page.svelte";
 const FORM = "lib/components/leave/LeaveRequestForm.svelte";
 const TIME_ENTRIES = "routes/(app)/time-entries/+page.svelte";
 const TEAM_TIME_ENTRIES = "routes/(app)/team/time-entries/+page.svelte";
+const KONTO = "routes/(app)/ich/konto/+page.svelte";
 
 /** The markup of the first element opened by `open` up to its self-closing `/>`. */
 function elementAfter(text: string, open: string, from = 0): string {
@@ -56,18 +57,15 @@ describe("personal saldo views pass the data to the forecast label (Issue #588, 
     expect(helper).toContain("forecastLabel(answer.unconfirmedMonths, answer.hasClosedMonth)");
   });
 
-  it("/leave: the KPI reads the count from /leave/overtime-balance and passes it", () => {
+  it("/leave shows no saldo; Ich › Konto words its forecast from forecastLabel (#851)", () => {
+    // Phase 851 (prototype): the hours account moved to Ich › Konto (#594); /leave keeps no saldo
+    // view, so it cannot word a forecast differently.
     const text = read(LEAVE);
-    expect(text).toMatch(/unconfirmedMonths\?: number \| null;/);
-    expect(text).toMatch(/unconfirmedMonths = r\.unconfirmedMonths/);
-    const kpi = elementAfter(
-      text,
-      "<SaldoAnzeige",
-      text.indexOf("{#if confirmedMinutes !== undefined}"),
-    );
-    expect(kpi).toContain("confirmedMinutes={confirmedMinutes ?? 0}");
-    expect(kpi).toContain("{unconfirmedMonths}");
-    expect(kpi).toContain("hasClosedMonth={hasClosedMonth ?? false}");
+    expect(text).not.toContain("<SaldoAnzeige");
+    expect(text).not.toContain("/leave/overtime-balance");
+    const konto = read("routes/(app)/ich/konto/+page.svelte");
+    expect(konto).toContain("forecastLabel(overtime.unconfirmedMonths, overtime.hasClosedMonth)");
+    expect(konto).toMatch(/unconfirmedMonths\?: number \| null;/);
   });
 
   it("leave form: the forecast row label comes from forecastLabel() and the masked branch clears the count", () => {
@@ -88,16 +86,25 @@ describe("personal saldo views pass the data to the forecast label (Issue #588, 
     expect(compact).toContain("{unconfirmedMonths}");
   });
 
-  it.each([
-    ["time-entries", TIME_ENTRIES, "overtimeValue?.unconfirmedMonths"],
-    ["team/time-entries", TEAM_TIME_ENTRIES, "overtimeValue?.unconfirmedMonths"],
-  ])("%s: the Konto card gets the count of /overtime/:id", (_name, rel, source) => {
-    const text = read(rel);
+  it("team/time-entries: the Konto card gets the count of /overtime/:id", () => {
+    const text = read(TEAM_TIME_ENTRIES);
     expect(text).toMatch(/unconfirmedMonths\?: number \| null;/);
-    expect(text).toContain(`overtimeUnconfirmedMonths = ${source}`);
+    expect(text).toContain("overtimeUnconfirmedMonths = overtimeValue?.unconfirmedMonths");
     const card = elementAfter(text, "<KontoSaldoCard");
     expect(card).toContain("unconfirmedMonths={overtimeUnconfirmedMonths}");
     expect(card).toContain("hasClosedMonth={overtimeHasClosedMonth}");
+  });
+
+  // Issue #851: the own account total left /time-entries for /ich/konto, which words its forecast
+  // from the same two fields of /overtime/:id; /time-entries shows the month only.
+  it("the own account total is worded on /ich/konto, and /time-entries shows none", () => {
+    const konto = read(KONTO);
+    expect(konto).toMatch(/unconfirmedMonths\?: number \| null;/);
+    expect(konto).toContain("forecastLabel(overtime.unconfirmedMonths, overtime.hasClosedMonth)");
+    const zeiten = read(TIME_ENTRIES);
+    expect(zeiten.length).toBeGreaterThan(0);
+    expect(zeiten).not.toContain("<KontoSaldoCard");
+    expect(zeiten).not.toContain("/overtime/${activeEmpId}`");
   });
 
   it("team/time-entries resets the count together with the other split fields", () => {

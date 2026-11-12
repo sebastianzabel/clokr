@@ -306,11 +306,12 @@ describe("navigation (Z-01, AC: kein Eintrag doppelt)", () => {
     );
   });
 
-  it("the availability feature off hides its two entries", () => {
+  it("the availability feature off hides the team availability, never the own Dienstplan (#597)", () => {
     const hrefs = visibleNavSections(user("ADMIN"), { availabilityEnabled: false }).flatMap((s) =>
       s.items.map((i) => i.href),
     );
-    expect(hrefs).not.toContain("/ich/dienstplan");
+    // Phase 851: Dienstplan shows the own shifts first; only its availability tab needs the feature.
+    expect(hrefs).toContain("/ich/dienstplan");
     expect(hrefs).not.toContain("/team/verfuegbarkeit");
   });
 
@@ -407,7 +408,7 @@ describe("phone tabs (D-844-13)", () => {
       "/team/abwesenheiten",
     ]);
   });
-  it("employee: Mein Tag · Zeiten · Abwesend · Plan, Plan skipped without the feature", () => {
+  it("employee: Mein Tag · Zeiten · Abwesend · Plan, Plan also without the feature (#597)", () => {
     expect(mobileTabs(user("EMPLOYEE"), ALL).map((t) => t.label)).toEqual([
       "Mein Tag",
       "Zeiten",
@@ -416,7 +417,7 @@ describe("phone tabs (D-844-13)", () => {
     ]);
     expect(
       mobileTabs(user("EMPLOYEE"), { availabilityEnabled: false }).map((t) => t.label),
-    ).toEqual(["Mein Tag", "Zeiten", "Abwesend"]);
+    ).toEqual(["Mein Tag", "Zeiten", "Abwesend", "Plan"]);
   });
   it("never offers a target the user may not open", () => {
     for (const persona of Object.keys(P)) {

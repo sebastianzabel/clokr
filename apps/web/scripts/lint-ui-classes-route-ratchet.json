@@ -9,8 +9,8 @@
       },
       "apps/web/src/lib/components/leave/LeaveToolbar.svelte": {
         "count": 2,
-        "ticket": "#851",
-        "reason": "Shared with /team/leave (#853); migrate with the first of the two pages"
+        "ticket": "#853",
+        "reason": "Shared with /team/leave; its tabs, PeriodSwitcher and SegmentedControl are blocks already, only the wrapper classes match. #851 left it for #853, which owns the team page and migrates the toolbar for both pages (decision on #851)."
       },
       "apps/web/src/lib/components/operator/SupportAuditLog.svelte": {
         "count": 1,
@@ -20,10 +20,6 @@
       "apps/web/src/routes/(app)/admin/availability/+page.svelte": {
         "count": 1,
         "ticket": "#853"
-      },
-      "apps/web/src/routes/(app)/leave/+page.svelte": {
-        "count": 4,
-        "ticket": "#851"
       },
       "apps/web/src/routes/(app)/team/leave/+page.svelte": {
         "count": 4,
@@ -45,10 +41,6 @@
       "apps/web/src/routes/(app)/inbox/+page.svelte": {
         "count": 5,
         "ticket": "#853"
-      },
-      "apps/web/src/routes/(app)/leave/+page.svelte": {
-        "count": 7,
-        "ticket": "#851"
       }
     },
     "own-data-table": {
@@ -85,10 +77,6 @@
         "count": 1,
         "ticket": "#853"
       },
-      "apps/web/src/routes/(app)/leave/+page.svelte": {
-        "count": 1,
-        "ticket": "#851"
-      },
       "apps/web/src/routes/(app)/shifts/planning/+page.svelte": {
         "count": 1,
         "ticket": "#853"
@@ -100,10 +88,6 @@
       "apps/web/src/routes/(app)/team/time-entries/+page.svelte": {
         "count": 1,
         "ticket": "#853"
-      },
-      "apps/web/src/routes/(app)/time-entries/+page.svelte": {
-        "count": 1,
-        "ticket": "#851"
       }
     },
     "raw-scrim-modal": {}

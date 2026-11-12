@@ -280,6 +280,12 @@ export default defineConfig({
       //     own salon, a decision through the dialog of Aufgaben with its toast); tenant fixture plus
       //     API-created people, a second salon and a sick request
       //
+      // Issue #847 added a further file:
+      //   - verwalten-uebersicht-847.spec.ts (Verwalten › Übersicht: at least six setup checks with
+      //     link and state, the admin tasks counted and linked, the mail warning on the overview and
+      //     in the mail settings exactly when the server cannot deliver, the Personalabteilung lands
+      //     there); tenant fixture plus an API-created person with the HR template
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -307,6 +313,7 @@ export default defineConfig({
         /all-routes-overflow-843\.spec\.ts/,
         /mein-tag-845\.spec\.ts/,
         /heute-im-salon-846\.spec\.ts/,
+        /verwalten-uebersicht-847\.spec\.ts/,
         /shift-notices-850\.spec\.ts/,
         /verwalten-854\.spec\.ts/,
       ],
