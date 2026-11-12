@@ -181,7 +181,8 @@ test.describe("admin salons (Issue #563)", () => {
     await page.goto("/admin/salons");
     await page
       .getByRole("row", { name: /Niedersachsen/ })
-      .getByRole("button", { name: "Niedersachsen" })
+      // The name cell's button is the row's only control (the status chip is not interactive).
+      .getByRole("button")
       .click();
     await expect(page).toHaveURL(new RegExp(`/verwalten/salons/${salon.id}$`));
 
@@ -233,7 +234,7 @@ test.describe("admin salons (Issue #563)", () => {
     // Create: the list's own link navigates client-side.
     await page.getByRole("link", { name: "Salon anlegen" }).click();
     await expect(page).toHaveURL(/\/verwalten\/salons\/neu$/);
-    await page.getByLabel("Name", { exact: true }).fill(SECOND_SALON_NAME);
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill(SECOND_SALON_NAME);
     await page.getByLabel("Bundesland").selectOption("HESSEN");
     await page.getByRole("button", { name: "Salon anlegen" }).click();
 
@@ -357,7 +358,7 @@ test.describe("admin salons (Issue #563)", () => {
     expect(patches).toBe(1);
 
     // The lock is only the Bundesland: the other master-data fields stay editable.
-    const name = page.getByLabel("Name", { exact: true });
+    const name = page.getByRole("textbox", { name: "Name", exact: true });
     await expect(name).toBeEnabled();
     await name.fill("Umbenannter Testsalon");
     await expect(name).toHaveValue("Umbenannter Testsalon");

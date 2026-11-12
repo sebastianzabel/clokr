@@ -263,6 +263,12 @@ export default defineConfig({
       //     the rail without scrolling at 1440 x 900 and 1024 x 768; tenant fixture plus API-created
       //     people with their system role templates
       //
+      // Issue #854 (D-854-17, AC-4) added a further file:
+      //   - verwalten-854.spec.ts (every migrated Verwalten page of fixtures/verwalten-854-pages.json:
+      //     H1 text, axe WCAG 2 A/AA with colour contrast on the page and on each of its tabs, tab
+      //     keyboard navigation, no horizontal overflow at 390 and 1440 px); tenant fixture only, no
+      //     seed.
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -289,6 +295,7 @@ export default defineConfig({
         /bausteine-843\.spec\.ts/,
         /all-routes-overflow-843\.spec\.ts/,
         /shift-notices-850\.spec\.ts/,
+        /verwalten-854\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

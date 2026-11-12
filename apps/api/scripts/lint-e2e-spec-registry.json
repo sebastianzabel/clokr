@@ -210,6 +210,11 @@
       "file": "apps/e2e/tests/shift-notices-850.spec.ts",
       "category": "in-ci",
       "reason": "Issue #850 browser proof of the shift planning wording: test 1 plans a shift for a fresh person and approves a vacation over that day through the API (the approval marks the shift, Phase 43-04), then /shifts/conflicts shows ONE notice row with the German date, the person, the reason and the action „Schicht behalten“, no ISO date and no developer word in the list, the explanation opens behind (i), and the action clears the mark (POST /shifts/:id/restore) so the row leaves the list. Test 2: the Planungsbedarf week label reads „KW n · …“. Plus two Sichtbarkeits-Durchläufe (Issue #710: notice row with action and opened explanation; the Planungsbedarf week label) at 1280/390/360 px light and dark (12 tests). Tenant fixture only, no seed; no date dependency beyond the clock: the day is the second Wednesday of March next year (no public holiday in any Bundesland) and the page range is set to that month."
+    },
+    {
+      "file": "apps/e2e/tests/verwalten-854.spec.ts",
+      "category": "in-ci",
+      "reason": "AC-4 / D-854-17 (Issue #854) gating browser proof of the migrated Verwalten pages: it reads apps/e2e/fixtures/verwalten-854-pages.json (every page plan of #854 appends its page there) and, per page and as the fixture tenant admin, proves the Seitenkopf H1 text, axe WCAG 2 A/AA including colour contrast on the page content and again on each of its tabs, that the tab strip offers exactly the listed triggers and that ArrowRight moves focus and selection to the next trigger (the strip loops), and that neither the page nor any tab scrolls horizontally at 390 and 1440 px (scrollWidth and measurePageOverflow()). A dynamic page first creates its entity through the API with a synthetic name. Tenant fixture only, no seed, no date dependency; CI (the e2e-ci project) is the arbiter, there is no local run in this phase."
     }
   ]
 }
