@@ -85,8 +85,8 @@ export default defineConfig({
       testMatch: /auth\.setup\.ts/,
     },
     {
-      // Phase 70 advisory a11y gate (DEVOPS-V8-05): scans the public /login page only,
-      // requires no auth/storageState.
+      // Phase 70 a11y gate (DEVOPS-V8-05, blocking since #275): scans the public pages - every
+      // signed-out page and state plus the 404 page (#855) - and requires no auth/storageState.
       name: "axe-scan",
       testMatch: /axe-scan\.spec\.ts/,
       use: {
@@ -274,6 +274,12 @@ export default defineConfig({
       //     seed. Its sibling screenshots-854.spec.ts runs in the separate, non-gating `screenshots`
       //     project below, never here.
       //
+      // Issue #846 added a further file:
+      //   - heute-im-salon-846.spec.ts (Team › Heute im Salon: every Kennzahl links to its list,
+      //     the four on the first screen at 1440 x 900 and 390 x 844, a Salonmanager sees only the
+      //     own salon, a decision through the dialog of Aufgaben with its toast); tenant fixture plus
+      //     API-created people, a second salon and a sick request
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -300,6 +306,7 @@ export default defineConfig({
         /bausteine-843\.spec\.ts/,
         /all-routes-overflow-843\.spec\.ts/,
         /mein-tag-845\.spec\.ts/,
+        /heute-im-salon-846\.spec\.ts/,
         /shift-notices-850\.spec\.ts/,
         /verwalten-854\.spec\.ts/,
       ],

@@ -79,3 +79,17 @@ export function leaveRequested(
   const base = `Antrag gestellt · ${typeLabel} ${leavePeriod(startDate, endDate)}`;
   return halfDay ? `${base} (halber Tag)` : base;
 }
+
+/**
+ * #846 (D-03): „Urlaub genehmigt · 14.12.–18.12.2026“ / „Urlaub abgelehnt · …“ — the acknowledgement of a
+ * decision in the shared review dialog (Aufgaben and Heute im Salon). `typeLabel` as in `leaveRequested`.
+ */
+export function leaveDecided(
+  typeLabel: string,
+  startDate: string,
+  endDate: string,
+  status: "APPROVED" | "REJECTED",
+): string {
+  const verb = status === "APPROVED" ? "genehmigt" : "abgelehnt";
+  return `${typeLabel} ${verb} · ${leavePeriod(startDate, endDate)}`;
+}

@@ -33,6 +33,7 @@
   } from "$lib/phorest/appointmentCollisions";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import { leaveDecided } from "$lib/feedback/action-messages"; // #846 D-03: every decision is acknowledged
   import {
     LEAVE_TYPE_OPTIONS,
     NEUTRAL_CHIP_LABEL,
@@ -211,6 +212,8 @@
   ): Promise<boolean> {
     saving = true;
     error = "";
+    // the period is read before the dialog closes (the page may swap `request` on reload)
+    const period = request ? { start: request.startDate, end: request.endDate } : null;
     try {
       await api.patch(`/leave/requests/${ctx.id}/review`, {
         status,
@@ -230,6 +233,8 @@
       }
       open = false;
       pendingApprove = null;
+      if (period)
+        toasts.success(leaveDecided(typeName(ctx.typeCode), period.start, period.end, status));
       await onReviewed();
       return true;
     } catch (e: unknown) {

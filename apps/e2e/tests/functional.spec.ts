@@ -77,31 +77,33 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(box!.y).toBeLessThan(800);
     });
 
-    test("team saldo card sits at the top of the team area", async ({ page, tenant }) => {
-      // Issue #588 (AC-588-1): the card "Salden" is the first block under the team divider, so with
-      // the divider scrolled to the top of the viewport its heading and its first figure (the
-      // team median, or the empty text when nobody is in reach) are in view without scrolling on.
+    test("Heute im Salon carries no saldo card and no team chart (#846 D-04)", async ({
+      page,
+      tenant,
+    }) => {
+      // Issue #846 (owner decision D-04): the card "Salden" (#588) and the three team charts (#591)
+      // left the start page; they move to Verwalten › Berichte with #895. Positive control first:
+      // the Kennzahlen-Band has rendered, so the absences below are measured on a loaded page.
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/team/heute"); // #844: the team block lives on Team › Heute im Salon
+      await page.goto("/team/heute");
+      await expect(page.getByTestId("kpi-present")).toBeVisible({ timeout: 15_000 });
+      await page.waitForLoadState("networkidle");
 
-      const card = page.locator(".team-saldo-card");
-      await expect(card).toBeVisible({ timeout: 15_000 });
-      await page.locator(".team-divider").scrollIntoViewIfNeeded();
-      await page.locator(".team-divider").evaluate((el) => el.scrollIntoView({ block: "start" }));
-
-      await expect(card.getByText("Salden", { exact: true })).toBeInViewport();
-      const firstFigure = card
-        .getByTestId("team-saldo-median")
-        .or(card.getByText("Keine Salden in deiner Reichweite"));
-      // The figure arrives with the overview request, which starts after the team block loaded; the
-      // wait is for that load under a busy full run (a single run needs about 3 s), the assertion
-      // itself - the figure lies inside the viewport - is unchanged.
-      await expect(firstFigure).toBeInViewport({ timeout: 20_000 });
+      await expect(page.locator(".team-saldo-card")).toHaveCount(0);
+      await expect(page.locator("canvas")).toHaveCount(0);
+      await expect(page.getByRole("link", { name: /im Bericht öffnen$/ })).toHaveCount(0);
     });
   });
 
+  // Issue #846 (D-04): the team charts left Heute im Salon and come back under Verwalten › Berichte
+  // with #895. Their drill-down contract (#591: a month column and the header link open the report
+  // of those months) stays here as the acceptance of that page; #895 points the two tests at their
+  // new place and removes the fixme. Until then there is no page that draws these charts.
   test.describe("Dashboard charts", () => {
-    test("a month of the team charts opens the report of that month", async ({ page, tenant }) => {
+    test.fixme("a month of the team charts opens the report of that month", async ({
+      page,
+      tenant,
+    }) => {
       // Issue #591 (AC-591-3, D-591-3): the header links "Bericht →" and the click on a month
       // column both lead to the reports page; the URL is written by the reports page's own
       // serialiser, so the expectations below are the contract /reports?from&to&tab.
@@ -169,7 +171,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       );
     });
 
-    test("the header link of Krankheitstage opens the urlaub tab over the chart's months", async ({
+    test.fixme("the header link of Krankheitstage opens the urlaub tab over the chart's months", async ({
       page,
       tenant,
     }) => {

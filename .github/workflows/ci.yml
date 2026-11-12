@@ -1023,8 +1023,9 @@ jobs:
   # ── Axe a11y scan (DEVOPS-V8-05) ──────────────────────────────────────
   # Blocking as of Phase 275 (Issue #275, D-08): the assertion in
   # axe-scan.spec.ts was made real (toEqual([])) and continue-on-error
-  # removed, both in the same phase. Scans the public /login page only;
-  # extending to authenticated pages remains open, not scheduled.
+  # removed, both in the same phase. Scans the public pages: every
+  # signed-out page and state plus the 404 page (Issue #855, API mocked
+  # in the spec); extending to authenticated pages remains open.
   axe-scan:
     # Playwright has no chromium build for ubuntu26.04 yet (image ubuntu26/20261012.163); drop this pin once it does.
     runs-on: ubuntu-24.04

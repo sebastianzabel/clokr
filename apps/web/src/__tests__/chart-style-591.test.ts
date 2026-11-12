@@ -55,7 +55,18 @@ const BUILDER_FILE = "lib/dashboard/team-charts.ts";
 /** The files that draw a chart, measured 18.10.2026 on the tree of #591-01. */
 const EXPECTED_CHART_FILES = [
   "lib/components/dashboard/TeamSaldoCard.svelte",
-  "routes/(app)/dashboard/+page.svelte",
+  // Issue #846 (D-04): the start page draws no chart any more; its three trends move to
+  // Verwalten › Berichte with #895 (see RESERVED_FOR_895).
+];
+/**
+ * Builders that no page draws while #895 moves the team trends from the start page to Verwalten ›
+ * Berichte. They stay in the runtime table (G4 keeps proving their style); G3 requires that exactly
+ * these are unused, so the register can only shrink — the day #895 lands it must be empty.
+ */
+const RESERVED_FOR_895 = [
+  "teamHoursChartConfig",
+  "teamSaldoTrendChartConfig",
+  "teamSickDaysChartConfig",
 ];
 /**
  * Walk floor: 281 non-test `.ts`/`.svelte` files measured on 18.10.2026, minus about 5 %. The
@@ -413,8 +424,10 @@ describe("Issue #591 - one chart style (D-591-5)", () => {
     expect(offenders, `a chart is built inline or by an unknown function: ${offenders}`).toEqual(
       [],
     );
-    expect([...used].sort()).toEqual(Object.keys(RUNTIME_TABLE).sort());
-    expect([...exported].sort()).toEqual(Object.keys(RUNTIME_TABLE).sort());
+    const table = Object.keys(RUNTIME_TABLE).sort();
+    expect(RESERVED_FOR_895.every((name) => table.includes(name))).toBe(true);
+    expect([...used].sort()).toEqual(table.filter((name) => !RESERVED_FOR_895.includes(name)));
+    expect([...exported].sort()).toEqual(table);
   });
 
   it("G4: every builder titles its value axis, never smooths and draws what its descriptor says", () => {
@@ -466,7 +479,8 @@ describe("Issue #591 - one chart style (D-591-5)", () => {
   it("G5: every canvas is labelled from its descriptor and carries role=img", () => {
     const svelteFiles = FILES.filter((f) => f.rel.endsWith(".svelte"));
     const tags = svelteFiles.flatMap((f) => canvasTags(f.text).map((tag) => ({ rel: f.rel, tag })));
-    expect(tags.length).toBeGreaterThanOrEqual(4);
+    // #846: one chart component remains (TeamSaldoCard); every chart file owns a canvas (below)
+    expect(tags.length).toBeGreaterThanOrEqual(1);
     const offenders = tags.flatMap(({ rel, tag }) => {
       const problem = canvasProblem(tag);
       return problem === null ? [] : [`${rel}: ${problem}`];
