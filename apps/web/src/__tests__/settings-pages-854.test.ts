@@ -259,7 +259,10 @@ function pageFile(section: SettingsSection): string {
 }
 
 /** Every problem of `sections` against the Zod schemas, the web files and the pinned permissions. */
-export function registryProblems(sections: readonly SettingsSection[]): string[] {
+export function registryProblems(
+  sections: readonly SettingsSection[],
+  scan: { files: SourceFile[]; puts: WebPut[] } = { files: scannedFiles, puts: allPuts },
+): string[] {
   const problems: string[] = [];
 
   // (1) one place per key
@@ -289,7 +292,7 @@ export function registryProblems(sections: readonly SettingsSection[]): string[]
 
   // (3) every settings save of the scanned web files sends its own section's keys only; every section key is sent
   const sent = new Map<string, Set<string>>(); // `${file}::${endpoint}` -> keys the saves of that file send
-  for (const put of allPuts) {
+  for (const put of scan.puts) {
     const candidates = sections.filter(
       (s) => s.renderedBy === put.file && s.endpoint === put.endpoint,
     );
@@ -317,7 +320,7 @@ export function registryProblems(sections: readonly SettingsSection[]): string[]
     }
     if (put.computed) {
       const dynamic = candidates.filter((s) => s.dynamicPayload === true);
-      const text = scannedFiles.find((f) => f.rel === put.file)!.text;
+      const text = scan.files.find((f) => f.rel === put.file)!.text;
       if (dynamic.length === 0)
         problems.push(`${where}: computed key without a dynamicPayload section`);
       for (const section of dynamic)
@@ -341,7 +344,7 @@ export function registryProblems(sections: readonly SettingsSection[]): string[]
 
   // (4) the rendering file is the page's route file or imported by it
   for (const section of sections) {
-    const file = scannedFiles.find((f) => f.rel === section.renderedBy);
+    const file = scan.files.find((f) => f.rel === section.renderedBy);
     if (file === undefined) {
       problems.push(`${section.id}: renderedBy ${section.renderedBy} does not exist`);
       continue;
@@ -492,43 +495,56 @@ describe("the checker can fail (controls)", () => {
     ).toBe(true);
   });
 
+  // The retention section saves through pickSection, whose body cannot name a foreign key by construction;
+  // the two controls below therefore read a SYNTHETIC literal save in the place of its file, so they keep
+  // proving the checker whichever page still has a hand-written body.
+  const RETENTION_FILE = "lib/components/admin/protokoll/RetentionSection.svelte";
+  const withLiteralSave = (body: string) => {
+    const files = scannedFiles.map((f) =>
+      f.rel === RETENTION_FILE ? { ...f, text: `api.put("/settings/work", ${body});` } : f,
+    );
+    return { files, puts: files.flatMap(settingsPuts) };
+  };
+
   it("reports a save that sends a key of another section", () => {
-    // saveRetention sends dataRetentionYears; moving that key elsewhere leaves the save without a home
-    const sections = base().map((s) =>
-      s.id === "audit-retention"
-        ? { ...s, keys: [] }
-        : s.id === "export-datev"
-          ? { ...s, keys: [...s.keys, "dataRetentionYears"] }
-          : s,
-    );
-    expect(registryProblems(sections).some((p) => p.includes("sends dataRetentionYears"))).toBe(
-      true,
-    );
+    const scan = withLiteralSave("{ dataRetentionYears: 5, tenantName: name }");
+    expect(
+      registryProblems(base(), scan).some((p) =>
+        p.includes("sends dataRetentionYears, tenantName"),
+      ),
+    ).toBe(true);
+    // The same save with only its own key is clean.
+    expect(registryProblems(base(), withLiteralSave("{ dataRetentionYears: 5 }"))).toEqual([]);
   });
 
   it("reports a registry key that no save sends", () => {
-    const sections = edited("audit-retention", {
+    const sections = edited("protokoll-aufbewahrung", {
       keys: ["dataRetentionYears", "dataRetentionDays"],
     });
     // a key the schema declares but nobody sends: borrow a real schema key
-    const real = edited("audit-retention", {
+    const real = edited("protokoll-aufbewahrung", {
       keys: ["dataRetentionYears", "reminderOffsetMinutes"],
     });
-    expect(registryProblems(sections).some((p) => p.includes("dataRetentionDays"))).toBe(true);
+    const scan = withLiteralSave("{ dataRetentionYears: 5 }");
+    expect(registryProblems(sections, scan).some((p) => p.includes("dataRetentionDays"))).toBe(
+      true,
+    );
     expect(
-      registryProblems(real).some((p) => p.includes("reminderOffsetMinutes is not sent by")),
+      registryProblems(real, scan).some((p) => p.includes("reminderOffsetMinutes is not sent by")),
     ).toBe(true);
   });
 
   it("reports a stale rendering file and a gate that differs from the source page", () => {
-    const stale = edited("audit-retention", { renderedBy: "routes/(app)/admin/gone/+page.svelte" });
+    const stale = edited("protokoll-aufbewahrung", {
+      renderedBy: "routes/(app)/admin/gone/+page.svelte",
+    });
     expect(registryProblems(stale).some((p) => p.includes("does not exist"))).toBe(true);
     const widened = edited("export-datev", { requires: [["tenant-settings:read:ZUGEWIESEN"]] });
     expect(registryProblems(widened).some((p) => p.includes("requires differ"))).toBe(true);
   });
 
   it("a save without a registered section is reported", () => {
-    const sections = base().filter((s) => s.id !== "audit-retention");
+    const sections = base().filter((s) => s.id !== "protokoll-aufbewahrung");
     expect(registryProblems(sections).some((p) => p.includes("no registered section"))).toBe(true);
   });
 });

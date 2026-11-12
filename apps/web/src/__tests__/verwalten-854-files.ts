@@ -115,6 +115,9 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/employees/detail/BerufsschuleSection.svelte",
   // The detail page itself: a shell over the five tab components, free of every legacy shell.
   "routes/(app)/admin/employees/[id]/+page.svelte",
+  // Plan 854-23 (Daten › Protokoll): the list page with its filters and CSV export, and the retention section.
+  "routes/(app)/admin/audit/+page.svelte",
+  "lib/components/admin/protokoll/RetentionSection.svelte",
   // The Zugang tab opens it (deactivation with a last working day); it renders Dialog directly.
   "lib/components/admin/DeactivateEmployeeDialog.svelte",
 ];

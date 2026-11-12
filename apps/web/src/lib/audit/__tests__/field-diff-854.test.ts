@@ -2,7 +2,7 @@
 // shared vocabulary; a value is always text.
 import { describe, expect, it } from "vitest";
 
-import { auditFieldRows, auditValueText } from "../field-diff";
+import { auditEntryTitle, auditFieldRows, auditValueText } from "../field-diff";
 import { AUDIT_FIELD_FALLBACK_LABEL, fieldLabel } from "../labels";
 
 describe("auditFieldRows", () => {
@@ -95,5 +95,28 @@ describe("auditValueText", () => {
 
   it("never interprets markup: it stays text", () => {
     expect(auditValueText("<b>x</b>")).toBe("<b>x</b>");
+  });
+});
+
+describe("auditEntryTitle", () => {
+  it("composes the object and the action label", () => {
+    expect(auditEntryTitle("UPDATE", "TimeEntry")).toBe("Zeiteintrag geändert");
+    expect(auditEntryTitle("CREATE", "Employee")).toBe("Person angelegt");
+  });
+
+  it("an action label that already names the object stands alone", () => {
+    expect(auditEntryTitle("LEAVE_CORRECTED", "Absence")).toBe("Abwesenheit korrigiert");
+  });
+
+  it("a several-word action label that does not name the object reads „Objekt: Aktion“", () => {
+    expect(auditEntryTitle("LEAVE_CORRECTED", "LeaveRequest")).toBe(
+      "Abwesenheitsantrag: Abwesenheit korrigiert",
+    );
+  });
+
+  it("never shows a raw code, not even for an unknown pair", () => {
+    const title = auditEntryTitle("SOME_NEW_ACTION", "SomeNewModel");
+    expect(title).not.toMatch(/SOME_NEW|SomeNewModel/);
+    expect(title.length).toBeGreaterThan(0);
   });
 });

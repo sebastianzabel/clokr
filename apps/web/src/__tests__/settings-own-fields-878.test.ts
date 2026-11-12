@@ -93,9 +93,6 @@ const EXPECTED: Record<string, Record<string, string[]>> = {
       "datevUrlaubNr",
     ],
   },
-  audit: {
-    saveRetention: ["dataRetentionYears"],
-  },
 };
 
 describe("Issue #878 — each section sends only its own fields", () => {
@@ -123,6 +120,12 @@ describe("Issue #878 — each section sends only its own fields", () => {
     for (const page of ["system", "export", "audit", "vacation"]) {
       expect(readRoute(page)).not.toContain("_gOtherFields");
     }
+  });
+
+  // Issue #854 (plan 854-23): the retention save moved into RetentionSection (registry section
+  // `protokoll-aufbewahrung`, pinned by settings-pages-854 and admin-audit-save-wiring); the page itself writes none.
+  it("/admin/audit writes no settings key itself (its section is a registry section of a component)", () => {
+    expect(settingsWorkPuts(readRoute("audit"))).toEqual([]);
   });
 
   it("the system page writes no tenant setting itself (its sections are registry sections of components)", () => {

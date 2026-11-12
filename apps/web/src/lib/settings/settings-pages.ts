@@ -564,16 +564,17 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     renderedBy: "routes/(app)/admin/export/+page.svelte",
   },
 
-  // ── /admin/audit ───────────────────────────────────────────────────────────────────────────────
+  // ── Daten › Protokoll (plan 854-23, D-854-21) ──────────────────────────────────────────────────
+  // The retention period of the former audit page, rendered by a component of the rebuilt Protokoll page.
   {
-    id: "audit-retention",
+    id: "protokoll-aufbewahrung",
     page: "/verwalten/daten/protokoll",
     title: "Aufbewahrung",
     endpoint: "/settings/work",
     keys: ["dataRetentionYears"],
     source: "/admin/audit",
     requires: AUDIT_REQUIRES,
-    renderedBy: "routes/(app)/admin/audit/+page.svelte",
+    renderedBy: "lib/components/admin/protokoll/RetentionSection.svelte",
   },
 
   // ── System › Integrationen ─────────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@
  */
 import { sameSettingValue } from "$lib/settings/section-state";
 
-import { fieldLabel } from "./labels";
+import { actionLabel, entityLabel, fieldLabel } from "./labels";
 
 export interface AuditFieldRow {
   /** The stored key (a control value; the label is display only). */
@@ -91,4 +91,17 @@ export function auditFieldRows(
     after: auditValueText(after[key]),
     changed: !sameSettingValue(before[key], after[key]),
   }));
+}
+
+/**
+ * The heading of one entry, composed from the two labels, never from a code: „Zeiteintrag geändert“. An
+ * action label that already names the object („Abwesenheit korrigiert“) stands alone; a label of several
+ * words that does not („Anmeldung fehlgeschlagen“) reads „<Objekt>: <Aktion>“.
+ */
+export function auditEntryTitle(action: string, entity: string): string {
+  const what = actionLabel(action);
+  const object = entityLabel(entity);
+  if (what.includes(object)) return what;
+  if (/\s/.test(what)) return `${object}: ${what}`;
+  return `${object} ${what.charAt(0).toLowerCase()}${what.slice(1)}`;
 }
