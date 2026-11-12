@@ -1,11 +1,12 @@
 <!--
   SupportAccessDetail — one support access with every read made under it (Issue #93, AC-93-7, D-08,
-  D-13) and the action that ends a running access at once.
+  D-13; rebuilt on the blocks in #854) and the action that ends a running access at once.
 
   Display only: the page fetches and performs the end; this component shows what it is given and asks
   for the confirmation. Instants are written in the tenant's time zone from the API. The „Zugriff
   beenden“ button is a UX gate on `tenant-settings:update` — the API's 403 stays the authority. A read
-  of an anonymised person names no one (D-13). The operator's reason is rendered as text, never markup.
+  of an anonymised person names no one (D-13). The operator is shown by display name only, never an
+  e-mail or an IP (T-854-64). The operator's reason is rendered as text, never markup.
 
   Props:
     detail — the API's detail response (`access`, `reads`, `timezone`)
@@ -13,8 +14,10 @@
     onEnd  — ends the access; a rejection keeps the dialog open and shows its message
 -->
 <script lang="ts">
+  import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import Note from "$components/ui/Note.svelte";
   import { hasPermission, type PermissionHolder } from "$lib/permissions";
   import {
     categoryLabel,
@@ -22,7 +25,7 @@
     formatInZone,
     formatMonth,
     formatReadWindow,
-    statusBadgeClass,
+    statusChipTone,
     statusLabel,
     type SupportAccessDetailResponse,
     type SupportAccessRead,
@@ -77,60 +80,86 @@
   function scopeLabel(read: SupportAccessRead): string {
     return formatMonth(read.month) || formatReadWindow(read.filters);
   }
+
+  const readColumns: DataTableColumn[] = [
+    { key: "at", label: "Zeitpunkt", primary: true },
+    { key: "what", label: "Was" },
+    { key: "person", label: "Person" },
+    { key: "scope", label: "Zeitraum" },
+  ];
+
+  const readRows = $derived(
+    detail.reads.map((read, index) => ({
+      index,
+      at: formatInZone(read.at, timezone),
+      what: categoryLabel(read.category),
+      person: personLabel(read),
+      scope: scopeLabel(read),
+    })),
+  );
 </script>
 
-<Section title="Zugriff" sub="Wer wann und warum auf die Daten deines Unternehmens zugegriffen hat">
-  {#snippet actions()}
+<section class="settings-group" aria-labelledby="sa-grant-title">
+  <div class="sa-head">
+    <div class="sa-head-text">
+      <h2 class="settings-group-title" id="sa-grant-title">Freigabe</h2>
+      <p class="settings-group-desc">
+        Wer wann und warum auf die Daten deines Unternehmens zugegriffen hat
+      </p>
+    </div>
     {#if canEnd}
-      <button class="btn btn-danger sm" type="button" onclick={openConfirm}>Zugriff beenden</button>
+      <button type="button" class="btn btn-danger" onclick={openConfirm}>Zugriff beenden</button>
     {/if}
-  {/snippet}
+  </div>
 
   <dl class="sa-dl">
-    <dt>Betreiber</dt>
-    <dd>{access.operatorName}</dd>
-
-    <dt>Grund</dt>
-    <dd class="sa-reason">{access.reason}</dd>
-
-    <dt>Beginn</dt>
-    <dd>{formatInZone(access.startedAt, timezone)}</dd>
-
-    <dt>{closing.label}</dt>
-    <dd>{formatInZone(closing.at, timezone)}</dd>
-
-    <dt>Status</dt>
-    <dd>
-      <span class={`${statusBadgeClass(access.status)} sa-badge`}>{statusLabel(access.status)}</span
-      >
-    </dd>
-
+    <div>
+      <dt>Betreiber</dt>
+      <dd>{access.operatorName}</dd>
+    </div>
+    <div>
+      <dt>Status</dt>
+      <dd>
+        <Chip tone={statusChipTone(access.status)}>{statusLabel(access.status)}</Chip>
+      </dd>
+    </div>
+    <div>
+      <dt>Beginn</dt>
+      <dd>{formatInZone(access.startedAt, timezone)}</dd>
+    </div>
+    <div>
+      <dt>{closing.label}</dt>
+      <dd>{formatInZone(closing.at, timezone)}</dd>
+    </div>
     {#if access.endedBy}
-      <dt>Beendet</dt>
-      <dd>{endedByLabel(access.endedBy)}</dd>
+      <div>
+        <dt>Beendet</dt>
+        <dd>{endedByLabel(access.endedBy)}</dd>
+      </div>
     {/if}
+    <div class="sa-wide">
+      <dt>Grund</dt>
+      <dd class="sa-reason">{access.reason}</dd>
+    </div>
   </dl>
-</Section>
+</section>
 
-<Section
-  title="Abrufe"
-  sub="Jeder einzelne Abruf unter diesem Zugriff, in der Reihenfolge des Abrufs"
->
+<section class="settings-group" aria-labelledby="sa-reads-title">
+  <h2 class="settings-group-title" id="sa-reads-title">Gelesene Daten</h2>
+  <p class="settings-group-desc">
+    Jeder einzelne Abruf unter diesem Zugriff, in der Reihenfolge des Abrufs
+  </p>
   {#if detail.reads.length === 0}
-    <p class="sa-empty">Noch keine Abrufe.</p>
+    <Note tone="info">Noch keine Abrufe.</Note>
   {:else}
-    <ul class="sa-reads" aria-label="Abrufe">
-      {#each detail.reads as read, index (index)}
-        <li class="sa-read">
-          <span class="sa-read-time">{formatInZone(read.at, timezone)}</span>
-          <span class="chip">{categoryLabel(read.category)}</span>
-          <span class="sa-read-person">{personLabel(read)}</span>
-          <span class="sa-read-scope">{scopeLabel(read)}</span>
-        </li>
-      {/each}
-    </ul>
+    <DataTable
+      columns={readColumns}
+      rows={readRows}
+      rowKey={(row) => row.index}
+      caption="Abrufe unter diesem Support-Zugriff"
+    />
   {/if}
-</Section>
+</section>
 
 <ConfirmDialog
   bind:open={confirmOpen}
@@ -142,98 +171,60 @@
 >
   {#snippet body()}
     {#if endError}
-      <div class="alert alert-error" role="alert"><span>⚠</span><span>{endError}</span></div>
+      <div role="alert"><Note tone="bad">{endError}</Note></div>
     {/if}
   {/snippet}
 </ConfirmDialog>
 
 <style>
-  /* The tinted label text of .badge-yellow / .badge-purple misses 4.5:1 on its own tint (measured 4.25:1 in
-     light and down to 1.93:1 in dark mode): the label takes the body text colour, tint and border stay. */
-  .sa-badge {
-    color: var(--text);
+  .sa-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--s-3);
   }
 
+  .sa-head-text {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+  }
+
+  /* Each pair is one cell of a responsive grid: no breakpoint, the columns follow the available width. */
   .sa-dl {
     display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    gap: 8px 20px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+    gap: var(--s-4);
     margin: 0;
-    font-size: 14px;
+  }
+
+  .sa-dl > div {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    min-width: 0;
+  }
+
+  .sa-wide {
+    grid-column: 1 / -1;
   }
 
   .sa-dl dt {
     color: var(--text-2);
+    font-size: var(--fs-sm);
+    font-weight: 600;
   }
 
   .sa-dl dd {
     margin: 0;
+    color: var(--text);
     min-width: 0;
   }
 
   .sa-reason {
     overflow-wrap: anywhere;
     white-space: pre-wrap;
-  }
-
-  .sa-empty {
-    margin: 0;
-    font-size: 14px;
-    color: var(--text-2);
-  }
-
-  .sa-reads {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .sa-read {
-    display: grid;
-    grid-template-columns: max-content max-content minmax(0, 1fr) minmax(0, 1fr);
-    align-items: center;
-    gap: 12px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--line);
-    font-size: 14px;
-  }
-
-  .sa-read:last-child {
-    border-bottom: none;
-  }
-
-  .sa-read-time {
-    font-variant-numeric: tabular-nums;
-  }
-
-  .sa-read-person,
-  .sa-read-scope {
-    overflow-wrap: anywhere;
-  }
-
-  .sa-read-scope {
-    color: var(--text-2);
-  }
-
-  @media (max-width: 720px) {
-    .sa-dl {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 2px;
-    }
-
-    .sa-dl dd {
-      margin-bottom: 8px;
-    }
-
-    .sa-read {
-      grid-template-columns: minmax(0, 1fr) max-content;
-    }
-
-    .sa-read-person,
-    .sa-read-scope {
-      grid-column: 1 / -1;
-    }
   }
 </style>

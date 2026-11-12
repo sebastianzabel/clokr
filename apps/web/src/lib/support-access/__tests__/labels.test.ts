@@ -12,7 +12,7 @@ import {
   formatInZone,
   formatMonth,
   formatReadWindow,
-  statusBadgeClass,
+  statusChipTone,
   statusLabel,
 } from "../labels";
 
@@ -49,13 +49,11 @@ describe("support-access labels", () => {
     expect(endedByLabel("SYSTEM")).toBe("SYSTEM");
   });
 
-  it("gives every known status a badge recipe from app.css and an unknown one the neutral badge", () => {
-    expect(statusBadgeClass("ACTIVE")).toMatch(/^badge badge-[a-z]+$/);
-    expect(statusBadgeClass("EXPIRED")).toMatch(/^badge badge-[a-z]+$/);
-    expect(statusBadgeClass("ENDED")).toMatch(/^badge badge-[a-z]+$/);
-    const classes = new Set(["ACTIVE", "EXPIRED", "ENDED"].map(statusBadgeClass));
-    expect(classes.size).toBe(3);
-    expect(statusBadgeClass("SUSPENDED")).toBe("badge badge-gray");
+  it("gives every known status its own chip tone and an unknown one the neutral chip", () => {
+    const tones = new Set(["ACTIVE", "EXPIRED", "ENDED"].map(statusChipTone));
+    expect(tones.size).toBe(3);
+    expect(statusChipTone("ACTIVE")).toBe("warn");
+    expect(statusChipTone("SUSPENDED")).toBe("neutral");
   });
 });
 
