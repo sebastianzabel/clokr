@@ -5,7 +5,6 @@
   import { authStore } from "$stores/auth";
   import { employeeAdminRights, contractShiftRights } from "$lib/page-rights";
   import { DETAIL_TAB_ALIASES, employeeDetailTabs } from "$lib/employees/detail-tabs";
-  import { contractHistoryRows, type ContractHistoryInput } from "$lib/employees/contract-history";
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -21,56 +20,23 @@
   import Section from "$lib/components/admin/Section.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import RetroactiveBSWizard from "$lib/components/vocational-school/RetroactiveBSWizard.svelte";
-  import OvertimeModeField from "$lib/components/schedule/OvertimeModeField.svelte";
   import SalonAssignmentsSection from "$lib/components/employees/SalonAssignmentsSection.svelte";
   import {
     shouldOfferRetroactiveRun,
     type RetroactivePreview,
   } from "$lib/components/vocational-school/retroactive";
   import type { EmployeeClassification } from "$lib/employee-classification";
-  import {
-    isWorkDay,
-    buildContractWorkDaysPayload,
-    buildUsualWorkDaysPayload,
-    usualWorkDaysShortfall,
-    usualWorkDaysMissing,
-    shiftContractsMissingUsualWorkDays,
-    buildUsualWorkDaysBackfillPayload,
-    type ContractHistoryRow,
-  } from "$lib/utils/work-schedule";
   import type { FormRole } from "$lib/employees/form-role";
   import UrlaubTab from "$lib/components/employees/detail/UrlaubTab.svelte";
+  import VertragTab from "$lib/components/employees/detail/VertragTab.svelte";
+  import type { ContractSchedule } from "$lib/employees/vertrag-form";
   import ZugangTab from "$lib/components/employees/detail/ZugangTab.svelte";
   import { salonContext } from "$stores/salon-context";
   import { hasPermission } from "$lib/permissions";
 
   // ── Types ──────────────────────────────────────────────────────────────────
-  type ScheduleType = "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
-
-  interface WorkSchedule {
-    id?: string;
-    type: ScheduleType;
-    weeklyHours: number | string | null;
-    monthlyHours: number | string | null;
-    mondayHours: number | string;
-    tuesdayHours: number | string;
-    wednesdayHours: number | string;
-    thursdayHours: number | string;
-    fridayHours: number | string;
-    saturdayHours: number | string;
-    sundayHours: number | string;
-    overtimeThreshold: number | string;
-    allowOvertimePayout: boolean;
-    validFrom: string;
-    overtimeMode?: "CARRY_FORWARD" | "TRACK_ONLY";
-    coreStart?: string | null;
-    coreEnd?: string | null;
-    coreDays?: number[];
-    workDays?: number[];
-    contractWorkDaysPerWeek?: number | null;
-    // Phase 436 Plan 02 (D-06): SHIFT_BASED-only "übliche Arbeitstage" Angabe.
-    usualWorkDays?: number[];
-  }
+  // The stored work schedule; the Vertrag tab owns its form (plan 854-21).
+  type WorkSchedule = ContractSchedule;
 
   interface Employee {
     id: string;
@@ -296,8 +262,6 @@
       }
       employee = empRes.value;
       workSchedule = schedRes.status === "fulfilled" ? schedRes.value : null;
-      // Issue #481 R7 — the Nachtrag section reads the full contract history (fail-soft).
-      void loadContractHistory();
       vacationEntitlement = vacRes.status === "fulfilled" ? vacRes.value : null;
       // Phase 65 — tenant defaults for placeholder display (D-08)
       tenantBreakConfig = cfgRes.status === "fulfilled" ? cfgRes.value : null;
@@ -354,35 +318,6 @@
 
       // Phase 109 (D-11/D-12) — baseline snapshots, taken once every field above is hydrated,
       // so no section starts marked "Nicht gespeichert" right after load.
-      scheduleSnapshot = snap(
-        eType,
-        eWeeklyHours,
-        eMonthlyHours,
-        eCoreStart,
-        eCoreEnd,
-        eCoreDays,
-        eMon,
-        eTue,
-        eWed,
-        eThu,
-        eFri,
-        eSat,
-        eSun,
-        eMonWd,
-        eTueWd,
-        eWedWd,
-        eThuWd,
-        eFriWd,
-        eSatWd,
-        eSunWd,
-        eThreshold,
-        ePayout,
-        eOvertimeMode,
-        eWorkDays,
-        eContractWorkDays,
-        eUsualWorkDays,
-        eValidFrom,
-      );
       pausendauerSnapshot = snap(eBreakOver6hOverride, eBreakOver9hOverride);
       phorestPufferSnapshot = snap(ePhorestPrepOverride, ePhorestWrapupOverride);
       patternsSnapshot = snap(bsPatterns);
@@ -420,6 +355,8 @@
   let tabs = $derived(employeeDetailTabs(rights));
   let canDiscardShifts = $derived(contractShiftRights($authStore.user).canDiscardShifts);
   let canUpdateEmployee = $derived(rights.canUpdate);
+  // PUT /settings/work/:id needs contract:update; presentation only, the API refuses anyway.
+  let canUpdateContract = $derived(hasPermission($authStore.user, "contract:update:ZUGEWIESEN"));
   let canEditVacation = $derived(
     hasPermission($authStore.user, "leave-entitlement:update:ZUGEWIESEN"),
   );
@@ -616,57 +553,6 @@
       employee.bsSlotShortDayMinutes != null ? String(employee.bsSlotShortDayMinutes) : "";
     empBsSlotBlockWeek =
       employee.bsSlotBlockWeekMinutes != null ? String(employee.bsSlotBlockWeekMinutes) : "";
-
-    const sched = workSchedule;
-    eType = sched?.type ?? "FIXED_SCHEDULE";
-    eWeeklyHours = sched ? Number(sched.weeklyHours ?? 40) : 40;
-    eMonthlyHours = sched?.monthlyHours ? Number(sched.monthlyHours) : 0;
-    eCoreStart = (sched as (WorkSchedule & { coreStart?: string | null }) | null)?.coreStart ?? "";
-    eCoreEnd = (sched as (WorkSchedule & { coreEnd?: string | null }) | null)?.coreEnd ?? "";
-    eCoreDays = Array.isArray((sched as (WorkSchedule & { coreDays?: number[] }) | null)?.coreDays)
-      ? [...((sched as WorkSchedule & { coreDays?: number[] })?.coreDays ?? [])]
-      : [];
-    eWorkDays =
-      Array.isArray((sched as (WorkSchedule & { workDays?: number[] }) | null)?.workDays) &&
-      ((sched as WorkSchedule & { workDays?: number[] })?.workDays?.length ?? 0) > 0
-        ? [...((sched as WorkSchedule & { workDays?: number[] })?.workDays ?? [])]
-        : [1, 2, 3, 4, 5];
-    // Phase 107 (D-01) — hydrate the vertragliche Anzahl alongside eWorkDays.
-    eContractWorkDays = sched?.contractWorkDaysPerWeek ?? null;
-    // Phase 436 Plan 02 (D-06) — hydrate the übliche Arbeitstage Angabe, sorted copy.
-    eUsualWorkDays = [...(sched?.usualWorkDays ?? [])].sort((a, b) => a - b);
-    eMon = sched ? Number(sched.mondayHours) : 8;
-    eTue = sched ? Number(sched.tuesdayHours) : 8;
-    eWed = sched ? Number(sched.wednesdayHours) : 8;
-    eThu = sched ? Number(sched.thursdayHours) : 8;
-    eFri = sched ? Number(sched.fridayHours) : 8;
-    eSat = sched ? Number(sched.saturdayHours) : 0;
-    eSun = sched ? Number(sched.sundayHours) : 0;
-    // Phase 76.3 (SALDO-V19-01): derive weekday booleans via the shared
-    // work-schedule helper so workDays (Phase 61) wins over per-day-hours.
-    // Reference week: 2026-06-01 (Mon) ... 2026-06-07 (Sun). Stub dates are
-    // only used to call isWorkDay() — the helper looks at date.getDay()
-    // (0=Sun..6=Sat) and never reads year/month.
-    const refMon = new Date(2026, 5, 1);
-    const refTue = new Date(2026, 5, 2);
-    const refWed = new Date(2026, 5, 3);
-    const refThu = new Date(2026, 5, 4);
-    const refFri = new Date(2026, 5, 5);
-    const refSat = new Date(2026, 5, 6);
-    const refSun = new Date(2026, 5, 7);
-    eMonWd = isWorkDay(sched, refMon);
-    eTueWd = isWorkDay(sched, refTue);
-    eWedWd = isWorkDay(sched, refWed);
-    eThuWd = isWorkDay(sched, refThu);
-    eFriWd = isWorkDay(sched, refFri);
-    eSatWd = isWorkDay(sched, refSat);
-    eSunWd = isWorkDay(sched, refSun);
-    eThreshold = sched ? Number(sched.overtimeThreshold) : 60;
-    ePayout = sched ? sched.allowOvertimePayout : false;
-    eOvertimeMode = sched?.overtimeMode ?? "CARRY_FORWARD";
-    eValidFrom = sched
-      ? String(sched.validFrom).split("T")[0]
-      : new Date().toISOString().split("T")[0];
   }
 
   // Phase 65 — Persist per-employee Pausendauer override (BREAK-06)
@@ -1167,305 +1053,6 @@
     retroPreview = null;
   }
 
-  // ── Arbeitszeit state ──────────────────────────────────────────────────────
-  let eType = $state<ScheduleType>("FIXED_SCHEDULE");
-  let eWeeklyHours = $state<number>(40);
-  let eMonthlyHours = $state<number>(0);
-  let eCoreStart = $state<string>("");
-  let eCoreEnd = $state<string>("");
-  let eCoreDays = $state<number[]>([]);
-  let eWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
-  // Phase 107 (D-01/D-23) — vertragliche Anzahl Arbeitstage/Woche, SHIFT_BASED only.
-  // Writes EXCLUSIVELY contractWorkDaysPerWeek; never derives or touches eWorkDays.
-  let eContractWorkDays = $state<number | null>(null);
-  // Phase 436 Plan 02 (D-06) — übliche Arbeitstage (optional), SHIFT_BASED only.
-  // 0=So..6=Sa, the SAME convention as workDays/usualWorkDays elsewhere.
-  let eUsualWorkDays = $state<number[]>([]);
-  let eMon = $state<number>(8);
-  let eTue = $state<number>(8);
-  let eWed = $state<number>(8);
-  let eThu = $state<number>(8);
-  let eFri = $state<number>(8);
-  let eSat = $state<number>(0);
-  let eSun = $state<number>(0);
-  let eMonWd = $state<boolean>(true);
-  let eTueWd = $state<boolean>(true);
-  let eWedWd = $state<boolean>(true);
-  let eThuWd = $state<boolean>(true);
-  let eFriWd = $state<boolean>(true);
-  let eSatWd = $state<boolean>(false);
-  let eSunWd = $state<boolean>(false);
-  let eThreshold = $state<number>(60);
-  let ePayout = $state<boolean>(false);
-  let eOvertimeMode = $state<"CARRY_FORWARD" | "TRACK_ONLY">("CARRY_FORWARD");
-  let eValidFrom = $state<string>(new Date().toISOString().split("T")[0]);
-  let arbeitszeitSaving = $state(false);
-  let arbeitszeitError = $state("");
-  let arbeitszeitSaved = $state(false);
-
-  // Orphan-Schichten
-  interface OrphanShiftPreview {
-    date: string;
-    startTime: string;
-    endTime: string;
-  }
-  let orphanModalOpen = $state(false);
-  let orphanPendingCount = $state(0);
-  let orphanPreview = $state<OrphanShiftPreview[]>([]);
-
-  let eWeekly = $derived(eMon + eTue + eWed + eThu + eFri + eSat + eSun);
-  let eWorkingDays = $derived(
-    [eMon, eTue, eWed, eThu, eFri, eSat, eSun].filter((h) => h > 0).length,
-  );
-
-  let orphanNewTypeLabel = $derived(
-    eType === "FIXED_SCHEDULE"
-      ? "Feste Arbeitszeit"
-      : eType === "FLEXTIME"
-        ? "Gleitzeit"
-        : eType === "MONTHLY_HOURS"
-          ? "Monatsstunden"
-          : eType,
-  );
-
-  function onScheduleTypeChange(newType: ScheduleType) {
-    eType = newType;
-  }
-
-  // Phase 60 (#220) — WorkSchedule.validFrom MUST be the 1st of a calendar month.
-  // Snap the user's date pick to the 1st of its month on every change so the
-  // input box immediately reflects what the server will accept. The API enforces
-  // the same rule via Zod (apps/api/src/contexts/platform/month-first-date.ts).
-  function snapValidFromToMonthFirst() {
-    if (!eValidFrom) return; // empty input — leave alone
-    // eValidFrom is "YYYY-MM-DD" from <input type="date">. Rewrite the day part.
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(eValidFrom);
-    if (!m) return; // unexpected shape — leave alone, server-side Zod will reject
-    if (m[3] === "01") return; // already month-1st — idempotent no-op
-    eValidFrom = `${m[1]}-${m[2]}-01`;
-  }
-
-  function buildSchedulePayload(extra?: {
-    keepOrphanShifts?: boolean;
-    cancelOrphanShifts?: boolean;
-  }) {
-    return {
-      type: eType,
-      weeklyHours:
-        eType === "SHIFT_BASED" || eType === "FLEXTIME"
-          ? eWeeklyHours
-          : eType === "FIXED_SCHEDULE"
-            ? eWeekly
-            : null,
-      monthlyHours: eType === "MONTHLY_HOURS" ? eMonthlyHours : null,
-      coreStart: eType === "FLEXTIME" ? eCoreStart || null : null,
-      coreEnd: eType === "FLEXTIME" ? eCoreEnd || null : null,
-      coreDays: eType === "FLEXTIME" ? eCoreDays : [],
-      mondayHours: eType === "FIXED_SCHEDULE" ? eMon : eMonWd ? 1 : 0,
-      tuesdayHours: eType === "FIXED_SCHEDULE" ? eTue : eTueWd ? 1 : 0,
-      wednesdayHours: eType === "FIXED_SCHEDULE" ? eWed : eWedWd ? 1 : 0,
-      thursdayHours: eType === "FIXED_SCHEDULE" ? eThu : eThuWd ? 1 : 0,
-      fridayHours: eType === "FIXED_SCHEDULE" ? eFri : eFriWd ? 1 : 0,
-      saturdayHours: eType === "FIXED_SCHEDULE" ? eSat : eSatWd ? 1 : 0,
-      sundayHours: eType === "FIXED_SCHEDULE" ? eSun : eSunWd ? 1 : 0,
-      overtimeThreshold: eThreshold,
-      allowOvertimePayout: ePayout,
-      overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
-      // Phase 107 (D-02/D-23) — SHIFT_BASED never sends workDays (the server already
-      // freezes it in settings.ts; omitting it here is defence in depth — a body that
-      // doesn't carry the value cannot express the old overwrite-by-guessing at all)
-      // and is the only type that sends a non-null contractWorkDaysPerWeek. Extracted
-      // to a pure helper (apps/web/src/lib/utils/work-schedule.ts) so this exact slice
-      // is unit-testable without mounting the component.
-      ...buildContractWorkDaysPayload(eType, eWorkDays, eContractWorkDays),
-      // Phase 436 Plan 02 (D-06): übliche Arbeitstage, SHIFT_BASED only (D-02 mirror).
-      ...buildUsualWorkDaysPayload(eType, eUsualWorkDays),
-      validFrom: eValidFrom,
-      ...extra,
-    };
-  }
-
-  async function doSaveSchedule(extra?: {
-    keepOrphanShifts?: boolean;
-    cancelOrphanShifts?: boolean;
-  }) {
-    if (!employee) return;
-    arbeitszeitSaving = true;
-    arbeitszeitError = "";
-    try {
-      await api.put<WorkSchedule>(`/settings/work/${employee.id}`, buildSchedulePayload(extra));
-      arbeitszeitSaved = true;
-      // Issue #481 R7 — a contract change may add or replace a SHIFT_BASED row.
-      void loadContractHistory();
-      scheduleSnapshot = snap(
-        eType,
-        eWeeklyHours,
-        eMonthlyHours,
-        eCoreStart,
-        eCoreEnd,
-        eCoreDays,
-        eMon,
-        eTue,
-        eWed,
-        eThu,
-        eFri,
-        eSat,
-        eSun,
-        eMonWd,
-        eTueWd,
-        eWedWd,
-        eThuWd,
-        eFriWd,
-        eSatWd,
-        eSunWd,
-        eThreshold,
-        ePayout,
-        eOvertimeMode,
-        eWorkDays,
-        eContractWorkDays,
-        eUsualWorkDays,
-        eValidFrom,
-      );
-      setTimeout(() => (arbeitszeitSaved = false), 3000);
-    } catch (e: unknown) {
-      if (
-        (e as { status?: number })?.status === 409 &&
-        (e as { data?: { code?: string } })?.data?.code === "ORPHAN_SHIFTS_PENDING"
-      ) {
-        const payload = (
-          e as { data?: { pendingShifts?: number; shiftPreview?: OrphanShiftPreview[] } }
-        )?.data;
-        orphanPendingCount = payload?.pendingShifts ?? 0;
-        orphanPreview = payload?.shiftPreview ?? [];
-        orphanModalOpen = true;
-      } else {
-        arbeitszeitError = e instanceof Error ? e.message : "Fehler beim Speichern";
-      }
-    } finally {
-      arbeitszeitSaving = false;
-    }
-  }
-
-  async function saveSchedule() {
-    return doSaveSchedule();
-  }
-
-  // ── Issue #481 R6/R7 — Nachtrag übliche Arbeitstage on existing SHIFT_BASED rows ──
-  let contractHistory = $state<ContractHistoryInput[]>([]);
-  let backfillSelection = $state<Record<string, number[]>>({});
-  let backfillSaving = $state(false);
-  let backfillError = $state("");
-  let contractsMissingUsual = $derived(shiftContractsMissingUsualWorkDays(contractHistory));
-  let backfillBlocked = $derived(
-    contractsMissingUsual.every((r) => (backfillSelection[r.id]?.length ?? 0) === 0) ||
-      contractsMissingUsual.some(
-        (r) =>
-          usualWorkDaysShortfall(backfillSelection[r.id] ?? [], r.contractWorkDaysPerWeek ?? null) >
-          0,
-      ),
-  );
-
-  function contractValidFromLabel(row: ContractHistoryRow): string {
-    return new Date(row.validFrom).toLocaleDateString("de-DE", { timeZone: "UTC" });
-  }
-
-  async function loadContractHistory() {
-    try {
-      contractHistory = await api.get<ContractHistoryInput[]>(
-        `/settings/work/${employeeId}/history`,
-      );
-    } catch {
-      // Without contract:read (or on any error) the section simply stays hidden.
-      contractHistory = [];
-    }
-  }
-
-  function toggleBackfillDay(rowId: string, day: number) {
-    const current = backfillSelection[rowId] ?? [];
-    backfillSelection[rowId] = current.includes(day)
-      ? current.filter((d) => d !== day)
-      : [...current, day].sort((a, b) => a - b);
-  }
-
-  async function saveUsualWorkDaysBackfill() {
-    if (!employee) return;
-    backfillSaving = true;
-    backfillError = "";
-    const errors: string[] = [];
-    let saved = 0;
-    let currentRowFilled: number[] | null = null;
-    for (const row of contractsMissingUsual) {
-      const selection = backfillSelection[row.id] ?? [];
-      if (selection.length === 0) continue;
-      try {
-        const updated = await api.patch<ContractHistoryRow>(
-          `/settings/work/${employee.id}/usual-work-days`,
-          buildUsualWorkDaysBackfillPayload(row.id, selection),
-        );
-        saved++;
-        if (row.id === workSchedule?.id) currentRowFilled = updated.usualWorkDays ?? selection;
-      } catch (e: unknown) {
-        const message = e instanceof Error ? e.message : "Fehler beim Speichern";
-        errors.push(`Vertrag gültig ab ${contractValidFromLabel(row)}: ${message}`);
-      }
-    }
-    await loadContractHistory();
-    backfillSelection = {};
-    // Keep the contract form in step when the current row was filled — only when it holds no
-    // unsaved edits of its own, so nothing the admin typed is overwritten.
-    if (currentRowFilled && workSchedule && !scheduleDirty) {
-      workSchedule = { ...workSchedule, usualWorkDays: currentRowFilled };
-      eUsualWorkDays = [...currentRowFilled];
-      scheduleSnapshot = snap(
-        eType,
-        eWeeklyHours,
-        eMonthlyHours,
-        eCoreStart,
-        eCoreEnd,
-        eCoreDays,
-        eMon,
-        eTue,
-        eWed,
-        eThu,
-        eFri,
-        eSat,
-        eSun,
-        eMonWd,
-        eTueWd,
-        eWedWd,
-        eThuWd,
-        eFriWd,
-        eSatWd,
-        eSunWd,
-        eThreshold,
-        ePayout,
-        eOvertimeMode,
-        eWorkDays,
-        eContractWorkDays,
-        eUsualWorkDays,
-        eValidFrom,
-      );
-    }
-    backfillError = errors.join(" ");
-    if (saved > 0) toasts.success("Übliche Arbeitstage gespeichert");
-    backfillSaving = false;
-  }
-
-  async function orphanKeep() {
-    orphanModalOpen = false;
-    await doSaveSchedule({ keepOrphanShifts: true });
-  }
-
-  async function orphanCancel() {
-    orphanModalOpen = false;
-    await doSaveSchedule({ cancelOrphanShifts: true });
-  }
-
-  function orphanAbort() {
-    orphanModalOpen = false;
-    eType = "SHIFT_BASED";
-  }
-
   // ── Urlaub ─────────────────────────────────────────────────────────────────
   // The entitlement of the current year is read here with the rest of the page and handed to the
   // Urlaub tab, which owns its form, its snapshot and its save.
@@ -1481,47 +1068,6 @@
   function snap(...values: unknown[]): string {
     return JSON.stringify(values);
   }
-
-  let scheduleSnapshot = $state("");
-  // Issue #481 R5 — a SHIFT_BASED contract cannot be saved without (enough) übliche Arbeitstage.
-  let scheduleBlockedByUsualWorkDays = $derived(
-    eType === "SHIFT_BASED" &&
-      (usualWorkDaysMissing(eType, eUsualWorkDays) ||
-        usualWorkDaysShortfall(eUsualWorkDays, eContractWorkDays) > 0),
-  );
-  let scheduleDirty = $derived(
-    // N-04: eValidFrom (the WorkSchedule's validFrom) is part of this snapshot — value and
-    // effective date are one decision, so changing either marks this section unsaved.
-    snap(
-      eType,
-      eWeeklyHours,
-      eMonthlyHours,
-      eCoreStart,
-      eCoreEnd,
-      eCoreDays,
-      eMon,
-      eTue,
-      eWed,
-      eThu,
-      eFri,
-      eSat,
-      eSun,
-      eMonWd,
-      eTueWd,
-      eWedWd,
-      eThuWd,
-      eFriWd,
-      eSatWd,
-      eSunWd,
-      eThreshold,
-      ePayout,
-      eOvertimeMode,
-      eWorkDays,
-      eContractWorkDays,
-      eUsualWorkDays,
-      eValidFrom,
-    ) !== scheduleSnapshot,
-  );
 
   let pausendauerSnapshot = $state("");
   let pausendauerDirty = $derived(
@@ -1552,9 +1098,10 @@
   // `bind:changes`; this page sums everything into ONE registration.
   let personChanges = $state(0);
   let vacationChanges = $state(0);
+  let vertragChanges = $state(0);
   let anyUnsaved = $derived(
     personChanges > 0 ||
-      scheduleDirty ||
+      vertragChanges > 0 ||
       pausendauerDirty ||
       phorestPufferDirty ||
       patternsDirty ||
@@ -1592,6 +1139,11 @@
   let tenantDefaultApprenticeVacationDays = $derived(
     Number(tenantBreakConfig?.defaultApprenticeVacationDays) || 20,
   );
+
+  /** The Vertrag tab reports the saved schedule; the Überschreibungen below read its weekly hours. */
+  function onContractSaved(saved: ContractSchedule) {
+    workSchedule = saved;
+  }
 
   /** The Person tab reports what a PATCH wrote; the record (and so the head and the Vertrag tab) follows. */
   function onPersonSaved(written: Partial<PersonEmployee>) {
@@ -1631,557 +1183,15 @@
           />
         {/if}
       {:else if tab === "vertrag"}
-        <!-- ── Arbeitszeit ─────────────────────────────────────────────────── -->
-        <Section
-          title="Arbeitszeitmodell"
-          sub="Feste Arbeitszeit, Gleitzeit, Monatsstunden oder nach Schichtplan"
-          dirty={scheduleDirty}
-        >
-          {#snippet footer()}
-            <button
-              class="btn btn-primary"
-              onclick={saveSchedule}
-              disabled={arbeitszeitSaving || scheduleBlockedByUsualWorkDays}
-            >
-              {arbeitszeitSaving ? "Speichern…" : "Speichern"}
-            </button>
-            {#if arbeitszeitSaved}<span class="saved-hint">Gespeichert</span>{/if}
-          {/snippet}
-
-          {#if arbeitszeitError}
-            <div class="callout error">{arbeitszeitError}</div>
-          {/if}
-
-          <!-- Type picker -->
-          <div class="form-group">
-            <span class="form-label">Arbeitszeitmodell</span>
-            <div class="schedule-type-picker" role="group" aria-label="Arbeitszeitmodell">
-              {#each [{ value: "FIXED_SCHEDULE", label: "Feste Arbeitszeit", tooltip: "Per-Tag-Stunden festgelegt — z.B. Mo–Fr je 8h." }, { value: "FLEXTIME", label: "Gleitzeit", tooltip: "Wochenstundensoll mit freier Tagesverteilung. Optional Kernarbeitszeit." }, { value: "MONTHLY_HOURS", label: "Monatsstunden", tooltip: "Monatsstunden-Budget — z.B. 15h/Monat für Minijobber." }, { value: "SHIFT_BASED", label: "Nach Schichtplan", tooltip: "Die Arbeitstage ergeben sich aus dem Schichtplan; die Wochenstunden sind das Soll." }] as seg (seg.value)}
-                <button
-                  type="button"
-                  class="stp-btn"
-                  class:stp-btn--active={eType === seg.value}
-                  aria-pressed={eType === seg.value}
-                  title={seg.tooltip}
-                  onclick={() => onScheduleTypeChange(seg.value as ScheduleType)}
-                  >{seg.label}</button
-                >
-              {/each}
-            </div>
-          </div>
-
-          <!-- FIXED_SCHEDULE: per-day hour inputs -->
-          {#if eType === "FIXED_SCHEDULE"}
-            <p class="form-hint">Wochenstunden werden automatisch aus den Tagen summiert.</p>
-            <div class="day-grid">
-              <div class="day-input">
-                <label class="day-label form-label" for="emp-day-mo">Mo</label>
-                <input
-                  id="emp-day-mo"
-                  type="number"
-                  min="0"
-                  max="24"
-                  step="0.5"
-                  bind:value={eMon}
-                  class="form-input day-field"
-                />
-              </div>
-              <div class="day-input">
-                <label class="day-label form-label" for="emp-day-di">Di</label>
-                <input
-                  id="emp-day-di"
-                  type="number"
-                  min="0"
-                  max="24"
-                  step="0.5"
-                  bind:value={eTue}
-                  class="form-input day-field"
-                />
-              </div>
-              <div class="day-input">
-                <label class="day-label form-label" for="emp-day-mi">Mi</label>
-                <input
-                  id="emp-day-mi"
-                  type="number"
-                  min="0"
-                  max="24"
-                  step="0.5"
-                  bind:value={eWed}
-                  class="form-input day-field"
-                />
-              </div>
-              <div class="day-input">
-                <label class="day-label form-label" for="emp-day-do">Do</label>
-                <input
-                  id="emp-day-do"
-                  type="number"
-                  min="0"
-                  max="24"
-                  step="0.5"
-                  bind:value={eThu}
-                  class="form-input day-field"
-                />
-              </div>
-              <div class="day-input">
-                <label class="day-label form-label" for="emp-day-fr">Fr</label>
-                <input
-                  id="emp-day-fr"
-                  type="number"
-                  min="0"
-                  max="24"
-                  step="0.5"
-                  bind:value={eFri}
-                  class="form-input day-field"
-                />
-              </div>
-              <div class="day-input">
-                <label class="day-label form-label" for="emp-day-sa">Sa</label>
-                <input
-                  id="emp-day-sa"
-                  type="number"
-                  min="0"
-                  max="24"
-                  step="0.5"
-                  bind:value={eSat}
-                  class="form-input day-field"
-                />
-              </div>
-              <div class="day-input">
-                <label class="day-label form-label" for="emp-day-so">So</label>
-                <input
-                  id="emp-day-so"
-                  type="number"
-                  min="0"
-                  max="24"
-                  step="0.5"
-                  bind:value={eSun}
-                  class="form-input day-field"
-                />
-              </div>
-              <div class="day-input total-col">
-                <span class="day-label form-label">Summe</span>
-                <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
-              </div>
-            </div>
-
-            <!-- Phase 107 (D-22/D-24, issue #94) — read-only: structurally cannot
-                 overwrite workDays. Shows the same derived count normalizeWorkDays()
-                 computes server-side; disabled (not readonly, app.css has no
-                 :read-only rule) so it visibly reads as a consequence, not an input. -->
-            <div class="form-group" style="margin-top: 1rem;">
-              <label class="form-label" for="e-fixed-workdays">Arbeitstage/Woche</label>
-              <div class="input-suffix-wrap" style="max-width: 240px;">
-                <input
-                  id="e-fixed-workdays"
-                  type="number"
-                  class="form-input threshold-input"
-                  value={eWorkingDays}
-                  disabled
-                />
-                <span class="input-suffix">Tage</span>
-              </div>
-              <p class="form-hint">
-                Ergibt sich automatisch aus den oben eingetragenen Tagesstunden.
-              </p>
-            </div>
-          {:else if eType === "FLEXTIME"}
-            <div class="form-group">
-              <label class="form-label" for="e-weekly-flex">Wochenstunden-Soll</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="e-weekly-flex"
-                  type="number"
-                  min="0"
-                  max="60"
-                  step="0.25"
-                  bind:value={eWeeklyHours}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">h/Woche</span>
-              </div>
-            </div>
-
-            <!-- Phase 107 gap G-01 (UAT 2026-08-28) — Arbeitstage belongs to the
-                 contract data ABOVE the Kernarbeitszeit heading, not inside it. It is
-                 authoritative for Urlaubsverbrauch (calculateWorkDays), Pro-Rata-Anspruch
-                 (countWorkDaysPerWeek) and, since v1.9.12, the Soll distribution — the
-                 exact opposite of the Kerntage chips below, which the schema documents as
-                 "UI metadata only". Two identical-looking chip rows must not sit adjacent
-                 under a heading that says "(optional)". Placement is the fix; the chips
-                 themselves are unchanged. -->
-            <div class="form-group">
-              <span class="form-label">Arbeitstage</span>
-              <div class="weekday-chips" role="group" aria-label="Arbeitstage">
-                {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
-                  <button
-                    type="button"
-                    class="wd-chip"
-                    class:wd-chip--active={eWorkDays.includes(day.value)}
-                    onclick={() => {
-                      if (eWorkDays.includes(day.value)) {
-                        eWorkDays = eWorkDays.filter((d) => d !== day.value);
-                      } else {
-                        eWorkDays = [...eWorkDays, day.value];
-                      }
-                    }}>{day.label}</button
-                  >
-                {/each}
-              </div>
-              <p class="form-hint">
-                Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Soll-Verteilung.
-              </p>
-            </div>
-
-            <h3 class="modal-section-heading">Kernarbeitszeit (optional)</h3>
-            <p class="form-hint">
-              Zeitfenster, in dem alle Mitarbeiter anwesend sein müssen. Leer lassen für reine
-              Gleitzeit ohne Kernzeit.
-            </p>
-
-            <div class="form-row">
-              <div class="form-group">
-                <label class="form-label" for="e-core-start">Kernzeitbeginn</label>
-                <input
-                  id="e-core-start"
-                  type="time"
-                  bind:value={eCoreStart}
-                  placeholder="—"
-                  class="form-input"
-                />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="e-core-end">Kernzeitende</label>
-                <input
-                  id="e-core-end"
-                  type="time"
-                  bind:value={eCoreEnd}
-                  placeholder="—"
-                  class="form-input"
-                />
-              </div>
-            </div>
-
-            <div class="form-group">
-              <span class="form-label">Kerntage</span>
-              <div class="weekday-chips" role="group" aria-label="Kerntage">
-                {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
-                  <button
-                    type="button"
-                    class="wd-chip"
-                    class:wd-chip--active={eCoreDays.includes(day.value)}
-                    onclick={() => {
-                      if (eCoreDays.includes(day.value)) {
-                        eCoreDays = eCoreDays.filter((d) => d !== day.value);
-                      } else {
-                        eCoreDays = [...eCoreDays, day.value];
-                      }
-                    }}>{day.label}</button
-                  >
-                {/each}
-              </div>
-              <p class="form-hint">
-                Nur zur Information — wirkt sich weder auf das Soll noch auf den Urlaub aus.
-              </p>
-            </div>
-          {:else if eType === "MONTHLY_HOURS"}
-            <div class="form-group">
-              <label class="form-label" for="e-monthly-hours">Stunden/Monat</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="e-monthly-hours"
-                  type="number"
-                  min="0"
-                  max="744"
-                  step="0.5"
-                  bind:value={eMonthlyHours}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">Stunden</span>
-              </div>
-              <p class="form-hint">Soll wird monatlich berechnet — es gibt keine Tagesziele.</p>
-            </div>
-
-            <OvertimeModeField
-              type={eType}
-              monthlyHours={eMonthlyHours}
-              value={eOvertimeMode}
-              onchange={(v) => (eOvertimeMode = v)}
-            />
-
-            <!-- Phase 107 gap G-02 (UAT 2026-08-28) — these chips DO set workDays, just
-                 indirectly: buildSchedulePayload() sends them as mondayHours…sundayHours =
-                 1/0 and the server derives workDays from exactly those via
-                 normalizeWorkDays() (apps/api/src/contexts/platform/api/settings.ts:1034). D-26's decision
-                 to hide the redundant NUMERIC count stands — the chips express the set
-                 exactly — but its stated reason ("kennt keine Tagesziele, das Feld wäre
-                 irreführend") was wrong about workDays. The write path is deliberately
-                 untouched: changing it would rewrite every existing MONTHLY_HOURS
-                 employee's workDays, and with it their Urlaubsverbrauch and Anspruch. -->
-            <div class="form-group">
-              <span class="form-label">Arbeitstage</span>
-              <div class="weekday-chips" role="group" aria-label="Arbeitstage">
-                <button
-                  type="button"
-                  class="wd-chip"
-                  class:wd-chip--active={eMonWd}
-                  onclick={() => (eMonWd = !eMonWd)}>Mo</button
-                >
-                <button
-                  type="button"
-                  class="wd-chip"
-                  class:wd-chip--active={eTueWd}
-                  onclick={() => (eTueWd = !eTueWd)}>Di</button
-                >
-                <button
-                  type="button"
-                  class="wd-chip"
-                  class:wd-chip--active={eWedWd}
-                  onclick={() => (eWedWd = !eWedWd)}>Mi</button
-                >
-                <button
-                  type="button"
-                  class="wd-chip"
-                  class:wd-chip--active={eThuWd}
-                  onclick={() => (eThuWd = !eThuWd)}>Do</button
-                >
-                <button
-                  type="button"
-                  class="wd-chip"
-                  class:wd-chip--active={eFriWd}
-                  onclick={() => (eFriWd = !eFriWd)}>Fr</button
-                >
-                <button
-                  type="button"
-                  class="wd-chip"
-                  class:wd-chip--active={eSatWd}
-                  onclick={() => (eSatWd = !eSatWd)}>Sa</button
-                >
-                <button
-                  type="button"
-                  class="wd-chip"
-                  class:wd-chip--active={eSunWd}
-                  onclick={() => (eSunWd = !eSunWd)}>So</button
-                >
-              </div>
-              <p class="form-hint">
-                Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Urlaubsanspruch.
-              </p>
-            </div>
-          {:else}
-            <!-- SHIFT_BASED -->
-            <div class="form-group">
-              <label class="form-label" for="e-weekly-hours">Wochenstunden-Soll</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="e-weekly-hours"
-                  type="number"
-                  min="1"
-                  max="168"
-                  step="0.5"
-                  bind:value={eWeeklyHours}
-                  class="form-input threshold-input"
-                  aria-required="true"
-                />
-                <span class="input-suffix">Stunden</span>
-              </div>
-              <p class="form-hint">
-                Schichtplan ist führend — Soll wird wöchentlich als Gesamtstunden erfasst.
-              </p>
-            </div>
-
-            <!-- Phase 107 (D-22/D-23, issue #94) — writes EXCLUSIVELY
-                 contractWorkDaysPerWeek. The concrete weekdays come from the
-                 Schichtplan, not this field; eWorkDays is never read or written here. -->
-            <div class="form-group" style="margin-top: 1rem;">
-              <label class="form-label" for="e-contract-workdays">Arbeitstage/Woche</label>
-              <div class="input-suffix-wrap" style="max-width: 240px;">
-                <input
-                  id="e-contract-workdays"
-                  type="number"
-                  min="1"
-                  max="7"
-                  step="1"
-                  class="form-input threshold-input"
-                  value={eContractWorkDays}
-                  oninput={(ev) => {
-                    eContractWorkDays = Math.max(
-                      1,
-                      Math.min(7, Number((ev.target as HTMLInputElement).value) || 0),
-                    );
-                  }}
-                />
-                <span class="input-suffix">Tage</span>
-              </div>
-              <p class="form-hint">
-                Vertragliche Anzahl Arbeitstage pro Woche. Welche Wochentage das konkret sind,
-                bestimmt der Schichtplan — nicht dieses Feld.
-              </p>
-            </div>
-
-            <!-- Phase 436 Plan 02 (D-06) — übliche Arbeitstage, used for pricing angebrochene
-                 Urlaubswochen (D-01/D-03). Issue #481 R5: required for SHIFT_BASED; the server is
-                 authoritative (T-436-08), this chip row and the hints below are UX only. -->
-            <div class="form-group" style="margin-top: 1rem;">
-              <span class="form-label"
-                >Übliche Arbeitstage <span class="badge badge-gray">Pflicht</span></span
-              >
-              <div class="weekday-chips" role="group" aria-label="Übliche Arbeitstage">
-                {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
-                  <button
-                    type="button"
-                    class="wd-chip"
-                    class:wd-chip--active={eUsualWorkDays.includes(day.value)}
-                    aria-pressed={eUsualWorkDays.includes(day.value)}
-                    onclick={() => {
-                      if (eUsualWorkDays.includes(day.value)) {
-                        eUsualWorkDays = eUsualWorkDays.filter((d) => d !== day.value);
-                      } else {
-                        eUsualWorkDays = [...eUsualWorkDays, day.value].sort((a, b) => a - b);
-                      }
-                    }}>{day.label}</button
-                  >
-                {/each}
-              </div>
-              <p class="form-hint">
-                Pflicht bei Schichtbetrieb: mindestens so viele Tage wie Arbeitstage pro Woche. In
-                angebrochenen Urlaubswochen zählen nur Urlaubstage an diesen Wochentagen; eine volle
-                Urlaubswoche kostet immer die vertraglichen Arbeitstage.
-              </p>
-              {#if usualWorkDaysMissing(eType, eUsualWorkDays)}
-                <div class="callout">
-                  Bitte die üblichen Arbeitstage ankreuzen – bei Schichtbetrieb Pflicht. Ohne Angabe
-                  kann der Vertrag nicht gespeichert werden.
-                </div>
-              {:else if usualWorkDaysShortfall(eUsualWorkDays, eContractWorkDays) > 0}
-                <div class="callout">
-                  Bitte mindestens {eContractWorkDays} Tage ankreuzen – so viele Arbeitstage hat der Vertrag.
-                  Sonst wird die Angabe beim Speichern abgelehnt.
-                </div>
-              {/if}
-            </div>
-          {/if}
-
-          <!-- Threshold + Payout -->
-          <div class="extra-row spaced-top-md">
-            <div class="form-group">
-              <label class="form-label" for="e-threshold">Überstunden-Warnschwelle</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="e-threshold"
-                  type="number"
-                  min="1"
-                  max="500"
-                  bind:value={eThreshold}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">Stunden</span>
-              </div>
-            </div>
-            <div class="form-group">
-              <span class="form-label">Überstunden-Auszahlung</span>
-              <label class="toggle-label">
-                <input type="checkbox" bind:checked={ePayout} class="toggle-cb" />
-                <span>{ePayout ? "Erlaubt" : "Gesperrt"}</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- Valid From — Phase 60 (#220) enforces month-1st snap -->
-          <div class="form-group spaced-top-md">
-            <label class="form-label" for="e-valid-from">Gültig ab</label>
-            <input
-              id="e-valid-from"
-              type="date"
-              bind:value={eValidFrom}
-              onchange={snapValidFromToMonthFirst}
-              class="form-input"
-            />
-            <p class="form-hint">Wechsel werden zum 1. eines Monats wirksam.</p>
-          </div>
-        </Section>
-
-        <!-- Issue #86 (D-01) — the employment history on today's model: one row per contract
-             version, read-only (a change is made through the Arbeitszeitmodell section above). -->
-        {#if contractHistory.length > 0}
-          <Section
-            title="Vertragsverlauf"
-            sub="Jede Vertragsänderung gilt ab dem Monatsersten; frühere Verträge bleiben erhalten."
-          >
-            <div class="table-wrap">
-              <table class="data-table" data-testid="contract-history">
-                <thead>
-                  <tr>
-                    <th>Zeitraum</th>
-                    <th>Modell</th>
-                    <th>Umfang</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each contractHistoryRows(contractHistory) as row (row.id)}
-                    <tr>
-                      <td>{row.period}</td>
-                      <td>{row.model}</td>
-                      <td>{row.extent}</td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          </Section>
-        {/if}
-
-        <!-- Issue #481 R6/R7 — Nachtrag of the übliche Arbeitstage on existing SHIFT_BASED contract
-             rows (current or historic) that have none. Button-gated per ADMIN_STRUCTURE §3.2.1:
-             the chips only change local state; the server validates and audits each row. -->
-        {#if contractsMissingUsual.length > 0}
-          <Section title="Übliche Arbeitstage nachtragen" sub="Schichtbetrieb-Verträge ohne Angabe">
-            {#snippet footer()}
-              <button
-                class="btn btn-primary"
-                onclick={saveUsualWorkDaysBackfill}
-                disabled={backfillSaving || backfillBlocked}
-              >
-                {backfillSaving ? "Speichern…" : "Speichern"}
-              </button>
-            {/snippet}
-
-            <div class="callout">
-              Für diese Verträge fehlen die üblichen Arbeitstage. Ohne Angabe zählt in angebrochenen
-              Urlaubswochen jeder beantragte Tag von Montag bis Samstag als Urlaubstag. Die Angabe
-              wird im bestehenden Vertragsdatensatz gespeichert – es entsteht kein neuer Vertrag.
-              Bereits genehmigte Anträge werden dadurch nicht automatisch neu berechnet.
-            </div>
-            {#if backfillError}
-              <div class="callout error">{backfillError}</div>
-            {/if}
-
-            {#each contractsMissingUsual as row (row.id)}
-              <div class="form-group" style="margin-top: 1rem;">
-                <span class="form-label">
-                  Vertrag gültig ab {contractValidFromLabel(row)} · {row.contractWorkDaysPerWeek ??
-                    "–"} Tage/Woche
-                </span>
-                <div class="weekday-chips" role="group" aria-label="Übliche Arbeitstage">
-                  {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
-                    <button
-                      type="button"
-                      class="wd-chip"
-                      class:wd-chip--active={(backfillSelection[row.id] ?? []).includes(day.value)}
-                      aria-pressed={(backfillSelection[row.id] ?? []).includes(day.value)}
-                      onclick={() => toggleBackfillDay(row.id, day.value)}>{day.label}</button
-                    >
-                  {/each}
-                </div>
-                {#if usualWorkDaysShortfall(backfillSelection[row.id] ?? [], row.contractWorkDaysPerWeek ?? null) > 0}
-                  <div class="callout">
-                    Bitte mindestens {row.contractWorkDaysPerWeek} Tage ankreuzen – so viele Arbeitstage
-                    hat der Vertrag.
-                  </div>
-                {/if}
-              </div>
-            {/each}
-          </Section>
-        {/if}
+        <VertragTab
+          {employeeId}
+          schedule={workSchedule}
+          employee={{ classification }}
+          canEdit={canUpdateContract}
+          {canDiscardShifts}
+          bind:changes={vertragChanges}
+          onSaved={onContractSaved}
+        />
 
         <!-- Phase 65 — Pausendauer (Optional) per-Employee Override (BREAK-06, BREAK-07, D-04..D-07) -->
         <!-- Phase 73-05: data-testid surface for the per-employee Pausendauer editor.
@@ -3049,66 +2059,6 @@
             </div>
           </Section>
         {/if}
-
-        <!-- Orphan-Schichten modal -->
-        {#if orphanModalOpen}
-          <div
-            class="orphan-overlay"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Geplante Schichten vorhanden"
-          >
-            <div class="orphan-card">
-              <h3 class="orphan-title">Geplante Schichten vorhanden</h3>
-              <p class="orphan-intro">
-                Beim Wechsel auf <strong>{orphanNewTypeLabel}</strong>
-                {orphanPendingCount === 1
-                  ? "ist 1 geplante Schicht"
-                  : `sind ${orphanPendingCount} geplante Schichten`}
-                noch in der Datenbank.
-              </p>
-              {#if orphanPreview.length > 0}
-                <ul class="orphan-list">
-                  {#each orphanPreview as s (s.date)}
-                    <li class="orphan-item">
-                      <span class="orphan-date">{s.date}</span>
-                      <span class="orphan-time">{s.startTime} – {s.endTime}</span>
-                    </li>
-                  {/each}
-                  {#if orphanPendingCount > orphanPreview.length}
-                    <li class="orphan-more">
-                      … und {orphanPendingCount - orphanPreview.length} weitere
-                    </li>
-                  {/if}
-                </ul>
-              {/if}
-              <p class="orphan-question">Was soll mit den zukünftigen Schichten passieren?</p>
-              <div class="orphan-footer">
-                <button class="btn btn-ghost" onclick={orphanAbort} disabled={arbeitszeitSaving}
-                  >Abbrechen</button
-                >
-                <button class="btn btn-secondary" onclick={orphanKeep} disabled={arbeitszeitSaving}>
-                  {arbeitszeitSaving ? "Speichern…" : "Behalten"}
-                </button>
-                {#if canDiscardShifts}
-                  <button
-                    class="btn btn-danger"
-                    onclick={orphanCancel}
-                    disabled={arbeitszeitSaving}
-                  >
-                    {arbeitszeitSaving ? "Speichern…" : "Stornieren"}
-                  </button>
-                {/if}
-              </div>
-              {#if !canDiscardShifts}
-                <p class="form-hint">
-                  Zum Verwerfen von Schichten ist das Recht zur Schichtplanung erforderlich. Bitte
-                  die Schichtplanung darum, die Schichten zu verwerfen, oder wähle „Behalten“.
-                </p>
-              {/if}
-            </div>
-          </div>
-        {/if}
       {:else if tab === "urlaub"}
         <UrlaubTab
           {employeeId}
@@ -3219,16 +2169,8 @@
     font-weight: 600;
   }
 
-  .toggle-label {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    cursor: pointer;
-    font-size: 14px;
-    color: var(--text);
-  }
-
   /* ── Schedule type picker ───────────────────────────────────────────────── */
+  /* The BS-mode picker of the pattern editor (the contract form that used it moved to VertragTab). */
   .schedule-type-picker {
     display: flex;
     flex-wrap: wrap;
@@ -3262,126 +2204,12 @@
   }
 
   /* ── Day grid ───────────────────────────────────────────────────────────── */
-  .day-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-3);
-    margin-top: var(--s-3);
-    align-items: flex-end;
-  }
-
-  .day-input {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-1);
-    min-width: 52px;
-  }
-
-  .day-label {
-    text-align: center;
-  }
-
-  .day-field {
-    width: 58px;
-    text-align: center;
-  }
-
-  .total-col {
-    min-width: 56px;
-  }
-
-  .weekly-total {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--text);
-    font-family: var(--font-ui);
-    padding: 8px 0;
-  }
 
   /* ── Weekday chips ──────────────────────────────────────────────────────── */
-  .weekday-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-2);
-  }
-
-  .wd-chip {
-    min-width: 40px;
-    padding: var(--s-1) var(--s-2);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    background: var(--sunk);
-    color: var(--text-2);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition:
-      border-color 0.15s,
-      background 0.15s,
-      color 0.15s;
-  }
-
-  .wd-chip--active {
-    border-color: var(--brand);
-    background: var(--brand-soft);
-    color: var(--brand);
-  }
 
   /* ── Input suffix ───────────────────────────────────────────────────────── */
-  .input-suffix-wrap {
-    display: flex;
-    align-items: stretch;
-    gap: 0;
-  }
-
-  .input-suffix-wrap .form-input,
-  .input-suffix-wrap .threshold-input {
-    border-radius: var(--r-control) 0 0 var(--r-control);
-    border-right: none;
-  }
-
-  .input-suffix {
-    display: flex;
-    align-items: center;
-    padding: 0 var(--s-3);
-    border: 1px solid var(--line);
-    border-radius: 0 var(--r-control) var(--r-control) 0;
-    background: var(--sunk);
-    color: var(--text-2);
-    font-size: 13px;
-    white-space: nowrap;
-  }
-
-  .threshold-input {
-    width: 80px;
-  }
 
   /* ── Form row / extra row ───────────────────────────────────────────────── */
-  .form-row {
-    display: flex;
-    gap: var(--s-4);
-    flex-wrap: wrap;
-  }
-
-  .extra-row {
-    display: flex;
-    gap: var(--s-6);
-    flex-wrap: wrap;
-    align-items: flex-end;
-  }
-
-  .spaced-top-md {
-    margin-top: var(--s-5);
-  }
-
-  .modal-section-heading {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--text-3, var(--text-2));
-    margin: var(--s-5) 0 var(--s-2);
-  }
 
   /* ── Callout ────────────────────────────────────────────────────────────── */
   .callout {
@@ -3408,104 +2236,8 @@
   }
 
   /* ── Toggle ─────────────────────────────────────────────────────────────── */
-  .toggle-cb {
-    width: 16px;
-    height: 16px;
-  }
-
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 10px;
-    border-radius: var(--r-control);
-    font-size: 12px;
-    font-weight: 600;
-  }
 
   /* ── Orphan shifts overlay (inline, not modal) ──────────────────────────── */
-  .orphan-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 50;
-  }
-
-  .orphan-card {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-card);
-    padding: var(--s-6);
-    max-width: 480px;
-    width: 100%;
-    box-shadow: var(--shadow);
-  }
-
-  .orphan-title {
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--text);
-    margin: 0 0 var(--s-3);
-  }
-
-  .orphan-intro {
-    font-size: 14px;
-    color: var(--text);
-    margin: 0 0 var(--s-3);
-  }
-
-  .orphan-list {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 var(--s-3);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    overflow: hidden;
-  }
-
-  .orphan-item {
-    display: flex;
-    gap: var(--s-4);
-    padding: var(--s-2) var(--s-3);
-    border-bottom: 1px solid var(--line);
-    font-size: 13px;
-    color: var(--text);
-  }
-
-  .orphan-item:last-child {
-    border-bottom: none;
-  }
-
-  .orphan-date {
-    font-weight: 600;
-    font-family: var(--font-ui);
-  }
-
-  .orphan-time {
-    color: var(--text-2);
-  }
-
-  .orphan-more {
-    padding: var(--s-2) var(--s-3);
-    font-size: 12px;
-    color: var(--text-2);
-  }
-
-  .orphan-question {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-    margin: var(--s-3) 0 var(--s-4);
-  }
-
-  .orphan-footer {
-    display: flex;
-    gap: var(--s-3);
-    flex-wrap: wrap;
-    align-items: center;
-  }
 
   /* Phase 67 (BERSCH-15) — BS-Pattern read-only list */
   .bs-pattern-list {

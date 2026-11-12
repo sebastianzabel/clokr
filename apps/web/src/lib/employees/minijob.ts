@@ -80,13 +80,16 @@ export function minijobHint(input: MinijobHintInput): MinijobHint | null {
   };
 }
 
-/** The advisory sentence of the Note; the tone is a prompt to check, not a finding. */
-export function minijobHintText(hint: MinijobHint): string {
+/** The advisory sentence of the Note; the tone is a prompt to check, not a finding. `save` words the contract tab. */
+export function minijobHintText(hint: MinijobHint, outcome: "create" | "save" = "create"): string {
   const fmt = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 1 });
   return (
     `Prüfe die Minijob-Grenze: ${fmt(hint.plannedMonthlyHours)} Stunden im Monat liegen über ` +
     `${fmt(hint.limitHours)} Stunden (${hint.limitEuro.toLocaleString("de-DE")} € bei ` +
     `${hint.minimumWageEuro.toLocaleString("de-DE", { minimumFractionDigits: 2 })} € Mindestlohn). ` +
-    `Gelegentliches Überschreiten ist erlaubt. Du kannst die Person trotzdem anlegen.`
+    `Gelegentliches Überschreiten ist erlaubt. ` +
+    (outcome === "save"
+      ? "Du kannst den Vertrag trotzdem speichern."
+      : "Du kannst die Person trotzdem anlegen.")
   );
 }

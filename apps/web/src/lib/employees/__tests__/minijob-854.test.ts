@@ -2,7 +2,7 @@
 // planned hours of a MINIJOB person lie above what the monthly limit allows at the minimum wage.
 import { describe, expect, it } from "vitest";
 
-import { MINIJOB_LIMITS, minijobHint, minijobLimitFor } from "../minijob";
+import { MINIJOB_LIMITS, minijobHint, minijobHintText, minijobLimitFor } from "../minijob";
 
 const base = {
   classification: "MINIJOB",
@@ -86,5 +86,21 @@ describe("minijobHint - who it applies to", () => {
       limitEuro: 603,
     });
     expect(minijobHint({ ...base, weeklyHours: 10, validFrom: "2027-01-01" })).toBeNull();
+  });
+});
+
+describe("minijobHintText wording (plan 854-21)", () => {
+  const hint = {
+    plannedMonthlyHours: 65,
+    limitHours: 43.4,
+    limitEuro: 603,
+    minimumWageEuro: 13.9,
+  };
+
+  it("words the create flow and the contract tab differently, same advice otherwise", () => {
+    expect(minijobHintText(hint)).toContain("Du kannst die Person trotzdem anlegen.");
+    expect(minijobHintText(hint, "save")).toContain("Du kannst den Vertrag trotzdem speichern.");
+    expect(minijobHintText(hint, "save")).not.toContain("anlegen");
+    expect(minijobHintText(hint, "save")).toContain("Prüfe die Minijob-Grenze");
   });
 });

@@ -48,6 +48,16 @@ const URLAUB_MODEL = readRouteFile(
   "src/lib/employees/urlaub-form.ts",
 );
 
+// The Vertrag tab (plan 854-21) owns the contract form: one group, one snapshot, one PUT with validFrom.
+const VERTRAG_TAB = readRouteFile(
+  "../lib/components/employees/detail/VertragTab.svelte",
+  "src/lib/components/employees/detail/VertragTab.svelte",
+);
+const VERTRAG_MODEL = readRouteFile(
+  "../lib/employees/vertrag-form.ts",
+  "src/lib/employees/vertrag-form.ts",
+);
+
 // The plan's reference slicer (`vacation-summary.test.ts:47-55`) finds a function's end by
 // searching for the next "\n  }" (a two-space-indented closing brace) after the marker. That
 // heuristic breaks on this page: several save functions take an optional object-typed
@@ -90,19 +100,19 @@ function fnBody(marker: string, source: string = PAGE): string {
 }
 
 describe("D-08/AK-10 — Vertragsdaten mit validFrom stay button-gated", () => {
-  it("saveSchedule is wired via onclick=, never onchange=", () => {
-    expect(PAGE).toContain("onclick={saveSchedule}");
-    expect(PAGE).not.toContain("onchange={saveSchedule}");
+  it("the contract group saves through its SaveBar, never through a change handler", () => {
+    expect(VERTRAG_TAB).toContain("onSave={() => save()}");
+    expect(VERTRAG_TAB).not.toContain("onchange={save}");
+    expect(VERTRAG_TAB).not.toMatch(/onchange=\{\(\) => save\(/);
+    // The page no longer owns any contract save.
+    expect(PAGE).not.toContain("saveSchedule");
   });
 
-  it("the saveSchedule chain actually writes validFrom — not a same-named stub", () => {
-    // `saveSchedule()` is a thin wrapper (`return doSaveSchedule()`); pinning "validFrom"
-    // directly on its own body would prove nothing (it isn't there — it's one call deeper).
-    // Trace the real chain instead: saveSchedule -> doSaveSchedule -> buildSchedulePayload,
-    // where `validFrom: eValidFrom` is actually assembled into the PUT body.
-    expect(fnBody("async function saveSchedule")).toContain("doSaveSchedule");
-    expect(fnBody("async function doSaveSchedule")).toContain("buildSchedulePayload");
-    expect(fnBody("function buildSchedulePayload")).toContain("validFrom");
+  it("the save chain actually writes validFrom — not a same-named stub", () => {
+    // `save()` hands the values to buildSchedulePayload, where `validFrom` is assembled into the PUT body.
+    expect(fnBody("async function save", VERTRAG_TAB)).toContain("buildSchedulePayload(values");
+    expect(fnBody("export function buildSchedulePayload", VERTRAG_MODEL)).toContain("validFrom");
+    expect(fnBody("async function save", VERTRAG_TAB)).toContain("`/settings/work/${employeeId}`");
   });
 
   // N-04 (Triage-Kommentar, 26.08.2026): "Autosave nur für Einstellungen, die sofort gelten.
@@ -113,7 +123,6 @@ describe("D-08/AK-10 — Vertragsdaten mit validFrom stay button-gated", () => {
 
 describe("N-02 — every save path on this page is already button-gated", () => {
   const BUTTON_GATED = [
-    "saveSchedule",
     "savePausendauer",
     "savePhorestPuffer",
     "saveBsSlotEmp",
@@ -165,12 +174,13 @@ describe("AK-02 — no text/number input writes inline on this page", () => {
     // [anti-vacuity] the Person tab does hold text and number inputs, and none writes inline.
     expect(PERSON_TAB.match(/type="(?:text|number)"/g)?.length ?? 0).toBeGreaterThan(3);
     expect(textOrNumberInputHandlers(PERSON_TAB)).toEqual([]);
+    expect(VERTRAG_TAB.match(/type="(?:text|number)"/g)?.length ?? 0).toBeGreaterThan(3);
+    expect(textOrNumberInputHandlers(VERTRAG_TAB)).toEqual([]);
   });
 });
 
 describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
   const FLAGS = [
-    "scheduleDirty",
     "pausendauerDirty",
     "phorestPufferDirty",
     "patternsDirty",
@@ -182,16 +192,18 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
   });
 
   // Issue #580 removed the footer of the Berechtigungen tab: role assignments save in their own
-  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1). Since #854 the Person tab owns its three groups and
-  // reports their change count (`bind:changes`), as does the Urlaub tab, so five footer Sections
-  // remain on this page.
-  it("all five footer Sections receive a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(5);
+  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1). Since #854 the Person, Vertrag and Urlaub tabs own their
+  // groups and report their change count (`bind:changes`), so four footer Sections remain on this page
+  // (the overrides, until plan 854-22).
+  it("all four remaining footer Sections receive a dirty prop", () => {
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(4);
   });
 
-  it("the Person and Urlaub tabs' unsaved changes are summed into the one registration", () => {
+  it("the Person, Vertrag and Urlaub tabs' unsaved changes are summed into the one registration", () => {
     expect(PAGE).toContain("bind:changes={personChanges}");
+    expect(PAGE).toContain("bind:changes={vertragChanges}");
     expect(PAGE).toContain("bind:changes={vacationChanges}");
+    expect(PAGE).toContain("vertragChanges > 0");
     expect(PAGE).toMatch(/let anyUnsaved = \$derived\(\s*personChanges > 0/);
     expect(PAGE).toContain("vacationChanges > 0");
   });
@@ -231,12 +243,19 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     expect(onchangeWrites).toEqual([]);
   });
 
-  it("AK-10: the Arbeitszeitmodell snapshot covers validFrom (N-04 — Wert und Stichtag sind eine Entscheidung)", () => {
-    const slice = PAGE.slice(
-      PAGE.indexOf("let scheduleDirty"),
-      PAGE.indexOf("let scheduleDirty") + 600,
-    );
-    expect(slice).toContain("validFrom");
+  it("AK-10: the contract snapshot covers validFrom (N-04 — Wert und Stichtag sind eine Entscheidung)", () => {
+    expect(VERTRAG_TAB).toContain("countChanges(snapshot, values, CONTRACT_KEYS)");
+    const keys = VERTRAG_MODEL.slice(VERTRAG_MODEL.indexOf("export const CONTRACT_KEYS"));
+    expect(keys.slice(0, keys.indexOf("]"))).toContain('"validFrom"');
+  });
+
+  it("T-109-26: the contract snapshot is re-taken only after the PUT succeeded", () => {
+    const body = fnBody("async function save", VERTRAG_TAB);
+    const put = body.indexOf("api.put<");
+    const retake = body.indexOf("snapshot = snapshotOfValues()");
+    expect(put).toBeGreaterThan(-1);
+    expect(retake).toBeGreaterThan(put);
+    expect(body.indexOf("finally")).toBeGreaterThan(retake);
   });
 
   it("T-109-26: no snapshot reset is the first statement of a finally block", () => {

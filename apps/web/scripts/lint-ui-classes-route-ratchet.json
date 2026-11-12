@@ -142,10 +142,6 @@
         "count": 1,
         "ticket": "#853"
       },
-      "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/admin/import/+page.svelte": {
         "count": 2,
         "ticket": "#854"

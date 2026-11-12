@@ -423,20 +423,22 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(page).toHaveURL(new RegExp(`/verwalten/personen/${x.id}`));
     await page.getByRole("tab", { name: "Vertrag" }).click();
     const contractHistory = page.getByTestId("contract-history");
-    await expect(contractHistory.locator("tbody tr")).toHaveCount(1);
-    const mondayHours = page.locator("#emp-day-mo");
+    await expect(contractHistory.getByRole("listitem")).toHaveCount(1);
+    const contractPanel = page.getByRole("tabpanel");
+    const mondayHours = contractPanel.getByLabel("Montag", { exact: true });
     await expect(mondayHours).toBeVisible();
     const before = Number(await mondayHours.inputValue());
     await mondayHours.fill(String(before - 2));
-    await page.locator("#e-valid-from").fill(nextFirst);
-    const modelSection = page.locator("section").filter({
-      has: page.locator(".section-title", { hasText: /^Arbeitszeitmodell$/ }),
-    });
-    await modelSection.getByRole("button", { name: "Speichern" }).click();
-    await expect(modelSection.getByText("Gespeichert")).toBeVisible();
-    await expect(contractHistory.locator("tbody tr")).toHaveCount(2);
-    await expect(contractHistory.locator("tbody tr").first()).toContainText(
-      `seit ${deDate(nextFirst)}`,
+    // #854: „Gültig ab“ is a month-first-only DatePicker; typing the next month-first replaces the
+    // default (which already is that day), so the change succeeds on the first try.
+    await typeDay(contractPanel.locator('[aria-label="Gültig ab"]'), nextFirst);
+    await contractPanel.getByRole("button", { name: "Vertrag speichern" }).click();
+    await expect(
+      page.getByText(`Vertrag gespeichert · gilt ab ${deDate(nextFirst)}`),
+    ).toBeVisible();
+    await expect(contractHistory.getByRole("listitem")).toHaveCount(2);
+    await expect(contractHistory.getByRole("listitem").first()).toContainText(
+      `ab ${deDate(nextFirst)}`,
     );
 
     // ── 3. AC-86-5: add an Einsatzsalon, end it; both rows stay listed ───────────────────────
@@ -946,7 +948,7 @@ test.describe("Issue #86 — Sichtmatrix 390/360 px, hell/dunkel", () => {
 
         // 3. the detail page, Arbeitszeit tab: three contract rows
         await page.getByRole("tab", { name: "Vertrag" }).click();
-        await expect(page.getByTestId("contract-history").locator("tbody tr")).toHaveCount(3);
+        await expect(page.getByTestId("contract-history").getByRole("listitem")).toHaveCount(3);
         await expect(page.getByText(/Danger/)).toHaveCount(0);
         results.push(await checkCell(page, "employee-arbeitszeit", viewport.width, mode));
 

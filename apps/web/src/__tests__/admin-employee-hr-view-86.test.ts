@@ -30,6 +30,12 @@ const PERSON_TAB = readRouteFile(
   "src/lib/components/employees/detail/PersonTab.svelte",
 );
 
+// Plan 854-21: the contract half of the Vertrag tab (form, timeline, Nachtrag) is a component too.
+const VERTRAG_TAB = readRouteFile(
+  "../lib/components/employees/detail/VertragTab.svelte",
+  "src/lib/components/employees/detail/VertragTab.svelte",
+);
+
 describe("/admin/employees/[id] - tabs follow permissions (Issue #86, D-04)", () => {
   it("imports employeeDetailTabs and derives its tab list from it", () => {
     expect(DETAIL).toMatch(
@@ -79,12 +85,16 @@ const CREATE_MODEL = readRouteFile(
 );
 
 describe("/admin/employees/[id] - employment on today's model (Issue #86, D-01)", () => {
-  it("renders the read-only Vertragsverlauf from contractHistoryRows(contractHistory)", () => {
-    expect(DETAIL).toMatch(
+  it("renders the read-only Vertragsverlauf from contractHistoryRows(history)", () => {
+    expect(VERTRAG_TAB).toMatch(
       /import \{[^}]*\bcontractHistoryRows\b[^}]*\} from "\$lib\/employees\/contract-history"/,
     );
-    expect(DETAIL).toMatch(/title="Vertragsverlauf"/);
-    expect(DETAIL).toMatch(/contractHistoryRows\(contractHistory\)/);
+    expect(VERTRAG_TAB).toMatch(/title="Vertragsverlauf"|>Vertragsverlauf</);
+    expect(VERTRAG_TAB).toMatch(/contractHistoryRows\(history\)/);
+    // The e2e hook of the timeline survives, and the page mounts the tab instead of owning a history.
+    expect(VERTRAG_TAB).toContain('data-testid="contract-history"');
+    expect(DETAIL).toContain("<VertragTab");
+    expect(DETAIL).not.toContain("contractHistoryRows");
   });
 
   it("words the exit date as the end of the employment and says the access stays active", () => {
