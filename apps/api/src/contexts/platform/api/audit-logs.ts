@@ -3,11 +3,17 @@ import { z } from "zod";
 import { requirePermission } from "../request-permissions";
 import {
   attachAffectedEmployees,
+  auditExportQuerySchema,
   auditFilterQuerySchema,
   auditFilterWhere,
   auditTenantTimezone,
+  inclusiveDayCount,
   periodBounds,
 } from "../audit-log-read";
+import { AUDIT_CSV_MAX_ROWS, auditCsvFilename, auditLogCsv } from "../audit-csv";
+
+/** Longest period one CSV export may span, in calendar days. */
+const AUDIT_EXPORT_MAX_DAYS = 366;
 
 const idParamSchema = z.object({
   id: z.string().min(1),
@@ -81,6 +87,78 @@ export async function auditLogRoutes(app: FastifyInstance) {
         page: parseInt(page),
         limit: take,
       };
+    },
+  );
+
+  // GET /audit-logs/export?from=&to=[&action=&entity=&userId=&employeeId=] - audit-log:read.
+  // The filtered protocol as a spreadsheet file (Issue #583): the same parser, the same tenant `OR`
+  // and the same filter clause as the list, so the file holds exactly what the list shows. It is an
+  // export of personal data: the successful download is audited BEFORE the bytes leave; a refusal
+  // (400, 403) writes nothing. Registered as a static path, which the router prefers to `/:id`.
+  app.get(
+    "/export",
+    {
+      schema: {
+        tags: ["Audit"],
+        security: [{ bearerAuth: [] }],
+        description:
+          "CSV export of the audit log: the list of GET /audit-logs for a mandatory period (from, to as tenant-local days, at most 366 days) and the optional filters action, entity, userId and employeeId, as UTF-8 with BOM, semicolon separated, with every action and object as German label and as code. At most 10000 rows. Old and new values are not exported. Audited as EXPORT (AUDIT_LOG_CSV) before the file is sent.",
+      },
+      preHandler: requirePermission("audit-log:read:ZUGEWIESEN"),
+    },
+    async (req, reply) => {
+      const { from, to, ...filters } = auditExportQuerySchema.parse(req.query);
+      if (inclusiveDayCount(from, to) > AUDIT_EXPORT_MAX_DAYS) {
+        return reply.code(400).send({ error: "Der Zeitraum darf höchstens 366 Tage umfassen." });
+      }
+      const tenantId = req.user.tenantId;
+      const tz = await auditTenantTimezone(app.prisma, tenantId);
+      const where = {
+        AND: [
+          {
+            OR: [
+              { user: { employee: { tenantId } } },
+              { userId: null, newValue: { path: ["actor", "tenantId"], equals: tenantId } },
+            ],
+          },
+          auditFilterWhere(filters, periodBounds(from, to, tz)),
+        ],
+      };
+
+      // Count first: a set above the cap is refused before anything is read or written.
+      const total = await app.prisma.auditLog.count({ where });
+      if (total > AUDIT_CSV_MAX_ROWS) {
+        return reply
+          .code(400)
+          .send({ error: "Zu viele Einträge für einen Export. Wähle einen kürzeren Zeitraum." });
+      }
+
+      const logs = await app.prisma.auditLog.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: AUDIT_CSV_MAX_ROWS,
+        include: { user: { select: { email: true } } },
+      });
+      const rows = await attachAffectedEmployees(app.prisma, tenantId, logs);
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "EXPORT",
+        entity: "AuditLog",
+        newValue: {
+          type: "AUDIT_LOG_CSV",
+          from,
+          to,
+          action: filters.action ?? null,
+          entity: filters.entity ?? null,
+          userId: filters.userId ?? null,
+          employeeId: filters.employeeId ?? null,
+          rowCount: rows.length,
+        },
+      });
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header("Content-Disposition", `attachment; filename="${auditCsvFilename(from, to)}"`);
+      return reply.send(auditLogCsv(rows, tz));
     },
   );
 
