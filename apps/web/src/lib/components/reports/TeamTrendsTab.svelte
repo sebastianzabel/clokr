@@ -116,8 +116,11 @@
   }
 
   // ── Loads ────────────────────────────────────────────────────────────────────
-  let view = $state<TeamTrendView | null>(null);
-  let trend = $state<OvertimeTrendResponse | null>(null);
+  // Raw state on purpose: chart.js writes into the data it draws (dataset metadata), and a deep
+  // proxy would turn those writes into reruns of the chart effects that read them (an effect loop
+  // that sent the page to the error boundary). Both are only ever replaced as a whole.
+  let view = $state.raw<TeamTrendView | null>(null);
+  let trend = $state.raw<OvertimeTrendResponse | null>(null);
   let loading = $state(true);
   let failed = $state(false);
   let rejected = $state(false);
