@@ -246,6 +246,11 @@
       "auth": "tenant-admin"
     },
     {
+      "page": "(app)/verwalten/regeln/monatsabschluss/+page.svelte",
+      "path": "/verwalten/regeln/monatsabschluss",
+      "auth": "tenant-admin"
+    },
+    {
       "page": "(app)/verwalten/system/+page.svelte",
       "path": "/verwalten/system",
       "auth": "tenant-admin"

@@ -31,9 +31,13 @@ const VIEWPORTS = [
 const THEMES = ["pflaume", "salz", "petrol"] as const;
 type Theme = (typeof THEMES)[number];
 
-/** Pages whose SectionStack renders a tab strip; `/admin/system` has the widest one (5 tabs). */
+/**
+ * Pages whose SectionStack renders a tab strip. `/admin/system` had the widest one (5 tabs) until the
+ * Verwalten rebuild (Issue #854) moved its Arbeitszeit tab to Regeln; with fewer tabs it no longer has to
+ * overflow a phone, so the overflow assertion (`widest`) is off for it.
+ */
 const PAGES = [
-  { path: "/admin/system", widest: true },
+  { path: "/admin/system", widest: false },
   { path: "/admin/vacation", widest: false },
 ] as const;
 

@@ -74,15 +74,15 @@ function settingsWorkPuts(source: string): Put[] {
 // saveBsSlots, saveDefaultWorkDays and saveCoreDefaults -> the other sections of that page) are no longer
 // pages of /admin; their own-fields rule is pinned where they live: settings-pages-854 (3) reads every
 // settings PUT of `lib/components/admin/` and requires `pickSection(…, settingsSection("<id>").keys)` or a
-// literal inside one registered section, and arbeitszeit-save-wiring-854 names each section.
+// literal inside one registered section, and arbeitszeit-save-wiring-854 names each section. The same holds for
+// plan 854-08: toggleBlockMonthCloseOnUnconfirmedBreak and saveCloseMonthWithGaps became `BreakBlockSection` and
+// `GapsSection` of Regeln › Monatsabschluss (monatsabschluss-854.test.ts).
 const EXPECTED: Record<string, Record<string, string[]>> = {
   system: {
     saveShiftHoursMode: ["shiftStoreHoursMode"],
     saveFederalState: ["federalState", "tenantName", "timezone"],
-    toggleBlockMonthCloseOnUnconfirmedBreak: ["blockMonthCloseOnUnconfirmedBreak"],
     saveAvailabilityEnabled: ["availabilityEnabled"],
     saveVocationalSchoolAutoCleanupShifts: ["vocationalSchoolAutoCleanupShifts"],
-    saveCloseMonthWithGaps: ["closeMonthWithGapsAllowed"],
   },
   export: {
     saveDatev: [

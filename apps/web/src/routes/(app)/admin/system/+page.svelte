@@ -18,7 +18,6 @@
   // ── Tabs (Phase 58: tabbed config layout) ──────────────────────────────────
   const TABS = [
     { id: "allgemein", label: "Allgemein" },
-    { id: "arbeitszeit", label: "Arbeitszeit" },
     { id: "sicherheit", label: "Sicherheit" },
     { id: "kommunikation", label: "Kommunikation" },
     { id: "integration", label: "Integration" },
@@ -42,10 +41,6 @@
     defaultVacationDays: number;
     carryOverDeadlineDay: number;
     carryOverDeadlineMonth: number;
-    // Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01); the Pausen themselves are saved on
-    // Regeln › Arbeitszeit & Verträge (Issue #854)
-    enforceBreakConfirmation?: boolean;
-    blockMonthCloseOnUnconfirmedBreak?: boolean;
     // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
     availabilityEnabled?: boolean;
     // Check mode of shifts against the opening hours of their salon (the hours live on the salon)
@@ -54,8 +49,6 @@
     // Plan 05 surfaces toggle here). Wenn true (Default): künftige Shifts auf neuen
     // BS-Tagen werden vom Generator weich-gelöscht; in der Vergangenheit nur markiert.
     vocationalSchoolAutoCleanupShifts?: boolean;
-    // Phase 76.29 — Monatsabschluss mit Lücken
-    closeMonthWithGapsAllowed?: boolean;
   }
 
   interface SecurityConfig {
@@ -143,13 +136,6 @@
     }
   }
 
-  // Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01)
-  let enforceBreakConfirmation = $state(false);
-  let blockMonthCloseOnUnconfirmedBreak = $state(false);
-  let breakConfirmSaving = $state(false);
-  let breakConfirmSaved = $state(false);
-  let breakConfirmError = $state("");
-
   // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
   let availabilityEnabled = $state(true);
   let availabilitySaving = $state(false);
@@ -157,10 +143,6 @@
   // Phase 67.2 (Plan 05) — Auto-Cleanup für Berufsschultag-Schichten Toggle
   let vocationalSchoolAutoCleanupShifts = $state(true);
   let vsAutoCleanupSaving = $state(false);
-
-  // Phase 76.29 — Monatsabschluss mit Lücken (toggle)
-  let closeMonthWithGapsAllowed = $state(true);
-  let closeMonthWithGapsSaving = $state(false);
 
   let smtpHost = $state("");
   let smtpPort = $state(587);
@@ -419,16 +401,11 @@
       gTenantName = cfg.tenantName ?? "";
       gTimezone = cfg.timezone ?? "Europe/Berlin";
       settingsLoaded = true;
-      // Phase 93.06 — Pausen-Bestätigung flag, read-only here (saved on Regeln › Arbeitszeit & Verträge)
-      enforceBreakConfirmation = cfg.enforceBreakConfirmation ?? false;
-      blockMonthCloseOnUnconfirmedBreak = cfg.blockMonthCloseOnUnconfirmedBreak ?? false;
       // Phase 47.3 — Verfügbarkeits-System Feature-Toggle (default on)
       availabilityEnabled = cfg.availabilityEnabled ?? true;
 
       // Phase 67.2 (Plan 05) — load tenant-wide BS-Shift-Auto-Cleanup toggle
       vocationalSchoolAutoCleanupShifts = cfg.vocationalSchoolAutoCleanupShifts ?? true;
-      // Phase 76.29 — Monatsabschluss mit Lücken
-      closeMonthWithGapsAllowed = cfg.closeMonthWithGapsAllowed ?? true;
       shiftStoreHoursMode = cfg.shiftStoreHoursMode ?? "DAY_ONLY";
 
       try {
@@ -553,44 +530,10 @@
 
   // saveDatev moved to /admin/export (Phase 58).
 
-  // Monatsabschluss bei unbestätigten Pausen (Phase 93.06, BREAK-05 / BREAK-01). Sends only its own flag
-  // (Issue #878). It is only meaningful while enforceBreakConfirmation is on (the switch is disabled
-  // otherwise); that flag is saved on Regeln › Arbeitszeit & Verträge and only read here.
-  async function toggleBlockMonthCloseOnUnconfirmedBreak() {
-    // bind:checked has already written the new value into the state, so the DOM and the state agree and an
-    // explicit revert actually lands (WR-02); the toggle must never outlive a failed save.
-    const previous = !blockMonthCloseOnUnconfirmedBreak;
-    if (!settingsLoaded) {
-      blockMonthCloseOnUnconfirmedBreak = previous;
-      breakConfirmError = "Einstellungen sind noch nicht geladen.";
-      return;
-    }
-    // No-op: only meaningful when enforcement is on. The input is `disabled` in that case, so
-    // this is unreachable from the UI — revert silently rather than reporting a non-event.
-    if (!enforceBreakConfirmation) {
-      blockMonthCloseOnUnconfirmedBreak = previous;
-      return;
-    }
-    breakConfirmSaving = true;
-    breakConfirmError = "";
-    breakConfirmSaved = false;
-    try {
-      await api.put("/settings/work", {
-        blockMonthCloseOnUnconfirmedBreak,
-      });
-      breakConfirmSaved = true;
-      setTimeout(() => (breakConfirmSaved = false), 2500);
-    } catch (e: unknown) {
-      blockMonthCloseOnUnconfirmedBreak = previous;
-      breakConfirmError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      breakConfirmSaving = false;
-    }
-  }
-
   // Phase 47.3 / 49.4 — Tenant Feature-Toggle: Verfügbarkeits-System
   async function saveAvailabilityEnabled() {
-    // bind:checked already applied the new value — see toggleBlockMonthCloseOnUnconfirmedBreak (WR-02).
+    // bind:checked has already written the new value into the state, so the DOM and the state agree and an
+    // explicit revert actually lands (WR-02); the toggle must never outlive a failed save.
     const previous = !availabilityEnabled;
     if (!settingsLoaded) {
       availabilityEnabled = previous;
@@ -616,7 +559,7 @@
   // Mirrors saveAvailabilityEnabled exactly; the backend reads
   // TenantConfig.vocationalSchoolAutoCleanupShifts in shift-cleanup.ts.
   async function saveVocationalSchoolAutoCleanupShifts() {
-    // bind:checked already applied the new value — see toggleBlockMonthCloseOnUnconfirmedBreak (WR-02).
+    // bind:checked already applied the new value — see saveAvailabilityEnabled (WR-02).
     const previous = !vocationalSchoolAutoCleanupShifts;
     if (!settingsLoaded) {
       vocationalSchoolAutoCleanupShifts = previous;
@@ -634,31 +577,6 @@
       toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       vsAutoCleanupSaving = false;
-    }
-  }
-
-  // Phase 76.29 — Monatsabschluss mit Lücken toggle
-  async function saveCloseMonthWithGaps() {
-    // bind:checked already applied the new value — see toggleBlockMonthCloseOnUnconfirmedBreak (WR-02). This one
-    // gates Monatsabschluss with missing entries, so a silently-wrong checkbox is a compliance
-    // problem, not just a cosmetic one.
-    const previous = !closeMonthWithGapsAllowed;
-    if (!settingsLoaded) {
-      closeMonthWithGapsAllowed = previous;
-      toasts.error("Einstellungen sind noch nicht geladen.");
-      return;
-    }
-    closeMonthWithGapsSaving = true;
-    try {
-      await api.put("/settings/work", {
-        closeMonthWithGapsAllowed,
-      });
-      toasts.success("Einstellung gespeichert.");
-    } catch (e: unknown) {
-      closeMonthWithGapsAllowed = previous;
-      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
-    } finally {
-      closeMonthWithGapsSaving = false;
     }
   }
 
@@ -714,7 +632,7 @@
   }
 
   async function toggleTwoFa() {
-    // bind:checked already applied the new value — see toggleBlockMonthCloseOnUnconfirmedBreak (WR-02). 2FA is the
+    // bind:checked already applied the new value — see saveAvailabilityEnabled (WR-02). 2FA is the
     // most security-relevant toggle on the page; it must never claim a state the server rejected.
     const previous = !twoFaEnabled;
     twoFaSaving = true;
@@ -1138,68 +1056,6 @@
                 bind:checked={vocationalSchoolAutoCleanupShifts}
                 onchange={saveVocationalSchoolAutoCleanupShifts}
                 disabled={vsAutoCleanupSaving}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-        </Section>
-      {:else if currentTab === "arbeitszeit"}
-        <!-- ── Monatsabschluss bei unbestätigten Pausen ─────────────────────────
-             The Pausen section itself (automatic deduction, durations, confirmation) moved to
-             Regeln › Arbeitszeit & Verträge (Issue #854); this switch stays with the
-             Monatsabschluss settings until they get a page of their own. -->
-        <Section
-          title="Monatsabschluss bei unbestätigten Pausen"
-          sub={`Wirkt nur, solange die Pausen-Bestätigung unter „${pageLabel("/verwalten/regeln/arbeitszeit")}“ eingeschaltet ist.`}
-        >
-          {#if breakConfirmError}
-            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-              <span>⚠</span><span>{breakConfirmError}</span>
-            </div>
-          {/if}
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label"
-                >Monatsabschluss bei unbestätigten Pausen blockieren</span
-              >
-              <p class="form-hint text-muted">Sonst nur Warnung.</p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Monatsabschluss bei unbestätigten Pausen blockieren"
-                bind:checked={blockMonthCloseOnUnconfirmedBreak}
-                onchange={toggleBlockMonthCloseOnUnconfirmedBreak}
-                disabled={breakConfirmSaving || !enforceBreakConfirmation}
-                data-testid="admin-system-pausen-blockMonthCloseOnUnconfirmedBreak"
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          {#if breakConfirmSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
-        </Section>
-
-        <!-- ── Monatsabschluss mit Lücken (Phase 76.29 CFG-01) ───────────────── -->
-        <Section
-          title="Monatsabschluss mit Lücken"
-          sub="Erlaubt den Abschluss von Monaten mit fehlenden Zeiteinträgen"
-        >
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label">Abschluss trotz fehlender Einträge erlauben</span>
-              <p class="form-hint text-muted">
-                Wenn aktiviert, können Monate auch dann abgeschlossen werden, wenn Arbeitstage ohne
-                Zeiterfassung vorliegen. Fehlende Tage werden als 0h gegen das volle Soll gewertet.
-              </p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Monatsabschluss mit Lücken erlauben"
-                bind:checked={closeMonthWithGapsAllowed}
-                onchange={saveCloseMonthWithGaps}
-                disabled={closeMonthWithGapsSaving}
-                data-testid="admin-system-arbeitszeit-closeMonthWithGapsAllowed"
               />
               <span class="switch-slider"></span>
             </label>

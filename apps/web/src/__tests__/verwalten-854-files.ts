@@ -43,6 +43,10 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/arbeitszeit/OpenEntriesSection.svelte",
   // First adopted by the Arbeitszeit page (plan 854-07): the bulk apply preview of Issue #568.
   "lib/components/admin/BulkApplyDialog.svelte",
+  // Plan 854-08 (Regeln › Monatsabschluss): the native page and its two sections.
+  "routes/(app)/verwalten/regeln/monatsabschluss/+page.svelte",
+  "lib/components/admin/monatsabschluss/GapsSection.svelte",
+  "lib/components/admin/monatsabschluss/BreakBlockSection.svelte",
 ];
 
 export interface VerwaltenFile {

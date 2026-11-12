@@ -87,6 +87,7 @@
 </script>
 
 <SettingsGroup
+  id="pausen"
   title="Pausen"
   description="Pflichtpausen nach § 4 ArbZG: mehr als 6 Stunden Arbeit brauchen mindestens 30 Minuten Pause, mehr als 9 Stunden mindestens 45 Minuten."
   changes={changeCount}

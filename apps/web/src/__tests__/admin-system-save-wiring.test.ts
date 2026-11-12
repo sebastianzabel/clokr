@@ -79,12 +79,14 @@ function fnBody(marker: string): string {
 // Their keys are pinned by settings-pages-854 ((1) one place per key, (3) the section sends its own keys and
 // every registry key is sent) and the behaviour by arbeitszeit-save-wiring-854.test.ts and
 // BreaksSection-854.test.ts; nothing here was relaxed, the controls no longer exist on this page.
-describe("D-03/N-11 — the five instant handlers stay instant", () => {
+// Issue #854 (plan 854-08): the two Monatsabschluss switches (`saveCloseMonthWithGaps`,
+// `toggleBlockMonthCloseOnUnconfirmedBreak`) moved to Regeln › Monatsabschluss, where each is a section with a
+// SaveBar (`GapsSection`, `BreakBlockSection`). The controls no longer exist here; their keys are pinned by
+// settings-pages-854 and the behaviour by monatsabschluss-854.test.ts - nothing was relaxed.
+describe("D-03/N-11 — the three instant handlers stay instant", () => {
   const INSTANT_HANDLERS = [
     "saveAvailabilityEnabled",
     "saveVocationalSchoolAutoCleanupShifts",
-    "saveCloseMonthWithGaps",
-    "toggleBlockMonthCloseOnUnconfirmedBreak",
     "toggleTwoFa",
   ] as const;
 
@@ -98,10 +100,11 @@ describe("D-03/N-11 — the five instant handlers stay instant", () => {
   // explicitly decided otherwise. This count pins that the list above is exactly the eight
   // handlers the research established — not four, not five, not ten.
   // Issue #433 (D-04): the count dropped from nine to eight because saveHolidayDeduction and its
-  // toggle were removed; Issue #854 (plan 854-07) took it to five: the three Pausen handlers moved to
-  // the Arbeitszeit page's SaveBar — the controls no longer exist here, not because a check was relaxed.
-  it("there are exactly five instant handlers (#433 and #854 corrections)", () => {
-    expect(INSTANT_HANDLERS.length).toBe(5);
+  // toggle were removed; Issue #854 took it to five (plan 854-07: the three Pausen handlers moved to the
+  // Arbeitszeit page's SaveBar) and to three (plan 854-08: the two Monatsabschluss switches moved to their
+  // own page's SaveBars) — the controls no longer exist here, not because a check was relaxed.
+  it("there are exactly three instant handlers (#433 and #854 corrections)", () => {
+    expect(INSTANT_HANDLERS.length).toBe(3);
   });
 });
 
@@ -120,22 +123,22 @@ describe("D-03/N-11 — the five instant handlers stay instant", () => {
 //
 // `saveDefaultBreakStart` is excluded: it sits on a `type="time"` input, not a checkbox, so the
 // DOM/state divergence described above does not apply to it.
-describe("WR-02 — the five instant checkbox toggles roll back and report on failure", () => {
+describe("WR-02 — the three instant checkbox toggles roll back and report on failure", () => {
   /** handler → the state variable it owns */
   const TOGGLES: Record<string, string> = {
     saveAvailabilityEnabled: "availabilityEnabled",
     saveVocationalSchoolAutoCleanupShifts: "vocationalSchoolAutoCleanupShifts",
-    saveCloseMonthWithGaps: "closeMonthWithGapsAllowed",
-    toggleBlockMonthCloseOnUnconfirmedBreak: "blockMonthCloseOnUnconfirmedBreak",
     toggleTwoFa: "twoFaEnabled",
   };
   const ENTRIES = Object.entries(TOGGLES);
 
   // Issue #433 (D-04) took the count from eight to seven (saveHolidayDeduction removed), Issue #854 from
   // seven to five (toggleAutoBreak and toggleEnforceBreakConfirmation moved to the Arbeitszeit page's
-  // SaveBar) — the controls no longer exist here, not because a check was relaxed.
-  it("there are exactly five of them", () => {
-    expect(ENTRIES.length).toBe(5);
+  // SaveBar) and to three (plan 854-08: saveCloseMonthWithGaps and toggleBlockMonthCloseOnUnconfirmedBreak
+  // moved to the Monatsabschluss page's SaveBars) — the controls no longer exist here, not because a check
+  // was relaxed.
+  it("there are exactly three of them", () => {
+    expect(ENTRIES.length).toBe(3);
   });
 
   // This is the assertion that would have FAILED against the old source: every one of these
@@ -182,10 +185,8 @@ describe("WR-02 — the five instant checkbox toggles roll back and report on fa
     }
   });
 
-  it("the compliance-weighted two are covered by name (2FA, Monatsabschluss)", () => {
-    expect(Object.keys(TOGGLES)).toEqual(
-      expect.arrayContaining(["toggleTwoFa", "saveCloseMonthWithGaps"]),
-    );
+  it("the compliance-weighted one is covered by name (2FA)", () => {
+    expect(Object.keys(TOGGLES)).toEqual(expect.arrayContaining(["toggleTwoFa"]));
   });
 });
 

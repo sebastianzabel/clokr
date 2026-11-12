@@ -281,6 +281,24 @@ export const APP_ROUTES: readonly AppRoute[] = [
     parent: "/verwalten/regeln",
     description: "Standard-Arbeitszeit, Pausen, Überstunden, Gleitzeit und Berufsschule",
   },
+  // Issue #854: a page created by the Verwalten rebuild. Its sections come from /admin/system; the registry
+  // (settings-pages.ts) pins `requires` to the union of theirs. The close WORKFLOW is /verwalten/monatsabschluss.
+  {
+    href: "/verwalten/regeln/monatsabschluss",
+    area: "verwalten",
+    label: "Monatsabschluss",
+    icon: "lock",
+    width: "read",
+    requires: [
+      [Z("tenant-settings:read")],
+      [Z("tenant-settings:update")],
+      [Z("terminal:manage")],
+      [Z("api-key:manage")],
+    ],
+    inNav: false,
+    parent: "/verwalten/regeln",
+    description: "Wann ein Monat abgeschlossen werden darf",
+  },
   // no read guard; the page's writes decide (PUT /settings/work, /settings/leave-types)
   {
     href: "/verwalten/regeln/urlaub",

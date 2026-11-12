@@ -11,6 +11,8 @@
   import SaveBar from "$components/ui/SaveBar.svelte";
 
   interface Props {
+    /** Optional anchor id of the section (`/verwalten/...#pausen`), for links from other pages. */
+    id?: string;
     /** Section heading, German, sentence case. */
     title: string;
     /** One muted line below the heading. */
@@ -28,6 +30,7 @@
   }
 
   let {
+    id,
     title,
     description,
     changes,
@@ -43,7 +46,7 @@
   const titleId = `${uid}-title`;
 </script>
 
-<section class="settings-group" aria-labelledby={titleId}>
+<section class="settings-group" {id} aria-labelledby={titleId}>
   <h2 class="settings-group-title" id={titleId}>{title}</h2>
   {#if description}
     <p class="settings-group-desc">{description}</p>

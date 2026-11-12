@@ -35,6 +35,12 @@
       "path": "/verwalten/regeln/arbeitszeit",
       "heading": "Arbeitszeit & Verträge",
       "tabs": []
+    },
+    {
+      "slug": "regeln-monatsabschluss",
+      "path": "/verwalten/regeln/monatsabschluss",
+      "heading": "Monatsabschluss",
+      "tabs": []
     }
   ]
 }

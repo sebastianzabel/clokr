@@ -88,6 +88,16 @@ const FROM_SYSTEM = {
   requires: SYSTEM_REQUIRES,
 } as const;
 
+// Plan 854-08: the closing settings of the System page live on Regeln › Monatsabschluss (the settings, not
+// the close workflow of Verwalten › Monatsabschluss).
+const MONATSABSCHLUSS_PAGE = "/verwalten/regeln/monatsabschluss";
+const MONATSABSCHLUSS_DIR = "lib/components/admin/monatsabschluss";
+const MONATSABSCHLUSS_FROM_SYSTEM = {
+  page: MONATSABSCHLUSS_PAGE,
+  source: "/admin/system",
+  requires: SYSTEM_REQUIRES,
+} as const;
+
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   // ── Regeln › Arbeitszeit & Verträge ────────────────────────────────────────────────────────────
   {
@@ -190,6 +200,24 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     renderedBy: `${ARBEITSZEIT_DIR}/OpenEntriesSection.svelte`,
   },
 
+  // ── Regeln › Monatsabschluss ───────────────────────────────────────────────────────────────────
+  {
+    ...MONATSABSCHLUSS_FROM_SYSTEM,
+    id: "monatsabschluss-luecken",
+    title: "Monatsabschluss mit Lücken",
+    endpoint: "/settings/work",
+    keys: ["closeMonthWithGapsAllowed"],
+    renderedBy: `${MONATSABSCHLUSS_DIR}/GapsSection.svelte`,
+  },
+  {
+    ...MONATSABSCHLUSS_FROM_SYSTEM,
+    id: "monatsabschluss-pausen",
+    title: "Offene Pausenbefunde",
+    endpoint: "/settings/work",
+    keys: ["blockMonthCloseOnUnconfirmedBreak"],
+    renderedBy: `${MONATSABSCHLUSS_DIR}/BreakBlockSection.svelte`,
+  },
+
   // ── /admin/system ──────────────────────────────────────────────────────────────────────────────
   {
     ...SYSTEM,
@@ -211,20 +239,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     title: "Features",
     endpoint: "/settings/work",
     keys: ["availabilityEnabled", "vocationalSchoolAutoCleanupShifts"],
-  },
-  {
-    ...SYSTEM,
-    id: "system-breaks",
-    title: "Monatsabschluss bei unbestätigten Pausen",
-    endpoint: "/settings/work",
-    keys: ["blockMonthCloseOnUnconfirmedBreak"],
-  },
-  {
-    ...SYSTEM,
-    id: "system-close-month-gaps",
-    title: "Monatsabschluss mit Lücken",
-    endpoint: "/settings/work",
-    keys: ["closeMonthWithGapsAllowed"],
   },
   {
     ...SYSTEM,
