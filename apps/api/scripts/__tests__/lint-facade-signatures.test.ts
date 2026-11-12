@@ -517,7 +517,7 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
   // facade (`contexts/time-tracking/facade/time-entries.ts`, retention archive of DayBreak /
   // DayBreakAck, same shape as `archiveEntriesBefore`) — passes F1/F2/F3 directly, no new
   // exception; exceptions unchanged at 17.
-  it("the real tree has exactly 161 exported facade functions today, 20 grandfathered/named exceptions, 0 unexcepted findings", () => {
+  it("the real tree has exactly 162 exported facade functions today, 20 grandfathered/named exceptions, 0 unexcepted findings", () => {
     const files = discoverFacadeFiles(REPO_ROOT);
     expect(files).toEqual(
       [
@@ -617,7 +617,9 @@ describe("live tree — KNOWN_FACADE_FILES against the real exceptions file", ()
     // db first, tenant-scoped, passes F1/F2/F3 directly), exceptions unchanged at 19 — 159 -> 160.
     // Issue #599: +1 (`clearMonthCorrectionTextsForEmployee`, working-time-account/facade/overtime-account.ts,
     // DSGVO anonymization, named F3 exception like clearOvertimePlanNotesForEmployee), exceptions 19 -> 20 — 160 -> 161.
-    expect(functions).toHaveLength(161);
+    // Issue #853 (D-853-21a): +1 (`findMissingClockOutEntries`, time-tracking/facade/time-entries.ts,
+    // db first and tenant-scoped, passes F1/F2/F3 directly), exceptions unchanged at 20 — 161 -> 162.
+    expect(functions).toHaveLength(162);
 
     const rawExceptions = JSON.parse(
       readFileSync(
