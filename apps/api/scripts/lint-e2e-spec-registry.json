@@ -215,6 +215,11 @@
       "file": "apps/e2e/tests/verwalten-854.spec.ts",
       "category": "in-ci",
       "reason": "AC-4 / D-854-17 (Issue #854) gating browser proof of the migrated Verwalten pages: it reads apps/e2e/fixtures/verwalten-854-pages.json (every page plan of #854 appends its page there) and, per page and as the fixture tenant admin, proves the Seitenkopf H1 text, axe WCAG 2 A/AA including colour contrast on the page content and again on each of its tabs, that the tab strip offers exactly the listed triggers and that ArrowRight moves focus and selection to the next trigger (the strip loops), and that neither the page nor any tab scrolls horizontally at 390 and 1440 px (scrollWidth and measurePageOverflow()). A dynamic page first creates its entity through the API with a synthetic name. Tenant fixture only, no seed, no date dependency; CI (the e2e-ci project) is the arbiter, there is no local run in this phase."
+    },
+    {
+      "file": "apps/e2e/tests/screenshots-854.spec.ts",
+      "category": "in-ci",
+      "reason": "AC-9 / D-854-17 (Issue #854) non-gating capture of the migrated Verwalten pages: it skips itself unless CAPTURE_854=1 and runs only in the dedicated screenshots Playwright project, started by the CI job screenshots-854 (continue-on-error, never a required check), which uploads the full-page PNGs at 1440 and 390 px as the artifact screenshots-854 for the human comparison with the prototype. It reads the same fixture list as verwalten-854.spec.ts, asserts no pixel, uses the fixture tenant with synthetic names only (no seed, no real data) and the visual project's fixed browser clock."
     }
   ]
 }

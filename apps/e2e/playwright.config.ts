@@ -267,7 +267,8 @@ export default defineConfig({
       //   - verwalten-854.spec.ts (every migrated Verwalten page of fixtures/verwalten-854-pages.json:
       //     H1 text, axe WCAG 2 A/AA with colour contrast on the page and on each of its tabs, tab
       //     keyboard navigation, no horizontal overflow at 390 and 1440 px); tenant fixture only, no
-      //     seed.
+      //     seed. Its sibling screenshots-854.spec.ts runs in the separate, non-gating `screenshots`
+      //     project below, never here.
       //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
@@ -303,6 +304,17 @@ export default defineConfig({
       // No `dependencies: ["setup"]` (D-04) — these specs authenticate via the tenant
       // fixture's own bootstrap-tenant call (apps/e2e/fixtures/tenant.ts), not via
       // storageState, so they don't need the seeded admin user auth.setup.ts logs in.
+    },
+    {
+      // Issue #854 (D-854-17, AC-9) - the acceptance screenshots of the migrated Verwalten pages.
+      // Run by the non-gating CI job `screenshots-854` (CAPTURE_854=1, uploads the PNGs as the
+      // artifact screenshots-854); no pixel assertion exists. No other project picks the file up,
+      // and without CAPTURE_854 the spec skips itself. Same `use` as e2e-ci.
+      name: "screenshots",
+      testMatch: [/screenshots-854\.spec\.ts/],
+      use: {
+        ...devices["Desktop Chrome"],
+      },
     },
   ],
 });
