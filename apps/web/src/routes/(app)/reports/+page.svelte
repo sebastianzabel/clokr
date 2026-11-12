@@ -1,6 +1,6 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
-  import { onMount, tick, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
@@ -16,10 +16,13 @@
     salonScopeLabel,
     withSalonId,
   } from "$lib/salons/page-scope"; // Issue #542
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
-  import KPIStat from "$components/ui/KPIStat.svelte";
-  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Icon from "$components/Icon.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
+  import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import ExitedFinalSaldoSection from "$lib/components/reports/ExitedFinalSaldoSection.svelte"; // Issue #613
   import AbsencesByPersonTable from "$lib/components/reports/AbsencesByPersonTable.svelte"; // Issue #713
@@ -144,27 +147,10 @@
     });
   }
 
-  async function selectTab(tab: PeriodTab, moveFocus = false): Promise<void> {
-    writeState({ ...urlState, tab });
-    if (moveFocus) {
-      await tick();
-      document.getElementById(`reports-tab-${tab}`)?.focus();
-    }
-  }
-
-  // ARIA tabs with one tab stop: ArrowLeft/ArrowRight wrap, Home/End jump, all of them activate.
-  function onTabKeydown(e: KeyboardEvent): void {
-    const tabs = rights.periodTabs;
-    if (tabs.length < 2 || activeTab === null) return;
-    const i = tabs.indexOf(activeTab);
-    let next: PeriodTab | null = null;
-    if (e.key === "ArrowRight") next = tabs[(i + 1) % tabs.length];
-    else if (e.key === "ArrowLeft") next = tabs[(i - 1 + tabs.length) % tabs.length];
-    else if (e.key === "Home") next = tabs[0];
-    else if (e.key === "End") next = tabs[tabs.length - 1];
-    if (next === null) return;
-    e.preventDefault();
-    void selectTab(next, true);
+  // PageTabs reports the selected value; the URL stays the one state (replaceState).
+  function onTabChange(value: string): void {
+    const tab = rights.periodTabs.find((t) => t === value);
+    if (tab !== undefined) writeState({ ...urlState, tab });
   }
 
   function onPeriodChange(from: YearMonth, to: YearMonth): void {
@@ -742,7 +728,7 @@
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  // ── KPI summaries (v1.5) ───────────────────────────────────────────────────
+  // ── The personal view (callers without a team report right) ────────────────
 
   // Employee KPIs - derived from the CLOSED months only (open months carry no figures)
   let empClosedRows = $derived(empMonthlyCloses.flatMap((r) => (r.status === "closed" ? [r] : [])));
@@ -758,173 +744,102 @@
     const m = abs % 60;
     return `${sign}${h}:${String(m).padStart(2, "0")}`;
   }
+
+  const empKpiItems = $derived<KpiItem[]>([
+    { label: "Abgeschlossen", value: String(kpiClosedMonths), unit: "Monate" },
+    { label: "Soll", value: fmtHoursFromMin(kpiTotalExpectedMin), unit: "h" },
+    { label: "Ist", value: fmtHoursFromMin(kpiTotalWorkedMin), unit: "h" },
+    { label: "Saldo", value: fmtBalance(kpiTotalBalanceMin), unit: "h" },
+  ]);
+
+  // One flat row per month for the DataTable (a closed month carries its figures, an open one none).
+  type EmpTableRow = {
+    key: string;
+    year: number;
+    month: number;
+    label: string;
+    closed: boolean;
+    expectedMinutes: number;
+    workedMinutes: number;
+    balanceMinutes: number;
+  };
+
+  const empRows = $derived<EmpTableRow[]>(
+    empMonthlyCloses.map((r) => ({
+      key: `${r.year}-${r.month}`,
+      year: r.year,
+      month: r.month,
+      label: r.label,
+      closed: r.status === "closed",
+      expectedMinutes: r.status === "closed" ? r.expectedMinutes : 0,
+      workedMinutes: r.status === "closed" ? r.workedMinutes : 0,
+      balanceMinutes: r.status === "closed" ? r.balanceMinutes : 0,
+    })),
+  );
+
+  const EMP_COLUMNS: DataTableColumn[] = [
+    { key: "label", label: "Monat", primary: true },
+    { key: "expectedMinutes", label: "Soll", align: "end" },
+    { key: "workedMinutes", label: "Ist", align: "end" },
+    // Every closed row is a non-superseded MONTHLY snapshot the server listed (the record the PDF
+    // prints), so the figure is final, never a forecast: the header says confirmed.
+    { key: "balanceMinutes", label: "Saldo (Bestätigt)", align: "end" },
+    { key: "status", label: "Status" },
+    { key: "pdf", label: "Stundennachweis", align: "end" },
+  ];
 </script>
 
 <svelte:head>
   <title>{pageLabel("/reports")} – Clokr</title>
 </svelte:head>
 
+{#snippet exportAction()}
+  <button
+    type="button"
+    class="btn btn-outline"
+    data-testid="reports-period-export"
+    onclick={(e) => openExport(e.currentTarget)}
+  >
+    <Icon name="download" size={14} />
+    Exportieren
+  </button>
+{/snippet}
+
 <PageHead
-  eyebrow={showTeamArea ? "Verwalten" : "Ich"}
   title={pageLabel("/reports")}
   sub={showTeamArea
     ? "Zeiten, Konten und Urlaub für einen Zeitraum – bis zu 12 Monate."
     : "Persönliche Monatsabschlüsse — als PDF zum Download."}
+  actions={showTeamArea && canReportExport && (periodTabActive || exportOnly)
+    ? exportAction
+    : undefined}
 />
 
 {#if showTeamArea}
   <SalonScopeLabel label={scopeLabel} />
-  {#if rights.periodTabs.length > 0}
-    <div
-      class="view-tabs"
-      role="tablist"
-      aria-label="Berichtsbereich"
-      tabindex="-1"
-      onkeydown={onTabKeydown}
+  {#if rights.periodTabs.length > 0 && activeTab !== null}
+    <PageTabs
+      tabs={rights.periodTabs.map((t) => ({ value: t, label: TAB_LABEL[t] }))}
+      tab={activeTab}
+      {onTabChange}
+      tabsLabel="Berichtsbereich"
     >
-      {#each rights.periodTabs as tab (tab)}
-        <button
-          type="button"
-          class="view-tab"
-          class:view-tab--active={tab === activeTab}
-          role="tab"
-          id="reports-tab-{tab}"
-          aria-selected={tab === activeTab}
-          aria-controls="reports-panel-{tab}"
-          tabindex={tab === activeTab ? 0 : -1}
-          onclick={() => selectTab(tab)}>{TAB_LABEL[tab]}</button
-        >
-      {/each}
-    </div>
-  {/if}
-
-  {#if periodTabActive || exportOnly}
-    <div
-      class="page period-content"
-      style="--period-bar-h: {barHeight}px"
-      role={periodTabActive ? "tabpanel" : undefined}
-      id={periodTabActive ? `reports-panel-${activeTab}` : undefined}
-      aria-labelledby={periodTabActive ? `reports-tab-${activeTab}` : undefined}
-    >
-      <PeriodBar
-        onHeight={(px) => (barHeight = px)}
-        from={urlState.from}
-        to={urlState.to}
-        {today}
-        loading={periodLoading}
-        canExport={canReportExport}
-        onChange={onPeriodChange}
-        onOpenRange={openRange}
-        onOpenExport={openExport}
-      />
-
-      {#if exportOnly}
-        <p class="period-note" data-testid="period-export-only-note">
-          Keine Auswertung freigegeben – Exporte verfügbar
-        </p>
-      {:else if periodSalonRejected}
-        <SalonScopeLabel label={null} rejected={true} />
-      {:else if periodFailure === "INVALID"}
-        <div class="callout error" role="alert" data-testid="period-invalid">
-          <p>Dieser Zeitraum lässt sich nicht auswerten – höchstens 12 Monate auf einmal.</p>
-          <button
-            type="button"
-            class="btn btn-outline sm"
-            onclick={() => onPeriodChange({ ...today }, { ...today })}>Zum aktuellen Monat</button
-          >
-        </div>
-      {:else if periodFailure === "FAILED"}
-        <div class="callout error" role="alert" data-testid="period-error">
-          <p>
-            Der Bericht konnte nicht geladen werden. Prüf die Verbindung und versuch es noch einmal.
-          </p>
-          <button
-            type="button"
-            class="btn btn-outline sm"
-            onclick={() => void loadPeriod(urlState.from, urlState.to, pageSalonId)}
-            >Erneut versuchen</button
-          >
-        </div>
-      {:else}
-        <div class="period-body" class:period-body--dim={periodLoading && period !== null}>
-          <Card animate>
-            <PeriodKpis
-              kpis={period?.kpis ?? null}
-              filterActive={pageSalonId !== null}
-              withoutHomeSalonCount={period?.withoutHomeSalonCount ?? null}
-              loading={periodLoading}
-            />
-          </Card>
-        </div>
-
-        <div
-          class="page period-tab-content"
-          class:period-body--dim={periodLoading && period !== null}
-        >
-          {#if activeTab === "zeiten"}
-            <TimesAccountsTable
-              rows={period?.rows ?? null}
-              loading={periodLoading}
-              periodLabel={periodLabel(urlState.from, urlState.to, today)}
-              filterActive={pageSalonId !== null}
-              {personHref}
-              onOpenPerson={openPerson}
-              exited={exitedBlock}
-            />
-            {#if period?.helpers !== undefined}
-              <!-- Issue #714: the salon viewpoint (names + hours only), only under a salon filter. -->
-              <SalonWorkedSection
-                rows={period.rows}
-                helpers={period.helpers}
-                totalMinutes={period.kpis.salonWorkedMinutes ?? null}
-                helpersReach={period.helpersReach ?? null}
-                periodLabel={periodLabel(urlState.from, urlState.to, today)}
-                loading={periodLoading}
-              />
-            {/if}
-          {:else if activeTab === "urlaub"}
-            <VacationAbsenceTab
-              vacation={period?.vacation ?? null}
-              absences={period?.absences ?? null}
-              filterActive={pageSalonId !== null}
-              loading={periodLoading}
-              today={todayIso}
-              canNotify={canReportNotify}
-              periodLabel={periodLabel(urlState.from, urlState.to, today)}
-              personHref={vacationPersonHref}
-              onOpenPerson={openVacationPerson}
-              onNotify={sendCarryoverNotice}
-            />
-            <AbsencesByPersonTable
-              rows={period?.rows ?? null}
-              loading={periodLoading}
-              periodLabel={periodLabel(urlState.from, urlState.to, today)}
-              filterActive={pageSalonId !== null}
-              {personHref}
-              onOpenPerson={openPerson}
-            />
+      {#snippet panel(value)}
+        <!-- Every panel is rendered by the tab block; only the selected one holds content. -->
+        {#if value === activeTab}
+          {#if value === "heute"}
+            {@render heutePanel()}
+          {:else}
+            {@render periodPanel()}
           {/if}
-        </div>
-      {/if}
-    </div>
+        {/if}
+      {/snippet}
+    </PageTabs>
+  {:else if exportOnly}
+    {@render periodPanel()}
   {/if}
 
-  {#if activeTab === "heute"}
-    <div class="page" role="tabpanel" id="reports-panel-heute" aria-labelledby="reports-tab-heute">
-      {#if canTeamAttendance}
-        <TodayAttendance
-          attendance={todayAttendance}
-          loading={todayLoading}
-          error={todayError}
-          rejected={attendanceSalonRejected}
-          {canAddTeamEntry}
-          {canRecordTeamAbsence}
-        />
-      {/if}
-    </div>
-  {/if}
-
-  <!-- Dialogs sit after the panels, never inside an animated Card (Issue #570). -->
+  <!-- Dialogs sit after the panels, never inside an animated block (Issue #570). -->
   <PeriodRangeDialog
     bind:open={rangeOpen}
     from={urlState.from}
@@ -969,129 +884,173 @@
   />
   <div class="sr-only" role="status" aria-live="polite" data-testid="period-live">{liveText}</div>
 {:else}
-  <div class="kpi-row">
-    <Card animate>
-      <KPIStat label="Abgeschlossen" value={String(kpiClosedMonths)} unit="Monate" />
-    </Card>
-    <Card animate>
-      <KPIStat label="Soll" value={fmtHoursFromMin(kpiTotalExpectedMin)} unit="h" />
-    </Card>
-    <Card animate>
-      <KPIStat label="Ist" value={fmtHoursFromMin(kpiTotalWorkedMin)} unit="h" />
-    </Card>
-    <Card animate>
-      <KPIStat
-        label="Saldo"
-        value={fmtBalance(kpiTotalBalanceMin)}
-        unit="h"
-        deltaTone={kpiTotalBalanceMin > 0 ? "good" : kpiTotalBalanceMin < 0 ? "bad" : "neutral"}
-      />
-    </Card>
-  </div>
+  <div class="report-stack">
+    <KpiStrip items={empKpiItems} ariaLabel="Persönliche Bilanz der abgeschlossenen Monate" />
 
-  <!-- EMP-06: Employee personal monthly closes -->
-  <Card animate class="emp-closes-card" style="--card-idx: 1;">
-    <div class="emp-closes-hd">
-      <CardHeader title="Monatsabschlüsse" sub="Persönliche Bilanz je Monat" />
-    </div>
-    {#if empClosesLoading}
-      <Skeleton shape="row" count={3} />
-    {:else if empClosesError}
-      <div class="emp-closes-error" role="alert">{empClosesError}</div>
+    <!-- EMP-06: Employee personal monthly closes -->
+    <section class="settings-group" aria-labelledby="emp-closes-title">
+      <h2 class="settings-group-title" id="emp-closes-title">Monatsabschlüsse</h2>
+      <p class="settings-group-desc">Persönliche Bilanz je Monat</p>
+      {#if empClosesError}
+        <div role="alert">
+          <Note tone="bad">{empClosesError}</Note>
+        </div>
+      {:else}
+        <DataTable
+          columns={EMP_COLUMNS}
+          rows={empRows}
+          rowKey={(row) => row.key}
+          cell={empCell}
+          caption="Monatsabschlüsse"
+          loading={empClosesLoading}
+        />
+      {/if}
+    </section>
+  </div>
+{/if}
+
+{#snippet empCell(row: EmpTableRow, column: DataTableColumn)}
+  {#if column.key === "label"}
+    <b>{row.label}</b>
+  {:else if column.key === "status"}
+    {#if row.closed}
+      <Chip tone="ok">Abgeschlossen</Chip>
     {:else}
-      <div class="table-scroll">
-        <table class="emp-closes-table">
-          <thead>
-            <tr>
-              <th>Monat</th>
-              <th class="num">Soll</th>
-              <th class="num">Ist</th>
-              <th class="num">Saldo (Bestätigt)</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#if empMonthlyCloses.length === 0}
-              <tr>
-                <td colspan="6" class="emp-closes-empty">Noch keine abgeschlossenen Monate</td>
-              </tr>
-            {:else}
-              {#each empMonthlyCloses as row (`${row.year}-${row.month}`)}
-                <tr>
-                  <td><b class="emp-month-label">{row.label}</b></td>
-                  {#if row.status === "closed"}
-                    <td class="num">{fmtMinutesAsHrs(row.expectedMinutes)}</td>
-                    <td class="num">{fmtMinutesAsHrs(row.workedMinutes)}</td>
-                    <td class="num">
-                      <!-- Every closed row is a non-superseded MONTHLY snapshot the server
-                           listed (the record the PDF prints), so this figure is final, never a
-                           forecast: the column header says confirmed, and it renders through the
-                           shared primitive in single-value mode so the U+2212 minus and the
-                           sign colouring match every other saldo on the page. -->
-                      <SaldoAnzeige
-                        variant="compact"
-                        saldoMinutes={row.balanceMinutes}
-                        isLocked={row.status === "closed"}
-                      />
-                    </td>
-                  {:else}
-                    <td class="num" title="Prognose im PDF">—</td>
-                    <td class="num" title="Prognose im PDF">—</td>
-                    <td class="num" title="Prognose im PDF">—</td>
-                  {/if}
-                  <td>
-                    {#if row.status === "closed"}
-                      <span class="chip chip-good">
-                        <svg
-                          width="11"
-                          height="11"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          aria-hidden="true"
-                        >
-                          <rect x="3" y="11" width="18" height="11" rx="2" />
-                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                        </svg>
-                        Abgeschlossen
-                      </span>
-                    {:else}
-                      <span class="chip chip-warn"><span class="dot"></span> Offen</span>
-                    {/if}
-                  </td>
-                  <td class="emp-pdf-cell">
-                    <button
-                      type="button"
-                      class="btn btn-ghost xs"
-                      onclick={() => downloadEmployeeMonthlyPdf(row.year, row.month, row.label)}
-                    >
-                      <svg
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        aria-hidden="true"
-                      >
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                      PDF
-                    </button>
-                  </td>
-                </tr>
-              {/each}
-            {/if}
-          </tbody>
-        </table>
+      <Chip tone="warn">Offen</Chip>
+    {/if}
+  {:else if column.key === "pdf"}
+    <button
+      type="button"
+      class="btn btn-ghost"
+      onclick={() => downloadEmployeeMonthlyPdf(row.year, row.month, row.label)}
+    >
+      <Icon name="download" size={14} />
+      PDF
+    </button>
+  {:else if !row.closed}
+    <span title="Prognose im PDF">—</span>
+  {:else if column.key === "balanceMinutes"}
+    <!-- The shared primitive in single-value mode: the U+2212 minus and the sign colouring match
+         every other saldo on the page. -->
+    <SaldoAnzeige variant="compact" saldoMinutes={row.balanceMinutes} isLocked={row.closed} />
+  {:else if column.key === "expectedMinutes"}
+    {fmtMinutesAsHrs(row.expectedMinutes)}
+  {:else if column.key === "workedMinutes"}
+    {fmtMinutesAsHrs(row.workedMinutes)}
+  {/if}
+{/snippet}
+
+{#snippet periodPanel()}
+  <div class="period-content" style="--period-bar-h: {barHeight}px">
+    <PeriodBar
+      onHeight={(px) => (barHeight = px)}
+      from={urlState.from}
+      to={urlState.to}
+      {today}
+      loading={periodLoading}
+      canExport={false}
+      onChange={onPeriodChange}
+      onOpenRange={openRange}
+      onOpenExport={openExport}
+    />
+
+    {#if exportOnly}
+      <p class="period-note" data-testid="period-export-only-note">
+        Keine Auswertung freigegeben – Exporte verfügbar
+      </p>
+    {:else if periodSalonRejected}
+      <SalonScopeLabel label={null} rejected={true} />
+    {:else if periodFailure === "INVALID"}
+      <div class="period-refusal" role="alert" data-testid="period-invalid">
+        <Note tone="bad"
+          >Dieser Zeitraum lässt sich nicht auswerten – höchstens 12 Monate auf einmal.</Note
+        >
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          onclick={() => onPeriodChange({ ...today }, { ...today })}>Zum aktuellen Monat</button
+        >
+      </div>
+    {:else if periodFailure === "FAILED"}
+      <div data-testid="period-error">
+        <ErrorState
+          message="Der Bericht konnte nicht geladen werden. Prüf die Verbindung und versuch es noch einmal."
+          hint=""
+          retrying={periodLoading}
+          onRetry={() => void loadPeriod(urlState.from, urlState.to, pageSalonId)}
+        />
+      </div>
+    {:else}
+      <div class="period-body" class:period-body--dim={periodLoading && period !== null}>
+        <PeriodKpis
+          kpis={period?.kpis ?? null}
+          filterActive={pageSalonId !== null}
+          withoutHomeSalonCount={period?.withoutHomeSalonCount ?? null}
+          loading={periodLoading}
+        />
+      </div>
+
+      <div class="period-tab-content" class:period-body--dim={periodLoading && period !== null}>
+        {#if activeTab === "zeiten"}
+          <TimesAccountsTable
+            rows={period?.rows ?? null}
+            loading={periodLoading}
+            periodLabel={periodLabel(urlState.from, urlState.to, today)}
+            filterActive={pageSalonId !== null}
+            {personHref}
+            onOpenPerson={openPerson}
+            exited={exitedBlock}
+          />
+          {#if period?.helpers !== undefined}
+            <!-- Issue #714: the salon viewpoint (names + hours only), only under a salon filter. -->
+            <SalonWorkedSection
+              rows={period.rows}
+              helpers={period.helpers}
+              totalMinutes={period.kpis.salonWorkedMinutes ?? null}
+              helpersReach={period.helpersReach ?? null}
+              periodLabel={periodLabel(urlState.from, urlState.to, today)}
+              loading={periodLoading}
+            />
+          {/if}
+        {:else if activeTab === "urlaub"}
+          <VacationAbsenceTab
+            vacation={period?.vacation ?? null}
+            absences={period?.absences ?? null}
+            filterActive={pageSalonId !== null}
+            loading={periodLoading}
+            today={todayIso}
+            canNotify={canReportNotify}
+            periodLabel={periodLabel(urlState.from, urlState.to, today)}
+            personHref={vacationPersonHref}
+            onOpenPerson={openVacationPerson}
+            onNotify={sendCarryoverNotice}
+          />
+          <AbsencesByPersonTable
+            rows={period?.rows ?? null}
+            loading={periodLoading}
+            periodLabel={periodLabel(urlState.from, urlState.to, today)}
+            filterActive={pageSalonId !== null}
+            {personHref}
+            onOpenPerson={openPerson}
+          />
+        {/if}
       </div>
     {/if}
-  </Card>
-{/if}
+  </div>
+{/snippet}
+
+{#snippet heutePanel()}
+  {#if canTeamAttendance}
+    <TodayAttendance
+      attendance={todayAttendance}
+      loading={todayLoading}
+      error={todayError}
+      rejected={attendanceSalonRejected}
+      {canAddTeamEntry}
+      {canRecordTeamAbsence}
+    />
+  {/if}
+{/snippet}
 
 {#snippet exitedBlock()}
   <!-- Issue #613 / #612: persons who left with an open final saldo - today's state, not the period. -->
@@ -1099,7 +1058,7 @@
     {#if overviewSalonRejected}
       <SalonScopeLabel label={null} rejected={true} />
     {:else if overtimeError}
-      <p class="section-error">{overtimeError}</p>
+      <Note tone="bad">{overtimeError}</Note>
     {:else if overtimeOverview}
       <ExitedFinalSaldoSection
         rows={overtimeSections.exitedOpen}
@@ -1111,30 +1070,12 @@
 {/snippet}
 
 <style>
-  /* ── KPI cluster (Card + KPIStat grid) ────────────────────────────────── */
-  .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    margin-bottom: 20px;
-  }
-
-  @media (max-width: 960px) {
-    .kpi-row {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-
-  @media (max-width: 540px) {
-    .kpi-row {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* ── Period area (Issue #612) ────────────────────────────────────────────── */
-
-  /* The sticky parent of the period bar: it sticks for the whole panel. */
-  .period-content {
+  .report-stack,
+  .period-content,
+  .period-tab-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
     min-width: 0;
   }
 
@@ -1144,89 +1085,16 @@
     transition: opacity 0.15s ease;
   }
 
+  .period-refusal {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-3);
+  }
+
   .period-note {
     margin: 0;
     color: var(--text-2);
-    font-size: 0.9375rem;
-  }
-
-  .section-error {
-    margin: 0;
-    font-size: 0.9375rem;
-    color: var(--bad);
-  }
-
-  /* ── EMP-06: Employee monthly closes table ──────────────────────── */
-  .emp-closes-card {
-    padding: 0;
-    overflow: hidden;
-  }
-  .emp-closes-hd {
-    padding: 16px 20px 0;
-    margin-bottom: 0;
-  }
-  .emp-closes-table {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-  }
-  .emp-closes-table th {
-    text-align: left;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-2);
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--line);
-  }
-  .emp-closes-table td {
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--line);
-    font-size: 13.5px;
-    vertical-align: middle;
-  }
-  .emp-closes-table tbody tr:last-child td {
-    border-bottom: 0;
-  }
-  .emp-closes-table tbody tr:hover td {
-    background: var(--sunk);
-  }
-  .emp-closes-table .num {
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-  }
-  .emp-month-label {
-    font-weight: 600;
-  }
-  /* Phase 97-07 — the Saldo (Bestätigt) cell now renders through SaldoAnzeige in
-     single-value mode; its own scoped <style> intentionally leaves the legacy
-     .saldo__value unpainted (colour is only wired for split mode). Reapply the same
-     good/bad/muted mapping the old page-local .diff-good/.diff-bad/.diff-zero classes
-     provided, keyed off the primitive's own semantic sign class, scoped to this table's
-     Saldo column only. :global() is required to reach past the child component boundary. */
-  .emp-closes-table .num :global(.saldo--positive .saldo__value) {
-    color: var(--ok);
-  }
-  .emp-closes-table .num :global(.saldo--negative .saldo__value) {
-    color: var(--bad);
-  }
-  .emp-closes-table .num :global(.saldo--zero .saldo__value) {
-    color: var(--text-2);
-  }
-  .emp-pdf-cell {
-    text-align: right;
-    white-space: nowrap;
-  }
-  .emp-closes-error {
-    padding: 16px 24px;
-    color: var(--bad);
-    background: var(--bad-soft);
-    border-bottom: 1px solid var(--line);
-  }
-  .emp-closes-empty {
-    text-align: center;
-    padding: 32px;
-    color: var(--text-2);
+    font-size: var(--fs-base);
   }
 </style>

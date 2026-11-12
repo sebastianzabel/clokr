@@ -41,14 +41,14 @@ describe("Issue #595 Plan 02 - /reports employee month table comes from the serv
   });
 
   it("chooses the chip text from the row status: Abgeschlossen for closed, Offen for open", () => {
-    expect(PAGE).toMatch(/row\.status === "closed"/);
-    expect(PAGE).toContain("Abgeschlossen");
-    expect(PAGE).toContain("Offen");
+    expect(PAGE).toMatch(/closed: r\.status === "closed"/);
+    expect(PAGE).toContain('<Chip tone="ok">Abgeschlossen</Chip>');
+    expect(PAGE).toContain('<Chip tone="warn">Offen</Chip>');
     expect(PAGE).not.toContain("Gesperrt");
   });
 
   it("passes the row status to the lock badge of SaldoAnzeige", () => {
-    expect(PAGE).toContain('isLocked={row.status === "closed"}');
+    expect(PAGE).toContain("isLocked={row.closed}");
   });
 
   it("requests the PDF with the row's year and month", () => {

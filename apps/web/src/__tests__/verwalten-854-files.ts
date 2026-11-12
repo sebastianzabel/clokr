@@ -133,6 +133,9 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/monatsabschluss/MonthStatusTable.svelte",
   // The Zugang tab opens it (deactivation with a last working day); it renders Dialog directly.
   "lib/components/admin/DeactivateEmployeeDialog.svelte",
+  // Plan 854-27 (Berichte I): the page shell with PageTabs over period-state and the period KPI strips.
+  "routes/(app)/reports/+page.svelte",
+  "lib/components/reports/PeriodKpis.svelte",
 ];
 
 export interface VerwaltenFile {

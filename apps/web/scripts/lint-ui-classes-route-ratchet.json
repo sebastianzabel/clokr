@@ -50,10 +50,6 @@
       }
     },
     "own-kpi-card": {
-      "apps/web/src/lib/components/reports/PeriodKpis.svelte": {
-        "count": 8,
-        "ticket": "#854"
-      },
       "apps/web/src/lib/components/reports/PersonDrilldown.svelte": {
         "count": 4,
         "ticket": "#854"
@@ -69,10 +65,6 @@
       "apps/web/src/routes/(app)/leave/+page.svelte": {
         "count": 7,
         "ticket": "#851"
-      },
-      "apps/web/src/routes/(app)/reports/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
       }
     },
     "own-data-table": {

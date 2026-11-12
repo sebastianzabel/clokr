@@ -216,7 +216,7 @@ describe("PeriodKpis - under a salon filter (#714)", () => {
   it("the callout names the circle, the mover rule and the persons without a Stammsalon", () => {
     filtered();
     const note = screen.getByTestId("period-kpis-salon-note");
-    expect(note).toHaveClass("callout", "brand");
+    expect(note.querySelector(".note")).toHaveClass("note-brand");
     expect(note).toHaveTextContent(PERSON_SALDO_BY_HOME_SALON_LABEL);
     expect(note).toHaveTextContent(HOME_SALON_CHANGE_NOTE);
     expect(note).toHaveTextContent(withoutHomeSalonNote(2));
@@ -229,17 +229,16 @@ describe("PeriodKpis - under a salon filter (#714)", () => {
     expect(note).not.toHaveTextContent("ohne Stammsalon");
   });
 
-  it("adds the salon hours as a ninth tile in its own grid row, with no saldo delta", () => {
+  it("adds the salon hours as a ninth tile in a strip of its own, with no saldo delta", () => {
     filtered();
     expect(document.querySelectorAll(".kpi-label")).toHaveLength(9);
     expect(tile(SALON_WORKED_LABEL)).toEqual({ value: "80:00 h", delta: SALON_WORKED_DELTA_NOTE });
     const article = screen
       .getByText(SALON_WORKED_LABEL, { selector: ".kpi-label" })
       .closest("article")!;
-    const grid = article.parentElement!;
-    expect(grid).toHaveClass("kpi-grid");
-    expect(grid.querySelectorAll("article")).toHaveLength(1);
-    expect(grid.previousElementSibling?.tagName).toBe("HR");
+    const strip = article.closest(".kpi-strip")!;
+    expect(strip.querySelectorAll("article")).toHaveLength(1);
+    expect(screen.getByTestId("period-kpis-salon-hours")).toContainElement(strip as HTMLElement);
   });
 
   it("shows no salon-hours tile while the answer carries no salon hours", () => {
@@ -333,12 +332,24 @@ describe("PeriodKpis - source", () => {
   it("is non-empty, imports no $app module and does not colour the figures by sign", () => {
     expect(source.length).toBeGreaterThan(1000);
     expect(source).not.toContain("$app/");
-    expect(source).not.toMatch(/deltaTone="(good|bad|warn)"/);
-    expect(source).toContain('deltaTone="neutral"');
+    expect(source).not.toMatch(/deltaTone/);
   });
 
-  it("sizes the value at 20 px below 1440 px and lets the unit wrap (UI-SPEC)", () => {
-    expect(source).toMatch(/@media \(max-width: 1439px\)[\s\S]*\.kpi-value[\s\S]*font-size: 20px/);
-    expect(source).toMatch(/flex-wrap: wrap/);
+  it("is built from KpiStrips of the Kennzahlenleiste block, not from page-own tiles", () => {
+    expect(source).toContain(
+      'import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte"',
+    );
+    expect(source).not.toContain("KPIStat");
+    expect(source).not.toMatch(/class="[^"]*\bkpi/);
+  });
+
+  it("renders the three groups as strips: time, vacation and, under a filter, the salon hours", () => {
+    renderWithTheme(PeriodKpis, {
+      kpis: kpis({ salonWorkedMinutes: 4800 }),
+      filterActive: true,
+      withoutHomeSalonCount: 0,
+      loading: false,
+    });
+    expect(document.querySelectorAll(".kpi-strip")).toHaveLength(3);
   });
 });

@@ -212,6 +212,22 @@
       "path": "/verwalten/monatsabschluss",
       "heading": "Monatsabschluss",
       "tabs": []
+    },
+    {
+      "slug": "berichte",
+      "path": "/verwalten/berichte",
+      "heading": "Berichte",
+      "tabs": [
+        {
+          "label": "Zeiten & Konten"
+        },
+        {
+          "label": "Urlaub & Abwesenheit"
+        },
+        {
+          "label": "Heute"
+        }
+      ]
     }
   ]
 }

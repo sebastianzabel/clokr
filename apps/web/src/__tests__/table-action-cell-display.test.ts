@@ -157,8 +157,8 @@ describe("#442 — instrument controls (anti-vacuity)", () => {
 
   it("styleBlockOf(reports) really loaded the page rules — anti-vacuity", () => {
     const block = styleBlockOf(REPORTS_PAGE);
-    expect(block).toContain(".period-content {");
-    expect(block).toContain(".kpi-row {");
+    expect(block).toContain(".period-content,");
+    expect(block).toContain(".period-body--dim {");
   });
 
   it("styleBlockOf(attendance list) really loaded the action cell rules — anti-vacuity", () => {
