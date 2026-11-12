@@ -1,0 +1,113 @@
+// Test helper (not a `*.test.ts`) - the walkers and the migration list of the Verwalten pages (Issue
+// #854, D-854-28). It only lists files; every guard that uses it states its own non-empty floor and
+// carries a positive control.
+//
+// MIGRATED_854 is the single piece of migration state: a page plan appends the files it rebuilt, and
+// `verwalten-pages-blocks-854.test.ts` (AC-1) and `section-titles-854.test.ts` (D-854-15) then
+// enforce them. The ratchet register `lint-ui-classes-route-ratchet.json` only ever falls.
+
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { APP_ROUTES } from "$lib/nav/routes";
+
+import { SRC_ROOT, walkFiles } from "./design-source-files";
+
+/**
+ * Files rebuilt on the blocks of #843, paths relative to `apps/web/src/`. The three hub pages render
+ * `HubPage` (a #844 block-only page) and were clean from the start.
+ */
+export const MIGRATED_854: readonly string[] = [
+  "routes/(app)/verwalten/regeln/+page.svelte",
+  "routes/(app)/verwalten/daten/+page.svelte",
+  "routes/(app)/verwalten/system/+page.svelte",
+];
+
+export interface VerwaltenFile {
+  /** Path relative to `src/`, POSIX separators. */
+  rel: string;
+  /** Route key (`file ?? href`) for a route file; the file name below its root for a component. */
+  key: string;
+  text: string;
+  /** True for the page file of a route-table entry (it carries the page head), false for detail sub-routes. */
+  tableEntry: boolean;
+}
+
+/** The pages #853 owns although they sit below a Verwalten table entry's file directory. */
+const OWNED_ELSEWHERE = ["routes/(app)/admin/availability/"];
+
+/** The Verwalten Übersicht is #847, not a page of this phase. */
+const OVERVIEW = "routes/(app)/verwalten/+page.svelte";
+
+/** Same rule as `lint-ui.mjs` `isRedirectStub`: no template, only an `onMount(() => goto(` script. */
+const REDIRECT_STUB_RE = /onMount\(\s*\(\s*\)\s*=>\s*goto\(/;
+export function isRedirectStub(text: string): boolean {
+  const template = text.replace(/<script[\s\S]*?<\/script>/g, "").trim();
+  return template === "" && REDIRECT_STUB_RE.test(text);
+}
+
+function pageFilesBelow(dirRel: string): string[] {
+  const dir = join(SRC_ROOT, dirRel);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true })
+    .map(String)
+    .filter((f) => f === "+page.svelte" || f.endsWith("/+page.svelte"))
+    .map((f) => `${dirRel}/${f}`.split("\\").join("/"));
+}
+
+/**
+ * Every `+page.svelte` that renders a Verwalten URL: the file of each table entry of area `verwalten`
+ * (not the Übersicht, not an `internal` page), every detail sub-route below such a directory, and
+ * every page below `routes/(app)/verwalten/`. Redirect stubs and the pages #853 owns are skipped.
+ */
+export function verwaltenRouteFiles(): VerwaltenFile[] {
+  const seen = new Map<string, VerwaltenFile>();
+  const add = (rel: string, key: string, tableEntry: boolean) => {
+    if (seen.has(rel) || rel === OVERVIEW) return;
+    if (OWNED_ELSEWHERE.some((prefix) => rel.startsWith(prefix))) return;
+    const abs = join(SRC_ROOT, rel);
+    if (!existsSync(abs)) return;
+    const text = readFileSync(abs, "utf8");
+    if (isRedirectStub(text)) return;
+    seen.set(rel, { rel, key, text, tableEntry });
+  };
+
+  for (const route of APP_ROUTES) {
+    if (route.area !== "verwalten" || route.href === "/verwalten" || route.internal) continue;
+    const key = route.file ?? route.href;
+    const dirRel = `routes/(app)${key}`;
+    add(`${dirRel}/+page.svelte`, key, true);
+    for (const rel of pageFilesBelow(dirRel)) add(rel, rel, false);
+  }
+  for (const rel of pageFilesBelow("routes/(app)/verwalten")) add(rel, rel, false);
+  return [...seen.values()].sort((a, b) => a.rel.localeCompare(b.rel));
+}
+
+/** The legacy shells that stay for the operator console and #853: migrated files must not import them. */
+export const LEGACY_SHELLS = [
+  "admin/Section.svelte",
+  "admin/SectionStack.svelte",
+  "admin/ListDetail.svelte",
+  "admin/ToolPage.svelte",
+] as const;
+
+const COMPONENT_ROOTS = ["admin", "employees", "reports"] as const;
+
+/** Every `.svelte` component below the three Verwalten component directories (tests and the shells excluded). */
+export function verwaltenComponentFiles(): VerwaltenFile[] {
+  const out: VerwaltenFile[] = [];
+  for (const root of COMPONENT_ROOTS) {
+    const dir = join(SRC_ROOT, "lib/components", root);
+    if (!existsSync(dir)) continue;
+    for (const f of walkFiles(dir, [".svelte"], { includeTests: false })) {
+      if ((LEGACY_SHELLS as readonly string[]).includes(`${root}/${f.rel}`)) continue;
+      out.push({
+        rel: `lib/components/${root}/${f.rel}`,
+        key: `${root}/${f.rel}`,
+        text: f.text,
+        tableEntry: false,
+      });
+    }
+  }
+  return out.sort((a, b) => a.rel.localeCompare(b.rel));
+}
