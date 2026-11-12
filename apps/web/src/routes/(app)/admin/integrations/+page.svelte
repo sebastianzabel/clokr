@@ -1,8 +1,14 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
+  import { page } from "$app/stores";
+  import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
+  import { visibleIntegrationenTabs } from "$lib/settings/integrationen";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import TerminalsPanel from "$lib/components/admin/integrationen/TerminalsPanel.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
   import Pagination from "$lib/components/ui/Pagination.svelte";
-  import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
@@ -75,13 +81,33 @@
   let optPageSize = $state(10);
   let pagedOptedIn = $derived(optedIn.slice((optPage - 1) * optPageSize, optPage * optPageSize));
 
+  // ── Tabs (D-854-26: lowercase German ids) ──
+  // The page merges sections of two old pages, so each tab is offered under the alternatives of its own
+  // section (D-854-05, T-854-35).
+  const user = $derived($authStore.user);
+  const visibleTabs = $derived(visibleIntegrationenTabs(user));
+  const visibleTabIds = $derived(visibleTabs.map((tab) => tab.value as string));
+  let activeTab = $state<string>("");
+
+  function selectTab(next: string) {
+    activeTab = next;
+    writeTabHash(next);
+  }
+
   // Phase 566 (D-12): display only — the server answers 409 for an unbooked module either way.
   // `=== false` only: an unknown state never hides the create row.
   const hardwareBooked = $derived(moduleBooked($salonContext, "HARDWARE_CLOCK"));
 
   onMount(async () => {
+    activeTab = visibleTabIds.length > 0 ? tabFromHash($page.url.hash, visibleTabIds) : "";
     // Forced, so a freshly booked module shows without waiting for the navigation throttle.
     void salonContext.load($authStore.user?.id ?? null, { force: true });
+    // A person without the presence permission must not trigger its reads (and meet a 403).
+    if (!visibleTabIds.includes("wlan")) {
+      sourcesLoading = false;
+      optInLoading = false;
+      return;
+    }
     await Promise.all([loadSources(), loadOptedIn()]);
     // Load employees list for device assignment dropdown.
     // GET /employees returns the array directly (not wrapped in { employees }).
@@ -258,282 +284,327 @@
 
 <svelte:head><title>{pageLabel("/admin/integrations")} – Clokr</title></svelte:head>
 
-<SectionStack
-  eyebrow="Verwalten"
+<PageHead
   title={pageLabel("/admin/integrations")}
-  sub="WLAN-Präsenz und externe Dienste"
-  animate
->
-  <!-- ── Block 1: Präsenz-Quellen ──────────────────────────────────────── -->
-  <Section title="Präsenz-Quellen" sub="API-Schlüssel für WLAN-Adapter verwalten">
-    {#if showNewKey}
-      <div class="alert alert-success new-key-alert" role="status" aria-live="polite">
-        <div>
-          <strong>Neuer Schlüssel erstellt!</strong>
-          <p class="key-hint">Kopier den Schlüssel jetzt — er wird nicht erneut angezeigt:</p>
-          <div class="key-row">
-            <code class="key-value">{newRawKey}</code>
-            <button class="btn btn-sm btn-ghost" onclick={() => copyToClipboard(newRawKey)}
-              >Schlüssel kopieren</button
-            >
-          </div>
-          <button
-            class="btn btn-sm btn-ghost close-key-btn"
-            onclick={() => {
-              showNewKey = false;
-              newRawKey = "";
-            }}>Schließen</button
-          >
-        </div>
-      </div>
-    {/if}
+  sub="WLAN-Anwesenheit, NFC-Terminals und API-Schlüssel für das ganze Unternehmen."
+/>
 
-    {#if hardwareBooked === false}
-      <ModuleHint module="HARDWARE_CLOCK" subject="WLAN-Anwesenheitsquellen" />
-    {:else}
-      <div class="source-create-row">
-        <input
-          type="text"
-          class="form-input source-name-input"
-          bind:value={newSourceName}
-          placeholder="Quellen-Name (z.B. FritzBox Büro)"
-        />
-        <input
-          type="url"
-          class="form-input source-url-input"
-          bind:value={newSourceAdapterUrl}
-          placeholder="Adapter-URL (optional)"
-        />
-        <button
-          class="btn btn-primary"
-          onclick={handleCreateSource}
-          disabled={sourceCreating || !newSourceName.trim()}
-        >
-          Schlüssel erstellen
-        </button>
-      </div>
-    {/if}
-
-    {#if sourceCreateError}
-      <p class="form-error" role="alert">{sourceCreateError}</p>
-    {/if}
-
-    {#if sourcesLoading}
-      <div class="skeleton skeleton-text source-skel"></div>
-    {:else if sources.length > 0}
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Schlüssel-Prefix</th>
-              <th>Zuletzt verwendet</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedSources as src (src.id)}
-              <tr class:row-revoked={src.revokedAt}>
-                <td>{src.name}</td>
-                <td><code class="mono-sm">{src.keyPrefix}</code></td>
-                <td>{src.lastUsedAt ? new Date(src.lastUsedAt).toLocaleString("de-DE") : "Nie"}</td>
-                <td>
-                  {#if src.revokedAt}
-                    <span class="badge badge-red">Widerrufen</span>
-                  {:else}
-                    <span class="badge badge-green">Aktiv</span>
-                  {/if}
-                </td>
-                <td>
-                  {#if !src.revokedAt}
-                    <button
-                      class="btn btn-sm btn-ghost btn-danger-text"
-                      onclick={() => askRevokeSource(src.id)}
-                    >
-                      Quelle widerrufen
-                    </button>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <Pagination total={sources.length} bind:page={srcPage} bind:pageSize={srcPageSize} />
-      </div>
-    {:else}
-      <p class="text-muted empty-msg">
-        Noch keine Präsenz-Quellen. Leg einen Schlüssel für deinen ersten Adapter an.
-      </p>
-    {/if}
-  </Section>
-
-  <!-- ── Handys per QR-Code koppeln (Issue #610) ───────────────────────── -->
-  <Section
-    title="Handys per QR-Code koppeln"
-    sub="QR-Code für das Salon-WLAN erstellen und aushängen"
+{#if visibleTabs.length === 0}
+  <div role="alert">
+    <Note tone="bad">Du hast keine Berechtigung für die Integrationen.</Note>
+  </div>
+{:else}
+  <PageTabs
+    tabs={visibleTabs.map(({ value, label }) => ({ value, label }))}
+    tab={activeTab}
+    onTabChange={selectTab}
+    tabsLabel="Bereiche der Integrationen"
   >
-    <PairingGuide />
-  </Section>
-
-  <!-- ── Block 2: WLAN-Geräteliste ────────────────────────────────────── -->
-  <Section title="WLAN-Geräteliste" sub="Verbundene Geräte und ihre Zuweisungen">
-    <div class="devices-toolbar">
-      <div class="devices-toolbar-left">
-        {#if sources.filter((s) => !s.revokedAt).length > 1}
-          <select class="form-input source-select" bind:value={selectedSourceId}>
-            {#each sources.filter((s) => !s.revokedAt) as src (src.id)}
-              <option value={src.id}>{src.name}</option>
-            {/each}
-          </select>
-        {/if}
-        <span class="text-muted refresh-hint">
-          {devicesLastRefreshed
-            ? `Zuletzt aktualisiert: ${devicesLastRefreshed.toLocaleTimeString("de-DE")}`
-            : "Noch nicht geladen"}
-        </span>
-      </div>
-      <button
-        class="btn btn-outline btn-sm"
-        onclick={refreshDevices}
-        disabled={devicesLoading || !selectedSourceId}
-      >
-        {devicesLoading ? "Aktualisieren…" : "Liste aktualisieren"}
-      </button>
-    </div>
-
-    {#if devicesError}
-      <div class="alert alert-error" role="alert">
-        <span aria-hidden="true">⚠</span>
-        <span>{devicesError}</span>
-      </div>
-    {:else if devicesLoading}
-      <div class="skeleton skeleton-text devices-skel"></div>
-    {:else if devices.length > 0}
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>MAC-Adresse</th>
-              <th>Hostname</th>
-              <th>Zuletzt gesehen</th>
-              <th>Status</th>
-              <th>Mitarbeiter</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedDevices as dev (dev.mac)}
-              <tr>
-                <td><code class="mono-sm">{dev.mac}</code></td>
-                <td>{dev.hostname || "—"}</td>
-                <td class="cell-sm">{formatLastSeen(dev.lastSeen)}</td>
-                <td>
-                  <span class="status-cell">
-                    <span
-                      class="status-dot"
-                      class:status-dot--online={dev.online}
-                      aria-hidden="true"
-                    ></span>
-                    {dev.online ? "Online" : "Offline"}
-                  </span>
-                </td>
-                <td>
-                  {#if dev.assignedEmployeeId}
-                    <span class="cell-sm">{dev.assignedEmployeeName ?? dev.assignedEmployeeId}</span
+    {#snippet panel(value)}
+      {#if value === "wlan"}
+        <div class="wlan-tab">
+          <!-- ── Block 1: Präsenz-Quellen ──────────────────────────────────────── -->
+          <Section title="Präsenz-Quellen" sub="API-Schlüssel für WLAN-Adapter verwalten">
+            {#if showNewKey}
+              <div class="alert alert-success new-key-alert" role="status" aria-live="polite">
+                <div>
+                  <strong>Neuer Schlüssel erstellt!</strong>
+                  <p class="key-hint">
+                    Kopier den Schlüssel jetzt — er wird nicht erneut angezeigt:
+                  </p>
+                  <div class="key-row">
+                    <code class="key-value">{newRawKey}</code>
+                    <button class="btn btn-sm btn-ghost" onclick={() => copyToClipboard(newRawKey)}
+                      >Schlüssel kopieren</button
                     >
-                  {:else}
-                    <span class="text-muted cell-sm">Nicht zugewiesen</span>
-                  {/if}
-                </td>
-                <td>
-                  {#if dev.assignedEmployeeId}
-                    <button
-                      class="btn btn-sm btn-ghost btn-danger-text"
-                      onclick={() => askUnassignDevice(dev.mac)}
-                      disabled={deviceAssigning[dev.mac]}
-                    >
-                      Aufheben
-                    </button>
-                  {:else}
-                    <button
-                      class="btn btn-sm btn-outline"
-                      onclick={() => openAssignModal(dev)}
-                      disabled={deviceAssigning[dev.mac]}
-                    >
-                      Zuweisen
-                    </button>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <Pagination total={devices.length} bind:page={devPage} bind:pageSize={devPageSize} />
-      </div>
-    {:else if devicesLastRefreshed}
-      <p class="text-muted empty-msg">
-        Keine Geräte gefunden. Stell sicher, dass der WLAN-Adapter (z. B. FRITZ!Box) läuft und
-        verbunden ist.
-      </p>
-    {:else}
-      <p class="text-muted empty-msg">
-        Klick auf „Liste aktualisieren“, um die verbundenen Geräte zu laden.
-      </p>
-    {/if}
-  </Section>
+                  </div>
+                  <button
+                    class="btn btn-sm btn-ghost close-key-btn"
+                    onclick={() => {
+                      showNewKey = false;
+                      newRawKey = "";
+                    }}>Schließen</button
+                  >
+                </div>
+              </div>
+            {/if}
 
-  <!-- ── Block 3: Opt-in-Übersicht ─────────────────────────────────────── -->
-  <Section title="Opt-In-Übersicht" sub="Welche Mitarbeiter haben WLAN-Präsenzerkennung aktiviert">
-    {#if optInLoading}
-      <div class="skeleton skeleton-text optin-skel"></div>
-    {:else if optedIn.length > 0}
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Mitarbeiter</th>
-              <th>Opt-In</th>
-              <th>MAC-Adressen</th>
-              <th>Aktiviert am</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedOptedIn as emp (emp.id)}
-              <tr>
-                <td>{emp.firstName} {emp.lastName}</td>
-                <td>
-                  {#if emp.wifiPresenceEnabled}
-                    <span class="badge badge-green">Aktiv</span>
-                  {:else}
-                    <span class="badge badge-gray">Inaktiv</span>
-                  {/if}
-                </td>
-                <td class="cell-sm">
-                  {#if emp.wifiMacs.length === 0}
-                    <span class="text-muted">—</span>
-                  {:else if emp.wifiMacs.length <= 2}
-                    {#each emp.wifiMacs as mac (mac)}
-                      <code class="mono-sm mac-chip">{mac}</code>
+            {#if hardwareBooked === false}
+              <ModuleHint module="HARDWARE_CLOCK" subject="WLAN-Anwesenheitsquellen" />
+            {:else}
+              <div class="source-create-row">
+                <input
+                  type="text"
+                  class="form-input source-name-input"
+                  bind:value={newSourceName}
+                  placeholder="Quellen-Name (z.B. FritzBox Büro)"
+                />
+                <input
+                  type="url"
+                  class="form-input source-url-input"
+                  bind:value={newSourceAdapterUrl}
+                  placeholder="Adapter-URL (optional)"
+                />
+                <button
+                  class="btn btn-primary"
+                  onclick={handleCreateSource}
+                  disabled={sourceCreating || !newSourceName.trim()}
+                >
+                  Schlüssel erstellen
+                </button>
+              </div>
+            {/if}
+
+            {#if sourceCreateError}
+              <p class="form-error" role="alert">{sourceCreateError}</p>
+            {/if}
+
+            {#if sourcesLoading}
+              <div class="skeleton skeleton-text source-skel"></div>
+            {:else if sources.length > 0}
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Schlüssel-Prefix</th>
+                      <th>Zuletzt verwendet</th>
+                      <th>Status</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each pagedSources as src (src.id)}
+                      <tr class:row-revoked={src.revokedAt}>
+                        <td>{src.name}</td>
+                        <td><code class="mono-sm">{src.keyPrefix}</code></td>
+                        <td
+                          >{src.lastUsedAt
+                            ? new Date(src.lastUsedAt).toLocaleString("de-DE")
+                            : "Nie"}</td
+                        >
+                        <td>
+                          {#if src.revokedAt}
+                            <span class="badge badge-red">Widerrufen</span>
+                          {:else}
+                            <span class="badge badge-green">Aktiv</span>
+                          {/if}
+                        </td>
+                        <td>
+                          {#if !src.revokedAt}
+                            <button
+                              class="btn btn-sm btn-ghost btn-danger-text"
+                              onclick={() => askRevokeSource(src.id)}
+                            >
+                              Quelle widerrufen
+                            </button>
+                          {/if}
+                        </td>
+                      </tr>
                     {/each}
-                  {:else}
-                    <span class="badge badge-blue">{emp.wifiMacs.length} Geräte</span>
-                  {/if}
-                </td>
-                <td class="cell-sm">
-                  {emp.wifiOptInAt ? new Date(emp.wifiOptInAt).toLocaleDateString("de-DE") : "—"}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <Pagination total={optedIn.length} bind:page={optPage} bind:pageSize={optPageSize} />
-      </div>
-    {:else}
-      <p class="text-muted empty-msg">Kein Mitarbeiter hat WLAN-Präsenzerkennung aktiviert.</p>
-    {/if}
-  </Section>
-</SectionStack>
+                  </tbody>
+                </table>
+                <Pagination
+                  total={sources.length}
+                  bind:page={srcPage}
+                  bind:pageSize={srcPageSize}
+                />
+              </div>
+            {:else}
+              <p class="text-muted empty-msg">
+                Noch keine Präsenz-Quellen. Leg einen Schlüssel für deinen ersten Adapter an.
+              </p>
+            {/if}
+          </Section>
+
+          <!-- ── Handys per QR-Code koppeln (Issue #610) ───────────────────────── -->
+          <Section
+            title="Handys per QR-Code koppeln"
+            sub="QR-Code für das Salon-WLAN erstellen und aushängen"
+          >
+            <PairingGuide />
+          </Section>
+
+          <!-- ── Block 2: WLAN-Geräteliste ────────────────────────────────────── -->
+          <Section title="WLAN-Geräteliste" sub="Verbundene Geräte und ihre Zuweisungen">
+            <div class="devices-toolbar">
+              <div class="devices-toolbar-left">
+                {#if sources.filter((s) => !s.revokedAt).length > 1}
+                  <select class="form-input source-select" bind:value={selectedSourceId}>
+                    {#each sources.filter((s) => !s.revokedAt) as src (src.id)}
+                      <option value={src.id}>{src.name}</option>
+                    {/each}
+                  </select>
+                {/if}
+                <span class="text-muted refresh-hint">
+                  {devicesLastRefreshed
+                    ? `Zuletzt aktualisiert: ${devicesLastRefreshed.toLocaleTimeString("de-DE")}`
+                    : "Noch nicht geladen"}
+                </span>
+              </div>
+              <button
+                class="btn btn-outline btn-sm"
+                onclick={refreshDevices}
+                disabled={devicesLoading || !selectedSourceId}
+              >
+                {devicesLoading ? "Aktualisieren…" : "Liste aktualisieren"}
+              </button>
+            </div>
+
+            {#if devicesError}
+              <div class="alert alert-error" role="alert">
+                <span aria-hidden="true">⚠</span>
+                <span>{devicesError}</span>
+              </div>
+            {:else if devicesLoading}
+              <div class="skeleton skeleton-text devices-skel"></div>
+            {:else if devices.length > 0}
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>MAC-Adresse</th>
+                      <th>Hostname</th>
+                      <th>Zuletzt gesehen</th>
+                      <th>Status</th>
+                      <th>Mitarbeiter</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each pagedDevices as dev (dev.mac)}
+                      <tr>
+                        <td><code class="mono-sm">{dev.mac}</code></td>
+                        <td>{dev.hostname || "—"}</td>
+                        <td class="cell-sm">{formatLastSeen(dev.lastSeen)}</td>
+                        <td>
+                          <span class="status-cell">
+                            <span
+                              class="status-dot"
+                              class:status-dot--online={dev.online}
+                              aria-hidden="true"
+                            ></span>
+                            {dev.online ? "Online" : "Offline"}
+                          </span>
+                        </td>
+                        <td>
+                          {#if dev.assignedEmployeeId}
+                            <span class="cell-sm"
+                              >{dev.assignedEmployeeName ?? dev.assignedEmployeeId}</span
+                            >
+                          {:else}
+                            <span class="text-muted cell-sm">Nicht zugewiesen</span>
+                          {/if}
+                        </td>
+                        <td>
+                          {#if dev.assignedEmployeeId}
+                            <button
+                              class="btn btn-sm btn-ghost btn-danger-text"
+                              onclick={() => askUnassignDevice(dev.mac)}
+                              disabled={deviceAssigning[dev.mac]}
+                            >
+                              Aufheben
+                            </button>
+                          {:else}
+                            <button
+                              class="btn btn-sm btn-outline"
+                              onclick={() => openAssignModal(dev)}
+                              disabled={deviceAssigning[dev.mac]}
+                            >
+                              Zuweisen
+                            </button>
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+                <Pagination
+                  total={devices.length}
+                  bind:page={devPage}
+                  bind:pageSize={devPageSize}
+                />
+              </div>
+            {:else if devicesLastRefreshed}
+              <p class="text-muted empty-msg">
+                Keine Geräte gefunden. Stell sicher, dass der WLAN-Adapter (z. B. FRITZ!Box) läuft
+                und verbunden ist.
+              </p>
+            {:else}
+              <p class="text-muted empty-msg">
+                Klick auf „Liste aktualisieren“, um die verbundenen Geräte zu laden.
+              </p>
+            {/if}
+          </Section>
+
+          <!-- ── Block 3: Opt-in-Übersicht ─────────────────────────────────────── -->
+          <Section
+            title="Opt-In-Übersicht"
+            sub="Welche Mitarbeiter haben WLAN-Präsenzerkennung aktiviert"
+          >
+            {#if optInLoading}
+              <div class="skeleton skeleton-text optin-skel"></div>
+            {:else if optedIn.length > 0}
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Mitarbeiter</th>
+                      <th>Opt-In</th>
+                      <th>MAC-Adressen</th>
+                      <th>Aktiviert am</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each pagedOptedIn as emp (emp.id)}
+                      <tr>
+                        <td>{emp.firstName} {emp.lastName}</td>
+                        <td>
+                          {#if emp.wifiPresenceEnabled}
+                            <span class="badge badge-green">Aktiv</span>
+                          {:else}
+                            <span class="badge badge-gray">Inaktiv</span>
+                          {/if}
+                        </td>
+                        <td class="cell-sm">
+                          {#if emp.wifiMacs.length === 0}
+                            <span class="text-muted">—</span>
+                          {:else if emp.wifiMacs.length <= 2}
+                            {#each emp.wifiMacs as mac (mac)}
+                              <code class="mono-sm mac-chip">{mac}</code>
+                            {/each}
+                          {:else}
+                            <span class="badge badge-blue">{emp.wifiMacs.length} Geräte</span>
+                          {/if}
+                        </td>
+                        <td class="cell-sm">
+                          {emp.wifiOptInAt
+                            ? new Date(emp.wifiOptInAt).toLocaleDateString("de-DE")
+                            : "—"}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+                <Pagination
+                  total={optedIn.length}
+                  bind:page={optPage}
+                  bind:pageSize={optPageSize}
+                />
+              </div>
+            {:else}
+              <p class="text-muted empty-msg">
+                Kein Mitarbeiter hat WLAN-Präsenzerkennung aktiviert.
+              </p>
+            {/if}
+          </Section>
+        </div>
+      {:else if value === "terminals"}
+        <TerminalsPanel active={activeTab === "terminals"} />
+      {/if}
+    {/snippet}
+  </PageTabs>
+{/if}
 
 <!-- ── Bestätigungs-Dialoge ──────────────────────────────────────────────── -->
 <ConfirmDialog

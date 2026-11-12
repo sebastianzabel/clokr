@@ -10,7 +10,8 @@
 // (/admin/integrations) and the Branch-ID field (/admin/phorest) — plus the total.
 // (i) (Issue #563, D-18): the fifth spot — the salon create action on /admin/salons.
 // (j) (Issue #624): the sixth spot — the create action of /admin/roles.
-// Total: exactly six hint usages in the web source, all under routes/(app)/admin/.
+// Total: exactly six hint usages in the web source, all in an admin set-up area: routes/(app)/admin/ or, since
+// plan 854-14 (the integrations panels moved out of the pages), lib/components/admin/integrationen/.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,10 +31,19 @@ const WEB_SRC = webSrcRoot();
 const ROUTES_APP = join(WEB_SRC, "routes", "(app)");
 const COMPONENTS = join(WEB_SRC, "lib", "components");
 const ADMIN_SYSTEM = join(ROUTES_APP, "admin", "system", "+page.svelte");
+const TERMINALS_PANEL = join(COMPONENTS, "admin", "integrationen", "TerminalsPanel.svelte");
 const ADMIN_INTEGRATIONS = join(ROUTES_APP, "admin", "integrations", "+page.svelte");
 const ADMIN_PHOREST = join(ROUTES_APP, "admin", "phorest", "+page.svelte");
 const ADMIN_SALONS = join(ROUTES_APP, "admin", "salons", "+page.svelte");
 const ADMIN_ROLES = join(ROUTES_APP, "admin", "roles", "+page.svelte");
+
+/** The admin set-up areas that may render the hint (paths relative to `src/`). */
+function inSetupArea(rel: string): boolean {
+  return (
+    rel.startsWith(join("routes", "(app)", "admin") + "/") ||
+    rel.startsWith(join("lib", "components", "admin", "integrationen") + "/")
+  );
+}
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -67,31 +77,25 @@ function hintTags(source: string): string[] {
 }
 
 describe("module teaser placement (Phase 566, D-12)", () => {
-  const page = stripComments(readFileSync(ADMIN_SYSTEM, "utf8"));
+  // Plan 854-14: the NFC terminals moved from /admin/system to the panel of System > Integrationen.
+  const terminals = stripComments(readFileSync(TERMINALS_PANEL, "utf8"));
 
-  function sectionBody(title: string): string {
-    const open = page.indexOf(`<Section title="${title}"`);
-    expect(open, `section ${title}`).toBeGreaterThan(-1);
-    const next = page.indexOf("<Section", open + 1);
-    return page.slice(open, next === -1 ? undefined : next);
-  }
-
-  it("(a) /admin/system holds exactly one HARDWARE_CLOCK hint, inside the NFC-Terminals section", () => {
-    expect(page.match(/<ModuleHint\s+module="HARDWARE_CLOCK"/g)).toHaveLength(1);
-    expect(sectionBody("NFC-Terminals")).toMatch(/<ModuleHint\s+module="HARDWARE_CLOCK"/);
+  it("(a) the terminals panel holds exactly one HARDWARE_CLOCK hint and /admin/system none", () => {
+    expect(terminals.match(/<ModuleHint\s+module="HARDWARE_CLOCK"/g)).toHaveLength(1);
+    expect(stripComments(readFileSync(ADMIN_SYSTEM, "utf8"))).not.toContain("HARDWARE_CLOCK");
   });
 
-  it("(b) the NFC create markup is still in the same section, in the {:else} of the hint", () => {
-    const nfc = sectionBody("NFC-Terminals");
-    expect(nfc).toContain("{#if hardwareBooked === false}");
-    const branches = nfc.split("{:else}");
+  it("(b) the NFC create action is still in the panel, in the {:else} of the hint", () => {
+    const open = terminals.indexOf("{#if hardwareBooked === false}");
+    expect(open).toBeGreaterThan(-1);
+    const branches = terminals.slice(open, terminals.indexOf("{/if}", open)).split("{:else}");
     expect(branches[0]).toContain("<ModuleHint");
-    expect(branches[0]).not.toContain("inline-create");
-    expect(branches[1]).toContain('class="inline-create"');
-    expect(branches[1]).toContain("createTerminalKey");
+    expect(branches[0]).not.toContain("openCreate");
+    expect(branches[1]).toContain("openCreate");
+    expect(terminals).toContain("createTerminalKey");
     // Existing keys stay listed and revocable outside the branch.
-    expect(nfc).toContain("revokeTerminalKey");
-    expect(nfc.indexOf("revokeTerminalKey")).toBeGreaterThan(nfc.indexOf('class="inline-create"'));
+    expect(terminals).toContain("askRevoke");
+    expect(terminals.indexOf("askRevoke(row)")).toBeGreaterThan(terminals.indexOf("{/if}", open));
   });
 
   it("(c) clock, calendar, dashboard and every other non-admin view never show the hint", () => {
@@ -215,7 +219,7 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     expect(code).not.toMatch(/get\(\s*salonContext\s*\)/);
   });
 
-  it("(g) exactly six hint usages in the web source, one per spot, all under routes/(app)/admin/", () => {
+  it("(g) exactly six hint usages in the web source, one per spot, all in an admin set-up area", () => {
     const files = walk(WEB_SRC);
     // Anti-vacuity: the walk saw the five pages and a floor of source files.
     expect(files).toEqual(
@@ -237,7 +241,7 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     );
     expect(usages).toHaveLength(6);
     for (const { file } of usages) {
-      expect(file.startsWith(join("routes", "(app)", "admin") + "/"), file).toBe(true);
+      expect(inSetupArea(file), file).toBe(true);
     }
     const bySpot = usages.map(({ file, tag }) => `${file}|${tag.match(/module="(\w+)"/)?.[1]}`);
     expect(bySpot.sort((a, b) => a.localeCompare(b))).toEqual(
@@ -246,7 +250,8 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
         join("routes", "(app)", "admin", "phorest", "+page.svelte") + "|INTEGRATIONS",
         join("routes", "(app)", "admin", "roles", "+page.svelte") + "|CHAIN",
         join("routes", "(app)", "admin", "salons", "+page.svelte") + "|CHAIN",
-        join("routes", "(app)", "admin", "system", "+page.svelte") + "|HARDWARE_CLOCK",
+        join("lib", "components", "admin", "integrationen", "TerminalsPanel.svelte") +
+          "|HARDWARE_CLOCK",
         join("routes", "(app)", "admin", "system", "+page.svelte") + "|INTEGRATIONS",
       ].sort((a, b) => a.localeCompare(b)),
     );
@@ -286,10 +291,8 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     expect(createBranch).toContain("Neue Rolle");
   });
 
-  it("(h) no file outside routes/(app)/admin/ renders the hint (operator console and shared layout included)", () => {
-    const outside = walk(WEB_SRC).filter(
-      (file) => !relative(WEB_SRC, file).startsWith(join("routes", "(app)", "admin") + "/"),
-    );
+  it("(h) no file outside the admin set-up areas renders the hint (operator console and shared layout included)", () => {
+    const outside = walk(WEB_SRC).filter((file) => !inSetupArea(relative(WEB_SRC, file)));
     expect(outside.length).toBeGreaterThanOrEqual(WEB_SRC_FLOOR / 2);
     const hits = outside.filter(
       (file) => hintTags(stripComments(readFileSync(file, "utf8"))).length > 0,

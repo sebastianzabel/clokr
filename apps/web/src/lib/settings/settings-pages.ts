@@ -67,6 +67,7 @@ const LEAVE_LIMITS_REQUIRES: PermissionAlternatives = [
 const EXPORT_REQUIRES: PermissionAlternatives = [[Z("report:export")]];
 const AUDIT_REQUIRES: PermissionAlternatives = [[Z("audit-log:read")]];
 const PHOREST_REQUIRES: PermissionAlternatives = [[Z("integration:manage")]];
+const PRESENCE_REQUIRES: PermissionAlternatives = [[Z("presence-source:manage")]];
 const SHIFTS_REQUIRES: PermissionAlternatives = [
   [Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")],
 ];
@@ -134,6 +135,8 @@ const DIENSTPLAN_FROM_VACATION = {
 } as const;
 
 // Plan 854-11: the vacation page itself, rewritten in place as Regeln › Abwesenheiten (route file /admin/vacation).
+const INTEGRATIONEN_PAGE = "/verwalten/system/integrationen";
+const INTEGRATIONEN_DIR = "lib/components/admin/integrationen";
 const ABWESENHEITEN_PAGE = "/verwalten/regeln/abwesenheiten";
 const ABWESENHEITEN_DIR = "lib/components/admin/abwesenheiten";
 const ABWESENHEITEN = {
@@ -428,9 +431,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "passwordRequireSpecial",
     ],
   },
-  // Management sections: lists with their own endpoints, no configuration keys.
-  { ...SYSTEM, id: "system-terminals", title: "NFC-Terminals", endpoint: null, keys: [] },
-  { ...SYSTEM, id: "system-api-keys", title: "API Keys", endpoint: null, keys: [] },
+  // The NFC terminal keys and the API keys left this page for System › Integrationen (plan 854-14).
 
   // ── Regeln › Abwesenheiten ─────────────────────────────────────────────────────────────────────
   // The vacation, sick-leave, holiday-rule and carry-over settings of the former Urlaubsverwaltung, one section
@@ -564,6 +565,31 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     source: "/admin/audit",
     requires: AUDIT_REQUIRES,
     renderedBy: "routes/(app)/admin/audit/+page.svelte",
+  },
+
+  // ── System › Integrationen ─────────────────────────────────────────────────────────────────────
+  // Management sections: lists with their own endpoints, no configuration keys (plan 854-14). The page opens
+  // under the union of the three. The terminal and API-key sections keep the pinned alternatives of the System
+  // page they came from; the API's `terminal:manage` / `api-key:manage` stays the authority.
+  {
+    page: INTEGRATIONEN_PAGE,
+    id: "integrationen-wlan",
+    title: "WLAN-Anwesenheit",
+    endpoint: null,
+    keys: [],
+    source: "/admin/integrations",
+    requires: PRESENCE_REQUIRES,
+    renderedBy: "routes/(app)/admin/integrations/+page.svelte",
+  },
+  {
+    page: INTEGRATIONEN_PAGE,
+    id: "integrationen-terminals",
+    title: "NFC-Terminals",
+    endpoint: null,
+    keys: [],
+    source: "/admin/system",
+    requires: SYSTEM_REQUIRES,
+    renderedBy: `${INTEGRATIONEN_DIR}/TerminalsPanel.svelte`,
   },
 
   // ── /admin/phorest ─────────────────────────────────────────────────────────────────────────────

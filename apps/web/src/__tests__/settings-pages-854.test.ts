@@ -431,7 +431,7 @@ describe("registry helpers", () => {
     ]);
     const ids = sectionsOfPage("/verwalten/system/allgemein").map((s) => s.id);
     expect(ids[0]).toBe("system-company");
-    expect(ids).toContain("system-api-keys");
+    expect(ids).toContain("system-password");
     expect(sectionsOfPage("/nowhere")).toEqual([]);
     expect(pageAlternatives("/nowhere")).toEqual([]);
   });

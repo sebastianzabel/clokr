@@ -475,7 +475,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     parent: "/verwalten",
     description: "Allgemeines, Darstellung, Schnittstellen und Rollen",
   },
-  // tabs: settings, terminals, API keys
+  // Plan 854-14: the terminal and API keys moved to System › Integrationen
   {
     href: "/verwalten/system/allgemein",
     area: "verwalten",
@@ -491,7 +491,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     file: "/admin/system",
     inNav: false,
     parent: "/verwalten/system",
-    description: "Unternehmen, Arbeitszeit, Sicherheit, Kommunikation und Geräte",
+    description: "Unternehmen, Sicherheit und Anmeldung",
   },
   // no API guard (writes /me/preferences); grouped with the tenant settings
   {
@@ -513,11 +513,19 @@ export const APP_ROUTES: readonly AppRoute[] = [
     label: "Integrationen",
     icon: "wifi",
     width: "read",
-    requires: [[Z("presence-source:manage")]],
+    // Plan 854-14: tabs WLAN-Anwesenheit (presence-source:manage), NFC-Terminals and API-Schlüssel (the
+    // System alternatives); the registry (settings-pages.ts) pins this to the union of the tabs' sections.
+    requires: [
+      [Z("presence-source:manage")],
+      [Z("tenant-settings:read")],
+      [Z("tenant-settings:update")],
+      [Z("terminal:manage")],
+      [Z("api-key:manage")],
+    ],
     file: "/admin/integrations",
     inNav: false,
     parent: "/verwalten/system",
-    description: "WLAN-Anwesenheit und Handy-Kopplung",
+    description: "WLAN-Anwesenheit, NFC-Terminals und API-Schlüssel",
   },
   // /integrations/phorest/*
   {

@@ -1,86 +1,75 @@
-// Issue #541 (D-03, D-08, D-11) — source-read pin of the terminal salon wiring on
-// `admin/system/+page.svelte`. A route page cannot be mounted (`apps/web/vitest.config.ts` has no
-// `$app` alias; see admin-system-save-wiring.test.ts for the precedent), so the wiring is pinned by
-// reading the source; the cell is proven by its mount test and the save logic (optimistic update,
-// revert before the toast) by the unit test of `$lib/admin/terminal-salon-save`.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+// Issue #541 (D-03, D-08, D-11) - source-read pin of the terminal salon wiring. Since plan 854-14 the terminals
+// live in the panel of System > Integrationen (`TerminalsPanel.svelte`), not on System > Allgemein. The panel is
+// mounted by `terminals-panel-854.test.ts`; this file keeps the original source pins (the same assertions as before
+// the move): the cell is proven by its mount test and the save logic (optimistic update, revert before the toast)
+// by the unit test of `$lib/admin/terminal-salon-save`.
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-function readRouteFile(relativeFromHere: string, relativeFromCwd: string): string {
-  try {
-    return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
-  } catch {
-    return readFileSync(resolve(process.cwd(), relativeFromCwd), "utf8");
-  }
-}
-
-const PAGE = readRouteFile(
-  "../routes/(app)/admin/system/+page.svelte",
-  "src/routes/(app)/admin/system/+page.svelte",
+const SRC = join(__dirname, "..");
+const PANEL = readFileSync(
+  join(SRC, "lib/components/admin/integrationen/TerminalsPanel.svelte"),
+  "utf8",
 );
-
-/** The NFC-Terminals section: from its title to the next section title. */
-function terminalSection(): string {
-  const start = PAGE.indexOf('<Section title="NFC-Terminals"');
-  expect(start, "NFC-Terminals section not found").toBeGreaterThan(-1);
-  const end = PAGE.indexOf("<Section ", start + 10);
-  expect(end).toBeGreaterThan(start);
-  return PAGE.slice(start, end);
-}
+const SYSTEM = readFileSync(join(SRC, "routes/(app)/admin/system/+page.svelte"), "utf8");
 
 /** Brace-depth slice of a function body starting at its marker. */
 function fnBody(marker: string): string {
-  const start = PAGE.indexOf(marker);
+  const start = PANEL.indexOf(marker);
   expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
-  const open = PAGE.indexOf("{", PAGE.indexOf(")", start));
+  const open = PANEL.indexOf("{", PANEL.indexOf(")", start));
   let depth = 0;
-  for (let i = open; i < PAGE.length; i++) {
-    if (PAGE[i] === "{") depth++;
-    else if (PAGE[i] === "}" && --depth === 0) return PAGE.slice(open, i + 1);
+  for (let i = open; i < PANEL.length; i++) {
+    if (PANEL[i] === "{") depth++;
+    else if (PANEL[i] === "}" && --depth === 0) return PANEL.slice(open, i + 1);
   }
   throw new Error(`unterminated body: ${marker}`);
 }
 
-describe("Issue #541 — terminal salon wiring on /admin/system", () => {
+describe("Issue #541 - terminal salon wiring on System > Integrationen", () => {
+  it("the panel file exists and System > Allgemein no longer carries terminals", () => {
+    expect(existsSync(join(SRC, "lib/components/admin/integrationen/TerminalsPanel.svelte"))).toBe(
+      true,
+    );
+    expect(SYSTEM).not.toContain("TerminalSalonCell");
+    expect(SYSTEM).not.toContain("/terminals");
+  });
+
   it("renders the cell in the terminal table and saves through setTerminalSalon", () => {
-    const section = terminalSection();
-    expect(section).toContain("<TerminalSalonCell");
-    expect(section).toContain("onchange={(salonId) => setTerminalSalon(key.id, salonId)}");
+    expect(PANEL).toContain("<TerminalSalonCell");
+    expect(PANEL).toContain("onchange={(salonId) => setTerminalSalon(row.id, salonId)}");
   });
 
   it("setTerminalSalon delegates to saveTerminalSalon (behaviour: terminal-salon-save.test.ts)", () => {
-    expect(PAGE).toContain('from "$lib/admin/terminal-salon-save"');
+    expect(PANEL).toContain('from "$lib/admin/terminal-salon-save"');
     const body = fnBody("function setTerminalSalon(");
     expect(body).toContain("saveTerminalSalon<TerminalKey>(");
     expect(body).toContain("`/terminals/${keyId}`");
   });
 
   it("the salon column follows showSalonOptions and shows whenever a key is bound", () => {
-    const m = PAGE.match(/const showTerminalSalonColumn = \$derived\(([\s\S]*?)\);\n/);
-    expect(m, "showTerminalSalonColumn not found").not.toBeNull();
+    const m = PANEL.match(/const showSalonColumn = \$derived\(([\s\S]*?)\);\n/);
+    expect(m, "showSalonColumn not found").not.toBeNull();
     expect(m![1]).toContain("salonOptionsShown");
     expect(m![1]).toMatch(/salonId !== null/);
-    expect(PAGE).toMatch(/const salonOptionsShown = \$derived\(showSalonOptions\(/);
+    expect(PANEL).toMatch(/const salonOptionsShown = \$derived\(showSalonOptions\(/);
   });
 
-  it("the create-row select sits inside inline-create, guarded by salonOptionsShown", () => {
-    const section = terminalSection();
-    const create = section.indexOf('class="inline-create"');
-    expect(create).toBeGreaterThan(-1);
-    const select = section.indexOf('aria-label="Salon des neuen Terminals"');
-    expect(select).toBeGreaterThan(create);
-    const guard = section.lastIndexOf("{#if salonOptionsShown}", select);
-    expect(guard).toBeGreaterThan(create);
-    // the id is sent only when one is chosen (D-03)
+  it("the create dialog select is guarded by salonOptionsShown and the id is sent only when chosen", () => {
+    const form = PANEL.indexOf('id="terminal-create-form"');
+    expect(form).toBeGreaterThan(-1);
+    const select = PANEL.indexOf("bind:value={newSalonId}", form);
+    expect(select).toBeGreaterThan(form);
+    const guard = PANEL.lastIndexOf("{#if salonOptionsShown}", select);
+    expect(guard).toBeGreaterThan(form);
     expect(fnBody("async function createTerminalKey(")).toContain(
-      '...(newKeySalonId !== "" && { salonId: newKeySalonId })',
+      '...(newSalonId !== "" && { salonId: newSalonId })',
     );
   });
 
   it("keeps exactly one HARDWARE_CLOCK hint", () => {
-    expect(PAGE.match(/<ModuleHint module="HARDWARE_CLOCK"/g)).toHaveLength(1);
+    expect(PANEL.match(/<ModuleHint module="HARDWARE_CLOCK"/g)).toHaveLength(1);
   });
 });

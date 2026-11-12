@@ -3,10 +3,8 @@
   import { onMount } from "svelte";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { salonContext, moduleBooked, showSalonOptions } from "$stores/salon-context";
+  import { salonContext, moduleBooked } from "$stores/salon-context";
   import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
-  import TerminalSalonCell from "$lib/components/admin/TerminalSalonCell.svelte";
-  import { saveTerminalSalon } from "$lib/admin/terminal-salon-save";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
@@ -153,32 +151,6 @@
   let pwSaved = $state(false);
   let pwError = $state("");
 
-  // NFC Terminals
-  interface TerminalKey {
-    id: string;
-    name: string;
-    keyPrefix: string;
-    lastUsedAt: string | null;
-    revokedAt: string | null;
-    createdAt: string;
-    // Issue #541: the salon the terminal is bound to (null = salon from the weekly pattern)
-    salonId: string | null;
-    salonName: string | null;
-    salonActive: boolean | null;
-  }
-
-  let terminalKeys: TerminalKey[] = $state([]);
-  let tkPage = $state(1);
-  let tkPageSize = $state(10);
-  let pagedTerminalKeys = $derived(
-    terminalKeys.slice((tkPage - 1) * tkPageSize, tkPage * tkPageSize),
-  );
-  let terminalLoading = $state(false);
-  let newKeyName = $state("");
-  let newKeySalonId = $state("");
-  let newKeyRaw = $state(""); // shown once after creation
-  let showNewKey = $state(false);
-
   // API Keys
   interface ApiKeyEntry {
     id: string;
@@ -261,16 +233,7 @@
 
   // Phase 566 (D-12): display only — the server answers 409 for an unbooked module either way.
   // `=== false` only: an unknown state never hides the create row.
-  const hardwareBooked = $derived(moduleBooked($salonContext, "HARDWARE_CLOCK"));
   const integrationsBooked = $derived(moduleBooked($salonContext, "INTEGRATIONS"));
-
-  // Issue #541 (D-08, D-11): the terminal salon choice follows the #64 rule (showSalonOptions is
-  // its one place); the column also shows whenever a key is bound, so a binding stays visible
-  // and removable.
-  const salonOptionsShown = $derived(showSalonOptions($salonContext));
-  const showTerminalSalonColumn = $derived(
-    salonOptionsShown || terminalKeys.some((k) => k.salonId !== null),
-  );
 
   onMount(async () => {
     // Forced, so a freshly booked module shows without waiting for the navigation throttle.
@@ -299,13 +262,6 @@
         loginLockoutMinutes = sec.loginLockoutMinutes ?? 15;
       } catch {
         /* ignorieren */
-      }
-
-      try {
-        const res = await api.get<{ keys: TerminalKey[] }>("/terminals");
-        terminalKeys = res.keys;
-      } catch (err) {
-        console.error("Failed to load terminal keys:", err);
       }
 
       try {
@@ -485,61 +441,6 @@
       newApiKeyScopes = newApiKeyScopes.filter((s) => s !== scope);
     } else {
       newApiKeyScopes = [...newApiKeyScopes, scope];
-    }
-  }
-
-  async function createTerminalKey() {
-    if (!newKeyName.trim()) return;
-    terminalLoading = true;
-    try {
-      const res = await api.post<{ rawKey: string }>("/terminals", {
-        name: newKeyName.trim(),
-        ...(newKeySalonId !== "" && { salonId: newKeySalonId }),
-      });
-      newKeyRaw = res.rawKey;
-      showNewKey = true;
-      newKeyName = "";
-      newKeySalonId = "";
-      // Refresh list
-      const list = await api.get<{ keys: TerminalKey[] }>("/terminals");
-      terminalKeys = list.keys;
-    } catch (err) {
-      console.error("Failed to create terminal key:", err);
-      toasts.error(
-        err instanceof ApiError ? err.message : "Terminal-Schlüssel konnte nicht erstellt werden.",
-      );
-    } finally {
-      terminalLoading = false;
-    }
-  }
-
-  // Issue #541 (D-03, D-08): instant save of the salon select. The optimistic update and the
-  // revert-before-toast rollback live in `$lib/admin/terminal-salon-save` (unit-tested).
-  function setTerminalSalon(id: string, salonId: string | null): Promise<boolean> {
-    return saveTerminalSalon<TerminalKey>({
-      id,
-      salonId,
-      getRows: () => terminalKeys,
-      setRows: (rows) => (terminalKeys = rows),
-      salons: $salonContext.salons,
-      patch: (keyId, salon) => api.patch<TerminalKey>(`/terminals/${keyId}`, { salonId: salon }),
-      onSaved: () => toasts.success("Salon-Bindung gespeichert."),
-      onFailed: (err) => {
-        console.error("Failed to set terminal salon:", err);
-        toasts.error(
-          err instanceof ApiError ? err.message : "Salon-Bindung konnte nicht gespeichert werden.",
-        );
-      },
-    });
-  }
-
-  async function revokeTerminalKey(id: string) {
-    try {
-      await api.delete(`/terminals/${id}`);
-      const list = await api.get<{ keys: TerminalKey[] }>("/terminals");
-      terminalKeys = list.keys;
-    } catch (err) {
-      console.error("Failed to revoke terminal key:", err);
     }
   }
 
@@ -928,130 +829,6 @@
           {/snippet}
         </Section>
       {:else if currentTab === "integration"}
-        <!-- ── NFC-Terminals ────────────────────────────────────────────────── -->
-        <Section title="NFC-Terminals" sub="API-Schlüssel für stationäre Geräte">
-          {#if showNewKey}
-            <div class="alert alert-success" style="margin-bottom: 1rem;">
-              <div>
-                <strong>Neuer Schlüssel erstellt!</strong>
-                <p style="margin: 0.5rem 0;">
-                  Kopier den Schlüssel jetzt — er wird nicht erneut angezeigt:
-                </p>
-                <div class="key-display">
-                  <code class="key-code">{newKeyRaw}</code>
-                  <button class="btn btn-ghost btn-sm" onclick={() => copyToClipboard(newKeyRaw)}
-                    >Kopieren</button
-                  >
-                </div>
-                <button
-                  class="btn btn-ghost btn-sm"
-                  style="margin-top: 0.5rem;"
-                  onclick={() => {
-                    showNewKey = false;
-                    newKeyRaw = "";
-                  }}>Schließen</button
-                >
-              </div>
-            </div>
-          {/if}
-
-          {#if hardwareBooked === false}
-            <ModuleHint module="HARDWARE_CLOCK" subject="NFC-Terminals" />
-          {:else}
-            <div class="inline-create">
-              <input
-                type="text"
-                class="form-input"
-                bind:value={newKeyName}
-                placeholder="Terminal-Name (z.B. Kasse 1)"
-              />
-              {#if salonOptionsShown}
-                <select
-                  class="form-input"
-                  bind:value={newKeySalonId}
-                  aria-label="Salon des neuen Terminals"
-                >
-                  <option value="">Kein Salon – Salon aus dem Wochenmuster</option>
-                  {#each $salonContext.salons as salon (salon.id)}
-                    <option value={salon.id}>{salon.name}</option>
-                  {/each}
-                </select>
-              {/if}
-              <button
-                class="btn btn-primary"
-                onclick={createTerminalKey}
-                disabled={terminalLoading || !newKeyName.trim()}
-              >
-                Schlüssel erstellen
-              </button>
-            </div>
-          {/if}
-
-          {#if terminalKeys.length > 0}
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    {#if showTerminalSalonColumn}
-                      <th>Salon</th>
-                    {/if}
-                    <th>Schlüssel</th>
-                    <th>Zuletzt verwendet</th>
-                    <th>Status</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each pagedTerminalKeys as key (key.id)}
-                    <tr class:row-revoked={key.revokedAt}>
-                      <td>{key.name}</td>
-                      {#if showTerminalSalonColumn}
-                        <td>
-                          <TerminalSalonCell
-                            terminal={key}
-                            salons={$salonContext.salons}
-                            showOptions={salonOptionsShown}
-                            onchange={(salonId) => setTerminalSalon(key.id, salonId)}
-                          />
-                        </td>
-                      {/if}
-                      <td><code class="inline-code">{key.keyPrefix}</code></td>
-                      <td
-                        >{key.lastUsedAt
-                          ? new Date(key.lastUsedAt).toLocaleString("de-DE")
-                          : "Nie"}</td
-                      >
-                      <td>
-                        {#if key.revokedAt}
-                          <span class="badge badge-red">Widerrufen</span>
-                        {:else}
-                          <span class="badge badge-green">Aktiv</span>
-                        {/if}
-                      </td>
-                      <td>
-                        {#if !key.revokedAt}
-                          <button
-                            class="btn btn-sm btn-ghost btn-danger-ghost"
-                            onclick={() => revokeTerminalKey(key.id)}>Widerrufen</button
-                          >
-                        {/if}
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-              <Pagination
-                total={terminalKeys.length}
-                bind:page={tkPage}
-                bind:pageSize={tkPageSize}
-              />
-            </div>
-          {:else}
-            <p class="text-muted">Keine Terminal-Schlüssel vorhanden.</p>
-          {/if}
-        </Section>
-
         <!-- ── API Keys ─────────────────────────────────────────────────────── -->
         <Section title="API Keys" sub="Schlüssel für externe Integrationen">
           {#if showNewApiKey}
