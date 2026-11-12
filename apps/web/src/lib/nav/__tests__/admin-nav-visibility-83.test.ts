@@ -42,10 +42,10 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
     ]);
   });
 
-  it("Daten lists Import, DATEV-Export, Protokoll, then Support-Zugriffe directly after Protokoll (#93, #574)", () => {
+  it("Daten lists Import, Export, Protokoll, then Support-Zugriffe directly after Protokoll (#93, #574)", () => {
     expect(labelsOf("/verwalten/daten")).toEqual([
       "CSV-Import",
-      "DATEV-Export",
+      "Export",
       "Protokoll",
       "Support-Zugriffe",
     ]);

@@ -463,7 +463,7 @@ describe("registry helpers", () => {
     expect(mayOpenSection({ permissions: ["terminal:manage:ZUGEWIESEN"] }, smtp)).toBe(true);
     expect(mayOpenSection({ permissions: ["report:read:ZUGEWIESEN"] }, smtp)).toBe(false);
     expect(mayOpenSection(null, smtp)).toBe(false);
-    const datev = settingsSection("export-datev");
+    const datev = settingsSection("export-datev-einrichtung");
     expect(mayOpenSection({ permissions: ["tenant-settings:update:ZUGEWIESEN"] }, datev)).toBe(
       false,
     );
@@ -539,7 +539,9 @@ describe("the checker can fail (controls)", () => {
       renderedBy: "routes/(app)/admin/gone/+page.svelte",
     });
     expect(registryProblems(stale).some((p) => p.includes("does not exist"))).toBe(true);
-    const widened = edited("export-datev", { requires: [["tenant-settings:read:ZUGEWIESEN"]] });
+    const widened = edited("export-datev-einrichtung", {
+      requires: [["tenant-settings:read:ZUGEWIESEN"]],
+    });
     expect(registryProblems(widened).some((p) => p.includes("requires differ"))).toBe(true);
   });
 

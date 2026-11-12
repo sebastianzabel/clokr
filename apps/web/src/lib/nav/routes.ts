@@ -410,7 +410,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: "children",
     inNav: true,
     parent: "/verwalten",
-    description: "Import, DATEV-Export, Protokoll und Support-Zugriffe",
+    description: "Import, Export, Protokoll und Support-Zugriffe",
   },
   // POST /imports/employees, POST /imports/time-entries
   {
@@ -425,18 +425,18 @@ export const APP_ROUTES: readonly AppRoute[] = [
     parent: "/verwalten/daten",
     description: "Personen und Zeiten aus einer CSV-Datei übernehmen",
   },
-  // GET /reports/datev
+  // GET /reports/datev, GET /reports/datev/employee, GET /reports/period/csv, GET /reports/monthly-export/pdf
   {
-    href: "/verwalten/daten/datev",
+    href: "/verwalten/daten/export",
     area: "verwalten",
-    label: "DATEV-Export",
+    label: "Export",
     icon: "download",
     width: "read",
     requires: [[Z("report:export")]],
     file: "/admin/export",
     inNav: false,
     parent: "/verwalten/daten",
-    description: "Lohndaten für die Lohnbuchhaltung",
+    description: "DATEV, CSV, Monatsexport und Kalender",
   },
   // GET /audit-logs
   {
@@ -612,6 +612,12 @@ export const LEGACY_ROUTE_REDIRECTS: readonly LegacyRedirect[] = [
     href: "/verwalten/regeln/urlaubsgrenzen",
     requires: [[Z("leave-limit:manage")], [Z("leave-request:approve")]],
     to: "/verwalten/regeln/abwesenheiten#urlaubsgrenzen",
+  },
+  // The #844 URL of the DATEV export page (renamed by #854, plan 854-24); it may be bookmarked.
+  {
+    href: "/verwalten/daten/datev",
+    requires: [[Z("report:export")]],
+    to: "/verwalten/daten/export",
   },
   // → /admin/integrations (301 from its +page.server.ts)
   { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },

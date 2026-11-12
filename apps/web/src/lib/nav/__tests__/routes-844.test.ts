@@ -163,6 +163,8 @@ describe("old URLs of the acceptance criteria land on the new place", () => {
     ["/admin/system", "/verwalten/system/allgemein"],
     ["/admin/month-close", "/verwalten/monatsabschluss"],
     ["/admin/audit/42", "/verwalten/daten/protokoll/42"],
+    ["/admin/export", "/verwalten/daten/export"],
+    ["/verwalten/daten/datev", "/verwalten/daten/export"], // the renamed #844 URL (alias)
     ["/admin/availability", "/team/verfuegbarkeit"],
     ["/reports", "/verwalten/berichte"],
   ];

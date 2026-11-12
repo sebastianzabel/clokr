@@ -8,6 +8,7 @@ import {
   exportPreselection,
   monthName,
   openMonthHint,
+  wholeNumberProblem,
 } from "../export-centre";
 
 describe("monthName", () => {
@@ -165,5 +166,26 @@ describe("csvPeriodProblem", () => {
     expect(csvPeriodProblem({ year: 2025, month: 1 }, { year: 2026, month: 1 }, today)).toContain(
       "12 Monate",
     );
+  });
+});
+
+describe("wholeNumberProblem", () => {
+  const range = { min: 1, max: 9999 };
+  it("accepts a whole number inside the range", () => {
+    expect(wholeNumberProblem("Urlaub", 300, range)).toBeNull();
+    expect(wholeNumberProblem("Urlaub", 1, range)).toBeNull();
+    expect(wholeNumberProblem("Urlaub", 9999, range)).toBeNull();
+  });
+  it("refuses a decimal, zero and a number above the range", () => {
+    for (const value of [1.5, 0, 10000, -3]) {
+      expect(wholeNumberProblem("Urlaub", value, range), String(value)).toBe(
+        "Urlaub ist eine ganze Zahl von 1 bis 9999.",
+      );
+    }
+  });
+  it("an empty required field is a Pflichtangabe, an empty optional one is fine", () => {
+    expect(wholeNumberProblem("Urlaub", null, range)).toBe("Urlaub ist eine Pflichtangabe.");
+    expect(wholeNumberProblem("Urlaub", undefined, range)).toBe("Urlaub ist eine Pflichtangabe.");
+    expect(wholeNumberProblem("Urlaub", null, { ...range, optional: true })).toBeNull();
   });
 });

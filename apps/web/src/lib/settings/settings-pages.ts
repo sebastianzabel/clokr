@@ -547,9 +547,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 
   // ── /admin/export ──────────────────────────────────────────────────────────────────────────────
   {
-    id: "export-datev",
-    page: "/verwalten/daten/datev",
-    title: "DATEV-Nummern",
+    id: "export-datev-einrichtung",
+    page: "/verwalten/daten/export",
+    title: "DATEV-Einrichtung",
     endpoint: "/settings/work",
     keys: [
       "datevNormalstundenNr",

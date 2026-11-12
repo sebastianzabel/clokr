@@ -82,18 +82,11 @@ function settingsWorkPuts(source: string): Put[] {
 // Plan 854-15: the System page's one remaining `PUT /settings/work` (company, region) is the registry section
 // `allgemein-unternehmen` of `CompanySection`; settings-pages-854 (3) pins that it sends exactly its keys, and
 // `allgemein-854.test.ts` mounts it. The page itself writes no setting any more.
-const EXPECTED: Record<string, Record<string, string[]>> = {
-  export: {
-    saveDatev: [
-      "datevBeraterNr",
-      "datevKrankNr",
-      "datevMandantenNr",
-      "datevNormalstundenNr",
-      "datevSonderurlaubNr",
-      "datevUrlaubNr",
-    ],
-  },
-};
+// Issue #854 (plan 854-24): the DATEV save of /admin/export (`saveDatev`) now sends
+// `pickSection(datev, settingsSection("export-datev-einrichtung").keys)`; settings-pages-854 (3) pins that it sends
+// exactly the six registry keys, admin-export-save-wiring pins the save itself. It is no literal payload any more,
+// so this file keeps only the "no load-time copy" rule for it.
+const EXPECTED: Record<string, Record<string, string[]>> = {};
 
 describe("Issue #878 — each section sends only its own fields", () => {
   for (const [page, expected] of Object.entries(EXPECTED)) {
@@ -124,6 +117,15 @@ describe("Issue #878 — each section sends only its own fields", () => {
 
   // Issue #854 (plan 854-23): the retention save moved into RetentionSection (registry section
   // `protokoll-aufbewahrung`, pinned by settings-pages-854 and admin-audit-save-wiring); the page itself writes none.
+  it("/admin/export saves through pickSection of its registry section, with no literal payload and no spread", () => {
+    const source = readRoute("export");
+    expect(settingsWorkPuts(source)).toEqual([]);
+    // Whitespace-normalised: Prettier may break the call over several lines.
+    expect(source.replace(/\s+/g, " ")).toContain(
+      'pickSection( datev as Record<string, unknown>, settingsSection("export-datev-einrichtung").keys, )',
+    );
+  });
+
   it("/admin/audit writes no settings key itself (its section is a registry section of a component)", () => {
     expect(settingsWorkPuts(readRoute("audit"))).toEqual([]);
   });

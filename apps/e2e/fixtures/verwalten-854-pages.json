@@ -188,6 +188,12 @@
           "label": "Aufbewahrung"
         }
       ]
+    },
+    {
+      "slug": "daten-export",
+      "path": "/verwalten/daten/export",
+      "heading": "Export",
+      "tabs": []
     }
   ]
 }

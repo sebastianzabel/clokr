@@ -157,3 +157,21 @@ export function csvPeriodProblem(from: YearMonth, to: YearMonth, today: YearMont
   const problem = validateRange(from, to, today);
   return problem === null ? null : RANGE_ERROR_TEXT[problem];
 }
+
+/**
+ * The German problem of a whole-number setting, or null when fine. `label` is the field's name as the page
+ * shows it (the page owns every word of the DATEV numbers); an empty optional field is fine.
+ */
+export function wholeNumberProblem(
+  label: string,
+  value: number | null | undefined,
+  range: { min: number; max: number; optional?: boolean },
+): string | null {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return range.optional ? null : `${label} ist eine Pflichtangabe.`;
+  }
+  if (!Number.isInteger(value) || value < range.min || value > range.max) {
+    return `${label} ist eine ganze Zahl von ${range.min} bis ${range.max}.`;
+  }
+  return null;
+}

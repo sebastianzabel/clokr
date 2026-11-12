@@ -57,7 +57,7 @@
     },
     {
       "page": "(app)/admin/export/+page.svelte",
-      "path": "/verwalten/daten/datev",
+      "path": "/verwalten/daten/export",
       "auth": "tenant-admin"
     },
     {

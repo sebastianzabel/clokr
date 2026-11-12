@@ -11,5 +11,5 @@
 <HubPage
   title={pageLabel("/verwalten/daten")}
   hub="/verwalten/daten"
-  sub="Daten übernehmen, exportieren und nachvollziehen."
+  sub="Import, Export, Protokoll und Support-Zugriffe."
 />
