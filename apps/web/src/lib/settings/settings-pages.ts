@@ -61,6 +61,9 @@ const VACATION_REQUIRES: PermissionAlternatives = [
 const EXPORT_REQUIRES: PermissionAlternatives = [[Z("report:export")]];
 const AUDIT_REQUIRES: PermissionAlternatives = [[Z("audit-log:read")]];
 const PHOREST_REQUIRES: PermissionAlternatives = [[Z("integration:manage")]];
+const SHIFTS_REQUIRES: PermissionAlternatives = [
+  [Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")],
+];
 
 const SYSTEM_PAGE = "routes/(app)/admin/system/+page.svelte";
 const VACATION_PAGE = "routes/(app)/admin/vacation/+page.svelte";
@@ -102,6 +105,17 @@ const MONATSABSCHLUSS_FROM_SYSTEM = {
 // & E-Mail; each section keeps the alternatives of the page it came from.
 const BENACHRICHTIGUNGEN_PAGE = "/verwalten/regeln/benachrichtigungen";
 const BENACHRICHTIGUNGEN_DIR = "lib/components/admin/benachrichtigungen";
+
+// Plan 854-09: the shift configuration of /admin/shifts lives on Regeln › Dienstplan as three management
+// panels (lists with their own endpoints, no configuration keys); the settings of System and Urlaub that join
+// the page follow in plan 854-10.
+const DIENSTPLAN_PAGE = "/verwalten/regeln/dienstplan";
+const DIENSTPLAN_DIR = "lib/components/admin/dienstplan";
+const FROM_SHIFTS = {
+  page: DIENSTPLAN_PAGE,
+  source: "/admin/shifts",
+  requires: SHIFTS_REQUIRES,
+} as const;
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   // ── Regeln › Arbeitszeit & Verträge ────────────────────────────────────────────────────────────
@@ -337,6 +351,30 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     ],
   },
   // Management sections: lists with their own endpoints, no configuration keys.
+  {
+    ...FROM_SHIFTS,
+    id: "dienstplan-vorlagen",
+    title: "Schichtvorlagen",
+    endpoint: null,
+    keys: [],
+    renderedBy: `${DIENSTPLAN_DIR}/ShiftTemplatesPanel.svelte`,
+  },
+  {
+    ...FROM_SHIFTS,
+    id: "dienstplan-bedarf",
+    title: "Bedarfsregeln",
+    endpoint: null,
+    keys: [],
+    renderedBy: "routes/(app)/admin/shifts/+page.svelte",
+  },
+  {
+    ...FROM_SHIFTS,
+    id: "dienstplan-muster",
+    title: "Wochenmuster",
+    endpoint: null,
+    keys: [],
+    renderedBy: "routes/(app)/admin/shifts/+page.svelte",
+  },
   { ...SYSTEM, id: "system-terminals", title: "NFC-Terminals", endpoint: null, keys: [] },
   { ...SYSTEM, id: "system-api-keys", title: "API Keys", endpoint: null, keys: [] },
 

@@ -361,14 +361,15 @@ export const APP_ROUTES: readonly AppRoute[] = [
   {
     href: "/verwalten/regeln/dienstplan",
     area: "verwalten",
-    label: "Schichteinstellungen",
+    label: "Dienstplan",
     icon: "grid",
     width: "read",
     requires: [[Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")]],
     file: "/admin/shifts",
     inNav: false,
     parent: "/verwalten/regeln",
-    description: "Schichtvorlagen, Bedarfsregeln und Wochenmuster",
+    description:
+      "Schichtvorlagen, Bedarfsregeln, Wochenmuster, Öffnungszeiten-Bindung und Erinnerungen",
   },
   // GET /overtime/close-month/status
   {

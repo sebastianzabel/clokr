@@ -28,6 +28,13 @@ const PAGE = readRouteFile(
   "src/routes/(app)/admin/shifts/+page.svelte",
 );
 
+// Issue #854 (plan 09): the template editor moved from the page into its own panel component; a
+// component is read the same way (it cannot be mounted here without the page's stores either).
+const TEMPLATES = readRouteFile(
+  "../lib/components/admin/dienstplan/ShiftTemplatesPanel.svelte",
+  "src/lib/components/admin/dienstplan/ShiftTemplatesPanel.svelte",
+);
+
 function fnBody(marker: string): string {
   const start = PAGE.indexOf(marker);
   expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
@@ -37,13 +44,18 @@ function fnBody(marker: string): string {
 }
 
 describe("D-01 — the pattern matrix saves only on its section button", () => {
-  it.each(["saveBulkPatterns", "saveTemplate", "saveRule"])(
-    "%s is onclick-only, never onchange",
-    (name) => {
-      expect(PAGE).toContain(`onclick={${name}}`);
-      expect(PAGE).not.toContain(`onchange={${name}}`);
-    },
-  );
+  it.each(["saveBulkPatterns", "saveRule"])("%s is onclick-only, never onchange", (name) => {
+    expect(PAGE).toContain(`onclick={${name}}`);
+    expect(PAGE).not.toContain(`onchange={${name}}`);
+  });
+
+  // The template editor is a Dialog form: the write runs on submit (button or Enter), never on a
+  // field's change or blur.
+  it("saveTemplate runs on the editor form's submit, never on change or blur", () => {
+    expect(TEMPLATES).toContain("void saveTemplate()");
+    expect(TEMPLATES).toContain("onsubmit={(event) =>");
+    expect(TEMPLATES).not.toMatch(/on(?:change|blur|input)=\{[^}]*saveTemplate/);
+  });
 
   // Modal drafts (Vorlage/Regel) are explicitly NOT part of the page-level save registry —
   // same reasoning 109-12/109-13 apply on admin/vacation's Sonderurlaub modals.
@@ -108,6 +120,7 @@ describe("the pattern Section has a footer — the marker belongs in it", () => 
 
   it("AK-02: no text/number input on admin/shifts carries an inline write handler", () => {
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
+    expect(textOrNumberInputHandlers(TEMPLATES)).toEqual([]);
   });
 });
 

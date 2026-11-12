@@ -67,7 +67,7 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
       "Urlaubsverwaltung",
       "Betriebsurlaub",
       "Urlaubsgrenzen & Sperren",
-      "Schichteinstellungen",
+      "Dienstplan",
     ]);
     expect(labelsOf("/verwalten/system")).toEqual([
       "Allgemein",

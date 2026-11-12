@@ -1,7 +1,8 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
-  import { formatStaff } from "$lib/shifts/staffing"; // Issue #850 — "2", never "2.00"
+  import { formatStaff } from "$lib/shifts/staffing"; // Issue #850 - "2", never "2.00"
   import { onMount } from "svelte";
+  import { page } from "$app/stores";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
@@ -13,92 +14,53 @@
     coverageRuleSalonPayload,
     showCoverageSalonColumn,
   } from "$lib/shifts/coverage-rule-salon";
-  import SectionStack from "$lib/components/admin/SectionStack.svelte";
+  import {
+    DAY_NAMES,
+    DAY_NAMES_LONG,
+    type CoverageRule,
+    type PatternEmployee,
+    type PatternRow,
+    type ShiftTemplate,
+  } from "$lib/shifts/dienstplan-config";
+  import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import ShiftTemplatesPanel from "$lib/components/admin/dienstplan/ShiftTemplatesPanel.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
   import Modal from "$components/ui/Modal.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
 
-  // ── Types ───────────────────────────────────────────────────
-  interface ShiftTemplate {
-    id: string;
-    name: string;
-    startTime: string;
-    endTime: string;
-    color: string;
-  }
+  type ShiftWeekResponse = { employees: PatternEmployee[] };
 
-  interface CoverageRule {
-    id: string;
-    templateId: string | null;
-    dayOfWeek: number; // -1 = all days, 0..6 = Mo..So
-    minStaff: number | string; // Decimal arrives as string from Prisma
-    requiresNonSupervised: boolean;
-    // Issue #647: display fields served by the list; null = a rule for all salons.
-    salonId: string | null;
-    salonName: string | null;
-    salonActive: boolean | null;
-  }
+  // The panels of the page, in the order of the tab strip; the URL hash names one (D-854-03).
+  const TABS = [
+    { value: "vorlagen", label: "Schichtvorlagen" },
+    { value: "bedarf", label: "Bedarfsregeln" },
+    { value: "muster", label: "Wochenmuster" },
+  ] as const;
+  const TAB_IDS = TABS.map((tab) => tab.value);
+  let activeTab = $state<string>(TAB_IDS[0]);
 
-  // Phase 48 — Pattern editor types
-  interface PatternEmployee {
-    id: string;
-    firstName: string;
-    lastName: string;
-    workSchedules?: Array<{
-      type: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
-      weeklyHours: number | string | null;
-    }>;
+  function selectTab(next: string) {
+    activeTab = next;
+    writeTabHash(next);
   }
-  interface PatternRow {
-    employeeId: string;
-    dayOfWeek: number; // 0..6
-    templateId: string | null;
-  }
-  interface ShiftWeekResponse {
-    employees: PatternEmployee[];
-  }
-
-  const DAY_NAMES = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-  const DAY_NAMES_LONG = [
-    "Montag",
-    "Dienstag",
-    "Mittwoch",
-    "Donnerstag",
-    "Freitag",
-    "Samstag",
-    "Sonntag",
-  ];
 
   // Issue #83 (D-13): access is decided by the admin layout guard (admin-route-permissions.ts);
   // the API answers 403 regardless.
   onMount(() => {
+    activeTab = tabFromHash($page.url.hash, TAB_IDS);
     void loadAll();
   });
-
-  // ── Tabs (Phase 58) ─────────────────────────────────────────
-  const TABS = [
-    { id: "vorlagen", label: "Vorlagen & Mindestbesetzung" },
-    { id: "muster", label: "Muster" },
-  ];
-  let activeTab = $state<string>("vorlagen");
 
   // ── State ───────────────────────────────────────────────────
   let templates: ShiftTemplate[] = $state([]);
   let coverageRules: CoverageRule[] = $state([]);
-  // Ladenöffnungszeiten + binding mode moved to /admin/system#allgemein (Phase 58).
   let loading = $state(true);
   let saving = $state(false);
   let error = $state("");
-
-  // Template editor
-  let tplModalOpen = $state(false);
-  let tplName = $state("");
-  let tplStart = $state("06:00");
-  let tplEnd = $state("14:00");
-  let tplColor = $state("");
-  let tplError = $state("");
-  let editingTplId: string | null = $state(null);
 
   // Coverage rule editor
   let ruleModalOpen = $state(false);
@@ -120,12 +82,7 @@
     ),
   );
 
-  // Delete confirmations
-  let tplDeleteConfirm = $state<{ open: boolean; id: string | null; name: string }>({
-    open: false,
-    id: null,
-    name: "",
-  });
+  // Delete confirmation
   let ruleDeleteConfirm = $state<{ open: boolean; id: string | null }>({
     open: false,
     id: null,
@@ -139,26 +96,6 @@
   let patternMatrixInitial: Record<string, Array<string | null>> = $state({});
   let patternsSaving = $state(false);
   let patternsMsg = $state("");
-
-  // Palette for shift template colors (theme-independent)
-  const SHIFT_PALETTE = [
-    { token: "--shift-violet", label: "Violett" },
-    { token: "--shift-blue", label: "Blau" },
-    { token: "--shift-green", label: "Grün" },
-    { token: "--shift-amber", label: "Bernstein" },
-    { token: "--shift-rose", label: "Rose" },
-    { token: "--shift-slate", label: "Schiefer" },
-  ];
-
-  function resolveShiftToken(name: string, fallback = ""): string {
-    if (typeof window === "undefined") return fallback;
-    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return v || fallback;
-  }
-
-  function pickPaletteColor(token: string) {
-    tplColor = resolveShiftToken(token, tplColor);
-  }
 
   // ── Load all config ─────────────────────────────────────────
   async function loadAll() {
@@ -174,7 +111,6 @@
       ]);
       templates = tpls;
       coverageRules = rules;
-
       // Phase 48 — Build pattern matrix from SHIFT_BASED employees + tenant patterns
       shiftEmployees = (week.employees ?? [])
         .filter((e) => e.workSchedules?.[0]?.type === "SHIFT_BASED")
@@ -196,6 +132,20 @@
       error = "Fehler beim Laden der Konfiguration.";
     } finally {
       loading = false;
+    }
+  }
+
+  // Reloads the two lists a template or rule write can change; the pattern matrix and its unsaved
+  // edits are left alone.
+  async function reloadLists() {
+    try {
+      [templates, coverageRules] = await Promise.all([
+        api.get<ShiftTemplate[]>("/shifts/templates"),
+        api.get<CoverageRule[]>("/shifts/coverage-rules"),
+      ]);
+    } catch (e) {
+      console.error(e);
+      toasts.error("Die Listen konnten nicht neu geladen werden.");
     }
   }
 
@@ -270,73 +220,6 @@
     setTimeout(() => (patternsMsg = ""), 3000);
   }
 
-  // ── Templates ───────────────────────────────────────────────
-  function openCreateTemplate() {
-    editingTplId = null;
-    tplName = "";
-    tplStart = "06:00";
-    tplEnd = "14:00";
-    tplColor = resolveShiftToken("--shift-violet");
-    tplError = "";
-    tplModalOpen = true;
-  }
-
-  function openEditTemplate(tpl: ShiftTemplate) {
-    editingTplId = tpl.id;
-    tplName = tpl.name;
-    tplStart = tpl.startTime;
-    tplEnd = tpl.endTime;
-    tplColor = tpl.color;
-    tplError = "";
-    tplModalOpen = true;
-  }
-
-  async function saveTemplate() {
-    if (!tplName.trim() || !tplStart || !tplEnd) {
-      tplError = "Name, Start- und Endzeit sind Pflichtfelder.";
-      return;
-    }
-    saving = true;
-    tplError = "";
-    try {
-      const payload = {
-        name: tplName.trim(),
-        startTime: tplStart,
-        endTime: tplEnd,
-        color: tplColor,
-      };
-      if (editingTplId) {
-        await api.put(`/shifts/templates/${editingTplId}`, payload);
-        toasts.success("Vorlage aktualisiert.");
-      } else {
-        await api.post("/shifts/templates", payload);
-        toasts.success("Vorlage erstellt.");
-      }
-      tplModalOpen = false;
-      editingTplId = null;
-      await loadAll();
-    } catch (e) {
-      tplError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      saving = false;
-    }
-  }
-
-  function askDeleteTemplate(id: string, name: string) {
-    tplDeleteConfirm = { open: true, id, name };
-  }
-
-  async function confirmDeleteTemplate() {
-    if (!tplDeleteConfirm.id) return;
-    try {
-      await api.delete(`/shifts/templates/${tplDeleteConfirm.id}`);
-      await loadAll();
-      toasts.success("Vorlage gelöscht.");
-    } catch (e) {
-      toasts.error(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
-    }
-  }
-
   // ── Coverage Rules ──────────────────────────────────────────
   function openCreateRule() {
     ruleEditingId = null;
@@ -381,7 +264,7 @@
         await api.post("/shifts/coverage-rules", payload);
       }
       ruleModalOpen = false;
-      await loadAll();
+      await reloadLists();
       toasts.success(
         ruleEditingId ? "Mindestbesetzung aktualisiert." : "Mindestbesetzung angelegt.",
       );
@@ -400,7 +283,7 @@
     if (!ruleDeleteConfirm.id) return;
     try {
       await api.delete(`/shifts/coverage-rules/${ruleDeleteConfirm.id}`);
-      await loadAll();
+      await reloadLists();
       toasts.success("Mindestbesetzung gelöscht.");
     } catch (e) {
       toasts.error(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
@@ -416,269 +299,168 @@
     if (rule.dayOfWeek === -1) return "Alle Tage";
     return DAY_NAMES_LONG[rule.dayOfWeek] ?? "—";
   }
-
-  // Ladenöffnungszeiten + saveStoreHours moved to /admin/system#allgemein (Phase 58).
 </script>
 
 <svelte:head>
   <title>{pageLabel("/admin/shifts")} – Clokr</title>
 </svelte:head>
 
-<SectionStack
-  eyebrow="Verwalten"
+<PageHead
   title={pageLabel("/admin/shifts")}
-  sub="Vorlagen, Mindestbesetzung und Schicht-Muster"
-  tabs={TABS}
-  bind:activeTab
-  animate
->
-  {#snippet tabContent(currentTab)}
-    {#if error}
-      <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
-    {/if}
+  sub="Schichtvorlagen, Bedarfsregeln und Wochenmuster deines Unternehmens."
+/>
 
-    {#if loading}
-      <Skeleton shape="card" count={2} lines={3} />
-    {:else if currentTab === "vorlagen"}
-      <!-- ── Templates section ────────────────────────────────────── -->
-      <Section title="Schichtvorlagen" sub="Wiederkehrende Schichtmuster definieren">
-        {#if templates.length === 0}
-          <p class="cfg-muted">Noch keine Vorlagen vorhanden.</p>
-        {:else}
-          <div class="cfg-table">
-            <div class="cfg-row cfg-row--head">
-              <div>Farbe</div>
-              <div>Name</div>
-              <div>Zeitraum</div>
-              <div class="cfg-row__actions">Aktionen</div>
-            </div>
-            {#each templates as tpl (tpl.id)}
-              <div class="cfg-row">
-                <div>
-                  <span class="cfg-swatch" style:background={tpl.color} aria-hidden="true"></span>
-                </div>
-                <div class="cfg-cell-name">{tpl.name}</div>
-                <div class="cfg-cell-num">{tpl.startTime} – {tpl.endTime}</div>
-                <div class="cfg-row__actions">
-                  <button
-                    type="button"
-                    class="btn btn-ghost sm"
-                    onclick={() => openEditTemplate(tpl)}
-                  >
-                    Bearbeiten
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-ghost sm"
-                    onclick={() => askDeleteTemplate(tpl.id, tpl.name)}
-                  >
-                    Löschen
-                  </button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {/if}
-        {#snippet footer()}
-          <button type="button" class="btn btn-primary sm" onclick={openCreateTemplate}>
-            Neue Vorlage
-          </button>
-        {/snippet}
-      </Section>
-
-      <!-- ── Coverage Rules section ───────────────────────────────── -->
-      <Section
-        title="Mindestbesetzung"
-        sub="Wie viele Personen je Vorlage und Wochentag mindestens eingeplant sein sollen. Die genaueste Regel gilt; ohne Regel sind es 2."
-      >
-        {#if coverageRules.length === 0}
-          <p class="cfg-muted">
-            Noch keine Mindestbesetzung festgelegt. Ohne Regel gelten 2 Personen.
-          </p>
-        {:else}
-          <div class="cfg-table">
-            <div
-              class="cfg-row cfg-row--head cfg-row--rules"
-              class:cfg-row--rules-salon={salonColumnShown}
-            >
-              {#if salonColumnShown}
-                <div>Salon</div>
-              {/if}
-              <div>Vorlage</div>
-              <div>Wochentag</div>
-              <div>Mindestens</div>
-              <div>Aufsicht erforderlich</div>
-              <div class="cfg-row__actions">Aktionen</div>
-            </div>
-            {#each coverageRules as rule (rule.id)}
-              <div class="cfg-row cfg-row--rules" class:cfg-row--rules-salon={salonColumnShown}>
+{#if error}
+  <ErrorState message={error} onRetry={loadAll} retrying={loading} />
+{:else if loading}
+  <Skeleton shape="card" count={2} lines={3} />
+{:else}
+  <PageTabs
+    tabs={[...TABS]}
+    tab={activeTab}
+    onTabChange={selectTab}
+    tabsLabel="Bereiche des Dienstplans"
+  >
+    {#snippet panel(value)}
+      {#if value === "vorlagen"}
+        <ShiftTemplatesPanel {templates} onChanged={reloadLists} />
+      {:else if value === "bedarf"}
+        <Section
+          title="Mindestbesetzung"
+          sub="Wie viele Personen je Vorlage und Wochentag mindestens eingeplant sein sollen. Die genaueste Regel gilt; ohne Regel sind es 2."
+        >
+          {#if coverageRules.length === 0}
+            <p class="cfg-muted">
+              Noch keine Mindestbesetzung festgelegt. Ohne Regel gelten 2 Personen.
+            </p>
+          {:else}
+            <div class="cfg-table">
+              <div
+                class="cfg-row cfg-row--head cfg-row--rules"
+                class:cfg-row--rules-salon={salonColumnShown}
+              >
                 {#if salonColumnShown}
-                  {@const salonCell = coverageRuleSalonCell(rule)}
-                  <div>
-                    {salonCell.label}
-                    {#if salonCell.inactive}
-                      <span class="badge badge-yellow">{COVERAGE_RULE_SALON_INACTIVE_BADGE}</span>
-                    {/if}
-                  </div>
+                  <div>Salon</div>
                 {/if}
-                <div class="cfg-cell-name">{ruleTemplateName(rule)}</div>
-                <div>{ruleDayLabel(rule)}</div>
-                <div class="cfg-cell-num">{formatStaff(Number(rule.minStaff))}</div>
-                <div>{rule.requiresNonSupervised ? "Ja" : "Nein"}</div>
-                <div class="cfg-row__actions">
-                  <button type="button" class="btn btn-ghost sm" onclick={() => openEditRule(rule)}>
-                    Bearbeiten
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-ghost sm"
-                    onclick={() => askDeleteRule(rule.id)}
-                  >
-                    Löschen
-                  </button>
-                </div>
+                <div>Vorlage</div>
+                <div>Wochentag</div>
+                <div>Mindestens</div>
+                <div>Aufsicht erforderlich</div>
+                <div class="cfg-row__actions">Aktionen</div>
               </div>
-            {/each}
-          </div>
-        {/if}
-        {#snippet footer()}
-          <button type="button" class="btn btn-primary sm" onclick={openCreateRule}>
-            Neue Mindestbesetzung
-          </button>
-        {/snippet}
-      </Section>
-    {:else if currentTab === "muster"}
-      <!-- ── Pattern-Editor section (Phase 48) ─────────────────────── -->
-      <!-- The template and coverage-rule editors above live in <Modal> — a modal draft is
-           dismissible by ESC and backdrop (Modal.svelte:26,33), which beforeNavigate never sees
-           and Section.dirty cannot render for. Modal drafts are deliberately out of the page
-           registry; only this Section carries a dirty prop. -->
-      <Section
-        title="Schicht-Muster (Wochenrhythmus)"
-        sub="Wiederkehrendes Wochenmuster je Person. Nur Mitarbeitende mit Arbeitszeitmodell „Nach Schichtplan“ erscheinen hier. Änderungen werden erst beim Klick auf „Muster speichern“ übernommen."
-        dirty={patternsDirty}
-      >
-        {#if shiftEmployees.length === 0}
-          <div class="callout info">
-            Noch niemand arbeitet nach Schichtplan. Stell das Arbeitszeitmodell unter
-            <a href="/admin/vacation">Personalstruktur</a> auf „Nach Schichtplan“ um, damit Mitarbeitende
-            hier erscheinen.
-          </div>
-        {:else}
-          <div class="pat-table">
-            <div class="pat-row pat-row--head">
-              <div>Mitarbeiter</div>
-              {#each DAY_NAMES as dn, dow (dow)}
-                <div class="pat-col-head">
-                  <span class="pat-dow">{dn}</span>
-                  {#if sollHintForDow(dow)}
-                    <span class="pat-soll">{sollHintForDow(dow)}</span>
+              {#each coverageRules as rule (rule.id)}
+                <div class="cfg-row cfg-row--rules" class:cfg-row--rules-salon={salonColumnShown}>
+                  {#if salonColumnShown}
+                    {@const salonCell = coverageRuleSalonCell(rule)}
+                    <div>
+                      {salonCell.label}
+                      {#if salonCell.inactive}
+                        <span class="badge badge-yellow">{COVERAGE_RULE_SALON_INACTIVE_BADGE}</span>
+                      {/if}
+                    </div>
                   {/if}
+                  <div class="cfg-cell-name">{ruleTemplateName(rule)}</div>
+                  <div>{ruleDayLabel(rule)}</div>
+                  <div class="cfg-cell-num">{formatStaff(Number(rule.minStaff))}</div>
+                  <div>{rule.requiresNonSupervised ? "Ja" : "Nein"}</div>
+                  <div class="cfg-row__actions">
+                    <button
+                      type="button"
+                      class="btn btn-ghost sm"
+                      onclick={() => openEditRule(rule)}
+                    >
+                      Bearbeiten
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost sm"
+                      onclick={() => askDeleteRule(rule.id)}
+                    >
+                      Löschen
+                    </button>
+                  </div>
                 </div>
               {/each}
             </div>
-            {#each shiftEmployees as emp (emp.id)}
-              <div class="pat-row" class:pat-row--dirty={isRowDirty(emp.id)}>
-                <div class="cfg-cell-name">{employeeFullName(emp)}</div>
-                {#each [0, 1, 2, 3, 4, 5, 6] as dow (dow)}
-                  <div class="pat-cell" class:pat-cell--dirty={isCellDirty(emp.id, dow)}>
-                    <select
-                      class="form-input pat-select"
-                      value={patternMatrix[emp.id]?.[dow] ?? ""}
-                      onchange={(e) => {
-                        const v = (e.currentTarget as HTMLSelectElement).value;
-                        const row = patternMatrix[emp.id] ?? Array(7).fill(null);
-                        row[dow] = v === "" ? null : v;
-                        patternMatrix = { ...patternMatrix, [emp.id]: row };
-                      }}
-                      aria-label="{employeeFullName(emp)} {DAY_NAMES_LONG[dow]}"
-                    >
-                      <option value="">—</option>
-                      {#each templates as tpl (tpl.id)}
-                        <option value={tpl.id}>{tpl.name}</option>
-                      {/each}
-                    </select>
+          {/if}
+          {#snippet footer()}
+            <button type="button" class="btn btn-primary sm" onclick={openCreateRule}>
+              Neue Mindestbesetzung
+            </button>
+          {/snippet}
+        </Section>
+      {:else if value === "muster"}
+        <Section
+          title="Schicht-Muster (Wochenrhythmus)"
+          sub="Wiederkehrendes Wochenmuster je Person. Nur Mitarbeitende mit Arbeitszeitmodell „Nach Schichtplan“ erscheinen hier. Änderungen werden erst beim Klick auf „Muster speichern“ übernommen."
+          dirty={patternsDirty}
+        >
+          {#if shiftEmployees.length === 0}
+            <div class="callout info">
+              Noch niemand arbeitet nach Schichtplan. Stell das Arbeitszeitmodell unter
+              <a href="/admin/vacation">Personalstruktur</a> auf „Nach Schichtplan“ um, damit Mitarbeitende
+              hier erscheinen.
+            </div>
+          {:else}
+            <div class="pat-table">
+              <div class="pat-row pat-row--head">
+                <div>Mitarbeiter</div>
+                {#each DAY_NAMES as dn, dow (dow)}
+                  <div class="pat-col-head">
+                    <span class="pat-dow">{dn}</span>
+                    {#if sollHintForDow(dow)}
+                      <span class="pat-soll">{sollHintForDow(dow)}</span>
+                    {/if}
                   </div>
                 {/each}
               </div>
-            {/each}
-          </div>
-        {/if}
-        {#snippet footer()}
-          <button
-            type="button"
-            class="btn btn-primary sm"
-            onclick={saveBulkPatterns}
-            disabled={patternsSaving || dirtyEmployeeCount === 0}
-          >
-            {patternsSaving
-              ? "Speichern …"
-              : `Muster speichern${dirtyEmployeeCount > 0 ? ` (${dirtyEmployeeCount})` : ""}`}
-          </button>
-          {#if patternsMsg}
-            <span class="cfg-muted cfg-msg">{patternsMsg}</span>
+              {#each shiftEmployees as emp (emp.id)}
+                <div class="pat-row" class:pat-row--dirty={isRowDirty(emp.id)}>
+                  <div class="cfg-cell-name">{employeeFullName(emp)}</div>
+                  {#each [0, 1, 2, 3, 4, 5, 6] as dow (dow)}
+                    <div class="pat-cell" class:pat-cell--dirty={isCellDirty(emp.id, dow)}>
+                      <select
+                        class="form-input pat-select"
+                        value={patternMatrix[emp.id]?.[dow] ?? ""}
+                        onchange={(e) => {
+                          const v = (e.currentTarget as HTMLSelectElement).value;
+                          const row = patternMatrix[emp.id] ?? Array(7).fill(null);
+                          row[dow] = v === "" ? null : v;
+                          patternMatrix = { ...patternMatrix, [emp.id]: row };
+                        }}
+                        aria-label="{employeeFullName(emp)} {DAY_NAMES_LONG[dow]}"
+                      >
+                        <option value="">—</option>
+                        {#each templates as tpl (tpl.id)}
+                          <option value={tpl.id}>{tpl.name}</option>
+                        {/each}
+                      </select>
+                    </div>
+                  {/each}
+                </div>
+              {/each}
+            </div>
           {/if}
-        {/snippet}
-      </Section>
-    {/if}
-  {/snippet}
-</SectionStack>
-
-<!-- ── Modal: Template ───────────────────────────────────────── -->
-<Modal
-  bind:open={tplModalOpen}
-  eyebrow="Schicht-Konfiguration"
-  title={editingTplId ? "Vorlage bearbeiten" : "Neue Vorlage"}
->
-  {#if tplError}
-    <div class="callout error" role="alert">{tplError}</div>
-  {/if}
-  <div class="form-group">
-    <label class="form-label" for="tpl-name">Name *</label>
-    <input
-      id="tpl-name"
-      class="form-input"
-      type="text"
-      bind:value={tplName}
-      placeholder="z.B. Frühschicht"
-    />
-  </div>
-  <div class="form-row">
-    <div class="form-group">
-      <label class="form-label" for="tpl-start">Startzeit *</label>
-      <input id="tpl-start" class="form-input" type="time" bind:value={tplStart} />
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="tpl-end">Endzeit *</label>
-      <input id="tpl-end" class="form-input" type="time" bind:value={tplEnd} />
-    </div>
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="tpl-color">Farbe</label>
-    <input id="tpl-color" class="form-input form-input--color" type="color" bind:value={tplColor} />
-  </div>
-  <div class="cfg-palette" role="group" aria-label="Schichtfarbe wählen">
-    {#each SHIFT_PALETTE as p (p.token)}
-      <button
-        type="button"
-        class="cfg-swatch-btn"
-        style:background="var({p.token})"
-        title={p.label}
-        aria-label={p.label}
-        onclick={() => pickPaletteColor(p.token)}
-      ></button>
-    {/each}
-  </div>
-  {#snippet footer()}
-    <div class="spacer"></div>
-    <button type="button" class="btn btn-outline sm" onclick={() => (tplModalOpen = false)}
-      >Abbrechen</button
-    >
-    <button type="button" class="btn btn-primary sm" onclick={saveTemplate} disabled={saving}>
-      {saving ? "Speichern …" : "Speichern"}
-    </button>
-  {/snippet}
-</Modal>
+          {#snippet footer()}
+            <button
+              type="button"
+              class="btn btn-primary sm"
+              onclick={saveBulkPatterns}
+              disabled={patternsSaving || dirtyEmployeeCount === 0}
+            >
+              {patternsSaving
+                ? "Speichern …"
+                : `Muster speichern${dirtyEmployeeCount > 0 ? ` (${dirtyEmployeeCount})` : ""}`}
+            </button>
+            {#if patternsMsg}
+              <span class="cfg-muted cfg-msg">{patternsMsg}</span>
+            {/if}
+          {/snippet}
+        </Section>
+      {/if}
+    {/snippet}
+  </PageTabs>
+{/if}
 
 <!-- ── Modal: Coverage Rule ──────────────────────────────────── -->
 <Modal
@@ -762,15 +544,6 @@
 
 <!-- ── Confirmations ─────────────────────────────────────────── -->
 <ConfirmDialog
-  bind:open={tplDeleteConfirm.open}
-  title="Vorlage löschen?"
-  description={`Die Vorlage „${tplDeleteConfirm.name}" wird dauerhaft entfernt.`}
-  confirmLabel="Löschen"
-  danger
-  onConfirm={confirmDeleteTemplate}
-/>
-
-<ConfirmDialog
   bind:open={ruleDeleteConfirm.open}
   title="Mindestbesetzung löschen?"
   description="Die Regel wird dauerhaft entfernt. Gibt es keine andere passende Regel, gelten 2 Personen."
@@ -827,13 +600,6 @@
     font-variant-numeric: tabular-nums;
     font-family: var(--font-ui);
   }
-  .cfg-swatch {
-    display: inline-block;
-    width: 24px;
-    height: 24px;
-    border-radius: var(--r-control);
-    border: 1px solid var(--line);
-  }
   .cfg-muted {
     color: var(--text-2);
     font-size: 13.5px;
@@ -859,38 +625,11 @@
     color: var(--text);
     cursor: pointer;
   }
-  .cfg-palette {
-    display: flex;
-    gap: 8px;
-    margin: 8px 0 12px;
-    flex-wrap: wrap;
-  }
-  .cfg-swatch-btn {
-    width: 24px;
-    height: 24px;
-    border-radius: var(--r-control);
-    border: 1px solid var(--line);
-    cursor: pointer;
-    padding: 0;
-  }
   .form-group {
     display: flex;
     flex-direction: column;
     gap: 4px;
     margin-bottom: 10px;
-  }
-  .form-row {
-    display: flex;
-    gap: 12px;
-  }
-  .form-row .form-group {
-    flex: 1;
-  }
-  .form-input--color {
-    width: 48px;
-    height: 36px;
-    padding: 2px;
-    cursor: pointer;
   }
 
   @media (max-width: 720px) {
