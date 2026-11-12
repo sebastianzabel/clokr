@@ -64,11 +64,6 @@
       }
     },
     "own-period-control": {
-      "apps/web/src/routes/(app)/dashboard/+page.svelte": {
-        "count": 2,
-        "ticket": "#846",
-        "reason": "Team-Wochenübersicht (Heute im Salon)"
-      },
       "apps/web/src/routes/(operator)/betreiber/(konsole)/mandanten/[id]/support/mitarbeitende/[employeeId]/+page.svelte": {
         "count": 1,
         "ticket": null,

@@ -49,10 +49,12 @@ h6 {
   text-wrap: balance;
 }
 
-/* Inline links in body text — must be distinguishable from surrounding text */
+/* Inline links in body text — must be distinguishable from surrounding text. A whole list row or
+   table cell that is a link (.list-link of ListRow, .team-grid__link of the team week, #846) is no
+   inline text link: its row is the affordance. */
 a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):not(
     .sidebar-brand
-  ):not(.mehr-item) {
+  ):not(.mehr-item):not(.list-link):not(.team-grid__link) {
   text-decoration-line: underline;
   text-decoration-color: var(--brand);
   text-underline-offset: 2px;
@@ -60,7 +62,7 @@ a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-us
 }
 a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):not(
     .sidebar-brand
-  ):not(.mehr-item):hover {
+  ):not(.mehr-item):not(.list-link):not(.team-grid__link):hover {
   text-decoration-color: var(--brand);
 }
 
