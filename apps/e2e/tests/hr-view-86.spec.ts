@@ -7,11 +7,11 @@
  *      employee list, an employee's detail page (every visible tab), the reports, the month close
  *      and the salon admin WITHOUT one API answer >= 400 and WITHOUT one request to a time-data
  *      endpoint (time entries, day breaks, retro requests, month saldo) — DSGVO Art. 5 lit. c;
- *   b. the tab strip shows Stammdaten, Arbeitszeit, Urlaub, Salons and never Berechtigungen or
- *      Gefahrenzone; HR changes a contract from the next month-first, adds and ends an Einsatzsalon,
- *      sets an exit date and finds the ended person with the filter „Ausgeschieden“;
+ *   b. the tab strip shows Person, Vertrag, Urlaub, Salons and never Zugang (the former Berechtigungen
+ *      and Gefahrenzone); HR changes a contract from the next month-first, adds and ends an
+ *      Einsatzsalon, sets an exit date and finds the ended person with the filter „Ausgeschieden“;
  *   c. HR creates an employee with a chosen Stammsalon in a tenant with two active salons;
- *   d. the list, the detail page (Salons and Arbeitszeit tabs) and the month close fit 390 and
+ *   d. the list, the detail page (Salons and Vertrag tabs) and the month close fit 390 and
  *      360 px in light and dark mode. The visual matrix runs on route interception: the interesting
  *      shapes (a long name, an ended person, an inactive salon, withheld day details) are
  *      fulfilled from fixtures instead of being produced by the real stack, so the cells do not
@@ -308,14 +308,13 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
       page.getByRole("tabpanel").getByText("Persönliche Daten", { exact: true }),
     ).toBeVisible();
 
-    // The tab strip is exactly what HR may use; Berechtigungen and Gefahrenzone are absent.
+    // The tab strip is exactly what HR may use; Zugang (roles, account, anonymise) is absent (#854).
     const tabs = page.getByRole("tab");
-    await expect(tabs).toHaveText(["Stammdaten", "Arbeitszeit", "Urlaub", "Salons"]);
-    await expect(page.getByRole("tab", { name: "Berechtigungen" })).toHaveCount(0);
-    await expect(page.getByRole("tab", { name: "Gefahrenzone" })).toHaveCount(0);
+    await expect(tabs).toHaveText(["Person", "Vertrag", "Urlaub", "Salons"]);
+    await expect(page.getByRole("tab", { name: "Zugang" })).toHaveCount(0);
 
     // Walk every visible tab and wait for something that tab renders.
-    await page.getByRole("tab", { name: "Arbeitszeit" }).click();
+    await page.getByRole("tab", { name: "Vertrag" }).click();
     await expect(page.getByText("Arbeitszeitmodell", { exact: true }).first()).toBeVisible();
     await expect(page.getByTestId("contract-history")).toBeVisible();
 
@@ -326,7 +325,7 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(page.getByTestId("salon-assignments-table")).toBeVisible();
     await expect(page.getByTestId("salon-assignments-table")).toContainText("Stammsalon");
 
-    await page.getByRole("tab", { name: "Stammdaten" }).click();
+    await page.getByRole("tab", { name: "Person" }).click();
     await expect(
       page.getByRole("tabpanel").getByText("Persönliche Daten", { exact: true }),
     ).toBeVisible();
@@ -412,7 +411,7 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     // #843 D-843-11: the name cell of the DataTable row is a button, not a link.
     await page.getByTestId(`admin-employees-row-${x.id}`).getByRole("button").first().click();
     await expect(page).toHaveURL(new RegExp(`/verwalten/personen/${x.id}`));
-    await page.getByRole("tab", { name: "Arbeitszeit" }).click();
+    await page.getByRole("tab", { name: "Vertrag" }).click();
     const contractHistory = page.getByTestId("contract-history");
     await expect(contractHistory.locator("tbody tr")).toHaveCount(1);
     const mondayHours = page.locator("#emp-day-mo");
@@ -474,17 +473,23 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await page.goto(`${tenant.baseUrl}/admin/employees/${x.id}`);
 
     // ── 4. AC-86-6: set the exit date (last, so no assignment rule about it interferes) ───────
-    await page.getByRole("tab", { name: "Stammdaten" }).click();
-    await page.locator("#e-exitdate").fill(exitDay);
-    const personal = page.locator("section").filter({
-      has: page.locator(".section-title", { hasText: /^Persönliche Daten$/ }),
-    });
+    await page.getByRole("tab", { name: "Person" }).click();
+    // #854: the exit date is a DatePicker (segments Tag, Monat, Jahr) in the group „Austritt und
+    // Urlaubsbasis“ with its own SaveBar; the answer is a toast.
+    const [exitYear, exitMonth, exitDom] = exitDay.split("-");
+    const employment = page.getByRole("region", { name: "Austritt und Urlaubsbasis" });
+    await employment
+      .locator('[aria-label="Austrittsdatum"]')
+      .getByRole("spinbutton")
+      .first()
+      .click();
+    await page.keyboard.type(`${exitDom}${exitMonth}${exitYear}`);
     const exitSaved = page.waitForResponse(
       (r) => r.request().method() === "PATCH" && r.url().endsWith(`/api/v1/employees/${x.id}`),
     );
-    await personal.getByRole("button", { name: "Speichern" }).click();
+    await employment.getByRole("button", { name: "Austritt und Urlaubsbasis speichern" }).click();
     expect((await exitSaved).status(), "the exit date is saved").toBe(200);
-    await expect(personal.getByText("Gespeichert")).toBeVisible();
+    await expect(page.getByText("Austritt und Urlaubsbasis gespeichert.")).toBeVisible();
 
     // ── 5. the ended employee is found with the filter „Ausgeschieden“ ───────────────────────
     await page.goto(`${tenant.baseUrl}/admin/employees`);
@@ -929,7 +934,7 @@ test.describe("Issue #86 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         results.push(await checkCell(page, "employee-salons", viewport.width, mode));
 
         // 3. the detail page, Arbeitszeit tab: three contract rows
-        await page.getByRole("tab", { name: "Arbeitszeit" }).click();
+        await page.getByRole("tab", { name: "Vertrag" }).click();
         await expect(page.getByTestId("contract-history").locator("tbody tr")).toHaveCount(3);
         await expect(page.getByText(/Danger/)).toHaveCount(0);
         results.push(await checkCell(page, "employee-arbeitszeit", viewport.width, mode));

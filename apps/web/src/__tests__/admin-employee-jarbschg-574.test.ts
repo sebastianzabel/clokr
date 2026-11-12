@@ -18,10 +18,16 @@ const DETAIL = readRouteFile(
   "../routes/(app)/admin/employees/[id]/+page.svelte",
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
+// Since Issue #854 (plan 854-20) the birth date field lives in the Person tab.
+const PERSON_TAB = readRouteFile(
+  "../lib/components/employees/detail/PersonTab.svelte",
+  "src/lib/components/employees/detail/PersonTab.svelte",
+);
 
 describe("Issue #574 — § 11 JArbSchG for every person under 18", () => {
   it("[vacuity gate] the employee detail page is loaded", () => {
-    expect(DETAIL.length).toBeGreaterThan(100_000);
+    expect(DETAIL.length).toBeGreaterThan(80_000);
+    expect(PERSON_TAB.length).toBeGreaterThan(5_000);
     expect(DETAIL).toContain('data-testid="pausendauer-over6h"');
   });
 
@@ -29,8 +35,9 @@ describe("Issue #574 — § 11 JArbSchG for every person under 18", () => {
     const match = /let isUnder18 = \$derived\(([\s\S]*?)\);/.exec(DETAIL);
     expect(match, "no isUnder18 derived").not.toBeNull();
     const expression = match?.[1] ?? "";
-    expect(expression).toContain("eBirthDate");
-    expect(expression).not.toMatch(/eClassification|AZUBI/);
+    // #854: the Vertrag tab follows the SAVED birth day of the record (the Person tab saves it).
+    expect(expression).toContain("birthDay");
+    expect(expression).not.toMatch(/classification|AZUBI/i);
     expect(DETAIL).not.toContain("isAzubiUnder18");
   });
 
@@ -41,7 +48,7 @@ describe("Issue #574 — § 11 JArbSchG for every person under 18", () => {
   });
 
   it("names § 11 JArbSchG in the hint, the pill and the placeholders — never § 9", () => {
-    expect(DETAIL.replace(/\s+/g, " ")).toContain(
+    expect(PERSON_TAB.replace(/\s+/g, " ")).toContain(
       "Für Personen unter 18 Jahren gelten bei den Pausen die Regeln nach § 11 JArbSchG: mehr als 4,5 Stunden 30 Min, mehr als 6 Stunden 60 Min.",
     );
     expect(DETAIL).toContain("Unter 18 — Pausen nach § 11 JArbSchG");

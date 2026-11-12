@@ -142,6 +142,9 @@ export const SCOPE_FILES = [
   // Issue #854 (plan 854-08): the same for Regeln › Monatsabschluss and Benachrichtigungen & E-Mail.
   "apps/web/src/routes/(app)/verwalten/regeln/monatsabschluss/+page.svelte",
   "apps/web/src/routes/(app)/verwalten/regeln/benachrichtigungen/+page.svelte",
+  // Issue #854 (plan 854-20): the Person tab of the employee detail shows its controls by
+  // employee:update (`canEdit`), never by a role.
+  "apps/web/src/lib/components/employees/detail/PersonTab.svelte",
 ];
 
 /** (file, exact trimmed line text) pairs that may keep a flagged line. Empty since #538: the last

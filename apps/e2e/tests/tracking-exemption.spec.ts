@@ -74,7 +74,7 @@ test.describe("Tracking exemption — admin toggle (Phase 76.7 D-26)", () => {
     await loginAsTenantAdmin(page, tenant);
 
     await page.goto(`/admin/employees/${employeeId}`);
-    // Stammdaten tab is the default; the exemption toggle lives there.
+    // The Person tab is the default; the exemption toggle lives there.
 
     // ADMIN gate visible
     const toggle = page.getByTestId("exemption-toggle");

@@ -56,16 +56,16 @@ const STYLE = STYLE_MATCH![1];
 // keep using --card / --text — those are the "editable" look the disabled state must differ
 // from. If a future edit changes these, the test below re-derives its expectations from the
 // actual tokens found here instead of hardcoding them, so it still pins the *distinction*.
-const BASE_BLOCK_MATCH = STYLE.match(/\.input,\s*\n\s*\.select,\s*\n\s*\.form-input\s*\{([^}]*)\}/);
+const BASE_BLOCK_MATCH = STYLE.match(/\n\s*\.form-input\s*\{([^}]*)\}/);
 
-// The disabled override this fix adds. Written to tolerate minor formatting drift (selector
-// grouping order, whitespace) while still requiring all three selectors and both declarations.
-const DISABLED_BLOCK_MATCH = STYLE.match(
-  /\.input:disabled,\s*\n\s*\.select:disabled,\s*\n\s*\.form-input:disabled\s*\{([^}]*)\}/,
-);
+// The disabled override this fix adds. Written to tolerate minor formatting drift (whitespace) while
+// still requiring the selector and both declarations. Since Issue #854 (plan 854-20) the `.input`
+// and `.select` classes are gone from this page (the Person tab moved onto FormField); only the
+// Vertrag panel's old `.form-input` markup remains, so the rule names that one class.
+const DISABLED_BLOCK_MATCH = STYLE.match(/\n\s*\.form-input:disabled\s*\{([^}]*)\}/);
 
 describe("admin employee detail — disabled .form-input visibility (issue #94)", () => {
-  it("defines a base (editable) .input/.select/.form-input rule using --card and --text", () => {
+  it("defines a base (editable) .form-input rule using --card and --text", () => {
     expect(
       BASE_BLOCK_MATCH,
       "base .form-input rule not found — page structure changed",
@@ -75,7 +75,7 @@ describe("admin employee detail — disabled .form-input visibility (issue #94)"
     expect(base).toMatch(/color:\s*var\(--text\)/);
   });
 
-  it("defines a scoped :disabled override for .input/.select/.form-input (the actual fix)", () => {
+  it("defines a scoped :disabled override for .form-input (the actual fix)", () => {
     expect(
       DISABLED_BLOCK_MATCH,
       "no .form-input:disabled rule in this file's scoped <style> — the component's own " +

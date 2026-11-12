@@ -24,6 +24,12 @@ const DETAIL = readRouteFile(
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
 
+// Since Issue #854 (plan 854-20) the Person tab is a component of its own.
+const PERSON_TAB = readRouteFile(
+  "../lib/components/employees/detail/PersonTab.svelte",
+  "src/lib/components/employees/detail/PersonTab.svelte",
+);
+
 describe("/admin/employees/[id] - tabs follow permissions (Issue #86, D-04)", () => {
   it("imports employeeDetailTabs and derives its tab list from it", () => {
     expect(DETAIL).toMatch(
@@ -34,8 +40,12 @@ describe("/admin/employees/[id] - tabs follow permissions (Issue #86, D-04)", ()
   });
 
   it("restores the hash only for a tab of the derived list and hands that list to the layout", () => {
-    expect(DETAIL).toMatch(/tabs\.some\(\(t\) => t\.id === hash\)/);
-    expect(DETAIL).toMatch(/\{tabs\}|tabs=\{tabs\}/);
+    // #854: the hash is read by the one allow-list rule against the VISIBLE ids (aliases map the
+    // former ids onto them), and the layout gets exactly the derived list.
+    expect(DETAIL).toMatch(
+      /tabFromHash\(\s*\$page\.url\.hash,\s*tabs\.map\(\(t\) => t\.id\),\s*DETAIL_TAB_ALIASES,?\s*\)/,
+    );
+    expect(DETAIL).toMatch(/tabs=\{tabs\.map\(/);
     expect(DETAIL).not.toMatch(/tabs=\{TABS\}/);
   });
 
@@ -78,10 +88,11 @@ describe("/admin/employees/[id] - employment on today's model (Issue #86, D-01)"
   });
 
   it("words the exit date as the end of the employment and says the access stays active", () => {
-    expect(DETAIL).toContain("Austrittsdatum (optional)");
-    expect(DETAIL).toMatch(/beendet\s+das\s+Beschäftigungsverhältnis/);
-    expect(DETAIL).toMatch(/bleibt\s+mit\s+allen\s+Daten\s+sichtbar/);
-    expect(DETAIL).toMatch(
+    expect(PERSON_TAB).toContain('label="Austrittsdatum"');
+    expect(PERSON_TAB).toMatch(/Optional\.\s+Bei\s+gesetztem\s+Datum/);
+    expect(PERSON_TAB).toMatch(/beendet\s+das\s+Beschäftigungsverhältnis/);
+    expect(PERSON_TAB).toMatch(/bleibt\s+mit\s+allen\s+Daten\s+sichtbar/);
+    expect(PERSON_TAB).toMatch(
       /Zugang\s+zur\s+App\s+bleibt\s+aktiv,\s+bis\s+er\s+gesondert\s+gesperrt\s+wird/,
     );
   });

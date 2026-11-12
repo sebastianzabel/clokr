@@ -31,6 +31,13 @@ const PAGE = readRouteFile(
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
 
+// Since Issue #854 (plan 854-20) the Stammdaten live in the Person tab component: three groups with
+// their own SaveBar, snapshot and PATCH, and the § 18 ArbZG exemption with its confirm dialog.
+const PERSON_TAB = readRouteFile(
+  "../lib/components/employees/detail/PersonTab.svelte",
+  "src/lib/components/employees/detail/PersonTab.svelte",
+);
+
 // The plan's reference slicer (`vacation-summary.test.ts:47-55`) finds a function's end by
 // searching for the next "\n  }" (a two-space-indented closing brace) after the marker. That
 // heuristic breaks on this page: several save functions take an optional object-typed
@@ -39,7 +46,8 @@ const PAGE = readRouteFile(
 // function body even starts, so the naive slice would end before reaching anything inside the
 // real body. `fnBody` here instead tracks paren/brace depth so a parameter type's braces can
 // never be mistaken for the function body's closing brace.
-function fnBody(marker: string): string {
+function fnBody(marker: string, source: string = PAGE): string {
+  const PAGE = source;
   const start = PAGE.indexOf(marker);
   expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
 
@@ -95,7 +103,6 @@ describe("D-08/AK-10 — Vertragsdaten mit validFrom stay button-gated", () => {
 
 describe("N-02 — every save path on this page is already button-gated", () => {
   const BUTTON_GATED = [
-    "saveStammdaten",
     "saveSchedule",
     "savePausendauer",
     "savePhorestPuffer",
@@ -109,12 +116,21 @@ describe("N-02 — every save path on this page is already button-gated", () => 
     expect(PAGE).not.toContain(`onchange={${name}}`);
   });
 
+  it("the Person tab groups save through their SaveBar, never through a change handler", () => {
+    for (const name of ["saveIdentity", "saveStructure", "saveEmployment"]) {
+      expect(PERSON_TAB, name).toContain(`onSave={${name}}`);
+      expect(PERSON_TAB, name).not.toContain(`onchange={${name}}`);
+      expect(fnBody(`async function ${name}`, PERSON_TAB), name).toContain("patchEmployee");
+    }
+  });
+
   it("the § 18 ArbZG exemption toggle stays confirm-gated — the PATCH fires only on confirm", () => {
-    expect(PAGE).toContain("onchange={onExemptToggleChange}");
-    expect(PAGE).toContain("onConfirm={confirmExemptToggle}");
+    expect(PERSON_TAB).toContain("onchange={onExemptToggleChange}");
+    expect(PERSON_TAB).toContain("onConfirm={confirmExemptToggle}");
     // The change handler itself must only stage the intent and open the dialog; the actual
     // api.patch() must live in confirmExemptToggle, never here.
-    expect(fnBody("function onExemptToggleChange")).not.toContain("api.patch");
+    expect(fnBody("function onExemptToggleChange", PERSON_TAB)).not.toContain("api.patch");
+    expect(fnBody("async function confirmExemptToggle", PERSON_TAB)).toContain("api.patch");
   });
 });
 
@@ -131,12 +147,14 @@ describe("AK-02 — no text/number input writes inline on this page", () => {
 
   it("returns the empty array today and must stay empty", () => {
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
+    // [anti-vacuity] the Person tab does hold text and number inputs, and none writes inline.
+    expect(PERSON_TAB.match(/type="(?:text|number)"/g)?.length ?? 0).toBeGreaterThan(3);
+    expect(textOrNumberInputHandlers(PERSON_TAB)).toEqual([]);
   });
 });
 
 describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
   const FLAGS = [
-    "stammdatenDirty",
     "scheduleDirty",
     "pausendauerDirty",
     "phorestPufferDirty",
@@ -150,9 +168,15 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
   });
 
   // Issue #580 removed the footer of the Berechtigungen tab: role assignments save in their own
-  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1), so seven footer Sections remain.
-  it("all seven footer Sections receive a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(7);
+  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1). Since #854 the Person tab owns its three groups and
+  // reports their change count (`bind:changes`), so six footer Sections remain on this page.
+  it("all six footer Sections receive a dirty prop", () => {
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(6);
+  });
+
+  it("the Person tab's unsaved changes are summed into the one registration", () => {
+    expect(PAGE).toContain("bind:changes={personChanges}");
+    expect(PAGE).toMatch(/let anyUnsaved = \$derived\(\s*personChanges > 0/);
   });
 
   it("registers under its own id and de-registers on unmount", () => {
@@ -223,11 +247,15 @@ describe("Issue #435 — server-driven vacation values", () => {
     expect(line).toContain("regularDays");
   });
 
-  it("the Stammdaten snapshot covers eAnnualVacationDays (D-13)", () => {
-    const idx = PAGE.indexOf("let stammdatenDirty = $derived(");
-    expect(idx, "stammdatenDirty derivation not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 400);
-    expect(slice).toContain("eAnnualVacationDays");
+  it("the Person tab's change count covers annualVacationDays (D-13)", () => {
+    // The employment group counts its keys against its snapshot; annualVacationDays is one of them.
+    expect(PERSON_TAB).toContain("countChanges(snapshot, values, EMPLOYMENT_KEYS)");
+    const model = readRouteFile(
+      "../lib/employees/person-form.ts",
+      "src/lib/employees/person-form.ts",
+    );
+    const keys = model.slice(model.indexOf("export const EMPLOYMENT_KEYS"));
+    expect(keys.slice(0, keys.indexOf("]"))).toContain('"annualVacationDays"');
   });
 });
 

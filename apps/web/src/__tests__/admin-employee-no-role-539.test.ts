@@ -42,7 +42,7 @@ describe("/admin/employees/[id] - a person without a role (Issue #539)", () => {
   });
 
   it("renders the hint under hasNoRole, outside the canAssignRoles condition", () => {
-    const tab = PAGE.slice(PAGE.indexOf('tab === "berechtigungen"'));
+    const tab = PAGE.slice(PAGE.indexOf('tab === "zugang"'));
     const hintAt = tab.indexOf("{NO_ROLE_HINT}");
     expect(hintAt).toBeGreaterThan(-1);
     const guard = tab.lastIndexOf("{#if hasNoRole(accountUser)}", hintAt);

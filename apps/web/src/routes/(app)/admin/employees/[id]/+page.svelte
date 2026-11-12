@@ -4,13 +4,19 @@
   import { toasts } from "$stores/toast";
   import { authStore } from "$stores/auth";
   import { employeeAdminRights, contractShiftRights } from "$lib/page-rights";
-  import { employeeDetailTabs } from "$lib/employees/detail-tabs";
+  import { DETAIL_TAB_ALIASES, employeeDetailTabs } from "$lib/employees/detail-tabs";
   import { contractHistoryRows, type ContractHistoryInput } from "$lib/employees/contract-history";
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { onMount, untrack } from "svelte";
-  import ListDetail from "$lib/components/admin/ListDetail.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Breadcrumb from "$components/ui/Breadcrumb.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
+  import PersonTab from "$lib/components/employees/detail/PersonTab.svelte";
+  import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
+  import { employmentState, localCalendarDay } from "$lib/employees/employment-state";
+  import { dayOf, type PersonEmployee } from "$lib/employees/person-form";
   import Section from "$lib/components/admin/Section.svelte";
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
@@ -22,13 +28,7 @@
     shouldOfferRetroactiveRun,
     type RetroactivePreview,
   } from "$lib/components/vocational-school/retroactive";
-  import {
-    type EmployeeClassification,
-    CLASSIFICATION_OPTIONS,
-    CLASSIFICATION_LABELS,
-    applyDefaults,
-    isOverridden,
-  } from "$lib/employee-classification";
+  import type { EmployeeClassification } from "$lib/employee-classification";
   import {
     isWorkDay,
     buildContractWorkDaysPayload,
@@ -51,11 +51,6 @@
   } from "$lib/api/roles";
   import { salonContext } from "$stores/salon-context";
   import { hasPermission } from "$lib/permissions";
-  import {
-    statutoryMinimumFiveDayWeek,
-    MISSING_BIRTH_DATE_HINT,
-  } from "$lib/statutory-minimum-vacation";
-  import { vacationBaseDefaultPlaceholder } from "$lib/vacation-base-default";
   import {
     CARRY_OVER_REASON_OPTIONS,
     carryOverReasonLabel,
@@ -303,6 +298,11 @@
   const employeeId = $derived($page.params.id ?? "");
 
   onMount(async () => {
+    activeTab = tabFromHash(
+      $page.url.hash,
+      tabs.map((t) => t.id),
+      DETAIL_TAB_ALIASES,
+    );
     loading = true;
     loadError = "";
     try {
@@ -380,18 +380,6 @@
 
       // Phase 109 (D-11/D-12) — baseline snapshots, taken once every field above is hydrated,
       // so no section starts marked "Nicht gespeichert" right after load.
-      stammdatenSnapshot = snap(
-        eFirstName,
-        eLastName,
-        eEmployeeNumber,
-        eNfcCardId,
-        eExitDate,
-        eBirthDate,
-        eAnnualVacationDays,
-        eClassification,
-        eCoverageWeight,
-        eRequiresSupervision,
-      );
       scheduleSnapshot = snap(
         eType,
         eWeeklyHours,
@@ -446,27 +434,16 @@
 
   // ── Tabs ───────────────────────────────────────────────────────────────────
   // The tab list follows the caller's permissions (Issue #86, D-04); it is derived below, next to
-  // `rights`, from employeeDetailTabs().
+  // `rights`, from employeeDetailTabs(). The selected tab lives in the URL hash (Issue #854): the
+  // hash is read against the VISIBLE ids only, and the former ids (`#stammdaten`, `#arbeitszeit`,
+  // `#berechtigungen`, `#danger`) resolve through DETAIL_TAB_ALIASES.
+  let activeTab = $state<string>("person");
 
-  let activeTab = $state<string>("stammdaten");
+  function selectTab(next: string) {
+    activeTab = next;
+    writeTabHash(next);
+  }
 
-  $effect(() => {
-    if (typeof window !== "undefined" && window.location.hash) {
-      const hash = decodeURIComponent(window.location.hash.slice(1));
-      if (tabs.some((t) => t.id === hash)) activeTab = hash;
-    }
-  });
-
-  $effect(() => {
-    if (typeof window !== "undefined" && activeTab) {
-      history.replaceState(null, "", `#${encodeURIComponent(activeTab)}`);
-    }
-  });
-
-  // ── Stammdaten state ───────────────────────────────────────────────────────
-  let eFirstName = $state<string>("");
-  let eLastName = $state<string>("");
-  let eEmployeeNumber = $state<string>("");
   // Permission-driven controls (Issue #538): the API refuses anything beyond these, the page only
   // hides. Setting a role needs role-assignment:manage; the § 18 ArbZG exemption rides on the
   // employee PATCH, hence employee:update.
@@ -523,18 +500,6 @@
   let tabs = $derived(employeeDetailTabs(rights));
   let canDiscardShifts = $derived(contractShiftRights($authStore.user).canDiscardShifts);
   let canUpdateEmployee = $derived(rights.canUpdate);
-  let eNfcCardId = $state<string>("");
-  let eExitDate = $state<string>("");
-  let eBirthDate = $state<string>(""); // § 11 JArbSchG needs the birth date for the under-18 check
-  // Issue #435 (D-13) — per-person vacation base value; null = tenant default.
-  let eAnnualVacationDays = $state<number | null>(null);
-  let eClassification = $state<EmployeeClassification>("VOLLZEIT");
-  let eCoverageWeight = $state<number>(applyDefaults("VOLLZEIT").coverageWeight);
-  let eRequiresSupervision = $state<boolean>(applyDefaults("VOLLZEIT").requiresSupervision);
-  let stammdatenSaving = $state(false);
-  let stammdatenError = $state("");
-  let stammdatenSaved = $state(false);
-
   // Phase 65 — Per-employee Pausendauer override (BREAK-06)
   // String state lets us distinguish "" (= null, use tenant) from typed integer values
   let eBreakOver6hOverride = $state<string>("");
@@ -664,24 +629,6 @@
     })(),
   );
 
-  // Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption toggle (ADMIN-only).
-  // `eIsTimeTrackingExempt` mirrors the checkbox UI state. `preChangeExempt`
-  // is the last server-confirmed value used to revert when the user cancels
-  // the ConfirmDialog. `intendedExempt` snapshots the requested new value so
-  // the modal description can render the correct verb.
-  let eIsTimeTrackingExempt = $state<boolean>(false);
-  let preChangeExempt = $state<boolean>(false);
-  let intendedExempt = $state<boolean>(false);
-  let exemptConfirmOpen = $state<boolean>(false);
-  let exemptSaving = $state<boolean>(false);
-
-  let eCoverageOverridden = $derived(
-    isOverridden(eClassification, "coverageWeight", eCoverageWeight),
-  );
-  let eSupervisionOverridden = $derived(
-    isOverridden(eClassification, "requiresSupervision", eRequiresSupervision),
-  );
-
   /**
    * Pure age-at-date helper (mirrors apps/api/src/contexts/absence/jarbschg.ts ageAtDate, no date-fns dep).
    * Returns full years between birthDate and atDate. Returns NaN for invalid input.
@@ -700,54 +647,18 @@
 
   // Issue #574 (D-574-12) — § 11 JArbSchG applies to ANY person under 18, whatever the
   // classification (the API decides the break regime per work date the same way): 30/60 Min
-  // suggestion. Read from local state (eBirthDate) so the pill and the suggestion update live as
-  // the admin edits Stammdaten — no need to save first.
+  // suggestion. Read from the saved birth date of the Person tab (plan 854-20: the field has its own
+  // SaveBar there, the Vertrag tab follows what the record holds).
+  let birthDay = $derived(dayOf(employee?.birthDate));
+  let classification = $derived<EmployeeClassification>(employee?.classification ?? "VOLLZEIT");
   let isUnder18 = $derived(
-    Number.isFinite(ageAtDate(eBirthDate || null, new Date())) &&
-      ageAtDate(eBirthDate || null, new Date()) < 18,
+    Number.isFinite(ageAtDate(birthDay, new Date())) && ageAtDate(birthDay, new Date()) < 18,
   );
   let bothOverridesEmpty = $derived(eBreakOver6hOverride === "" && eBreakOver9hOverride === "");
   let showUnder18SuggestionButton = $derived(isUnder18 && bothOverridesEmpty);
 
-  // Issue #435 (D-12) — AZUBI with no birth date on file: the legal minimum cannot be checked.
-  let azubiMissingBirthDate = $derived(eClassification === "AZUBI" && !eBirthDate);
-
-  // Issue #435 (D-13) — tenant default shown as the Stammdaten placeholder.
-  let tenantDefaultVacationDays = $derived(Number(tenantBreakConfig?.defaultVacationDays) || 30);
-  // Issue #482 — the Azubi-Standard, same fallback as admin/vacation's own form (20).
-  let tenantDefaultApprenticeVacationDays = $derived(
-    Number(tenantBreakConfig?.defaultApprenticeVacationDays) || 20,
-  );
-  // Issue #435 (D-13 hint) — below the statutory minimum for the CURRENT year (display-only;
-  // the server's PUT/PATCH guards, plan 03, are authoritative).
-  let eAnnualVacationMinimum = $derived(
-    // Without a birth date the adult minimum (§ 3 BUrlG) still applies — never "no minimum".
-    statutoryMinimumFiveDayWeek(eBirthDate || null, new Date().getFullYear()),
-  );
-
   function initFields() {
     if (!employee) return;
-    eFirstName = employee.firstName ?? "";
-    eLastName = employee.lastName ?? "";
-    eEmployeeNumber = employee.employeeNumber ?? "";
-    eNfcCardId = employee.nfcCardId ?? "";
-    eExitDate = employee.exitDate ? String(employee.exitDate).split("T")[0] : "";
-    eBirthDate = employee.birthDate ? String(employee.birthDate).split("T")[0] : "";
-    // Issue #482: null/undefined = the classification's own Standard, resolved server-side
-    // (placeholder shown in the input).
-    eAnnualVacationDays =
-      employee.annualVacationDays !== undefined && employee.annualVacationDays !== null
-        ? Number(employee.annualVacationDays)
-        : null;
-    eClassification = employee.classification ?? "VOLLZEIT";
-    eCoverageWeight =
-      employee.coverageWeight !== undefined && employee.coverageWeight !== null
-        ? Number(employee.coverageWeight)
-        : applyDefaults(employee.classification ?? "VOLLZEIT").coverageWeight;
-    eRequiresSupervision =
-      employee.requiresSupervision ??
-      applyDefaults(employee.classification ?? "VOLLZEIT").requiresSupervision;
-
     // Phase 65 — override fields ("" = null in PATCH body, fall back to tenant default)
     eBreakOver6hOverride =
       employee.breakOver6hOverride !== undefined && employee.breakOver6hOverride !== null
@@ -770,13 +681,6 @@
       employee.phorestWrapupMinutesOverride !== null
         ? String(employee.phorestWrapupMinutesOverride)
         : "";
-
-    // Phase 76.7 (UI-V19-04a) — hydrate § 18 ArbZG exemption flag.
-    // `preChangeExempt` tracks the last server-confirmed value so a Abbrechen
-    // click on the ConfirmDialog can revert the visual toggle.
-    eIsTimeTrackingExempt = employee.isTimeTrackingExempt === true;
-    preChangeExempt = eIsTimeTrackingExempt;
-    intendedExempt = eIsTimeTrackingExempt;
 
     // Phase 76.36 — hydrate per-employee bsSlot* overrides ("" = null, inherit from lower layer)
     empBsSlotFirstLong =
@@ -854,68 +758,6 @@
     eVacReasonNote = vacData?.carryOverNote ?? "";
     loadedVacReason = vacData?.carryOverReason ?? null;
     loadedVacReasonNote = vacData?.carryOverNote ?? null;
-  }
-
-  function onClassificationChange() {
-    const def = applyDefaults(eClassification);
-    eCoverageWeight = def.coverageWeight;
-    eRequiresSupervision = def.requiresSupervision;
-  }
-
-  function resetCoverage() {
-    eCoverageWeight = applyDefaults(eClassification).coverageWeight;
-  }
-
-  function resetSupervision() {
-    eRequiresSupervision = applyDefaults(eClassification).requiresSupervision;
-  }
-
-  async function saveStammdaten() {
-    if (!employee) return;
-    stammdatenSaving = true;
-    stammdatenError = "";
-    stammdatenSaved = false;
-    try {
-      const res = await api.patch<typeof employee & { proRataWarning?: { message: string } }>(
-        `/employees/${employee.id}`,
-        {
-          firstName: eFirstName,
-          lastName: eLastName,
-          employeeNumber: eEmployeeNumber,
-          nfcCardId: eNfcCardId || null,
-          exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
-          birthDate: eBirthDate ? new Date(eBirthDate).toISOString() : null,
-          classification: eClassification,
-          coverageWeight: eCoverageWeight,
-          requiresSupervision: eRequiresSupervision,
-          // Issue #482 (G-5): null = back to the classification's own Standard (an explicit
-          // stored value is an override; clearing the field returns the person to the Standard).
-          annualVacationDays: eAnnualVacationDays ?? null,
-        },
-      );
-      employee = { ...employee, firstName: eFirstName, lastName: eLastName };
-      stammdatenSaved = true;
-      stammdatenSnapshot = snap(
-        eFirstName,
-        eLastName,
-        eEmployeeNumber,
-        eNfcCardId,
-        eExitDate,
-        eBirthDate,
-        eAnnualVacationDays,
-        eClassification,
-        eCoverageWeight,
-        eRequiresSupervision,
-      );
-      setTimeout(() => (stammdatenSaved = false), 3000);
-      if (res.proRataWarning) {
-        toasts.warning(res.proRataWarning.message, 8000);
-      }
-    } catch (e: unknown) {
-      stammdatenError = e instanceof Error ? e.message : "Fehler beim Speichern";
-    } finally {
-      stammdatenSaving = false;
-    }
   }
 
   // Phase 65 — Persist per-employee Pausendauer override (BREAK-06)
@@ -1082,52 +924,6 @@
     } finally {
       empBsSlotSaving = false;
     }
-  }
-
-  // ── Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption toggle handlers ─────────
-  // The toggle is bind:checked={eIsTimeTrackingExempt}. We intercept the change
-  // via `onchange`, snapshot the requested value into `intendedExempt`, and open
-  // the ConfirmDialog. The PATCH only fires from `confirmExemptToggle()`; an
-  // Abbrechen click invokes `cancelExemptToggle()` via the ConfirmDialog's
-  // `onCancel` prop, which reverts the visual checkbox to its pre-change state.
-  function onExemptToggleChange(ev: Event) {
-    const target = ev.currentTarget as HTMLInputElement;
-    const newValue = target.checked;
-    if (newValue === preChangeExempt) {
-      // No-op (user re-clicked back to the original) — do nothing.
-      return;
-    }
-    intendedExempt = newValue;
-    exemptConfirmOpen = true;
-  }
-
-  async function confirmExemptToggle() {
-    if (!employee) return;
-    exemptSaving = true;
-    try {
-      await api.patch(`/employees/${employee.id}`, {
-        isTimeTrackingExempt: intendedExempt,
-      });
-      preChangeExempt = intendedExempt;
-      eIsTimeTrackingExempt = intendedExempt;
-      // Reflect new value on the cached employee record so subsequent reverts
-      // resolve to the new server-confirmed baseline.
-      employee = { ...employee, isTimeTrackingExempt: intendedExempt };
-      toasts.success("Befreiung aktualisiert");
-    } catch (e: unknown) {
-      // Roll back the visual toggle to the last server-confirmed state.
-      eIsTimeTrackingExempt = preChangeExempt;
-      const msg = e instanceof Error ? e.message : "Speichern fehlgeschlagen";
-      toasts.error(msg);
-    } finally {
-      exemptSaving = false;
-    }
-  }
-
-  function cancelExemptToggle() {
-    // Revert the checkbox to the last server-confirmed value.
-    eIsTimeTrackingExempt = preChangeExempt;
-    intendedExempt = preChangeExempt;
   }
 
   // ── BS-Pattern editor helpers (Phase 67 Plan 02, BERSCH-15) ───────────────
@@ -1829,22 +1625,6 @@
     return JSON.stringify(values);
   }
 
-  let stammdatenSnapshot = $state("");
-  let stammdatenDirty = $derived(
-    snap(
-      eFirstName,
-      eLastName,
-      eEmployeeNumber,
-      eNfcCardId,
-      eExitDate,
-      eBirthDate,
-      eAnnualVacationDays,
-      eClassification,
-      eCoverageWeight,
-      eRequiresSupervision,
-    ) !== stammdatenSnapshot,
-  );
-
   let scheduleSnapshot = $state("");
   // Issue #481 R5 — a SHIFT_BASED contract cannot be saved without (enough) übliche Arbeitstage.
   let scheduleBlockedByUsualWorkDays = $derived(
@@ -1921,8 +1701,11 @@
   // page that the operator leaves cannot strand a stale entry and trap the next navigation
   // (T-109-27, mirrors T-109-23 on admin/system). Registry id ("admin-employee-detail") is
   // distinct from admin/system's ("admin-system") so the two pages cannot clear each other.
+  // The Person tab owns its snapshots and reports the count of unsaved changes through
+  // `bind:changes`; this page sums everything into ONE registration.
+  let personChanges = $state(0);
   let anyUnsaved = $derived(
-    stammdatenDirty ||
+    personChanges > 0 ||
       scheduleDirty ||
       pausendauerDirty ||
       phorestPufferDirty ||
@@ -1976,15 +1759,28 @@
   }
 
   // ── Derived display ────────────────────────────────────────────────────────
-  let displayName = $derived(`${eFirstName} ${eLastName}`.trim());
+  let displayName = $derived(`${employee?.firstName ?? ""} ${employee?.lastName ?? ""}`.trim());
+  // The head's second line: the employee number and the employment state (Issue #86, D-01). The
+  // state is decided from the exit date and a calendar day, never from a display string.
+  let headSub = $derived.by(() => {
+    const state = employmentState(employee?.exitDate, localCalendarDay());
+    const parts: string[] = [];
+    if (employee?.employeeNumber) parts.push(`Personalnummer ${employee.employeeNumber}`);
+    parts.push(state.kind === "EMPLOYED" ? "Beschäftigt" : state.label);
+    return parts.join(" · ");
+  });
 
-  // Phase 76.7 (UI-V19-04a) — verb for the ConfirmDialog description.
-  // OFF→ON (`intendedExempt === true`) = "befreien" (exempting the employee)
-  // ON→OFF (`intendedExempt === false`) = "unterstellen" (re-subjecting to tracking)
-  let exemptActionVerb = $derived(intendedExempt ? "befreien" : "unterstellen");
-  let exemptDialogDescription = $derived(
-    `Du bist dabei, die Zeiterfassungs-Pflicht für ${employee?.firstName ?? ""} ${employee?.lastName ?? ""} zu ${exemptActionVerb}. Diese Änderung wird im Audit-Log protokolliert. Hinweis: Urlaubsanspruch nach BUrlG bleibt unverändert.`,
+  // Tenant defaults for the placeholder of the vacation base value (Person tab).
+  let tenantDefaultVacationDays = $derived(Number(tenantBreakConfig?.defaultVacationDays) || 30);
+  // Issue #482 — the Azubi-Standard, same fallback as the vacation rules page (20).
+  let tenantDefaultApprenticeVacationDays = $derived(
+    Number(tenantBreakConfig?.defaultApprenticeVacationDays) || 20,
   );
+
+  /** The Person tab reports what a PATCH wrote; the record (and so the head and the Vertrag tab) follows. */
+  function onPersonSaved(written: Partial<PersonEmployee>) {
+    if (employee) employee = { ...employee, ...(written as Partial<Employee>) };
+  }
 </script>
 
 {#if loading}
@@ -1992,201 +1788,33 @@
 {:else if loadError || !employee}
   <div class="page-error">{loadError || "Mitarbeiter nicht gefunden."}</div>
 {:else}
-  <ListDetail
-    view="detail"
-    eyebrow="Personal"
-    title={displayName || "Mitarbeiter"}
-    sub={eEmployeeNumber ? `Personalnummer: ${eEmployeeNumber}` : undefined}
+  <Breadcrumb
     crumbs={[
-      { label: "Personal" },
       { label: pageLabel("/admin/employees"), href: "/admin/employees" },
       { label: displayName || "Mitarbeiter" },
     ]}
-    {tabs}
-    bind:activeTab
+  />
+  <PageHead title={displayName || "Mitarbeiter"} sub={headSub} />
+
+  <PageTabs
+    tabs={tabs.map((t) => ({ value: t.id, label: t.label }))}
+    tab={activeTab}
+    onTabChange={selectTab}
+    tabsLabel="Bereiche der Person"
   >
-    {#snippet tabContent(tab)}
-      {#if tab === "stammdaten"}
-        <!-- ── Stammdaten ──────────────────────────────────────────────────── -->
-        <Section
-          title="Persönliche Daten"
-          sub="Name, Mitarbeiternummer, NFC, Austrittsdatum"
-          dirty={stammdatenDirty}
-        >
-          {#snippet footer()}
-            <button class="btn btn-primary" onclick={saveStammdaten} disabled={stammdatenSaving}>
-              {stammdatenSaving ? "Speichern…" : "Speichern"}
-            </button>
-            {#if stammdatenSaved}<span class="saved-hint">Gespeichert</span>{/if}
-          {/snippet}
-
-          {#if stammdatenError}
-            <div class="callout error">{stammdatenError}</div>
-          {/if}
-
-          <div class="form-grid">
-            <div class="form-group">
-              <label class="form-label" for="e-firstname">Vorname</label>
-              <input id="e-firstname" type="text" bind:value={eFirstName} class="input" />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="e-lastname">Nachname</label>
-              <input id="e-lastname" type="text" bind:value={eLastName} class="input" />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="e-empno">Mitarbeiter-Nr.</label>
-              <input id="e-empno" type="text" bind:value={eEmployeeNumber} class="input" />
-            </div>
-
-            <!-- Personalstruktur -->
-            <div class="form-group form-group--full form-subhead">
-              <h4 class="form-subhead-title">Personalstruktur</h4>
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="e-classification">Personalkategorie</label>
-              <select
-                id="e-classification"
-                bind:value={eClassification}
-                onchange={onClassificationChange}
-                class="select"
-              >
-                {#each CLASSIFICATION_OPTIONS as opt (opt)}
-                  <option value={opt}>{CLASSIFICATION_LABELS[opt]}</option>
-                {/each}
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="e-coverage">Schicht-Gewicht</label>
-              <input
-                id="e-coverage"
-                type="number"
-                bind:value={eCoverageWeight}
-                class="input"
-                min="0"
-                max="9.99"
-                step="0.05"
-              />
-              {#if eCoverageOverridden}
-                <div class="override-row">
-                  <span class="chip chip-warn">Manuell überschrieben</span>
-                  <button type="button" class="btn btn-ghost btn-sm" onclick={resetCoverage}
-                    >Auf Standard zurück</button
-                  >
-                </div>
-              {/if}
-            </div>
-            <div class="form-group form-group--full">
-              <label class="toggle-label">
-                <input type="checkbox" bind:checked={eRequiresSupervision} />
-                Aufsichtspflichtig
-              </label>
-              {#if eSupervisionOverridden}
-                <div class="override-row">
-                  <span class="chip chip-warn">Manuell überschrieben</span>
-                  <button type="button" class="btn btn-ghost btn-sm" onclick={resetSupervision}
-                    >Auf Standard zurück</button
-                  >
-                </div>
-              {/if}
-            </div>
-
-            <!-- Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption toggle (ADMIN-only) -->
-            {#if canUpdateEmployee}
-              <div class="form-group form-group--full form-subhead">
-                <h4 class="form-subhead-title">Zeiterfassungs-Pflicht</h4>
-              </div>
-              <div class="form-group form-group--full" data-testid="exemption-toggle-row">
-                <label class="toggle-label">
-                  <input
-                    type="checkbox"
-                    bind:checked={eIsTimeTrackingExempt}
-                    onchange={onExemptToggleChange}
-                    disabled={exemptSaving}
-                    data-testid="exemption-toggle"
-                  />
-                  <span>Keine Zeiterfassungs-Pflicht (§ 18 ArbZG)</span>
-                </label>
-                <p class="hint">
-                  Inhaber, Geschäftsführer und leitende Angestellte sind nach § 18 ArbZG von der
-                  Arbeitszeiterfassung befreit. Urlaubsanspruch nach BUrlG bleibt bestehen.
-                </p>
-              </div>
-            {/if}
-
-            <!-- Weitere Stammdaten -->
-            <div class="form-group form-group--full form-subhead">
-              <h4 class="form-subhead-title">Weitere Stammdaten</h4>
-            </div>
-            <div class="form-group form-group--full">
-              <label class="form-label" for="e-birthdate">Geburtsdatum (optional)</label>
-              <input id="e-birthdate" type="date" bind:value={eBirthDate} class="input" />
-              <p class="hint">
-                Für Personen unter 18 Jahren gelten bei den Pausen die Regeln nach § 11 JArbSchG:
-                mehr als 4,5 Stunden 30 Min, mehr als 6 Stunden 60 Min.
-              </p>
-              {#if azubiMissingBirthDate}
-                <div class="callout">{MISSING_BIRTH_DATE_HINT}</div>
-              {/if}
-            </div>
-            <!-- Issue #482: per-person vacation base value -->
-            <div class="form-group form-group--full">
-              <label class="form-label" for="e-annual-vacation-days">
-                Urlaubstage pro Jahr (5-Tage-Woche)
-              </label>
-              <input
-                id="e-annual-vacation-days"
-                type="number"
-                min="0.5"
-                max="365"
-                step="0.01"
-                class="input"
-                bind:value={eAnnualVacationDays}
-                placeholder={vacationBaseDefaultPlaceholder(
-                  eClassification,
-                  tenantDefaultVacationDays,
-                  tenantDefaultApprenticeVacationDays,
-                )}
-              />
-              <p class="hint">
-                Leer = Azubi-Standard für Auszubildende, sonst Unternehmensstandard (beides unter
-                Regeln › Abwesenheiten). Gilt für künftige Urlaubsjahre; bestehende Ansprüche ändern
-                sich nur im Tab Urlaub (mit Protokoll).
-              </p>
-              {#if eAnnualVacationMinimum && eAnnualVacationDays !== null && eAnnualVacationDays < eAnnualVacationMinimum.days}
-                <div class="callout error">
-                  Unter dem gesetzlichen Mindesturlaub von {eAnnualVacationMinimum.days.toLocaleString(
-                    "de-DE",
-                    { maximumFractionDigits: 2 },
-                  )} Tagen ({eAnnualVacationMinimum.law}) – das Speichern wird abgelehnt, sofern
-                  sich der Wert ändert.
-                </div>
-              {/if}
-            </div>
-            <div class="form-group form-group--full">
-              <label class="form-label" for="e-exitdate">Austrittsdatum (optional)</label>
-              <input id="e-exitdate" type="date" bind:value={eExitDate} class="input" />
-              <p class="hint">
-                Bei gesetztem Datum wird der Jahresurlaub anteilig berechnet (<span translate="no"
-                  >§ 5 Abs. 2 BUrlG</span
-                >). Das Austrittsdatum beendet das Beschäftigungsverhältnis: Die Person bleibt mit
-                allen Daten sichtbar, der Zugang zur App bleibt aktiv, bis er gesondert gesperrt
-                wird.
-              </p>
-            </div>
-            <div class="form-group form-group--full">
-              <label class="form-label" for="e-nfc">NFC-Karten-ID</label>
-              <input
-                id="e-nfc"
-                type="text"
-                bind:value={eNfcCardId}
-                class="input"
-                placeholder="z.B. NFC-A1B2C3D4"
-              />
-              <p class="hint">Optional. Ermöglicht Stempeln per NFC-Karte.</p>
-            </div>
-          </div>
-        </Section>
-      {:else if tab === "arbeitszeit"}
+    {#snippet panel(tab)}
+      {#if tab === "person"}
+        {#if employee}
+          <PersonTab
+            {employee}
+            canEdit={canUpdateEmployee}
+            {tenantDefaultVacationDays}
+            {tenantDefaultApprenticeVacationDays}
+            bind:changes={personChanges}
+            onSaved={onPersonSaved}
+          />
+        {/if}
+      {:else if tab === "vertrag"}
         <!-- ── Arbeitszeit ─────────────────────────────────────────────────── -->
         <Section
           title="Arbeitszeitmodell"
@@ -2900,7 +2528,7 @@
         </div>
 
         <!-- Phase 67 (BERSCH-15) — Berufsschultag (Optional) editor (full edit semantics) -->
-        {#if eClassification === "AZUBI"}
+        {#if classification === "AZUBI"}
           <Section
             title="Berufsschultag (Optional)"
             sub="Wiederkehrende Berufsschultage und Block-Wochen für BBiG-§15-Freistellung"
@@ -3797,7 +3425,7 @@
       {:else if tab === "salons"}
         <!-- ── Salons (Issue #86, AC-86-5) ────────────────────────────────── -->
         <SalonAssignmentsSection {employeeId} canEdit={rights.canUpdate} />
-      {:else if tab === "berechtigungen"}
+      {:else if tab === "zugang"}
         <!-- ── Berechtigungen ─────────────────────────────────────────────── -->
         <!-- The tab snippet loses the `!employee` narrowing of the page branch. -->
         {@const accountUser = employee?.user}
@@ -3866,60 +3494,61 @@
             {/if}
           </div>
         </Section>
-      {:else if tab === "danger"}
-        <!-- ── Gefahrenzone ────────────────────────────────────────────────── -->
-        <DangerZone
-          title="Anonymisieren (DSGVO Art. 17)"
-          description="Persönliche Daten werden anonymisiert (Name → 'Gelöscht / GELÖSCHT-Personalnummer', E-Mail anonymisiert). Die Personalnummer bleibt für die Lohnunterlagen erhalten (§ 41 EStG, § 147 AO). Ist kein Austrittsdatum eingetragen, wird das heutige Datum als Austrittsdatum gesetzt; Abwesenheiten nach dem Austritt werden storniert. Zeiterfassungen, Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist (10 Jahre nach § 147 AO) erhalten."
-          animate
-        >
-          {#snippet actions()}
-            <button class="btn btn-danger" onclick={() => (anonConfirmOpen = true)}>
-              Anonymisieren
-            </button>
-          {/snippet}
-        </DangerZone>
+        {#if rights.canAnonymize}
+          <!-- ── Gefahrenzone ────────────────────────────────────────────────── -->
+          <DangerZone
+            title="Anonymisieren (DSGVO Art. 17)"
+            description="Persönliche Daten werden anonymisiert (Name → 'Gelöscht / GELÖSCHT-Personalnummer', E-Mail anonymisiert). Die Personalnummer bleibt für die Lohnunterlagen erhalten (§ 41 EStG, § 147 AO). Ist kein Austrittsdatum eingetragen, wird das heutige Datum als Austrittsdatum gesetzt; Abwesenheiten nach dem Austritt werden storniert. Zeiterfassungen, Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist (10 Jahre nach § 147 AO) erhalten."
+            animate
+          >
+            {#snippet actions()}
+              <button class="btn btn-danger" onclick={() => (anonConfirmOpen = true)}>
+                Anonymisieren
+              </button>
+            {/snippet}
+          </DangerZone>
 
-        <DangerZone
-          title="Endgültig löschen"
-          description="Datensatz permanent entfernen. Nur möglich nach Anonymisierung und Ablauf der gesetzlichen Aufbewahrungsfrist (§ 147 AO, 10 Jahre)."
-          animate
-        >
-          {#snippet actions()}
-            {#if hardDeleteError}
-              <div class="callout error">{hardDeleteError}</div>
-            {/if}
-            {#if hardDeleteRetentionExpiresAt}
-              <div class="callout">
-                <b>Aufbewahrungsfrist noch nicht abgelaufen.</b>
-                Die gesetzliche Aufbewahrungsfrist (<span translate="no">§ 147 AO</span>, 10 Jahre)
-                läuft ab am:
-                <strong>
-                  {new Date(hardDeleteRetentionExpiresAt).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                  })}
-                </strong>.
-              </div>
-              <label class="force-delete-checkbox">
-                <input type="checkbox" bind:checked={hardDeleteForce} />
-                Ich bestätige, dass ich diese Aufbewahrungsfrist kenne und den Datensatz trotzdem unwiderruflich
-                löschen möchte (z. B. Testdaten). Diese Aktion wird im Audit-Log protokolliert.
-              </label>
-            {/if}
-            <button
-              class="btn btn-danger"
-              onclick={() => (hardDelConfirmOpen = true)}
-              disabled={hardDeleteRetentionExpiresAt !== null && !hardDeleteForce}
-            >
-              Endgültig löschen
-            </button>
-          {/snippet}
-        </DangerZone>
+          <DangerZone
+            title="Endgültig löschen"
+            description="Datensatz permanent entfernen. Nur möglich nach Anonymisierung und Ablauf der gesetzlichen Aufbewahrungsfrist (§ 147 AO, 10 Jahre)."
+            animate
+          >
+            {#snippet actions()}
+              {#if hardDeleteError}
+                <div class="callout error">{hardDeleteError}</div>
+              {/if}
+              {#if hardDeleteRetentionExpiresAt}
+                <div class="callout">
+                  <b>Aufbewahrungsfrist noch nicht abgelaufen.</b>
+                  Die gesetzliche Aufbewahrungsfrist (<span translate="no">§ 147 AO</span>, 10
+                  Jahre) läuft ab am:
+                  <strong>
+                    {new Date(hardDeleteRetentionExpiresAt).toLocaleDateString("de-DE", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                    })}
+                  </strong>.
+                </div>
+                <label class="force-delete-checkbox">
+                  <input type="checkbox" bind:checked={hardDeleteForce} />
+                  Ich bestätige, dass ich diese Aufbewahrungsfrist kenne und den Datensatz trotzdem unwiderruflich
+                  löschen möchte (z. B. Testdaten). Diese Aktion wird im Audit-Log protokolliert.
+                </label>
+              {/if}
+              <button
+                class="btn btn-danger"
+                onclick={() => (hardDelConfirmOpen = true)}
+                disabled={hardDeleteRetentionExpiresAt !== null && !hardDeleteForce}
+              >
+                Endgültig löschen
+              </button>
+            {/snippet}
+          </DangerZone>
+        {/if}
       {/if}
     {/snippet}
-  </ListDetail>
+  </PageTabs>
 
   <!-- ── Confirm Dialogs ─────────────────────────────────────────────────────── -->
   <ConfirmDialog
@@ -3939,18 +3568,6 @@
     danger
     onConfirm={hardDelete}
   />
-
-  <!-- Phase 76.7 (UI-V19-04a, D-18, D-20) — § 18 ArbZG exemption confirmation -->
-  {#if canUpdateEmployee}
-    <ConfirmDialog
-      bind:open={exemptConfirmOpen}
-      title="§ 18 ArbZG — Zeiterfassungs-Befreiung"
-      description={exemptDialogDescription}
-      confirmLabel="Bestätigen"
-      onConfirm={confirmExemptToggle}
-      onCancel={cancelExemptToggle}
-    />
-  {/if}
 
   <!-- Phase 103 plan 04 — 3-step retroactive BS-pattern wizard, replacing the plan-01
        tracer's single-step confirm dialog. Mounted only once a preview is loaded, so
@@ -3991,10 +3608,6 @@
     gap: var(--s-1);
   }
 
-  .form-group--full {
-    grid-column: 1 / -1;
-  }
-
   .form-label {
     font-size: 12px;
     font-weight: 600;
@@ -4003,8 +3616,6 @@
     letter-spacing: 0.05em;
   }
 
-  .input,
-  .select,
   .form-input {
     height: 38px;
     padding: 0 var(--s-3);
@@ -4015,57 +3626,28 @@
     font-size: 14px;
   }
 
-  .input:focus,
-  .select:focus,
   .form-input:focus {
     outline: none;
     border-color: var(--brand);
   }
 
   /* Phase 107 (issue #94, human-verify follow-up) — this scoped block redeclares
-     background/color for .input/.select/.form-input above, which ties the CSS
+     background/color for .form-input above, which ties the CSS
      specificity of app.css's shared `.form-input:disabled` recipe (both are a
      single class + pseudo-class). Svelte's per-component style injection then
      wins that tie, silently defeating the global disabled treatment for every
      background/color property it also sets — only `cursor: not-allowed` survived,
      which is invisible until hover. Re-assert the exact same shared recipe here
      so a disabled field on this page reads visibly quieter, not just non-hoverable. */
-  .input:disabled,
-  .select:disabled,
   .form-input:disabled {
     background: var(--sunk);
     color: var(--text-2);
     cursor: not-allowed;
   }
 
-  .hint,
   .form-hint {
     font-size: 12px;
     color: var(--text-2);
-    margin-top: var(--s-1);
-  }
-
-  /* ── Subheadings in form ────────────────────────────────────────────────── */
-  .form-subhead {
-    border-top: 1px solid var(--line);
-    padding-top: var(--s-3);
-    margin-top: var(--s-2);
-  }
-
-  .form-subhead-title {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--text-3, var(--text-2));
-    margin: 0;
-  }
-
-  /* ── Override badges ────────────────────────────────────────────────────── */
-  .override-row {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
     margin-top: var(--s-1);
   }
 
@@ -4076,12 +3658,6 @@
     border-radius: var(--r-control);
     font-size: 11px;
     font-weight: 600;
-  }
-
-  .chip-warn {
-    background: var(--warn-soft, oklch(97% 0.05 80));
-    color: var(--warn, oklch(65% 0.18 80));
-    border: 1px solid var(--warn, oklch(65% 0.18 80));
   }
 
   .toggle-label {

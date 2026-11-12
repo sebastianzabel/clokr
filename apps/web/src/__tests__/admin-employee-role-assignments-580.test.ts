@@ -18,6 +18,11 @@ const DETAIL = readRouteFile(
   "../routes/(app)/admin/employees/[id]/+page.svelte",
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
+// Since Issue #854 (plan 854-20) the Stammdaten saves live in the Person tab component.
+const PERSON_TAB = readRouteFile(
+  "../lib/components/employees/detail/PersonTab.svelte",
+  "src/lib/components/employees/detail/PersonTab.svelte",
+);
 const LIST = readRouteFile(
   "../routes/(app)/admin/employees/+page.svelte",
   "src/routes/(app)/admin/employees/+page.svelte",
@@ -47,12 +52,13 @@ function fnBody(source: string, name: string): string {
 
 describe("/admin/employees/[id] — Berechtigungen (#580)", () => {
   it("[vacuity gate] both pages are loaded", () => {
-    expect(DETAIL.length).toBeGreaterThan(100_000);
+    expect(DETAIL.length).toBeGreaterThan(80_000);
     expect(LIST.length).toBeGreaterThan(20_000);
   });
 
-  const start = DETAIL.indexOf('tab === "berechtigungen"');
-  const end = DETAIL.indexOf('tab === "danger"');
+  // The Zugang tab holds the roles first and the anonymise / delete groups last (#854).
+  const start = DETAIL.indexOf('tab === "zugang"');
+  const end = DETAIL.indexOf("{#if rights.canAnonymize}");
   const tab = DETAIL.slice(start, end);
 
   it("renders the block for the employee's user, with a change handler", () => {
@@ -72,7 +78,9 @@ describe("/admin/employees/[id] — Berechtigungen (#580)", () => {
   it("no longer sends a role with the Stammdaten and has no select state", () => {
     expect(DETAIL).not.toMatch(/\beRole\b|roleForSave|initialFormRole|id="e-role"/);
     expect(DETAIL).not.toContain("Administrator");
-    expect(fnBody(DETAIL, "saveStammdaten")).not.toMatch(/\brole\b/);
+    for (const name of ["saveIdentity", "saveStructure", "saveEmployment"]) {
+      expect(fnBody(PERSON_TAB, name), name).not.toMatch(/\brole\b/);
+    }
   });
 
   it("loads the assignments only with role-assignment:manage", () => {
