@@ -782,8 +782,9 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
       description: `forecast head x=${headBox!.x} (viewport right ${scrollRight}); 31.03. right=${lastBox!.x + lastBox!.width}, forecast left=${headAfter!.x}`,
     });
 
-    // (d) the controls are in the toolbar; the planner is one card.
-    const toolbar = page.locator(".leave-toolbar");
+    // (d) the controls are in the toolbar row under the tab strip (#853: `.lv-controls` replaced the
+    // old `.leave-toolbar`); the planner is one card.
+    const toolbar = page.locator(".lv-controls");
     await expect(toolbar.getByTestId("leave-plan-head")).toBeVisible();
     await expect(toolbar.getByTestId("leave-plan-add-wish")).toBeVisible();
     await expect(page.getByTestId("leave-plan-page").locator(".card")).toHaveCount(1);
@@ -1059,7 +1060,9 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     const count = page.getByTestId("leave-team-view-list-badge");
     await expect(count).toBeVisible();
     await expect(count).toHaveText("1");
-    await expect(count).toHaveClass(/tab-badge--count/);
+    // #853: the strip is PageTabs; its count pill is `page-tab-badge` (a link pill, still neutral -
+    // the not-red assertion below is what pins "information, not alarm").
+    await expect(count).toHaveClass(/page-tab-badge/);
     await expect(count).toHaveAttribute("title", /1 offen: 1 Antrag/);
     expect(await count.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(
       await tokenColor("--bad"),
