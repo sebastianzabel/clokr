@@ -4,6 +4,7 @@
   "private": true,
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./audit-labels.json": "./audit-labels.json"
   }
 }
