@@ -21,6 +21,12 @@ export const MIGRATED_854: readonly string[] = [
   "routes/(app)/verwalten/regeln/+page.svelte",
   "routes/(app)/verwalten/daten/+page.svelte",
   "routes/(app)/verwalten/system/+page.svelte",
+  // Plan 854-02 (the Salons tracer): list, detail and the three panels of the detail.
+  "routes/(app)/admin/salons/+page.svelte",
+  "routes/(app)/admin/salons/[id]/+page.svelte",
+  "lib/components/admin/OpeningHoursEditor.svelte",
+  "lib/components/admin/SalonHolidays.svelte",
+  "lib/components/admin/salons/SalonMasterDataForm.svelte",
 ];
 
 export interface VerwaltenFile {
