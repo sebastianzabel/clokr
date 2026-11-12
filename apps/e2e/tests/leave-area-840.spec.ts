@@ -25,7 +25,7 @@
  *   7. (gap round, plan 840-17, G-1/G-3/G-8) the Anträge count is neutral and explained on every tab
  *      (also on a directly opened Planung) and leads to the „Offen“ filter, the type chips of the
  *      Anträge list and the inbox use the colours of the one mapping, the inbox header reads
- *      „Team“ / „Inbox“;
+ *      „Aufgaben“ without an eyebrow (#843 D-843-22, #853 D-853-19);
  *   8. (gap round, plan 840-18, G-9) „Neue Abwesenheit“ lays out as Mitarbeiter + Art, then
  *      Von + Bis, with no select cut off and no type eyebrow, and stacks on a phone;
  *   9. (gap round, plan 840-18, G-7) the primary buttons of the leave pages compute exactly the
@@ -959,9 +959,10 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     expect(found).toEqual(Object.fromEntries(Object.keys(found).map((name) => [name, []])));
   });
 
-  // The inbox is the one place requests are decided (D-840-03). Its rows use the `onPrimary` mode of
-  // `ApprovalRow` (#840): the name is the one row button and the „Prüfen“ button is its sibling, so
-  // axe `nested-interactive` has nothing to report.
+  // The inbox is the one place requests are decided (D-840-03). Since #853 its rows are `TaskRow`s
+  // (test id `task-row-<kind>-<id>`) in the list `inbox-task-list`; they keep the `onPrimary` mode of
+  // `ListRow`: the name is the one row button and the „Prüfen“ button is its sibling, so axe
+  // `nested-interactive` has nothing to report.
   test("5b. axe: the inbox with an open request", async ({ page, request, tenant }) => {
     const first = firstOfNextMonth();
     const employee = await createEmployee(request, tenant, {
@@ -981,11 +982,16 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/inbox");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.locator(".approval-row").first()).toBeVisible();
+    await expect(page.getByTestId("inbox-task-list")).toBeVisible();
+    await expect(page.locator('[data-testid^="task-row-urlaub-"]').first()).toBeVisible();
     expect(await axeViolations(page), "axe on the inbox").toEqual([]);
 
     // Keyboard: Enter on the row's name button opens the review dialog (the `onPrimary` mode).
-    const nameButton = page.locator(".approval-row button.approval-primary").first();
+    const nameButton = page
+      .locator('[data-testid^="task-row-urlaub-"]')
+      .first()
+      .getByRole("button", { name: /Posteingang Zeile/ })
+      .first();
     await nameButton.focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("dialog").first()).toBeVisible();
@@ -1099,7 +1105,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(head.locator(".eyebrow")).toHaveCount(0);
     await expect(head.getByRole("heading", { level: 1 })).toHaveText("Aufgaben"); // Issue #574: one page name
     await expect(head.locator("h1 em")).toHaveCount(0);
-    const inboxChip = page.locator(".approval-row .leave-type-chip").first();
+    const inboxChip = page.locator('[data-testid^="task-row-urlaub-"] .leave-type-chip').first();
     await expect(inboxChip).toBeVisible();
     expect(await borderStyleOf(inboxChip)).toBe("dashed");
     expect(await inboxChip.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(vacation);

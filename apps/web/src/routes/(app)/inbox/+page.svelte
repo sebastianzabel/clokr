@@ -12,7 +12,9 @@
   import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
   import List from "$components/ui/List.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
-  import Modal from "$components/ui/Modal.svelte";
+  import Dialog from "$components/ui/Dialog.svelte"; // Issue #853 (D-853-18)
+  import FormField from "$components/ui/FormField.svelte";
+  import Note from "$components/ui/Note.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // § 9 reject reason (moved from /team/leave, #840)
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
@@ -20,6 +22,7 @@
   import { LEAVE_TYPE_OPTIONS, type CalendarTypeCode } from "$lib/leave/team-calendar-visibility"; // Phase 262, Phase 255
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
   import TaskRow from "$lib/components/team/aufgaben/TaskRow.svelte"; // Issue #853 (D-853-06)
+  import RetroReviewBody from "$lib/components/team/aufgaben/RetroReviewBody.svelte"; // Issue #853 (D-853-18)
   import {
     taskRowsFrom,
     taskCounts,
@@ -845,238 +848,143 @@
   </div>
 {/if}
 
-<!-- ── Retro detail/review modal ──────────────────────────────────────── -->
+<!-- ── Zeitnachtrag decision: a Dialog with a fact list (Issue #853, D-853-18) ───────── -->
 {#if retroDetail}
-  <Modal
+  <RetroReviewBody
     bind:open={retroDetailOpen}
-    eyebrow="Retro-Antrag prüfen"
-    title={`${retroDetail.employee.firstName} ${retroDetail.employee.lastName}`}
-  >
-    <!-- Mini-stat grid: Mitarbeiter / Zieldatum / Alter -->
-    <div class="mini-stat-grid">
-      <div class="mini-stat">
-        <span class="label">Mitarbeiter</span>
-        <span class="value">{retroDetail.employee.firstName} {retroDetail.employee.lastName}</span>
-      </div>
-      <div class="mini-stat">
-        <span class="label">Zieldatum</span>
-        <span class="value">{fmtDate(retroDetail.targetDate)}</span>
-      </div>
-      <div class="mini-stat">
-        <span class="label">Alter (Tage)</span>
-        <span
-          class="value"
-          style="font-family: var(--font-ui); font-variant-numeric: tabular-nums;"
-        >
-          {retroDetail.entryAgeInDays ?? "?"}
-        </span>
-      </div>
-    </div>
-
-    <!-- Vorgeschlagene Zeiten (RETRO-16/D-10: editable on approve — manager can
-         correct the employee's proposal before it is written to the entry). -->
-    {#if retroDetail.startTime && retroDetail.endTime}
-      <div class="note-block">
-        <div class="note-label">Vorgeschlagene Zeiten</div>
-        <div class="retro-times-row">
-          <div class="review-note-field">
-            <label class="review-note-label" for="retro-edit-start">Von</label>
-            <input
-              id="retro-edit-start"
-              type="time"
-              class="review-note-input"
-              bind:value={retroEditStartTime}
-              disabled={retroReviewSaving}
-            />
-          </div>
-          <div class="review-note-field">
-            <label class="review-note-label" for="retro-edit-end">Bis</label>
-            <input
-              id="retro-edit-end"
-              type="time"
-              class="review-note-input"
-              bind:value={retroEditEndTime}
-              disabled={retroReviewSaving}
-            />
-          </div>
-          <div class="review-note-field">
-            <label class="review-note-label" for="retro-edit-break">Pause (Min.)</label>
-            <input
-              id="retro-edit-break"
-              type="number"
-              min="0"
-              step="1"
-              class="review-note-input"
-              bind:value={retroEditBreakMinutes}
-              disabled={retroReviewSaving}
-            />
-          </div>
-        </div>
-      </div>
-    {/if}
-
-    <!-- Begründung Mitarbeiter -->
-    <div class="note-block">
-      <div class="note-label">Begründung Mitarbeiter</div>
-      <div class="note-text">„{retroDetail.reason}"</div>
-    </div>
-
-    <!-- Age warning callout (if age > window) -->
-    {#if retroDetail.entryAgeInDays != null && retroDetail.windowDays != null && retroDetail.entryAgeInDays > retroDetail.windowDays}
-      <div class="callout warning" role="alert">
-        <span class="ico" aria-hidden="true">⚠</span>
-        <p>
-          Eintrag vom {fmtDate(retroDetail.targetDate)} liegt {retroDetail.entryAgeInDays} Tage in der
-          Vergangenheit (Fenster: {retroDetail.windowDays} Tage).
-        </p>
-      </div>
-    {/if}
-
-    <!-- ArbZG legal callout (always shown) -->
-    <div class="callout" role="note">
-      <span class="ico" aria-hidden="true">⚖</span>
-      <p>Rückwirkende Korrekturen müssen revisionssicher begründet sein (ArbZG § 16 Abs. 2).</p>
-    </div>
-
-    <!-- Review note — optional on approve, mandatory on reject (Revisionssicherheit) -->
-    <div class="review-note-field">
-      <label class="review-note-label" for="retro-review-note"
-        >Kommentar <span class="text-muted">(optional bei Genehmigung, Pflicht bei Ablehnung)</span
-        ></label
-      >
-      <input
-        id="retro-review-note"
-        type="text"
-        class="review-note-input"
-        bind:value={retroReviewNote}
-        placeholder="Begründung für Genehmigung oder Ablehnung"
-        disabled={retroReviewSaving}
-      />
-    </div>
-
-    {#if retroReviewError}
-      <div class="callout error" role="alert">
-        <span class="ico">⚠</span>
-        <p>{retroReviewError}</p>
-      </div>
-    {/if}
-
-    {#snippet footer()}
-      <button class="btn btn-ghost" onclick={closeRetroDetail} disabled={retroReviewSaving}>
-        Abbrechen
-      </button>
-      <span class="spacer"></span>
-      {#if retroDetail && isRetroSelfApproval(retroDetail)}
-        <span class="footer-note">Eigene Anträge können nicht selbst genehmigt werden.</span>
-      {:else if retroDetail?.status === "PENDING"}
-        <button
-          class="btn btn-danger"
-          onclick={() => submitRetroReview("REJECTED")}
-          disabled={retroReviewSaving || !retroReviewNote.trim()}
-        >
-          {retroReviewSaving ? "…" : "Ablehnen"}
-        </button>
-        <button
-          class="btn btn-primary"
-          onclick={() => submitRetroReview("APPROVED")}
-          disabled={retroReviewSaving}
-        >
-          {retroReviewSaving ? "…" : "Genehmigen"}
-        </button>
-      {:else}
-        <span class="footer-note">Antrag bereits entschieden.</span>
-      {/if}
-    {/snippet}
-  </Modal>
+    personName={`${retroDetail.employee.firstName} ${retroDetail.employee.lastName}`}
+    dayLabel={fmtDate(retroDetail.targetDate)}
+    proposedLabel={retroDetail.startTime && retroDetail.endTime
+      ? `${retroDetail.startTime}–${retroDetail.endTime}${
+          retroDetail.breakMinutes ? ` · Pause ${retroDetail.breakMinutes} Min.` : ""
+        }`
+      : null}
+    entryAgeInDays={retroDetail.entryAgeInDays ?? null}
+    employeeReason={retroDetail.reason}
+    ageWarning={retroDetail.entryAgeInDays != null &&
+    retroDetail.windowDays != null &&
+    retroDetail.entryAgeInDays > retroDetail.windowDays
+      ? `Eintrag vom ${fmtDate(retroDetail.targetDate)} liegt ${retroDetail.entryAgeInDays} Tage in der Vergangenheit (Fenster: ${retroDetail.windowDays} Tage).`
+      : null}
+    editableTimes={Boolean(retroDetail.startTime && retroDetail.endTime)}
+    bind:startTime={retroEditStartTime}
+    bind:endTime={retroEditEndTime}
+    bind:breakMinutes={retroEditBreakMinutes}
+    bind:reviewNote={retroReviewNote}
+    saving={retroReviewSaving}
+    error={retroReviewError}
+    pending={retroDetail.status === "PENDING"}
+    selfApproval={isRetroSelfApproval(retroDetail)}
+    onApprove={() => submitRetroReview("APPROVED")}
+    onReject={() => submitRetroReview("REJECTED")}
+    onCancel={closeRetroDetail}
+  />
 {/if}
 
-<!-- ── Phase 104-10 (R6/D-27/D-26): "AU liegt vor" — Confirm-Dialog ─────────── -->
+<!-- ── Phase 104-10 (R6/D-27/D-26): "AU liegt vor" — Confirm-Dialog (Issue #853: facts + fields) ── -->
 {#if section9ConfirmCase}
-  <Modal bind:open={section9ConfirmOpen} eyebrow="§ 9 BUrlG" title="AU liegt vor">
+  <Dialog bind:open={section9ConfirmOpen} eyebrow="§ 9 BUrlG" title="AU liegt vor">
     <div data-testid="section9-confirm-modal" style="display: contents">
-      <div class="review-grid">
-        <div class="review-field">
-          <span class="review-label">Mitarbeiter</span>
-          <span class="review-value">{section9ConfirmCase.employeeName}</span>
+      <dl class="facts">
+        <div class="fact">
+          <dt>Person</dt>
+          <dd>{section9ConfirmCase.employeeName}</dd>
         </div>
-        <div class="review-field">
-          <span class="review-label">Überschneidung</span>
-          <span class="review-value"
-            >{fmtDate(section9ConfirmCase.overlapStart)} – {fmtDate(
-              section9ConfirmCase.overlapEnd,
-            )}</span
-          >
+        <div class="fact">
+          <dt>Überschneidung</dt>
+          <dd>
+            {fmtDate(section9ConfirmCase.overlapStart)} – {fmtDate(section9ConfirmCase.overlapEnd)}
+          </dd>
         </div>
+      </dl>
+
+      <div class="review-section">
+        <fieldset class="attest-fieldset">
+          <legend class="attest-legend">Gültigkeit der AU</legend>
+          <div class="attest-dates">
+            <FormField label="Gültig von">
+              {#snippet field({ id, describedBy, invalid })}
+                <input
+                  {id}
+                  type="date"
+                  bind:value={section9AttestFrom}
+                  class="form-input attest-date-input"
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid ? "true" : undefined}
+                />
+              {/snippet}
+            </FormField>
+            <FormField label="Gültig bis">
+              {#snippet field({ id, describedBy, invalid })}
+                <input
+                  {id}
+                  type="date"
+                  bind:value={section9AttestTo}
+                  class="form-input attest-date-input"
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid ? "true" : undefined}
+                />
+              {/snippet}
+            </FormField>
+          </div>
+        </fieldset>
       </div>
 
-      <div class="form-group review-section">
-        <span class="form-label">Gültigkeit der AU</span>
-        <div class="attest-dates">
-          <div class="form-group">
-            <label class="form-label" for="s9-from">Gültig von</label>
-            <input
-              id="s9-from"
-              type="date"
-              bind:value={section9AttestFrom}
-              class="form-input attest-date-input"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="s9-to">Gültig bis</label>
-            <input
-              id="s9-to"
-              type="date"
-              bind:value={section9AttestTo}
-              class="form-input attest-date-input"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div class="form-group review-section">
-        <span class="form-label">Herkunft</span>
-        <label class="toggle-label">
-          <input type="radio" name="s9-source" value="EAU" bind:group={section9AttestSource} />
-          <span>eAU abgerufen</span>
-        </label>
-        <label class="toggle-label">
-          <input type="radio" name="s9-source" value="PAPIER" bind:group={section9AttestSource} />
-          <span>Papier</span>
-        </label>
+      <div class="review-section">
+        <fieldset class="attest-fieldset">
+          <legend class="attest-legend">Herkunft</legend>
+          <label class="toggle-label">
+            <input type="radio" name="s9-source" value="EAU" bind:group={section9AttestSource} />
+            <span>eAU abgerufen</span>
+          </label>
+          <label class="toggle-label">
+            <input type="radio" name="s9-source" value="PAPIER" bind:group={section9AttestSource} />
+            <span>Papier</span>
+          </label>
+        </fieldset>
       </div>
 
       {#if section9AttestSource === "PAPIER"}
-        <div class="form-group review-section">
-          <label class="form-label" for="s9-file">Papier-AU (optional)</label>
-          <input
-            id="s9-file"
-            type="file"
-            accept="application/pdf,image/jpeg,image/png"
-            class="form-input"
-            onchange={(e) => (section9File = (e.target as HTMLInputElement).files?.[0] ?? null)}
-          />
-          <p class="text-muted section9-hint">PDF, JPG oder PNG, max. 10 MB.</p>
+        <div class="review-section">
+          <FormField label="Papier-AU (optional)" help="PDF, JPG oder PNG, max. 10 MB.">
+            {#snippet field({ id, describedBy, invalid })}
+              <input
+                {id}
+                type="file"
+                accept="application/pdf,image/jpeg,image/png"
+                class="form-input"
+                aria-describedby={describedBy}
+                aria-invalid={invalid ? "true" : undefined}
+                onchange={(e) => (section9File = (e.target as HTMLInputElement).files?.[0] ?? null)}
+              />
+            {/snippet}
+          </FormField>
         </div>
       {/if}
 
-      <div class="form-group review-section">
-        <label class="form-label" for="s9-reason">Begründung</label>
-        <textarea
-          id="s9-reason"
-          class="form-input"
-          rows="2"
-          bind:value={section9Reason}
-          placeholder="Verwaltungsvermerk zur Nachvollziehbarkeit"
-        ></textarea>
-        <p class="text-muted section9-hint">
-          Verwaltungsvermerk zur Nachvollziehbarkeit — bitte keine Diagnose oder Arztangaben
-          eintragen.
-        </p>
+      <div class="review-section">
+        <FormField
+          label="Begründung"
+          required
+          help="Verwaltungsvermerk zur Nachvollziehbarkeit — bitte keine Diagnose oder Arztangaben eintragen."
+        >
+          {#snippet field({ id, describedBy, invalid })}
+            <textarea
+              {id}
+              class="form-input"
+              rows="2"
+              bind:value={section9Reason}
+              placeholder="Verwaltungsvermerk zur Nachvollziehbarkeit"
+              aria-describedby={describedBy}
+              aria-invalid={invalid ? "true" : undefined}
+            ></textarea>
+          {/snippet}
+        </FormField>
       </div>
 
       {#if section9Error}
-        <div class="alert alert-error review-error" role="alert">
-          <span>⚠</span><span>{section9Error}</span>
+        <div class="review-section" role="alert">
+          <Note tone="bad">{section9Error}</Note>
         </div>
       {/if}
     </div>
@@ -1094,7 +1002,7 @@
         {section9Saving ? "…" : "Bestätigen"}
       </button>
     {/snippet}
-  </Modal>
+  </Dialog>
 {/if}
 
 <!-- ── Phase 104-10 (D-11): "AU liegt vor" — Ablehnen-Begründung ─────────────── -->
@@ -1137,113 +1045,52 @@
     margin-bottom: var(--s-3);
   }
 
-  /* ── Modal body helpers ───────────────────────────────────────────────── */
-  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
-  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
-  .mini-stat-grid {
+  /* ── § 9 confirm dialog (Issue #853): facts as a definition list, fields as FormField ── */
+  .facts {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px;
-    padding: 14px 16px;
-    background: var(--sunk);
-    border-radius: var(--r-control);
-    border: 1px solid var(--line);
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s-3) var(--s-6);
+    margin: 0;
   }
-
-  @media (max-width: 560px) {
-    .mini-stat-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
-  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
-  .note-block {
-    background: var(--sunk);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    padding: 12px 14px;
-  }
-  .note-label {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-3);
-    margin-bottom: 6px;
-  }
-  .note-text {
-    font-size: 13.5px;
-    color: var(--text);
-  }
-
-  /* ── Retro editable proposed-times row (RETRO-16/D-10) ──────────────────
-     Layout-only wrapper around 3 existing .review-note-field/-input pairs —
-     no new color/radius/spacing tokens, reuses the review-note-input look. */
-  .retro-times-row {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    margin-top: 8px;
-  }
-  .retro-times-row .review-note-field {
-    flex: 1;
-    min-width: 100px;
-  }
-
-  /* ── Review note input ────────────────────────────────────────────────── */
-  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
-  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
-  .review-note-field {
+  .fact {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 2px;
+    min-width: 0;
   }
-  .review-note-label {
-    font-size: 11px;
+  .fact dt {
+    font-size: var(--fs-sm);
     font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-3);
-  }
-  .review-note-input {
-    width: 100%;
-    padding: 9px 12px;
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    background: var(--card);
-    color: var(--text);
-    font-family: var(--font-ui);
-    font-size: 13.5px;
-    transition: border-color 160ms var(--ease);
-  }
-  .review-note-input:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
-    border-color: var(--brand);
-  }
-
-  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
-  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
-  .footer-note {
-    font-size: 12.5px;
     color: var(--text-2);
   }
-  .spacer {
-    flex: 1;
+  .fact dd {
+    margin: 0;
+    font-size: var(--fs-base);
+    font-weight: 500;
+    overflow-wrap: anywhere;
   }
-
-  /* ── § 9 dialog ─────────────────────────────────────────────────────────── */
-  .section9-hint {
-    font-size: 0.8125rem;
-    margin: 0.25rem 0 0;
+  .review-section {
+    margin-top: var(--s-5);
   }
-  /* Modal body of the "AU liegt vor" dialog. */
+  .attest-fieldset {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+  .attest-legend {
+    padding: 0;
+    margin-bottom: var(--s-2);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text-2);
+  }
   .attest-dates {
     display: flex;
-    gap: 1rem;
+    gap: var(--s-4);
     flex-wrap: wrap;
-    margin-top: 0.75rem;
   }
   .attest-date-input {
     max-width: 160px;
@@ -1251,39 +1098,14 @@
   .toggle-label {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--s-2);
     cursor: pointer;
     font-weight: 500;
   }
-  .review-error {
-    margin-top: 0.75rem;
-  }
-  .review-section {
-    margin-top: 1.25rem;
-  }
-  .review-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem 1.5rem;
-    background: var(--sunk);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    padding: 1rem 1.25rem;
-  }
-  .review-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
-  .review-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-2);
-  }
-  .review-value {
-    font-size: 0.9375rem;
-    font-weight: 500;
+
+  @media (max-width: 560px) {
+    .facts {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
