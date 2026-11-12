@@ -55,6 +55,13 @@ type DynamicSite = {
  */
 const DYNAMIC_AUDIT_SITES: DynamicSite[] = [
   {
+    file: "contexts/platform/audit-log-read.ts",
+    count: 1,
+    anchor: "...(action ? { action } : {}),",
+    reason:
+      "the read filter of GET /audit-logs and its CSV export (a Prisma where built from the query); no row is written",
+  },
+  {
     file: "composition/operator-support-ports.ts",
     count: 2,
     anchor: "entity: row.entity",
@@ -85,8 +92,9 @@ const DYNAMIC_AUDIT_SITES: DynamicSite[] = [
   {
     file: "contexts/platform/api/audit-logs.ts",
     count: 1,
-    anchor: "z.string().min(1).max(64).optional()",
-    reason: "the query schema of the audit read, not a writer",
+    anchor: "action: filters.action ?? null",
+    reason:
+      "the EXPORT row of GET /audit-logs/export records the caller's action filter inside newValue; the row's own action is the literal EXPORT",
   },
   {
     file: "contexts/platform/api/employees.ts",
