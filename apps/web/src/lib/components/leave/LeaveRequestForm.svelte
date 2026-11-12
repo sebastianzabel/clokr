@@ -1041,13 +1041,34 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1rem;
   }
-  /* Issue #853: before a person is chosen only the picker (the first field) and the form actions
-     are shown. */
+  /* Issue #853: before a person is chosen only the picker (the first field) and „Abbrechen“ are
+     shown. */
   .form-grid[data-awaiting-person] > :not([data-form-row="who"]):not(.form-actions) {
     display: none;
   }
   .form-grid[data-awaiting-person] [data-form-row="who"] > :not(:first-child) {
     display: none;
+  }
+  .form-grid[data-awaiting-person] [data-testid="leave-form-submit"] {
+    display: none;
+  }
+  /* Issue #853 (S-15): the person picker of the team dialog is the #843 FormField with a Combobox. In
+     the form rows it takes this form's own field look (label size, label gap, control height of
+     `.form-input`), so „Für wen?“ and „Art“ line up on one top. */
+  .form-row > :global(.form-field) {
+    gap: 0.5rem;
+  }
+  .form-row :global(.ff-label) {
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .form-row :global(.cb-field) {
+    min-height: 2.6rem;
+  }
+  .form-row :global(.cb-field .cb-input) {
+    min-height: calc(2.6rem - 2px);
+    font-size: 1rem;
   }
   .form-row--single {
     grid-template-columns: minmax(0, 1fr);

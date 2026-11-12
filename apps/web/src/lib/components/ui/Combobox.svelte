@@ -226,7 +226,11 @@
     z-index: 1600;
   }
 
+  /* bits-ui copies the COMPUTED z-index of the content onto the floating wrapper (inline style,
+     which beats the class above), so the stacking value has to sit on the content itself or the
+     list renders under a Dialog (1500/1501) it was opened from (Issue #853, „Für wen?“). */
   .cb-content {
+    z-index: 1600;
     max-height: min(280px, 50vh);
     overflow-y: auto;
     padding: var(--s-1);
