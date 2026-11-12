@@ -115,7 +115,7 @@ test.describe("Hinweise zur Schichtplanung (Issue #850)", () => {
     await page.getByLabel("E-Mail").fill(`admin@${tenant.tenantId}.test`);
     await page.getByLabel("Passwort", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: /anmelden/i }).click();
-    await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+    await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
 
     await page.goto("/shifts/conflicts");
     await expect(page.getByRole("heading", { name: "Hinweise zur Schichtplanung" })).toBeVisible();
@@ -153,7 +153,7 @@ test.describe("Hinweise zur Schichtplanung (Issue #850)", () => {
     await page.getByLabel("E-Mail").fill(`admin@${tenant.tenantId}.test`);
     await page.getByLabel("Passwort", { exact: true }).fill(PASSWORD);
     await page.getByRole("button", { name: /anmelden/i }).click();
-    await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+    await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
     await page.goto("/shifts/planning");
     const label = page.locator(".week-pager-label");
     await expect(label).toHaveText(/^KW \d{1,2} · \d{1,2}\..*–/);

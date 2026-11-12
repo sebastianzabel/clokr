@@ -108,6 +108,12 @@
     "reason": "Issue #718 (DSGVO Art. 17): nulls OvertimePlan.note for employeeId inside anonymize.ts's own $transaction, deliberately with no deletedAt guard and no tenantId parameter. Its sole caller is anonymizeEmployeeData(), reached only after platform/api/employees.ts's DELETE /:id handler validated 'id' against req.user.tenantId before opening the transaction this function runs inside. Same shape and reasoning as clearEntryNotesForEmployee/anonymizeLeaveRequestsForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
   },
   {
+    "file": "apps/api/src/contexts/working-time-account/facade/overtime-account.ts",
+    "function": "clearMonthCorrectionTextsForEmployee",
+    "rules": ["F3"],
+    "reason": "Issue #599 (DSGVO Art. 17): replaces MonthCorrectionRequest.reason with the neutral text and nulls reviewNote for employeeId inside anonymize.ts's own $transaction. Its sole caller is anonymizeEmployeeData(), reached only after platform/api/employees.ts's DELETE /:id handler validated 'id' against req.user.tenantId before opening the transaction this function runs inside. Same shape and reasoning as clearOvertimePlanNotesForEmployee above: a tenantId parameter here would be decorative, not a real boundary."
+  },
+  {
     "file": "apps/api/src/contexts/scheduling/facade/shifts.ts",
     "function": "clearSchedulingNotesForEmployee",
     "rules": ["F3"],

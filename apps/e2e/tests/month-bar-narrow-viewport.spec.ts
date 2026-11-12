@@ -327,7 +327,12 @@ for (const viewport of VIEWPORTS) {
             // position (Issue #571). The assertion itself is unchanged.
             await waitForStableBox(bar);
             await expect(async () => {
-              await today.scrollIntoViewIfNeeded();
+              // #844: scrollIntoViewIfNeeded leaves an element alone that is cut by less than a pixel at
+              // the fold (measured: ratio 0.9897 at 390 px once the header became 48 px), so it never
+              // reached "fully on screen". Centre it instead; the assertion below is unchanged.
+              await today.evaluate((el) =>
+                el.scrollIntoView({ block: "center", inline: "nearest" }),
+              );
               await expect(today, `${where}: "Heute" is not fully on screen`).toBeInViewport({
                 ratio: 1,
                 timeout: 1000,

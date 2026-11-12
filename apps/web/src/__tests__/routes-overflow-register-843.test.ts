@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
+import { legacyRedirectTarget } from "$lib/nav/routes";
 
 import { E2E_ROOT, SRC_ROOT, walkFiles } from "./design-source-files";
 
@@ -43,12 +44,17 @@ function pageFiles(): string[] {
     .filter((rel) => rel === "+page.svelte" || rel.endsWith("/+page.svelte"));
 }
 
-/** The URL segments a page file serves: route groups vanish, `[param]` becomes a wildcard. */
+/** The URL segments a page file serves: route groups vanish, `[param]` becomes a wildcard. Since #844 a
+ *  page file is served at the route table's new URL (`/admin/audit` -> `/verwalten/daten/protokoll`); its
+ *  file path only redirects there, so the register must name the new URL. */
 function urlSegments(page: string): string[] {
   const dir = page.split("/").slice(0, -1);
-  return dir
+  const fileSegments = dir
     .filter((s) => !(s.startsWith("(") && s.endsWith(")")))
     .map((s) => (s.startsWith("[") && s.endsWith("]") ? ":" : s));
+  const fileUrl = `/${fileSegments.join("/")}`;
+  const served = legacyRedirectTarget(fileUrl) ?? fileUrl;
+  return served.split("/").filter(Boolean);
 }
 
 /** Every problem of `register` against the page files; empty when the register is sound. */
