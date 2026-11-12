@@ -1080,17 +1080,26 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await chooseFromCombobox(who, page.getByRole("option", { name: /Zeile, Formular/ }), "Zeile");
     await expect(who).toHaveValue(/Zeile, Formular/);
     await expect(page.locator("#f-type")).toBeVisible();
-    // The person's balance block loads after the pick and grows (re-centres) the dialog: measure the
-    // fields only once it is there, so every box comes from the same final layout.
+    // The person's balance block and the colleague hint load after the pick and grow (re-centre) the
+    // dialog: the four boxes are read in ONE evaluate, so they come from the same layout.
     await expect(dialog.getByText("Jahresanspruch")).toBeVisible();
     await animationsSettled(page);
     const topOf = async (selector: string) => (await page.locator(selector).boundingBox())!;
-    // The Combobox's field box (input + chevron) is the counterpart of the Art select's box.
-    const whoField = dialog.locator(".cb-field").first();
-    const emp = (await whoField.boundingBox())!;
-    const type = await topOf("#f-type");
-    const from = await topOf("#f-start");
-    const to = await topOf("#f-end");
+    const boxes = () =>
+      page.evaluate(() => {
+        const rect = (selector: string) => {
+          const r = document.querySelector(selector)!.getBoundingClientRect();
+          return { y: r.y, width: r.width, height: r.height };
+        };
+        // The Combobox's field box (input + chevron) is the counterpart of the Art select's box.
+        return {
+          emp: rect('[data-testid="leave-form-modal"] .cb-field'),
+          type: rect("#f-type"),
+          from: rect("#f-start"),
+          to: rect("#f-end"),
+        };
+      });
+    const { emp, type, from, to } = await boxes();
     expect(Math.abs(emp.y - type.y), "Für wen? and Art share their top").toBeLessThanOrEqual(2);
     expect(emp.width, "the Für wen? field is wide enough").toBeGreaterThanOrEqual(200);
     expect(type.width, "the Art select is wide enough").toBeGreaterThanOrEqual(200);
@@ -1105,8 +1114,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     expect(phoneTo.y, "Bis lies below Von on a phone").toBeGreaterThanOrEqual(
       phoneFrom.y + phoneFrom.height - 1,
     );
-    const phoneEmp = (await whoField.boundingBox())!;
-    const phoneType = await topOf("#f-type");
+    const { emp: phoneEmp, type: phoneType } = await boxes();
     expect(phoneType.y, "Art lies below Für wen? on a phone").toBeGreaterThanOrEqual(
       phoneEmp.y + phoneEmp.height - 1,
     );
