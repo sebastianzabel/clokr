@@ -1093,11 +1093,11 @@ test.describe("Issue #612 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         await page.goto(`${base}&tab=zeiten&person=${people[0].id}`);
         const dialog = page.getByRole("dialog", { name: people[0].fullName });
         await expect(dialog).toBeVisible();
-        await expect(dialog.locator(".drill-day-list li").first()).toBeVisible();
+        await expect(dialog.locator('tr[data-testid^="drill-day-"]').first()).toBeVisible();
         results.push(
           await checkCell(page, "drilldown", viewport.width, mode, {
             axe: false,
-            listSelector: ".drill-day-list li",
+            listSelector: 'tr[data-testid^="drill-day-"]',
           }),
         );
 

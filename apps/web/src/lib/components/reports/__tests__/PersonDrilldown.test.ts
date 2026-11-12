@@ -1,10 +1,11 @@
 // Issue #612 (D-612-4, ADD-4, P-13, T-612-20, amendments 6 and 7) - the person drill-down, mounted.
-// lib/components/reports/ is outside the lint:ui-classes gate (CLAUDE.md), so the month series, the
-// day list by permission, the person documents by permission and the closing saldo are proven
-// here. The component imports no API client: the day list is injected, which is also what lets the
-// "no request without time-entry:read" rule be measured (the injected loader is never called).
+// The month series, the day list by permission, the person documents by permission (the
+// Stundennachweis download and, since Issue #854, the DATEV link into Daten > Export) and the
+// closing saldo are proven here. The component imports no API client: the day list is injected,
+// which is also what lets the "no request without time-entry:read" rule be measured (the injected
+// loader is never called).
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent, within, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import {
@@ -165,27 +166,10 @@ function props(overrides: Record<string, unknown> = {}) {
     showSalonColumn: true,
     loadDayEntries: vi.fn().mockResolvedValue(ENTRIES),
     onDownloadPdf: vi.fn().mockResolvedValue(undefined),
-    onDownloadDatev: vi.fn().mockResolvedValue(undefined),
     onClose: vi.fn(),
     ...overrides,
   };
 }
-
-function viewport(narrow640: boolean) {
-  vi.stubGlobal(
-    "matchMedia",
-    vi.fn().mockImplementation((query: string) => ({
-      matches: narrow640 && query.includes("640"),
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    })),
-  );
-}
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
 
 // The phrase the HR e2e matches by regex (hr-view-86.spec.ts), spelled in two halves so that
 // this directory holds the literal nowhere (the rendered text must not contain it either).
@@ -193,15 +177,14 @@ const HR_E2E_PHRASE = ["PDF", "herunterladen"].join(" ");
 
 describe("PersonDrilldown - header and figures", () => {
   it("names the person, the number and the period; four figures in the copy-deck order", async () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     expect(screen.getByRole("dialog", { name: "Person A" })).toBeInTheDocument();
     expect(screen.getByText("Personenansicht")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 3, name: "Person A" })).toBeInTheDocument();
     expect(screen.getByText("Personalnr. 0042 · Jul – Sep 2026")).toBeInTheDocument();
-    const stats = [...document.querySelectorAll(".mini-stat")].map((el) => [
-      el.querySelector(".label")?.textContent,
-      el.querySelector(".value")?.textContent?.trim(),
+    const stats = [...document.querySelectorAll(".kpi-strip .kpi")].map((el) => [
+      el.querySelector(".kpi-label")?.textContent?.trim(),
+      el.querySelector(".kpi-value")?.textContent?.trim(),
     ]);
     expect(stats).toEqual([
       ["Soll", "475:00"],
@@ -214,7 +197,6 @@ describe("PersonDrilldown - header and figures", () => {
   });
 
   it("a withheld saldo reads a dash in the figures and shows no SaldoAnzeige", () => {
-    viewport(false);
     renderWithTheme(
       PersonDrilldown,
       props({
@@ -239,7 +221,7 @@ describe("PersonDrilldown - header and figures", () => {
         }),
       }),
     );
-    const values = [...document.querySelectorAll(".mini-stat .value")].map((e) =>
+    const values = [...document.querySelectorAll(".kpi-strip .kpi-value")].map((e) =>
       e.textContent?.trim(),
     );
     expect(values[0]).toContain("—");
@@ -252,7 +234,6 @@ describe("PersonDrilldown - header and figures", () => {
 
 describe("PersonDrilldown - the month series", () => {
   it("lists the months by their server names with Soll, Ist, Saldo and a status chip", () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     const table = screen.getByRole("table", { name: /Monate/ });
     const rows = within(table).getAllByRole("row").slice(1);
@@ -273,7 +254,6 @@ describe("PersonDrilldown - the month series", () => {
   });
 
   it("selects the last month by default and moves the selection on a click", async () => {
-    viewport(false);
     const p = props();
     renderWithTheme(PersonDrilldown, p);
     expect(screen.getByRole("button", { name: "September 2026" })).toHaveAttribute(
@@ -297,7 +277,6 @@ describe("PersonDrilldown - the month series", () => {
   });
 
   it("a month without a Soll reads ohne Soll, a withheld month figure a dash", () => {
-    viewport(false);
     renderWithTheme(
       PersonDrilldown,
       props({
@@ -313,7 +292,6 @@ describe("PersonDrilldown - the month series", () => {
   });
 
   it("a new period (new row) resets the selection to its last month", async () => {
-    viewport(false);
     const p = props();
     const view = renderWithTheme(PersonDrilldown, p);
     await fireEvent.click(screen.getByRole("button", { name: "Juli 2026" }));
@@ -328,7 +306,6 @@ describe("PersonDrilldown - the month series", () => {
   });
 
   it("shows the vacation line of the period-end year", () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     expect(
       screen.getByText("Urlaubsjahr 2026: Anspruch 30 · Genommen 12 · Genehmigt 5 · Resturlaub 13"),
@@ -336,7 +313,6 @@ describe("PersonDrilldown - the month series", () => {
   });
 
   it("a missing entitlement is named instead of zeros, no vacation row hides the line", () => {
-    viewport(false);
     const view = renderWithTheme(
       PersonDrilldown,
       props({
@@ -359,7 +335,6 @@ describe("PersonDrilldown - Abwesenheiten (Issue #713)", () => {
     screen.getByRole("heading", { name: "Abwesenheiten" }).closest("section") as HTMLElement;
 
   it("lists the non-zero kinds with their unit in canonical order, singular for exactly 1", () => {
-    viewport(false);
     renderWithTheme(
       PersonDrilldown,
       props({
@@ -384,7 +359,6 @@ describe("PersonDrilldown - Abwesenheiten (Issue #713)", () => {
   });
 
   it("sits after the section Urlaub and before the day list", () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props({ row: withAbsence({ SICK: 2 }) }));
     const order = screen
       .getAllByRole("heading", { level: 3 })
@@ -398,14 +372,12 @@ describe("PersonDrilldown - Abwesenheiten (Issue #713)", () => {
   });
 
   it("says so when the person has no absence in the period", () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     expect(within(section()).getByText("Keine Abwesenheiten im Zeitraum.")).toBeInTheDocument();
     expect(within(section()).queryAllByRole("listitem")).toHaveLength(0);
   });
 
   it("shows counts only: no calendar day appears in the section", () => {
-    viewport(false);
     renderWithTheme(
       PersonDrilldown,
       props({ row: withAbsence({ SICK: 3, SICK_CHILD: 2, MATERNITY: 4 }) }),
@@ -414,7 +386,6 @@ describe("PersonDrilldown - Abwesenheiten (Issue #713)", () => {
   });
 
   it("is independent of the time-entry right and of a vacation row", () => {
-    viewport(false);
     const loadDayEntries = vi.fn().mockResolvedValue(ENTRIES);
     renderWithTheme(
       PersonDrilldown,
@@ -430,7 +401,6 @@ describe("PersonDrilldown - Abwesenheiten (Issue #713)", () => {
   });
 
   it("keeps the HR phrase out and reads the counts from the row without summing", () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props({ row: withAbsence({ SICK: 2 }) }));
     expect(document.body.textContent).not.toContain(HR_E2E_PHRASE);
     expect(source).not.toMatch(/absence\[[^\]]+\]\s*[-+*/]/);
@@ -439,7 +409,6 @@ describe("PersonDrilldown - Abwesenheiten (Issue #713)", () => {
 
 describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
   it("renders one row per entry; the date only on the first of a day; no totals row", async () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     const table = await screen.findByRole("table", { name: /Tage im September 2026/ });
     const rows = within(table).getAllByRole("row").slice(1);
@@ -455,7 +424,6 @@ describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
   });
 
   it("an open entry is „läuft“, an invalid one „zählt nicht“ with its reason, a trip names both salons", async () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     const table = await screen.findByRole("table", { name: /Tage im September 2026/ });
     const rows = within(table).getAllByRole("row").slice(1);
@@ -468,7 +436,6 @@ describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
   });
 
   it("the Salon column exists only when salon options are shown", async () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props({ showSalonColumn: false }));
     const table = await screen.findByRole("table", { name: /Tage im September 2026/ });
     expect(within(table).queryByRole("columnheader", { name: "Salon" })).toBeNull();
@@ -476,7 +443,6 @@ describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
   });
 
   it("links to Team-Zeiten at the first day of the selected month", async () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     await screen.findByRole("table", { name: /Tage im September 2026/ });
     expect(screen.getByRole("link", { name: "In Team-Zeiten öffnen" })).toHaveAttribute(
@@ -485,28 +451,26 @@ describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
     );
   });
 
-  it("at 640 px and below the days are a list of one line per entry, still without totals", async () => {
-    viewport(true);
+  it("the days are one table DOM at every width: each cell carries its column label for the card layout", async () => {
     renderWithTheme(PersonDrilldown, props());
-    const list = await screen.findByRole("list", { name: /Tage im September 2026/ });
-    expect(within(list).queryByRole("table")).toBeNull();
-    const items = within(list).getAllByRole("listitem");
-    expect(items).toHaveLength(5);
-    expect(items[0]).toHaveTextContent("Mo 07.09. · 08:00–12:00 · Pause 0:00 · 4:00 h");
-    expect(items[0]).toHaveTextContent("Nord");
-    expect(items[1]).toHaveTextContent("13:00–16:30 · Pause 0:30 · 3:00 h");
-    expect(list.textContent).not.toMatch(/Summe|Gesamt/);
+    const table = await screen.findByRole("table", { name: /Tage im September 2026/ });
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(
+      Array.from(rows[0].querySelectorAll("td")).map((td) => td.getAttribute("data-label")),
+    ).toEqual(["Datum", "Von–Bis", "Pause", "Arbeitszeit", "Salon"]);
+    expect(
+      Array.from(rows[1].querySelectorAll("td"))[0].querySelector(".drill-repeat"),
+    ).not.toBeNull();
+    expect(table.textContent).not.toMatch(/Summe|Gesamt/);
   });
 
   it("an empty month says so", async () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props({ loadDayEntries: vi.fn().mockResolvedValue([]) }));
     expect(await screen.findByText("Keine Einträge in diesem Monat.")).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: /Tage im/ })).toBeNull();
   });
 
   it("a failed read shows the error with Erneut laden, which asks again", async () => {
-    viewport(false);
     const loadDayEntries = vi
       .fn()
       .mockRejectedValueOnce(new Error("boom"))
@@ -523,7 +487,6 @@ describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
   });
 
   it("only the latest month's answer is shown when the selection changes while a read is open", async () => {
-    viewport(false);
     let resolveSeptember: (v: unknown) => void = () => {};
     const loadDayEntries = vi
       .fn()
@@ -541,7 +504,6 @@ describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
   });
 
   it("WITHOUT time-entry:read no request is made and one hint line replaces the list (T-612-20)", async () => {
-    viewport(false);
     const p = props({ canTimeEntryRead: false });
     renderWithTheme(PersonDrilldown, p);
     expect(
@@ -556,21 +518,24 @@ describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
 });
 
 describe("PersonDrilldown - the person documents (only with report:export)", () => {
-  it("offers DATEV (Person) and Stundennachweis (PDF) for the selected month with the copy-deck names", async () => {
-    viewport(false);
+  it("offers the Stundennachweis as a download and DATEV as a link into Daten > Export for the selected month", async () => {
     const p = props();
     renderWithTheme(PersonDrilldown, p);
     const pdf = screen.getByRole("button", {
       name: "Stundennachweis September 2026 für Person A (PDF)",
     });
-    const datev = screen.getByRole("button", { name: "DATEV-Datei September 2026 für Person A" });
+    const datev = screen.getByRole("link", { name: /^DATEV für diese Person/ });
     expect(pdf).toHaveTextContent("Stundennachweis (PDF)");
-    expect(datev).toHaveTextContent("DATEV (Person)");
+    expect(datev).toHaveTextContent("DATEV für diese Person");
+    // The link carries the person, the year and the month of the selected row; no file is made here.
+    expect(datev).toHaveAttribute("href", "/verwalten/daten/export?person=emp-1&year=2026&month=9");
     await fireEvent.click(pdf);
     expect(p.onDownloadPdf).toHaveBeenCalledWith({ year: 2026, month: 9 });
-    await fireEvent.click(datev);
-    expect(p.onDownloadDatev).toHaveBeenCalledWith({ year: 2026, month: 9 });
     await fireEvent.click(screen.getByRole("button", { name: "Juli 2026" }));
+    expect(screen.getByRole("link", { name: /^DATEV für diese Person/ })).toHaveAttribute(
+      "href",
+      "/verwalten/daten/export?person=emp-1&year=2026&month=7",
+    );
     await fireEvent.click(
       screen.getByRole("button", { name: "Stundennachweis Juli 2026 für Person A (PDF)" }),
     );
@@ -578,22 +543,19 @@ describe("PersonDrilldown - the person documents (only with report:export)", () 
   });
 
   it("the forbidden word sequence never occurs", () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     expect(document.body.textContent).not.toContain(HR_E2E_PHRASE);
     expect(source).not.toContain(HR_E2E_PHRASE);
   });
 
   it("without report:export neither button renders", () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props({ canReportExport: false }));
     expect(screen.queryByText("Stundennachweis (PDF)")).toBeNull();
-    expect(screen.queryByText("DATEV (Person)")).toBeNull();
+    expect(screen.queryByText("DATEV für diese Person")).toBeNull();
     expect(screen.getByRole("button", { name: "Schließen" })).toBeInTheDocument();
   });
 
   it("a button keeps its label and shows a spinner while its download runs", async () => {
-    viewport(false);
     let finish: () => void = () => {};
     const onDownloadPdf = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
     renderWithTheme(PersonDrilldown, props({ onDownloadPdf }));
@@ -611,7 +573,6 @@ describe("PersonDrilldown - the person documents (only with report:export)", () 
 
 describe("PersonDrilldown - the closing saldo (P-13, amendment 7)", () => {
   it("an open month after a closed one: split mode with the unconfirmed months passed on", () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     const anzeige = screen.getByTestId("saldo-anzeige");
     expect(anzeige).toHaveClass("saldo--split");
@@ -622,7 +583,6 @@ describe("PersonDrilldown - the closing saldo (P-13, amendment 7)", () => {
   });
 
   it("the server cannot split it: the single value, worded as a forecast", () => {
-    viewport(false);
     renderWithTheme(
       PersonDrilldown,
       props({
@@ -641,7 +601,6 @@ describe("PersonDrilldown - the closing saldo (P-13, amendment 7)", () => {
   });
 
   it("the last month confirmed: the single value as confirmed (locked)", () => {
-    viewport(false);
     renderWithTheme(
       PersonDrilldown,
       props({
@@ -669,7 +628,6 @@ describe("PersonDrilldown - the closing saldo (P-13, amendment 7)", () => {
 
 describe("PersonDrilldown - the saldo tooltip stays inside the modal on a phone (e2e matrix finding)", () => {
   it("the saldo block is the anchor of its tooltip panel", () => {
-    viewport(false);
     renderWithTheme(PersonDrilldown, props());
     const anzeige = screen.getByTestId("saldo-anzeige");
     expect(anzeige.closest(".drill-saldo")).not.toBeNull();
@@ -687,7 +645,6 @@ describe("PersonDrilldown - the saldo tooltip stays inside the modal on a phone 
 
 describe("PersonDrilldown - closing", () => {
   it("Schließen takes the initial focus and reports the close once", async () => {
-    viewport(false);
     const p = props();
     renderWithTheme(PersonDrilldown, p);
     const close = screen.getByRole("button", { name: "Schließen" });
@@ -698,7 +655,6 @@ describe("PersonDrilldown - closing", () => {
   });
 
   it("Escape closes it as well", async () => {
-    viewport(false);
     const p = props();
     renderWithTheme(PersonDrilldown, p);
     // #843 D-843-16: the dialog is portaled to body and bits-ui listens for Escape on document
@@ -707,7 +663,6 @@ describe("PersonDrilldown - closing", () => {
   });
 
   it("a drill-down that is not open renders nothing and asks for nothing", () => {
-    viewport(false);
     const p = props({ open: false });
     renderWithTheme(PersonDrilldown, p);
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -721,6 +676,13 @@ describe("PersonDrilldown - source", () => {
     expect(source.length).toBeGreaterThan(3000);
     expect(source).not.toContain("$app/");
     expect(source).not.toContain("$api/");
+  });
+
+  // Issue #854 (AC-7): the DATEV file is made on Daten > Export only; this component names no route.
+  it("starts no DATEV download: no DATEV route, the link is built by exportHref", () => {
+    expect(source).not.toContain("/reports/datev");
+    expect(source).not.toContain("fetch(");
+    expect(source).toContain("exportHref(");
   });
 
   it("passes the forecast data to the split SaldoAnzeige (#588 R8) and holds no forecast literal", () => {

@@ -38,10 +38,6 @@
       }
     },
     "own-kpi-card": {
-      "apps/web/src/lib/components/reports/PersonDrilldown.svelte": {
-        "count": 4,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/dashboard/+page.svelte": {
         "count": 1,
         "ticket": "#845"
@@ -84,10 +80,6 @@
         "count": 1,
         "ticket": null,
         "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
-      },
-      "apps/web/src/lib/components/reports/PersonDrilldown.svelte": {
-        "count": 2,
-        "ticket": "#854"
       },
       "apps/web/src/lib/components/team/SalonTimeEntries.svelte": {
         "count": 1,

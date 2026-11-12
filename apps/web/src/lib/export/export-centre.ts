@@ -152,6 +152,22 @@ export function exportPreselection(url: URL): ExportPreselection {
   };
 }
 
+/**
+ * The link into the export page with a choice preselected (D-854-22): the inverse of
+ * `exportPreselection`, so the keys are spelled in this module only. A person is optional.
+ */
+export function exportHref(choice: {
+  personId?: string | null;
+  year: number;
+  month: number;
+}): string {
+  const query = new URLSearchParams();
+  if (choice.personId) query.set("person", choice.personId);
+  query.set("year", String(choice.year));
+  query.set("month", String(choice.month));
+  return `/verwalten/daten/export?${query.toString()}`;
+}
+
 /** The problem of a chosen CSV period in German (`GET /reports/period/csv` takes months, at most 12, none in the future); null when fine. */
 export function csvPeriodProblem(from: YearMonth, to: YearMonth, today: YearMonth): string | null {
   const problem = validateRange(from, to, today);

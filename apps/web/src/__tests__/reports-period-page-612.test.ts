@@ -415,24 +415,20 @@ describe("/reports period area (Issue #612) - the person drill-down", () => {
     expect((PAGE.match(/loadDayEntries\(/g) ?? []).length).toBe(1);
   });
 
-  it("the person documents are the page's blob downloads, for the month the modal names", () => {
+  it("the person's Stundennachweis is the page's blob download; DATEV left the page (Issue #854)", () => {
     const pdf = functionBody("downloadEmployeePdf");
     expect(pdf).toContain(
       "/reports/monthly/pdf?employeeId=${employeeId}&year=${target.year}&month=${target.month}",
     );
     expect(pdf).toContain("toasts.error(");
-    const datev = functionBody("downloadEmployeeDatev");
-    expect(datev).toContain(
-      "/api/v1/reports/datev/employee?employeeId=${employeeId}&year=${target.year}&month=${target.month}",
-    );
-    expect(datev).toContain("toasts.error(");
     expect(TEMPLATE).toContain("{canReportExport}");
     expect(TEMPLATE).toContain(
       "downloadEmployeePdf(drillRow.employeeId, drillRow.employeeName, target)",
     );
-    expect(TEMPLATE).toContain(
-      "downloadEmployeeDatev(drillRow.employeeId, drillRow.employeeName, target)",
-    );
+    // D-854-22: the drill-down links into Daten > Export; the page keeps no DATEV download.
+    expect(SCRIPT).not.toContain("downloadEmployeeDatev");
+    expect(TEMPLATE).not.toContain("onDownloadDatev");
+    expect(PAGE).not.toContain("/reports/datev");
     // The old per-row error state is gone with the buttons.
     expect(PAGE).not.toContain("empDownloadErrors");
   });

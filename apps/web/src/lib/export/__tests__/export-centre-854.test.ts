@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   csvPeriodProblem,
   exportHistoryRows,
+  exportHref,
   exportPreselection,
   monthName,
   openMonthHint,
@@ -187,5 +188,25 @@ describe("wholeNumberProblem", () => {
     expect(wholeNumberProblem("Urlaub", null, range)).toBe("Urlaub ist eine Pflichtangabe.");
     expect(wholeNumberProblem("Urlaub", undefined, range)).toBe("Urlaub ist eine Pflichtangabe.");
     expect(wholeNumberProblem("Urlaub", null, { ...range, optional: true })).toBeNull();
+  });
+});
+
+describe("exportHref", () => {
+  const PERSON = "0b1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+  it("is the inverse of exportPreselection: person, year and month survive the round trip", () => {
+    const href = exportHref({ personId: PERSON, year: 2026, month: 9 });
+    expect(href).toBe(`/verwalten/daten/export?person=${PERSON}&year=2026&month=9`);
+    expect(exportPreselection(new URL(href, "https://clokr.test"))).toEqual({
+      personId: PERSON,
+      year: 2026,
+      month: 9,
+    });
+  });
+
+  it("leaves the person out when none is given", () => {
+    const href = exportHref({ year: 2027, month: 1 });
+    expect(href).toBe("/verwalten/daten/export?year=2027&month=1");
+    expect(exportPreselection(new URL(href, "https://clokr.test")).personId).toBeNull();
   });
 });

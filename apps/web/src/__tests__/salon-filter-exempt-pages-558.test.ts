@@ -146,12 +146,6 @@ const EXEMPT_BLOCKS: ReadonlyArray<{
   reason: string;
 }> = [
   {
-    block: "per-person DATEV download",
-    fn: "downloadEmployeeDatev",
-    loads: "/reports/datev/employee",
-    reason: "a document of one named person; the salon does not change what it contains",
-  },
-  {
     block: "per-person Stundennachweis",
     fn: "downloadEmployeePdf",
     loads: "/reports/monthly/pdf",
@@ -167,20 +161,22 @@ describe("Issue #542 — blocks of Berichte that stay unfiltered", () => {
     // Issue #612: the page shrank when the attendance list and the export cards moved out (measured
     // 47 618 bytes after 612-06); the floor keeps the check non-vacuous.
     expect(REPORTS_PAGE.length).toBeGreaterThan(30_000);
-    expect(EXEMPT_BLOCKS.length).toBeGreaterThanOrEqual(2);
+    // Issue #854: the per-person DATEV block left with its function (the page starts no DATEV file),
+    // so one block remains - the floor follows the removal, it is not relaxed.
+    expect(EXEMPT_BLOCKS.length).toBeGreaterThanOrEqual(1);
     for (const { fn } of EXEMPT_BLOCKS) {
       expect(reportsFunctionBody(fn).length, `function ${fn} not found`).toBeGreaterThan(100);
     }
   });
 
-  // Issue #854 (D-854-22): the tenant DATEV download left this page (Daten › Export is the one place,
-  // where the payroll file stays complete and is never salon-narrowed, OD-2, § 41 EStG). The only
-  // DATEV route left here is the per-person file of the drill-down.
-  it("the page starts no tenant DATEV download; its only DATEV route is the per-person file", () => {
+  // Issue #854 (D-854-22, AC-7): no DATEV download is started on this page at all - Daten › Export is
+  // the one place, where the payroll file stays complete and is never salon-narrowed (OD-2, § 41
+  // EStG). The per-person drill-down only links there; `export-one-datev-path-854.test.ts` pins that
+  // no other file names a DATEV route.
+  it("the page starts no DATEV download: no DATEV route and no DATEV function", () => {
     expect(reportsFunctionBody("downloadDatev")).toBe("");
-    expect(REPORTS_PAGE).not.toContain("/reports/datev?");
-    expect((REPORTS_PAGE.match(/\/reports\/datev/g) ?? []).length).toBe(1);
-    expect(REPORTS_PAGE).toContain("/reports/datev/employee");
+    expect(reportsFunctionBody("downloadEmployeeDatev")).toBe("");
+    expect(REPORTS_PAGE).not.toContain("/reports/datev");
   });
 
   for (const { block, fn, loads, reason } of EXEMPT_BLOCKS) {

@@ -142,6 +142,13 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/reports/TodayAttendance.svelte",
   // Export dialog of Berichte: Dialog + List, no DATEV download (links to Daten > Export).
   "lib/components/reports/ExportDialog.svelte",
+  // Plan 854-28 (Berichte II): every table of the page is a DataTable, the drill-down links into the export.
+  "lib/components/reports/TimesAccountsTable.svelte",
+  "lib/components/reports/AbsencesByPersonTable.svelte",
+  "lib/components/reports/VacationAbsenceTab.svelte",
+  "lib/components/reports/ExitedFinalSaldoSection.svelte",
+  "lib/components/reports/SalonWorkedSection.svelte",
+  "lib/components/reports/PersonDrilldown.svelte",
 ];
 
 export interface VerwaltenFile {

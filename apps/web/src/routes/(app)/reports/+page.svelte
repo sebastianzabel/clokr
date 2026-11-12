@@ -666,42 +666,6 @@
     }
   }
 
-  async function downloadEmployeeDatev(employeeId: string, name: string, target: YearMonth) {
-    try {
-      const { authStore: authSt } = await import("$stores/auth");
-      const { get } = await import("svelte/store");
-      const auth = get(authSt);
-      const res = await fetch(
-        `/api/v1/reports/datev/employee?employeeId=${employeeId}&year=${target.year}&month=${target.month}`,
-        {
-          headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
-        },
-      );
-      if (!res.ok) {
-        // Issue #304: a 422 names the personnel numbers LODAS cannot take; show that, not a generic text.
-        if (res.status === 422) {
-          const payload = (await res.json().catch(() => ({}))) as { error?: string };
-          if (payload.error) {
-            toasts.error(payload.error);
-            return;
-          }
-        }
-        throw new Error("Download fehlgeschlagen");
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `DATEV_${name.replace(/\s+/g, "_")}_${target.year}_${String(target.month).padStart(2, "0")}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 100);
-    } catch {
-      toasts.error("Die DATEV-Datei konnte nicht erstellt werden. Bitte versuch es noch einmal.");
-    }
-  }
-
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   // ── The personal view (callers without a team report right) ────────────────
@@ -850,10 +814,6 @@
     onDownloadPdf={(target) =>
       drillRow
         ? downloadEmployeePdf(drillRow.employeeId, drillRow.employeeName, target)
-        : undefined}
-    onDownloadDatev={(target) =>
-      drillRow
-        ? downloadEmployeeDatev(drillRow.employeeId, drillRow.employeeName, target)
         : undefined}
     onClose={closeDrill}
   />
