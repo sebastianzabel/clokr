@@ -449,7 +449,7 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await page.getByTestId("salon-assignment-add").click();
     // #854: the form is a dialog; the days are DatePickers (segments Tag, Monat, Jahr).
     const assignmentDialog = page.getByRole("dialog");
-    await assignmentDialog.getByLabel("Salon", { exact: true }).selectOption({
+    await assignmentDialog.getByRole("combobox", { name: "Salon", exact: true }).selectOption({
       label: SECOND_SALON_NAME,
     });
     await typeDay(assignmentDialog.locator('[aria-label="Gültig ab"]'), hireDay);
