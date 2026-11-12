@@ -56,7 +56,7 @@ describe("VACATION_YEAR_COLUMNS mirrors the Monatsexport labels (Issue #617)", (
 describe("the Urlaubsuebersicht on /reports (VacationAbsenceTab) uses the shared labels", () => {
   it("[vacuity gate] the page source is loaded", () => {
     expect(PAGE.length).toBeGreaterThan(0);
-    expect(PAGE).toContain("vac-table");
+    expect(PAGE).toContain("vacationColumns");
   });
 
   it("imports VACATION_YEAR_COLUMNS and renders the headers from it", () => {
@@ -64,7 +64,7 @@ describe("the Urlaubsuebersicht on /reports (VacationAbsenceTab) uses the shared
     expect(PAGE).toMatch(
       /import \{ VACATION_YEAR_COLUMNS \} from "\$lib\/reports\/vacation-columns"/,
     );
-    expect(PAGE).toMatch(/\{#each VACATION_YEAR_COLUMNS as/);
+    expect(PAGE).toContain("VACATION_YEAR_COLUMNS.map(");
   });
 
   it("no longer has the Rest column, the Geplant column or the Urlaubsart column", () => {

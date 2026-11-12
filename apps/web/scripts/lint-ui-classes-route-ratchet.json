@@ -17,14 +17,6 @@
         "ticket": null,
         "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
       },
-      "apps/web/src/lib/components/reports/AbsencesByPersonTable.svelte": {
-        "count": 3,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/VacationAbsenceTab.svelte": {
-        "count": 3,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/admin/availability/+page.svelte": {
         "count": 1,
         "ticket": "#853"
@@ -93,23 +85,7 @@
         "ticket": null,
         "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
       },
-      "apps/web/src/lib/components/reports/AbsencesByPersonTable.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/ExitedFinalSaldoSection.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/lib/components/reports/PersonDrilldown.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/SalonWorkedSection.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/VacationAbsenceTab.svelte": {
         "count": 2,
         "ticket": "#854"
       },

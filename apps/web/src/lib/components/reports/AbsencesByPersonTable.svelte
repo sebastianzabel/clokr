@@ -1,21 +1,24 @@
 <script lang="ts">
-  // Issue #713 (D-03, D-08, D-10) - the card „Abwesenheiten je Person“ of the tab „Urlaub &
+  // Issue #713 (D-03, D-08, D-10) - the section „Abwesenheiten je Person“ of the tab „Urlaub &
   // Abwesenheit“: one row per person of the period answer, one column per absence kind (Krank and
-  // Kinderkrank apart), searchable, sortable and paged, a list instead of the table at 960 px and
-  // below. Pattern 3: every figure is the server's `rows[].absence`, formatted here and never
-  // summed; the decisions live in `$lib/reports/absence-table`. A column that is 0 for every row of
-  // the whole answer is not rendered. It owns no URL and no navigation: the page hands in the
-  // person link and decides what a click does.
+  // Kinderkrank apart), searchable, sortable and paged. Rebuilt on the blocks for Issue #854: a
+  // DataTable under a TableToolbar (cards below 760 px of container width). Pattern 3: every figure
+  // is the server's `rows[].absence`, formatted here and never summed; the decisions live in
+  // `$lib/reports/absence-table`. A column that is 0 for every row of the whole answer is not
+  // rendered. It owns no URL and no navigation: the page hands in the person link and decides what
+  // a click on it does.
   import { untrack } from "svelte";
-  import ApprovalRow from "$components/ui/ApprovalRow.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
+  import DataTable, {
+    type DataTableColumn,
+    type DataTableSort,
+  } from "$components/ui/DataTable.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
+  import Note from "$components/ui/Note.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
+  import TableToolbar from "$components/ui/TableToolbar.svelte";
   import {
     ABSENCE_UNIT_HINT,
-    absenceListLine,
     hiddenAbsenceColumns,
     nextAbsenceSort,
     sortAbsenceRows,
@@ -24,7 +27,7 @@
   } from "$lib/reports/absence-table";
   import { fmtDaysDe } from "$lib/reports/period-format";
   import type { PeriodRow } from "$lib/reports/period-report";
-  import { filterPeriodRows, initialsOf, type SortDir } from "$lib/reports/period-table";
+  import { filterPeriodRows, type SortDir } from "$lib/reports/period-table";
   import {
     PERSON_VALUES_NOT_SPLIT_LABEL,
     SALON_PERIOD_END_PERSONS_NOTE,
@@ -44,7 +47,7 @@
     filterActive: boolean;
     /** The drill-down URL of a person (the name link's `href`; opens in a new tab too). */
     personHref: (row: PeriodRow) => string;
-    /** A click on a name link, a list row or a row cell; the page intercepts a plain left click. */
+    /** A click on a name link; the page intercepts a plain left click. */
     onOpenPerson: (event: MouseEvent, row: PeriodRow) => void;
   }
 
@@ -54,26 +57,16 @@
   let sort = $state<{ key: AbsenceSortKey; dir: SortDir }>({ key: "name", dir: "asc" });
   let page = $state(1);
   let pageSize = $state(25);
-  let narrow = $state(false);
-
-  // The list replaces the table at the app's chrome breakpoint (ADD-6).
-  $effect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 960px)");
-    narrow = query.matches;
-    const onChange = (e: { matches: boolean }) => {
-      narrow = e.matches;
-    };
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  });
 
   const all = $derived(rows ?? []);
   // Which columns exist is decided over the WHOLE answer - never per page or per search.
-  const columns = $derived(visibleAbsenceColumns(all));
+  const kinds = $derived(visibleAbsenceColumns(all));
   const hiddenKinds = $derived(hiddenAbsenceColumns(all));
   const visible = $derived(sortAbsenceRows(filterPeriodRows(all, search), sort.key, sort.dir));
-  const pageRows = $derived(visible.slice((page - 1) * pageSize, page * pageSize));
+  // DataTable's row type is a string-keyed record; the interface of the period row has no index
+  // signature, so the shown rows carry the intersection.
+  type TableRow = PeriodRow & Record<string, unknown>;
+  const pageRows = $derived(visible.slice((page - 1) * pageSize, page * pageSize) as TableRow[]);
 
   // Search and sort apply to all rows before paging; a change returns to page 1.
   $effect(() => {
@@ -84,31 +77,20 @@
     });
   });
 
-  const mobileSorts = $derived([
-    { value: "name:asc", label: "Name (A–Z)" },
-    { value: "name:desc", label: "Name (Z–A)" },
-    ...columns.map((c) => ({ value: `${c.code}:desc`, label: `${c.label} (meiste zuerst)` })),
+  const columns = $derived<DataTableColumn[]>([
+    { key: "name", label: "Person", primary: true, sortable: true },
+    ...kinds.map((c) => ({
+      key: c.code,
+      label: c.header,
+      sortable: true,
+      align: "end" as const,
+    })),
   ]);
 
-  function onMobileSort(value: string) {
-    const [key, dir] = value.split(":") as [AbsenceSortKey, SortDir];
-    sort = { key, dir };
-  }
-
-  function ariaSort(key: AbsenceSortKey): "ascending" | "descending" | "none" {
-    if (sort.key !== key) return "none";
-    return sort.dir === "asc" ? "ascending" : "descending";
-  }
-
-  // The whole row opens the person; the name link and any button keep their own behaviour.
-  function onRowClick(e: MouseEvent, row: PeriodRow) {
-    const target = e.target as Element | null;
-    if (target?.closest("a, button")) return;
-    onOpenPerson(e, row);
-  }
-
-  function personCount(n: number): string {
-    return `${n} ${n === 1 ? "Person" : "Personen"}`;
+  const tableSort = $derived<DataTableSort>({ key: sort.key, dir: sort.dir });
+  // The module's cycle (a kind starts with the most days) decides, not the table's.
+  function onSort(next: DataTableSort | null) {
+    sort = nextAbsenceSort(sort, (next?.key ?? sort.key) as AbsenceSortKey);
   }
 
   function resetSearch() {
@@ -116,13 +98,33 @@
   }
 </script>
 
-<Card animate>
-  <CardHeader title="Abwesenheiten je Person" sub={periodLabel} />
+{#snippet cell(row: TableRow, column: DataTableColumn)}
+  {#if column.key === "name"}
+    <span class="abp-person">
+      <a
+        class="abp-person-link"
+        href={personHref(row)}
+        data-sveltekit-noscroll
+        title={row.employeeName}
+        onclick={(e) => onOpenPerson(e, row)}>{row.employeeName}</a
+      >
+      <span class="abp-sub">{row.employeeNumber}</span>
+    </span>
+  {:else}
+    {fmtDaysDe(row.absence[column.key as keyof PeriodRow["absence"]])}
+  {/if}
+{/snippet}
+
+<section class="settings-group" aria-labelledby="absences-by-person-title">
+  <div>
+    <h2 class="settings-group-title" id="absences-by-person-title">Abwesenheiten je Person</h2>
+    <p class="settings-group-desc abp-label">{periodLabel}</p>
+  </div>
 
   {#if filterActive}
-    <p class="form-hint" data-testid="absence-salon-note">
-      {SALON_PERIOD_END_PERSONS_NOTE} · {PERSON_VALUES_NOT_SPLIT_LABEL}
-    </p>
+    <div data-testid="absence-salon-note">
+      <Note tone="brand">{SALON_PERIOD_END_PERSONS_NOTE} · {PERSON_VALUES_NOT_SPLIT_LABEL}</Note>
+    </div>
   {/if}
 
   {#if rows === null}
@@ -137,127 +139,31 @@
       title="Keine Personen im Zeitraum"
       description="In deiner Reichweite war im gewählten Zeitraum niemand beschäftigt. Wähle oben einen anderen Zeitraum."
     />
-  {:else if columns.length === 0}
-    <p class="abp-empty">Keine Abwesenheiten im Zeitraum.</p>
+  {:else if kinds.length === 0}
+    <EmptyState icon="inbox" title="Keine Abwesenheiten im Zeitraum." />
   {:else}
-    <div class="filter-bar">
-      <input
-        type="search"
-        class="form-input filter-search"
-        placeholder="Name oder Personalnummer"
-        aria-label="Person suchen"
-        bind:value={search}
-      />
-      {#if narrow}
-        <select
-          class="form-input"
-          aria-label="Sortieren nach"
-          value={`${sort.key}:${sort.dir}`}
-          onchange={(e) => onMobileSort(e.currentTarget.value)}
-        >
-          {#each mobileSorts as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      {/if}
-      <span class="filter-count" data-testid="absence-count">{personCount(visible.length)}</span>
-    </div>
-
-    {#if visible.length === 0}
-      <EmptyState
-        icon="search"
-        title="Keine Treffer"
-        description={`Keine Person passt zu „${search.trim()}“.`}
-        actionLabel="Suche zurücksetzen"
-        onaction={resetSearch}
-      />
-    {:else if narrow}
-      <ul class="abp-list" role="list">
-        {#each pageRows as row (row.employeeId)}
-          <li>
-            <ApprovalRow
-              avatar={initialsOf(row.employeeName)}
-              name={row.employeeName}
-              primaryHref={personHref(row)}
-              primaryLabel={`${row.employeeName} – Personenansicht öffnen`}
-              onPrimaryClick={(e) => onOpenPerson(e, row)}
-              dates={absenceListLine(row, columns)}
-            />
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <div class="table-scroll">
-        <table class="data-table data-table--compact abp-table">
-          <caption class="sr-only">Abwesenheiten je Person, {periodLabel}</caption>
-          <thead>
-            <tr>
-              <th
-                scope="col"
-                class="sortable"
-                class:sorted={sort.key === "name"}
-                aria-sort={ariaSort("name")}
-              >
-                <button
-                  type="button"
-                  class="abp-sort-btn"
-                  onclick={() => (sort = nextAbsenceSort(sort, "name"))}
-                >
-                  Person
-                  {#if sort.key === "name"}
-                    <span class="sort-indicator" aria-hidden="true"
-                      >{sort.dir === "asc" ? "▲" : "▼"}</span
-                    >
-                  {/if}
-                </button>
-              </th>
-              {#each columns as col (col.code)}
-                <th
-                  scope="col"
-                  class="sortable num"
-                  class:sorted={sort.key === col.code}
-                  aria-sort={ariaSort(col.code)}
-                >
-                  <button
-                    type="button"
-                    class="abp-sort-btn"
-                    onclick={() => (sort = nextAbsenceSort(sort, col.code))}
-                  >
-                    {col.header}
-                    {#if sort.key === col.code}
-                      <span class="sort-indicator" aria-hidden="true"
-                        >{sort.dir === "asc" ? "▲" : "▼"}</span
-                      >
-                    {/if}
-                  </button>
-                </th>
-              {/each}
-            </tr>
-          </thead>
-          <tbody>
-            {#each pageRows as row (row.employeeId)}
-              <!-- The keyboard path is the name link; the row click is a pointer convenience. -->
-              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-              <tr class="abp-row" onclick={(e) => onRowClick(e, row)}>
-                <th scope="row" class="abp-person">
-                  <a
-                    class="abp-person-link"
-                    href={personHref(row)}
-                    data-sveltekit-noscroll
-                    title={row.employeeName}
-                    onclick={(e) => onOpenPerson(e, row)}>{row.employeeName}</a
-                  >
-                  <span class="abp-sub">{row.employeeNumber}</span>
-                </th>
-                {#each columns as col (col.code)}
-                  <td class="num">{fmtDaysDe(row.absence[col.code])}</td>
-                {/each}
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
+    <DataTable
+      {columns}
+      rows={pageRows}
+      rowKey={(row) => row.employeeId}
+      rowTestId={(row) => `abp-row-${row.employeeId}`}
+      {cell}
+      sort={tableSort}
+      {onSort}
+      filtered={search.trim() !== ""}
+      onResetFilters={resetSearch}
+      caption={`Abwesenheiten je Person, ${periodLabel}`}
+    >
+      {#snippet toolbar()}
+        <TableToolbar
+          bind:query={search}
+          count={visible.length}
+          total={all.length}
+          searchLabel="Name oder Personalnummer suchen"
+          onReset={resetSearch}
+        />
+      {/snippet}
+    </DataTable>
 
     {#if visible.length > 0}
       <Pagination
@@ -270,59 +176,32 @@
       />
     {/if}
 
-    <p class="form-hint" data-testid="absence-unit-hint">{ABSENCE_UNIT_HINT}</p>
+    <p class="settings-group-desc abp-hint" data-testid="absence-unit-hint">{ABSENCE_UNIT_HINT}</p>
     {#if hiddenKinds.length > 0}
-      <p class="form-hint" data-testid="absence-hidden-hint">
+      <p class="settings-group-desc abp-hint" data-testid="absence-hidden-hint">
         Ohne Einträge im Zeitraum: {hiddenKinds.map((c) => c.label).join(", ")}
       </p>
     {/if}
   {/if}
-</Card>
+</section>
 
 <style>
-  .abp-empty {
-    margin: 0;
-    font-size: 15px;
-    color: var(--text-2);
+  .abp-label {
+    margin-top: var(--s-1);
   }
 
-  .abp-table .num {
-    text-align: right;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .abp-table th {
-    white-space: normal;
-  }
-
-  /* The sort control is a button inside the header cell: reset it to the cell's own look. */
-  .abp-sort-btn {
-    appearance: none;
-    background: none;
-    border: 0;
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    font: inherit;
-    letter-spacing: inherit;
-    text-transform: inherit;
-    color: inherit;
-    text-align: inherit;
-    cursor: pointer;
-  }
-
-  .abp-row {
-    cursor: pointer;
+  .abp-hint {
+    margin-top: 0;
   }
 
   .abp-person {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-1);
     min-width: 160px;
     max-width: 240px;
-    text-align: left;
-    font-weight: 400;
-    text-transform: none;
-    letter-spacing: normal;
+    padding-block: var(--s-1);
   }
 
   .abp-person-link {
@@ -331,7 +210,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 15px;
     font-weight: 600;
     line-height: 1.3;
     color: var(--text);
@@ -343,25 +221,15 @@
   }
 
   .abp-sub {
-    display: block;
-    margin: 0;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.4;
+    font-weight: 400;
     color: var(--text-2);
   }
 
-  .abp-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-  }
-
-  @media (pointer: coarse) {
-    .abp-sort-btn {
-      min-height: 44px;
+  @container (max-width: 759.98px) {
+    .abp-person {
+      max-width: 100%;
     }
   }
 </style>

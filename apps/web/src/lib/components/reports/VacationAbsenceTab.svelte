@@ -1,27 +1,29 @@
 <script lang="ts">
   // Issue #612 (D-612-5, ADD-2, P-06, P-07, P-15, UI-SPEC "Tab Urlaub & Abwesenheit") - the vacation
   // table of the period (one calendar year at a time, with the Verfall column and the notice
-  // button) and the absence statistics by kind. Pattern 3: every figure is the server's; this
-  // component formats days and dates and sums nothing. It owns no URL, no navigation and no API
-  // client: the page hands in the person link, the click handler and the notice call.
+  // button) and the absence statistics by kind. Rebuilt on the blocks for Issue #854: two sections
+  // with a DataTable each (cards below 760 px of container width), a TableToolbar over the vacation
+  // table, Chips and a Note. Pattern 3: every figure is the server's; this component formats days
+  // and dates and sums nothing. It owns no URL, no navigation and no API client: the page hands in
+  // the person link, the click handler and the notice call.
   import { untrack } from "svelte";
-  import ApprovalRow from "$components/ui/ApprovalRow.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
+  import Note from "$components/ui/Note.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
-  import Skeleton from "$components/ui/Skeleton.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
+  import TableToolbar from "$components/ui/TableToolbar.svelte";
   import { leaveTypeColor } from "$lib/leave/leave-colors";
   import { LEAVE_TYPES } from "$lib/leave/team-calendar-visibility";
-  import { fmtDateDe, fmtDateShortDe, fmtDaysDe } from "$lib/reports/period-format";
+  import { fmtDateDe, fmtDaysDe } from "$lib/reports/period-format";
   import type {
     PeriodAbsence,
     PeriodVacationRow,
     PeriodVacationYear,
   } from "$lib/reports/period-report";
-  import { initialsOf } from "$lib/reports/period-table";
   import { VACATION_YEAR_COLUMNS } from "$lib/reports/vacation-columns"; // Issue #617
   import {
     PERSON_VALUES_NOT_SPLIT_LABEL,
@@ -48,7 +50,7 @@
      * a person the drill-down cannot show (no row in the period answer): a plain name then.
      */
     personHref: (employeeId: string) => string | null;
-    /** A click on a name link, a list row or a row cell; the page intercepts a plain left click. */
+    /** A click on a name link; the page intercepts a plain left click. */
     onOpenPerson: (event: MouseEvent, employeeId: string) => void;
     /** Sends the carry-over notice of one entitlement (`POST /reports/carryover-warn`). */
     onNotify: (entitlementId: string) => Promise<{ warned: number; skippedDedup: number }>;
@@ -80,20 +82,7 @@
   let search = $state("");
   let page = $state(1);
   let pageSize = $state(25);
-  let narrow = $state(false);
   let chosenYear = $state<number | null>(null);
-
-  // The list replaces the table at the app's chrome breakpoint (ADD-6).
-  $effect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 960px)");
-    narrow = query.matches;
-    const onChange = (e: { matches: boolean }) => {
-      narrow = e.matches;
-    };
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  });
 
   // ── The vacation year ──────────────────────────────────────────────────────────────
 
@@ -121,7 +110,11 @@
           a.employeeId.localeCompare(b.employeeId),
       ),
   );
-  const pageRows = $derived(visible.slice((page - 1) * pageSize, page * pageSize));
+  // DataTable's row type is a string-keyed record; the interfaces of the period answer have no index
+  // signature, so the shown rows carry the intersection.
+  type VacRow = PeriodVacationRow & Record<string, unknown>;
+  type KindRow = PeriodAbsence & Record<string, unknown>;
+  const pageRows = $derived(visible.slice((page - 1) * pageSize, page * pageSize) as VacRow[]);
 
   // A search, another year or a new answer returns to page 1.
   $effect(() => {
@@ -157,11 +150,6 @@
       fmtDaysDe(row.pendingDays ?? 0),
       fmtDaysDe(row.remainingDays ?? 0),
     ];
-  }
-
-  // One string, so the separators survive the template's whitespace collapsing.
-  function listLine(row: PeriodVacationRow): string {
-    return `Anspruch ${fmtDaysDe(row.entitlementDays ?? 0)} · Genommen ${fmtDaysDe(row.takenDays ?? 0)} · Genehmigt ${fmtDaysDe(row.approvedUpcomingDays ?? 0)} · Beantragt ${fmtDaysDe(row.pendingDays ?? 0)}`;
   }
 
   const anyAtRisk = $derived(yearRows.some((r) => !r.missingEntitlement && atRisk(r) > 0));
@@ -226,17 +214,21 @@
     }
   }
 
-  // The whole row opens the person; the name link and any button keep their own behaviour.
-  function onRowClick(e: MouseEvent, row: PeriodVacationRow) {
-    const target = e.target as Element | null;
-    if (target?.closest("a, button")) return;
-    if (personHref(row.employeeId) === null) return;
-    onOpenPerson(e, row.employeeId);
-  }
+  const vacationColumns: DataTableColumn[] = [
+    { key: "name", label: "Person", primary: true },
+    ...VACATION_YEAR_COLUMNS.map((label, i) => ({
+      key: `figure-${i}`,
+      label,
+      align: "end" as const,
+    })),
+    { key: "verfall", label: "Verfall" },
+  ];
 
-  function personCount(n: number): string {
-    return `${n} ${n === 1 ? "Person" : "Personen"}`;
-  }
+  const kindColumns: DataTableColumn[] = [
+    { key: "kind", label: "Art", primary: true },
+    { key: "personCount", label: "Personen", align: "end" },
+    { key: "totalDays", label: "Tage", align: "end" },
+  ];
 
   // ── The absence statistics (P-07) ──────────────────────────────────────────────────
 
@@ -259,63 +251,91 @@
 {#snippet verfallBody(row: PeriodVacationRow)}
   {@const notice = noticeLine(row)}
   {@const id = row.entitlementId ?? ""}
-  <span class="verfall-line">{verfallLine(row)}</span>
-  {#if notice !== null}<span class="verfall-sub">{notice}</span>{/if}
-  {#if canSendNotice(row)}
-    <button
-      type="button"
-      class="btn btn-ghost xs"
-      aria-label={`Hinweis senden an ${row.employeeName}`}
-      disabled={busy[id]}
-      onclick={() => notify(row)}
-    >
-      {#if busy[id]}<Spinner size={12} />{/if}
-      Hinweis senden
-    </button>
-  {/if}
-  {#if messages[id]}
-    <span class="verfall-sub" role="status">{messages[id]}</span>
-  {/if}
-{/snippet}
-
-{#snippet listFigures(row: PeriodVacationRow)}
-  {@const risk = atRisk(row)}
-  <span class="vac-list-meta">
-    {#if row.missingEntitlement}
-      <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
-    {:else}
-      <span>{listLine(row)}</span>
-      {#if risk > 0}
-        <span class="chip chip-warn"
-          >Verfall {fmtDaysDe(risk)} T.{row.carryOverDeadline
-            ? ` bis ${fmtDateShortDe(row.carryOverDeadline)}`
-            : ""}</span
-        >
-      {/if}
+  <div class="verfall-cell">
+    <span class="verfall-line">{verfallLine(row)}</span>
+    {#if notice !== null}<span class="verfall-sub">{notice}</span>{/if}
+    {#if canSendNotice(row)}
+      <button
+        type="button"
+        class="btn btn-ghost xs vac-notify"
+        aria-label={`Hinweis senden an ${row.employeeName}`}
+        disabled={busy[id]}
+        onclick={() => notify(row)}
+      >
+        {#if busy[id]}<Spinner size={12} />{/if}
+        Hinweis senden
+      </button>
     {/if}
-  </span>
+    {#if messages[id]}
+      <span class="verfall-sub" role="status">{messages[id]}</span>
+    {/if}
+  </div>
 {/snippet}
 
-<Card animate>
-  <CardHeader
-    title="Urlaubsübersicht"
-    sub={activeYear === null ? undefined : `Urlaubsjahr ${activeYear}`}
-  >
-    {#snippet actions()}
-      {#if years.length > 1 && activeYear !== null}
-        <SegmentedControl
-          size="sm"
-          name="reports-vacation-year"
-          ariaLabel="Urlaubsjahr"
-          options={years.map((y) => ({ value: String(y.year), label: String(y.year) }))}
-          value={String(activeYear)}
-          onchange={(v) => {
-            chosenYear = Number(v);
-          }}
-        />
+{#snippet vacationCell(row: VacRow, column: DataTableColumn)}
+  {#if column.key === "name"}
+    {@const href = personHref(row.employeeId)}
+    <span class="vac-person">
+      {#if href !== null}
+        <a
+          class="vac-person-link"
+          {href}
+          data-sveltekit-noscroll
+          title={row.employeeName}
+          onclick={(e) => onOpenPerson(e, row.employeeId)}>{row.employeeName}</a
+        >
+      {:else}
+        <span class="vac-person-link" title={row.employeeName}>{row.employeeName}</span>
       {/if}
-    {/snippet}
-  </CardHeader>
+      <span class="verfall-sub">{row.employeeNumber}</span>
+    </span>
+  {:else if row.missingEntitlement}
+    <!-- A person without an entitlement has no figures: the first figure cell says so, the rest dash. -->
+    {#if column.key === "figure-0"}
+      <Chip tone="warn">kein Anspruch hinterlegt</Chip>
+    {:else}
+      {DASH}
+    {/if}
+  {:else if column.key === "verfall"}
+    {@render verfallBody(row)}
+  {:else}
+    {@const index = Number(column.key.replace("figure-", ""))}
+    <span class:strong={index === FIGURE_COLUMNS - 1}>{figures(row)[index]}</span>
+  {/if}
+{/snippet}
+
+{#snippet kindCell(row: KindRow, column: DataTableColumn)}
+  {#if column.key === "kind"}
+    <span class="type-dot" style={`--type-color: var(${leaveTypeColor(row.code).fill})`}></span>
+    {kindLabel(row)}
+  {:else if column.key === "personCount"}
+    {row.personCount}
+  {:else}
+    {fmtDaysDe(row.totalDays)}
+  {/if}
+{/snippet}
+
+<section class="settings-group" aria-labelledby="vacation-overview-title">
+  <div class="vac-head">
+    <div>
+      <h2 class="settings-group-title" id="vacation-overview-title">Urlaubsübersicht</h2>
+      {#if activeYear !== null}
+        <p class="settings-group-desc vac-label">Urlaubsjahr {activeYear}</p>
+      {/if}
+    </div>
+    {#if years.length > 1 && activeYear !== null}
+      <SegmentedControl
+        size="sm"
+        name="reports-vacation-year"
+        ariaLabel="Urlaubsjahr"
+        options={years.map((y) => ({ value: String(y.year), label: String(y.year) }))}
+        value={String(activeYear)}
+        onchange={(v) => {
+          chosenYear = Number(v);
+        }}
+      />
+    {/if}
+  </div>
 
   <!-- #843 D-843-07: a refresh over an existing answer announces itself through the Skeleton, not text -->
   {#if loading && vacation !== null}
@@ -323,9 +343,9 @@
   {/if}
 
   {#if filterActive}
-    <p class="form-hint" data-testid="vacation-salon-note">
-      {SALON_PERIOD_END_PERSONS_NOTE} · {PERSON_VALUES_NOT_SPLIT_LABEL}
-    </p>
+    <div data-testid="vacation-salon-note">
+      <Note tone="brand">{SALON_PERIOD_END_PERSONS_NOTE} · {PERSON_VALUES_NOT_SPLIT_LABEL}</Note>
+    </div>
   {/if}
 
   {#if vacation === null}
@@ -342,140 +362,42 @@
     />
   {:else}
     {#if anyAtRisk}
-      <div class="callout" data-testid="vacation-eugh-callout">
-        <p>
+      <div data-testid="vacation-eugh-callout">
+        <Note tone="warn">
           Hinweispflicht: Mitarbeiter müssen gemäß EuGH C-684/16 ausdrücklich auf verfallenden
           Urlaub hingewiesen werden. Ohne dokumentierten Hinweis verfällt der Urlaub <strong
             >nicht</strong
           >.
-        </p>
+        </Note>
       </div>
     {/if}
 
-    <div class="filter-bar">
-      <input
-        type="search"
-        class="form-input filter-search"
-        placeholder="Name oder Personalnummer"
-        aria-label="Person suchen"
-        bind:value={search}
-      />
-      <span class="filter-count" data-testid="vacation-count">{personCount(visible.length)}</span>
-    </div>
+    <DataTable
+      columns={vacationColumns}
+      rows={pageRows}
+      rowKey={(row) => row.employeeId}
+      rowTestId={(row) => `vac-row-${row.employeeId}`}
+      cell={vacationCell}
+      filtered={search.trim() !== ""}
+      onResetFilters={() => (search = "")}
+      caption={`Urlaub je Person, Urlaubsjahr ${activeYear}`}
+    >
+      {#snippet toolbar()}
+        <TableToolbar
+          bind:query={search}
+          count={visible.length}
+          total={yearRows.length}
+          searchLabel="Name oder Personalnummer suchen"
+          onReset={() => (search = "")}
+        />
+      {/snippet}
+    </DataTable>
 
-    {#if visible.length === 0}
-      <EmptyState
-        icon="search"
-        title="Keine Treffer"
-        description={`Keine Person passt zu „${search.trim()}“.`}
-        actionLabel="Suche zurücksetzen"
-        onaction={() => (search = "")}
-      />
-    {:else if narrow}
-      <ul class="vac-list" role="list">
-        {#each pageRows as row (row.employeeId)}
-          {@const id = row.entitlementId ?? ""}
-          <li>
-            {#if canSendNotice(row)}
-              <ApprovalRow
-                avatar={initialsOf(row.employeeName)}
-                name={row.employeeName}
-                primaryHref={personHref(row.employeeId) ?? undefined}
-                primaryLabel={`${row.employeeName} – Personenansicht öffnen`}
-                onPrimaryClick={(e) => onOpenPerson(e, row.employeeId)}
-                dates={`Rest ${fmtDaysDe(row.remainingDays ?? 0)} T.`}
-              >
-                {#snippet metaContent()}{@render listFigures(row)}{/snippet}
-                {#snippet actions()}
-                  <button
-                    type="button"
-                    class="btn btn-ghost xs vac-notify-touch"
-                    aria-label={`Hinweis senden an ${row.employeeName}`}
-                    disabled={busy[id]}
-                    onclick={() => notify(row)}
-                  >
-                    {#if busy[id]}<Spinner size={12} />{/if}
-                    Hinweis senden
-                  </button>
-                {/snippet}
-              </ApprovalRow>
-            {:else}
-              <ApprovalRow
-                avatar={initialsOf(row.employeeName)}
-                name={row.employeeName}
-                primaryHref={personHref(row.employeeId) ?? undefined}
-                primaryLabel={`${row.employeeName} – Personenansicht öffnen`}
-                onPrimaryClick={(e) => onOpenPerson(e, row.employeeId)}
-                dates={row.missingEntitlement
-                  ? DASH
-                  : `Rest ${fmtDaysDe(row.remainingDays ?? 0)} T.`}
-              >
-                {#snippet metaContent()}{@render listFigures(row)}{/snippet}
-              </ApprovalRow>
-            {/if}
-            {#if messages[id]}
-              <p class="vac-status" role="status">{messages[id]}</p>
-            {/if}
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <div class="table-scroll">
-        <table class="data-table data-table--compact vac-table">
-          <caption class="sr-only">Urlaub je Person, Urlaubsjahr {activeYear}</caption>
-          <thead>
-            <tr>
-              <th scope="col">Person</th>
-              {#each VACATION_YEAR_COLUMNS as label (label)}
-                <th scope="col" class="num">{label}</th>
-              {/each}
-              <th scope="col">Verfall</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pageRows as row (row.employeeId)}
-              {@const href = personHref(row.employeeId)}
-              <!-- The keyboard path is the name link; the row click is a pointer convenience. -->
-              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-              <tr class="vac-row" onclick={(e) => onRowClick(e, row)}>
-                <th scope="row" class="vac-person">
-                  {#if href !== null}
-                    <a
-                      class="vac-person-link"
-                      {href}
-                      data-sveltekit-noscroll
-                      title={row.employeeName}
-                      onclick={(e) => onOpenPerson(e, row.employeeId)}>{row.employeeName}</a
-                    >
-                  {:else}
-                    <span class="vac-person-link" title={row.employeeName}>{row.employeeName}</span>
-                  {/if}
-                  <span class="verfall-sub">{row.employeeNumber}</span>
-                </th>
-                {#if row.missingEntitlement}
-                  <td colspan={FIGURE_COLUMNS + 1}>
-                    <span class="badge badge-yellow">kein Anspruch hinterlegt</span>
-                  </td>
-                {:else}
-                  {#each figures(row) as value, i (i)}
-                    <td class="num" class:strong={i === FIGURE_COLUMNS - 1}>{value}</td>
-                  {/each}
-                  <td class="vac-verfall">
-                    <div class="verfall-cell">{@render verfallBody(row)}</div>
-                  </td>
-                {/if}
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      <p class="form-hint">
+    {#if visible.length > 0}
+      <p class="settings-group-desc vac-hint">
         Alle Werte in Arbeitstagen. Verfügbar = Anspruch + wirksamer Übertrag. Resturlaub =
         Verfügbar − Genommen − Genehmigt. Beantragte Tage werden nicht abgezogen.
       </p>
-    {/if}
-
-    {#if visible.length > 0}
       <Pagination
         total={visible.length}
         bind:page
@@ -486,85 +408,63 @@
       />
     {/if}
   {/if}
-</Card>
+</section>
 
-<Card animate>
-  <CardHeader title="Abwesenheiten nach Art" sub={periodLabel} />
+<section class="settings-group" aria-labelledby="absence-kinds-title">
+  <div>
+    <h2 class="settings-group-title" id="absence-kinds-title">Abwesenheiten nach Art</h2>
+    <p class="settings-group-desc vac-label">{periodLabel}</p>
+  </div>
 
   {#if absences === null}
     {#if loading}
       <Skeleton shape="row" count={3} />
     {/if}
   {:else if shownAbsences.length === 0}
-    <p class="vac-empty">Keine Abwesenheiten im Zeitraum.</p>
+    <EmptyState icon="inbox" title="Keine Abwesenheiten im Zeitraum." />
   {:else}
-    <div class="table-scroll">
-      <table class="data-table data-table--compact abs-table">
-        <caption class="sr-only">Abwesenheiten nach Art, {periodLabel}</caption>
-        <thead>
-          <tr>
-            <th scope="col">Art</th>
-            <th scope="col" class="num">Personen</th>
-            <th scope="col" class="num">Tage</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each shownAbsences as a (a.code)}
-            <tr>
-              <td>
-                <span class="type-dot" style={`--type-color: var(${leaveTypeColor(a.code).fill})`}
-                ></span>
-                {kindLabel(a)}
-              </td>
-              <td class="num">{a.personCount}</td>
-              <td class="num">{fmtDaysDe(a.totalDays)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+    <div class="abs-table" data-testid="absence-kinds">
+      <DataTable
+        columns={kindColumns}
+        rows={shownAbsences as KindRow[]}
+        rowKey={(row) => row.code}
+        cell={kindCell}
+        caption={`Abwesenheiten nach Art, ${periodLabel}`}
+      />
     </div>
   {/if}
-</Card>
+</section>
 
 <style>
-  .vac-empty {
-    margin: 0;
-    font-size: 15px;
-    color: var(--text-2);
+  .vac-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-4);
   }
 
-  .vac-table .num,
-  .abs-table .num {
-    text-align: right;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
+  .vac-label {
+    margin-top: var(--s-1);
   }
 
-  .vac-table .num.strong {
+  .vac-hint {
+    margin-top: 0;
+  }
+
+  .strong {
     font-weight: 600;
     color: var(--text);
   }
 
-  .vac-table th {
-    white-space: normal;
-  }
-
-  .vac-row {
-    cursor: pointer;
-  }
-
-  /* A person the drill-down cannot show has a plain name and no pointer. */
-  .vac-row:has(span.vac-person-link) {
-    cursor: default;
-  }
-
   .vac-person {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-1);
     min-width: 160px;
     max-width: 240px;
-    text-align: left;
-    font-weight: 400;
-    text-transform: none;
-    letter-spacing: normal;
+    padding-block: var(--s-1);
   }
 
   .vac-person-link {
@@ -573,26 +473,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 15px;
     font-weight: 600;
     line-height: 1.3;
     color: var(--text);
     text-decoration: none;
   }
 
-  .vac-person-link:hover {
+  a.vac-person-link:hover {
     text-decoration: underline;
   }
 
   .verfall-sub {
     display: block;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.4;
+    font-weight: 400;
     color: var(--text-2);
-  }
-
-  .vac-verfall {
-    min-width: 170px;
   }
 
   /* Issue #442: the layout of the action cell lives on the inner wrapper, never on the td itself,
@@ -602,33 +498,13 @@
     flex-direction: column;
     align-items: flex-start;
     gap: var(--s-1);
+    min-width: 170px;
+    padding-block: var(--s-1);
+    font-weight: 400;
   }
 
   .verfall-line {
-    font-size: 15px;
     font-variant-numeric: tabular-nums;
-  }
-
-  .vac-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-  }
-
-  .vac-list-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--s-1) var(--s-2);
-  }
-
-  .vac-status {
-    margin: var(--s-1) 0 0;
-    font-size: 12px;
-    color: var(--text-2);
   }
 
   .type-dot {
@@ -640,12 +516,19 @@
     background: var(--type-color, currentColor);
   }
 
-  .abs-table {
-    max-width: 480px;
-  }
+  /* The notice button is a touch target in the card layout. */
+  @container (max-width: 759.98px) {
+    .vac-person {
+      max-width: 100%;
+    }
 
-  /* The notice button of the narrow list is a touch target (the list replaces the table at 960px). */
-  .vac-notify-touch {
-    min-height: 44px;
+    .verfall-cell {
+      align-items: flex-end;
+      min-width: 0;
+    }
+
+    .vac-notify {
+      min-height: 44px;
+    }
   }
 </style>

@@ -809,7 +809,7 @@ describe("/reports (Issue #612) - staggered reveal", () => {
     expect(COMPONENTS.TimesAccountsTable).toMatch(
       /<section\s+class="settings-group period-section"/,
     );
-    expect(countOf(COMPONENTS.VacationAbsenceTab, "<Card animate>")).toBe(2);
+    expect(countOf(COMPONENTS.VacationAbsenceTab, '<section class="settings-group"')).toBe(2);
     expect(COMPONENTS.TodayAttendance).toContain('<section class="settings-group"');
     // Data changes swap the content inside the blocks: nothing is keyed.
     expect(countOf(TEMPLATE, "{#key")).toBe(0);
@@ -818,7 +818,7 @@ describe("/reports (Issue #612) - staggered reveal", () => {
     }
   });
 
-  it("mounted: the vacation tab emits .card-animate sections, the Heute tab its group section", () => {
+  it("mounted: the vacation tab emits two group sections, the Heute tab its group section", () => {
     const vacation = renderWithTheme(VacationAbsenceTab, {
       vacation: null,
       absences: null,
@@ -831,7 +831,7 @@ describe("/reports (Issue #612) - staggered reveal", () => {
       onOpenPerson: () => {},
       onNotify: async () => ({ warned: 0, skippedDedup: 0 }),
     });
-    expect(document.querySelectorAll("section.card.card-animate")).toHaveLength(2);
+    expect(document.querySelectorAll("section.settings-group")).toHaveLength(2);
     vacation.unmount();
     const today = renderWithTheme(TodayAttendance, {
       attendance: null,

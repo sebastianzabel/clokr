@@ -1081,11 +1081,11 @@ test.describe("Issue #612 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         await expect(page.getByRole("button", { name: /Hinweis senden/ }).first()).toBeVisible();
         // Issue #713: the card „Abwesenheiten je Person“ lists the first page of the 30 people, so
         // the overflow and clip probes below cover it with the long name.
-        await expect(page.locator(".abp-list li")).toHaveCount(25);
+        await expect(page.locator('tr[data-testid^="abp-row-"]')).toHaveCount(25);
         results.push(
           await checkCell(page, "urlaub", viewport.width, mode, {
             axe: true,
-            listSelector: ".approval-row--stretched",
+            listSelector: 'tr[data-testid^="vac-row-"]',
           }),
         );
 
@@ -1434,8 +1434,9 @@ test.describe("Issue #714 — Salonwechsel: Stammsalon-Sicht im Blick", () => {
           "the helper is not a table row",
         ).toHaveCount(0);
 
-        const sectionTitle = page.locator(".salon-worked .card-title", {
-          hasText: /^Im Salon gearbeitet$/,
+        const sectionTitle = page.locator(".salon-worked").getByRole("heading", {
+          name: "Im Salon gearbeitet",
+          exact: true,
         });
         await expectSeenInViewport(sectionTitle, "the section heading 'Im Salon gearbeitet'");
         await expectSeenInViewport(
@@ -1585,48 +1586,39 @@ test.describe("Issue #713 — Abwesenheiten je Person im Blick", () => {
         await expect(page.getByTestId("absence-unit-hint")).toHaveCount(1);
         await settle(page);
 
-        const wide = viewport.width >= 768;
+        // The table is a DataTable: a table from 760 px of container width (the 1280 px cell), cards
+        // below it, where the head row is hidden and every cell carries its column label.
+        const wide = viewport.width >= 1100;
+        const abpSection = 'section[aria-labelledby="absences-by-person-title"]';
 
-        // ── 1. The card and the person's values.
+        // ── 1. The section and the person's values.
         await expectSeenInViewport(
-          page.locator(".card-title", { hasText: /^Abwesenheiten je Person$/ }),
-          "the card heading 'Abwesenheiten je Person'",
+          page.getByRole("heading", { name: "Abwesenheiten je Person", level: 2 }),
+          "the section heading 'Abwesenheiten je Person'",
         );
+        const personRow = page.locator('tr[data-testid^="abp-row-"]', { hasText: kira.fullName });
+        await expectSeenInViewport(personRow, `the row of ${kira.fullName}`);
         if (wide) {
           // `hasText` with a string matches case-insensitively, and „Kinderkrank“ contains „krank“.
-          const krankHeader = page.locator("table.abp-table thead th", {
+          const krankHeader = page.locator(`${abpSection} thead th`, {
             hasText: /^\s*Krank \(Kalendertage\)/,
           });
-          const childHeader = page.locator("table.abp-table thead th", {
+          const childHeader = page.locator(`${abpSection} thead th`, {
             hasText: "Kinderkrank (Kalendertage)",
           });
           await expectSeenInViewport(krankHeader, "the column header 'Krank (Kalendertage)'");
           await expectSeenInViewport(childHeader, "the column header 'Kinderkrank (Kalendertage)'");
-          const tableRow = page.locator("tr.abp-row", { hasText: kira.fullName });
-          await expectSeenInViewport(tableRow, `the table row of ${kira.fullName}`);
-          const headers = (await page.locator("table.abp-table thead th").allInnerTexts()).map(
-            (h) => h.trim(),
-          );
-          const cellOf = (header: string) => {
-            // `innerText` carries the header's CSS uppercase transform, so compare case-insensitively.
-            const col = headers.findIndex((h) => h.toLowerCase().startsWith(header.toLowerCase()));
-            expect(col, `column ${header} among ${JSON.stringify(headers)}`).toBeGreaterThan(0);
-            return tableRow.locator("th, td").nth(col);
-          };
-          await expect(cellOf("Krank (Kalendertage)")).toHaveText("2");
-          await expect(cellOf("Kinderkrank (Kalendertage)")).toHaveText("1");
-        } else {
-          const item = page.locator(".abp-list li", { hasText: kira.fullName });
-          await expectSeenInViewport(item, `the list item of ${kira.fullName}`);
-          await expect(item).toContainText("Krank 2");
-          await expect(item).toContainText("Kinderkrank 1");
         }
+        await expect(personRow.locator('td[data-label="Krank (Kalendertage)"]')).toHaveText("2");
+        await expect(personRow.locator('td[data-label="Kinderkrank (Kalendertage)"]')).toHaveText(
+          "1",
+        );
 
         // ── 2. The two sick lines of „Abwesenheiten nach Art“.
-        const krankLine = page.locator("table.abs-table tbody tr", {
+        const krankLine = page.locator('[data-testid="absence-kinds"] tbody tr', {
           hasText: /^\s*Krank \(Kalendertage\)/,
         });
-        const kinderLine = page.locator("table.abs-table tbody tr", {
+        const kinderLine = page.locator('[data-testid="absence-kinds"] tbody tr', {
           hasText: /^\s*Kinderkrank \(Kalendertage\)/,
         });
         await expectSeenInViewport(krankLine, "the 'nach Art' line 'Krank (Kalendertage)'");
@@ -1644,17 +1636,7 @@ test.describe("Issue #713 — Abwesenheiten je Person im Blick", () => {
         });
 
         // ── 3. The drill-down section „Abwesenheiten“ (a plain click on the person).
-        if (wide) {
-          await page
-            .locator("tr.abp-row", { hasText: kira.fullName })
-            .locator("a.abp-person-link")
-            .click();
-        } else {
-          await page
-            .getByRole("link", { name: `${kira.fullName} – Personenansicht öffnen` })
-            .first()
-            .click();
-        }
+        await personRow.getByRole("link", { name: kira.fullName }).click();
         const dialog = page.getByRole("dialog", { name: kira.fullName });
         await expect(dialog).toBeVisible();
         await settle(page);
@@ -1709,22 +1691,14 @@ test.describe("Issue #713 — Abwesenheiten je Person im Blick", () => {
           answer.rows.every((r) => r.absence.PARENTAL === 0),
           "nobody of the answer has Elternzeit",
         ).toBe(true);
-        if (wide) {
-          await expect(
-            page.locator("table.abp-table thead th", { hasText: "Elternzeit (Arbeitstage)" }),
-            "control: no column for a kind nobody has",
-          ).toHaveCount(0);
-          await expect(
-            page.locator("table.abp-table thead th", { hasText: "Kinderkrank (Kalendertage)" }),
-            "control: the column of a kind somebody has exists",
-          ).toHaveCount(1);
-        } else {
-          const item = page.locator(".abp-list li", { hasText: kira.fullName });
-          await expect(item, "control: no Elternzeit entry in the list").not.toContainText(
-            "Elternzeit",
-          );
-          await expect(item).toContainText("Kinderkrank");
-        }
+        await expect(
+          personRow.locator('td[data-label^="Elternzeit"]'),
+          "control: no column for a kind nobody has",
+        ).toHaveCount(0);
+        await expect(
+          personRow.locator('td[data-label^="Kinderkrank"]'),
+          "control: the column of a kind somebody has exists",
+        ).toHaveCount(1);
         await expect(page.getByTestId("absence-hidden-hint")).toContainText("Elternzeit");
       });
     }
@@ -1756,7 +1730,7 @@ test.describe("Issue #726 — Suchfeld der Filterleiste", () => {
         }
         // Every filter bar of the tab: since #713 the Urlaub tab carries two (Urlaubsübersicht
         // and Abwesenheiten je Person), each with its own search field.
-        const fields = page.locator(".filter-bar .filter-search");
+        const fields = page.locator(".table-toolbar .tt-search");
         await expect(fields, "every filter bar of the tab offers its search field").toHaveCount(
           SEARCH_FIELDS_PER_TAB[tab],
         );
@@ -1767,7 +1741,7 @@ test.describe("Issue #726 — Suchfeld der Filterleiste", () => {
           await expect(search, `search field ${i + 1} is visible`).toBeVisible();
 
           const geo = await search.evaluate((el) => {
-            const bar = el.closest(".filter-bar") as HTMLElement;
+            const bar = el.closest(".tt-bar") as HTMLElement;
             const r = el.getBoundingClientRect();
             const b = bar.getBoundingClientRect();
             const siblings = [...bar.children]
@@ -1802,7 +1776,7 @@ test.describe("Issue #726 — Suchfeld der Filterleiste", () => {
         // Control: with the defect re-created (min-width 0, no growth) the same probe reads
         // a stub, so the assertions above can fail.
         await page.addStyleTag({
-          content: ".filter-bar .filter-search{min-width:0 !important;flex:0 1 0 !important}",
+          content: ".tt-search{min-width:0 !important;flex:0 1 0 !important}",
         });
         const broken = await fields.first().evaluate((el) => el.getBoundingClientRect().width);
         expect(broken, "control: the probe sees a shrunken field").toBeLessThan(MIN_SEARCH_PX);
