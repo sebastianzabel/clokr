@@ -58,6 +58,11 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/dienstplan/CoverageRulesPanel.svelte",
   "lib/components/admin/dienstplan/WeekPatternsPanel.svelte",
   "lib/components/admin/dienstplan/DienstplanSettingsPanel.svelte",
+  // Plan 854-11 (Regeln › Abwesenheiten, part I): the rebuilt vacation page and its three panels.
+  "routes/(app)/admin/vacation/+page.svelte",
+  "lib/components/admin/abwesenheiten/UrlaubPanel.svelte",
+  "lib/components/admin/abwesenheiten/UebertragPanel.svelte",
+  "lib/components/admin/abwesenheiten/SonderurlaubPanel.svelte",
 ];
 
 export interface VerwaltenFile {

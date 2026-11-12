@@ -66,6 +66,22 @@
           "label": "Einstellungen"
         }
       ]
+    },
+    {
+      "slug": "regeln-abwesenheiten",
+      "path": "/verwalten/regeln/abwesenheiten",
+      "heading": "Abwesenheiten",
+      "tabs": [
+        {
+          "label": "Urlaub"
+        },
+        {
+          "label": "Sonderurlaub"
+        },
+        {
+          "label": "Übertrag"
+        }
+      ]
     }
   ]
 }
