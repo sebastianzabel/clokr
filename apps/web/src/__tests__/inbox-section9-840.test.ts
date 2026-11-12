@@ -51,9 +51,13 @@ describe("Issue #840 D-840-05 - the § 9 cases wait in the inbox", () => {
     expect(TEAM_LEAVE).toContain('title={pageLabel("/team/leave")}'); // #840 (E-01) / #574: „Abwesenheiten“
   });
 
-  it("[section] the inbox renders a section „§ 9-Fälle“ with the three actions", () => {
-    expect(INBOX).toContain('title="§ 9-Fälle"');
-    expect(INBOX).toContain('data-testid="section9-cases-list"');
+  it("[section] the § 9 cases are rows of the one Aufgaben list (#853) with the three actions", () => {
+    // #853 (D-853-06): the separate card „§ 9-Fälle“ is gone; a case is a `paragraf9` row of the list.
+    expect(INBOX).not.toContain('title="§ 9-Fälle"');
+    expect(INBOX).not.toContain("section9-cases-list");
+    expect(INBOX).toContain('testId="inbox-task-list"');
+    expect(INBOX).toContain("const c = section9Of(row)");
+    expect(INBOX).toContain("rowId={c ? `section9-${c.id}` : undefined}");
     expect(INBOX).toContain("AU liegt vor");
     expect(INBOX).toContain("Wieder eröffnen");
     expect(INBOX).toContain("section9-case-${c.id}-confirm");
@@ -87,9 +91,9 @@ describe("Issue #840 D-840-05 - the § 9 cases wait in the inbox", () => {
     expect(submit.indexOf("uploadSection9Document(")).toBeLessThan(submit.indexOf("/confirm`"));
   });
 
-  it("[hint] the section shows for holders of a § 9 key and the loader runs only then", () => {
+  it("[hint] the § 9 kind is offered to holders of a § 9 key and the loader runs only then", () => {
     expect(INBOX).toContain('"section9:read:ZUGEWIESEN"');
-    expect(INBOX).toContain("{#if canSection9}");
+    expect(INBOX).toContain("section9: canSection9,");
     const mount = onMountBody(INBOX);
     expect(mount).toContain("if (canSection9) loads.push(loadSection9Cases());");
     expect(mount).toContain("else section9Loading = false;");

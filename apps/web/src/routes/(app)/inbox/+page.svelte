@@ -9,8 +9,6 @@
   import { hasAnyPermission, hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
   import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
   import List from "$components/ui/List.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
@@ -28,7 +26,10 @@
     taskKindLabel,
     rowsForView,
     filterByKind,
+    availableTaskKinds,
     TASK_KIND_VALUES,
+    type NoticeTaskSource,
+    type OpenTasksAnswer,
     type TaskKind,
     type TaskRowModel,
   } from "$lib/team/task-model"; // Issue #853 (D-853-06)
@@ -134,7 +135,48 @@
   let retroEditEndTime = $state("");
   let retroEditBreakMinutes = $state(0);
 
-  // Hint only (T-840-28): shows the § 9 section to holders of either § 9 key.
+  // ── § 9 BUrlG — "AU liegt vor" (Phase 104-10, R6/D-27/D-11/D-26; moved here from /team/leave, #840) ──
+  interface Section9Case {
+    id: string;
+    employeeId: string;
+    employeeName: string;
+    // #468: GET /leave/section9 can also return SUPERSEDED — a CONFIRMED credit a correction
+    // (PATCH /correct) made obsolete, never an open case (the filter below still only lists
+    // AU_PENDING and REJECTED).
+    status: "AU_PENDING" | "CONFIRMED" | "REJECTED" | "SUPERSEDED";
+    overlapStart: string;
+    overlapEnd: string;
+    creditedStart: string | null;
+    creditedEnd: string | null;
+    creditedDays: number | null;
+    attestSource: string | null;
+    attestValidFrom: string | null;
+    attestValidTo: string | null;
+    reason: string | null;
+    sickRequest: { id: string; startDate: string; endDate: string; status: string };
+    vacationRequest: {
+      id: string;
+      startDate: string;
+      endDate: string;
+      halfDay: boolean;
+      days: number;
+      typeName: string;
+    };
+  }
+
+  let section9Cases: Section9Case[] = $state([]);
+  let section9Loading = $state(true);
+  let highlightSection9Id: string | null = $state(null);
+
+  // Issue #853 (D-853-07, D-853-22): the Pausenbefunde are the caller's own #85 break notices, the
+  // missing clock-outs come from the reach-scoped open-tasks read. Both are calm sources: a refusal
+  // or a failure is an empty source, never an error alert.
+  let notices: NoticeTaskSource[] = $state([]);
+  let noticesLoading = $state(true);
+  let openTasks = $state<OpenTasksAnswer | null>(null);
+  let openTasksLoading = $state(true);
+
+  // Hint only (T-840-28): shows the § 9 rows to holders of either § 9 key.
   const canSection9 = $derived(
     hasAnyPermission($authStore.user, ["section9:read:ZUGEWIESEN", "section9:decide:ZUGEWIESEN"]),
   );
@@ -153,6 +195,10 @@
   const canRetro = $derived(
     hasAnyPermission($authStore.user, ["retro-request:approve:ZUGEWIESEN"]),
   );
+
+  // The missing clock-outs are offered to a caller who holds the time-entry reach the read needs
+  // (a UX hint; the API scopes every row by the per-entry reach).
+  const canOpenTasks = $derived(hasPermission($authStore.user, "time-entry:read:ZUGEWIESEN"));
 
   /** Reloads what a § 9 decision can change: the § 9 cases, and the leave list for an approver only. */
   async function reloadAfterSection9() {
@@ -189,10 +235,13 @@
       } else {
         loading = false;
       }
-      // The § 9 section is only a UX hint: the API answers 403 without `section9:read` and decides
+      // The § 9 rows are only a UX hint: the API answers 403 without `section9:read` and decides
       // every action by `section9:decide`.
       if (canSection9) loads.push(loadSection9Cases());
       else section9Loading = false;
+      loads.push(loadNotices());
+      if (canOpenTasks) loads.push(loadOpenTasks());
+      else openTasksLoading = false;
       await Promise.all(loads);
       await applyDeepLink(link);
       if (hadLinkParams) stripDeepLinkParams();
@@ -293,6 +342,31 @@
     }
   }
 
+  /** The caller's newest notifications; only the break notices become rows (D-853-07). */
+  async function loadNotices() {
+    noticesLoading = true;
+    try {
+      const answer = await api.get<{ notifications: NoticeTaskSource[] }>("/notifications");
+      notices = answer.notifications ?? [];
+    } catch {
+      notices = [];
+    } finally {
+      noticesLoading = false;
+    }
+  }
+
+  /** The open-task read (missing clock-outs, D-853-21/22); `types` decides which kinds exist (D-853-23). */
+  async function loadOpenTasks() {
+    openTasksLoading = true;
+    try {
+      openTasks = await api.get<OpenTasksAnswer>("/tasks/open");
+    } catch {
+      openTasks = null;
+    } finally {
+      openTasksLoading = false;
+    }
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────────
   function fmtDate(iso: string): string {
     if (!iso) return "";
@@ -315,6 +389,9 @@
       {
         leave: [...openRequests, ...approvedRequests, ...rejectedRequests],
         retro: retroRequests,
+        section9: section9Cases,
+        notices,
+        openTasks,
       },
       { leaveDays: (r) => leaveDaysLabel(Number(r.days), r.halfDay, r.typeCode as TypeCode) },
     ),
@@ -324,15 +401,23 @@
   const taskOpenCounts = $derived(taskCounts(openTaskRows));
 
   // A kind is offered only to a caller who can decide it (same hints as the loaders; the API decides).
-  const availableKinds = $derived<TaskKind[]>([
-    ...(canListLeave ? (["urlaub"] as const) : []),
-    ...(canRetro ? (["nachtrag"] as const) : []),
-  ]);
+  // Pausenbefund appears only when the caller has such rows; Zeitkorrektur only when the open-task
+  // answer lists the type (D-853-23).
+  const availableKinds = $derived<TaskKind[]>(
+    availableTaskKinds({
+      leave: canListLeave,
+      retro: canRetro,
+      section9: canSection9,
+      breakNoticeCount: taskOpenCounts.pausenbefund,
+      openTaskTypes: openTasks?.types ?? [],
+    }),
+  );
   const kpiItems = $derived<KpiItem[]>(
     availableKinds.map((kind) => ({
       label: `Offen · ${taskKindLabel(kind)}`,
       value: taskOpenCounts[kind],
       testId: `inbox-kpi-${kind}`,
+      ...(kind === "pausenbefund" ? { explanation: "Aus deinen neuesten Benachrichtigungen" } : {}),
     })),
   );
 
@@ -356,7 +441,13 @@
     { value: "entschieden", label: "Entschieden" },
   ]);
 
-  const tasksLoading = $derived((canListLeave && loading) || (canRetro && retroLoading));
+  const tasksLoading = $derived(
+    (canListLeave && loading) ||
+      (canRetro && retroLoading) ||
+      (canSection9 && section9Loading) ||
+      noticesLoading ||
+      (canOpenTasks && openTasksLoading),
+  );
 
   function onTypSelected(value: string) {
     taskUrl.write({ typ: value as TaskKind | "alle" });
@@ -379,6 +470,12 @@
   function retroOf(row: TaskRowModel): RetroEntryRequest | null {
     if (row.kind !== "nachtrag") return null;
     return retroRequests.find((r) => r.id === row.sourceId) ?? null;
+  }
+
+  /** The § 9 case a task row stands for. */
+  function section9Of(row: TaskRowModel): Section9Case | null {
+    if (row.kind !== "paragraf9") return null;
+    return section9Cases.find((c) => c.id === row.sourceId) ?? null;
   }
 
   // ── Detail modal ─────────────────────────────────────────────────────────
@@ -476,39 +573,6 @@
       retroReviewSaving = false;
     }
   }
-
-  // ── § 9 BUrlG — "AU liegt vor" (Phase 104-10, R6/D-27/D-11/D-26; moved here from /team/leave, #840) ──
-  interface Section9Case {
-    id: string;
-    employeeId: string;
-    employeeName: string;
-    // #468: GET /leave/section9 can also return SUPERSEDED — a CONFIRMED credit a correction
-    // (PATCH /correct) made obsolete, never an open case (the filter below still only lists
-    // AU_PENDING and REJECTED).
-    status: "AU_PENDING" | "CONFIRMED" | "REJECTED" | "SUPERSEDED";
-    overlapStart: string;
-    overlapEnd: string;
-    creditedStart: string | null;
-    creditedEnd: string | null;
-    creditedDays: number | null;
-    attestSource: string | null;
-    attestValidFrom: string | null;
-    attestValidTo: string | null;
-    reason: string | null;
-    sickRequest: { id: string; startDate: string; endDate: string; status: string };
-    vacationRequest: {
-      id: string;
-      startDate: string;
-      endDate: string;
-      halfDay: boolean;
-      days: number;
-      typeName: string;
-    };
-  }
-
-  let section9Cases: Section9Case[] = $state([]);
-  let section9Loading = $state(true);
-  let highlightSection9Id: string | null = $state(null);
 
   // The inbox is a work queue and stays unfiltered (#558): a due § 9 decision must never be hidden
   // by the header selection, so this read sends no salon parameter and the API scopes it by reach.
@@ -698,7 +762,7 @@
         <EmptyState
           icon="inbox"
           title="Keine offenen Aufgaben"
-          description="Alle Anträge sind bearbeitet."
+          description="Es wartet keine Entscheidung auf dich."
         />
       {/if}
     {:else}
@@ -706,9 +770,12 @@
         {#each visibleTaskRows as row (row.key)}
           {@const request = leaveOf(row)}
           {@const retro = retroOf(row)}
+          {@const c = section9Of(row)}
           <TaskRow
             {row}
             typeLabel={row.typeCode ? typeName(row.typeCode) : undefined}
+            rowId={c ? `section9-${c.id}` : undefined}
+            highlight={c !== null && highlightSection9Id === c.id}
             onOpen={request
               ? () => openDetail(request)
               : retro
@@ -722,7 +789,47 @@
                 offers an immediate decision. A decided row has no button; its title opens the
                 details.
               -->
-              {#if !row.decided}
+              {#if c}
+                <!-- § 9 (Phase 104-10, R6/D-11): the three existing actions, unchanged handlers -->
+                {#if c.status === "AU_PENDING"}
+                  <button
+                    class="btn btn-sm btn-primary"
+                    data-testid={`section9-case-${c.id}-confirm`}
+                    onclick={() => openSection9Confirm(c)}
+                  >
+                    AU liegt vor
+                  </button>
+                  <button
+                    class="btn btn-sm btn-ghost text-red"
+                    data-testid={`section9-case-${c.id}-reject`}
+                    onclick={() => openSection9Reject(c)}
+                  >
+                    Ablehnen
+                  </button>
+                {:else if c.status === "REJECTED"}
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    data-testid={`section9-case-${c.id}-reopen`}
+                    onclick={() => reopenSection9Case(c)}
+                  >
+                    Wieder eröffnen
+                  </button>
+                {/if}
+              {:else if row.kind === "pausenbefund" || row.kind === "ausstempeln" || row.kind === "zeitkorrektur"}
+                <!--
+                  No decision path of its own: the acknowledgement / correction happens on Zeiten with
+                  the existing dialogs. A row whose stored link is not a same-origin app path has no link.
+                -->
+                {#if row.href}
+                  <a class="btn btn-primary btn-sm" href={row.href}>
+                    {row.kind === "pausenbefund"
+                      ? "Klären"
+                      : row.kind === "ausstempeln"
+                        ? "Korrigieren"
+                        : "Prüfen"}
+                  </a>
+                {/if}
+              {:else if !row.decided}
                 <button
                   class="btn btn-primary btn-sm"
                   onclick={() => (request ? openDetail(request) : retro && openRetroDetail(retro))}
@@ -736,84 +843,6 @@
       </List>
     {/if}
   </div>
-{/if}
-
-<!-- ── § 9 BUrlG — Fälle (Phase 104-10, R6/D-27/D-11; moved here from /team/leave, #840 D-840-05) ── -->
-{#if canSection9}
-  <Card animate class="list-card section9-list-card" style="padding: 0;">
-    <div class="list-card-header">
-      <CardHeader
-        title="§ 9-Fälle"
-        sub="§ 9 BUrlG — Urlaub und Krankheit überschneiden sich, die AU wartet auf deine Entscheidung"
-      />
-    </div>
-    <div class="section9-cases" data-testid="section9-cases-list">
-      {#if section9Loading}
-        <Skeleton shape="row" count={3} />
-      {:else if openSection9Cases.length === 0}
-        <EmptyState
-          icon="inbox"
-          title="Keine offenen § 9-Fälle"
-          description="Es wartet keine Entscheidung zu einer Arbeitsunfähigkeit im Urlaub."
-        />
-      {:else}
-        {#each openSection9Cases as c (c.id)}
-          <div
-            class="section9-case-row"
-            id="section9-{c.id}"
-            class:highlight-row={highlightSection9Id === c.id}
-          >
-            <div class="pending-info">
-              <span class="pending-name">{c.employeeName}</span>
-              <span class="pending-type">
-                Urlaub {fmtDate(c.vacationRequest.startDate)}–{fmtDate(c.vacationRequest.endDate)} · Krank
-                {fmtDate(c.sickRequest.startDate)}–{fmtDate(c.sickRequest.endDate)}
-              </span>
-              {#if c.status === "REJECTED"}
-                <span class="badge badge-red" data-testid="section9-case-status">AU abgelehnt</span>
-                {#if c.reason}
-                  <span class="text-muted" title={c.reason}>„{c.reason}"</span>
-                {/if}
-              {:else}
-                <span class="badge badge-yellow" data-testid="section9-case-status"
-                  >AU ausstehend</span
-                >
-              {/if}
-            </div>
-            <div class="section9-case-actions">
-              {#if c.status === "AU_PENDING"}
-                <button
-                  class="btn btn-sm btn-primary"
-                  data-testid={`section9-case-${c.id}-confirm`}
-                  onclick={() => openSection9Confirm(c)}
-                >
-                  AU liegt vor
-                </button>
-                <button
-                  class="btn btn-sm btn-ghost text-red"
-                  data-testid={`section9-case-${c.id}-reject`}
-                  onclick={() => openSection9Reject(c)}
-                >
-                  Ablehnen
-                </button>
-              {:else if c.status === "REJECTED"}
-                <button
-                  class="btn btn-sm btn-ghost"
-                  data-testid={`section9-case-${c.id}-reopen`}
-                  onclick={() => reopenSection9Case(c)}
-                >
-                  Wieder eröffnen
-                </button>
-                <p class="section9-case-hint text-muted">
-                  Trifft die AU später ein, kann der Vorgang wieder eröffnet werden.
-                </p>
-              {/if}
-            </div>
-          </div>
-        {/each}
-      {/if}
-    </div>
-  </Card>
 {/if}
 
 <!-- ── Retro detail/review modal ──────────────────────────────────────── -->
@@ -1108,21 +1137,6 @@
     margin-bottom: var(--s-3);
   }
 
-  /* ── List card (overrides .card padding for full-bleed rows) ─────────── */
-  :global(.list-card) {
-    overflow: hidden;
-  }
-
-  /* Header wrapper that adds the bottom border separation when the CardHeader
-     sits at the top of a padding:0 list card. */
-  .list-card-header {
-    padding: 18px 18px 14px;
-    border-bottom: 1px solid var(--line);
-  }
-  .list-card-header :global(.card-hd) {
-    margin-bottom: 0;
-  }
-
   /* ── Modal body helpers ───────────────────────────────────────────────── */
   /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
   /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
@@ -1219,66 +1233,11 @@
     flex: 1;
   }
 
-  /* ── § 9 cases (moved from /team/leave, #840) ─────────────────────────── */
-  .section9-cases {
-    display: flex;
-    flex-direction: column;
-    padding: 0 18px;
-  }
-  .section9-case-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-    padding: 0.75rem 0;
-    border-top: 1px solid var(--line);
-  }
-  .section9-case-row:first-child {
-    border-top: none;
-  }
-  .section9-case-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .section9-case-hint {
-    font-size: 0.8125rem;
-    margin: 0;
-  }
+  /* ── § 9 dialog ─────────────────────────────────────────────────────────── */
   .section9-hint {
     font-size: 0.8125rem;
     margin: 0.25rem 0 0;
   }
-  .pending-info {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-    flex: 1;
-    min-width: 0;
-  }
-  .pending-name {
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .pending-type {
-    color: var(--brand);
-    font-weight: 500;
-  }
-  @keyframes highlight-fade {
-    0% {
-      background-color: var(--brand-soft);
-    }
-    100% {
-      background-color: transparent;
-    }
-  }
-  .highlight-row {
-    animation: highlight-fade 3s var(--ease-out) both;
-  }
-
   /* Modal body of the "AU liegt vor" dialog. */
   .attest-dates {
     display: flex;

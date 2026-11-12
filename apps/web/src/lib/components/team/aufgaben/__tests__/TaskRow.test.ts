@@ -80,6 +80,66 @@ describe("TaskRow - other kinds", () => {
   });
 });
 
+describe("TaskRow - plan 10 kinds", () => {
+  const noticeRow: TaskRowModel = {
+    ...leaveRow,
+    key: "pausenbefund:p1",
+    kind: "pausenbefund",
+    sourceId: "p1",
+    personName: "Pausenbefund",
+    title: "Pausenbefund",
+    subtitle: "Am 10.11.2026 liegt keine Pause vor.",
+    status: "OPEN",
+    typeCode: null,
+  };
+
+  it("a Pausenbefund row has no avatar (its title is the notice's, not a person) and no status chip", () => {
+    const { container } = renderWithTheme(TaskRow, { row: noticeRow });
+    expect(container.querySelector(".list-avatar")).toBeNull();
+    expect(screen.getAllByText("Pausenbefund").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".chip").length).toBe(1);
+  });
+
+  it("an open-task row shows the label the server worded in its kind chip", () => {
+    renderWithTheme(TaskRow, {
+      row: {
+        ...noticeRow,
+        key: "ausstempeln:t1",
+        kind: "ausstempeln",
+        sourceId: "t1",
+        personName: "Tom Offen",
+        title: "Tom Offen",
+        label: "Ausstempeln fehlt",
+      },
+    });
+    expect(screen.getByText("Ausstempeln fehlt")).toBeTruthy();
+  });
+
+  it("a § 9 row shows the AU status in words", () => {
+    renderWithTheme(TaskRow, {
+      row: {
+        ...noticeRow,
+        kind: "paragraf9",
+        key: "paragraf9:s1",
+        sourceId: "s1",
+        status: "AU_PENDING",
+      },
+    });
+    expect(screen.getByText("AU ausstehend")).toBeTruthy();
+    cleanup();
+    renderWithTheme(TaskRow, {
+      row: {
+        ...noticeRow,
+        kind: "paragraf9",
+        key: "paragraf9:s2",
+        sourceId: "s2",
+        status: "AU_REJECTED",
+      },
+    });
+    expect(screen.getByText("AU abgelehnt")).toBeTruthy();
+  });
+});
+
 describe("TaskRow - test id, kind, row id, highlight, actions", () => {
   it("puts a test id with kind and source id, the kind and the row id on the li", () => {
     const { container } = renderWithTheme(TaskRow, { row: leaveRow, rowId: "task-1" });

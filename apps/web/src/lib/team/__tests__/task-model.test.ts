@@ -1,9 +1,12 @@
 // Issue #853 (D-853-06, D-853-18) - the pure model of Team › Aufgaben: kinds, rows, order and counts.
 import { describe, expect, it } from "vitest";
 import {
+  BREAK_NOTICE_TYPES,
   TASK_KINDS,
   TASK_KIND_VALUES,
   filterByKind,
+  availableTaskKinds,
+  breakFindingHref,
   fmtTaskDate,
   rowsForView,
   sortTasks,
@@ -11,7 +14,10 @@ import {
   taskKindLabel,
   taskRowsFrom,
   type LeaveTaskSource,
+  type NoticeTaskSource,
+  type OpenTaskSource,
   type RetroTaskSource,
+  type Section9TaskSource,
 } from "../task-model";
 
 const leaveDays = (r: LeaveTaskSource) => `${r.days} Tage`;
@@ -236,5 +242,249 @@ describe("fmtTaskDate", () => {
     expect(fmtTaskDate("2026-01-05")).toBe("05.01.2026");
     expect(fmtTaskDate("")).toBe("");
     expect(fmtTaskDate("heute")).toBe("heute");
+  });
+});
+
+// ── Plan 10: § 9, Pausenbefund, open tasks ───────────────────────────────────
+
+function section9(over: Partial<Section9TaskSource> & { id: string }): Section9TaskSource {
+  return {
+    employeeName: "Ina Beispiel",
+    status: "AU_PENDING",
+    overlapStart: "2026-11-03",
+    overlapEnd: "2026-11-05",
+    reason: null,
+    sickRequest: { startDate: "2026-11-03", endDate: "2026-11-06" },
+    vacationRequest: { startDate: "2026-11-02", endDate: "2026-11-13" },
+    ...over,
+  };
+}
+
+function notice(over: Partial<NoticeTaskSource> & { id: string }): NoticeTaskSource {
+  return {
+    type: "BREAK_PLACEMENT_VIOLATION",
+    title: "Pausenbefund",
+    message: "Am 10.11.2026 liegt keine Pause von mindestens 15 Minuten vor.",
+    link: "/team/time-entries?employeeId=7c9e6679-7425-40de-944b-e07fc1f90ae7&date=2026-11-10",
+    createdAt: "2026-11-11T09:00:00.000Z",
+    dismissedAt: null,
+    ...over,
+  };
+}
+
+function openTask(over: Partial<OpenTaskSource> & { id: string }): OpenTaskSource {
+  return {
+    type: "ausstempeln",
+    personName: "Tom Offen",
+    day: "2026-11-10",
+    startTime: "08:05",
+    label: "Ausstempeln fehlt",
+    link: "/team/zeiten?employeeId=7c9e6679-7425-40de-944b-e07fc1f90ae7&date=2026-11-10",
+    ...over,
+  };
+}
+
+describe("taskRowsFrom - § 9", () => {
+  it("maps an AU_PENDING case to a paragraf9 row with both periods in the subtitle", () => {
+    const [row] = taskRowsFrom({ section9: [section9({ id: "s1" })] }, { leaveDays });
+    expect(row).toMatchObject({
+      key: "paragraf9:s1",
+      kind: "paragraf9",
+      sourceId: "s1",
+      title: "Ina Beispiel",
+      subtitle: "Urlaub 02.11.2026–13.11.2026 · Krank 03.11.2026–06.11.2026",
+      status: "AU_PENDING",
+      decided: false,
+      typeCode: null,
+    });
+  });
+
+  it("keeps a REJECTED case open (it can be reopened) and shows its reason; CONFIRMED is no row", () => {
+    const rows = taskRowsFrom(
+      {
+        section9: [
+          section9({ id: "r", status: "REJECTED", reason: "AU fehlt" }),
+          section9({ id: "c", status: "CONFIRMED" }),
+          section9({ id: "x", status: "SUPERSEDED" }),
+        ],
+      },
+      { leaveDays },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe("AU_REJECTED");
+    expect(rows[0]?.subtitle).toContain("„AU fehlt“");
+    expect(rows[0]?.decided).toBe(false);
+  });
+});
+
+describe("taskRowsFrom - Pausenbefund (the caller's own break notices)", () => {
+  it("keeps only the two break notice types that are not dismissed", () => {
+    expect(BREAK_NOTICE_TYPES).toEqual([
+      "BREAK_CROSS_SALON_VIOLATION",
+      "BREAK_PLACEMENT_VIOLATION",
+    ]);
+    const rows = taskRowsFrom(
+      {
+        notices: [
+          notice({ id: "a" }),
+          notice({ id: "b", type: "BREAK_CROSS_SALON_VIOLATION" }),
+          notice({ id: "c", type: "LEAVE_APPROVED" }),
+          notice({ id: "d", dismissedAt: "2026-11-11T10:00:00.000Z" }),
+        ],
+      },
+      { leaveDays },
+    );
+    expect(rows.map((r) => r.sourceId).sort()).toEqual(["a", "b"]);
+    expect(rows.every((r) => r.kind === "pausenbefund")).toBe(true);
+  });
+
+  it("takes title and message as the server worded them and links to Zeiten with the query kept", () => {
+    const [row] = taskRowsFrom({ notices: [notice({ id: "a" })] }, { leaveDays });
+    expect(row?.title).toBe("Pausenbefund");
+    expect(row?.subtitle).toBe("Am 10.11.2026 liegt keine Pause von mindestens 15 Minuten vor.");
+    expect(row?.href).toBe(
+      "/team/zeiten?employeeId=7c9e6679-7425-40de-944b-e07fc1f90ae7&date=2026-11-10",
+    );
+  });
+
+  it("a notice with an unsafe or missing link is a row without a link", () => {
+    const rows = taskRowsFrom(
+      {
+        notices: [
+          notice({ id: "a", link: "https://evil.example/x" }),
+          notice({ id: "b", link: "javascript:alert(1)" }),
+          notice({ id: "c", link: null }),
+        ],
+      },
+      { leaveDays },
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.href === null)).toBe(true);
+  });
+});
+
+describe("breakFindingHref", () => {
+  it("maps a legacy route path to its new URL and keeps the query", () => {
+    expect(breakFindingHref("/team/time-entries?employeeId=e1&date=2026-11-10")).toBe(
+      "/team/zeiten?employeeId=e1&date=2026-11-10",
+    );
+  });
+
+  it("leaves a new URL as it is", () => {
+    expect(breakFindingHref("/team/zeiten?employeeId=e1&date=2026-11-10")).toBe(
+      "/team/zeiten?employeeId=e1&date=2026-11-10",
+    );
+  });
+
+  it("refuses a foreign origin, a protocol-relative URL, javascript: and empty input", () => {
+    expect(breakFindingHref("https://evil.example/team/zeiten")).toBeNull();
+    expect(breakFindingHref("//evil.example/x")).toBeNull();
+    expect(breakFindingHref("javascript:alert(1)")).toBeNull();
+    expect(breakFindingHref("/team/../admin")).toBeNull();
+    expect(breakFindingHref("")).toBeNull();
+    expect(breakFindingHref(null)).toBeNull();
+    expect(breakFindingHref(undefined)).toBeNull();
+  });
+});
+
+describe("taskRowsFrom - open tasks (the reach-scoped open-tasks read)", () => {
+  it("maps an ausstempeln task to a row with person, day, start time, the server's label and the link", () => {
+    const [row] = taskRowsFrom(
+      { openTasks: { types: ["ausstempeln"], tasks: [openTask({ id: "t1" })] } },
+      { leaveDays },
+    );
+    expect(row).toMatchObject({
+      key: "ausstempeln:t1",
+      kind: "ausstempeln",
+      title: "Tom Offen",
+      subtitle: "10.11.2026 · seit 08:05",
+      label: "Ausstempeln fehlt",
+      decided: false,
+    });
+    expect(row?.href).toBe(
+      "/team/zeiten?employeeId=7c9e6679-7425-40de-944b-e07fc1f90ae7&date=2026-11-10",
+    );
+  });
+
+  it("drops a zeitkorrektur task when the answer's types does not list it (D-853-23)", () => {
+    const rows = taskRowsFrom(
+      {
+        openTasks: {
+          types: ["ausstempeln"],
+          tasks: [openTask({ id: "t1" }), openTask({ id: "k1", type: "zeitkorrektur" })],
+        },
+      },
+      { leaveDays },
+    );
+    expect(rows.map((r) => r.kind)).toEqual(["ausstempeln"]);
+  });
+
+  it("maps a zeitkorrektur task when the answer lists the type", () => {
+    const rows = taskRowsFrom(
+      {
+        openTasks: {
+          types: ["ausstempeln", "zeitkorrektur"],
+          tasks: [openTask({ id: "k1", type: "zeitkorrektur", label: "Zeitkorrektur" })],
+        },
+      },
+      { leaveDays },
+    );
+    expect(rows.map((r) => r.kind)).toEqual(["zeitkorrektur"]);
+  });
+
+  it("ignores an unknown type and treats null / absent as an empty source", () => {
+    expect(
+      taskRowsFrom(
+        { openTasks: { types: ["neu"], tasks: [openTask({ id: "z", type: "neu" })] } },
+        { leaveDays },
+      ),
+    ).toEqual([]);
+    expect(taskRowsFrom({ openTasks: null }, { leaveDays })).toEqual([]);
+  });
+
+  it("sorts all kinds into one list, oldest first", () => {
+    const rows = taskRowsFrom(
+      {
+        leave: [leave({ id: "l", createdAt: "2026-11-05T08:00:00.000Z" })],
+        section9: [section9({ id: "s", overlapStart: "2026-11-03" })],
+        openTasks: { types: ["ausstempeln"], tasks: [openTask({ id: "t", day: "2026-11-10" })] },
+      },
+      { leaveDays },
+    );
+    expect(rows.map((r) => r.kind)).toEqual(["paragraf9", "urlaub", "ausstempeln"]);
+  });
+});
+
+describe("availableTaskKinds", () => {
+  const base = {
+    leave: false,
+    retro: false,
+    section9: false,
+    breakNoticeCount: 0,
+    openTaskTypes: [] as string[],
+  };
+
+  it("offers a kind only to a caller who can decide or see it, in display order", () => {
+    expect(availableTaskKinds(base)).toEqual([]);
+    expect(
+      availableTaskKinds({
+        leave: true,
+        retro: true,
+        section9: true,
+        breakNoticeCount: 2,
+        openTaskTypes: ["ausstempeln"],
+      }),
+    ).toEqual(["urlaub", "nachtrag", "paragraf9", "pausenbefund", "ausstempeln"]);
+  });
+
+  it("offers Pausenbefund only with rows and Zeitkorrektur only when the answer lists it", () => {
+    expect(availableTaskKinds({ ...base, leave: true })).toEqual(["urlaub"]);
+    expect(availableTaskKinds({ ...base, breakNoticeCount: 1 })).toEqual(["pausenbefund"]);
+    expect(availableTaskKinds({ ...base, openTaskTypes: ["ausstempeln"] })).toEqual([
+      "ausstempeln",
+    ]);
+    expect(
+      availableTaskKinds({ ...base, openTaskTypes: ["ausstempeln", "zeitkorrektur"] }),
+    ).toEqual(["ausstempeln", "zeitkorrektur"]);
   });
 });

@@ -1,8 +1,11 @@
 // Issue #853 (D-853-06, D-853-18, D-853-21) - the pure model of Team › Aufgaben: every open decision of
 // the caller as ONE kind of row. No request, no store, no clock: the page feeds it the answers of its
 // loaders (already narrowed to the caller's reach by the server) and renders what comes out. Plan 09
-// feeds the leave requests and the Zeitnachträge; § 9 cases, break findings and the open-task rows of
-// `GET /tasks/open` join in plan 10 as further `kind` values of the same row shape.
+// feeds the leave requests and the Zeitnachträge; plan 10 adds the § 9 cases, the Pausenbefunde (the
+// caller's own #85 break notices) and the open-task rows of `GET /tasks/open` (missing clock-outs and,
+// feature-checked, the Zeitkorrektur of #599) as further `kind` values of the same row shape.
+import { safeAppNext } from "$lib/nav/login-next";
+import { legacyRedirectTarget } from "$lib/nav/routes";
 
 /** A kind of task the list can carry. The value is a control value (URL, `data-kind`), never shown. */
 export type TaskKind =
@@ -63,9 +66,55 @@ export interface RetroTaskSource {
   createdAt: string;
 }
 
+/** What the model reads of a § 9 case (`GET /leave/section9`). */
+export interface Section9TaskSource {
+  id: string;
+  employeeName: string;
+  status: string;
+  overlapStart: string;
+  overlapEnd: string;
+  reason?: string | null;
+  sickRequest: { startDate: string; endDate: string };
+  vacationRequest: { startDate: string; endDate: string };
+}
+
+/** What the model reads of a notification (`GET /notifications`). */
+export interface NoticeTaskSource {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  link?: string | null;
+  createdAt: string;
+  dismissedAt?: string | null;
+}
+
+/** One task of `GET /tasks/open` (853-18). */
+export interface OpenTaskSource {
+  type: string;
+  id: string;
+  employeeId?: string;
+  personName: string;
+  day: string;
+  startTime?: string;
+  label: string;
+  link: string;
+}
+
+/** The answer of `GET /tasks/open`: `types` lists what the endpoint can answer at all (D-853-23). */
+export interface OpenTasksAnswer {
+  types: readonly string[];
+  tasks: readonly OpenTaskSource[];
+}
+
 export interface TaskSources {
   leave?: readonly LeaveTaskSource[];
   retro?: readonly RetroTaskSource[];
+  section9?: readonly Section9TaskSource[];
+  /** The caller's own notifications; only the break notices become rows (D-853-07). */
+  notices?: readonly NoticeTaskSource[];
+  /** `null`/absent = not loaded or refused: a calm empty source. */
+  openTasks?: OpenTasksAnswer | null;
 }
 
 /** The caller of the model supplies the one piece the model must not own. */
@@ -91,6 +140,10 @@ export interface TaskRowModel {
   decided: boolean;
   /** Leave type code for the type chip; null for every other kind. */
   typeCode: string | null;
+  /** Display label of the kind chip when the server worded it (open tasks); else the kind's own. */
+  label?: string;
+  /** Same-origin app path of the row's „Klären“ / „Korrigieren“ link; `null` = the row has no link. */
+  href?: string | null;
 }
 
 // ── Mapping ──────────────────────────────────────────────────────────────────
@@ -147,6 +200,89 @@ function retroRow(r: RetroTaskSource): TaskRowModel | null {
 }
 
 /**
+ * The target of a Pausenbefund or an open-task link (T-853-36): a stored, server-written path becomes an
+ * anchor only when it is a same-origin app path (`safeAppNext`), then an old route file path is mapped to
+ * its new URL (`/team/time-entries?...` -> `/team/zeiten?...`) with the query kept. Anything else -> null.
+ */
+export function breakFindingHref(link: string | null | undefined): string | null {
+  const safe = safeAppNext(link);
+  if (safe === null) return null;
+  const cut = safe.search(/[?#]/);
+  const path = cut === -1 ? safe : safe.slice(0, cut);
+  const tail = cut === -1 ? "" : safe.slice(cut);
+  return (legacyRedirectTarget(path) ?? path) + tail;
+}
+
+/** The notification types that are Pausenbefunde (#85): the caller's own, reach-worded break notices. */
+export const BREAK_NOTICE_TYPES: readonly string[] = [
+  "BREAK_CROSS_SALON_VIOLATION",
+  "BREAK_PLACEMENT_VIOLATION",
+];
+
+/** The § 9 cases that wait for a decision: AU pending, or rejected (can be reopened). */
+const OPEN_SECTION9_STATUSES: readonly string[] = ["AU_PENDING", "REJECTED"];
+
+function section9Row(c: Section9TaskSource): TaskRowModel | null {
+  if (!OPEN_SECTION9_STATUSES.includes(c.status)) return null;
+  const reason = c.status === "REJECTED" && c.reason ? ` · „${c.reason}“` : "";
+  return {
+    key: `paragraf9:${c.id}`,
+    kind: "paragraf9",
+    sourceId: c.id,
+    personName: c.employeeName,
+    title: c.employeeName,
+    subtitle:
+      `Urlaub ${fmtTaskDate(c.vacationRequest.startDate)}–${fmtTaskDate(c.vacationRequest.endDate)}` +
+      ` · Krank ${fmtTaskDate(c.sickRequest.startDate)}–${fmtTaskDate(c.sickRequest.endDate)}${reason}`,
+    // The case has no creation time; the start of the overlap is what makes it wait (the sort key).
+    createdAt: c.overlapStart,
+    status: c.status === "REJECTED" ? "AU_REJECTED" : "AU_PENDING",
+    decided: false,
+    typeCode: null,
+  };
+}
+
+function noticeRow(n: NoticeTaskSource): TaskRowModel | null {
+  if (!BREAK_NOTICE_TYPES.includes(n.type) || n.dismissedAt) return null;
+  return {
+    key: `pausenbefund:${n.id}`,
+    kind: "pausenbefund",
+    sourceId: n.id,
+    // The notice is worded by the server for this reader's reach: its title and message are shown as
+    // text, nothing is derived from them.
+    personName: n.title,
+    title: n.title,
+    subtitle: n.message,
+    createdAt: n.createdAt,
+    status: "OPEN",
+    decided: false,
+    typeCode: null,
+    href: breakFindingHref(n.link),
+  };
+}
+
+function openTaskRow(t: OpenTaskSource, types: readonly string[]): TaskRowModel | null {
+  // Only a type the answer lists is a kind of this list (the D-853-23 feature check).
+  if (!types.includes(t.type)) return null;
+  if (t.type !== "ausstempeln" && t.type !== "zeitkorrektur") return null;
+  const start = t.startTime ? ` · seit ${t.startTime}` : "";
+  return {
+    key: `${t.type}:${t.id}`,
+    kind: t.type,
+    sourceId: t.id,
+    personName: t.personName,
+    title: t.personName,
+    subtitle: `${fmtTaskDate(t.day)}${start}`,
+    createdAt: `${t.day}T${t.startTime ?? "00:00"}`,
+    status: "OPEN",
+    decided: false,
+    typeCode: null,
+    label: t.label,
+    href: breakFindingHref(t.link),
+  };
+}
+
+/**
  * Oldest first (`createdAt`, then key) - what waits longest is decided first. The decided view lists
  * the newest first, so the latest decisions are on top. Returns a new array.
  */
@@ -173,6 +309,19 @@ export function taskRowsFrom(sources: TaskSources, options: TaskOptions): TaskRo
   }
   for (const r of sources.retro ?? []) {
     const row = retroRow(r);
+    if (row) rows.push(row);
+  }
+  for (const c of sources.section9 ?? []) {
+    const row = section9Row(c);
+    if (row) rows.push(row);
+  }
+  for (const n of sources.notices ?? []) {
+    const row = noticeRow(n);
+    if (row) rows.push(row);
+  }
+  const open = sources.openTasks;
+  for (const t of open?.tasks ?? []) {
+    const row = openTaskRow(t, open?.types ?? []);
     if (row) rows.push(row);
   }
   return sortTasks(rows);
@@ -205,4 +354,28 @@ export function filterByKind(
   typ: TaskKind | "alle",
 ): TaskRowModel[] {
   return typ === "alle" ? [...rows] : rows.filter((r) => r.kind === typ);
+}
+
+/** What decides which kinds the caller is offered (segment and KPI band). */
+export interface AvailableKindsInput {
+  /** The held-key hints (the API decides): leave approve, retro approve, § 9 read/decide. */
+  leave: boolean;
+  retro: boolean;
+  section9: boolean;
+  /** The caller's own break notices: the kind appears only when there are some. */
+  breakNoticeCount: number;
+  /** `types` of the `GET /tasks/open` answer; empty when it was not loaded or refused. */
+  openTaskTypes: readonly string[];
+}
+
+/** The kinds the caller sees, in display order. Zeitkorrektur only when the open-task answer lists it. */
+export function availableTaskKinds(input: AvailableKindsInput): TaskKind[] {
+  const kinds: TaskKind[] = [];
+  if (input.leave) kinds.push("urlaub");
+  if (input.retro) kinds.push("nachtrag");
+  if (input.section9) kinds.push("paragraf9");
+  if (input.breakNoticeCount > 0) kinds.push("pausenbefund");
+  if (input.openTaskTypes.includes("ausstempeln")) kinds.push("ausstempeln");
+  if (input.openTaskTypes.includes("zeitkorrektur")) kinds.push("zeitkorrektur");
+  return kinds;
 }

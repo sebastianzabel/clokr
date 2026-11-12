@@ -31,6 +31,9 @@
     APPROVED: { label: "Genehmigt", tone: "ok" },
     REJECTED: { label: "Abgelehnt", tone: "bad" },
     USED: { label: "Verwendet", tone: "neutral" },
+    // § 9 cases (the model's own status values: the case waits for the AU, or was rejected).
+    AU_PENDING: { label: "AU ausstehend", tone: "warn" },
+    AU_REJECTED: { label: "AU abgelehnt", tone: "bad" },
   };
 
   const status = $derived(STATUS[row.status]);
@@ -41,6 +44,7 @@
   title={row.title}
   subtitle={row.subtitle}
   avatarKey={row.personName}
+  avatar={row.kind !== "pausenbefund"}
   testId={`task-row-${row.kind}-${row.sourceId}`}
   kind={row.kind}
   {rowId}
@@ -56,7 +60,7 @@
         requested={row.status === "PENDING"}
       />
     {:else}
-      <Chip tone="info">{taskKindLabel(row.kind)}</Chip>
+      <Chip tone="info">{row.label ?? taskKindLabel(row.kind)}</Chip>
     {/if}
     {#if status}
       <Chip tone={status.tone}>{status.label}</Chip>
