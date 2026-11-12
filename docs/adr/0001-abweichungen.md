@@ -8003,3 +8003,52 @@ Tokens, dazu die Rezeptdeklarationen), `leave-looks-840-gaps`, `leave-chip-contr
 Komponententests von `LeaveRequestForm`, `LeaveTypeChip`, `LeaveToolbar`, `LeavePlanningPanel`, `AbsenceTimeline` und
 `LeaveLegend` sowie die angepassten Fixierungen (jede mit `#840 G-n` im Test benannt). Browser:
 `apps/e2e/tests/leave-area-840.spec.ts`, Tests 6 bis 9 (Planung, Zähler/Chips/Inbox-Kopf, Formular, Primärknöpfe).
+
+## AJ — Korrektur abgeschlossener Monate als Kontobewegung (Phase 599, Issue #599)
+
+**Entscheidung (Owner 19.10. und 09.11.2026, Grauzonen auf #599 dokumentiert).** Ein Tag eines abgeschlossenen Monats wird nie
+nachträglich geändert. Eine Person stellt eine Korrekturanfrage (`MonthCorrectionRequest`, Arbeitszeitkonto), eine andere Person mit
+`month-correction:approve:ZUGEWIESEN` über sie entscheidet. Die Genehmigung bucht im laufenden Monat:
+
+- die Journalzeile `OvertimeTransaction` (Typ `CORRECTION`, Verweis auf Anfrage und Tag, `referenceMonth` = Monat des Tages),
+- `correctionMinutes` und `bookingDate` (Tag der Genehmigung, Zeitzone des Mandanten) an der Anfrage.
+
+**Warum nicht nur das Journal.** `OvertimeTransaction` bewegt den Saldo nicht: Der Saldo wird aus Einträgen, Abwesenheiten und
+Snapshots gerechnet, `OvertimeAccount.balanceHours` wird bei jeder Neuberechnung überschrieben. Eine Buchung nur im Journal wäre
+wirkungslos. Deshalb ist die Korrektur eine Kontobewegung im einen Saldo-Kern: `closeEmployeeMonth()` nimmt
+`accountCorrections` (Tag, Minuten) und addiert die Minuten der Tage seines Fensters auf `balanceMinutes`, außerhalb der
+§ 615-Klauseln, ohne Soll und Ist zu ändern — dasselbe Muster wie der Überstundenausgleich (#220). Gelesen wird nur über
+`booked-month-corrections.ts` (ein Person, viele Personen für die #696-Kette). Jeder Produktionsaufrufer übergibt das Feld;
+`month-correction-saldo-callers-599.test.ts` hält das fest (im Typ ist das Feld optional, damit die Kern-Fixtures unverändert bleiben).
+
+**Regeln.** Vier Augen (wer anfragt und um wen es geht, entscheidet nie; Sperre, keine Permission). Reichweite: Stammsalon am
+betroffenen Tag; außerhalb dieselbe 404 wie für eine unbekannte Anfrage. Keine stille Buchung: ist der laufende Monat geschlossen
+(409 `MONTH_LOCKED`) oder führt die Person heute keinen Saldo (Nur erfassen #494, kein Vertrag #780, ausgetreten:
+409 `CORRECTION_NO_SALDO`), wird nicht gebucht. Wie jede Buchung eines Tages wirkt sie ab dem Folgetag im Live-Saldo (#438).
+
+**Unterbau.** Neue Fremdschlüssel nur auf `Employee` (Unterbau, `Restrict`) und innerhalb von Arbeitszeitkonto
+(`OvertimeTransaction`, `Restrict`). Semantikänderung der Systemvorlagen: `month-correction:*` spiegelbildlich zu den
+Zeitnachtrag-Rechten (`20261109180000_month_correction_template_grant`).
+
+**Nachtrag Phase 599 — Systemrollen-Vorlagen (Unterbau-Semantikänderung, Owner-Entscheidung 12.11.2026,
+[Kommentar auf #599](https://github.com/getclokr/clokr/issues/599#issuecomment-6817644873)).** Freigegeben wie vorgeschlagen und so ausgeliefert:
+
+| Vorlage                      | neu                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Admin, Inhaber, Manager      | `month-correction:read:EIGENE`, `read:ZUGEWIESEN`, `create:EIGENE`, `create:ZUGEWIESEN`, `approve:ZUGEWIESEN` |
+| Mitarbeiter                  | `month-correction:read:EIGENE`, `create:EIGENE`                                                               |
+| Salonmanager                 | `month-correction:read:ZUGEWIESEN`, `create:ZUGEWIESEN`, `approve:ZUGEWIESEN`                                 |
+| Personalabteilung, Ausbilder | keine                                                                                                         |
+
+Die Änderung wirkt sofort auf jedes bestehende Konto mit dieser Rolle; Kundenkopien der Vorlagen bleiben unverändert, niemandem
+wird eine Rolle zugewiesen. Die Vier-Augen-Sperre (wer anfragt oder um wen es geht, entscheidet nie) ist keine Permission und gilt
+für jede Rolle. Die reine Datenmigration setzt je Vorlage genau die Vorlage von vorher plus diese Schlüssel (geprüft gegen
+`SYSTEM_ROLE_PERMISSIONS` vor #599: kein Recht entfernt oder geändert), jede Anweisung mit `IS DISTINCT FROM`-Guard und
+`"tenantId" IS NULL`; `month-correction-template-migration-599.test.ts` beweist das am eingecheckten SQL (Form, Wiederholbarkeit,
+Gleichheit mit der Konstante). Konstante, Datenbankzeile, `docs/permissions.md` und die Web-Persona-Fixture ändern sich zusammen.
+
+**Auswirkung auf die Kontexte.** Zeiterfassung: keine (der Zeitnachtrag bleibt für offene Monate, kein `TimeEntry` entsteht).
+Abwesenheiten: keine. Schichtplanung: keine. Arbeitszeitkonto: neues Modell, Routen `/api/v1/month-corrections`, Saldo-Kern-Eingang.
+Kompositionsschicht: keine eigene Regel; Berichte lesen die Wirkung über `computeMonthReportFigures` (Kontobewegung =
+`balanceAdjustmentMinutes`). Unterbau: Vorlagen, Benachrichtigungstypen `MONTH_CORRECTION_REQUESTED`/`_DECIDED`, Anonymisierung
+(Begründung → neutraler Text, Prüfnotiz → null).

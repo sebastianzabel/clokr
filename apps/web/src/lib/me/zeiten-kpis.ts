@@ -2,8 +2,17 @@
 // Pausen, Status. Pure wording over figures the page already holds (its MonthMetrics, the sum of the
 // recorded breaks and the server's day-check map): nothing is computed here, so the figures stay the
 // ones MonatSaldoCard showed (#125 one-source count, #433 MONTHLY_HOURS Soll, #495 no-Soll contract).
-import type { KpiItem } from "$components/ui/KpiStrip.svelte";
 import { fmtBalance, fmtMin } from "$lib/utils/format-minutes";
+
+/** The fields of KpiStrip's item this module fills (a structural subset; a plain .ts module cannot
+ *  import a type from a .svelte file under `tsc`). */
+export interface KpiItem {
+  label: string;
+  value: string;
+  unit?: string;
+  explanation?: string;
+  testId?: string;
+}
 
 export interface ZeitenMonthFigures {
   sollToDateMin: number;

@@ -29,13 +29,33 @@ import { SYSTEM_ROLE_PERMISSIONS, type SystemRoleSlot } from "../contexts/platfo
 const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
 export const MIGRATIONS_ROOT = join(REPO_ROOT, "packages", "db", "prisma", "migrations");
 
-export interface TemplateGrant {
-  /** The migration directory name ends with this (the timestamp prefix is not stated twice). */
-  dirSuffix: string;
-  /** The key the migration adds to every listed slot. */
-  key: string;
-  slots: readonly SystemRoleSlot[];
+export type TemplateGrant =
+  | {
+      /** The migration directory name ends with this (the timestamp prefix is not stated twice). */
+      dirSuffix: string;
+      /** The key the migration adds to every listed slot. */
+      key: string;
+      slots: readonly SystemRoleSlot[];
+    }
+  | {
+      dirSuffix: string;
+      /** Issue #599: a grant that adds different keys to different slots. */
+      slotKeys: Partial<Record<SystemRoleSlot, readonly string[]>>;
+    };
+
+/** The keys `grant` adds to `slot` (empty when the slot is not part of the grant). */
+export function keysGrantedTo(grant: TemplateGrant, slot: SystemRoleSlot): readonly string[] {
+  if ("slotKeys" in grant) return grant.slotKeys[slot] ?? [];
+  return grant.slots.includes(slot) ? [grant.key] : [];
 }
+
+const MONTH_CORRECTION_FULL = [
+  "month-correction:read:EIGENE",
+  "month-correction:read:ZUGEWIESEN",
+  "month-correction:create:EIGENE",
+  "month-correction:create:ZUGEWIESEN",
+  "month-correction:approve:ZUGEWIESEN",
+] as const;
 
 /** Oldest first. Each entry is the order the migrations run in. */
 export const TEMPLATE_GRANT_CHAIN: readonly TemplateGrant[] = [
@@ -48,6 +68,20 @@ export const TEMPLATE_GRANT_CHAIN: readonly TemplateGrant[] = [
     dirSuffix: "_leave_plan_template_grant",
     key: "leave-plan:manage:ZUGEWIESEN",
     slots: ["ADMIN", "OWNER", "SALON_MANAGER"],
+  },
+  {
+    dirSuffix: "_month_correction_template_grant",
+    slotKeys: {
+      ADMIN: MONTH_CORRECTION_FULL,
+      MANAGER: MONTH_CORRECTION_FULL,
+      OWNER: MONTH_CORRECTION_FULL,
+      EMPLOYEE: ["month-correction:read:EIGENE", "month-correction:create:EIGENE"],
+      SALON_MANAGER: [
+        "month-correction:read:ZUGEWIESEN",
+        "month-correction:create:ZUGEWIESEN",
+        "month-correction:approve:ZUGEWIESEN",
+      ],
+    },
   },
 ];
 
@@ -84,9 +118,9 @@ export function grantMigrationSql(dirSuffix: string): string {
  * that every LATER grant of the chain added to that slot. Catalog order is kept.
  */
 export function templateAsOf(slot: SystemRoleSlot, dirSuffix: string): string[] {
-  const later = TEMPLATE_GRANT_CHAIN.slice(indexOfGrant(dirSuffix) + 1)
-    .filter((g) => g.slots.includes(slot))
-    .map((g) => g.key);
+  const later = TEMPLATE_GRANT_CHAIN.slice(indexOfGrant(dirSuffix) + 1).flatMap((g) =>
+    keysGrantedTo(g, slot),
+  );
   return SYSTEM_ROLE_PERMISSIONS[slot].filter((key) => !later.includes(key));
 }
 

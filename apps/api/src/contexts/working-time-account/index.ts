@@ -48,6 +48,8 @@ export {
   createOvertimeAccount,
   setOvertimeAccountBalance,
   hardDeleteOvertimeDataForEmployee,
+  clearMonthCorrectionTextsForEmployee, // Issue #599 (DSGVO Art. 17)
+  MONTH_CORRECTION_REASON_ANONYMIZED, // Issue #599
   clearOvertimePlanNotesForEmployee,
 } from "./facade/overtime-account";
 export {

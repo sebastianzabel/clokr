@@ -118,6 +118,7 @@ export type PrismaModelName =
   | "overtimeAccount"
   | "overtimeTransaction"
   | "overtimePlan"
+  | "monthCorrectionRequest" // Issue #599 — correction request for a closed month
   | "leaveType"
   | "leaveEntitlement"
   | "specialLeaveRule"
@@ -208,11 +209,12 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   leaveLimitRule: "absence", // Issue #836 — Urlaubsgrenzen und Urlaubssperren je Salon
   leavePlan: "absence", // Issue #835 — Urlaubsplaner: Plan je Salon und Jahr
   leavePlanWish: "absence", // Issue #835 — Urlaubsplaner: Wunsch einer Person
-  // working-time-account — 5
+  // working-time-account — 6 (Issue #599: + MonthCorrectionRequest, 5 -> 6)
   overtimeAccount: "working-time-account",
   overtimeTransaction: "working-time-account",
   overtimePlan: "working-time-account",
   saldoSnapshot: "working-time-account",
+  monthCorrectionRequest: "working-time-account", // Issue #599 — correction request for a closed month
   openingBalance: "working-time-account",
   // scheduling — 9
   shift: "scheduling",

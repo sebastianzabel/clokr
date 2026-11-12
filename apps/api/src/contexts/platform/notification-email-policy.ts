@@ -73,6 +73,9 @@ const RETRO_ENTRY_ENTRIES: Record<string, EmailPolicy> = {
   RETRO_ENTRY_UPDATED:   { email: "toggle", field: "emailOnRetroEntry" },
   RETRO_ENTRY_DECIDED:   { email: "toggle", field: "emailOnRetroEntry" },
   RETRO_ENTRY_WITHDRAWN: { email: "toggle", field: "emailOnRetroEntry" },
+  // Issue #599 — the correction request of a closed month rides the same Anträge toggle.
+  MONTH_CORRECTION_REQUESTED: { email: "toggle", field: "emailOnRetroEntry" },
+  MONTH_CORRECTION_DECIDED:   { email: "toggle", field: "emailOnRetroEntry" },
 };
 
 // ── C. always — 7 entries. Each emails today; each would regress under any existing toggle ──

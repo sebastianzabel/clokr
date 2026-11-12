@@ -14,6 +14,7 @@
  * closeEmployeeMonth — byte-identical SaldoSnapshot values guaranteed.
  * Live path (P4, time-entries.ts) remains for SNAP-03 (76.27).
  */
+import { getBookedMonthCorrections } from "./booked-month-corrections"; // Issue #599
 import { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver
@@ -514,6 +515,14 @@ export async function recalculateSnapshots(
         unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
       })),
       holidayDateStrings,
+      // Issue #599 — booked corrections of closed months, an account movement of this month.
+      accountCorrections: await getBookedMonthCorrections(
+        app.prisma,
+        employeeId,
+        employee.tenantId,
+        monthFirstDay,
+        monthLastDay,
+      ),
       tenantConfig: tenantConfig
         ? {
             defaultBreakOver6h: tenantConfig.defaultBreakOver6h,

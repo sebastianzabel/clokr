@@ -205,11 +205,13 @@ test.describe("Phase 75 — Visual baselines", () => {
       content: ".topbar, .save-bar { position: static !important; }",
     });
     await page.evaluate(() => window.scrollTo(0, 0));
+    // Soft: a changed frame must not hide the state of the frames after it, so one CI run reports
+    // (and the artifact carries) every frame that differs. The test still fails on any mismatch.
     for (const theme of ["pflaume", "salz", "petrol"]) {
       for (const mode of ["light", "dark"]) {
-        await expect(page.getByTestId(`bausteine-frame-${theme}-${mode}`)).toHaveScreenshot(
-          `11-bausteine-${theme}-${mode}.png`,
-        );
+        await expect
+          .soft(page.getByTestId(`bausteine-frame-${theme}-${mode}`))
+          .toHaveScreenshot(`11-bausteine-${theme}-${mode}.png`);
       }
     }
   });
