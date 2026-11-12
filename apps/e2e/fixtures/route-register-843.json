@@ -223,11 +223,6 @@
       "auth": "tenant-admin"
     },
     {
-      "page": "(app)/team/heute/+page.svelte",
-      "path": "/team/heute",
-      "auth": "tenant-admin"
-    },
-    {
       "page": "(app)/team/leave/+page.svelte",
       "path": "/team/abwesenheiten",
       "auth": "tenant-admin"
@@ -240,26 +235,6 @@
     {
       "page": "(app)/time-entries/+page.svelte",
       "path": "/ich/zeiten",
-      "auth": "tenant-admin"
-    },
-    {
-      "page": "(app)/verwalten/+page.svelte",
-      "path": "/verwalten",
-      "auth": "tenant-admin"
-    },
-    {
-      "page": "(app)/verwalten/daten/+page.svelte",
-      "path": "/verwalten/daten",
-      "auth": "tenant-admin"
-    },
-    {
-      "page": "(app)/verwalten/regeln/+page.svelte",
-      "path": "/verwalten/regeln",
-      "auth": "tenant-admin"
-    },
-    {
-      "page": "(app)/verwalten/system/+page.svelte",
-      "path": "/verwalten/system",
       "auth": "tenant-admin"
     },
     {
