@@ -1,5 +1,8 @@
 <script lang="ts">
-  import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
+  import AuthFrame from "$lib/components/auth/AuthFrame.svelte";
+  import FormField from "$lib/components/ui/FormField.svelte";
+  import Note from "$lib/components/ui/Note.svelte";
+  import Spinner from "$lib/components/ui/Spinner.svelte";
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { api } from "$api/client";
@@ -11,6 +14,15 @@
   let error = $state("");
   let loading = $state(false);
   let pageState = $state<"form" | "success" | "expired" | "used" | "invalid">("form");
+
+  // Issue #855 (D-855-03): every state is a title, one sentence and one action.
+  const STATE_TITLES = {
+    form: "Konto aktivieren",
+    success: "Konto aktiviert",
+    expired: "Link abgelaufen",
+    used: "Schon aktiviert",
+    invalid: "Link ungültig",
+  } as const;
 
   let pwPolicy = $state({
     passwordMinLength: 12,
@@ -36,11 +48,11 @@
 
   async function handleSubmit() {
     if (password !== passwordConfirm) {
-      error = "Passwörter stimmen nicht überein";
+      error = "Die Passwörter stimmen nicht überein.";
       return;
     }
     if (password.length < pwPolicy.passwordMinLength) {
-      error = `Passwort muss mindestens ${pwPolicy.passwordMinLength} Zeichen haben`;
+      error = `Dein Passwort braucht mindestens ${pwPolicy.passwordMinLength} Zeichen.`;
       return;
     }
     loading = true;
@@ -55,7 +67,7 @@
       } else if (msg.includes("verwendet") || msg.includes("409")) {
         pageState = "used";
       } else {
-        error = msg || "Fehler beim Aktivieren des Kontos";
+        error = msg || "Das Konto ließ sich nicht aktivieren. Bitte versuche es noch einmal.";
       }
     } finally {
       loading = false;
@@ -67,67 +79,51 @@
   <title>Konto aktivieren – Clokr</title>
 </svelte:head>
 
-<div class="login-page">
-  <div class="login-card">
-    <div class="login-logo">
-      <BrandLogo size={36} />
-    </div>
-
-    {#if pageState === "invalid"}
-      <div class="state-box state-error">
-        <span class="state-icon">⚠</span>
-        <h2>Ungültiger Link</h2>
-        <p>Dieser Einladungslink ist ungültig. Bitte wende dich an deine Administration.</p>
-      </div>
-    {:else if pageState === "expired"}
-      <div class="state-box state-error">
-        <span class="state-icon">⏰</span>
-        <h2>Link abgelaufen</h2>
-        <p>
-          Dieser Einladungslink ist abgelaufen (gültig 24 Stunden). Bitte wende dich an deine
-          Administration, um einen neuen Link zu bekommen.
-        </p>
-      </div>
-    {:else if pageState === "used"}
-      <div class="state-box state-warning">
-        <span class="state-icon">✓</span>
-        <h2>Bereits aktiviert</h2>
-        <p>
-          Dieses Konto ist schon aktiviert. Du kannst dich direkt <a href="/login">anmelden</a>.
-        </p>
-      </div>
-    {:else if pageState === "success"}
-      <div class="state-box state-success">
-        <span class="state-icon">✓</span>
-        <h2>Konto aktiviert!</h2>
-        <p>Dein Passwort ist gesetzt. Du kannst dich jetzt anmelden.</p>
-        <a href="/login" class="btn btn-primary" style="margin-top:1rem;display:inline-block"
-          >Zur Anmeldung</a
-        >
-      </div>
-    {:else}
-      <p class="login-subtitle" style="text-align:center;margin-bottom:1.5rem">
-        Bitte leg ein Passwort für dein Konto fest.
-      </p>
-
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          handleSubmit();
-        }}
-        class="login-form"
+<AuthFrame
+  title={STATE_TITLES[pageState]}
+  subtitle={pageState === "form" ? "Leg ein Passwort für dein Konto fest." : undefined}
+>
+  {#if pageState === "invalid"}
+    <div role="alert">
+      <Note tone="bad"
+        >Dieser Einladungslink ist ungültig. Bitte wende dich an deine Administration.</Note
       >
-        {#if error}
-          <div class="alert alert-error" role="alert">
-            <span>⚠</span>
-            <span>{error}</span>
-          </div>
-        {/if}
+    </div>
+    <a href="/login" class="btn btn-primary auth-submit">Zur Anmeldung</a>
+  {:else if pageState === "expired"}
+    <div role="alert">
+      <Note tone="warn"
+        >Dieser Einladungslink ist abgelaufen (er gilt 24 Stunden). Bitte deine Administration um
+        einen neuen Link.</Note
+      >
+    </div>
+    <a href="/login" class="btn btn-primary auth-submit">Zur Anmeldung</a>
+  {:else if pageState === "used"}
+    <div role="status">
+      <Note tone="info">Dieses Konto ist schon aktiviert. Du kannst dich direkt anmelden.</Note>
+    </div>
+    <a href="/login" class="btn btn-primary auth-submit">Zur Anmeldung</a>
+  {:else if pageState === "success"}
+    <div role="status">
+      <Note tone="ok">Dein Passwort ist gesetzt. Du kannst dich jetzt anmelden.</Note>
+    </div>
+    <a href="/login" class="btn btn-primary auth-submit">Zur Anmeldung</a>
+  {:else}
+    <form
+      onsubmit={(e) => {
+        e.preventDefault();
+        handleSubmit();
+      }}
+      class="auth-form"
+    >
+      {#if error}
+        <div role="alert"><Note tone="bad">{error}</Note></div>
+      {/if}
 
-        <div class="form-group">
-          <label class="form-label" for="password">Passwort</label>
+      <FormField label="Passwort">
+        {#snippet field({ id, describedBy, invalid })}
           <input
-            id="password"
+            {id}
             type="password"
             bind:value={password}
             required
@@ -135,140 +131,33 @@
             class="form-input"
             placeholder="Mindestens {pwPolicy.passwordMinLength} Zeichen"
             autocomplete="new-password"
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
           />
           <PasswordStrength {password} policy={pwPolicy} />
-        </div>
+        {/snippet}
+      </FormField>
 
-        <div class="form-group">
-          <label class="form-label" for="password-confirm">Passwort bestätigen</label>
+      <FormField label="Passwort bestätigen">
+        {#snippet field({ id, describedBy, invalid })}
           <input
-            id="password-confirm"
+            {id}
             type="password"
             bind:value={passwordConfirm}
             required
             class="form-input"
             placeholder="Passwort wiederholen"
             autocomplete="new-password"
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
           />
-        </div>
+        {/snippet}
+      </FormField>
 
-        <button type="submit" disabled={loading} class="btn btn-primary login-submit">
-          {#if loading}
-            <span class="login-spinner"></span>
-            Aktivieren…
-          {:else}
-            Konto aktivieren
-          {/if}
-        </button>
-      </form>
-    {/if}
-  </div>
-</div>
-
-<style>
-  .login-page {
-    min-height: 100dvh;
-    background-color: var(--sunk);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
-  }
-
-  .login-card {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-card);
-    box-shadow: var(--shadow-pop);
-    padding: 2.5rem;
-    width: 100%;
-    max-width: 420px;
-  }
-
-  .login-logo {
-    text-align: center;
-    margin-bottom: 1.5rem;
-  }
-  .login-subtitle {
-    font-size: 0.9375rem;
-    color: var(--text-2);
-  }
-
-  .login-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1.125rem;
-  }
-
-  .login-submit {
-    width: 100%;
-    padding: 0.7rem 1.25rem;
-    font-size: 1rem;
-    margin-top: 0.25rem;
-  }
-
-  .login-spinner {
-    display: inline-block;
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid color-mix(in srgb, var(--brand-ink) 40%, transparent);
-    border-top-color: var(--brand-ink);
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .state-box {
-    text-align: center;
-    padding: 1.5rem;
-    border-radius: var(--r-control);
-  }
-
-  .state-icon {
-    display: block;
-    font-size: 2.5rem;
-    margin-bottom: 0.75rem;
-  }
-  .state-box h2 {
-    font-size: 1.25rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-  }
-  .state-box p {
-    font-size: 0.9375rem;
-    color: var(--text-2);
-  }
-  .state-box a {
-    color: var(--brand);
-  }
-
-  .state-error {
-    background: var(--bad-soft);
-    color: var(--bad);
-  }
-  .state-warning {
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-  .state-success {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-
-  .alert {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-radius: var(--r-control);
-    font-size: 0.875rem;
-    background: var(--bad-soft);
-    color: var(--bad);
-    border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent);
-  }
-</style>
+      <button type="submit" disabled={loading} class="btn btn-primary auth-submit">
+        {#if loading}<Spinner size={16} label="Konto wird aktiviert" />{/if}
+        Konto aktivieren
+      </button>
+    </form>
+  {/if}
+</AuthFrame>

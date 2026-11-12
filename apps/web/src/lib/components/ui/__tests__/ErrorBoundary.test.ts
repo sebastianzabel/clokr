@@ -25,38 +25,41 @@ describe("ErrorBoundary — one boundary, two messages (Issue #127)", () => {
     errorMock.mockClear();
   });
 
-  it("without a throw: children render, no .callout appears", () => {
+  it("without a throw: children render, no failure view appears", () => {
     renderWithTheme(BoundaryHarness, { scope: "view", when: "never" });
     expect(screen.getByTestId("throwing-child")).toBeInTheDocument();
-    expect(document.querySelector(".callout")).toBeNull();
+    expect(document.querySelector("[data-boundary-failed]")).toBeNull();
     expect(errorMock).not.toHaveBeenCalled();
   });
 
   it('scope="view" + render throw: shows the view message, child is not in the DOM', () => {
     renderWithTheme(BoundaryHarness, { scope: "view", when: "render" });
-    const callout = document.querySelector(".callout.error");
+    const callout = document.querySelector("[data-boundary-failed]");
     expect(callout).not.toBeNull();
     expect(callout?.textContent).toContain("Diese Ansicht konnte nicht geladen werden.");
+    // #855 (D-855-07): the failure view is announced and offers the reload.
+    expect(callout?.getAttribute("role")).toBe("alert");
+    expect(screen.getByRole("button", { name: "Seite neu laden" })).toBeInTheDocument();
     expect(screen.queryByTestId("throwing-child")).toBeNull();
   });
 
   it('scope="app" + render throw: shows the app message', () => {
     renderWithTheme(BoundaryHarness, { scope: "app", when: "render" });
-    const callout = document.querySelector(".callout.error");
+    const callout = document.querySelector("[data-boundary-failed]");
     expect(callout).not.toBeNull();
     expect(callout?.textContent).toContain("Die Anwendung konnte nicht geladen werden.");
   });
 
   it("D-02: the two scope titles are different strings, not the same message twice", () => {
     renderWithTheme(BoundaryHarness, { scope: "view", when: "render" });
-    const viewText = document.querySelector(".callout.error")?.textContent ?? "";
+    const viewText = document.querySelector("[data-boundary-failed]")?.textContent ?? "";
     expect(viewText).toContain("Diese Ansicht konnte nicht geladen werden.");
     expect(viewText).not.toContain("Die Anwendung konnte nicht geladen werden.");
   });
 
   it('scope="view" + onMount throw (the #115 failure class): also shows the replacement, not an empty tree', () => {
     renderWithTheme(BoundaryHarness, { scope: "view", when: "mount" });
-    const callout = document.querySelector(".callout.error");
+    const callout = document.querySelector("[data-boundary-failed]");
     expect(callout).not.toBeNull();
     expect(callout?.textContent).toContain("Diese Ansicht konnte nicht geladen werden.");
   });
@@ -79,7 +82,7 @@ describe("ErrorBoundary — one boundary, two messages (Issue #127)", () => {
 
   it("T-127-01: the raw error text never reaches the rendered replacement", () => {
     renderWithTheme(BoundaryHarness, { scope: "view", when: "render" });
-    const callout = document.querySelector(".callout.error");
+    const callout = document.querySelector("[data-boundary-failed]");
     expect(callout?.textContent).not.toContain("BOOM-127-render");
   });
 

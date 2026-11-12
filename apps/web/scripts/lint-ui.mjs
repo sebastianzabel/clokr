@@ -117,6 +117,10 @@ for (const file of listFiles(ALL_SVELTE)) {
   // #843 (D-843-14): the Seitenkopf block owns the <h1>; PageHead delegates to it.
   if (file.endsWith("lib/components/ui/PageHeader.svelte")) continue;
   if (file.includes("/routes/(auth)/")) continue;
+  // #855 (D-855-01/06): the signed-out frame and the error page stand outside the shell's Seitenkopf
+  // (sign-in pages, unknown URLs) and own their single <h1>, like the (auth)/ pages they render.
+  if (file.endsWith("lib/components/auth/AuthFrame.svelte")) continue;
+  if (file.endsWith("lib/components/feedback/ErrorPage.svelte")) continue;
   const content = readFileSync(file, "utf8");
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
