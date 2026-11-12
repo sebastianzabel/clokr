@@ -182,6 +182,16 @@ describe("PeriodPicker", () => {
     expect(q.onNext).not.toHaveBeenCalled();
   });
 
+  it("prevDisabled (additive, #854) blocks the previous arrow with its own title", () => {
+    const q = props({ prevDisabled: true });
+    renderWithTheme(PeriodPicker, q);
+    const prev = screen.getByTestId("month-bar-prev") as HTMLButtonElement;
+    expect(prev).toBeDisabled();
+    expect(prev).toHaveAttribute("title", "Frühere Zeiträume gibt es nicht.");
+    prev.click();
+    expect(q.onPrev).not.toHaveBeenCalled();
+  });
+
   it("offers the zooms in the given order and reports a change once", async () => {
     const onZoom = vi.fn();
     const { container } = renderWithTheme(

@@ -147,10 +147,17 @@ describe("/admin/employees/[id] - no day-level data (Issue #86, AC-86-3, T-86b-1
   });
 });
 
-const MONTH_CLOSE = readRouteFile(
-  "../routes/(app)/admin/month-close/+page.svelte",
-  "src/routes/(app)/admin/month-close/+page.svelte",
-);
+// #854 (plan 854-26): the page and its MonthStatusTable together are the month close's render and
+// write sites; the pins below judge their joined source.
+const MONTH_CLOSE =
+  readRouteFile(
+    "../routes/(app)/admin/month-close/+page.svelte",
+    "src/routes/(app)/admin/month-close/+page.svelte",
+  ) +
+  readRouteFile(
+    "../lib/components/admin/monatsabschluss/MonthStatusTable.svelte",
+    "src/lib/components/admin/monatsabschluss/MonthStatusTable.svelte",
+  );
 const TEAM_TIMES = readRouteFile(
   "../routes/(app)/team/time-entries/+page.svelte",
   "src/routes/(app)/team/time-entries/+page.svelte",

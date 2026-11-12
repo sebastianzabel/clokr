@@ -127,6 +127,10 @@ export const MIGRATED_854: readonly string[] = [
   "routes/(app)/admin/support-access/[id]/+page.svelte",
   "lib/components/admin/SupportAccessList.svelte",
   "lib/components/admin/SupportAccessDetail.svelte",
+  // Plan 854-26 (Monatsabschluss): the close workflow page, its stepper and the months/persons tables.
+  "routes/(app)/admin/month-close/+page.svelte",
+  "lib/components/admin/monatsabschluss/CloseStepper.svelte",
+  "lib/components/admin/monatsabschluss/MonthStatusTable.svelte",
   // The Zugang tab opens it (deactivation with a last working day); it renders Dialog directly.
   "lib/components/admin/DeactivateEmployeeDialog.svelte",
 ];

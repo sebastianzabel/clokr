@@ -32,6 +32,10 @@
     nextLabel?: string;
     /** A real disabled next arrow whose title is {@link NEXT_PERIOD_DISABLED_TITLE}. */
     nextDisabled?: boolean;
+    /** A real disabled previous arrow (additive, #854: the first year with data); its title says why. */
+    prevDisabled?: boolean;
+    /** Title of the disabled previous arrow (default: an earlier period does not exist). */
+    prevDisabledTitle?: string;
     /** Emits `{prefix}`, `{prefix}-prev`, `{prefix}-next`, `{prefix}-today`, `{prefix}-label`. */
     testIdPrefix?: string;
     /** Small line above the label (e.g. "Buchungsmonat"). */
@@ -58,6 +62,8 @@
     prevLabel = "Vorheriger Zeitraum",
     nextLabel = "Nächster Zeitraum",
     nextDisabled = false,
+    prevDisabled = false,
+    prevDisabledTitle = "Frühere Zeiträume gibt es nicht.",
     testIdPrefix = "month-bar",
     eyebrow,
     zooms,
@@ -88,7 +94,8 @@
     <button
       class="nav-btn"
       onclick={onPrev}
-      title={prevLabel}
+      disabled={prevDisabled}
+      title={prevDisabled ? prevDisabledTitle : prevLabel}
       aria-label={prevLabel}
       data-testid={`${testIdPrefix}-prev`}
     >
