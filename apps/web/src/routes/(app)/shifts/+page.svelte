@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { homeHref } from "$lib/nav/routes";
+  import { homeHref, rosterTabs } from "$lib/nav/routes";
   import { pageLabel } from "$lib/nav/page-labels";
   import {
     STAFFING_EXPLANATION,
@@ -13,11 +13,13 @@
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { salonContext } from "$stores/salon-context";
+  import { tenantFeatures } from "$stores/tenant-features";
   import { closedDaysFor, type SalonOpeningHoursEntry } from "$lib/shifts/closed-days";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
+  import TeamSection from "$lib/components/team/TeamSection.svelte";
   import {
     isSalonFilterRejected,
     salonPageFilter,
@@ -25,7 +27,7 @@
     SALON_SOLL_NOT_ATTRIBUTABLE_NOTE,
     withSalonId,
   } from "$lib/salons/page-scope"; // Issue #558 (D-02/D-03/D-04/D-13)
-  import Card from "$components/ui/Card.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
   import PeriodPicker from "$components/ui/PeriodPicker.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import Modal from "$components/ui/Modal.svelte";
@@ -176,6 +178,11 @@
   const contextLoaded = $derived($salonContext.loaded);
   const pageSalonId = $derived(salonPageFilter($salonContext));
   const scopeLabel = $derived(salonScopeLabel($salonContext));
+  // Issue #853 (D-853-05): the four roster tabs are the link tabs of the route table; a tab the caller may
+  // not open (Verfügbarkeit without the feature or its permissions) is not part of the list.
+  const rosterTabsList = $derived(
+    rosterTabs($authStore.user, { availabilityEnabled: $tenantFeatures.availabilityEnabled }),
+  );
   let weekRejected = $state(false);
   // Plain `let`s (never `$state`): an effect that read them could re-trigger itself, which is the
   // v1.8.17 `effect_update_depth_exceeded` failure described at `prevCursorMondayTime` below.
@@ -1423,20 +1430,43 @@
 <!-- Phase 75-02 (D-01): data-testid surface for the Schichtplanung visual baseline.
      Matches the Phase 73-04/-05 convention (`<surface>-page`). -->
 <div class="page" data-testid="shifts-page">
-  <PageHead
-    eyebrow="Team"
-    title={pageLabel("/shifts")}
-    accent="Schicht"
-    sub="Wöchentliche Schichten zuweisen — mit Verfügbarkeit und Besetzung je Tag. Vorlagen und Mindestbesetzung pflegt die Verwaltung."
-  >
-    {#snippet actions()}
-      <!-- Phase 430 (D-11/D-14, Issue #430): sibling links to the conflict overview and the
-           new Wochenübersicht Planungsbedarf — neither page was linked from here before. -->
-      <a class="btn btn-ghost btn-sm" href="/shifts/conflicts">Hinweise</a>
-      <a class="btn btn-ghost btn-sm" href="/shifts/planning">Planungsbedarf</a>
-    {/snippet}
-  </PageHead>
-  <SalonScopeLabel label={scopeLabel} rejected={weekRejected} />
+  <div class="roster-head">
+    <PageHead
+      title={pageLabel("/shifts")}
+      sub="Schichten der Woche planen und Muster anwenden. Vorlagen und Mindestbesetzung pflegt die Verwaltung."
+    >
+      {#snippet actions()}
+        <!-- Issue #853 (D-853-13): the two plan actions live in the head; the sibling links to the
+             conflict overview and to Planungsbedarf (Phase 430) are the tabs below now. -->
+        <button type="button" class="btn btn-secondary sm" onclick={openCopy}>
+          Letzte Woche kopieren
+        </button>
+        <button type="button" class="btn btn-primary sm" onclick={openGenerate}>
+          Muster anwenden
+        </button>
+      {/snippet}
+    </PageHead>
+    <PageTabs tabs={rosterTabsList} tab="/team/dienstplan" tabsLabel="Dienstplan" />
+  </div>
+
+  <!-- Prototype .toolbar2; the scope label is placed on the right by CSS. -->
+  <div class="roster-period-row">
+    <div class="roster-scope">
+      <SalonScopeLabel label={scopeLabel} rejected={weekRejected} />
+    </div>
+    <!-- #843 D-843-11 (#648): the week header is the PeriodPicker block; the page owns no period arrows. -->
+    <PeriodPicker
+      label={fmtRange()}
+      onPrev={prevWeek}
+      onNext={nextWeek}
+      onToday={goToToday}
+      zooms={["woche"]}
+      zoom="woche"
+      prevLabel="Vorherige Woche"
+      nextLabel="Nächste Woche"
+      testIdPrefix="shifts-week"
+    />
+  </div>
 
   {#if error}
     <div class="callout error card-animate" role="alert">{error}</div>
@@ -1446,77 +1476,46 @@
        v1.7.4: Berufsschule chip removed — BS is now managed via the canonical
        EmployeeVocationalSchoolPattern + auto-generator path. -->
   {#if dndTemplates.length > 0}
-    <div
-      class="sp-template-strip"
-      use:dndzone={{
-        items: dndTemplates,
-        flipDurationMs: FLIP_MS,
-        dropFromOthersDisabled: true,
-        type: "shift-template",
-      }}
-      onconsider={onTemplateConsider}
-      onfinalize={onTemplateFinalize}
-    >
-      {#each dndTemplates as item (item.id)}
-        {@const tpl =
-          item.kind === "template" ? templates.find((t) => t.id === item.templateId) : undefined}
-        <!--
-          ALWAYS render a chip div for every item so children.length stays
-          equal to items.length — svelte-dnd-action requires a 1:1 mapping
-          between items[] and direct children. Shadow placeholders (mid-drag)
-          may not resolve to a Template; render an invisible spacer for them.
-        -->
-        <div
-          class="card sp-tpl-row sp-tpl-chip"
-          class:sp-tpl-chip--shadow={!tpl}
-          data-template-id={tpl?.id ?? ""}
-        >
-          {#if tpl}
-            <div class="sp-tpl-text">
-              <div class="serif-eyebrow sp-tpl-eyebrow">Vorlage</div>
-              <div class="sp-tpl-name">{tpl.name}</div>
-              <div class="sp-tpl-time">
+    <TeamSection title="Vorlagen">
+      <div
+        class="sp-template-strip"
+        use:dndzone={{
+          items: dndTemplates,
+          flipDurationMs: FLIP_MS,
+          dropFromOthersDisabled: true,
+          type: "shift-template",
+        }}
+        onconsider={onTemplateConsider}
+        onfinalize={onTemplateFinalize}
+      >
+        {#each dndTemplates as item (item.id)}
+          {@const tpl =
+            item.kind === "template" ? templates.find((t) => t.id === item.templateId) : undefined}
+          <!--
+            ALWAYS render a chip div for every item so children.length stays
+            equal to items.length — svelte-dnd-action requires a 1:1 mapping
+            between items[] and direct children. Shadow placeholders (mid-drag)
+            may not resolve to a Template; render an invisible spacer for them.
+          -->
+          <div
+            class="sp-tpl-chip"
+            class:sp-tpl-chip--shadow={!tpl}
+            data-template-id={tpl?.id ?? ""}
+          >
+            {#if tpl}
+              <span class="sp-tpl-name">{tpl.name}</span>
+              <span class="sp-tpl-time">
                 {tpl.startTime.slice(0, 5)}–{tpl.endTime.slice(0, 5)}
-              </div>
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
+              </span>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </TeamSection>
   {/if}
 
-  <!-- Week nav + grid card -->
-  <Card animate class="week-card">
-    <!-- Header dimensions/typography mirror .cal-monthbar / MonthBar
-         (Buchungsmonat-Header auf /leave, /team/leave, /teamcal,
-         /time-entries, /team/time-entries). -->
-    <div class="week-header">
-      <!-- #843 D-843-11 (#648): the week header is the PeriodPicker block; the page owns no period arrows. -->
-      <PeriodPicker
-        label={fmtRange()}
-        eyebrow="Schichtwoche"
-        onPrev={prevWeek}
-        onNext={nextWeek}
-        onToday={goToToday}
-        zooms={["woche"]}
-        zoom="woche"
-        prevLabel="Vorherige Woche"
-        nextLabel="Nächste Woche"
-        testIdPrefix="shifts-week"
-      />
-      <div class="week-header-actions">
-        <!-- Phase 43-05: "Letzte Woche kopieren" is the primary action;
-             "Muster anwenden" (Issue #850, was "Aus Mustern generieren") stays secondary for
-             tenants that have EmployeeShiftPattern rows configured. -->
-        <button type="button" class="btn btn-primary sm" onclick={openCopy}>
-          Letzte Woche kopieren
-        </button>
-        <button type="button" class="btn btn-ghost sm" onclick={openGenerate}>
-          Muster anwenden
-        </button>
-      </div>
-    </div>
-
+  <!-- The week grid is the page's one surface (D-853-18): no card around it. -->
+  <div class="week-surface">
     <div class="week-body">
       {#if loading}
         <Skeleton shape="block" height="360px" />
@@ -1792,7 +1791,7 @@
         </div>
       {/if}
     </div>
-  </Card>
+  </div>
 
   <!-- Modal: assign / edit shift -->
   <Modal
@@ -2072,61 +2071,69 @@
 </div>
 
 <style>
-  .sp-template-strip {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 16px;
-    margin-bottom: 18px;
-  }
-  .sp-tpl-row {
+  /* Issue #853 (D-853-18): head and tab strip sit together, like the prototype's .head + .tabsbar;
+     the page gap applies between this block and the rows below. */
+  .roster-head {
     display: flex;
+    flex-direction: column;
+  }
+  /* One row (prototype .toolbar2): the period on the left, the salon scope on the right. */
+  .roster-period-row {
+    display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
+    gap: 10px;
+    flex-wrap: wrap;
   }
-  .sp-tpl-text {
+  .roster-scope {
+    order: 2;
+    flex: 1 1 240px;
     min-width: 0;
+    text-align: right;
   }
-  .sp-tpl-eyebrow {
-    font-size: 13px;
+  .roster-scope :global(.salon-scope-label) {
+    margin: 0;
+  }
+  /* The template chips are drag sources, not cards: a compact surface with the name and the time. */
+  .sp-template-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .sp-tpl-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: var(--h-row);
+    padding: 0 12px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    cursor: grab;
+  }
+  .sp-tpl-chip--shadow {
+    visibility: hidden;
   }
   .sp-tpl-name {
     font-family: var(--font-ui);
-    font-size: 20px;
-    font-weight: 400;
-    margin-top: 4px;
+    font-size: var(--fs-base);
+    font-weight: 600;
     color: var(--text);
   }
   .sp-tpl-time {
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     color: var(--text-2);
-    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
   }
-  /* Card-Wrapper-Padding ist auf 0 gesetzt, damit der Header sein eigenes
-     18px/24px-Padding besitzt — identisch zu .cal-monthbar / .month-bar. */
-  :global(.week-card) {
-    padding: 0;
-  }
-  /* The PeriodPicker owns the inner spacing of the period part (18px 24px); the header only lays
-     the picker and the actions side by side. */
-  .week-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 24px 0 0;
-    border-bottom: 1px solid var(--line);
-    flex-wrap: wrap;
-  }
-  .week-header-actions {
-    display: flex;
-    margin-left: auto;
-    padding: 9px 0 9px 24px;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
+  /* The week grid is the one surface of the page: a framed grid, full width, no card around it. */
+  .week-surface {
+    min-width: 0;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
   }
   .week-body {
-    padding: 18px;
+    min-width: 0;
   }
   .state-msg {
     padding: 40px;
