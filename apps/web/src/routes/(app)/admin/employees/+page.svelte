@@ -661,7 +661,7 @@
     {#snippet actions()}
       {#if canCreate}
         <button class="btn btn-primary" onclick={openCreate} data-testid="admin-employees-add"
-          >+ Mitarbeiter anlegen</button
+          >+ Person anlegen</button
         >
       {/if}
     {/snippet}

@@ -47,7 +47,7 @@ const REGISTERED: Record<string, string> = {
 // noise, and a guard on an action page teaches the operator to click through the dialog.
 const EXCLUDED: Record<string, string> = {
   "employees/+page.svelte":
-    "the only editable form is the invite <Modal> with its own Abbrechen; a modal draft is a modal-dismissal concern that beforeNavigate never sees",
+    "the only form is the guided create Dialog (CreatePersonDialog) with its own Abbrechen; nothing is created before the last step, and a dialog draft is a dialog-dismissal concern that beforeNavigate never sees",
   "shutdowns/+page.svelte": "redirect stub (#854) to Abwesenheiten › Betriebsurlaub",
   "month-close/+page.svelte":
     "selectedYear/statusFilter are filters; unlockReason/gapAcknowledged are one-shot confirmations inside modals; the writes are operations, not form state",

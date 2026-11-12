@@ -97,6 +97,12 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/roles/AssignmentsTab.svelte",
   "lib/components/admin/roles/AssignmentDialog.svelte",
   "lib/components/admin/roles/PersonRoleAssignments.svelte",
+  // Plan 854-19 (Personen list): the page (selection and bulk changes came with plan 854-18, the old
+  // create Modal went with this plan), the guided create dialog, the bulk role dialog and the Stammsalon field.
+  "routes/(app)/admin/employees/+page.svelte",
+  "lib/components/employees/CreatePersonDialog.svelte",
+  "lib/components/employees/BulkRoleDialog.svelte",
+  "lib/components/employees/HomeSalonField.svelte",
 ];
 
 export interface VerwaltenFile {
