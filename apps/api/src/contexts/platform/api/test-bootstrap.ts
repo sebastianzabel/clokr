@@ -300,6 +300,10 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       });
       await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: employeeIds } } });
       await prisma.timeEntry.deleteMany({ where: { employeeId: { in: employeeIds } } });
+      // Issue #599 — the request references its journal row and the employee (both Restrict).
+      await prisma.monthCorrectionRequest.deleteMany({
+        where: { employeeId: { in: employeeIds } },
+      });
       await prisma.overtimeTransaction.deleteMany({
         where: { overtimeAccount: { employeeId: { in: employeeIds } } },
       });

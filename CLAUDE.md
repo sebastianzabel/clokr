@@ -172,6 +172,14 @@ Clokr MUST be audit-proof (revisionssicher). All data relevant to working time, 
   taken out again), so no day is credited twice (Issue #662; `scripts/audit-662-cancelled-leave-section9.ts` lists
   Bestand, read-only).
 
+- **Correction of a closed month = account movement in the running month (Issue #599, ADR Eintrag AJ).**
+  `MonthCorrectionRequest` (Arbeitszeitkonto, `/api/v1/month-corrections`) never touches the closed month, its entries or its
+  snapshot. An approval (four eyes: neither the requester nor the person concerned) books the journal row `OvertimeTransaction`
+  (CORRECTION) and `correctionMinutes` + `bookingDate` (tenant-local approval day) on the request in one transaction; the saldo
+  core folds them in through `closeEmployeeMonth`'s `accountCorrections`, read only via `booked-month-corrections.ts`. Every
+  production caller passes it (`month-correction-saldo-callers-599.test.ts`). No booking into a closed running month (409
+  `MONTH_LOCKED`) or for a person without a saldo today (409 `CORRECTION_NO_SALDO`). Open months keep the Zeitnachtrag.
+
 - **Operator audit is append-only (Phase 88, Issue #88, D-07a).** Every action of the operator
   principal is written to `OperatorAuditLog` through `recordOperatorAudit()`
   (`contexts/platform/operator-audit.ts`, the only file naming the delegate), never to the tenant
@@ -193,6 +201,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **User**: email → anonymized, passwordHash → "ANONYMIZED", isActive → false
 - **Notes**: All notes in TimeEntries, LeaveRequests, Absences are set to null, and the reason of day-break acknowledgements (`DayBreakAck.reason`; rows kept)
 - **Further person-authored free text (Issue #718)**: `LeaveRequest.reviewNote`, `RetroEntryRequest.reviewNote`, `OvertimePlan.note`, `Shift.note` and `EmployeeAvailability.note` → null; the required `RetroEntryRequest.reason` → the neutral text `RETRO_REASON_ANONYMIZED` ("Gelöscht (Anonymisierung)"). Rows, statuses, reviewers and times stay; soft-deleted rows are reached; the ANONYMIZE audit carries counts only. **Deliberately kept** (not person-authored, they document a booking, § 147 AO / GoBD / Art. 17 Abs. 3 lit. b DSGVO): `SaldoSnapshot.note` / `supersededReason` and `OpeningBalance.reason` / `evidenceRef` / `supersededReason`. `AuditLog` free texts are a separate open question (#512). Bestand: `scripts/audit-388-anonymized-leftovers.ts` lists the new fields (ids and counts only).
+- **Month corrections (Issue #599)**: `MonthCorrectionRequest.reason` → the neutral text `MONTH_CORRECTION_REASON_ANONYMIZED`, `reviewNote` → null (`clearMonthCorrectionTextsForEmployee`); rows, statuses, minutes and bookings stay.
 - **Break-waiver text** (Issue #508): `TimeEntry.breakWaivedReason` is set to null (soft-deleted entries too; `breakStatus` and the entry stay)
 - **WLAN identifiers** (Issue #388): `Employee.wifiMacs` → `[]`, `wifiPresenceEnabled` → false, `wifiOptInAt` → null; `PresenceDevice` rows (MAC + label) are hard-deleted. The `ANONYMIZE` audit carries counts only (`clearedDeviceIdentifiers`); Bestand is listed read-only by `scripts/audit-388-anonymized-leftovers.ts` (`docs/migrations.md` „Phase 388“)
 - **Documents**: Absence documentPath → null

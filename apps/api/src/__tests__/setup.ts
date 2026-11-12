@@ -824,6 +824,8 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.leaveEntitlement.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.timeEntry.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Issue #599 — the request references its journal row (Restrict) and the employee (Restrict).
+  await prisma.monthCorrectionRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.overtimeTransaction.deleteMany({
     where: { overtimeAccount: { employeeId: { in: employeeIds } } },
   });

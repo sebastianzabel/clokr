@@ -39,6 +39,8 @@ export const DUPLICATE_MESSAGES: Readonly<Record<string, string | null>> = {
   // Issue #597: one feed token per user, a random 256-bit secret — both written by the server only.
   CalendarFeedToken_userId_key: null,
   CalendarFeedToken_tokenHash_key: null,
+  // Issue #599: one journal row per approved correction; written by the approval only, never by input.
+  MonthCorrectionRequest_overtimeTransactionId_key: null,
   LeaveType_tenantId_name_key: "Eine Abwesenheitsart mit diesem Namen gibt es bereits.",
   LeaveType_tenantId_code_key: "Diese Abwesenheitsart gibt es bereits.",
   LeaveEntitlement_employeeId_leaveTypeId_year_key:

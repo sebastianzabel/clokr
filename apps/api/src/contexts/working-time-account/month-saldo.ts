@@ -571,15 +571,18 @@ export async function computeMonthSaldo(
   const scheduleType = String(schedule.type ?? "");
 
   // Pre-fetch all collections (mirroring overtime.ts lines 943–995)
-  const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] = await Promise.all([
-    // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
-    src.validEntries(employee.tenantId, effectiveStart, monthLastDay),
-    src.shifts(employee.tenantId, effectiveStart, monthLastDay),
-    // Issue #446 (D-02) — effective leave (APPROVED + CANCELLATION_REQUESTED), contexts/absence facade. THE SALDO INPUT.
-    src.leave(employee.tenantId, monthStart, monthEnd),
-    // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
-    src.absences(employee.tenantId, effectiveStart, monthEnd),
-  ]);
+  const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences, closeCorrections] =
+    await Promise.all([
+      // Phase 100B Plan 08 — T1, contexts/time-tracking facade. THE SALDO INPUT.
+      src.validEntries(employee.tenantId, effectiveStart, monthLastDay),
+      src.shifts(employee.tenantId, effectiveStart, monthLastDay),
+      // Issue #446 (D-02) — effective leave (APPROVED + CANCELLATION_REQUESTED), contexts/absence facade. THE SALDO INPUT.
+      src.leave(employee.tenantId, monthStart, monthEnd),
+      // Phase 100B Plan 12 — A4, contexts/absence facade. THE SALDO INPUT.
+      src.absences(employee.tenantId, effectiveStart, monthEnd),
+      // Issue #599 — booked corrections of closed months, an account movement of this month.
+      src.accountCorrections(employee.tenantId, effectiveStart, monthLastDay),
+    ]);
 
   // Days of the cumulative series: from month-start (or hireDate if later) through windowEnd =
   // yesterday or the month's last day, whichever is earlier (#438, see the series block below).
@@ -681,6 +684,7 @@ export async function computeMonthSaldo(
       unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
     })),
     holidayDateStrings,
+    accountCorrections: closeCorrections, // Issue #599
     tenantConfig: tenantCfg,
     employeeSlots,
     patternSlots,

@@ -574,6 +574,7 @@ model Employee {
   availabilities           EmployeeAvailability[]
   presenceDevices          PresenceDevice[]
   retroEntryRequests       RetroEntryRequest[]
+  monthCorrectionRequests  MonthCorrectionRequest[] // Issue #599
   // Phase 85 — explicit Phorest staff mapping (onDelete: Restrict — never cascade-delete history)
   phorestStaffMappings     PhorestStaffMapping[]
   // Phase 86 — DSGVO-minimal appointment busy-window cache (onDelete: Restrict — never cascade-delete)
@@ -911,9 +912,43 @@ model OvertimeTransaction {
   createdAt         DateTime                @default(now()) @db.Timestamptz
   createdBy         String?
 
-  overtimeAccount OvertimeAccount @relation(fields: [overtimeAccountId], references: [id], onDelete: Cascade)
+  overtimeAccount        OvertimeAccount         @relation(fields: [overtimeAccountId], references: [id], onDelete: Cascade)
+  // Issue #599 — the correction request this CORRECTION row books (null for every other row).
+  monthCorrectionRequest MonthCorrectionRequest?
 
   @@index([overtimeAccountId])
+}
+
+// Issue #599 (owner decision 19.10. and 09.11.2026) — a correction request for a day of a CLOSED
+// month, owned by Arbeitszeitkonto. The closed month, its entries and its SaldoSnapshot are never
+// touched: an approval books `correctionMinutes` on `bookingDate` (a day of the then running month)
+// as an account movement that the saldo core folds in (`closeEmployeeMonth`, `accountCorrections`),
+// plus the journal row `overtimeTransactionId` (type CORRECTION). Never deleted except by the
+// employee hard-delete path; withdrawn requests keep their row (status WITHDRAWN).
+model MonthCorrectionRequest {
+  id                    String                       @id @default(uuid())
+  employeeId            String
+  targetDate            DateTime                     @db.Date // the day of the closed month
+  startTime             String? // "HH:MM" proposed work start (evidence, never a TimeEntry)
+  endTime               String? // "HH:MM" proposed work end
+  breakMinutes          Int? // proposed total break minutes
+  reason                String // mandatory (Revisionssicherheit)
+  status                MonthCorrectionRequestStatus @default(PENDING)
+  requestedByUserId     String // the user who filed it (four-eyes axis)
+  reviewedByUserId      String?
+  reviewedAt            DateTime?                    @db.Timestamptz
+  reviewNote            String? // mandatory on approve/reject (route Zod)
+  correctionMinutes     Int? // signed, set on approval only
+  bookingDate           DateTime?                    @db.Date // tenant-local approval day, set on approval only
+  overtimeTransactionId String?                      @unique
+  createdAt             DateTime                     @default(now()) @db.Timestamptz
+  updatedAt             DateTime                     @updatedAt @db.Timestamptz
+
+  employee            Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  overtimeTransaction OvertimeTransaction? @relation(fields: [overtimeTransactionId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId, status])
+  @@index([employeeId, bookingDate])
 }
 
 model OvertimePlan {
@@ -1704,6 +1739,14 @@ enum OvertimeTransactionType {
   REDUCTION // Abbau (Freizeit genommen)
   PAYOUT // Ausbezahlt
   CORRECTION // Manuelle Korrektur
+}
+
+// Issue #599
+enum MonthCorrectionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
 }
 
 enum OvertimePlanStatus {

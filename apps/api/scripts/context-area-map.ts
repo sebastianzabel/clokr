@@ -356,6 +356,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/calendar-feed-token.ts": "unterbau", // Issue #597 — the calendar-feed token (generate, hash, issue/rotate, revoke, resolve); writes CalendarFeedToken
   "src/contexts/platform/api/me-calendar-feed.ts": "unterbau", // Issue #597 — own calendar-feed token routes under /me/calendar-feed
   "src/composition/calendar-feed.ts": "komposition", // Issue #597 — the public ICS feed of one person, reads every context through its index
+  "src/contexts/working-time-account/api/month-corrections.ts": "arbeitszeitkonto", // Issue #599 — correction requests for a day of a closed month (create, read, decide, withdraw); writes MonthCorrectionRequest and OvertimeTransaction
+  "src/contexts/working-time-account/booked-month-corrections.ts": "arbeitszeitkonto", // Issue #599 — the one read of booked month corrections for the saldo core (accountCorrections)
   "src/contexts/absence/leave-calendar-visibility.ts": "abwesenheiten", // Issue #835 - pure - canSeeLeaveType, the calendar's one type-visibility rule (moved out of api/leave.ts, second caller is the planner read)
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)
   "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
