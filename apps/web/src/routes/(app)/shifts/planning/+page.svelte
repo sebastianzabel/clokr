@@ -26,6 +26,8 @@
     withSalonId,
   } from "$lib/salons/page-scope"; // Issue #558 (D-03/D-04/D-07)
   import { mondayOfWeek, planningWeekLabel } from "$lib/shifts/planning-week"; // Issue #849
+  import { formatDayCount } from "$lib/leave/leave-days-label"; // Issue #853-19
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19
 
   interface PlanningRow {
     employeeId: string;
@@ -89,9 +91,9 @@
     employees.map((e) => ({
       key: e.employeeId,
       name: e.name,
-      contract: `${e.contractDays} Tage`,
+      contract: formatDayCount(e.contractDays),
       leave: leaveCell(e),
-      toPlan: `${e.stillToPlan} Tage`,
+      toPlan: formatDayCount(e.stillToPlan),
       planned: e.plannedDays ?? "–",
       difference: e.difference ?? "–",
     })),
@@ -147,7 +149,7 @@
 
   function leaveCell(row: PlanningRow): string {
     if (row.leaveDays === 0) return "0";
-    return `${row.leaveDays} (${row.leaveWeekdays.join(", ")})`;
+    return `${formatDays(row.leaveDays)} (${row.leaveWeekdays.join(", ")})`;
   }
 
   // Issue #558: this effect starts the first load (once the salon context is known, so the first

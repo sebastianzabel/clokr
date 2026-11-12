@@ -141,6 +141,8 @@
   } from "$lib/dashboard/team-charts"; // Issue #591
   import type { PeriodTab } from "$lib/reports/period-state"; // Issue #591 (D-591-3)
   import { chartAriaLabel, getChartTheme } from "$lib/utils/chart-theme"; // Issue #591
+  import { formatDayCount } from "$lib/leave/leave-days-label"; // Issue #853-19: day figures with a decimal comma
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19
   import {
     Chart,
     BarController,
@@ -1938,9 +1940,9 @@
             {#if stats.vacation}
               <KPIStat
                 label="Urlaubstage"
-                value={String(stats.vacation.remaining)}
-                unit={`/ ${stats.vacation.total}`}
-                delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
+                value={formatDays(stats.vacation.remaining)}
+                unit={`/ ${formatDays(stats.vacation.total)}`}
+                delta={`verbleibend${stats.vacation.used > 0 ? ` · ${formatDays(stats.vacation.used)} verbraucht` : ""}`}
               />
             {/if}
             <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt employees see
@@ -2129,8 +2131,7 @@
                 month: "2-digit",
               })}</strong
             >
-            ({myNextLeave.days}
-            {myNextLeave.days === 1 ? "Tag" : "Tage"})</span
+            ({formatDayCount(myNextLeave.days)})</span
           >
         </div>
       </div>
@@ -2273,7 +2274,7 @@
                     month: "2-digit",
                   })}
                 </span>
-                <span class="upcoming-days">{leave.days} {leave.days === 1 ? "Tag" : "Tage"}</span>
+                <span class="upcoming-days">{formatDayCount(leave.days)}</span>
                 <span class="upcoming-type badge badge-blue">{leave.type}</span>
               </div>
             {/each}

@@ -166,6 +166,46 @@ describe("LeaveRequestForm", () => {
     expect(screen.queryByTestId("leave-form-no-entitlement")).toBeNull();
   });
 
+  // Issue #853-19: a balance that is the result of a float subtraction must never reach the screen
+  // as 19.990000000000002 (30 - 10.01, 19.99 - 1). Every figure of the box is a day count with a
+  // decimal comma and at most two decimals.
+  it("VACATION balance box: float arithmetic is shown rounded, with the German decimal comma", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/leave/entitlements/")) {
+        return Promise.resolve([
+          entitlementRow({
+            totalDays: 30,
+            carriedOverDays: 0,
+            effectiveCarryOverDays: 0,
+            usedDays: 10.01,
+            provisionalUsedDays: 0.1 + 0.2, // 0.30000000000000004
+          }),
+        ]);
+      }
+      return defaultGetImpl(path);
+    });
+    const { container } = renderForm();
+    // 30 - 10.01 = 19.990000000000002 in floating point.
+    expect(30 - 10.01).not.toBe(19.99);
+    await waitFor(() => expect(screen.getByText("19,99 Tage")).toBeTruthy());
+    expect(screen.getByText("30 Tage")).toBeTruthy();
+    // Genommen (bestätigt) = used - provisional, and the provisional line itself.
+    expect(screen.getByText("− 9,71 Tage")).toBeTruthy();
+    expect(screen.getByText("− 0,3 Tage")).toBeTruthy();
+
+    // One workday requested: "Verbleibend" = 19.99 - 1 = 18.990000000000002 in floating point.
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-10-05" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-05" },
+    });
+    await waitFor(() => expect(screen.getByText("18,99 Tage")).toBeTruthy());
+    // No raw float anywhere in the box.
+    expect(container.textContent ?? "").not.toMatch(/\d\.\d{3,}/);
+    expect(container.textContent ?? "").not.toMatch(/\d\.\d+ Tage/);
+  });
+
   // ── OVERTIME_COMP balance box ────────────────────────────────────────────────────────────────
   it("OVERTIME_COMP: fetches /leave/overtime-balance scoped to employeeId and renders Guthaben", async () => {
     renderForm();

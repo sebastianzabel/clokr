@@ -50,6 +50,7 @@
   } from "$lib/leave/vacation-summary";
   import { resolveChipVisual, isDrawnInCalendar } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303, Issue #446 (D-04)
   import { leaveDaysLabel, calendarDaysUnit } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19: day figures with a decimal comma, never a raw float
   import {
     calendarDayLoad,
     calendarRangeQuery,
@@ -1025,7 +1026,7 @@
            vacationCardLabel(), damit sie getestet ist. -->
       <KPIStat
         label={vacationCardLabel(vacSummaryPlanned)}
-        value={vacRemaining === null ? "–" : String(vacRemaining)}
+        value={vacRemaining === null ? "–" : formatDays(vacRemaining)}
         unit={(vacRemaining ?? 0) === 1 ? "Tag" : "Tage"}
         delta={vacationBalance
           ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
@@ -1153,7 +1154,9 @@
     <div class="vac-stats">
       <div class="vac-stat">
         <div class="vac-stat-label">Anspruch</div>
-        <div class="vac-stat-value">{vacSummaryTotal}<span class="vac-stat-unit">T</span></div>
+        <div class="vac-stat-value">
+          {formatDays(vacSummaryTotal)}<span class="vac-stat-unit">T</span>
+        </div>
       </div>
       {#if vacSummaryCarryOver > 0}
         <!-- Phase 114 (RU-01/RU-03): zwei Kacheln statt einer. Der BRUTTO-Übertrag war bisher
@@ -1166,34 +1169,36 @@
         <div class="vac-stat" data-testid="vac-stat-carryover">
           <div class="vac-stat-label">Übertrag Vorjahr</div>
           <div class="vac-stat-value vac-stat-carry">
-            +{vacSummaryCarryOver}<span class="vac-stat-unit">T</span>
+            +{formatDays(vacSummaryCarryOver)}<span class="vac-stat-unit">T</span>
           </div>
         </div>
         <div class="vac-stat" data-testid="vac-stat-carryover-rest">
           <div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>
           <div class="vac-stat-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-stat-carry'}">
-            {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining}<span
-              class="vac-stat-unit">T</span
-            >
+            {vacSummaryCarryOverRemaining === 0
+              ? "0"
+              : "+" + formatDays(vacSummaryCarryOverRemaining)}<span class="vac-stat-unit">T</span>
           </div>
         </div>
       {/if}
       <div class="vac-stat">
         <div class="vac-stat-label">Genommen</div>
-        <div class="vac-stat-value">{vacSummaryUsed}<span class="vac-stat-unit">T</span></div>
+        <div class="vac-stat-value">
+          {formatDays(vacSummaryUsed)}<span class="vac-stat-unit">T</span>
+        </div>
       </div>
       {#if vacSummaryPlanned > 0}
         <div class="vac-stat">
           <div class="vac-stat-label">Beantragt</div>
           <div class="vac-stat-value vac-stat-planned">
-            {vacSummaryPlanned}<span class="vac-stat-unit">T</span>
+            {formatDays(vacSummaryPlanned)}<span class="vac-stat-unit">T</span>
           </div>
         </div>
       {/if}
       <div class="vac-stat vac-stat--highlight">
         <div class="vac-stat-label">Verbleibend</div>
         <div class="vac-stat-value {vacSummaryLeft < 0 ? 'neg' : 'pos'}">
-          {vacSummaryLeft}<span class="vac-stat-unit">T</span>
+          {formatDays(vacSummaryLeft)}<span class="vac-stat-unit">T</span>
         </div>
       </div>
     </div>
@@ -1503,8 +1508,8 @@
                         >
                           {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
                             ? "+"
-                            : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
-                            >{:else}{adjBadge.delta}{/if} Tag(e)
+                            : "−"}{#if adjBadge.bold}<strong>{formatDays(adjBadge.delta)}</strong
+                            >{:else}{formatDays(adjBadge.delta)}{/if} Tag(e)
                         </span>
                       {/if}
                       {#if req.daysProvisional}

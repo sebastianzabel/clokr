@@ -50,7 +50,7 @@
     NEUTRAL_CHIP_LABEL,
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility";
-  import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { formatDayCount, leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04), #853-19
   import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588
   import { leaveRequested } from "$lib/feedback/action-messages"; // #843 (D-843-08)
   import type { EditableLeaveRequest } from "$lib/leave/leave-request-form";
@@ -661,7 +661,9 @@
             <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
               <option value="">— Anlass wählen —</option>
               {#each specialLeaveRules as rule (rule.id)}
-                <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
+                <option value={rule.id}
+                  >{rule.name} ({formatDayCount(Number(rule.defaultDays))})</option
+                >
               {/each}
             </select>
           </div>
@@ -851,7 +853,7 @@
             <div class="balance-box">
               <div class="balance-row">
                 <span class="balance-label">Jahresanspruch</span>
-                <span class="balance-value">{vacationBalance.total} Tage</span>
+                <span class="balance-value">{formatDayCount(vacationBalance.total)}</span>
               </div>
               {#if vacationBalance.carryOver > 0}
                 <div class="balance-row">
@@ -863,7 +865,7 @@
                       >
                     {/if}
                   </span>
-                  <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
+                  <span class="balance-value">+ {formatDayCount(vacationBalance.carryOver)}</span>
                 </div>
               {/if}
               <div class="balance-row">
@@ -873,20 +875,20 @@
                     : "Genommen"}</span
                 >
                 <span class="balance-value"
-                  >− {vacationBalance.used - vacationBalance.provisionalUsed} Tage</span
+                  >− {formatDayCount(vacationBalance.used - vacationBalance.provisionalUsed)}</span
                 >
               </div>
               {#if vacationBalance.provisionalUsed > 0}
                 <div class="balance-row">
                   <span class="balance-label">Verbraucht (vorläufig)</span>
                   <span class="balance-value balance-value--muted"
-                    >− {vacationBalance.provisionalUsed} Tage</span
+                    >− {formatDayCount(vacationBalance.provisionalUsed)}</span
                   >
                 </div>
               {/if}
               <div class="balance-row">
                 <span class="balance-label">Resturlaub</span>
-                <span class="balance-value">{vacRemaining} Tage</span>
+                <span class="balance-value">{formatDayCount(vacRemaining ?? 0)}</span>
               </div>
               {#if vacationBalance.section9Movements?.length}
                 <ul class="section9-movements">
@@ -910,16 +912,17 @@
                     {/if}
                   </span>
                   <span class="balance-value balance-deduct">
-                    {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}− {effectiveDays}
-                      {effectiveDays === 1 ? "Tag" : "Tage"}{/if}
+                    {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}− {formatDayCount(
+                        effectiveDays,
+                      )}{/if}
                   </span>
                 </div>
                 <div class="balance-divider"></div>
                 <div class="balance-row">
                   <span class="balance-label">Verbleibend</span>
                   <span class="balance-value {(vacAfter ?? 0) < 0 ? 'balance-warn' : ''}">
-                    {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}{vacAfter}
-                      {(vacAfter ?? 0) === 1 ? "Tag" : "Tage"}{/if}
+                    {#if hoursPreviewLoading}<span class="text-muted">…</span
+                      >{:else}{formatDayCount(vacAfter ?? 0)}{/if}
                   </span>
                 </div>
                 {#if !hoursPreviewLoading && (vacAfter ?? 0) < 0}

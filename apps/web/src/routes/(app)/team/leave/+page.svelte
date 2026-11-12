@@ -43,6 +43,7 @@
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262, #269, Issue #446 (D-04)
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19
   import { parseLeaveCreateDeepLink, type LeaveCreateDeepLink } from "$lib/leave/create-deep-link"; // Issue #587
   import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
   import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"; // Issue #840 (G-3)
@@ -1297,8 +1298,8 @@
                       >
                         {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
                           ? "+"
-                          : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
-                          >{:else}{adjBadge.delta}{/if} Tag(e)
+                          : "−"}{#if adjBadge.bold}<strong>{formatDays(adjBadge.delta)}</strong
+                          >{:else}{formatDays(adjBadge.delta)}{/if} Tag(e)
                       </span>
                     {/if}
                     {#if req.daysProvisional}
