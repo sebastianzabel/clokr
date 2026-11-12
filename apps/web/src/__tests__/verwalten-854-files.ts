@@ -109,6 +109,8 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/employees/detail/UrlaubTab.svelte",
   "lib/components/employees/detail/ZugangTab.svelte",
   "lib/components/employees/SalonAssignmentsSection.svelte",
+  // The Zugang tab opens it (deactivation with a last working day); it renders Dialog directly.
+  "lib/components/admin/DeactivateEmployeeDialog.svelte",
 ];
 
 export interface VerwaltenFile {

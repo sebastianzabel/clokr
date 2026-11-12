@@ -9,7 +9,8 @@
 -->
 <script lang="ts">
   import { untrack } from "svelte";
-  import Modal from "$components/ui/Modal.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import Note from "$components/ui/Note.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import { ApiError } from "$api/client";
   import {
@@ -150,7 +151,7 @@
     await load(value);
   }
 
-  async function confirm() {
+  async function deactivate() {
     if (!canConfirm) return;
     saving = true;
     errorText = null;
@@ -167,10 +168,10 @@
   }
 </script>
 
-<Modal bind:open eyebrow="Mitarbeiter deaktivieren" title="Letzter Arbeitstag festlegen">
+<Dialog bind:open eyebrow="Mitarbeiter deaktivieren" title="Letzter Arbeitstag festlegen">
   <div class="dx-body">
     {#if errorText}
-      <div class="callout error" role="alert">{errorText}</div>
+      <div role="alert"><Note tone="bad">{errorText}</Note></div>
       {#if view === null && !loading && !saving}
         <div>
           <button type="button" class="btn btn-ghost" onclick={retry}>Erneut laden</button>
@@ -178,22 +179,18 @@
       {/if}
     {/if}
 
-    <div class="callout brand" role="note">
-      <p>
+    <div role="note">
+      <Note tone="brand">
         {employee.firstName}
         {employee.lastName} kann sich danach nicht mehr anmelden. Die Zeitdaten bleiben erhalten.
-      </p>
-      {#if loginOnly}
-        <p>
+        {#if loginOnly}
           Der Eintritt liegt in der Zukunft. Beim Deaktivieren wird nur der Zugang gesperrt. Es gibt
           keinen letzten Arbeitstag, und Abwesenheiten bleiben unverändert.
-        </p>
-      {:else}
-        <p>
+        {:else}
           Abwesenheiten nach dem letzten Arbeitstag werden storniert oder gekürzt. Ein Reaktivieren
           bringt sie nicht zurück.
-        </p>
-      {/if}
+        {/if}
+      </Note>
     </div>
 
     {#if today !== null && !loginOnly}
@@ -217,7 +214,7 @@
 
     {#if view !== null && !loginOnly}
       {#if view.refusal}
-        <div class="callout error" role="alert">{view.refusal.error}</div>
+        <div role="alert"><Note tone="bad">{view.refusal.error}</Note></div>
       {/if}
 
       <dl class="dx-figures">
@@ -291,11 +288,11 @@
     <button type="button" class="btn btn-ghost" disabled={saving} onclick={() => (open = false)}>
       Abbrechen
     </button>
-    <button type="button" class="btn btn-danger" disabled={!canConfirm} onclick={confirm}>
+    <button type="button" class="btn btn-danger" disabled={!canConfirm} onclick={deactivate}>
       Deaktivieren
     </button>
   {/snippet}
-</Modal>
+</Dialog>
 
 <style>
   .dx-body {

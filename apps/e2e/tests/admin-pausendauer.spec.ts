@@ -116,12 +116,8 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     await loginAsTenantAdmin(page, tenant);
 
     await page.goto(`/admin/employees/${employeeId}`);
-    // The Pausendauer Section lives under the Arbeitszeit tab on the detail page.
-    await page
-      .getByRole("button", { name: /Arbeitszeit/i })
-      .or(page.locator(".admin-tab").filter({ hasText: "Arbeitszeit" }))
-      .first()
-      .click();
+    // The Pausendauer Section lives under the Vertrag tab (formerly Arbeitszeit) on the detail page.
+    await page.getByRole("tab", { name: "Vertrag" }).click();
 
     const editor = page.getByTestId("pausendauer-editor");
     await expect(editor).toBeVisible();
@@ -144,11 +140,7 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     await savePromise;
 
     await page.reload();
-    await page
-      .getByRole("button", { name: /Arbeitszeit/i })
-      .or(page.locator(".admin-tab").filter({ hasText: "Arbeitszeit" }))
-      .first()
-      .click();
+    await page.getByRole("tab", { name: "Vertrag" }).click();
     await expect(page.getByTestId("pausendauer-over6h")).toHaveValue("40");
     await expect(page.getByTestId("pausendauer-over9h")).toHaveValue("50");
 

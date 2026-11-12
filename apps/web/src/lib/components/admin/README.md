@@ -23,8 +23,9 @@ Source: `apps/web/src/lib/components/admin/Section.svelte`
 Section is the atomic card primitive that replaces the legacy `<Card animate><CardHeader title sub/>`
 pattern in all admin pages. It owns the title/sub/actions/footer structure and is the composable
 building block that `SectionStack`, `ListDetail`, and `ToolPage` fill their page columns with. The
-`tone="danger"` escape hatch exists to mark a section as dangerous; prefer `<DangerZone>` over
-setting `tone="danger"` directly — DangerZone locks the tone and supplies the correct default title.
+`tone="danger"` escape hatch exists to mark a section as dangerous (the former `<DangerZone>` wrapper
+is gone since Issue #854; the Verwalten pages show irreversible actions as a `.settings-group` with
+`btn btn-danger` buttons behind a `ConfirmDialog`).
 
 ```ts
 interface Props {
@@ -80,64 +81,6 @@ Usage:
     <button class="btn btn-primary btn-sm">Speichern</button>
   {/snippet}
 </Section>
-```
-
----
-
-### `<DangerZone>`
-
-Source: `apps/web/src/lib/components/admin/DangerZone.svelte`
-
-DangerZone is a thin wrapper around `<Section tone="danger">` for irreversible actions. It renders a
-red-tinted card with the default title „Kritische Aktionen“ (docs/glossar.md) and is meant to be placed
-as the **last child** in a `SectionStack` or as the **last tab panel** in a `ListDetail`. Callers
-compose `ConfirmDialog` (from `$lib/components/ui/ConfirmDialog.svelte`) or a type-to-confirm input
-around each destructive action — `DangerZone` itself does NOT render a dialog.
-
-```ts
-interface Props {
-  title?: string;
-  description?: string;
-  animate?: boolean;
-  actions: Snippet;
-}
-```
-
-**Snippets:**
-
-| Name      | Required | Description                                             |
-| --------- | -------- | ------------------------------------------------------- |
-| `actions` | **yes**  | Destructive action buttons and their confirmation flows |
-
-Usage:
-
-```svelte
-<script>
-  import DangerZone from "$lib/components/admin/DangerZone.svelte";
-  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
-
-  let confirmOpen = $state(false);
-
-  async function handleDelete() {
-    await api.delete("/tenants/current");
-  }
-</script>
-
-<DangerZone description="Irreversible Aktionen für diesen Mandanten.">
-  {#snippet actions()}
-    <button class="btn btn-danger" onclick={() => (confirmOpen = true)}>
-      Daten zurücksetzen
-    </button>
-    <ConfirmDialog
-      bind:open={confirmOpen}
-      title="Daten zurücksetzen?"
-      description="Diese Aktion kann nicht rückgängig gemacht werden."
-      confirmLabel="Zurücksetzen"
-      danger
-      onConfirm={handleDelete}
-    />
-  {/snippet}
-</DangerZone>
 ```
 
 ---
