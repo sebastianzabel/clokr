@@ -55,8 +55,9 @@ const EXEMPT_PAGES: ReadonlyArray<{
     reason: "configuration picker: exceptions may name any employee (D-11)",
   },
   {
-    page: "admin/phorest",
-    file: "(app)/admin/phorest/+page.svelte",
+    // The mapping picker left the route file with #854 (plan 854-16): it is the connection panel of System › Phorest.
+    page: "PhorestConnectionPanel",
+    file: "../lib/components/admin/phorest/PhorestConnectionPanel.svelte",
     loads: "/employees",
     reason: "mapping picker: the Phorest staff mapping needs every employee (D-11)",
   },

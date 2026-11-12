@@ -8,11 +8,12 @@
 // (c): no file outside the admin set-up areas mentions the hint, "Zusatzmodul" or "Anbieter
 // schaltet".
 // (d)-(g) (Plan 566-10): the other three spots — API-Schlüssel and Präsenz-Quellen (panels of System >
-// Integrationen) and the Branch-ID field (/admin/phorest) — plus the total.
+// Integrationen) and the Branch-ID field (the connection panel of System > Phorest, plan 854-16) — plus the total.
 // (i) (Issue #563, D-18): the fifth spot — the salon create action on /admin/salons.
 // (j) (Issue #624): the sixth spot — the create action of /admin/roles.
 // Total: exactly six hint usages in the web source, all in an admin set-up area: routes/(app)/admin/ or, since
-// plan 854-14 (the integrations panels moved out of the pages), lib/components/admin/integrationen/.
+// plan 854-14 (the integrations panels moved out of the pages), lib/components/admin/integrationen/ and, since
+// plan 854-16, lib/components/admin/phorest/.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,7 +36,8 @@ const ADMIN_SYSTEM = join(ROUTES_APP, "admin", "system", "+page.svelte");
 const TERMINALS_PANEL = join(COMPONENTS, "admin", "integrationen", "TerminalsPanel.svelte");
 const API_KEYS_PANEL = join(COMPONENTS, "admin", "integrationen", "ApiKeysPanel.svelte");
 const PRESENCE_PANEL = join(COMPONENTS, "admin", "integrationen", "PresenceSourcesPanel.svelte");
-const ADMIN_PHOREST = join(ROUTES_APP, "admin", "phorest", "+page.svelte");
+// Plan 854-16: the Branch-ID field moved from the route file into the Phorest connection panel.
+const PHOREST_PANEL = join(COMPONENTS, "admin", "phorest", "PhorestConnectionPanel.svelte");
 const ADMIN_SALONS = join(ROUTES_APP, "admin", "salons", "+page.svelte");
 const ADMIN_ROLES = join(ROUTES_APP, "admin", "roles", "+page.svelte");
 
@@ -43,7 +45,8 @@ const ADMIN_ROLES = join(ROUTES_APP, "admin", "roles", "+page.svelte");
 function inSetupArea(rel: string): boolean {
   return (
     rel.startsWith(join("routes", "(app)", "admin") + "/") ||
-    rel.startsWith(join("lib", "components", "admin", "integrationen") + "/")
+    rel.startsWith(join("lib", "components", "admin", "integrationen") + "/") ||
+    rel.startsWith(join("lib", "components", "admin", "phorest") + "/")
   );
 }
 
@@ -137,7 +140,7 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
   const system = stripComments(readFileSync(ADMIN_SYSTEM, "utf8"));
   const apiKeys = stripComments(readFileSync(API_KEYS_PANEL, "utf8"));
   const presence = stripComments(readFileSync(PRESENCE_PANEL, "utf8"));
-  const phorest = stripComments(readFileSync(ADMIN_PHOREST, "utf8"));
+  const phorest = stripComments(readFileSync(PHOREST_PANEL, "utf8"));
 
   /** The two branches of the first `{#if <condition>} … {:else} … {/if}` of a panel. */
   function branchesOf(source: string, condition: string): [string, string] {
@@ -198,18 +201,19 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
 
   it("(f) Phorest: one INTEGRATIONS hint next to the Branch-ID input, under phCouplingBlocked only", () => {
     expect(phorest.match(/<ModuleHint\s+module="INTEGRATIONS"/g)).toHaveLength(1);
-    const input = phorest.indexOf('id="ph-branch"');
+    const input = phorest.indexOf('label="Branch-ID"');
     expect(input).toBeGreaterThan(-1);
-    const nearby = phorest.slice(input, input + 900);
-    expect(nearby).toContain("disabled={!phBranchIdEditable}");
+    const nearby = phorest.slice(input, input + 1400);
+    expect(nearby).toContain("disabled={!phBranchIdEditable || saving}");
     expect(nearby).toMatch(/\{#if phCouplingBlocked\}\s*<ModuleHint\s+module="INTEGRATIONS"/);
     // The multi-salon sentence is shown for the multi-salon case only.
     expect(nearby).toMatch(
-      /\{#if phMultiSalon\}\s*<p[^>]*>\s*Mehrere aktive Salons — die Phorest-Filiale wird je Salon gekoppelt\./,
+      /help=\{phMultiSalon\s*\?\s*"Mehrere aktive Salons — die Phorest-Filiale wird je Salon gekoppelt\."/,
     );
-    // The pinned request contract is untouched; credentials, sync, mapping and runs stay on the page.
-    expect(phorest).toContain("...(phBranchIdEditable ? { branchId: phBranchId } : {})");
-    for (const kept of ["testPhorest", "loadPhMapping", "loadPhSyncRuns", "ph-pass"]) {
+    // The request contract is untouched (the wire function sends the branch only while it is editable);
+    // credentials, the connection test, the mapping and the sync stay on the page.
+    expect(phorest).toContain("phorestWire(values, { branchEditable: phBranchIdEditable })");
+    for (const kept of ["testConnection", "loadMapping", "API-Passwort"]) {
       expect(phorest, kept).toContain(kept);
     }
   });
@@ -235,7 +239,7 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
         ADMIN_SYSTEM,
         PRESENCE_PANEL,
         API_KEYS_PANEL,
-        ADMIN_PHOREST,
+        PHOREST_PANEL,
         ADMIN_SALONS,
         ADMIN_ROLES,
       ]),
@@ -259,7 +263,8 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
           "|INTEGRATIONS",
         join("lib", "components", "admin", "integrationen", "PresenceSourcesPanel.svelte") +
           "|HARDWARE_CLOCK",
-        join("routes", "(app)", "admin", "phorest", "+page.svelte") + "|INTEGRATIONS",
+        join("lib", "components", "admin", "phorest", "PhorestConnectionPanel.svelte") +
+          "|INTEGRATIONS",
         join("routes", "(app)", "admin", "roles", "+page.svelte") + "|CHAIN",
         join("routes", "(app)", "admin", "salons", "+page.svelte") + "|CHAIN",
         join("lib", "components", "admin", "integrationen", "TerminalsPanel.svelte") +

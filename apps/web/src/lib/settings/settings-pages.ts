@@ -138,6 +138,7 @@ const DIENSTPLAN_FROM_VACATION = {
 // Plan 854-11: the vacation page itself, rewritten in place as Regeln › Abwesenheiten (route file /admin/vacation).
 const INTEGRATIONEN_PAGE = "/verwalten/system/integrationen";
 const INTEGRATIONEN_DIR = "lib/components/admin/integrationen";
+const PHOREST_DIR = "lib/components/admin/phorest";
 const ABWESENHEITEN_PAGE = "/verwalten/regeln/abwesenheiten";
 const ABWESENHEITEN_DIR = "lib/components/admin/abwesenheiten";
 const ABWESENHEITEN = {
@@ -612,9 +613,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 
   // ── /admin/phorest ─────────────────────────────────────────────────────────────────────────────
   {
-    id: "phorest-config",
+    id: "phorest-verbindung",
     page: "/verwalten/system/phorest",
-    title: "Verbindung und Import",
+    title: "Zugangsdaten und Import",
     endpoint: "/integrations/phorest/config",
     // `branchId` is sent only while exactly one salon is active (Issue #65, D-20).
     keys: [
@@ -630,7 +631,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     ],
     source: "/admin/phorest",
     requires: PHOREST_REQUIRES,
-    renderedBy: "routes/(app)/admin/phorest/+page.svelte",
+    renderedBy: `${PHOREST_DIR}/PhorestConnectionPanel.svelte`,
   },
 ];
 
