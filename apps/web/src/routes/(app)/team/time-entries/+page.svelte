@@ -18,8 +18,7 @@
   import KpiStrip from "$components/ui/KpiStrip.svelte"; // Issue #853 (D-853-18)
   import Skeleton from "$components/ui/Skeleton.svelte";
   import ErrorState from "$components/ui/ErrorState.svelte";
-  import { monthKpiItems } from "$lib/team/zeiten-kpis"; // Issue #853 (D-853-18)
-  import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-fkz
+  import { kontoKpiItem, monthKpiItems } from "$lib/team/zeiten-kpis"; // Issue #853 (D-853-18)
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import { toasts } from "$stores/toast";
@@ -245,8 +244,8 @@
   let saldoFetchFailed = $state(false);
   // Issue #85 (Phase 76b note) — the server refused the contract, saldo or month-saldo read for
   // this person (403, or the identical 404 of an out-of-scope person). A refusal is not a failure:
-  // the cards that depend on it disappear silently and the month card shows only the Ist of the
-  // entries the server returned for the caller's scope. `overtimeDenied` hides the Konto card.
+  // the figures that depend on it disappear silently and the month cell shows only the Ist of the
+  // entries the server returned for the caller's scope. `overtimeDenied` hides the account cell.
   let saldoDenied = $state(false);
   let overtimeDenied = $state(false);
   let saving = $state(false);
@@ -1638,10 +1637,11 @@
     };
   });
   let runningCount = $derived(entries.filter((e) => !e.endTime).length);
-  // Issue #853 (D-853-18) - the month figures as the cells of the Kennzahlenleiste. Only a selection and
-  // formatting of what monthMetrics already holds (lib/team/zeiten-kpis.ts); no figure is computed here.
-  let zeitenKpis = $derived(
-    monthKpiItems({
+  // Issue #853 (D-853-18) - the figures of the person as the cells of the Kennzahlenleiste: the month
+  // and, unless the overtime read was refused (#85), the account. Only a selection and formatting of
+  // what the page already holds (lib/team/zeiten-kpis.ts); no figure and no forecast wording is made here.
+  let zeitenKpis = $derived.by(() => {
+    const items = monthKpiItems({
       sollToDateMin: monthMetrics.sollToDateMin,
       istMin: monthMetrics.istMin,
       saldoMin: monthMetrics.saldoMin,
@@ -1650,8 +1650,21 @@
       workdaysSoFar: monthMetrics.workdaysSoFar,
       runningCount,
       isLocked: monthIsLocked || monthMetrics.closed,
-    }),
-  );
+    });
+    if (!overtimeDenied) {
+      items.push(
+        kontoKpiItem({
+          totalHours: overtimeTotalHours,
+          confirmedMinutes: overtimeConfirmedMinutes,
+          openMonthMinutes: overtimeOpenMonthMinutes,
+          hasClosedMonth: overtimeHasClosedMonth,
+          unconfirmedMonths: overtimeUnconfirmedMonths,
+          rosterIncomplete: overtimeRosterIncomplete,
+        }),
+      );
+    }
+    return items;
+  });
   // Issue #511 D-18 — the modal's findings are the server's answer for the PROPOSED entry together
   // with the day's other entries (POST /day-breaks/preview, debounced, a stale answer is dropped).
   // A failed preview leaves the list empty and never blocks saving. A hint (position of a break
@@ -1803,8 +1816,8 @@
 >
   {#snippet actions()}
     {#if teamMode === "person" && selectedEmployee}
-      <!-- quick 260820-fkz — Gesamt-Saldo moved OUT of the page head entirely, into the
-           quiet Konto card in the metrics row below (see KontoSaldoCard). -->
+      <!-- quick 260820-fkz — Gesamt-Saldo lives outside the page head, as the Stundenkonto cell
+           of the figures strip below (Issue #853, D-853-18). -->
       <button class="btn btn-primary" onclick={() => openAdd()}>
         <span aria-hidden="true">＋</span> Eintrag hinzufügen
       </button>
@@ -1886,28 +1899,16 @@
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
   {/if}
 
-  <!-- Metrics row (design variant 1c "Fortschritt", quick 260820-fkz).
-       Mirrors /time-entries (commit d88cdcba). Rendered ONLY with an employee
-       selected (D-01); the period control is not part of it (Issue #853), it sits in the
-       toolbar row above. -->
-  <div class="te-metrics">
+  <!-- Figures strip (Issue #853, D-853-18; prototype #p-zeiten stats): the month and the account of
+       the chosen person in one Kennzahlenleiste under the toolbar row. Rendered ONLY with an employee
+       selected (D-01). The cells are made by lib/team/zeiten-kpis.ts. -->
+  <div class="te-figures">
     {#if saldoCardState === "loading"}
       <Skeleton shape="block" height="6.5rem" />
     {:else if saldoCardState === "error"}
       <ErrorState message="Werte konnten nicht geladen werden." hint="" onRetry={loadAll} />
     {:else}
       <KpiStrip items={zeitenKpis} ariaLabel="Monat" />
-    {/if}
-    {#if !overtimeDenied}
-      <KontoSaldoCard
-        totalHours={overtimeTotalHours}
-        confirmedMinutes={overtimeConfirmedMinutes}
-        openMonthMinutes={overtimeOpenMonthMinutes}
-        hasClosedMonth={overtimeHasClosedMonth}
-        unconfirmedMonths={overtimeUnconfirmedMonths}
-        rosterIncomplete={overtimeRosterIncomplete}
-        {loading}
-      />
     {/if}
   </div>
   {#if saldoDenied && !loading}
@@ -2524,25 +2525,9 @@
 
   /* MonthBar + mini-stats styles live in the MonthBar primitive. */
 
-  /* ── Metrics row (quick 260820-fkz, mirrors /time-entries d88cdcba) ────
-       Month card (nav + progress bar) + quiet Konto card, side by side. */
-  .te-metrics {
-    display: grid;
-    grid-template-columns: 1.55fr 1fr;
-    gap: var(--s-4);
+  /* ── Figures strip under the toolbar row (Issue #853) ─────────────────── */
+  .te-figures {
     margin-bottom: 18px;
-    overflow: visible;
-  }
-
-  @media (max-width: 1000px) {
-    .te-metrics {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* Issue #85 — without the Konto card (refused saldo read) the month card takes the full row. */
-  .te-metrics--single {
-    grid-template-columns: 1fr;
   }
   .te-denied-note {
     margin: calc(-1 * var(--s-2)) 0 18px;

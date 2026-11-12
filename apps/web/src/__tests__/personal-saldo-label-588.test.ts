@@ -91,16 +91,26 @@ describe("personal saldo views pass the data to the forecast label (Issue #588, 
     expect(compact).toContain("{unconfirmedMonths}");
   });
 
-  it.each([
-    ["time-entries", TIME_ENTRIES, "overtimeValue?.unconfirmedMonths"],
-    ["team/time-entries", TEAM_TIME_ENTRIES, "overtimeValue?.unconfirmedMonths"],
-  ])("%s: the Konto card gets the count of /overtime/:id", (_name, rel, source) => {
-    const text = read(rel);
+  it("time-entries: the Konto card gets the count of /overtime/:id", () => {
+    const text = read(TIME_ENTRIES);
     expect(text).toMatch(/unconfirmedMonths\?: number \| null;/);
-    expect(text).toContain(`overtimeUnconfirmedMonths = ${source}`);
+    expect(text).toContain("overtimeUnconfirmedMonths = overtimeValue?.unconfirmedMonths");
     const card = elementAfter(text, "<KontoSaldoCard");
     expect(card).toContain("unconfirmedMonths={overtimeUnconfirmedMonths}");
     expect(card).toContain("hasClosedMonth={overtimeHasClosedMonth}");
+  });
+
+  // Issue #853 (D-853-18): on the Team page the account is the Stundenkonto cell of the figures strip,
+  // made by `kontoKpiItem()` from the same two values; the forecast wording stays in forecast-label.ts.
+  it("team/time-entries: the Stundenkonto cell gets the count of /overtime/:id", () => {
+    const text = read(TEAM_TIME_ENTRIES);
+    expect(text).toMatch(/unconfirmedMonths\?: number \| null;/);
+    expect(text).toContain("overtimeUnconfirmedMonths = overtimeValue?.unconfirmedMonths");
+    const start = text.indexOf("kontoKpiItem({");
+    expect(start, "kontoKpiItem( call not found").toBeGreaterThan(-1);
+    const call = text.slice(start, text.indexOf("}),", start));
+    expect(call).toContain("unconfirmedMonths: overtimeUnconfirmedMonths");
+    expect(call).toContain("hasClosedMonth: overtimeHasClosedMonth");
   });
 
   it("team/time-entries resets the count together with the other split fields", () => {

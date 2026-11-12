@@ -12,8 +12,9 @@
 //   M2 `toasts.error(...)` added to the 404 branch -> "[calm 404] a rejected salon ... no toast, no
 //      console.error" red.
 //   (Plan 85b-12, refused saldo state, 2026-10-13)
-//   M3 `KontoSaldoCard` rendered unconditionally (the `{#if !overtimeDenied}` wrapper removed)
-//      -> "[refused saldo] the Konto card is rendered only when the overtime read was not
+//   M3 the account cell added unconditionally (the `if (!overtimeDenied) {` guard removed; before
+//      Issue #853 D-853-18: `KontoSaldoCard` rendered without its `{#if !overtimeDenied}` wrapper)
+//      -> "[refused saldo] the account cell is added only when the overtime read was not
 //      denied" red.
 //   M4 `saldoFetchFailed = true` also assigned on a denial (`if (isDenied(rawMonthSaldo))
 //      saldoFetchFailed = true;`) -> "[refused saldo] only a failure routes into the error
@@ -160,14 +161,23 @@ describe("Issue #85 — the Salonansicht of /team/time-entries", () => {
     expect(PAGE).not.toMatch(/\bsettled\(/);
   });
 
-  it("[refused saldo] the Konto card is rendered only when the overtime read was not denied", () => {
-    const card = PAGE.indexOf("<KontoSaldoCard");
-    expect(card, "KontoSaldoCard not found").toBeGreaterThan(-1);
-    const guard = PAGE.lastIndexOf("{#if !overtimeDenied}", card);
-    expect(guard, "no denied guard in front of the card").toBeGreaterThan(-1);
-    // Nothing but whitespace between the guard and the card: the card sits directly inside it.
-    expect(PAGE.slice(guard + "{#if !overtimeDenied}".length, card).trim()).toBe("");
+  // Issue #853 (D-853-18): the account figure is the Stundenkonto cell of the Kennzahlenleiste (made by
+  // `kontoKpiItem()`), not the KontoSaldoCard any more. The guard is the same condition, now a
+  // statement of the strip's derivation: the cell is pushed directly inside `if (!overtimeDenied) {`.
+  it("[refused saldo] the account cell is added only when the overtime read was not denied", () => {
+    const cell = PAGE.indexOf("kontoKpiItem(");
+    expect(cell, "kontoKpiItem( not found").toBeGreaterThan(-1);
+    const guard = PAGE.lastIndexOf("if (!overtimeDenied) {", cell);
+    expect(guard, "no denied guard in front of the account cell").toBeGreaterThan(-1);
+    // Nothing but the push between the guard and the cell: the cell sits directly inside it.
+    expect(
+      PAGE.slice(guard + "if (!overtimeDenied) {".length, cell)
+        .replace(/\s+/g, "")
+        .replace(/^items\.push\($/, "items.push("),
+    ).toBe("items.push(");
     expect(PAGE).toContain("overtimeDenied = isDenied(rawOvertime);");
+    // The Konto card is gone from the page; a stray tag would show the account twice.
+    expect(PAGE).not.toContain("<KontoSaldoCard");
   });
 
   it("[refused saldo] the Ist-only monthMetrics branch precedes the !schedule branch", () => {
