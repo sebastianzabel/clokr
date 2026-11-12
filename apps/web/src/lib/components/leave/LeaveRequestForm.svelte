@@ -103,6 +103,9 @@
      *  in edit mode (the request's own dates win) and left blank when omitted. */
     initialStartDate?: string;
     initialEndDate?: string;
+    /** Issue #845: the type a fresh CREATE opens with (a start-page link „Krank melden“);
+     *  default VACATION. Ignored in edit mode. */
+    initialTypeCode?: CalendarTypeCode;
     /** The year `/leave/entitlements/:employeeId` is queried with — the calendar year the PAGE
      *  is currently showing (`calYear` on both `/leave` and `/team/leave`), not necessarily the
      *  real-world current year. Defaults to the real-world current year when omitted. This
@@ -129,6 +132,7 @@
     editingRequest = null,
     initialStartDate = "",
     initialEndDate = "",
+    initialTypeCode = "VACATION",
     entitlementYear = new Date().getFullYear(),
     onSaved,
     personPicker,
@@ -403,7 +407,7 @@
 
   // ── Form lifecycle ───────────────────────────────────────────────────────
   function resetFormFields() {
-    formType = "VACATION";
+    formType = initialTypeCode;
     formStart = initialStartDate;
     formEnd = initialEndDate;
     formHalfDay = false;

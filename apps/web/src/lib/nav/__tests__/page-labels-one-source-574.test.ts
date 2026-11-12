@@ -134,7 +134,11 @@ describe("page-labels: Mein Tag and Heute im Salon (#844, one file, two views)",
     expect(dashboard).toContain(
       'const pageKey = $derived(view === "team" ? "/team/heute" : "/dashboard");',
     );
-    expect(dashboard).toContain("title={pageLabel(pageKey)}");
+    // Owner acceptance #845 (09.11.2026, prototype v5): Mein Tag greets in its H1; the page name
+    // stays the crumb, the menu entry and the document title. Heute im Salon keeps the page name.
+    expect(dashboard).toMatch(
+      /title=\{view === "me" \? `\$\{greeting\(\)\}, \$\{capitalizedName\}` : pageLabel\(pageKey\)\}/,
+    );
     expect(dashboard).toContain("<title>{pageLabel(pageKey)} – Clokr</title>");
     expect(read("routes/(app)/team/heute/+page.svelte")).toContain("<Dashboard />");
     expect(pageLabel("/dashboard")).toBe("Mein Tag");

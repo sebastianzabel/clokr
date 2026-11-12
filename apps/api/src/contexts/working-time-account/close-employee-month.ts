@@ -1394,6 +1394,8 @@ export type WeekProgress = {
   toDateSollMinutes: number;
   /** The Ist of the part of the week up to and including yesterday (issue #438). */
   toDateWorkedMinutes: number;
+  /** Issue #596 (#845): today's net Soll (the day goal of the clock), same core, today alone. */
+  todaySollMinutes: number;
 };
 
 type WeekMonthPiece = { start: string; end: string };
@@ -1545,6 +1547,7 @@ export async function computeWeekProgress(
   let weekSollMinutes = 0;
   let toDateSollMinutes = 0;
   let toDateWorkedMinutes = 0;
+  let todaySollMinutes = 0;
 
   for (const { piece, calMonthStart, schedule } of pieceSchedules) {
     const pieceStartDate = new Date(piece.start + "T00:00:00Z");
@@ -1596,6 +1599,21 @@ export async function computeWeekProgress(
     });
     weekSollMinutes += wholePieceResult.expectedMinutes;
 
+    // Issue #596 (#845): today's own Soll — the piece's core on the one day, no entries (the
+    // goal of the day, not its saldo; today still never counts towards the saldo, #438).
+    if (todayStr >= piece.start && todayStr <= piece.end) {
+      const todayResult = closeEmployeeMonth({
+        ...sharedPieceInput,
+        monthStart: todayDate,
+        monthFirstDay: todayDate,
+        monthEnd: todayDate,
+        monthLastDay: todayDate,
+        entries: [],
+        holidayDateStrings: new Set([...pieceHolidays].filter((d) => d === todayStr)),
+      });
+      todaySollMinutes = todayResult.expectedMinutes;
+    }
+
     // The piece clipped to <= yesterday, with its entries — to-date Soll and Ist (issue #438:
     // today never counts). A piece entirely after yesterday (a future piece of the current
     // week) contributes nothing to the to-date pair.
@@ -1625,7 +1643,7 @@ export async function computeWeekProgress(
     toDateWorkedMinutes += toDateResult.workedMinutes;
   }
 
-  return { weekSollMinutes, toDateSollMinutes, toDateWorkedMinutes };
+  return { weekSollMinutes, toDateSollMinutes, toDateWorkedMinutes, todaySollMinutes };
 }
 
 /**

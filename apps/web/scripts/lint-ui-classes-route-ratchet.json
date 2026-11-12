@@ -56,14 +56,6 @@
       }
     },
     "own-period-control": {
-      "apps/web/src/lib/components/dashboard/MyShiftsWeek.svelte": {
-        "count": 2,
-        "ticket": "#845"
-      },
-      "apps/web/src/lib/components/dashboard/MyWeekView.svelte": {
-        "count": 2,
-        "ticket": "#845"
-      },
       "apps/web/src/routes/(app)/dashboard/+page.svelte": {
         "count": 2,
         "ticket": "#846",
@@ -101,7 +93,7 @@
         "ticket": "#854"
       },
       "apps/web/src/routes/(app)/dashboard/+page.svelte": {
-        "count": 13,
+        "count": 1,
         "ticket": "#845"
       },
       "apps/web/src/routes/(app)/leave/+page.svelte": {

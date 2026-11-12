@@ -227,43 +227,43 @@ describe("dashboard - the four clock and break writes acknowledge their result (
     expect(success).toHaveBeenCalledWith("Ausgestempelt 18:01");
   });
 
-  it("break start acknowledges locally, break end only after the POST succeeded", async () => {
-    serve([RUNNING_ENTRY]);
-    apiPost.mockResolvedValue({ breakMinutes: 30 });
+  // Issue #596 (#845): the running break is a server state — start AND end go to the server
+  // (POST /time-entries/:id/break), each acknowledged only after it answered.
+  it("break start and break end are acknowledged after the server answered", async () => {
+    const entry = { ...RUNNING_ENTRY, breakStartedAt: null as string | null };
+    serve([entry]);
+    apiPost.mockImplementation((path: string, body: { action: string }) => {
+      expect(path).toBe(`/time-entries/${ENTRY_ID}/break`);
+      if (body.action === "start") {
+        entry.breakStartedAt = local(12, 3).toISOString();
+        return Promise.resolve({ breakStartedAt: entry.breakStartedAt, breakMinutes: 0 });
+      }
+      entry.breakStartedAt = null;
+      return Promise.resolve({ breakStartedAt: null, breakMinutes: 30 });
+    });
     renderWithTheme(DashboardPage, {});
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Pause starten" }));
-
+    await fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
     await waitFor(() => expect(success).toHaveBeenCalledTimes(1));
+    expect(apiPost).toHaveBeenCalledWith(`/time-entries/${ENTRY_ID}/break`, { action: "start" });
     expect(success).toHaveBeenLastCalledWith(breakStarted(clockTime(local(12, 3))));
     expect(success).toHaveBeenLastCalledWith("Pause gestartet 12:03");
-    expect(apiPost).not.toHaveBeenCalled();
 
     vi.setSystemTime(local(12, 33));
-    await fireEvent.click(await screen.findByRole("button", { name: "Pause beenden" }));
-
+    await fireEvent.click(await screen.findByRole("button", { name: "Weiterarbeiten" }));
     await waitFor(() => expect(success).toHaveBeenCalledTimes(2));
-    expect(apiPost).toHaveBeenCalledWith(
-      `/time-entries/${ENTRY_ID}/breaks`,
-      expect.objectContaining({ endTime: local(12, 33).toISOString() }),
-    );
+    expect(apiPost).toHaveBeenLastCalledWith(`/time-entries/${ENTRY_ID}/break`, { action: "end" });
     expect(success).toHaveBeenLastCalledWith(breakEnded(clockTime(local(12, 33))));
     expect(success).toHaveBeenLastCalledWith("Pause beendet 12:33");
   });
 
   it("a refused break end toasts the error and no success", async () => {
-    serve([RUNNING_ENTRY]);
-    apiPost.mockRejectedValue(new ApiError(400, "Pause konnte nicht gespeichert werden"));
+    serve([{ ...RUNNING_ENTRY, breakStartedAt: local(12, 3).toISOString() }]);
+    apiPost.mockRejectedValue(new ApiError(409, "Es läuft keine Pause."));
     renderWithTheme(DashboardPage, {});
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Pause starten" }));
-    await waitFor(() => expect(success).toHaveBeenCalledTimes(1));
-    vi.setSystemTime(local(12, 33));
-    await fireEvent.click(await screen.findByRole("button", { name: "Pause beenden" }));
-
-    await waitFor(() =>
-      expect(error).toHaveBeenCalledWith("Pause konnte nicht gespeichert werden"),
-    );
-    expect(success).toHaveBeenCalledTimes(1);
+    await fireEvent.click(await screen.findByRole("button", { name: "Weiterarbeiten" }));
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Es läuft keine Pause."));
+    expect(success).not.toHaveBeenCalled();
   });
 });

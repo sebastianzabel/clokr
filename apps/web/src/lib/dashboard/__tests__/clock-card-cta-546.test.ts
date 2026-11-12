@@ -1,40 +1,25 @@
-// Issue #546 — regression shield for the dashboard clock card buttons ("Einstempeln" /
-// "Ausstempeln", the loading spinner and the keyboard focus ring).
+// Issue #546 — regression shield for the clock buttons ("Einstempeln" / "Ausstempeln", the loading
+// spinner and the keyboard focus ring).
 //
 // Defect (measured in Chromium before the fix): a light label on a light 92 % fill = 1.00..1.19:1,
-// and the loading spinner arc on the same fill = 1.00:1. Root cause: the primary card button composed
-// the global `.btn-primary`, whose `.btn-primary:hover:not(:disabled)` (0,3,0) forced the label
-// colour and beat the card's own `.timer-card-wrap .timer-cta-primary` (0,2,0) colour.
+// and the loading spinner arc on the same fill = 1.00:1. Root cause: a PAGE rule composed its own
+// colours for the card button and lost the cascade against the global `.btn-primary:hover` rule.
 //
-// Why it reads SOURCE: no route page is mounted in this workspace (see dashboard-clock-card.test.ts
-// for the precedent), and jsdom resolves neither custom properties nor `:hover`. The shield therefore
-// proves two things from the stylesheets themselves:
-//   1. cascade   - a card rule out-specifies EVERY app.css / tokens.css / page rule that can reach the
-//                  button or its spinner, per state (so a new layer cannot silently win again);
-//   2. contrast  - the tokens those winning rules reference, resolved for each of the six
-//                  combinations of the three themes of theme.ts x light/dark through the one token
-//                  cascade resolver (`token-cascade.ts`), give WCAG contrast (label >= 4.5, spinner
-//                  arc >= 3, focus ring vs its band >= 3). #842 (D-842-16, D-842-25): the retired
-//                  skin axis and its Branding & Themes presets are gone; the card text is the
-//                  --brand-ink role on the --brand-hover -> --brand gradient (D-842-08, P6).
-// The Svelte-compiled form of the page's scoped spinner rule, taken from the browser probe, is
-// `.btn-spinner.svelte-<hash>` = (0,2,0); the page's scoped rules therefore count +(0,1,0) here.
+// Since #845 the clock lives in the Stage block and its buttons are the global `.btn` / `.btn-primary`
+// recipes, whose label contrast in all six theme x mode combinations is pinned by
+// `btn-primary-contrast-840.test.ts`. The shield therefore proves, from the stylesheets themselves,
+// that nothing can reintroduce the defect class:
+//   1. markup   - exactly one primary stage button (label + spinner), the others plain `.btn`;
+//   2. cascade  - neither the page's `<style>` nor the Stage block declares a colour, fill, border
+//                 colour, outline or shadow for a button, so no page/block rule can beat the recipe;
+//   3. spinner  - the page's spinner draws in `currentColor`, i.e. with the label's proven contrast,
+//                 on every button it sits in (the old `--brand-ink` arc vanished on a light surface).
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import postcss from "postcss";
 import { describe, expect, it } from "vitest";
-
-import {
-  COMBINATIONS,
-  contrast,
-  resolveColor,
-  resolveCombination,
-  type Mode,
-  type Rgba,
-  type Theme,
-} from "../../../__tests__/token-cascade";
 
 function readSource(url: URL, fallback: string): string {
   try {
@@ -48,446 +33,86 @@ const PAGE = readSource(
   new URL("../../../routes/(app)/dashboard/+page.svelte", import.meta.url),
   "src/routes/(app)/dashboard/+page.svelte",
 );
-const APP_CSS = readSource(new URL("../../../app.css", import.meta.url), "src/app.css");
-const TOKENS_CSS = readSource(new URL("../../../tokens.css", import.meta.url), "src/tokens.css");
-const THEME_TS = readSource(
-  new URL("../../stores/theme.ts", import.meta.url),
-  "src/lib/stores/theme.ts",
+const STAGE = readSource(
+  new URL("../../components/ui/Stage.svelte", import.meta.url),
+  "src/lib/components/ui/Stage.svelte",
 );
 const DAY_STATE = readSource(
   new URL("../day-state.ts", import.meta.url),
   "src/lib/dashboard/day-state.ts",
 );
 
-// ── Selector specificity ────────────────────────────────────────────────────
-
-type Spec = [number, number, number];
-
-/** Replaces every Svelte `:global(...)` wrapper by its (paren-balanced) content. */
-function unwrapGlobal(selector: string): string {
-  let out = selector;
-  for (;;) {
-    const at = out.indexOf(":global(");
-    if (at === -1) return out;
-    const open = at + ":global".length;
-    let depth = 0;
-    let close = -1;
-    for (let i = open; i < out.length; i++) {
-      if (out[i] === "(") depth++;
-      else if (out[i] === ")") {
-        depth--;
-        if (depth === 0) {
-          close = i;
-          break;
-        }
-      }
-    }
-    if (close === -1) throw new Error(`Unbalanced :global( in ${selector}`);
-    out = out.slice(0, at) + out.slice(open + 1, close) + out.slice(close + 1);
-  }
+function styleOf(source: string): string {
+  const blocks = [...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]);
+  expect(blocks).toHaveLength(1);
+  return blocks[0];
 }
 
-/** True when the whole selector is exactly one `:global(...)` wrapper (a Svelte-unscoped rule). */
-function isFullyGlobal(selector: string): boolean {
-  const s = selector.trim();
-  if (!s.startsWith(":global(")) return false;
-  let depth = 0;
-  for (let i = ":global".length; i < s.length; i++) {
-    if (s[i] === "(") depth++;
-    else if (s[i] === ")") {
-      depth--;
-      if (depth === 0) return i === s.length - 1;
-    }
-  }
-  return false;
+interface Decl {
+  selector: string;
+  prop: string;
+  value: string;
 }
-
-/** Splits at top-level combinators (whitespace, >, +, ~) outside () and []. */
-function splitCompounds(selector: string): string[] {
-  const parts: string[] = [];
-  let cur = "";
-  let paren = 0;
-  let bracket = 0;
-  for (const ch of selector.trim()) {
-    if (ch === "(") paren++;
-    if (ch === ")") paren--;
-    if (ch === "[") bracket++;
-    if (ch === "]") bracket--;
-    if (paren === 0 && bracket === 0 && /[\s>+~]/.test(ch)) {
-      if (cur) parts.push(cur);
-      cur = "";
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur) parts.push(cur);
-  return parts;
-}
-
-function splitTopLevelCommas(list: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let depth = 0;
-  for (const ch of list) {
-    if (ch === "(" || ch === "[") depth++;
-    if (ch === ")" || ch === "]") depth--;
-    if (ch === "," && depth === 0) {
-      out.push(cur);
-      cur = "";
-    } else cur += ch;
-  }
-  out.push(cur);
-  return out;
-}
-
-interface Compound {
-  tag: string | null;
-  ids: string[];
-  classes: string[];
-  attrs: string[];
-  pseudos: { name: string; arg: string | null }[];
-  pseudoElements: number;
-}
-
-function parseCompound(text: string): Compound {
-  const c: Compound = {
-    tag: null,
-    ids: [],
-    classes: [],
-    attrs: [],
-    pseudos: [],
-    pseudoElements: 0,
-  };
-  let i = 0;
-  const ident = () => {
-    const m = /^[A-Za-z0-9_-]+/.exec(text.slice(i));
-    if (!m) return "";
-    i += m[0].length;
-    return m[0];
-  };
-  if (text[i] === "*") {
-    c.tag = "*";
-    i++;
-  } else if (/[A-Za-z]/.test(text[i] ?? "")) {
-    c.tag = ident();
-  }
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === "#") {
-      i++;
-      c.ids.push(ident());
-    } else if (ch === ".") {
-      i++;
-      c.classes.push(ident());
-    } else if (ch === "[") {
-      const end = text.indexOf("]", i);
-      c.attrs.push(text.slice(i + 1, end));
-      i = end + 1;
-    } else if (ch === ":") {
-      if (text[i + 1] === ":") {
-        i += 2;
-        ident();
-        c.pseudoElements++;
-        continue;
-      }
-      i++;
-      const name = ident();
-      let arg: string | null = null;
-      if (text[i] === "(") {
-        let depth = 0;
-        const start = i;
-        for (; i < text.length; i++) {
-          if (text[i] === "(") depth++;
-          if (text[i] === ")") {
-            depth--;
-            if (depth === 0) {
-              i++;
-              break;
-            }
-          }
-        }
-        arg = text.slice(start + 1, i - 1);
-      }
-      if (["before", "after", "first-line", "first-letter"].includes(name)) c.pseudoElements++;
-      else c.pseudos.push({ name, arg });
-    } else {
-      throw new Error(`Cannot parse compound selector "${text}" at ${i}`);
-    }
-  }
-  return c;
-}
-
-const cmp = (a: Spec, b: Spec): number => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-const add = (a: Spec, b: Spec): Spec => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-
-function specificity(selector: string): Spec {
-  let total: Spec = [0, 0, 0];
-  for (const part of splitCompounds(unwrapGlobal(selector))) {
-    const c = parseCompound(part);
-    let s: Spec = [
-      c.ids.length,
-      c.classes.length + c.attrs.length,
-      (c.tag && c.tag !== "*" ? 1 : 0) + c.pseudoElements,
-    ];
-    for (const p of c.pseudos) {
-      if (p.name === "where") continue;
-      if ((p.name === "not" || p.name === "is" || p.name === "has") && p.arg !== null) {
-        const best = splitTopLevelCommas(p.arg)
-          .map((a) => specificity(a))
-          .sort(cmp)
-          .pop()!;
-        s = add(s, best);
-      } else s = add(s, [0, 1, 0]);
-    }
-    total = add(total, s);
-  }
-  return total;
-}
-
-type State = "base" | "hover" | "focus";
-const STATE_PSEUDOS: Record<State, string[]> = {
-  base: [],
-  hover: ["hover"],
-  focus: ["focus", "focus-visible", "focus-within"],
-};
-const TRACKED_PSEUDOS = [
-  "hover",
-  "focus",
-  "focus-visible",
-  "focus-within",
-  "active",
-  "disabled",
-  "checked",
-];
-
-interface Element {
-  tag: string;
-  classes: string[];
-}
-
-/** Conservative: false only when the rightmost compound provably cannot match the element/state. */
-function canReach(selector: string, element: Element, state: State): boolean {
-  const parts = splitCompounds(unwrapGlobal(selector));
-  const c = parseCompound(parts[parts.length - 1]);
-  if (c.ids.length > 0 || c.pseudoElements > 0) return false;
-  if (c.tag && c.tag !== "*" && c.tag !== element.tag) return false;
-  if (c.classes.some((k) => !element.classes.includes(k))) return false;
-  for (const p of c.pseudos) {
-    if (p.name === "not" && p.arg?.trim() === ":disabled") continue;
-    if (TRACKED_PSEUDOS.includes(p.name) && !STATE_PSEUDOS[state].includes(p.name)) return false;
-  }
-  return true;
-}
-
-// ── Stylesheet model ────────────────────────────────────────────────────────
-
-type Source = "app.css" | "tokens.css" | "page";
-interface Rule {
-  source: Source;
-  selector: string; // one selector of the rule, as written
-  spec: Spec;
-  decls: { prop: string; value: string }[];
-  order: number;
-}
-
-function parseRules(css: string, source: Source, scopedBonus: boolean): Rule[] {
-  const rules: Rule[] = [];
-  let order = 0;
-  postcss.parse(css).walkRules((rule) => {
-    const parent = rule.parent;
-    if (parent && parent.type === "atrule" && /keyframes$/i.test((parent as postcss.AtRule).name))
-      return;
-    const decls: { prop: string; value: string }[] = [];
-    rule.each((n) => {
-      if (n.type === "decl") decls.push({ prop: n.prop.toLowerCase(), value: n.value });
-    });
-    for (const selector of rule.selectors) {
-      let spec = specificity(selector);
-      if (scopedBonus && !isFullyGlobal(selector)) spec = add(spec, [0, 1, 0]);
-      rules.push({ source, selector: selector.trim(), spec, decls, order: order++ });
-    }
+function declarations(css: string): Decl[] {
+  const out: Decl[] = [];
+  postcss.parse(css).walkDecls((d) => {
+    const rule = d.parent as postcss.Rule;
+    if (rule?.type === "rule") out.push({ selector: rule.selector, prop: d.prop, value: d.value });
   });
-  return rules;
-}
-
-const styleBlocks = PAGE.match(/<style[^>]*>[\s\S]*?<\/style>/g) ?? [];
-const PAGE_CSS = styleBlocks[0]?.replace(/^<style[^>]*>/, "").replace(/<\/style>$/, "") ?? "";
-const APP_RULES = parseRules(APP_CSS, "app.css", false);
-const TOKEN_RULES = parseRules(TOKENS_CSS, "tokens.css", false);
-const PAGE_RULES = parseRules(PAGE_CSS, "page", true);
-const GLOBAL_RULES = [...APP_RULES, ...TOKEN_RULES];
-
-const isCardRule = (r: Rule) =>
-  r.source === "page" && unwrapGlobal(r.selector).includes(".timer-card-wrap");
-const CARD_RULES = PAGE_RULES.filter(isCardRule);
-const PAGE_OTHER_RULES = PAGE_RULES.filter((r) => !isCardRule(r));
-
-// ── Markup ──────────────────────────────────────────────────────────────────
-
-/** End index of an opening tag, skipping `>` inside {...} expressions and quoted values. */
-function tagEnd(text: string, from: number): number {
-  let brace = 0;
-  let quote: string | null = null;
-  for (let i = from; i < text.length; i++) {
-    const ch = text[i];
-    if (quote) {
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (brace === 0 && (ch === '"' || ch === "'")) {
-      quote = ch;
-      continue;
-    }
-    if (ch === "{") brace++;
-    else if (ch === "}") brace--;
-    else if (ch === ">" && brace === 0) return i;
-  }
-  throw new Error("unterminated tag");
-}
-
-interface ButtonEl {
-  classes: string[];
-  body: string;
-  open: string;
-}
-
-function collectButtons(text: string): ButtonEl[] {
-  const out: ButtonEl[] = [];
-  let at = text.indexOf("<button");
-  while (at !== -1) {
-    const end = tagEnd(text, at);
-    const open = text.slice(at, end + 1);
-    const closeMatch = /<\/button\s*>/.exec(text.slice(end));
-    if (!closeMatch) throw new Error("button without closing tag");
-    const close = end + closeMatch.index;
-    const body = text.slice(end + 1, close);
-    const cls = /\sclass="([^"]*)"/.exec(open)?.[1].split(/\s+/).filter(Boolean) ?? [];
-    for (const m of open.matchAll(/class:([\w-]+)/g)) cls.push(m[1]);
-    out.push({ classes: cls, body, open });
-    at = text.indexOf("<button", close + 1);
-  }
   return out;
 }
 
-const BUTTONS = collectButtons(PAGE);
-const PRIMARIES = BUTTONS.filter((b) => b.classes.includes("timer-cta-primary"));
-const GHOSTS = BUTTONS.filter((b) => b.classes.includes("timer-cta-ghost"));
+const PAGE_DECLS = declarations(styleOf(PAGE));
+const STAGE_DECLS = declarations(styleOf(STAGE));
 
-// ── Tokens and colour maths ─────────────────────────────────────────────────
+/** The stage actions snippet of the page (where the clock buttons live). */
+const ACTIONS = (() => {
+  const stage = PAGE.indexOf("<Stage ");
+  const start = PAGE.indexOf("{#snippet actions()}", stage);
+  const end = PAGE.indexOf("{/snippet}", start);
+  expect(stage).toBeGreaterThan(-1);
+  expect(start).toBeGreaterThan(stage);
+  return PAGE.slice(start, end);
+})();
+const BUTTONS = [...ACTIONS.matchAll(/<button\b([\s\S]*?)>([\s\S]*?)<\/button\s*>/g)].map((m) => ({
+  classes: /\sclass="([^"]*)"/.exec(m[1])?.[1].split(/\s+/).filter(Boolean) ?? [],
+  body: m[2],
+}));
 
-const DECLARED_TOKENS = new Set([...TOKENS_CSS.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+const PAINT =
+  /^(color|background|background-color|background-image|border-color|outline|outline-color|box-shadow)$/;
+const BUTTONISH = /(^|[\s>+~(,])(button|\.btn(-primary)?|\.stage-actions)\b/;
 
-interface Combo {
-  id: string;
-  theme: Theme;
-  mode: Mode;
-}
+describe("clock buttons (Issue #546) - markup", () => {
+  it("parses real CSS and finds the stage buttons (anti-vacuity)", () => {
+    expect(PAGE_DECLS.length).toBeGreaterThan(200);
+    expect(STAGE_DECLS.length).toBeGreaterThan(5);
+    expect(BUTTONS.length).toBeGreaterThanOrEqual(3);
+  });
 
-/** The theme ids of theme.ts (its `id: "…"` literals) crossed with light/dark. */
-function comboList(): Combo[] {
-  const slice = THEME_TS.slice(THEME_TS.indexOf("export const themes"));
-  const block = slice.slice(0, slice.indexOf("];"));
-  const themes = [...block.matchAll(/id:\s*"(\w+)"/g)].map((m) => m[1]);
-  const combos: Combo[] = [];
-  for (const theme of themes)
-    for (const mode of ["light", "dark"])
-      combos.push({ id: `${theme}-${mode}`, theme: theme as Theme, mode: mode as Mode });
-  return combos;
-}
-
-/** Resolves every custom property for one combination through the shared cascade resolver. */
-function resolveTokens(combo: Combo): Map<string, string> {
-  return resolveCombination(TOKENS_CSS, combo.theme, combo.mode);
-}
-
-function tokenRgb(tokens: Map<string, string>, name: string): Rgba {
-  if (!tokens.has(name)) throw new Error(`token ${name} is not defined`);
-  return resolveColor(tokens, `var(${name})`);
-}
-
-/**
- * `var(--x)` or `color-mix(in srgb, var(--a) N%, var(--b) | transparent)`, nothing else: any other
- * expression throws instead of passing silently. The value is then resolved by the shared resolver.
- */
-function evalColor(value: string, tokens: Map<string, string>): Rgba {
-  const v = value.trim();
-  const supported =
-    /^var\(--[\w-]+\)$/.test(v) ||
-    /^color-mix\(\s*in srgb\s*,\s*var\(--[\w-]+\)\s+\d+(?:\.\d+)?%\s*,\s*(?:var\(--[\w-]+\)|transparent)\s*\)$/.test(
-      v,
+  it("renders exactly one primary button with the label and the spinner", () => {
+    const primaries = BUTTONS.filter((b) => b.classes.includes("btn-primary"));
+    expect(primaries).toHaveLength(1);
+    expect(primaries[0].body).toContain("{primaryLabel}");
+    expect(primaries[0].body).toMatch(
+      /\{#if clockLoading\}\s*<span class="btn-spinner"><\/span>\s*\{\/if\}/,
     );
-  if (!supported) throw new Error(`Unsupported colour expression: ${value}`);
-  return resolveColor(tokens, v);
-}
-
-// ── Cascade helpers ─────────────────────────────────────────────────────────
-
-const GROUPS = {
-  COLOR: ["color"],
-  FILL: ["background", "background-color", "background-image"],
-  RING: ["outline", "outline-color", "outline-style", "outline-width", "box-shadow"],
-  BORDER: [
-    "border",
-    "border-color",
-    "border-top-color",
-    "border-right-color",
-    "border-bottom-color",
-    "border-left-color",
-  ],
-} as const;
-type Group = keyof typeof GROUPS;
-
-const declares = (r: Rule, group: Group) =>
-  r.decls.some((d) => (GROUPS[group] as readonly string[]).includes(d.prop));
-
-function reaching(rules: Rule[], el: Element, state: State, group: Group): Rule[] {
-  return rules.filter((r) => declares(r, group) && canReach(r.selector, el, state));
-}
-
-function top(rules: Rule[]): Rule | null {
-  return rules.reduce<Rule | null>(
-    (best, r) => (best && cmp(best.spec, r.spec) >= 0 ? best : r),
-    null,
-  );
-}
-
-function primaryEl(): Element {
-  expect(PRIMARIES, "exactly one primary clock button").toHaveLength(1);
-  return { tag: "button", classes: PRIMARIES[0].classes };
-}
-const SPINNER_EL: Element = { tag: "span", classes: ["btn-spinner"] };
-
-// ── Tests ───────────────────────────────────────────────────────────────────
-
-describe("clock card CTA (Issue #546) - specificity engine", () => {
-  it("computes the specificity of the shapes that matter", () => {
-    expect(specificity(".btn-primary:hover:not(:disabled)")).toEqual([0, 3, 0]);
-    expect(specificity('[data-theme="salz"][data-mode="dark"] .btn-primary')).toEqual([0, 3, 0]);
-    expect(specificity(":where(button, a):focus-visible")).toEqual([0, 1, 0]);
-    expect(
-      specificity(":global(.timer-card-wrap .timer-cta-primary:hover:not(:disabled))"),
-    ).toEqual([0, 4, 0]);
-    expect(specificity("button")).toEqual([0, 0, 1]);
+    expect(primaries[0].classes).toEqual(["btn", "btn-primary"]);
   });
 
-  it("parses a non-trivial amount of real CSS (anti-vacuity)", () => {
-    expect(styleBlocks).toHaveLength(1);
-    expect(GLOBAL_RULES.length).toBeGreaterThan(300);
-    expect(CARD_RULES.length).toBeGreaterThan(5);
-  });
-});
-
-describe("clock card CTA (Issue #546) - markup", () => {
-  it("renders exactly one primary button with the label and the spinner, and no btn-* variant", () => {
-    expect(PRIMARIES).toHaveLength(1);
-    const p = PRIMARIES[0];
-    expect(p.body).toContain("{primaryLabel}");
-    expect(p.body).toMatch(/\{#if clockLoading\}\s*<span class="btn-spinner"><\/span>\s*\{\/if\}/);
-    expect(
-      p.classes.filter((k) => k.startsWith("btn-")),
-      "no global variant on the primary card button",
-    ).toEqual([]);
-    expect(p.classes).toContain("btn");
+  it("every other stage button is a global recipe (outline, or primary only while a break runs)", () => {
+    const others = BUTTONS.filter((x) => !x.classes.includes("btn-primary"));
+    for (const b of others) {
+      // the break toggle composes its variant through class: directives (checked below)
+      expect(b.classes).toEqual(
+        b.classes.includes("btn-outline") ? ["btn", "btn-outline"] : ["btn"],
+      );
+    }
+    const toggle = [...ACTIONS.matchAll(/<button\b([\s\S]*?)>/g)]
+      .map((m) => m[1])
+      .find((open) => open.includes("onclick={handleBreakToggle}"));
+    expect(toggle).toContain("class:btn-primary={breakStartedAt}");
+    expect(toggle).toContain("class:btn-outline={!breakStartedAt}");
   });
 
   it("primaryClockLabel can only return the two labels the CTA renders", () => {
@@ -495,176 +120,35 @@ describe("clock card CTA (Issue #546) - markup", () => {
       'primaryClockLabel(day: DayState): "Einstempeln" | "Ausstempeln" | null',
     );
   });
+});
 
-  it("finds the ghost card buttons", () => {
-    expect(GHOSTS.length).toBeGreaterThanOrEqual(2);
+describe("clock buttons (Issue #546) - cascade", () => {
+  it("no page rule paints a button: the global recipe cannot be out-specified from here", () => {
+    const offenders = PAGE_DECLS.filter((d) => PAINT.test(d.prop) && BUTTONISH.test(d.selector));
+    expect(offenders).toEqual([]);
+  });
+
+  it("the Stage block sizes its buttons and paints none of them", () => {
+    const sized = STAGE_DECLS.filter((d) => /stage-actions/.test(d.selector));
+    expect(sized.some((d) => d.prop === "min-height")).toBe(true); // positive control
+    expect(sized.filter((d) => PAINT.test(d.prop))).toEqual([]);
+  });
+
+  it("the matcher would catch a painting rule (positive control)", () => {
+    const probe = declarations(".stage-actions :global(button) { color: white; }");
+    expect(probe.filter((d) => PAINT.test(d.prop) && BUTTONISH.test(d.selector))).toHaveLength(1);
   });
 });
 
-describe("clock card CTA (Issue #546) - cascade", () => {
-  const competitorsOf = (el: Element, state: State, group: Group): Rule[] => [
-    ...reaching(GLOBAL_RULES, el, state, group),
-    ...reaching(PAGE_OTHER_RULES, el, state, group),
-  ];
-
-  const check = (label: string, el: Element, state: State, group: Group) => {
-    const card = top(reaching(CARD_RULES, el, state, group));
-    expect(card, `${label} ${state} ${group}: a card rule must declare it`).not.toBeNull();
-    for (const rival of competitorsOf(el, state, group)) {
-      expect(
-        cmp(card!.spec, rival.spec),
-        `${label} ${state} ${group}: card rule "${card!.selector}" [${card!.spec}] must out-specify "${rival.selector}" [${rival.spec}] (${rival.source})`,
-      ).toBeGreaterThan(0);
-    }
-  };
-
-  it("primary button: colour and fill win in base, hover and focus", () => {
-    const el = primaryEl();
-    for (const state of ["base", "hover", "focus"] as State[])
-      for (const group of ["COLOR", "FILL"] as Group[]) check("primary", el, state, group);
-  });
-
-  it("primary and ghost buttons: the focus ring wins", () => {
-    check("primary", primaryEl(), "focus", "RING");
-    for (const g of GHOSTS) check("ghost", { tag: "button", classes: g.classes }, "focus", "RING");
-  });
-
-  it("ghost buttons: colour and fill win in base and hover", () => {
-    for (const g of GHOSTS)
-      for (const state of ["base", "hover"] as State[])
-        for (const group of ["COLOR", "FILL"] as Group[])
-          check("ghost", { tag: "button", classes: g.classes }, state, group);
-  });
-
-  it("spinner inside the primary button: border colours win over the page's scoped rule", () => {
-    check("spinner", SPINNER_EL, "base", "BORDER");
-  });
-
-  it("competitor lists are not vacuous", () => {
-    const el = primaryEl();
-    expect(
-      competitorsOf(el, "focus", "RING").some((r) => r.selector.includes("focus-visible")),
-    ).toBe(true);
-    expect(competitorsOf(el, "base", "FILL").some((r) => r.selector === ".btn")).toBe(true);
-    expect(
-      competitorsOf(SPINNER_EL, "base", "BORDER").some(
-        (r) => r.source === "page" && r.selector === ".btn-spinner",
-      ),
-    ).toBe(true);
-    const scoped = competitorsOf(SPINNER_EL, "base", "BORDER").find(
-      (r) => r.source === "page" && r.selector === ".btn-spinner",
-    )!;
-    expect(scoped.spec).toEqual([0, 2, 0]);
-  });
-});
-
-describe("clock card CTA (Issue #546) - tokens only", () => {
-  const spinnerRules = CARD_RULES.filter((r) => /\.btn-spinner$/.test(unwrapGlobal(r.selector)));
-  const focusRules = CARD_RULES.filter((r) => r.selector.includes("focus-visible"));
-
-  it("the primary rules, the card spinner rule and the focus rule use only tokens", () => {
-    const el = primaryEl();
-    const checked = new Set<Rule>([...spinnerRules, ...focusRules]);
-    for (const state of ["base", "hover", "focus"] as State[])
-      for (const group of ["COLOR", "FILL", "RING"] as Group[])
-        for (const r of reaching(CARD_RULES, el, state, group)) checked.add(r);
-    // positive controls: the spinner and focus rules really are part of the checked set
-    expect(spinnerRules.length).toBeGreaterThanOrEqual(1);
-    expect(focusRules.length).toBeGreaterThanOrEqual(1);
-    expect(checked.size).toBeGreaterThanOrEqual(4);
-    for (const r of checked) {
-      for (const d of r.decls) {
-        if (
-          ![...GROUPS.COLOR, ...GROUPS.FILL, ...GROUPS.RING, ...GROUPS.BORDER].includes(
-            d.prop as never,
-          )
-        )
-          continue;
-        expect(
-          d.value,
-          `${r.selector} { ${d.prop} } must not contain a literal colour`,
-        ).not.toMatch(/#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(|\b(white|black)\b/i);
-        for (const m of d.value.matchAll(/var\((--[\w-]+)/g))
-          expect(
-            DECLARED_TOKENS.has(m[1]),
-            `${r.selector} references undeclared token ${m[1]}`,
-          ).toBe(true);
-      }
-    }
-  });
-});
-
-describe("clock card CTA (Issue #546) - WCAG contrast per theme x mode combination", () => {
-  const combos = comboList();
-
-  it("derives exactly the six combinations of the theme store (#842, D-842-25)", () => {
-    expect(combos).toHaveLength(6);
-    expect(combos.map((c) => c.id).sort()).toEqual(
-      COMBINATIONS.map((c) => `${c.theme}-${c.mode}`).sort(),
+describe("clock buttons (Issue #546) - spinner", () => {
+  it("the spinner arc draws in currentColor, so it carries the label's contrast", () => {
+    const spinner = PAGE_DECLS.filter((d) => d.selector === ".btn-spinner");
+    const top = spinner.find((d) => d.prop === "border-top-color");
+    const ring = spinner.find((d) => d.prop === "border");
+    expect(top?.value).toBe("currentColor");
+    expect(ring?.value).toMatch(/color-mix\(in srgb, currentColor \d+%, transparent\)/);
+    expect(spinner.map((d) => d.value).join(" ")).not.toMatch(
+      /--brand-ink|#[0-9a-f]{3,6}\b|white/i,
     );
-    expect(new Set(combos.map((c) => c.theme)).size).toBe(3);
-    expect(new Set(combos.map((c) => c.mode)).size).toBe(2);
-  });
-
-  it("token resolution distinguishes themes and modes (positive controls)", () => {
-    const get = (id: string) => resolveTokens(combos.find((c) => c.id === id)!);
-    expect(get("pflaume-dark").get("--brand-hover")).not.toBe(
-      get("pflaume-light").get("--brand-hover"),
-    );
-    expect(get("salz-light").get("--brand-hover")).not.toBe(
-      get("pflaume-light").get("--brand-hover"),
-    );
-    expect(get("pflaume-dark").get("--card")).not.toBe(get("pflaume-light").get("--card"));
-  });
-
-  it("an unsupported colour expression in the card rules throws instead of passing", () => {
-    const tokens = resolveTokens(combos[0]);
-    expect(() => evalColor("#ffffff", tokens)).toThrow(/Unsupported colour expression/);
-    expect(() => evalColor("rgba(255, 255, 255, 0.5)", tokens)).toThrow(/Unsupported/);
-    expect(() => evalColor("var(--no-such-token)", tokens)).toThrow(/not defined/);
-  });
-
-  it("label >= 4.5:1 in base, hover and focus; spinner arc >= 3:1; focus ring >= 3:1 against its band", () => {
-    const el = primaryEl();
-    const effective = (state: State, group: Group, prop: RegExp): string => {
-      const rule = top(reaching(CARD_RULES, el, state, group))!;
-      const decl = [...rule.decls].reverse().find((d) => prop.test(d.prop))!;
-      return decl.value;
-    };
-    const spinnerRule = top(
-      CARD_RULES.filter((r) => /\.btn-spinner$/.test(unwrapGlobal(r.selector))),
-    )!;
-    let arcValue = "";
-    for (const d of spinnerRule.decls)
-      if (d.prop === "border-color" || d.prop === "border-top-color") arcValue = d.value;
-    const ringRule = top(reaching(CARD_RULES, el, "focus", "RING"))!;
-    const ringVar = /var\((--[\w-]+)\)/.exec(
-      ringRule.decls.find((d) => d.prop === "outline")!.value,
-    )![1];
-    const bandVar = /var\((--[\w-]+)\)/.exec(
-      ringRule.decls.find((d) => d.prop === "box-shadow")!.value,
-    )![1];
-
-    let labelChecks = 0;
-    for (const combo of combos) {
-      const tokens = resolveTokens(combo);
-      for (const state of ["base", "hover", "focus"] as State[]) {
-        const text = evalColor(effective(state, "COLOR", /^color$/), tokens);
-        const fill = evalColor(effective(state, "FILL", /^background(-color)?$/), tokens);
-        expect(contrast(text, fill), `${combo.id} ${state} label`).toBeGreaterThanOrEqual(4.5);
-        labelChecks++;
-      }
-      const baseFill = evalColor(effective("base", "FILL", /^background(-color)?$/), tokens);
-      expect(
-        contrast(evalColor(arcValue, tokens), baseFill),
-        `${combo.id} loading spinner arc`,
-      ).toBeGreaterThanOrEqual(3);
-      expect(
-        contrast(tokenRgb(tokens, ringVar), tokenRgb(tokens, bandVar)),
-        `${combo.id} focus ring vs band`,
-      ).toBeGreaterThanOrEqual(3);
-    }
-    // anti-vacuity: six combinations x three states were actually measured
-    expect(labelChecks).toBe(18);
   });
 });

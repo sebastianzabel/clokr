@@ -50,8 +50,8 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
 
-    // The v1.5 dashboard hero is the `.timer-card` (replaces the old `.clock-btn`).
-    const timerCard = page.locator(".timer-card").first();
+    // Since #845 the clock is the Stage of Ich › Mein Tag (replaces the v1.5 `.timer-card`).
+    const timerCard = page.getByTestId("mein-tag-stage");
     await expect(timerCard).toBeVisible();
 
     const box = await timerCard.boundingBox();

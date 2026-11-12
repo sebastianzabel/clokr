@@ -3,7 +3,7 @@
 // The forecast of a personal saldo is worded by `lib/saldo/forecast-label.ts` from the server's
 // `unconfirmedMonths` (and `hasClosedMonth`); a view that forgets to pass the number would fall back
 // to the "unknown" wording and quietly read "Seit Monatsabschluss" for a genuine running month. These
-// pins read the five consumers (dashboard tile, /leave KPI, the leave form, both Konto cards) and
+// pins read the five consumers (Mein Tag figure, /leave KPI, the leave form, both Konto cards) and
 // fail when the value stops flowing from the endpoint to the primitive. The behaviour of the
 // primitives themselves is pinned by their mounted tests; the ban on a hard-coded wording is the
 // guard `team-saldo-one-place-588.test.ts`.
@@ -46,17 +46,14 @@ function elementAfter(text: string, open: string, from = 0): string {
 }
 
 describe("personal saldo views pass the data to the forecast label (Issue #588, P-14)", () => {
-  it("dashboard: the response type declares the count and the split tile passes it", () => {
+  it("dashboard (Mein Tag, #845): the GET /overtime/:id answer type declares the count and the figure passes it", () => {
     const text = read(DASHBOARD);
-    expect(text).toMatch(/unconfirmedMonths\?: number \| null;/);
-    const tile = elementAfter(
-      text,
-      "<SaldoAnzeige",
-      text.indexOf("confirmedMinutes !== undefined"),
-    );
-    expect(tile).toContain("confirmedMinutes={stats.overtime.confirmedMinutes}");
-    expect(tile).toMatch(/unconfirmedMonths=\{stats\.overtime\.unconfirmedMonths/);
-    expect(tile).toContain("hasClosedMonth={stats.overtime.hasClosedMonth");
+    // the page hands the whole answer to saldoFigure(), which words the forecast
+    expect(text).toMatch(/api\.get<OvertimeAnswer>\(`\/overtime\/\$\{/);
+    expect(text).toContain("saldoFigure(ownOvertime)");
+    const helper = read("lib/dashboard/mein-tag.ts");
+    expect(helper).toMatch(/unconfirmedMonths\?: number \| null;/);
+    expect(helper).toContain("forecastLabel(answer.unconfirmedMonths, answer.hasClosedMonth)");
   });
 
   it("/leave: the KPI reads the count from /leave/overtime-balance and passes it", () => {

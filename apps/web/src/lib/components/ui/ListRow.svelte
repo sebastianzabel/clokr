@@ -58,6 +58,8 @@
     highlight?: boolean;
     /** The title becomes the row's one button, stretched over the row; ignored when `href` is set. */
     onPrimary?: () => void;
+    /** Issue #845: content before the text in a row without avatar (a status chip). */
+    leading?: Snippet;
   }
 
   let {
@@ -76,6 +78,7 @@
     kind,
     highlight = false,
     onPrimary,
+    leading,
   }: Props = $props();
 
   let colour = $derived(avatarIndex(avatarKey ?? title));
@@ -90,6 +93,7 @@
   id={rowId}
   data-testid={testId}
   data-kind={kind}
+  class:list-row--leading={!avatar && !!leading}
 >
   {#if avatar}
     <span
@@ -98,6 +102,7 @@
       aria-hidden="true">{initialsOf(title)}</span
     >
   {/if}
+  {#if leading && !avatar}<span class="list-leading">{@render leading()}</span>{/if}
   <div class="list-text">
     {#if href}
       <a class="list-title list-link" {href}>{title}</a>
@@ -120,6 +125,11 @@
 </li>
 
 <style>
+  .list-leading {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+  }
   .list-row {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -252,6 +262,9 @@
   }
   .list-row--bare.list-row--task {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .list-row--leading {
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
   .list-row--bare .list-actions {
     grid-column: 1;
