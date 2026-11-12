@@ -725,14 +725,16 @@
 {#if availableKinds.length > 0}
   <div class="aufgaben-controls">
     {#if availableKinds.length > 1}
-      <SegmentedControl
-        options={typOptions}
-        value={activeTyp}
-        name="aufgaben-typ"
-        ariaLabel="Art der Aufgabe"
-        size="sm"
-        onchange={onTypSelected}
-      />
+      <div class="aufgaben-typ">
+        <SegmentedControl
+          options={typOptions}
+          value={activeTyp}
+          name="aufgaben-typ"
+          ariaLabel="Art der Aufgabe"
+          size="sm"
+          onchange={onTypSelected}
+        />
+      </div>
     {/if}
     <SegmentedControl
       options={ansichtOptions}
@@ -1034,6 +1036,14 @@
   .aufgaben-band,
   .aufgaben-list {
     margin-bottom: var(--s-4);
+  }
+
+  /* The type segment can hold up to six kinds: on a narrow screen it scrolls inside its own box
+     instead of widening the page. */
+  .aufgaben-typ {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   /* The type and view segments share one row; they wrap on a phone. */

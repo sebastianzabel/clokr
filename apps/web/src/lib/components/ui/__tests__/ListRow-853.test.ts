@@ -156,3 +156,12 @@ describe("List - testId", () => {
     expect(screen.getByRole("list", { name: "Hinweise" }).hasAttribute("data-testid")).toBe(false);
   });
 });
+
+describe("ListRow - task variant subtitle (plan 853-10)", () => {
+  it("lets the subtitle of a task wrap, because it carries decision facts (periods, a notice text)", () => {
+    // jsdom computes no layout, so the rule is pinned in the source: the default variant keeps the
+    // single-line ellipsis, the task variant overrides it.
+    expect(rowSource).toMatch(/\.list-row--task \.list-subtitle\s*\{[^}]*white-space:\s*normal/);
+    expect(rowSource).toMatch(/\.list-title,\s*\.list-subtitle\s*\{[^}]*white-space:\s*nowrap/);
+  });
+});

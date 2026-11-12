@@ -222,9 +222,14 @@
     border-radius: var(--r-control);
   }
 
-  /* Task variant: the buttons sit under the text block, in the text column. */
+  /* Task variant: the buttons sit under the text block, in the text column. The subtitle of a task
+     carries decision facts (periods, a notice text), so it wraps instead of being cut off. */
   .list-row--task {
     align-items: start;
+  }
+  .list-row--task .list-subtitle {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .list-actions {
     grid-column: 2 / -1;

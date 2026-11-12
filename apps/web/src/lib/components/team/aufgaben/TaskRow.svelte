@@ -44,7 +44,6 @@
   title={row.title}
   subtitle={row.subtitle}
   avatarKey={row.personName}
-  avatar={row.kind !== "pausenbefund"}
   testId={`task-row-${row.kind}-${row.sourceId}`}
   kind={row.kind}
   {rowId}

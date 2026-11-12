@@ -93,9 +93,9 @@ describe("TaskRow - plan 10 kinds", () => {
     typeCode: null,
   };
 
-  it("a Pausenbefund row has no avatar (its title is the notice's, not a person) and no status chip", () => {
+  it("a Pausenbefund row keeps the avatar column so the rows of the list align, and has no status chip", () => {
     const { container } = renderWithTheme(TaskRow, { row: noticeRow });
-    expect(container.querySelector(".list-avatar")).toBeNull();
+    expect(container.querySelector(".list-avatar")).not.toBeNull();
     expect(screen.getAllByText("Pausenbefund").length).toBeGreaterThan(0);
     expect(container.querySelectorAll(".chip").length).toBe(1);
   });
