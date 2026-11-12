@@ -85,6 +85,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/prisma-unique-violation.ts": "rahmen", // generic Prisma P2002 target reader; imported by the platform and scheduling contexts, owns no model
   "src/utils/crypto.ts": "rahmen", // generic crypto helper (hashing/encryption), no model, no single owning context
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
+  "src/utils/csv-cell.ts": "rahmen", // Issue #854 — CSV cell quoting and formula-injection guard shared by the period CSV and the audit CSV; pure, no model
   "src/utils/audit-diff.ts": "rahmen", // generic before/after diff for settings audit rows (Issue #285); pure, no model, imported by the platform and absence settings routes
   "src/utils/client-log-url.ts": "rahmen", // strips query/fragment from client-reported URLs before logging (Issue #610 review WR-02); pure, no model
   "src/utils/code-unit-order.ts": "rahmen", // locale-independent code-unit comparator for stable sorts; pure, no model, imported by the platform and absence contexts
@@ -133,6 +134,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    WorkSchedule/PublicHoliday/SchoolHolidayPeriod/AuditLog/ApiKey/Notification ────────────
   "src/contexts/platform/api/api-keys.ts": "unterbau", // writes ApiKey only
   "src/contexts/platform/api/audit-logs.ts": "unterbau", // reads AuditLog only
+  "src/contexts/platform/audit-log-read.ts": "unterbau", // Issue #854 (#583) — the filter parser and where-builder shared by GET /audit-logs and its CSV export; reads AuditLog only
+  "src/contexts/platform/audit-csv.ts": "unterbau", // Issue #854 (#583) — pure CSV formatting of AuditLog rows with the shared German labels; no Prisma, no rule
   "src/contexts/platform/api/support-accesses.ts": "unterbau", // Issue #93: tenant view of SupportAccess
   "src/contexts/platform/api/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
   "src/contexts/platform/api/avatars.ts": "unterbau", // writes Employee.avatarUrl only

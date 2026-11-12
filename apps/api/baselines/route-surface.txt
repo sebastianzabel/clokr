@@ -112,6 +112,7 @@
 │   ├── /coverage-rules (GET, HEAD, POST)
 │   ├── /deferred (GET, HEAD)
 │   ├── /dismiss-all (DELETE)
+│   ├── /export (GET, HEAD)
 │   ├── /generate-week (POST)
 │   ├── /json (GET, HEAD)
 │   ├── /load (GET, HEAD)
