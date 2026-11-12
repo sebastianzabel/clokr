@@ -964,6 +964,9 @@ async function checkCell(
         // `.sr-only` is the visually-hidden recipe (a 1 px clipped box holding text for screen
         // readers) - clipped by design, not content a user is denied.
         if (e.closest(".sr-only")) return false;
+        // The DataTable card layout (below 760 px container width) hides its header row with the
+        // same visually-hidden recipe, so the column names stay with screen readers (#854).
+        if (e.closest(".dt-table thead")) return false;
         return (ox === "hidden" || ox === "clip") && e.scrollWidth > e.clientWidth + 1;
       })
       .slice(0, 8)

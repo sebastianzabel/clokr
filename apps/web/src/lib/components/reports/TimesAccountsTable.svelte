@@ -334,12 +334,12 @@
     padding-block: var(--s-1);
   }
 
+  /* A long name wraps instead of ending in an ellipsis: a cut-off name is content denied on a
+     phone (the #612 visibility matrix measures it). */
   .period-person-link {
     display: block;
     max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
     font-weight: 600;
     line-height: 1.3;
     color: var(--text);
