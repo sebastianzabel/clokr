@@ -175,6 +175,19 @@
           "label": "Zugang"
         }
       ]
+    },
+    {
+      "slug": "daten-protokoll",
+      "path": "/verwalten/daten/protokoll",
+      "heading": "Protokoll",
+      "tabs": [
+        {
+          "label": "Protokoll"
+        },
+        {
+          "label": "Aufbewahrung"
+        }
+      ]
     }
   ]
 }

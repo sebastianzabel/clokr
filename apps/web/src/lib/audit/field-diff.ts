@@ -11,14 +11,15 @@ import { sameSettingValue } from "$lib/settings/section-state";
 
 import { actionLabel, entityLabel, fieldLabel } from "./labels";
 
-export interface AuditFieldRow {
+// A type alias, not an interface: DataTable rows must be assignable to Record<string, unknown>.
+export type AuditFieldRow = {
   /** The stored key (a control value; the label is display only). */
   key: string;
   label: string;
   before: string;
   after: string;
   changed: boolean;
-}
+};
 
 /** What an absent or null value reads as. */
 export const EMPTY_VALUE = "—";

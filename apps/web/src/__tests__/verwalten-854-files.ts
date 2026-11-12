@@ -117,6 +117,7 @@ export const MIGRATED_854: readonly string[] = [
   "routes/(app)/admin/employees/[id]/+page.svelte",
   // Plan 854-23 (Daten › Protokoll): the list page with its filters and CSV export, and the retention section.
   "routes/(app)/admin/audit/+page.svelte",
+  "routes/(app)/admin/audit/[id]/+page.svelte",
   "lib/components/admin/protokoll/RetentionSection.svelte",
   // The Zugang tab opens it (deactivation with a last working day); it renders Dialog directly.
   "lib/components/admin/DeactivateEmployeeDialog.svelte",
