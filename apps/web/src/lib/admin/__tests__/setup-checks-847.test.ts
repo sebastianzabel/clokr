@@ -68,21 +68,12 @@ describe("setupChecks", () => {
   });
 });
 
-describe("setupChecks — each link opens the tab that holds its setting", () => {
+describe("setupChecks — each link opens the page and section that holds its setting", () => {
   const read = (rel: string) => readFileSync(resolve(__dirname, rel), "utf8");
-  const PAGES: Record<string, string> = {
-    "/verwalten/system/allgemein": "../../../routes/(app)/admin/system/+page.svelte",
-    "/verwalten/regeln/urlaub": "../../../routes/(app)/admin/vacation/+page.svelte",
-  };
-  // the source of one tab branch: from its `currentTab === "<tab>"` to the next branch
-  const branch = (src: string, tab: string) => {
-    const start = src.indexOf(`currentTab === "${tab}"}`);
-    expect(start, `tab branch ${tab}`).toBeGreaterThan(0);
-    const next = src.indexOf("currentTab ===", start + 20);
-    return src.slice(start, next === -1 ? undefined : next);
-  };
+  const ROUTES = "../../../routes/(app)";
+  const SECTIONS = "../../components/admin";
 
-  it("rules, mail and terminals name their tab, and the tab holds the setting", () => {
+  it("rules and mail name a section anchor of a page that renders it", () => {
     const checks = setupChecks(
       {
         salons: null,
@@ -94,29 +85,60 @@ describe("setupChecks — each link opens the tab that holds its setting", () =>
       TODAY,
     );
     const byKey = Object.fromEntries(checks.map((c) => [c.key, c.href]));
-    const expected: Array<[string, string, string]> = [
-      ["rules", "/verwalten/regeln/urlaub#arbzg", "bind:checked={gArbzgEnabled}"],
+    // key -> [href, the page that renders the section, the section file, the anchor id, a marker of the setting]
+    const expected: Array<[string, string, string, string, string, string]> = [
+      [
+        "rules",
+        "/verwalten/regeln/arbeitszeit#arbzg",
+        `${ROUTES}/verwalten/regeln/arbeitszeit/+page.svelte`,
+        `${SECTIONS}/arbeitszeit/ComplianceSection.svelte`,
+        "arbzg",
+        "bind:checked={values.arbzgEnabled}",
+      ],
       [
         "smtp",
-        "/verwalten/system/allgemein#kommunikation",
-        'data-testid="admin-system-email-emailNotificationsEnabled"',
+        "/verwalten/regeln/benachrichtigungen#mailserver",
+        `${ROUTES}/verwalten/regeln/benachrichtigungen/+page.svelte`,
+        `${SECTIONS}/benachrichtigungen/SmtpSection.svelte`,
+        "mailserver",
+        'data-testid="benachrichtigungen-smtp-host"',
       ],
-      ["terminals", "/verwalten/system/allgemein#integration", "onclick={createTerminalKey}"],
     ];
-    for (const [key, href, marker] of expected) {
+    for (const [key, href, pageFile, sectionFile, anchor, marker] of expected) {
       expect(byKey[key]).toBe(href);
-      const [path, tab] = href.split("#");
-      const src = read(PAGES[path]);
-      expect(src).toContain(`{ id: "${tab}"`);
-      expect(src).toContain("let activeTab = $state<string>(tabFromHash());");
-      expect(branch(src, tab)).toContain(marker);
+      expect(href.endsWith(`#${anchor}`)).toBe(true);
+      const sectionName = sectionFile.split("/").pop()!.replace(".svelte", "");
+      const page = read(pageFile);
+      expect(page.length).toBeGreaterThan(500);
+      expect(page, `${pageFile} renders ${sectionName}`).toContain(`<${sectionName}`);
+      const section = read(sectionFile);
+      expect(section.length).toBeGreaterThan(500);
+      expect(section).toContain(`id="${anchor}"`);
+      expect(section).toContain(marker);
     }
   });
 
+  it("terminals opens the NFC-Terminals tab of System › Integrationen", () => {
+    const checks = setupChecks(
+      { salons: null, employees: null, smtp: null, work: null, terminals: [] },
+      TODAY,
+    );
+    const href = checks.find((c) => c.key === "terminals")?.href;
+    expect(href).toBe("/verwalten/system/integrationen#terminals");
+    const page = read(`${ROUTES}/admin/integrations/+page.svelte`);
+    expect(page.length).toBeGreaterThan(500);
+    // the page opens the tab named by the hash (allow-listed in tab-hash.ts) and renders the terminals panel for it
+    expect(page).toContain("tabFromHash($page.url.hash, visibleTabIds)");
+    expect(page).toContain('value === "terminals"');
+    expect(page).toContain("<TerminalsPanel");
+    expect(read("../../settings/integrationen.ts")).toContain('value: "terminals"');
+    expect(read(`${SECTIONS}/integrationen/TerminalsPanel.svelte`)).toContain("createTerminalKey");
+  });
+
   it("the overview strips the hash before it asks the route table", () => {
-    const overview = read("../../../routes/(app)/verwalten/+page.svelte");
+    const overview = read(`${ROUTES}/verwalten/+page.svelte`);
     expect(overview).toContain('mayOpenPath($authStore.user, href.split("#")[0])');
-    expect(overview).toContain('href="/verwalten/system/allgemein#kommunikation"');
+    expect(overview).toContain('href="/verwalten/regeln/benachrichtigungen#mailserver"');
     expect(overview).not.toMatch(/mayOpenPath\(\$authStore\.user, c\.href\)/);
   });
 });
@@ -169,14 +191,26 @@ describe("mailWithoutDelivery — one rule for the overview and the mail setting
     expect(mailWithoutDelivery({ emailNotificationsEnabled: true }, null)).toBe(false);
   });
 
-  it("both pages call it (no second copy of the rule)", () => {
+  it("the overview and the mail settings use it (no second copy of the rule)", () => {
     const read = (rel: string) => readFileSync(resolve(__dirname, rel), "utf8");
     const overview = read("../../../routes/(app)/verwalten/+page.svelte");
-    const system = read("../../../routes/(app)/admin/system/+page.svelte");
-    for (const src of [overview, system]) {
+    const settings = read("../../../routes/(app)/verwalten/regeln/benachrichtigungen/+page.svelte");
+    for (const src of [overview, settings]) {
       expect(src.length).toBeGreaterThan(1000);
       expect(src).toContain("mailWithoutDelivery(");
+    }
+    expect(overview).toContain("MAIL_WITHOUT_DELIVERY_TEXT");
+    // the settings page hands the result to both sections, which show the one text
+    expect(settings).toContain("{mailWarning}");
+    const sections = "../../components/admin/benachrichtigungen";
+    for (const [file, testid] of [
+      ["EmailSection.svelte", "mail-warning"],
+      ["SmtpSection.svelte", "mail-warning-smtp"],
+    ]) {
+      const src = read(`${sections}/${file}`);
+      expect(src.length).toBeGreaterThan(1000);
       expect(src).toContain("MAIL_WITHOUT_DELIVERY_TEXT");
+      expect(src).toContain(`data-testid="${testid}"`);
     }
   });
 });

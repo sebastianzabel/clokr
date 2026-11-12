@@ -9,11 +9,16 @@
     config  - the loaded `GET /settings/security` answer
     canEdit - presentation only; the server's 403 stays the authority
     changes - bindable, the number of unsaved changes (the page sums it into markUnsaved)
+    mailWarning - Issue #847: e-mail notifications are on but no mail server can deliver (the page decides it
+              through `mailWithoutDelivery()`, the one rule)
+    onSaved - called after a successful save with the stored master switch, for that same warning
 -->
 <script lang="ts">
   import { untrack } from "svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import Note from "$components/ui/Note.svelte";
+  import { MAIL_WITHOUT_DELIVERY_TEXT } from "$lib/admin/setup-checks";
   import SettingsGroup from "$lib/components/admin/settings/SettingsGroup.svelte";
   import ToggleField from "$lib/components/admin/settings/ToggleField.svelte";
   import { countChanges, pickSection } from "$lib/settings/section-state";
@@ -32,11 +37,19 @@
     config: SecurityEmailConfig;
     canEdit?: boolean;
     changes?: number;
+    mailWarning?: boolean;
+    onSaved?: (emailNotificationsEnabled: boolean) => void;
   }
 
   // `changes` is write-only here: the parent reads it through `bind:changes`.
-  // eslint-disable-next-line no-useless-assignment
-  let { config, canEdit = true, changes = $bindable(0) }: Props = $props();
+  let {
+    config,
+    canEdit = true,
+    // eslint-disable-next-line no-useless-assignment
+    changes = $bindable(0),
+    mailWarning = false,
+    onSaved,
+  }: Props = $props();
 
   let snapshot = $state<EmailValues>(untrack(() => emailFrom(config)));
   let values = $state<EmailValues>(untrack(() => emailFrom(config)));
@@ -61,6 +74,7 @@
       );
       snapshot = $state.snapshot(values);
       toasts.success("E-Mail-Benachrichtigungen gespeichert.");
+      onSaved?.(values.emailNotificationsEnabled);
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Speichern fehlgeschlagen.");
     } finally {
@@ -90,6 +104,11 @@
     disabled={!canEdit || saving}
     testid="benachrichtigungen-email-emailNotificationsEnabled"
   />
+  {#if mailWarning}
+    <div data-testid="mail-warning">
+      <Note tone="bad">{MAIL_WITHOUT_DELIVERY_TEXT}</Note>
+    </div>
+  {/if}
 
   {#each EMAIL_TYPE_FIELDS as field (field)}
     <ToggleField

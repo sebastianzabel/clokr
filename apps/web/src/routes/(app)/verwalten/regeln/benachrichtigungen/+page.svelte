@@ -15,6 +15,7 @@
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { markUnsaved } from "$stores/unsaved";
+  import { mailWithoutDelivery } from "$lib/admin/setup-checks"; // Issue #847
   import { pageLabel } from "$lib/nav/page-labels";
   import { mayOpenSection, settingsSection } from "$lib/settings/settings-pages";
   import type {
@@ -43,6 +44,25 @@
   let security = $state<Loaded<SecurityEmailConfig>>({ status: "idle" });
   let work = $state<Loaded<ReminderConfig>>({ status: "idle" });
 
+  // Issue #847: whether mail can be sent (the server's `deliveryReady`) and the STORED master switch decide
+  // the one warning „E-Mail aktiv, SMTP nicht eingerichtet“ - both sections show it, the rule is the shared
+  // `mailWithoutDelivery()`. A source that was not read (no permission, load failed) never warns.
+  let deliveryReady = $state<boolean | null>(null);
+  let emailEnabled = $state<boolean | undefined>(undefined);
+  const mailWarning = $derived(
+    mailWithoutDelivery(
+      { emailNotificationsEnabled: emailEnabled },
+      deliveryReady === null ? null : { deliveryReady },
+    ),
+  );
+
+  /** Re-read after an SMTP save: the warning follows the server's answer, not the typed form. */
+  async function refreshDelivery() {
+    deliveryReady =
+      (await api.get<SmtpConfig>("/settings/smtp").catch(() => null))?.deliveryReady ??
+      deliveryReady;
+  }
+
   const user = $derived($authStore.user);
   const show = $derived({
     smtp: mayOpenSection(user, settingsSection("benachrichtigungen-smtp")),
@@ -62,12 +82,18 @@
   // Each endpoint is asked once, as soon as the person is known to be allowed to open its section.
   $effect(() => {
     if (show.smtp && untrack(() => smtp.status) === "idle") {
-      void load<SmtpConfig>("/settings/smtp", (next) => (smtp = next));
+      void load<SmtpConfig>("/settings/smtp", (next) => {
+        smtp = next;
+        if (next.status === "ready") deliveryReady = next.data.deliveryReady ?? null;
+      });
     }
   });
   $effect(() => {
     if (show.email && untrack(() => security.status) === "idle") {
-      void load<SecurityEmailConfig>("/settings/security", (next) => (security = next));
+      void load<SecurityEmailConfig>("/settings/security", (next) => {
+        security = next;
+        if (next.status === "ready") emailEnabled = next.data.emailNotificationsEnabled ?? false;
+      });
     }
   });
   $effect(() => {
@@ -120,14 +146,24 @@
 
 {#if show.smtp}
   {#if smtp.status === "ready"}
-    <SmtpSection config={smtp.data} bind:changes={changes.smtp} />
+    <SmtpSection
+      config={smtp.data}
+      bind:changes={changes.smtp}
+      {mailWarning}
+      onSaved={refreshDelivery}
+    />
   {:else if smtp.status === "failed"}
     <div role="alert"><Note tone="bad">{LOAD_ERROR} (E-Mail-Server)</Note></div>
   {/if}
 {/if}
 {#if show.email}
   {#if security.status === "ready"}
-    <EmailSection config={security.data} bind:changes={changes.email} />
+    <EmailSection
+      config={security.data}
+      bind:changes={changes.email}
+      {mailWarning}
+      onSaved={(enabled) => (emailEnabled = enabled)}
+    />
   {:else if security.status === "failed"}
     <div role="alert"><Note tone="bad">{LOAD_ERROR} (E-Mail-Benachrichtigungen)</Note></div>
   {/if}

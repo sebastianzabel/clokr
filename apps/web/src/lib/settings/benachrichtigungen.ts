@@ -21,6 +21,8 @@ export interface SmtpConfig {
   smtpFromEmail?: string | null;
   smtpFromName?: string | null;
   smtpSecure?: boolean;
+  /** The server's answer whether mail can be sent at all (Issue #847); read-only, never written back. */
+  deliveryReady?: boolean;
 }
 
 export const DEFAULT_SMTP_PORT = 587;

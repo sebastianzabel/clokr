@@ -65,6 +65,7 @@
 </script>
 
 <SettingsGroup
+  id="arbzg"
   title="ArbZG-Prüfung"
   description="Arbeitszeitgesetz: Höchstarbeitszeit, Pausenpflicht und Ruhezeiten."
   changes={changeCount}

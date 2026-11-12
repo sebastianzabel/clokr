@@ -13,12 +13,17 @@
     config  - the loaded `GET /settings/smtp` answer
     canEdit - presentation only; the server's 403 stays the authority
     changes - bindable, the number of unsaved changes (the page sums it into markUnsaved)
+    mailWarning - Issue #847: e-mail notifications are on but no mail server can deliver (the page decides it
+              through `mailWithoutDelivery()`, the one rule)
+    onSaved - called after a successful save, so the page re-reads whether mail can be delivered now
 -->
 <script lang="ts">
   import { untrack } from "svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import FormField from "$components/ui/FormField.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import { MAIL_WITHOUT_DELIVERY_TEXT } from "$lib/admin/setup-checks";
   import SettingsGroup from "$lib/components/admin/settings/SettingsGroup.svelte";
   import ToggleField from "$lib/components/admin/settings/ToggleField.svelte";
   import { countChanges, pickSection } from "$lib/settings/section-state";
@@ -37,11 +42,19 @@
     config: SmtpConfig;
     canEdit?: boolean;
     changes?: number;
+    mailWarning?: boolean;
+    onSaved?: () => void;
   }
 
   // `changes` is write-only here: the parent reads it through `bind:changes`.
-  // eslint-disable-next-line no-useless-assignment
-  let { config, canEdit = true, changes = $bindable(0) }: Props = $props();
+  let {
+    config,
+    canEdit = true,
+    // eslint-disable-next-line no-useless-assignment
+    changes = $bindable(0),
+    mailWarning = false,
+    onSaved,
+  }: Props = $props();
 
   let snapshot = $state<SmtpValues>(untrack(() => smtpFrom(config)));
   let values = $state<SmtpValues>(untrack(() => smtpFrom(config)));
@@ -80,6 +93,7 @@
       if (typedPassword) passwordSet = true;
       snapshot = $state.snapshot(values);
       toasts.success("E-Mail-Server gespeichert.");
+      onSaved?.();
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Speichern fehlgeschlagen.");
     } finally {
@@ -107,6 +121,7 @@
 </script>
 
 <SettingsGroup
+  id="mailserver"
   title="E-Mail-Server"
   description="Über diesen Server verschickt Clokr E-Mails, zum Beispiel Einladungen und Benachrichtigungen."
   changes={changeCount}
@@ -116,6 +131,12 @@
   onSave={save}
   onDiscard={discard}
 >
+  {#if mailWarning}
+    <div data-testid="mail-warning-smtp">
+      <Note tone="bad">{MAIL_WITHOUT_DELIVERY_TEXT}</Note>
+    </div>
+  {/if}
+
   <FormField label="Server" error={messages.smtpHost}>
     {#snippet field({ id, describedBy, invalid })}
       <input
