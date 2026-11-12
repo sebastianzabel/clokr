@@ -1,5 +1,6 @@
 <script lang="ts" module>
-  export type ChipTone = "ok" | "warn" | "bad" | "info" | "brand" | "neutral";
+  import type { ChipTone as Tone } from "./chip-tone";
+  export type ChipTone = Tone;
 </script>
 
 <script lang="ts">

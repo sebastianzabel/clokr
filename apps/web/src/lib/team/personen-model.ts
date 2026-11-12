@@ -5,7 +5,7 @@
 import { employmentState } from "$lib/employees/employment-state";
 import { scheduleModelLabel } from "$lib/employees/contract-history";
 import { matchesSearch } from "$lib/table/search";
-import type { ChipTone } from "$components/ui/Chip.svelte";
+import type { ChipTone } from "$components/ui/chip-tone";
 
 export type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
 
