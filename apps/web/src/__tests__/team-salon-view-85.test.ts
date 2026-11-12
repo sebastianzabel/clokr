@@ -181,23 +181,14 @@ describe("Issue #85 — the Salonansicht of /team/time-entries", () => {
     expect(PAGE).not.toMatch(/\bsettled\(/);
   });
 
-  // Issue #853 (D-853-18): the account figure is the Stundenkonto cell of the Kennzahlenleiste (made by
-  // `kontoKpiItem()`), not the KontoSaldoCard any more. The guard is the same condition, now a
-  // statement of the strip's derivation: the cell is pushed directly inside `if (!overtimeDenied) {`.
-  it("[refused saldo] the account cell is added only when the overtime read was not denied", () => {
-    const cell = PAGE.indexOf("kontoKpiItem(");
-    expect(cell, "kontoKpiItem( not found").toBeGreaterThan(-1);
-    const guard = PAGE.lastIndexOf("if (!overtimeDenied) {", cell);
-    expect(guard, "no denied guard in front of the account cell").toBeGreaterThan(-1);
-    // Nothing but the push between the guard and the cell: the cell sits directly inside it.
-    expect(
-      PAGE.slice(guard + "if (!overtimeDenied) {".length, cell)
-        .replace(/\s+/g, "")
-        .replace(/^items\.push\($/, "items.push("),
-    ).toBe("items.push(");
-    expect(PAGE).toContain("overtimeDenied = isDenied(rawOvertime);");
-    // The Konto card is gone from the page; a stray tag would show the account twice.
+  // Issue #853 (owner review): the person view shows the four figures of the prototype (Gearbeitet,
+  // Monatssaldo, Pausen, Status) and no account figure at all, so no refused account can leak into it.
+  // The overtime read is still classified, because a denial of it withholds Soll and saldo.
+  it("[refused saldo] the person view shows no account figure, and a denied overtime read is classified", () => {
+    expect(PAGE).not.toContain("kontoKpiItem(");
     expect(PAGE).not.toContain("<KontoSaldoCard");
+    expect(PAGE).toContain("overtimeDenied = isDenied(rawOvertime);");
+    expect(PAGE).toContain("saldoDenied = isDenied(rawSchedule, rawOvertime);");
   });
 
   it("[refused saldo] the Ist-only monthMetrics branch precedes the !schedule branch", () => {
@@ -213,12 +204,11 @@ describe("Issue #85 — the Salonansicht of /team/time-entries", () => {
     expect(PAGE).toContain("if (isDenied(rawMonthSaldo)) saldoDenied = true;");
   });
 
-  it("[refused saldo] the German note is present, shown only for a denial", () => {
-    const text =
-      "Soll und Saldo dieser Person sehen Inhaber, Personalabteilung und die Person selbst.";
-    expect(PAGE).toContain(text);
-    const at = PAGE.indexOf(text);
-    expect(PAGE.lastIndexOf("{#if saldoDenied", at)).toBeGreaterThan(PAGE.lastIndexOf("{/if}", at));
+  // Issue #853 (owner review): the denial is said in the Monatssaldo figure itself (zeitenKpis'
+  // `saldoWithheld`, worded once in lib/me/zeiten-kpis.ts and pinned there), only for a denial.
+  it("[refused saldo] the withheld saldo is said in the figures, only for a denial", () => {
+    expect(PAGE).toContain("saldoWithheld: saldoDenied,");
+    expect(PAGE).not.toContain("Soll und Saldo dieser Person sehen");
   });
 
   it("[refused saldo] only a failure routes into the error branch; a denial never does", () => {

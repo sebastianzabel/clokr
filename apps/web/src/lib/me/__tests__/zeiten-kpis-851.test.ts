@@ -43,6 +43,18 @@ describe("zeitenKpis", () => {
     expect(zeitenStatus(false).explanation).toBe("Abschluss durch die Salonleitung");
   });
 
+  it("withholds the saldo of a person the caller may not read (#853, #85)", () => {
+    const [worked, saldo] = zeitenKpis({
+      ...base,
+      month: { ...month, noSollTarget: true, saldoMin: null, sollToDateMin: 0 },
+      saldoWithheld: true,
+    });
+    expect(worked).toMatchObject({ unit: "h" });
+    expect(saldo.value).toBe("—");
+    expect(saldo.explanation).toBe("sehen Inhaber, Personalabteilung und die Person selbst");
+    expect(saldo.explanation).not.toContain("ohne Sollvergleich");
+  });
+
   it("claims no day count its source does not have (#125)", () => {
     const [worked] = zeitenKpis({ ...base, month: { ...month, workdaysSoFar: null } });
     expect(worked.explanation).toBe("bis gestern");

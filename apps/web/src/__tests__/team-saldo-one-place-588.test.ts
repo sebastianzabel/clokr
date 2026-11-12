@@ -289,8 +289,9 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
       }
     }
     expect(offenders).toEqual([]);
-    // Non-vacuity, by name: the leave form's box and the person drill-down (split SaldoAnzeige);
-    // the Stundenkonto cell of /team/time-entries (kontoKpiItem, Issue #853 D-853-18). The dashboard
+    // Non-vacuity, by name: the leave form's box and the person drill-down (split SaldoAnzeige). The
+    // Stundenkonto cell of /team/time-entries went with the owner review of Issue #853 (the page shows
+    // the month only, pinned in personal-saldo-label-588). The dashboard
     // tile went with Issue #845 (Mein Tag words it through saldoFigure(), pinned in mein-tag-845), the
     // /leave KPI and the /time-entries card with Issue #851 (the own total is worded on /ich/konto,
     // pinned in personal-saldo-label-588).
@@ -302,10 +303,9 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     expect(fileText("lib/components/reports/PersonDrilldown.svelte")).toMatch(
       /<SaldoAnzeige[^>]*confirmedMinutes=[^>]*unconfirmedMonths=/s,
     );
-    // Since #851 (/time-entries) and #853 (/team/time-entries) no page renders KontoSaldoCard; a
-    // future caller is still checked by the loop above. The account cell is the pinned call site.
-    expect(cardSites).toBeGreaterThanOrEqual(0);
-    expect(cellSites).toBeGreaterThanOrEqual(1);
+    // Since #851 (/time-entries) and #853 (/team/time-entries) no page renders KontoSaldoCard or the
+    // account cell; a future caller of either is still checked by the loop above.
+    expect(cardSites + cellSites).toBeGreaterThanOrEqual(0);
   });
 
   it("R5: the reports team table renders no SaldoAnzeige, and the page's overview card is gone", () => {

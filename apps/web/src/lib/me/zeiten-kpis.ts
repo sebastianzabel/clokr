@@ -35,6 +35,11 @@ export interface ZeitenKpiInput {
   /** Days of the month with a finding of the server's day check; null = the check is off. */
   findingDays: number | null;
   runningCount: number;
+  /**
+   * Issue #853 (additive, Team › Zeiten): the caller may not read this person's Soll and saldo
+   * (#85). The figures then show the Ist only and say who sees the rest, never a no-Soll wording.
+   */
+  saldoWithheld?: boolean;
 }
 
 function daysText(n: number): string {
@@ -42,7 +47,7 @@ function daysText(n: number): string {
 }
 
 export function zeitenKpis(input: ZeitenKpiInput): KpiItem[] {
-  const { month, locked, breakMinutes, findingDays, runningCount } = input;
+  const { month, locked, breakMinutes, findingDays, runningCount, saldoWithheld = false } = input;
   const cutoff = locked ? "ganzer Monat" : "bis gestern";
 
   const workedParts = [
@@ -60,26 +65,33 @@ export function zeitenKpis(input: ZeitenKpiInput): KpiItem[] {
     testId: "zeiten-kpi-worked",
   };
 
-  const saldo: KpiItem = month.noSollTarget
+  const saldo: KpiItem = saldoWithheld
     ? {
         label: "Monatssaldo",
         value: "—",
-        explanation: "Zeiterfassung ohne Sollvergleich",
+        explanation: "sehen Inhaber, Personalabteilung und die Person selbst",
         testId: "zeiten-kpi-saldo",
       }
-    : {
-        label: "Monatssaldo",
-        value: month.saldoMin === null ? "—" : fmtBalance(month.saldoMin),
-        unit: month.saldoMin === null ? undefined : "h",
-        explanation: [
-          locked ? "Bestätigt · Monat abgeschlossen" : "Prognose · Monat offen",
-          month.rosterIncomplete ? "Dienstplan unvollständig" : null,
-          month.extraNote ?? null,
-        ]
-          .filter(Boolean)
-          .join(" · "),
-        testId: "zeiten-kpi-saldo",
-      };
+    : month.noSollTarget
+      ? {
+          label: "Monatssaldo",
+          value: "—",
+          explanation: "Zeiterfassung ohne Sollvergleich",
+          testId: "zeiten-kpi-saldo",
+        }
+      : {
+          label: "Monatssaldo",
+          value: month.saldoMin === null ? "—" : fmtBalance(month.saldoMin),
+          unit: month.saldoMin === null ? undefined : "h",
+          explanation: [
+            locked ? "Bestätigt · Monat abgeschlossen" : "Prognose · Monat offen",
+            month.rosterIncomplete ? "Dienstplan unvollständig" : null,
+            month.extraNote ?? null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          testId: "zeiten-kpi-saldo",
+        };
 
   const pauses: KpiItem = {
     label: "Pausen",

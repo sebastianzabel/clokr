@@ -22,7 +22,13 @@
     type DataTableRowTone,
   } from "$components/ui/DataTable.svelte"; // Issue #853 (D-853-10)
   import ErrorState from "$components/ui/ErrorState.svelte";
-  import { kontoKpiItem, monthKpiItems } from "$lib/team/zeiten-kpis"; // Issue #853 (D-853-18)
+  // Issue #853 (owner review): the four Kennzahlen of the prototype's „Zeiten“, worded by the same
+  // module Ich › Zeiten uses (#851); one row per day and the day sheet replace the entry table.
+  import { zeitenKpis, zeitenStatus } from "$lib/me/zeiten-kpis";
+  import { fmtBalance } from "$lib/utils/format-minutes";
+  import { pauseLabel, teamDayRows, type TeamDayRow } from "$lib/team/zeiten-day-rows";
+  import DaySheet, { type DaySheetEntry } from "$lib/components/me/DaySheet.svelte";
+  import Chip from "$components/ui/Chip.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import { toasts } from "$stores/toast";
@@ -132,6 +138,8 @@
     endTime: string | null;
     breakMinutes: number;
     breaks?: Break[];
+    /** Set while a break is running (break start/stop, #851). */
+    breakStartedAt?: string | null;
     type: string;
     source: "NFC" | "MOBILE" | "MANUAL" | "CORRECTION";
     note: string | null;
@@ -220,11 +228,6 @@
     date: string; // YYYY-MM-DD
     source: "PATTERN" | "MANUAL";
   }
-
-  // Discriminated union for the merged list view (TimeEntry + BsAbsence).
-  type ListRow =
-    | (TimeEntry & { kind: "TE" })
-    | { kind: "BS"; id: string; date: string; source: "PATTERN" | "MANUAL" };
 
   interface Employee {
     id: string;
@@ -1103,15 +1106,6 @@
     return labels[type] ?? type;
   }
 
-  function sourceBadge(s: TimeEntry["source"]): string {
-    return s === "NFC"
-      ? "badge-purple"
-      : s === "MOBILE"
-        ? "badge-blue"
-        : s === "CORRECTION"
-          ? "badge-yellow"
-          : "badge-gray";
-  }
   function sourceLabel(s: TimeEntry["source"]): string {
     return s === "NFC"
       ? "NFC"
@@ -1120,14 +1114,6 @@
         : s === "CORRECTION"
           ? "Korrektur"
           : "Manuell";
-  }
-
-  function fmtBreaks(e: TimeEntry): string {
-    if (e.breaks && e.breaks.length > 0) {
-      return e.breaks.map((b) => `${fmtTime(b.startTime)}–${fmtTime(b.endTime)}`).join(", ");
-    }
-    if (e.breakMinutes) return e.breakMinutes + " Min.";
-    return "—";
   }
 
   function slotNet(e: TimeEntry): string {
@@ -1207,22 +1193,12 @@
       ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
-  // Issue #70: a calendar cell with one entry still opens it for editing, a cell with several
-  // switches to the list focused on that day, an empty cell opens the new form.
-  async function onCellClick(day: string) {
+  // Issue #853 (owner review, prototype „Zeiten“): a day is read first. A calendar cell with entries
+  // opens the day sheet (the same one the list's „Öffnen“ opens); an empty cell opens the new form.
+  function onCellClick(day: string) {
     const action = cellClickAction(rowsOfDay(day));
-    if (action.kind === "edit") {
-      openEdit(action.entry);
-    } else if (action.kind === "list") {
-      selectedDate = day;
-      teView = "list";
-      await tick();
-      document
-        .querySelector('[data-tone="highlight"]')
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    } else {
-      openAdd(day);
-    }
+    if (action.kind === "new") openAdd(day);
+    else openDaySheet(day);
   }
 
   // The tooltip of a calendar cell: its own reason (holiday, absence, ...) plus the entry count.
@@ -1562,8 +1538,7 @@
   // selecting among already-computed values). Two deliberate omissions vs. /time-entries (D-04):
   //  - no `extraNote` — this page has no FLEXTIME "Woche Saldo" tile (verified: `weekExpectedMin`/
   //    `weekWorkedMin`/"Woche" do not occur here), so there is nothing to carry.
-  //  - no `rosterIncomplete` — /time-entries sets it but MonatSaldoCard has no such prop (dead
-  //    field there); not replicated here.
+  //  - `rosterIncomplete` is added where the figures are worded (zeitenKpis, Issue #853).
   type MonthMetrics = {
     sollToDateMin: number;
     istMin: number;
@@ -1652,34 +1627,6 @@
     };
   });
   let runningCount = $derived(entries.filter((e) => !e.endTime).length);
-  // Issue #853 (D-853-18) - the figures of the person as the cells of the Kennzahlenleiste: the month
-  // and, unless the overtime read was refused (#85), the account. Only a selection and formatting of
-  // what the page already holds (lib/team/zeiten-kpis.ts); no figure and no forecast wording is made here.
-  let zeitenKpis = $derived.by(() => {
-    const items = monthKpiItems({
-      sollToDateMin: monthMetrics.sollToDateMin,
-      istMin: monthMetrics.istMin,
-      saldoMin: monthMetrics.saldoMin,
-      noSollTarget: monthMetrics.noSollTarget,
-      sollLabel: monthMetrics.sollLabel,
-      workdaysSoFar: monthMetrics.workdaysSoFar,
-      runningCount,
-      isLocked: monthIsLocked || monthMetrics.closed,
-    });
-    if (!overtimeDenied) {
-      items.push(
-        kontoKpiItem({
-          totalHours: overtimeTotalHours,
-          confirmedMinutes: overtimeConfirmedMinutes,
-          openMonthMinutes: overtimeOpenMonthMinutes,
-          hasClosedMonth: overtimeHasClosedMonth,
-          unconfirmedMonths: overtimeUnconfirmedMonths,
-          rosterIncomplete: overtimeRosterIncomplete,
-        }),
-      );
-    }
-    return items;
-  });
   // Issue #511 D-18 — the modal's findings are the server's answer for the PROPOSED entry together
   // with the day's other entries (POST /day-breaks/preview, debounced, a stale answer is dropped).
   // A failed preview leaves the list empty and never blocks saving. A hint (position of a break
@@ -1728,6 +1675,26 @@
     arbzgEnabled ? dayChecksToArbzgMap(dayChecks) : new Map<string, DayWarning[]>(),
   );
 
+  // Issue #853 (owner review, prototype „Zeiten“): the four Kennzahlen Gearbeitet, Monatssaldo, Pausen
+  // and Status, worded by lib/me/zeiten-kpis.ts from the page's MonthMetrics (#125, #433, #495) - the
+  // same module Ich › Zeiten uses, so both pages say the same thing. Breaks are the stored ones of the
+  // counted entries (the set of the Ist); findings come from the server's day check (#80/#511).
+  // A refused saldo read (#85) shows the Ist only and says who sees the rest.
+  let breakMinutesToDate = $derived(entriesToDate.reduce((s, e) => s + (e.breakMinutes ?? 0), 0));
+  let zeitenItems = $derived(
+    zeitenKpis({
+      // The server sends `rosterIncomplete` for a SHIFT_BASED open month only (#97-05); never a
+      // fabricated flag.
+      month: { ...monthMetrics, rosterIncomplete: monthSaldo?.rosterIncomplete ?? false },
+      locked: monthIsLocked || monthMetrics.closed,
+      breakMinutes: breakMinutesToDate,
+      findingDays: arbzgEnabled ? arbzgDayMap.size : null,
+      runningCount,
+      saldoWithheld: saldoDenied,
+    }),
+  );
+  let zeitenMonthStatus = $derived(zeitenStatus(monthIsLocked || monthMetrics.closed));
+
   // Legend is derived from what the displayed month actually contains, and split by the
   // three encoding channels — quick task 260820-1i7. Colour = Soll status (left edge),
   // surface = Abwesenheit, mark = Hinweis.
@@ -1771,58 +1738,100 @@
     return { soll, abwesenheit, hinweise };
   });
 
-  // All entries for the current month, sorted by date descending then start time descending.
-  // 260611-ly6 — merges TimeEntries (kind="TE") with BS-Absences (kind="BS") for the
-  // list view. BS rows are read-only synthetic rows; lifecycle stays on /shifts.
-  let allEntries = $derived.by<ListRow[]>(() => {
-    const teRows: ListRow[] = entries.map((e) => ({ ...e, kind: "TE" as const }));
-    const bsRows: ListRow[] = bsAbsences.map((b) => ({
-      kind: "BS" as const,
-      // Prefix with "bs-" so the {#each} key cannot collide with a TimeEntry UUID.
-      id: `bs-${b.id}`,
-      date: b.date,
-      source: b.source,
-    }));
-    return [...teRows, ...bsRows].sort((a, b) => {
-      const dA = a.kind === "TE" ? (a.date ?? a.startTime).split("T")[0] : a.date;
-      const dB = b.kind === "TE" ? (b.date ?? b.startTime).split("T")[0] : b.date;
-      if (dA !== dB) return dB.localeCompare(dA); // desc by date
-      // Tiebreak: TE before BS so a working day stays grouped; within TE, descending
-      // by startTime.
-      if (a.kind !== b.kind) return a.kind === "TE" ? -1 : 1;
-      if (a.kind === "TE" && b.kind === "TE") {
-        return new Date(b.startTime).getTime() - new Date(a.startTime).getTime();
-      }
-      return 0;
-    });
-  });
-
-  // Issue #853 (D-853-10): the list view is a DataTable. A row wraps the merged list entry (a
-  // type alias, because DataTable's row generic wants an index-signature-compatible type).
-  type ListTableRow = { id: string; slot: ListRow };
-  const listTableRows = $derived<ListTableRow[]>(allEntries.map((slot) => ({ id: slot.id, slot })));
+  // Issue #853 (owner review, prototype „Zeiten“): the list is ONE row per day - Tag, Salon, Zeiten,
+  // Pause, Netto, Soll, Differenz and „Öffnen“ - built by lib/team/zeiten-day-rows.ts from the loaded
+  // entries and the page's per-day Soll. Source, note and the edit/delete actions of each entry live
+  // in the day sheet. Soll and Differenz appear only where the page has a per-day Soll to show: not
+  // for a refused saldo read (#85), not without a contract, and not for a weekly or monthly total
+  // (#164, isNoDailyTarget).
+  let sollVisible = $derived(!saldoDenied && !!schedule && !isNoDailyTarget);
+  let calendarDayByDate = $derived(new Map(calendarDays.map((d) => [d.dateStr, d])));
+  let dayRows = $derived(
+    teamDayRows({
+      // The salons of the day by name (a trip counts with its departure salon); the trip route
+      // itself is shown in the day sheet, inside the #64 gate.
+      entries: entries.map((e) => ({ ...e, salonLabel: e.salonName ?? null })),
+      vocationalSchoolDays: bsAbsences.map((b) => b.date),
+      dayInfo: (day) => calendarDayByDate.get(day),
+      sollVisible,
+      findingDays: new Set(arbzgDayMap.keys()),
+    }),
+  );
   const listColumns = $derived<DataTableColumn[]>([
-    { key: "date", label: "Datum", primary: true },
+    { key: "day", label: "Tag", primary: true },
     ...(multiEntryUi ? [{ key: "salon", label: "Salon" }] : []),
     { key: "times", label: "Zeiten" },
-    { key: "break", label: "Pause" },
-    { key: "net", label: "Netto" },
-    ...(isShiftBased && monthSaldo ? [{ key: "saldo", label: "Saldo seit Abschluss" }] : []),
-    { key: "source", label: "Quelle" },
-    { key: "note", label: "Notiz" },
-    { key: "actions", label: "" },
+    { key: "pause", label: "Pause", align: "end" as const },
+    { key: "net", label: "Netto", align: "end" as const },
+    ...(sollVisible ? [{ key: "soll", label: "Soll", align: "end" as const }] : []),
+    // SHIFT_BASED (#291, §615): a day's difference against the roster is not the account's figure, so
+    // the column shows the server's cumulative saldo of the day; its name and tooltip say what it holds.
+    ...(isShiftBased && monthSaldo
+      ? [
+          {
+            key: "saldo",
+            label: "Saldo seit Abschluss",
+            align: "end" as const,
+            title:
+              "Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt der Bericht.",
+          },
+        ]
+      : sollVisible
+        ? [{ key: "diff", label: "Differenz", align: "end" as const }]
+        : []),
+    { key: "open", label: "", align: "end" as const },
   ]);
-  // The row marking: an invalid entry is a warning, a Berufsschule row is informational, and the
-  // day the calendar cell sent the user to (Issue #70) is highlighted.
-  function listRowTone({ slot }: ListTableRow): DataTableRowTone | undefined {
-    if (slot.kind === "BS") return "info";
-    if (slot.isInvalid) return "warn";
-    const slotDate = (slot.date ?? slot.startTime).split("T")[0];
-    return multiEntryUi && slotDate === selectedDate ? "highlight" : undefined;
+  // Without a Differenz or saldo column the day's status chip (running, invalid) sits next to its times.
+  let stateInTimes = $derived(!listColumns.some((c) => c.key === "diff" || c.key === "saldo"));
+  // The day a deep link or a calendar cell pointed at (Issue #70) is highlighted; nothing else is
+  // tinted - a running or invalid day says so in its chip, never through a coloured row.
+  function dayRowTone(row: TeamDayRow): DataTableRowTone | undefined {
+    return multiEntryUi && row.day === selectedDate ? "highlight" : undefined;
   }
-  function listRowTestId({ slot }: ListTableRow): string | undefined {
-    return slot.kind === "BS" ? `bs-row-${slot.id}` : undefined;
+
+  // ── Day sheet (prototype „Tagesdialog“, #851 DaySheet) ─────────────────────
+  let daySheetOpen = $state(false);
+  let daySheetDay = $state<string | null>(null);
+  function openDaySheet(day: string) {
+    daySheetDay = day;
+    selectedDate = day;
+    daySheetOpen = true;
   }
+  let daySheetEntries = $derived(
+    daySheetDay
+      ? rowsOfDay(daySheetDay)
+          .slice()
+          .sort((x, y) => x.startTime.localeCompare(y.startTime))
+      : [],
+  );
+  let daySheetInfo = $derived(daySheetDay ? calendarDayByDate.get(daySheetDay) : undefined);
+  let daySheetLocked = $derived(daySheetEntries.some((e) => e.isLocked === true));
+  let daySheetRows = $derived<DaySheetEntry[]>(
+    daySheetEntries.map((e) => ({
+      id: e.id,
+      from: fmtTime(e.startTime),
+      to: e.endTime ? fmtTime(e.endTime) : "läuft",
+      pause: pauseLabel([e]),
+      net: e.endTime ? slotNet(e) : "–",
+      source: sourceLabel(e.source),
+      note: e.isInvalid && e.invalidReason ? e.invalidReason : e.note,
+      testId: `team-time-entry-row-${e.id}`,
+    })),
+  );
+  let daySheetIst = $derived(
+    daySheetEntries
+      .filter((e) => e.endTime && !e.isInvalid)
+      .reduce((sum, e) => sum + netEntryMinutes(e), 0),
+  );
+  let daySheetPrimary = $derived.by(() => {
+    if (!daySheetDay || daySheetLocked || daySheetInfo?.isFuture) return null;
+    // An existing entry is edited from its own row; the primary action only ever adds one.
+    return addActionForDay(rowsOfDay(daySheetDay), multiEntryUi).kind === "edit"
+      ? null
+      : rowsOfDay(daySheetDay).length > 0
+        ? "Weiteren Eintrag hinzufügen"
+        : "Eintrag hinzufügen";
+  });
 
   // Phase 116 (issue #119) — the ONE answer to "what does the list render right now".
   // `hasEmployeeLink` is always true where this renders (the markup sits inside
@@ -1832,7 +1841,7 @@
     resolveMonthListState({
       loading,
       hasEmployeeLink: selectedEmployeeId !== null,
-      rowCount: allEntries.length,
+      rowCount: dayRows.length,
     }),
   );
   let saldoCardState = $derived(
@@ -1949,23 +1958,28 @@
       <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
     {/if}
 
-    <!-- Figures strip (Issue #853, D-853-18; prototype #p-zeiten stats): the month and the account of
-       the chosen person in one Kennzahlenleiste under the toolbar row. Rendered ONLY with an employee
-       selected (D-01). The cells are made by lib/team/zeiten-kpis.ts. -->
+    <!-- Figures strip (Issue #853, owner review; prototype #p-zeiten stats): Gearbeitet, Monatssaldo,
+       Pausen and Status of the chosen person, worded by lib/me/zeiten-kpis.ts like Ich › Zeiten.
+       Rendered ONLY with an employee selected (D-01). -->
     <div class="te-figures">
       {#if saldoCardState === "loading"}
         <Skeleton shape="block" height="6.5rem" />
       {:else if saldoCardState === "error"}
         <ErrorState message="Werte konnten nicht geladen werden." hint="" onRetry={loadAll} />
       {:else}
-        <KpiStrip items={zeitenKpis} ariaLabel="Monat" />
+        <KpiStrip items={zeitenItems} ariaLabel="Monat in Zahlen">
+          {#snippet extra()}
+            <div class="te-status" data-testid="zeiten-kpi-status">
+              <span class="te-status-label">Status</span>
+              <span class="te-status-value"
+                ><Chip tone={zeitenMonthStatus.tone}>{zeitenMonthStatus.label}</Chip></span
+              >
+              <span class="te-status-note">{zeitenMonthStatus.explanation}</span>
+            </div>
+          {/snippet}
+        </KpiStrip>
       {/if}
     </div>
-    {#if saldoDenied && !loading}
-      <p class="text-muted te-denied-note">
-        Soll und Saldo dieser Person sehen Inhaber, Personalabteilung und die Person selbst.
-      </p>
-    {/if}
 
     <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
        nothing for a day without a cross-salon finding or a recorded day break, so single-entry
@@ -2040,8 +2054,7 @@
                     class="cal-arbzg-mark"
                     title={arbzgWarnings.map((w) => w.message).join("\n")}
                     aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
-                    >⚠&#xFE0E;</span
-                  >
+                  ></span>
                 {/if}
                 {#if day.isHoliday && day.isCurrentMonth}
                   <span class="cal-holiday-label">{day.holidayName}</span>
@@ -2139,116 +2152,66 @@
           />
         {:else}
           <!-- Phase 116 (issue #119, Akzeptanzkriterium 3): while loading there is a skeleton and
-             never the empty state. #853 D-853-10: the table is the DataTable block; its rows are
-             tinted by `listRowTone` (invalid entry, Berufsschule row, the focused day). -->
+             never the empty state. #853 (owner review): one row per day, the prototype's columns; the
+             entries of a day, their source and note and their actions are in the day sheet. -->
           <DataTable
             columns={listColumns}
-            rows={listTableRows}
-            rowKey={(row) => row.id}
-            rowTestId={listRowTestId}
-            rowTone={listRowTone}
+            rows={dayRows}
+            rowKey={(row) => row.day}
+            rowTestId={(row) => `team-day-row-${row.day}`}
+            rowTone={dayRowTone}
             loading={listState === "loading"}
-            caption="Einträge im Monat"
+            caption="Tage im Monat"
           >
             {#snippet cell(row, column)}
-              {@const slot = row.slot}
-              {#if slot.kind === "TE"}
-                {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-                {#if column.key === "date"}
-                  {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                  {new Date(slot.startTime).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                  })}{#if slotArbzg}
-                    <span class="list-arbzg-hint"
-                      >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                        class="arbzg-tooltip"
-                        >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                            />{/if}{/each}</span
-                      ></span
+              {#if column.key === "day"}
+                <span class="day-cell"
+                  >{row.dayLabel}{#if row.finding}<Chip tone="warn" title="ArbZG-Hinweis"
+                      >prüfen</Chip
+                    >{/if}</span
+                >
+              {:else if column.key === "salon"}
+                {#if multiEntryUi}{row.salon}{/if}
+              {:else if column.key === "times"}
+                <span class="times-cell" class:text-muted={row.vocationalSchool}
+                  >{row.times}{#if row.state && stateInTimes}<Chip tone={row.state.tone}
+                      >{row.state.label}</Chip
+                    >{/if}</span
+                >
+              {:else if column.key === "pause"}
+                {row.pause}
+              {:else if column.key === "net"}
+                {row.net}
+              {:else if column.key === "soll"}
+                {row.soll ?? "–"}
+              {:else if column.key === "diff"}
+                {#if row.state}
+                  <Chip tone={row.state.tone}>{row.state.label}</Chip>
+                {:else if row.diff}
+                  <Chip tone={row.diff.tone}>{row.diff.label}</Chip>
+                {:else}
+                  <span class="text-muted">–</span>
+                {/if}
+              {:else if column.key === "saldo"}
+                {#if isShiftBased && monthSaldo}
+                  {@const cum = monthSaldoDayMap.get(row.day)}
+                  {#if row.state}
+                    <Chip tone={row.state.tone}>{row.state.label}</Chip>
+                  {:else if cum != null}
+                    <Chip tone={cum > 0 ? "ok" : cum < 0 ? "bad" : "neutral"}
+                      >{cum === 0 ? "±0:00" : fmtBalance(cum)}</Chip
                     >
-                  {/if}
-                {:else if column.key === "salon"}
-                  {#if multiEntryUi}
-                    <span data-testid={`team-time-entry-row-${slot.id}-salon`}
-                      >{#if isTravelRow(slot)}<span
-                          class="badge badge-gray"
-                          data-testid={`team-time-entry-row-${slot.id}-travel-badge`}
-                          >{TRAVEL_TEXTS.badge}</span
-                        >
-                        <span
-                          class="travel-route"
-                          data-testid={`team-time-entry-row-${slot.id}-travel-route`}
-                          >{travelRouteLabel(slot)}</span
-                        >{:else}{slot.salonName ?? "—"}{/if}</span
-                    >
-                  {/if}
-                {:else if column.key === "times"}
-                  {fmtTime(slot.startTime)}–{#if slot.endTime}{fmtTime(slot.endTime)}{:else}<span
-                      class="badge badge-green">Aktiv</span
-                    >{/if}
-                {:else if column.key === "break"}
-                  {fmtBreaks(slot)}
-                {:else if column.key === "net"}
-                  <span class="font-medium">{slotNet(slot)}</span>
-                {:else if column.key === "saldo"}
-                  {#if isShiftBased && monthSaldo}
-                    {@const cum = monthSaldoDayMap.get(slotDate)}
-                    <span
-                      class={cum != null ? balClass(cum) : ""}
-                      title="Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kennzahl „Stundenkonto“."
-                    >
-                      {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
-                    </span>
-                  {/if}
-                {:else if column.key === "source"}
-                  <span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span>
-                {:else if column.key === "note"}
-                  <span class="list-note text-muted">
-                    {#if slot.isInvalid && slot.invalidReason}
-                      <span class="invalid-reason">{slot.invalidReason}</span>
-                    {:else}
-                      {slot.note ?? "---"}
-                    {/if}
-                  </span>
-                {:else if column.key === "actions"}
-                  {#if slot.isLocked}
-                    <!-- locked entries are read-only; no actions shown (D-08) -->
                   {:else}
-                    <span class="row-actions row-actions--visible">
-                      <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                        >✏️</button
-                      >
-                      <button
-                        class="btn-icon btn-icon-danger"
-                        onclick={() => openDeleteDialog(slot.id)}
-                        title="Löschen">🗑</button
-                      >
-                    </span>
+                    <span class="text-muted">–</span>
                   {/if}
                 {/if}
-              {:else if column.key === "date"}
-                <!-- 260611-ly6 - BS row: read-only, single-day, no times, no breaks, no actions. -->
-                {new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
-                  day: "2-digit",
-                  month: "2-digit",
-                  year: "numeric",
-                })}
-              {:else if column.key === "source"}
-                <span class="badge badge-blue">Berufsschule</span>
-              {:else if column.key === "note"}
-                <span class="list-note text-muted"
-                  >{slot.source === "PATTERN" ? "Automatisch (Muster)" : "Manuell eingefügt"}</span
+              {:else if column.key === "open" && !row.vocationalSchool}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  data-testid={`team-day-row-${row.day}-open`}
+                  onclick={() => openDaySheet(row.day)}>Öffnen</button
                 >
-              {:else if column.key === "actions"}
-                <span
-                  class="text-muted"
-                  style="font-size: 0.75rem;"
-                  title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
-                >
-              {:else}
-                <span class="text-muted">—</span>
               {/if}
             {/snippet}
           </DataTable>
@@ -2275,6 +2238,76 @@
     </EmptyState>
   {/if}
 {/snippet}
+
+<!-- The salon cell of an entry in the day sheet: only with salon choice (#64 gate); a trip shows its
+     route (#92). -->
+{#snippet daySheetSalon(row: DaySheetEntry)}
+  {#if multiEntryUi}
+    {@const target = daySheetEntries.find((e) => e.id === row.id)}
+    {#if target && isTravelRow(target)}<span
+        class="badge badge-gray"
+        data-testid={`team-time-entry-row-${row.id}-travel-badge`}>{TRAVEL_TEXTS.badge}</span
+      >
+      <span class="travel-route" data-testid={`team-time-entry-row-${row.id}-travel-route`}
+        >{travelRouteLabel(target)}</span
+      >{:else}<span data-testid={`team-time-entry-row-${row.id}-salon`}
+        >{target?.salonName ?? "—"}</span
+      >{/if}
+  {/if}
+{/snippet}
+
+<!-- ── Day sheet (Issue #853, owner review; the #851 DaySheet) ───────────────────
+     Read first: Soll, Ist and Differenz of the day, its entries with source and note, the findings of
+     the server's day check. Edit and delete are per entry; the primary action adds (or, without salon
+     choice, edits) the day's entry. A closed month offers nothing to change. -->
+{#if daySheetDay}
+  <DaySheet
+    bind:open={daySheetOpen}
+    title={format(new Date(daySheetDay + "T12:00:00"), "EEEE, d. MMMM", { locale: de })}
+    subtitle={selectedEmployee
+      ? `${selectedEmployee.firstName} ${selectedEmployee.lastName}`
+      : undefined}
+    sollMin={sollVisible && daySheetInfo && daySheetInfo.expectedMin > 0
+      ? daySheetInfo.expectedMin
+      : null}
+    istMin={daySheetIst}
+    entries={daySheetRows}
+    findings={(arbzgDayMap.get(daySheetDay) ?? []).map((w) => w.message)}
+    locked={daySheetLocked}
+    lockedText="Dieser Monat ist abgeschlossen. Die Einträge bleiben, wie sie sind; eine Korrektur wird als neuer Eintrag im laufenden Monat gebucht."
+    future={daySheetInfo?.isFuture ?? false}
+    primaryLabel={daySheetPrimary}
+    onPrimary={() => {
+      if (daySheetDay) openAdd(daySheetDay);
+    }}
+    entrySalon={multiEntryUi ? daySheetSalon : undefined}
+    wide
+  >
+    {#snippet entryActions(row)}
+      {@const target = daySheetEntries.find((e) => e.id === row.id)}
+      {#if target && !target.isLocked}
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          data-testid={`team-time-entry-row-${row.id}-edit`}
+          onclick={() => {
+            daySheetOpen = false;
+            openEdit(target);
+          }}>Bearbeiten</button
+        >
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          data-testid={`team-time-entry-row-${row.id}-delete`}
+          onclick={() => {
+            daySheetOpen = false;
+            openDeleteDialog(target.id);
+          }}>Löschen</button
+        >
+      {/if}
+    {/snippet}
+  </DaySheet>
+{/if}
 
 <!-- ── Modal (Modal primitive — owns backdrop/escape/focus-trap) ────────── -->
 <Modal
@@ -3129,5 +3162,43 @@
     min-width: 0;
     max-width: 100%;
     text-align: left;
+  }
+  /* Issue #853 (owner review): the Status cell of the figures strip, like Ich › Zeiten (#851). */
+  .te-status {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+  }
+  .te-status-label {
+    font-size: var(--fs-sm, 12.5px);
+    color: var(--text-2);
+  }
+  .te-status-value {
+    margin-top: var(--s-1);
+  }
+  .te-status-note {
+    font-size: var(--fs-sm, 12.5px);
+    color: var(--text-3);
+  }
+  /* The day cell: weekday and date, and a quiet „prüfen“ chip for a day with a finding. */
+  .day-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    white-space: nowrap;
+  }
+  /* A calendar day with a finding: a small warn dot instead of a symbol. */
+  .cal-arbzg-mark {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--warn);
+    opacity: 1;
+  }
+  .times-cell {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2);
   }
 </style>

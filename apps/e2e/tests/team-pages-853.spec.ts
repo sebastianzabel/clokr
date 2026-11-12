@@ -343,7 +343,8 @@ defineVisibilityWalkthrough({
   ],
 });
 
-// Zeiten: choose a person in the empty-state picker -> the calendar; switch to Liste -> the table.
+// Zeiten: choose a person in the empty-state picker -> the calendar; Liste -> the day table; Öffnen ->
+// the day sheet.
 defineVisibilityWalkthrough({
   title: "Team Zeiten Person und Liste",
   path: "/team/zeiten",
@@ -390,7 +391,15 @@ defineVisibilityWalkthrough({
       act: async (page) => {
         await page.getByRole("radio", { name: "Liste", exact: true }).click();
       },
-      target: (page) => page.getByRole("table", { name: "Einträge im Monat" }),
+      target: (page) => page.getByRole("table", { name: "Tage im Monat" }),
+    },
+    {
+      // Owner review of #853: a day row's „Öffnen“ opens the day sheet with the entry and its actions.
+      name: "Tag öffnen",
+      act: async (page) => {
+        await page.getByRole("button", { name: "Öffnen" }).first().click();
+      },
+      target: (page) => page.getByTestId("day-sheet"),
     },
   ],
 });

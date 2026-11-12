@@ -1,6 +1,6 @@
 // Issue #495 — pins that both month pages hand `noSollTarget` to their month figures (the Kennzahlen of
-// zeitenKpis() on /time-entries since Issue #851; the KpiStrip model `monthKpiItems()` on /team/time-entries
-// since Issue #853 D-853-18) and set it only for a MONTHLY_HOURS contract without monthly hours.
+// zeitenKpis() on both pages: /time-entries since Issue #851, /team/time-entries since the owner review of
+// Issue #853; the whole MonthMetrics, noSollTarget included, is handed over) and set it only for a MONTHLY_HOURS contract without monthly hours.
 //
 // This is a source-read PIN, not a behaviour test: route pages cannot be mounted here because
 // `apps/web/vitest.config.ts` has no `$app` alias. Without the pin, a page that stops passing the
@@ -35,9 +35,9 @@ const PAGES = [
   },
   {
     name: "/team/time-entries",
-    consumer: "monthKpiItems({",
-    consumerEnd: "isLocked:",
-    passes: "noSollTarget: monthMetrics.noSollTarget",
+    consumer: "zeitenKpis({",
+    consumerEnd: "locked:",
+    passes: "...monthMetrics,",
     source: readRouteFile(
       "../routes/(app)/team/time-entries/+page.svelte",
       "src/routes/(app)/team/time-entries/+page.svelte",
