@@ -245,6 +245,10 @@ async function main(prisma: PrismaClient) {
   const removedPairingCodes = await prisma.presencePairingCode.deleteMany({});
   console.log(`[pseudonymize] removed ${removedPairingCodes.count} pairing code(s)`);
 
+  // Calendar-feed tokens open a prod person's feed (Issue #597). One statement per run.
+  const removedFeedTokens = await prisma.calendarFeedToken.deleteMany({});
+  console.log(`[pseudonymize] removed ${removedFeedTokens.count} calendar feed token(s)`);
+
   // Operator accounts (Phase 88, D-11): neutralise every one. Per-row because the pseudonymous
   // email derives from the id; no delete, audit rows reference the accounts with onDelete Restrict.
   const operators = await prisma.operatorAccount.findMany({
