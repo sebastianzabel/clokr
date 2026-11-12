@@ -396,6 +396,12 @@ describe("settings registry against the sources (#854, D-854-03)", () => {
       ).toBe(true);
   });
 
+  it("no section still names a href that was renamed or folded away (plan 854-11: /verwalten/regeln/urlaub)", () => {
+    for (const section of SETTINGS_SECTIONS)
+      expect(section.page, section.id).not.toBe("/verwalten/regeln/urlaub");
+    expect(sectionsOfPage("/verwalten/regeln/abwesenheiten").length).toBeGreaterThanOrEqual(7);
+  });
+
   it("is not vacuous: at least 20 sections, 90 keys and 5 files with a settings save", () => {
     expect(SETTINGS_SECTIONS.length).toBeGreaterThanOrEqual(20);
     expect(SETTINGS_SECTIONS.flatMap((s) => s.keys).length).toBeGreaterThanOrEqual(90);

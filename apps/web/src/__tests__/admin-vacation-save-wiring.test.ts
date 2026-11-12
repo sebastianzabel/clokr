@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, it, expect } from "vitest";
 
-import { sectionsOfPage } from "$lib/settings/settings-pages";
+import { sectionsOfPage, settingsSection } from "$lib/settings/settings-pages";
 
 // fileURLToPath decodes the %28/%29 that the "(app)" route group produces in import.meta.url.
 function readSource(relativeFromHere: string, relativeFromCwd: string): string {
@@ -32,6 +32,10 @@ const PAGE = readSource(
   "src/routes/(app)/admin/vacation/+page.svelte",
 );
 const PANEL_FILES = ["UrlaubPanel", "UebertragPanel"] as const;
+const SONDERURLAUB = readSource(
+  "../lib/components/admin/abwesenheiten/SonderurlaubPanel.svelte",
+  "src/lib/components/admin/abwesenheiten/SonderurlaubPanel.svelte",
+);
 const PANELS = Object.fromEntries(
   PANEL_FILES.map((name) => [
     name,
@@ -119,6 +123,37 @@ describe("D-01 - a section saves only on its SaveBar button", () => {
       expect(PANELS[file]).toContain(`onSave={${name}}`);
       expect(PANELS[file]).not.toContain(`onchange={${name}}`);
     }
+  });
+});
+
+describe("Sonderurlaub - the rules are a management section with their own endpoints", () => {
+  it("the panel writes rules only through a Dialog form (POST create, PUT edit) and loads them lazily", () => {
+    expect(SONDERURLAUB).toContain('api.post("/special-leave/rules"');
+    expect(SONDERURLAUB).toContain("api.put(`/special-leave/rules/${editing.id}`");
+    expect(SONDERURLAUB).toContain('api.get<SpecialLeaveRule[]>("/special-leave/rules")');
+    expect(SONDERURLAUB).toContain("onsubmit={(event) => {");
+    expect(SONDERURLAUB).toContain("if (active && !loaded)");
+    // No tenant setting is written from the panel: the registry section has no keys.
+    expect(SONDERURLAUB).not.toMatch(/api\.put\(\s*"\/settings\//);
+    expect(SONDERURLAUB).not.toMatch(/onchange=\{save/);
+  });
+
+  it("the page holds no Sonderurlaub code of its own any more", () => {
+    for (const forbidden of [
+      "slRules",
+      "saveSLCreate",
+      "saveSLEdit",
+      "<Modal",
+      "<Section",
+      "SectionStack",
+    ])
+      expect(PAGE, forbidden).not.toContain(forbidden);
+    expect(PAGE).toContain("<SonderurlaubPanel");
+    expect(settingsSection("abwesenheiten-sonderurlaub")).toMatchObject({
+      endpoint: null,
+      keys: [],
+      source: "/admin/special-leave",
+    });
   });
 });
 

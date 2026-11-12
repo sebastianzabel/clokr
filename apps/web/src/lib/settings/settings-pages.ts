@@ -66,7 +66,6 @@ const SHIFTS_REQUIRES: PermissionAlternatives = [
 ];
 
 const SYSTEM_PAGE = "routes/(app)/admin/system/+page.svelte";
-const VACATION_PAGE = "routes/(app)/admin/vacation/+page.svelte";
 
 const SYSTEM = {
   page: "/verwalten/system/allgemein",
@@ -501,7 +500,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     keys: [],
     // The pre-#854 page /admin/special-leave redirects here (alias with `to`); it carries the same gate.
     source: "/admin/special-leave",
-    renderedBy: VACATION_PAGE,
+    renderedBy: `${ABWESENHEITEN_DIR}/SonderurlaubPanel.svelte`,
   },
 
   // ── /admin/export ──────────────────────────────────────────────────────────────────────────────
