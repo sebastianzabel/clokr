@@ -213,6 +213,84 @@ describe("excluded pages register nothing", () => {
   });
 });
 
+// ── The Verwalten routes (Issue #854, D-854-28) ────────────────────────────────────────────
+// The admin pages are being rebuilt under `routes/(app)/verwalten`; the same ledger rules apply
+// there, with their own ledgers keyed relative to that root. A page holding form state registers
+// exactly one id via `markUnsaved`; any other page is excluded with a reason. Later plans add
+// their pages here.
+const VERWALTEN_ROOT = resolve(process.cwd(), "src/routes/(app)/verwalten");
+
+const VERWALTEN_REGISTERED: Record<string, string> = {};
+
+const VERWALTEN_EXCLUDED: Record<string, string> = {
+  "+page.svelte": "hub page, no form state",
+  "regeln/+page.svelte": "hub page, no form state",
+  "daten/+page.svelte": "hub page, no form state",
+  "system/+page.svelte": "hub page, no form state",
+};
+
+const VERWALTEN_PAGES = adminPages(VERWALTEN_ROOT);
+const VERWALTEN_KEYS = VERWALTEN_PAGES.map((abs) =>
+  relative(VERWALTEN_ROOT, abs).split(sep).join("/"),
+);
+
+describe("every Verwalten page is accounted for", () => {
+  it("scanned at least 4 Verwalten pages", () => {
+    expect(
+      VERWALTEN_PAGES.length,
+      "fewer than 4 Verwalten pages scanned — src/routes/(app)/verwalten moved or emptied",
+    ).toBeGreaterThanOrEqual(4);
+  });
+
+  it("no Verwalten page is missing from the ledger", () => {
+    const missing = VERWALTEN_KEYS.filter(
+      (k) => !(k in VERWALTEN_REGISTERED) && !(k in VERWALTEN_EXCLUDED),
+    );
+    expect(
+      missing,
+      `The following Verwalten pages are in neither VERWALTEN_REGISTERED nor VERWALTEN_EXCLUDED: ${missing.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("no ledger entry points at a file that no longer exists", () => {
+    const ledgerKeys = [...Object.keys(VERWALTEN_REGISTERED), ...Object.keys(VERWALTEN_EXCLUDED)];
+    const stale = ledgerKeys.filter((k) => !VERWALTEN_KEYS.includes(k));
+    expect(stale, `Ledger entries with no matching +page.svelte: ${stale.join(", ")}`).toEqual([]);
+  });
+
+  it("no page is in both lists", () => {
+    expect(Object.keys(VERWALTEN_REGISTERED).filter((k) => k in VERWALTEN_EXCLUDED)).toEqual([]);
+  });
+
+  it("registered Verwalten pages carry the full idiom and exactly one id", () => {
+    for (const [relPath, id] of Object.entries(VERWALTEN_REGISTERED)) {
+      const src = readFileSync(join(VERWALTEN_ROOT, relPath), "utf8");
+      expect(src).toContain(`markUnsaved("${id}"`);
+      expect(src).toContain(`return () => markUnsaved("${id}", false)`);
+      expect(registrationIsGated(src, id), `${relPath} gates ${id} on snapshotsReady`).toBe(true);
+      expect(registeredIdsIn(src), `${relPath} should register exactly one id`).toEqual([id]);
+    }
+  });
+
+  it("excluded Verwalten pages register nothing and carry a reason", () => {
+    for (const [relPath, reason] of Object.entries(VERWALTEN_EXCLUDED)) {
+      const src = readFileSync(join(VERWALTEN_ROOT, relPath), "utf8");
+      expect(src, `${relPath} contains markUnsaved(`).not.toContain("markUnsaved(");
+      expect(reason.length, `${relPath}'s exclusion reason is empty`).toBeGreaterThan(0);
+    }
+  });
+
+  it("no id is registered by an admin page and a Verwalten page at once", () => {
+    const adminIds = new Set(
+      ALL_PAGES.flatMap((abs) => registeredIdsIn(readFileSync(abs, "utf8"))),
+    );
+    const clashes = VERWALTEN_PAGES.flatMap((abs) =>
+      registeredIdsIn(readFileSync(abs, "utf8")).filter((id) => adminIds.has(id)),
+    );
+    expect(clashes).toEqual([]);
+  });
+});
+
 describe("the documented rule names this gate", () => {
   it("docs/ADMIN_STRUCTURE.md names admin-unsaved-registry", () => {
     const docs = readFileSync(resolve(process.cwd(), "..", "..", "docs/ADMIN_STRUCTURE.md"), {

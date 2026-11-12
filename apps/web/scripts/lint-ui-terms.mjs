@@ -37,6 +37,7 @@ const SCAN_DIRS = ["src/routes", "src/lib"];
 /** Areas where "Phorest" may be named: the integration is configured and planned there. */
 const PHOREST_ALLOWED = [
   "src/routes/(app)/admin/", // Verwaltung: the integration's own settings page
+  "src/routes/(app)/verwalten/", // Verwaltung (#854): the Regeln pages name the Phorest import
   "src/routes/(app)/shifts/", // Schichtplanung: imported shifts are planned by managers
   "src/routes/(operator)/", // operator console: salon coupling
   "src/lib/components/admin/",
