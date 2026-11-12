@@ -247,7 +247,7 @@
 {#if loadError}
   <div class="callout error" role="alert">{loadError}</div>
 {:else}
-  <Section title="ROLLEN" sub="Systemrollen und die eigenen Rollen des Unternehmens">
+  <Section title="Rollen" sub="Systemrollen und die eigenen Rollen des Unternehmens">
     {#snippet actions()}
       {#if createHint}
         {@render createHint()}

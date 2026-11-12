@@ -161,7 +161,7 @@ Usage:
 </script>
 
 <Card animate class="dashboard-stat" style="--card-idx: 3;">
-  <CardHeader title="URLAUB" sub="Verbleibende Tage" />
+  <CardHeader title="Urlaub" sub="Verbleibende Tage" />
   <p>Inhalt…</p>
 </Card>
 ```
@@ -172,7 +172,7 @@ Source: `$components/ui/CardHeader.svelte`
 
 ```ts
 interface Props {
-  /** Bold uppercase title row inside .card-hd. */
+  /** Title row inside .card-hd (sentence case, small and muted). */
   title: string;
   /** Optional eyebrow text rendered below the title (upright). */
   sub?: string;
@@ -186,7 +186,7 @@ Rendered DOM: `<header class="card-hd"><div class="card-title">{title}</div>{#if
 Usage:
 
 ```svelte
-<CardHeader title="ZEITERFASSUNG" sub="Übersicht der aktuellen Woche">
+<CardHeader title="Zeiterfassung" sub="Übersicht der aktuellen Woche">
   {#snippet actions()}
     <button class="btn btn-ghost">Export</button>
   {/snippet}
@@ -369,6 +369,7 @@ Sources: `$components/ui/FormField.svelte`, `SaveBar.svelte` (+ `save-bar.ts`), 
 
 - `FormField` (`label`, `help?`, `error?`, `required?`, `field` snippet): the snippet receives `{ id, describedBy, invalid }` and puts them on the page's own control (`aria-describedby={describedBy}`, `aria-invalid={invalid ? "true" : undefined}`). Ids come from `$props.id()`.
 - `SaveBar` (`changes`, `errors`, `saving?`, `saveLabel`, `onSave`, `onDiscard`): the section-button rule of `docs/ADMIN_STRUCTURE.md` §3.2.1 as code. Hidden at 0 changes; the save button is disabled while `errors > 0` or `saving`; `saveLabel` says what happens („Vertrag speichern“). The German phrase and the `canSave` rule live only in `save-bar.ts`. No page adopts it yet.
+- **Settings pages (Issue #854, D-854-04/D-854-15).** A settings page groups its fields in `.settings-group` sections (`app.css`: `.settings-group-title` is an `h2` in sentence case at the h2 token, `.settings-group-desc` the muted help line) and gives each section its own `SaveBar`. The bar is fed by `$lib/settings/section-state.ts`: `countChanges(snapshot, values, KEYS)` for `changes`, `sectionErrors(errors)` for `errors`, `pickSection(values, KEYS)` as the own-fields payload of the save (never a spread of a load-time copy, #878). The page sums the counts of its sections into ONE `markUnsaved` call.
 - `DayGrid` (`value` bindable `{ mon … sun }` hours or `null`, `label`, `step?`, `disabled?`, `onchange?`): Mo…So fields, live sum in German notation („39,5 h“), a field error outside 0…24 (feedback only, the API validates).
 
 ### Bulk change preview: `<BulkPreviewDialog>`

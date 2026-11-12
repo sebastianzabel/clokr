@@ -1063,6 +1063,31 @@ select.form-input {
   margin-bottom: 1.75rem;
 }
 
+/* Issue #854 (D-854-15/D-854-04): one settings section = .settings-group with its own SaveBar */
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+.settings-group + .settings-group {
+  margin-top: var(--s-8);
+  padding-top: var(--s-8);
+  border-top: 1px solid var(--line);
+}
+.settings-group-title {
+  margin: 0;
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-group-desc {
+  margin: calc(-1 * var(--s-2)) 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
 .page-header {
   margin-bottom: 2.25rem;
 }

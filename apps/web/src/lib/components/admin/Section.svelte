@@ -6,7 +6,7 @@
   NOT a replacement for `ui/Card.svelte` (used outside admin).
 
   Props:
-    title    — 11px UPPERCASE section header label
+    title    — section heading in sentence case (h2 token, Issue #854)
     sub      — 13px muted description
     actions  — right-aligned header actions (snippet)
     footer   — per-card save area stripe (snippet)
@@ -16,7 +16,7 @@
     children — section body (required)
 
   Example:
-    <Section title="UNTERNEHMEN" sub="Firmenname & Region">
+    <Section title="Unternehmen" sub="Firmenname & Region">
       <FormFields />
       {#snippet footer()}
         <button class="btn btn-primary btn-sm">Speichern</button>
@@ -111,10 +111,9 @@
 
   .section-title {
     font-family: var(--font-ui);
-    font-size: 11px;
+    /* Sentence case at the h2 token (Issue #854, D-854-15): no capitals, no letter-spacing. */
+    font-size: var(--fs-h2);
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
     color: var(--text);
   }
 

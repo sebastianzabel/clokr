@@ -71,7 +71,7 @@ Usage:
   import Section from "$lib/components/admin/Section.svelte";
 </script>
 
-<Section title="UNTERNEHMEN" sub="Firmenname & Region">
+<Section title="Unternehmen" sub="Firmenname & Region">
   <FormFields />
   {#snippet actions()}
     <button class="btn btn-ghost btn-sm">Vorschau</button>
@@ -183,14 +183,14 @@ Usage:
 </script>
 
 <SectionStack eyebrow="Administration" title="Allgemein" animate>
-  <Section title="UNTERNEHMEN" sub="Firmenname & Region">
+  <Section title="Unternehmen" sub="Firmenname & Region">
     <FormFields />
     {#snippet footer()}
       <button class="btn btn-primary btn-sm">Speichern</button>
     {/snippet}
   </Section>
 
-  <Section title="FEATURES">
+  <Section title="Features">
     <FeatureToggles />
   </Section>
 
@@ -258,7 +258,7 @@ Usage (list mode):
 
 <ListDetail eyebrow="Administration" title="Mandanten" view="list">
   {#snippet list()}
-    <Section title="ALLE MANDANTEN">
+    <Section title="Alle Mandanten">
       <TenantTable />
     </Section>
   {/snippet}
@@ -288,11 +288,11 @@ Usage (detail mode with tabs):
 <ListDetail eyebrow="Administration" title="Mandant" view="detail" {crumbs} {tabs} bind:activeTab>
   {#snippet tabContent(tab)}
     {#if tab === "general"}
-      <Section title="ALLGEMEIN">
+      <Section title="Allgemein">
         <TenantForm />
       </Section>
     {:else if tab === "billing"}
-      <Section title="ABRECHNUNG">
+      <Section title="Abrechnung">
         <BillingForm />
       </Section>
     {:else if tab === "danger"}
@@ -356,7 +356,7 @@ Usage (no steps):
 
 <ToolPage eyebrow="Administration" title="Daten importieren">
   {#snippet form()}
-    <Section title="DATEI HOCHLADEN">
+    <Section title="Datei hochladen">
       <ImportDropzone />
     </Section>
   {/snippet}
