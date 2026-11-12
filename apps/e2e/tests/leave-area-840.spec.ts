@@ -1080,9 +1080,14 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await chooseFromCombobox(who, page.getByRole("option", { name: /Zeile, Formular/ }), "Zeile");
     await expect(who).toHaveValue(/Zeile, Formular/);
     await expect(page.locator("#f-type")).toBeVisible();
+    // The person's balance block loads after the pick and grows (re-centres) the dialog: measure the
+    // fields only once it is there, so every box comes from the same final layout.
+    await expect(dialog.getByText("Jahresanspruch")).toBeVisible();
     await animationsSettled(page);
     const topOf = async (selector: string) => (await page.locator(selector).boundingBox())!;
-    const emp = (await who.boundingBox())!;
+    // The Combobox's field box (input + chevron) is the counterpart of the Art select's box.
+    const whoField = dialog.locator(".cb-field").first();
+    const emp = (await whoField.boundingBox())!;
     const type = await topOf("#f-type");
     const from = await topOf("#f-start");
     const to = await topOf("#f-end");
@@ -1100,7 +1105,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     expect(phoneTo.y, "Bis lies below Von on a phone").toBeGreaterThanOrEqual(
       phoneFrom.y + phoneFrom.height - 1,
     );
-    const phoneEmp = (await who.boundingBox())!;
+    const phoneEmp = (await whoField.boundingBox())!;
     const phoneType = await topOf("#f-type");
     expect(phoneType.y, "Art lies below Für wen? on a phone").toBeGreaterThanOrEqual(
       phoneEmp.y + phoneEmp.height - 1,
