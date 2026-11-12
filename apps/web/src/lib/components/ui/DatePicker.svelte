@@ -15,6 +15,12 @@
     /** Latest selectable day, ISO. */
     max?: string;
     disabled?: boolean;
+    /**
+     * Only the first day of a month is selectable (a contract change, Issue #854). The calendar greys
+     * every other day, and a typed day that is not a 1st leaves the field invalid instead of being
+     * snapped: the value is kept as typed, so the page can name the rule and block the save.
+     */
+    monthFirstOnly?: boolean;
     /** FormField attrs: the id of the field, the describedby list and the invalid flag. */
     id?: string;
     describedBy?: string;
@@ -31,6 +37,7 @@
     min,
     max,
     disabled = false,
+    monthFirstOnly = false,
     id,
     describedBy,
     invalid = false,
@@ -52,6 +59,14 @@
   let dateValue = $derived(toDateValue(value));
   const minValue = $derived(toDateValue(min));
   const maxValue = $derived(toDateValue(max));
+
+  /** Calendar days other than the 1st are unavailable in month-first mode. */
+  const dayUnavailable = $derived(monthFirstOnly ? (date: DateValue) => date.day !== 1 : undefined);
+
+  /** A typed day that breaks the month-first rule is invalid too, whatever the caller says. */
+  const fieldInvalid = $derived(
+    invalid || (monthFirstOnly && dateValue !== undefined && dateValue.day !== 1),
+  );
 
   function onChange(next: DateValue | undefined) {
     const iso = next ? next.toString() : null;
@@ -79,6 +94,7 @@
     {minValue}
     {maxValue}
     {disabled}
+    isDateUnavailable={dayUnavailable}
     fixedWeeks
   >
     <DatePicker.Input
@@ -86,8 +102,8 @@
       class="dp-field"
       aria-label={label}
       aria-describedby={describedBy}
-      aria-invalid={invalid ? "true" : undefined}
-      data-invalid={invalid ? "" : undefined}
+      aria-invalid={fieldInvalid ? "true" : undefined}
+      data-invalid={fieldInvalid ? "" : undefined}
     >
       {#snippet children({ segments })}
         <span class="dp-segments">
