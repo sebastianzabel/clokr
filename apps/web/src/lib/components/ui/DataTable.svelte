@@ -65,6 +65,16 @@
     /** Accessible table caption (visually hidden). */
     caption: string;
     loading?: boolean;
+    /**
+     * Row selection (additive, #854): a leading checkbox column on the table and the card layout.
+     * Without it the table renders exactly as before.
+     */
+    selectable?: boolean;
+    /** Keys of the selected rows (bindable). Keys of rows not shown (other page, filtered away) stay. */
+    selectedKeys?: (string | number)[];
+    onSelectionChange?: (next: (string | number)[]) => void;
+    /** Accessible name of a row's checkbox; default „<text of the primary or first column> auswählen“. */
+    selectionLabel?: (row: Row) => string;
   }
 
   let {
@@ -81,7 +91,47 @@
     rowTestId,
     caption,
     loading = false,
+    selectable = false,
+    selectedKeys = $bindable([]),
+    onSelectionChange,
+    selectionLabel,
   }: Props = $props();
+
+  const selectedSet = $derived(new Set(selectedKeys));
+  const shownKeys = $derived(rows.map((row) => rowKey(row)));
+  const selectedShown = $derived(shownKeys.filter((key) => selectedSet.has(key)).length);
+  const allShownSelected = $derived(shownKeys.length > 0 && selectedShown === shownKeys.length);
+  const someShownSelected = $derived(selectedShown > 0 && !allShownSelected);
+
+  function setSelection(next: (string | number)[]) {
+    selectedKeys = next;
+    onSelectionChange?.(next);
+  }
+
+  function toggleRow(row: Row, checked: boolean) {
+    const key = rowKey(row);
+    if (checked) {
+      if (!selectedSet.has(key)) setSelection([...selectedKeys, key]);
+    } else if (selectedSet.has(key)) {
+      setSelection(selectedKeys.filter((k) => k !== key));
+    }
+  }
+
+  // The header checkbox acts on the shown rows only; a selection made on another page is kept.
+  function toggleAllShown(checked: boolean) {
+    if (checked) {
+      setSelection([...selectedKeys, ...shownKeys.filter((key) => !selectedSet.has(key))]);
+    } else {
+      const shown = new Set(shownKeys);
+      setSelection(selectedKeys.filter((key) => !shown.has(key)));
+    }
+  }
+
+  function rowSelectionLabel(row: Row): string {
+    if (selectionLabel) return selectionLabel(row);
+    const column = columns.find((c) => c.primary) ?? columns[0];
+    return `${column ? textOf(row, column) : ""} auswählen`.trim();
+  }
 
   function textOf(row: Row, column: DataTableColumn): string {
     const value = row[column.key];
@@ -122,6 +172,18 @@
         <caption class="sr-only">{caption}</caption>
         <thead>
           <tr>
+            {#if selectable}
+              <th scope="col" class="dt-select-cell">
+                <input
+                  type="checkbox"
+                  class="dt-check"
+                  aria-label="Alle angezeigten Zeilen auswählen"
+                  checked={allShownSelected}
+                  indeterminate={someShownSelected}
+                  onchange={(e) => toggleAllShown(e.currentTarget.checked)}
+                />
+              </th>
+            {/if}
             {#each columns as column (column.key)}
               {#if column.sortable && onSort}
                 <SortHeader
@@ -152,6 +214,17 @@
                 data-testid={rowTestId?.(row)}
                 onclick={(e) => onRowActivate(e, row)}
               >
+                {#if selectable}
+                  <td class="dt-select-cell" data-label="Auswahl">
+                    <input
+                      type="checkbox"
+                      class="dt-check"
+                      aria-label={rowSelectionLabel(row)}
+                      checked={selectedSet.has(rowKey(row))}
+                      onchange={(e) => toggleRow(row, e.currentTarget.checked)}
+                    />
+                  </td>
+                {/if}
                 {#each columns as column (column.key)}
                   <td
                     data-label={column.label}
@@ -176,6 +249,17 @@
               </tr>
             {:else}
               <tr data-testid={rowTestId?.(row)}>
+                {#if selectable}
+                  <td class="dt-select-cell" data-label="Auswahl">
+                    <input
+                      type="checkbox"
+                      class="dt-check"
+                      aria-label={rowSelectionLabel(row)}
+                      checked={selectedSet.has(rowKey(row))}
+                      onchange={(e) => toggleRow(row, e.currentTarget.checked)}
+                    />
+                  </td>
+                {/if}
                 {#each columns as column (column.key)}
                   <td
                     data-label={column.label}
@@ -252,6 +336,26 @@
 
   .dt-row--click {
     cursor: pointer;
+  }
+
+  .dt-table :global(th.dt-select-cell),
+  .dt-table td.dt-select-cell {
+    width: 1%;
+    padding-inline-end: 0;
+  }
+
+  .dt-check {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--brand);
+    cursor: pointer;
+    vertical-align: middle;
+  }
+
+  .dt-check:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
   }
 
   .dt-primary {
@@ -338,6 +442,17 @@
     }
 
     .dt-table td.dt-primary-cell::before {
+      display: none;
+    }
+
+    /* The selection checkbox sits at the start of the card, without a printed label. */
+    .dt-table td.dt-select-cell {
+      width: auto;
+      justify-content: flex-start;
+      padding-inline-end: 0;
+    }
+
+    .dt-table td.dt-select-cell::before {
       display: none;
     }
 

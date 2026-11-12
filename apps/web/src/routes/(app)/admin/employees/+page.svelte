@@ -46,6 +46,7 @@
     type DataTableSort,
   } from "$components/ui/DataTable.svelte";
   import { urlState } from "$lib/table/url-state";
+  import { downloadCsv, rowsToCsv } from "$lib/table/csv-export";
   import { listUrlSchema, sortEmployees } from "$lib/employees/list-url-state";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
@@ -376,6 +377,67 @@
     filterEmployment = "";
   }
 
+  // ── Selection and CSV export (Issue #854, D-854-09) ────────────────────────────────────────────
+  // The selection survives paging; it is cut down to the persons the filtered list still holds, so a
+  // person the filter hides can never be changed or exported unseen.
+  let selectedIds = $state<(string | number)[]>([]);
+  let selectedEmployees = $derived.by(() => {
+    const ids = new Set(selectedIds);
+    return sortedEmployees.filter((emp) => ids.has(emp.id));
+  });
+  let selectedCount = $derived(selectedEmployees.length);
+
+  function dayText(iso: string | null | undefined): string {
+    return iso
+      ? new Date(iso).toLocaleDateString("de-DE", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+        })
+      : "—";
+  }
+
+  // The text a column shows, one place for the cell and the CSV export. The export carries exactly
+  // the columns of the list (never more, T-854-44), without the action column.
+  function exportText(emp: Employee, key: string): string {
+    switch (key) {
+      case "number":
+        return emp.employeeNumber;
+      case "name":
+        return `${emp.lastName}, ${emp.firstName}`;
+      case "email":
+        return emp.user.email;
+      case "role":
+        return assignmentsOf(emp).length > 0
+          ? assignmentsOf(emp)
+              .map((assignment) => assignmentLabel(assignment, assignmentCtx))
+              .join(", ")
+          : NO_ASSIGNMENT_LABEL;
+      case "hire":
+        return dayText(emp.hireDate);
+      case "schedule":
+        return scheduleLabel(emp.workSchedule?.type);
+      case "status": {
+        const employment = employmentState(emp.exitDate, today);
+        return employment.kind === "EMPLOYED"
+          ? statusLabel(emp)
+          : `${statusLabel(emp)}, ${employment.label}`;
+      }
+      case "login":
+        return dayText(emp.user.lastLoginAt);
+      default:
+        return "";
+    }
+  }
+
+  function exportSelectedCsv() {
+    const exported = columns.filter((column) => column.key !== "actions");
+    const records = selectedEmployees.map((emp) =>
+      Object.fromEntries(exported.map((column) => [column.key, exportText(emp, column.key)])),
+    );
+    downloadCsv(`personen-${today}.csv`, rowsToCsv(exported, records));
+  }
+
   // KPI mini-stats (exclude anonymized)
   let statTotal = $derived(employees.filter((e) => !isAnonymized(e)).length);
   let statActive = $derived(employees.filter((e) => e.user.isActive && !isAnonymized(e)).length);
@@ -499,6 +561,8 @@
       ]);
       if (generation !== listGeneration) return;
       employees = list;
+      const known = new Set(list.map((emp) => emp.id));
+      selectedIds = selectedIds.filter((id) => known.has(String(id)));
       salonRejected = false;
     } catch (e: unknown) {
       if (generation !== listGeneration) return;
@@ -853,7 +917,28 @@
             onRowClick={(emp) => goto(`/admin/employees/${emp.id}`)}
             {loading}
             caption="Personen"
+            selectable
+            bind:selectedKeys={selectedIds}
+            selectionLabel={(emp) => `${emp.lastName}, ${emp.firstName} auswählen`}
           >
+            {#snippet toolbar()}
+              {#if selectedCount > 0}
+                <div class="bulk-bar" data-testid="admin-employees-bulk-bar">
+                  <span class="bulk-count" aria-live="polite">{selectedCount} ausgewählt</span>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    onclick={exportSelectedCsv}
+                    data-testid="admin-employees-export-csv">Als CSV exportieren</button
+                  >
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    onclick={() => (selectedIds = [])}>Auswahl aufheben</button
+                  >
+                </div>
+              {/if}
+            {/snippet}
             {#snippet cell(emp, column)}
               {#if column.key === "number"}
                 <span class="col-number">{emp.employeeNumber}</span>
@@ -881,13 +966,7 @@
                   <span class="text-muted">{NO_ASSIGNMENT_LABEL}</span>
                 {/if}
               {:else if column.key === "hire"}
-                <span class="col-date"
-                  >{new Date(emp.hireDate).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                  })}</span
-                >
+                <span class="col-date">{dayText(emp.hireDate)}</span>
               {:else if column.key === "schedule"}
                 <span class="chip">{scheduleLabel(emp.workSchedule?.type)}</span>
               {:else if column.key === "status"}
@@ -904,15 +983,7 @@
                   >
                 {/if}
               {:else if column.key === "login"}
-                <span class="col-login">
-                  {emp.user.lastLoginAt
-                    ? new Date(emp.user.lastLoginAt).toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })
-                    : "—"}
-                </span>
+                <span class="col-login">{dayText(emp.user.lastLoginAt)}</span>
               {:else if column.key === "actions"}
                 <div class="action-group">
                   {#if canManageAccess && !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
@@ -1452,6 +1523,19 @@
   .col-login {
     color: var(--text-2);
     font-size: 13px;
+  }
+
+  .bulk-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2);
+  }
+  .bulk-count {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text);
+    margin-right: var(--s-2);
   }
 
   .action-group {
