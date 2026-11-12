@@ -109,7 +109,8 @@
     {
       "page": "(app)/admin/shutdowns/+page.svelte",
       "path": "/verwalten/regeln/betriebsurlaub",
-      "auth": "tenant-admin"
+      "auth": "tenant-admin",
+      "skip": "Redirect-only page (#854): the company shutdown list is the Betriebsurlaub tab of Regeln › Abwesenheiten (/verwalten/regeln/abwesenheiten, measured as its own route); the file renders no content of its own. Its detail sub-route below keeps its path."
     },
     {
       "page": "(app)/admin/shutdowns/[id]/+page.svelte",

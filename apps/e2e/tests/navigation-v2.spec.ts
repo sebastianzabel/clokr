@@ -135,6 +135,9 @@ test.describe("Navigation v2 — old URLs land on the new place", () => {
       ["/admin/vacation", /\/verwalten\/regeln\/abwesenheiten(#.*)?$/],
       ["/verwalten/regeln/urlaub", /\/verwalten\/regeln\/abwesenheiten(#.*)?$/],
       ["/admin/special-leave", /\/verwalten\/regeln\/abwesenheiten#sonderurlaub$/],
+      // The company shutdown list is a tab of Abwesenheiten (#854): the old URL and the table URL both land there.
+      ["/admin/shutdowns", /\/verwalten\/regeln\/abwesenheiten#betriebsurlaub$/],
+      ["/verwalten/regeln/betriebsurlaub", /\/verwalten\/regeln\/abwesenheiten#betriebsurlaub$/],
       ["/admin/system", /\/verwalten\/system\/allgemein(\?|#|$)/],
       ["/dashboard", /\/ich\/tag$/],
       ["/admin", /\/verwalten$/],
