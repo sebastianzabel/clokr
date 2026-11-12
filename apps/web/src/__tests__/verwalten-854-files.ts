@@ -37,6 +37,12 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/arbeitszeit/WorkDaysSection.svelte",
   "lib/components/admin/arbeitszeit/CoreHoursSection.svelte",
   "lib/components/admin/arbeitszeit/VocationalSlotsSection.svelte",
+  "lib/components/admin/arbeitszeit/DefaultHoursSection.svelte",
+  "lib/components/admin/arbeitszeit/MaxNegativeSection.svelte",
+  "lib/components/admin/arbeitszeit/ComplianceSection.svelte",
+  "lib/components/admin/arbeitszeit/OpenEntriesSection.svelte",
+  // First adopted by the Arbeitszeit page (plan 854-07): the bulk apply preview of Issue #568.
+  "lib/components/admin/BulkApplyDialog.svelte",
 ];
 
 export interface VerwaltenFile {

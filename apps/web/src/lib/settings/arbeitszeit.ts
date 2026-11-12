@@ -22,6 +22,19 @@ export interface WorkConfig {
   bsSlotSecondLongDayMinutes?: number | null;
   bsSlotShortDayMinutes?: number | null;
   bsSlotBlockWeekMinutes?: number | null;
+  // Prisma serialises a Decimal as a string, so the hours may arrive as "8.00".
+  defaultMondayHours?: number | string;
+  defaultTuesdayHours?: number | string;
+  defaultWednesdayHours?: number | string;
+  defaultThursdayHours?: number | string;
+  defaultFridayHours?: number | string;
+  defaultSaturdayHours?: number | string;
+  defaultSundayHours?: number | string;
+  overtimeThreshold?: number | string;
+  allowOvertimePayout?: boolean;
+  maxNegativeBalanceMinutes?: number | null;
+  arbzgEnabled?: boolean;
+  autoDeleteOpenHours?: number;
 }
 
 /** Messages keyed by field; an empty or missing entry means the field is fine. */
@@ -326,4 +339,246 @@ export function vocationalSlotsWire(
 export function minutesAsHours(minutes: number | null): string {
   if (minutes === null || !Number.isFinite(minutes)) return "";
   return `= ${(minutes / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`;
+}
+
+// ── Standard-Arbeitszeit ─────────────────────────────────────────────────────────────────────────
+
+/** Hours per weekday, the shape of the DayGrid block (null while a field is empty). */
+export type DayHoursValues = Record<
+  "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun",
+  number | null
+>;
+
+export const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+export type DayKey = (typeof DAY_KEYS)[number];
+
+/** The registry key of each weekday's default hours. */
+export const DAY_FIELD: Readonly<Record<DayKey, string>> = {
+  mon: "defaultMondayHours",
+  tue: "defaultTuesdayHours",
+  wed: "defaultWednesdayHours",
+  thu: "defaultThursdayHours",
+  fri: "defaultFridayHours",
+  sat: "defaultSaturdayHours",
+  sun: "defaultSundayHours",
+};
+
+export const WEEKLY_HOURS_MIN = 1;
+export const WEEKLY_HOURS_MAX = 60;
+export const OVERTIME_THRESHOLD_MIN = 1;
+export const OVERTIME_THRESHOLD_MAX = 500;
+
+export type DefaultHoursValues = {
+  days: DayHoursValues;
+  /** Hours; null while the field is empty. */
+  overtimeThreshold: number | null;
+  allowOvertimePayout: boolean;
+};
+
+/** What the confirmed bulk apply adds to the save (Issue #568); the server computed all three. */
+export interface BulkSelection {
+  applyEmployeeIds: string[];
+  previewFingerprint: string;
+  effectiveFrom: string;
+}
+
+/** The same rule as DayGrid's `isValidDayHours` (0…24); feedback only, the API validates. */
+function validDay(hours: number | null): hours is number {
+  return hours !== null && Number.isFinite(hours) && hours >= 0 && hours <= 24;
+}
+
+/** Sum of the valid days, rounded to hundredths so float noise never shows (DayGrid's `sumDayHours`). */
+export function weeklyHoursOf(days: DayHoursValues): number {
+  let sum = 0;
+  for (const key of DAY_KEYS) {
+    const hours = days[key];
+    if (validDay(hours)) sum += hours;
+  }
+  return Math.round(sum * 100) / 100;
+}
+
+export function defaultHoursFrom(config: WorkConfig): DefaultHoursValues {
+  const hours = (value: number | string | undefined, fallback: number): number => {
+    const parsed = Number(value);
+    return value === undefined || !Number.isFinite(parsed) ? fallback : parsed;
+  };
+  return {
+    days: {
+      mon: hours(config.defaultMondayHours, 8),
+      tue: hours(config.defaultTuesdayHours, 8),
+      wed: hours(config.defaultWednesdayHours, 8),
+      thu: hours(config.defaultThursdayHours, 8),
+      fri: hours(config.defaultFridayHours, 8),
+      sat: hours(config.defaultSaturdayHours, 0),
+      sun: hours(config.defaultSundayHours, 0),
+    },
+    overtimeThreshold: hours(config.overtimeThreshold, 60),
+    allowOvertimePayout: config.allowOvertimePayout ?? false,
+  };
+}
+
+/** The values the section's SaveBar counts: one field per weekday, the threshold and the payout flag. */
+export function defaultHoursComparable(values: DefaultHoursValues): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    overtimeThreshold: values.overtimeThreshold,
+    allowOvertimePayout: values.allowOvertimePayout,
+  };
+  for (const key of DAY_KEYS) out[DAY_FIELD[key]] = values.days[key];
+  return out;
+}
+
+export const DEFAULT_HOURS_COMPARABLE_KEYS: readonly string[] = [
+  ...DAY_KEYS.map((key) => DAY_FIELD[key]),
+  "overtimeThreshold",
+  "allowOvertimePayout",
+];
+
+/** One message per invalid weekday (the DayGrid shows the same wording under the field), the weekly
+ *  total and the threshold. */
+export function defaultHoursMessages(
+  values: DefaultHoursValues,
+): Record<string, string | undefined> {
+  const messages: Record<string, string | undefined> = {};
+  for (const key of DAY_KEYS) {
+    if (!validDay(values.days[key])) messages[DAY_FIELD[key]] = "Gib eine Zahl von 0 bis 24 ein.";
+  }
+  const weekly = weeklyHoursOf(values.days);
+  if (
+    Object.keys(messages).length === 0 &&
+    (weekly < WEEKLY_HOURS_MIN || weekly > WEEKLY_HOURS_MAX)
+  ) {
+    messages.defaultWeeklyHours = `Die Wochensumme muss zwischen ${WEEKLY_HOURS_MIN} und ${WEEKLY_HOURS_MAX} Stunden liegen.`;
+  }
+  const threshold = values.overtimeThreshold;
+  if (
+    threshold === null ||
+    !Number.isFinite(threshold) ||
+    threshold < OVERTIME_THRESHOLD_MIN ||
+    threshold > OVERTIME_THRESHOLD_MAX
+  ) {
+    messages.overtimeThreshold = `Die Warnschwelle muss zwischen ${OVERTIME_THRESHOLD_MIN} und ${OVERTIME_THRESHOLD_MAX} Stunden liegen.`;
+  }
+  return messages;
+}
+
+/**
+ * The body of the save: the defaults, and — only for a confirmed bulk apply (Issue #568, AC-2) — the
+ * server's own selection. `applyToExisting` is true exactly when a selection is given; the effective
+ * date is the one the server's preview allowed, never computed here. Callers validate first.
+ */
+export function defaultHoursWire(
+  values: DefaultHoursValues,
+  bulk: BulkSelection | null,
+): Record<string, unknown> {
+  return {
+    defaultWeeklyHours: weeklyHoursOf(values.days),
+    defaultMondayHours: values.days.mon,
+    defaultTuesdayHours: values.days.tue,
+    defaultWednesdayHours: values.days.wed,
+    defaultThursdayHours: values.days.thu,
+    defaultFridayHours: values.days.fri,
+    defaultSaturdayHours: values.days.sat,
+    defaultSundayHours: values.days.sun,
+    overtimeThreshold: values.overtimeThreshold,
+    allowOvertimePayout: values.allowOvertimePayout,
+    applyToExisting: bulk !== null,
+    applyEmployeeIds: bulk?.applyEmployeeIds,
+    previewFingerprint: bulk?.previewFingerprint,
+    effectiveFrom: bulk?.effectiveFrom,
+  };
+}
+
+// ── Überstunden: negatives Saldo ─────────────────────────────────────────────────────────────────
+
+export const MAX_NEGATIVE_HOURS_MIN = 1;
+export const MAX_NEGATIVE_HOURS_MAX = 999;
+export const DEFAULT_MAX_NEGATIVE_HOURS = 20;
+
+export type MaxNegativeValues = {
+  enabled: boolean;
+  /** Hours; null while the field is empty. */
+  hours: number | null;
+};
+
+export function maxNegativeFrom(config: WorkConfig): MaxNegativeValues {
+  const minutes = config.maxNegativeBalanceMinutes;
+  return minutes === null || minutes === undefined
+    ? { enabled: false, hours: DEFAULT_MAX_NEGATIVE_HOURS }
+    : { enabled: true, hours: minutes / 60 };
+}
+
+export function maxNegativeMessages(values: MaxNegativeValues): FieldMessages<"hours"> {
+  if (!values.enabled) return {};
+  const hours = values.hours;
+  if (
+    hours === null ||
+    !Number.isFinite(hours) ||
+    hours < MAX_NEGATIVE_HOURS_MIN ||
+    hours > MAX_NEGATIVE_HOURS_MAX
+  ) {
+    return {
+      hours: `Gib einen Wert zwischen ${MAX_NEGATIVE_HOURS_MIN} und ${MAX_NEGATIVE_HOURS_MAX} Stunden ein.`,
+    };
+  }
+  return {};
+}
+
+/** Off sends null (no limit: a tolerance of 0 hours applies); on sends whole minutes. */
+export function maxNegativeWire(
+  values: MaxNegativeValues,
+): Record<"maxNegativeBalanceMinutes", unknown> {
+  return {
+    maxNegativeBalanceMinutes: values.enabled
+      ? Math.round((values.hours ?? DEFAULT_MAX_NEGATIVE_HOURS) * 60)
+      : null,
+  };
+}
+
+// ── ArbZG-Prüfung ────────────────────────────────────────────────────────────────────────────────
+
+export type ComplianceValues = { arbzgEnabled: boolean };
+export type ComplianceField = keyof ComplianceValues;
+
+export function complianceFrom(config: WorkConfig): ComplianceValues {
+  return { arbzgEnabled: config.arbzgEnabled ?? true };
+}
+
+export function complianceWire(values: ComplianceValues): Record<ComplianceField, unknown> {
+  return { arbzgEnabled: values.arbzgEnabled };
+}
+
+// ── Offene Einträge ──────────────────────────────────────────────────────────────────────────────
+
+export const OPEN_ENTRIES_HOURS_MAX = 168;
+export const DEFAULT_OPEN_ENTRIES_HOURS = 14;
+
+export type OpenEntriesValues = {
+  /** Hours; 0 = switched off; null while the field is empty. */
+  autoDeleteOpenHours: number | null;
+};
+export type OpenEntriesField = keyof OpenEntriesValues;
+
+export function openEntriesFrom(config: WorkConfig): OpenEntriesValues {
+  return { autoDeleteOpenHours: config.autoDeleteOpenHours ?? DEFAULT_OPEN_ENTRIES_HOURS };
+}
+
+export function openEntriesMessages(values: OpenEntriesValues): FieldMessages<OpenEntriesField> {
+  const hours = values.autoDeleteOpenHours;
+  if (
+    hours === null ||
+    !Number.isFinite(hours) ||
+    Math.trunc(hours) < 0 ||
+    Math.trunc(hours) > OPEN_ENTRIES_HOURS_MAX
+  ) {
+    return {
+      autoDeleteOpenHours: `Gib einen Wert zwischen 0 und ${OPEN_ENTRIES_HOURS_MAX} Stunden ein.`,
+    };
+  }
+  return {};
+}
+
+export function openEntriesWire(values: OpenEntriesValues): Record<OpenEntriesField, unknown> {
+  return {
+    autoDeleteOpenHours: Math.trunc(values.autoDeleteOpenHours ?? DEFAULT_OPEN_ENTRIES_HOURS),
+  };
 }

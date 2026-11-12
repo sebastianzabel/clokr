@@ -260,7 +260,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: "children",
     inNav: true,
     parent: "/verwalten",
-    description: "Urlaub, Betriebsurlaub, Urlaubsgrenzen und Schichten",
+    description: "Arbeitszeit, Urlaub, Betriebsurlaub, Urlaubsgrenzen und Schichten",
   },
   // Issue #854: a page created by the Verwalten rebuild (no route file of its own before). Its sections come from
   // /admin/system and /admin/vacation; the registry (settings-pages.ts) pins `requires` to the union of theirs.
@@ -275,6 +275,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
       [Z("tenant-settings:update")],
       [Z("terminal:manage")],
       [Z("api-key:manage")],
+      [Z("leave-config:manage")],
     ],
     inNav: false,
     parent: "/verwalten/regeln",

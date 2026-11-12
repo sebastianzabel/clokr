@@ -2185,10 +2185,6 @@
     font-weight: 500;
     font-size: 0.9375rem;
   }
-  .error-hint {
-    color: var(--bad);
-    font-size: 0.9375rem;
-  }
 
   .federal-state-select {
     min-width: 220px;

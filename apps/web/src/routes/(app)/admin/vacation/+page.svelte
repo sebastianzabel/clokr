@@ -4,9 +4,6 @@
 
   import { onMount } from "svelte";
   import { api } from "$api/client";
-  import BulkApplyDialog from "$lib/components/admin/BulkApplyDialog.svelte";
-  import { fetchBulkApplyPreview, type BulkApplySelection } from "$lib/api/bulk-apply";
-  import { formatDateDe } from "$lib/admin/bulk-apply-format";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
   import {
@@ -25,7 +22,6 @@
   const TABS = [
     { id: "uebersicht", label: "Übersicht" },
     { id: "standards", label: "Standards" },
-    { id: "arbzg", label: "ArbZG" },
     { id: "antraege", label: "Anträge & Krankheit" },
     { id: "erinnerungen", label: "Erinnerungen" },
     { id: "sonderurlaub", label: "Sonderurlaub" },
@@ -68,16 +64,6 @@
   let slSaving = $state(false);
 
   interface TenantConfig {
-    defaultWeeklyHours: number;
-    defaultMondayHours: number;
-    defaultTuesdayHours: number;
-    defaultWednesdayHours: number;
-    defaultThursdayHours: number;
-    defaultFridayHours: number;
-    defaultSaturdayHours: number;
-    defaultSundayHours: number;
-    overtimeThreshold: number;
-    allowOvertimePayout: boolean;
     defaultVacationDays: number;
     defaultApprenticeVacationDays?: number | string;
     carryOverDeadlineDay: number;
@@ -85,9 +71,7 @@
     federalState: string;
     clockOutReminderHours: number;
     missingEntriesDays: number;
-    autoDeleteOpenHours: number;
     // Optional extended fields returned by /settings/work
-    arbzgEnabled?: boolean;
     availabilityEnabled?: boolean;
     autoBreakEnabled?: boolean;
     defaultBreakStart?: string;
@@ -102,7 +86,6 @@
     sickNoteRequiredAfterDays?: number;
     autoCalcPartTimeVacation?: boolean;
     fullTimeWorkDaysPerWeek?: number;
-    maxNegativeBalanceMinutes?: number | null;
     enforceMinVacation?: boolean;
     carryOverRequiresReason?: boolean;
     vacationReminderStartMonth?: number;
@@ -124,15 +107,6 @@
   let error = $state("");
 
   // Global
-  let gMon = $state(8),
-    gTue = $state(8),
-    gWed = $state(8),
-    gThu = $state(8),
-    gFri = $state(8),
-    gSat = $state(0),
-    gSun = $state(0);
-  let gThreshold = $state(60);
-  let gPayout = $state(false);
   let gVacationDays = $state(30);
   // Issue #482: the Azubi-Standard — a calculation input for apprentices without an own value
   // (resolveVacationBaseDays()), also the create-dialog pre-fill suggestion (#435 D-03).
@@ -160,17 +134,12 @@
 
   let gCarryOverDay = $state(31);
   let gCarryOverMonth = $state(3);
-  let gArbzgEnabled = $state(true);
   // Phase 49.4: Verfügbarkeits-System toggle moved to /admin/system (Features card).
-  // v1.6.5: autoBreakEnabled + defaultBreakStart moved to /admin/system → Arbeitszeit.
-  let gApplyToExisting = $state(false);
-  // Issue #568: the bulk apply is two-step. A ticked save first opens the preview dialog; the
-  // dialog's confirmation sets pendingBulk, which saveGlobal sends along with the defaults.
-  let bulkDialogOpen = $state(false);
-  let pendingBulk: BulkApplySelection | null = $state(null);
+  // Issue #854 (plan 854-07): the working-time defaults (hours per weekday, overtime threshold and payout,
+  // the bulk apply to existing contracts), the ArbZG check, the open-entries limit and the negative-balance
+  // limit moved to Regeln › Arbeitszeit & Verträge.
   let gClockOutHours = $state(10);
   let gMissingDays = $state(7);
-  let gAutoInvalidateHours = $state(14);
 
   // Abwesenheits-Konfiguration
   let christmasEveRule = $state("NORMAL");
@@ -194,9 +163,6 @@
   let sickNoteRequiredAfterDays = $state(3);
   let autoCalcPartTimeVacation = $state(true);
   let fullTimeWorkDaysPerWeek = $state(5);
-  // Max Minusstunden
-  let maxNegEnabled = $state(false);
-  let maxNegHours = $state(20);
   // Erinnerungen
   let reminderPendingEnabled = $state(true);
   let reminderPendingHours = $state(48);
@@ -221,8 +187,6 @@
     gCarryOverDay = gMaxDay;
   });
 
-  let gWeekly = $derived(gMon + gTue + gWed + gThu + gFri + gSat + gSun);
-
   // KPI helpers
   let kpiCarryOverLabel = $derived(`${gCarryOverDay}. ${MONTHS[gCarryOverMonth - 1]}`);
 
@@ -239,23 +203,12 @@
   let globalSnapshot = $state("");
   let globalDirty = $derived(
     snap(
-      gMon,
-      gTue,
-      gWed,
-      gThu,
-      gFri,
-      gSat,
-      gSun,
-      gThreshold,
-      gPayout,
       gCarryOverDay,
       gCarryOverMonth,
       gVacationDays,
       gApprenticeVacationDays,
-      gArbzgEnabled,
       gClockOutHours,
       gMissingDays,
-      gAutoInvalidateHours,
       christmasEveRule,
       newYearsEveRule,
       holidayRulesValidFromYear,
@@ -281,14 +234,8 @@
       reminderDayCloseEnabled,
       reminderOffsetMinutes,
       reminderDayCloseTime,
-      maxNegEnabled,
-      maxNegHours,
     ) !== globalSnapshot,
   );
-  // gWeekly is NOT included — it's a $derived of gMon..gSun (:192), already covered.
-  // gApplyToExisting is NOT included — it's not a persisted value but a modifier of the next
-  // save, which saveGlobal itself resets to false as soon as the work PUT succeeded. A marker for it would
-  // claim an unsaved setting that does not exist.
 
   // Gate the registration on "the baseline has been taken" (WR-01). The snapshot starts as ""
   // and only gets its real value at the end of onMount's try, so globalDirty reads true until
@@ -305,24 +252,13 @@
   onMount(async () => {
     try {
       const cfg = await api.get<TenantConfig>("/settings/work");
-      gMon = Number(cfg.defaultMondayHours);
-      gTue = Number(cfg.defaultTuesdayHours);
-      gWed = Number(cfg.defaultWednesdayHours);
-      gThu = Number(cfg.defaultThursdayHours);
-      gFri = Number(cfg.defaultFridayHours);
-      gSat = Number(cfg.defaultSaturdayHours);
-      gSun = Number(cfg.defaultSundayHours);
-      gThreshold = Number(cfg.overtimeThreshold);
-      gPayout = cfg.allowOvertimePayout;
       gVacationDays = Number(cfg.defaultVacationDays) || 30;
       gApprenticeVacationDays = Number(cfg.defaultApprenticeVacationDays) || 20;
       gCarryOverDay = cfg.carryOverDeadlineDay ?? 31;
       gCarryOverMonth = cfg.carryOverDeadlineMonth ?? 3;
-      gArbzgEnabled = cfg.arbzgEnabled ?? true;
       // v1.6.5: autoBreakEnabled + defaultBreakStart are managed on /admin/system → Arbeitszeit.
       gClockOutHours = cfg.clockOutReminderHours ?? 10;
       gMissingDays = cfg.missingEntriesDays ?? 7;
-      gAutoInvalidateHours = cfg.autoDeleteOpenHours ?? 14;
 
       // Leave/overtime config
       christmasEveRule = cfg.christmasEveRule ?? "NORMAL";
@@ -342,11 +278,6 @@
       sickNoteRequiredAfterDays = clampKarenzDays(cfg.sickNoteRequiredAfterDays);
       autoCalcPartTimeVacation = cfg.autoCalcPartTimeVacation ?? true;
       fullTimeWorkDaysPerWeek = cfg.fullTimeWorkDaysPerWeek ?? 5;
-      const maxNegMinutes = cfg.maxNegativeBalanceMinutes;
-      if (maxNegMinutes != null) {
-        maxNegEnabled = true;
-        maxNegHours = maxNegMinutes / 60;
-      }
       enforceMinVacation = cfg.enforceMinVacation ?? true;
       carryOverRequiresReason = cfg.carryOverRequiresReason ?? true;
       vacationReminderStartMonth = cfg.vacationReminderStartMonth ?? 10;
@@ -363,23 +294,12 @@
       reminderOffsetMinutes = clampReminderOffsetInput(cfg.reminderOffsetMinutes);
       reminderDayCloseTime = normalizeDayCloseTimeInput(cfg.reminderDayCloseTime);
       globalSnapshot = snap(
-        gMon,
-        gTue,
-        gWed,
-        gThu,
-        gFri,
-        gSat,
-        gSun,
-        gThreshold,
-        gPayout,
         gCarryOverDay,
         gCarryOverMonth,
         gVacationDays,
         gApprenticeVacationDays,
-        gArbzgEnabled,
         gClockOutHours,
         gMissingDays,
-        gAutoInvalidateHours,
         christmasEveRule,
         newYearsEveRule,
         holidayRulesValidFromYear,
@@ -405,8 +325,6 @@
         reminderDayCloseEnabled,
         reminderOffsetMinutes,
         reminderDayCloseTime,
-        maxNegEnabled,
-        maxNegHours,
       );
       snapshotsReady = true;
     } catch (e: unknown) {
@@ -431,42 +349,20 @@
   }
 
   async function saveGlobal() {
-    // Issue #568 (D-07): with the box ticked nothing is saved before the admin confirmed the
-    // server preview in the dialog; confirmBulk re-enters here with pendingBulk set.
-    if (gApplyToExisting && pendingBulk === null) {
-      bulkDialogOpen = true;
-      return;
-    }
     gSaving = true;
     gError = "";
     gSaved = false;
-    let workSaved = false;
     try {
-      const saved = (await api.put("/settings/work", {
-        defaultWeeklyHours: gWeekly,
-        defaultMondayHours: gMon,
-        defaultTuesdayHours: gTue,
-        defaultWednesdayHours: gWed,
-        defaultThursdayHours: gThu,
-        defaultFridayHours: gFri,
-        defaultSaturdayHours: gSat,
-        defaultSundayHours: gSun,
-        overtimeThreshold: gThreshold,
-        allowOvertimePayout: gPayout,
+      await api.put("/settings/work", {
         carryOverDeadlineDay: gCarryOverDay,
         carryOverDeadlineMonth: gCarryOverMonth,
         defaultVacationDays: gVacationDays,
         defaultApprenticeVacationDays: gApprenticeVacationDays,
-        arbzgEnabled: gArbzgEnabled,
-        // v1.6.5: autoBreakEnabled + defaultBreakStart are owned by /admin/system →
-        // Arbeitszeit and intentionally not sent from this page to avoid clobbering.
-        applyToExisting: gApplyToExisting,
-        applyEmployeeIds: pendingBulk?.applyEmployeeIds,
-        previewFingerprint: pendingBulk?.previewFingerprint,
-        effectiveFrom: pendingBulk?.effectiveFrom,
+        // v1.6.5: autoBreakEnabled + defaultBreakStart are owned by Regeln › Arbeitszeit & Verträge
+        // (as are the default hours, the overtime threshold, arbzgEnabled, autoDeleteOpenHours and the
+        // bulk apply since Issue #854) and intentionally not sent from this page to avoid clobbering.
         clockOutReminderHours: gClockOutHours,
         missingEntriesDays: gMissingDays,
-        autoDeleteOpenHours: gAutoInvalidateHours,
         christmasEveRule,
         newYearsEveRule,
         holidayRulesValidFromYear,
@@ -496,44 +392,16 @@
         reminderDayCloseEnabled,
         reminderOffsetMinutes: clampReminderOffsetInput(reminderOffsetMinutes),
         reminderDayCloseTime: normalizeDayCloseTimeInput(reminderDayCloseTime),
-      })) as { appliedCount?: number } | undefined;
-      workSaved = true;
-      // Review WR-03: the apply is committed now. Reset the one-shot bulk state HERE, not after the
-      // unrelated security PUT below — if that one fails, the box must not stay ticked and the
-      // confirmed selection must not stay armed for the next save.
-      const appliedBulk = pendingBulk;
-      gApplyToExisting = false;
-      pendingBulk = null;
-      if (appliedBulk !== null) {
-        const count = saved?.appliedCount ?? appliedBulk.applyEmployeeIds.length;
-        toasts.success(
-          `${count} ${count === 1 ? "Vertrag" : "Verträge"} ab ${formatDateDe(appliedBulk.effectiveFrom)} angepasst`,
-        );
-      }
-      // Save max negative via security endpoint
-      await api.put("/settings/security", {
-        maxNegativeBalanceMinutes: maxNegEnabled ? Math.round(maxNegHours * 60) : null,
       });
       // Phase 49.4: availabilityEnabled toggle moved to /admin/system Features card.
       gSaved = true;
       globalSnapshot = snap(
-        gMon,
-        gTue,
-        gWed,
-        gThu,
-        gFri,
-        gSat,
-        gSun,
-        gThreshold,
-        gPayout,
         gCarryOverDay,
         gCarryOverMonth,
         gVacationDays,
         gApprenticeVacationDays,
-        gArbzgEnabled,
         gClockOutHours,
         gMissingDays,
-        gAutoInvalidateHours,
         christmasEveRule,
         newYearsEveRule,
         holidayRulesValidFromYear,
@@ -559,52 +427,13 @@
         reminderDayCloseEnabled,
         reminderOffsetMinutes,
         reminderDayCloseTime,
-        maxNegEnabled,
-        maxNegHours,
       ); // Phase 109 — section is clean again
       setTimeout(() => (gSaved = false), 3000);
     } catch (e: unknown) {
-      // A rejected bulk apply belongs to the dialog (its own message and the stale-preview
-      // handling); once the work PUT went through, a later failure is an ordinary save error.
-      if (pendingBulk !== null && !workSaved) throw e;
       gError = e instanceof Error ? e.message : "Fehler";
     } finally {
       gSaving = false;
     }
-  }
-
-  // Review IN-03: the preview found no affected contract. Save the defaults alone — the box is
-  // cleared first, so saveGlobal neither opens the dialog again nor sends the apply fields.
-  async function saveDefaultsOnly() {
-    gApplyToExisting = false;
-    await saveGlobal();
-  }
-
-  async function confirmBulk(selection: BulkApplySelection) {
-    pendingBulk = selection;
-    try {
-      await saveGlobal();
-    } finally {
-      pendingBulk = null;
-    }
-  }
-
-  // The preview classifies against the form's proposed working time; the effective date comes
-  // from the server's allowed list, never from a browser-side date rule (O5).
-  function loadBulkPreview(effectiveFrom?: string) {
-    return fetchBulkApplyPreview({
-      defaultWeeklyHours: gWeekly,
-      defaultMondayHours: gMon,
-      defaultTuesdayHours: gTue,
-      defaultWednesdayHours: gWed,
-      defaultThursdayHours: gThu,
-      defaultFridayHours: gFri,
-      defaultSaturdayHours: gSat,
-      defaultSundayHours: gSun,
-      overtimeThreshold: gThreshold,
-      allowOvertimePayout: gPayout,
-      effectiveFrom,
-    });
   }
 
   // ── Sonderurlaub: list + CRUD ──────────────────────────────────────────────
@@ -713,9 +542,7 @@
       <Section title="Übersicht" sub="Eckdaten für das ganze Unternehmen auf einen Blick">
         <div class="vac-kpi-grid">
           <KPIStat label="Jahresurlaub (Standard)" value={String(gVacationDays)} unit="T" />
-          <KPIStat label="Wochenstunden (Standard)" value={gWeekly.toFixed(1)} unit="h" />
           <KPIStat label="Resturlaub verfällt am" value={kpiCarryOverLabel} />
-          <KPIStat label="Überstunden-Warnschwelle" value={String(gThreshold)} unit="h" />
         </div>
         <div class="vac-callout">
           <strong>Für einzelne Personen:</strong> Individuelle Urlaubs- und Arbeitszeiteinstellungen
@@ -725,137 +552,6 @@
       </Section>
     {:else if currentTab === "standards"}
       <!-- ── Tab: Standards (Arbeitszeit + Urlaubsanspruch) ─────────────── -->
-      <Section title="Arbeitszeit & Überstunden" sub="Standard-Stunden und Überstundenregelungen">
-        <div class="settings-section">
-          <h3 class="section-inner-title">Wöchentliche Arbeitszeit</h3>
-          <p class="section-desc">Standard-Stunden pro Wochentag für alle Mitarbeiter.</p>
-
-          <div class="day-grid">
-            <div class="day-input">
-              <label class="day-label form-label" for="day-mo">Mo</label>
-              <input
-                id="day-mo"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={gMon}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="day-di">Di</label>
-              <input
-                id="day-di"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={gTue}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="day-mi">Mi</label>
-              <input
-                id="day-mi"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={gWed}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="day-do">Do</label>
-              <input
-                id="day-do"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={gThu}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="day-fr">Fr</label>
-              <input
-                id="day-fr"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={gFri}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="day-sa">Sa</label>
-              <input
-                id="day-sa"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={gSat}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="day-so">So</label>
-              <input
-                id="day-so"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={gSun}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input total-col">
-              <span class="day-label form-label">Summe/Woche</span>
-              <span class="weekly-total">{gWeekly.toFixed(1)}&thinsp;h</span>
-            </div>
-          </div>
-        </div>
-
-        <hr class="settings-divider" />
-
-        <div class="settings-section">
-          <h3 class="section-inner-title">Überstunden</h3>
-
-          <div class="inline-settings">
-            <div class="form-group">
-              <label class="form-label" for="g-threshold">Warnschwelle</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="g-threshold"
-                  type="number"
-                  min="1"
-                  max="500"
-                  step="1"
-                  bind:value={gThreshold}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">Stunden</span>
-              </div>
-              <p class="form-hint">Ab diesem Saldo: Kritisch-Warnung.</p>
-            </div>
-
-            <div class="form-group">
-              <span class="form-label">Auszahlung</span>
-              <label class="toggle-label">
-                <input type="checkbox" bind:checked={gPayout} class="toggle-cb" />
-                <span>{gPayout ? "Erlaubt" : "Gesperrt"}</span>
-              </label>
-            </div>
-          </div>
-        </div>
-      </Section>
-
       <!-- ── Section 3: Urlaubsanspruch ───────────────────────────────────── -->
       <Section title="Urlaubsanspruch" sub="Jahresurlaub und Resturlaub-Verfall">
         <div class="settings-section">
@@ -933,37 +629,6 @@
           </div>
         </div>
       </Section>
-    {:else if currentTab === "arbzg"}
-      <!-- ── Tab: ArbZG ─────────────────────────────────────────────────── -->
-      <Section
-        title="ArbZG — Compliance"
-        sub="Arbeitszeitgesetz — Höchstarbeitszeit & Pausenpflicht"
-      >
-        <div class="settings-section">
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label">ArbZG-Verstöße anzeigen</span>
-              <p class="form-hint">
-                Prüft Höchstarbeitszeit, Pausen und Ruhezeiten (<span translate="no"
-                  >§§ 3-5 ArbZG</span
-                >).
-              </p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="ArbZG-Verstöße anzeigen"
-                bind:checked={gArbzgEnabled}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          <p class="form-hint text-muted" style="margin-top: 1rem;">
-            Hinweis: Die Einstellung „Pausen automatisch abziehen" (§ 4 ArbZG) ist nach System →
-            Allgemein → Arbeitszeit umgezogen.
-          </p>
-        </div>
-      </Section>
     {:else if currentTab === "erinnerungen"}
       <!-- ── Tab: Erinnerungen ──────────────────────────────────────────── -->
       <Section
@@ -1012,28 +677,6 @@
               <p class="form-hint">
                 Mitarbeiter und Vorgesetzte werden benachrichtigt, wenn keine Zeiteinträge erfasst
                 wurden.
-              </p>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="g-autoinvalidate-hours"
-                >Auto-Invalidierung offener Einträge (Stunden, 0 = deaktiviert)</label
-              >
-              <div class="input-suffix-wrap">
-                <input
-                  id="g-autoinvalidate-hours"
-                  type="number"
-                  min="0"
-                  max="168"
-                  step="1"
-                  bind:value={gAutoInvalidateHours}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">Stunden</span>
-              </div>
-              <p class="form-hint">
-                Offene Einträge ohne Ausstempeln werden nach dieser Zeit als ungültig markiert und
-                müssen manuell korrigiert werden. 0 = deaktiviert.
               </p>
             </div>
           </div>
@@ -1313,36 +956,6 @@
         <hr class="settings-divider" />
 
         <div class="settings-section">
-          <h3 class="section-inner-title">Max. Minusstunden</h3>
-          <label class="form-label toggle-label">
-            <input type="checkbox" bind:checked={maxNegEnabled} />
-            Limit für negatives Überstundensaldo
-          </label>
-          <p class="form-hint">
-            Ohne aktivierten Wert gilt beim Überstundenausgleich-Antrag eine Toleranz von 0 Std. —
-            der Antrag darf das bestätigte Guthaben nicht ins Minus ziehen.
-          </p>
-          {#if maxNegEnabled}
-            <div class="inline-settings spaced-top-sm">
-              <div class="form-group">
-                <label class="form-label" for="max-neg-hours">Max. Minusstunden (h)</label>
-                <input
-                  id="max-neg-hours"
-                  type="number"
-                  min="1"
-                  max="999"
-                  step="0.5"
-                  bind:value={maxNegHours}
-                  class="form-input"
-                />
-              </div>
-            </div>
-          {/if}
-        </div>
-
-        <hr class="settings-divider" />
-
-        <div class="settings-section">
           <h3 class="section-inner-title">Automatische Erinnerungen</h3>
           <label class="form-label toggle-label">
             <input type="checkbox" bind:checked={reminderPendingEnabled} />
@@ -1479,10 +1092,6 @@
       </div>
     {/if}
     <div class="vac-save-row">
-      <label class="form-label toggle-label vac-apply-existing">
-        <input type="checkbox" bind:checked={gApplyToExisting} />
-        Auch auf bestehende Mitarbeiter anwenden
-      </label>
       <div class="vac-save-actions">
         {#if globalDirty}
           <span class="unsaved-hint" role="status">Nicht gespeichert</span>
@@ -1495,22 +1104,8 @@
         </button>
       </div>
     </div>
-    <p class="form-hint vac-save-hint">
-      Wenn aktiviert, öffnet „Speichern“ zuerst eine Vorschau. Individuelle Verträge bleiben ohne
-      ausdrückliche Auswahl unverändert. Änderungen gelten frühestens ab dem nächsten Monatsersten,
-      nie rückwirkend.
-    </p>
   </div>
 {/if}
-
-<!-- Issue #568: preview + explicit confirmation of the bulk apply (own footer snippet, so the
-     Modal-footer census of this page is unaffected) -->
-<BulkApplyDialog
-  bind:open={bulkDialogOpen}
-  loadPreview={loadBulkPreview}
-  onConfirm={confirmBulk}
-  onSaveDefaultsOnly={saveDefaultsOnly}
-/>
 
 <!-- ── Sonderurlaub: Create Modal ────────────────────────────────────────── -->
 <Modal bind:open={slShowCreate} eyebrow="Neue Regel" title="Sonderurlaubsregel anlegen">
@@ -1688,12 +1283,6 @@
     margin: 0;
   }
 
-  .section-desc {
-    font-size: 13px;
-    color: var(--text-2);
-    margin: -4px 0 16px;
-  }
-
   .inline-settings {
     display: flex;
     gap: 2.5rem;
@@ -1702,50 +1291,6 @@
   }
 
   /* ── Day input grid ─────────────────────────────────────────────────────── */
-  .day-grid {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    margin-bottom: 1.25rem;
-  }
-
-  .day-input {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  .day-label {
-    font-size: 0.6875rem !important;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 0 !important;
-  }
-
-  .day-field {
-    width: 58px;
-    text-align: center;
-    padding: 0.375rem 0.25rem;
-    font-size: 0.9375rem;
-  }
-
-  .total-col {
-    border-left: 1px solid var(--line);
-    padding-left: 0.75rem;
-    margin-left: 0.25rem;
-  }
-
-  .weekly-total {
-    font-family: var(--font-ui);
-    font-variant-numeric: tabular-nums;
-    font-size: 22px;
-    font-weight: 400;
-    color: var(--brand);
-    line-height: 2.1;
-  }
 
   /* ── Form helpers ───────────────────────────────────────────────────────── */
   .input-suffix-wrap {
@@ -1779,12 +1324,6 @@
     margin-top: 0.375rem;
   }
 
-  .toggle-cb {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--brand);
-  }
-
   .carryover-row {
     display: flex;
     align-items: center;
@@ -1802,10 +1341,6 @@
     align-items: center;
     justify-content: space-between;
     gap: 1.5rem;
-  }
-
-  .toggle-info {
-    flex: 1;
   }
 
   .toggle-row-label {
@@ -1870,15 +1405,6 @@
   }
 
   /* ── Footer (save bar) ──────────────────────────────────────────────────── */
-  .apply-existing-row {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .apply-existing-hint {
-    margin: 0.25rem 0 0 1.5rem;
-  }
 
   .saved-hint {
     color: var(--ok);
@@ -2000,15 +1526,9 @@
     gap: 16px;
     flex-wrap: wrap;
   }
-  .vac-apply-existing {
-    margin: 0;
-  }
   .vac-save-actions {
     display: flex;
     align-items: center;
     gap: 12px;
-  }
-  .vac-save-hint {
-    margin: 0;
   }
 </style>

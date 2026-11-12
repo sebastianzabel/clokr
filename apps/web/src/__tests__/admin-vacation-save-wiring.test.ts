@@ -76,19 +76,13 @@ describe("D-01 — the global settings form saves only on its button", () => {
 });
 
 describe("saveGlobal payload census — the field list plan 109-11 must snapshot", () => {
-  // Measured against apps/web/src/routes/(app)/admin/vacation/+page.svelte on 2026-08-30.
-  // Every key below is backed by a `$state` variable that plan 109-11's `globalSnapshot` must
-  // include — with one deliberate exception: `defaultWeeklyHours` is `$derived` from
-  // `gMon..gSun` (see the `defaultWeeklyHours` guard below) and therefore needs no snapshot
-  // entry of its own.
+  // Measured against apps/web/src/routes/(app)/admin/vacation/+page.svelte on 2026-08-30. Every key
+  // below is backed by a `$state` variable that plan 109-11's `globalSnapshot` must include.
+  // Issue #854 (plan 854-07): the 16 keys of the default hours, the overtime threshold and payout, the
+  // bulk-apply modifiers, arbzgEnabled and autoDeleteOpenHours moved to Regeln › Arbeitszeit & Verträge
+  // (47 -> 31); they are pinned there by settings-pages-854 and arbeitszeit-save-wiring-854.
   const WORK_KEYS = [
-    "allowOvertimePayout",
-    // Issue #568: +3 action modifiers of the guarded bulk apply (38 -> 41)
-    "applyEmployeeIds",
-    "applyToExisting",
-    "arbzgEnabled",
     "autoCalcPartTimeVacation",
-    "autoDeleteOpenHours",
     "carryOverDeadlineDay",
     "carryOverDeadlineMonth",
     "carryOverRequiresReason",
@@ -98,16 +92,7 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "clockOutReminderHours",
     // Issue #435 D-03: +defaultApprenticeVacationDays (37 → 38)
     "defaultApprenticeVacationDays",
-    "defaultFridayHours",
-    "defaultMondayHours",
-    "defaultSaturdayHours",
-    "defaultSundayHours",
-    "defaultThursdayHours",
-    "defaultTuesdayHours",
     "defaultVacationDays",
-    "defaultWednesdayHours",
-    "defaultWeeklyHours",
-    "effectiveFrom",
     "enforceMinVacation",
     "fullTimeWorkDaysPerWeek",
     "halfDayAllowed",
@@ -116,8 +101,6 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "leavePlanDeadlineLocksWishes",
     "missingEntriesDays",
     "newYearsEveRule",
-    "overtimeThreshold",
-    "previewFingerprint",
     // Issue #609 (D-01): +5 shift reminder keys (41 -> 46)
     "reminderDayCloseEnabled",
     "reminderDayCloseTime",
@@ -135,7 +118,7 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "vacationReminderStartMonth",
   ] as const;
 
-  it("PUT /settings/work carries exactly the 47 known keys, no more, no fewer", () => {
+  it("PUT /settings/work carries exactly the 31 known keys, no more, no fewer", () => {
     const saveGlobalBody = fnBody("async function saveGlobal");
     const bodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
     expect(bodyStart, 'api.put("/settings/work", {...}) call not found').toBeGreaterThan(-1);
@@ -144,69 +127,13 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     expect(keys).toEqual([...WORK_KEYS].sort());
   });
 
-  it("Issue #568: a ticked save opens the preview dialog before any api.put", () => {
-    const body = fnBody("async function saveGlobal");
-    const open = body.indexOf("bulkDialogOpen = true");
-    const firstPut = body.indexOf("api.put(");
-    expect(open, "bulkDialogOpen = true not found in saveGlobal").toBeGreaterThan(-1);
-    expect(firstPut, "api.put( not found in saveGlobal").toBeGreaterThan(-1);
-    expect(open).toBeLessThan(firstPut);
-    // The guard is conditioned on the checkbox and on the absence of a confirmed selection.
-    expect(body.slice(0, open)).toMatch(/gApplyToExisting && pendingBulk === null/);
-  });
-
-  it("Issue #568: only the dialog's confirmation sets pendingBulk", () => {
-    const assignments = PAGE.match(/pendingBulk = [^;]+;/g) ?? [];
-    // Review WR-03: saveGlobal clears it itself the moment the work PUT went through, confirmBulk's
-    // finally clears it for every other exit — two `= null`, one `= selection`.
-    expect(assignments.sort()).toEqual([
-      "pendingBulk = null;",
-      "pendingBulk = null;",
-      "pendingBulk = selection;",
-    ]);
-    expect(PAGE).toContain("onConfirm={confirmBulk}");
-  });
-
-  it("Review WR-03: the bulk state is reset right after the work PUT, before the security PUT", () => {
-    const body = fnBody("async function saveGlobal");
-    const workSaved = body.indexOf("workSaved = true");
-    const securityPut = body.indexOf('api.put("/settings/security"');
-    expect(workSaved, "workSaved = true not found in saveGlobal").toBeGreaterThan(-1);
-    expect(securityPut, "security PUT not found in saveGlobal").toBeGreaterThan(-1);
-    const between = body.slice(workSaved, securityPut);
-    // A failing security PUT must not leave a stale ticked box or a stale confirmed selection.
-    expect(between).toMatch(/gApplyToExisting = false;/);
-    expect(between).toMatch(/pendingBulk = null;/);
-    // The success toast reads the selection captured BEFORE the reset.
-    expect(between).toMatch(/const appliedBulk = pendingBulk;/);
-    expect(between.indexOf("const appliedBulk = pendingBulk;")).toBeLessThan(
-      between.indexOf("pendingBulk = null;"),
-    );
-  });
-
-  it("Review IN-03: the dialog's defaults-only action clears the box before saving, without a selection", () => {
-    expect(PAGE).toContain("onSaveDefaultsOnly={saveDefaultsOnly}");
-    const body = fnBody("async function saveDefaultsOnly");
-    expect(body.indexOf("gApplyToExisting = false;")).toBeGreaterThan(-1);
-    expect(body.indexOf("gApplyToExisting = false;")).toBeLessThan(body.indexOf("saveGlobal()"));
-    expect(body).not.toContain("pendingBulk");
-  });
-
-  it("PUT /settings/security carries exactly one key, maxNegativeBalanceMinutes", () => {
-    const saveGlobalBody = fnBody("async function saveGlobal");
-    const bodyStart = saveGlobalBody.indexOf('api.put("/settings/security", {');
-    expect(bodyStart, 'api.put("/settings/security", {...}) call not found').toBeGreaterThan(-1);
-    const objStart = saveGlobalBody.indexOf("{", bodyStart);
-    const keys = extractObjectKeys(sliceBalancedObject(saveGlobalBody, objStart));
-    expect(keys).toEqual(["maxNegativeBalanceMinutes"]);
-  });
-
-  it("defaultWeeklyHours is sent from the $derived gWeekly, not its own $state", () => {
-    expect(PAGE).toContain(
-      "let gWeekly = $derived(gMon + gTue + gWed + gThu + gFri + gSat + gSun);",
-    );
-    expect(fnBody("async function saveGlobal")).toContain("defaultWeeklyHours: gWeekly,");
-  });
+  // Issue #854 (plan 854-07): the guarded bulk apply of Issue #568 (the preview dialog before any
+  // write, only the dialog's confirmation sets the selection, the one-shot state reset, the defaults-only
+  // action), the security request of the negative-balance limit and the derived weekly total moved with
+  // their section to Regeln › Arbeitszeit & Verträge. The same pins hold there, on the mounted
+  // component: DefaultHoursSection-854.test.ts (no write before the confirmation, the server's selection
+  // and effective date are sent unchanged, a plain save carries no bulk key) and
+  // sections-vacation-854.test.ts (MaxNegativeSection: its own request to /settings/security, one key).
 });
 
 describe("D-11 — this page has no Section footer to carry the marker", () => {
@@ -244,7 +171,7 @@ describe("D-11 — this page has no Section footer to carry the marker", () => {
 describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation", () => {
   // Function names/keywords that appear inside a value expression but are not the underlying
   // state variable itself, e.g. `clampKarenzDays(sickNoteRequiredAfterDays)` or
-  // `Math.round(maxNegHours * 60)`.
+  // `parseThresholdsInput(carryoverWarningThresholdsText)`.
   const STOPWORDS = new Set([
     "Math",
     "round",
@@ -301,27 +228,8 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation"
     const workBodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
     const workObjStart = saveGlobalBody.indexOf("{", workBodyStart);
     const workObj = sliceBalancedObject(saveGlobalBody, workObjStart);
-    const secBodyStart = saveGlobalBody.indexOf('api.put("/settings/security", {');
-    const secObjStart = saveGlobalBody.indexOf("{", secBodyStart);
-    const secObj = sliceBalancedObject(saveGlobalBody, secObjStart);
 
-    const submitted = new Set([...valueIdentifiers(workObj), ...valueIdentifiers(secObj)]);
-    // Two allowed exceptions, neither a persisted value of its own:
-    //  - gWeekly is $derived from gMon..gSun, already covered via those seven.
-    //  - gApplyToExisting is an action modifier saveGlobal itself resets to false on success,
-    //    not a persisted setting — a marker for it would claim an unsaved change that does not
-    //    exist.
-    //  - Issue #568: pendingBulk is the dialog's confirmed selection, an action modifier like
-    //    gApplyToExisting that saveGlobal's caller resets to null after the save; its three
-    //    properties (applyEmployeeIds, previewFingerprint, effectiveFrom) are read off it with
-    //    `?.` and are not state variables of their own.
-    submitted.delete("gWeekly");
-    submitted.delete("gApplyToExisting");
-    submitted.delete("pendingBulk");
-    submitted.delete("applyEmployeeIds");
-    submitted.delete("previewFingerprint");
-    submitted.delete("effectiveFrom");
-
+    const submitted = new Set(valueIdentifiers(workObj));
     const snapArgs = new Set(
       globalDirtySnapArgs()
         .split(",")
@@ -465,7 +373,7 @@ describe("Issue #609 (D-01/D-15) — shift reminders on the Erinnerungen tab", (
       tuples.push(PAGE.slice(idx, stop));
       from = idx + 5;
     }
-    const full = tuples.filter((t) => t.includes("maxNegHours"));
+    const full = tuples.filter((t) => t.includes("carryoverWarningThresholdsText"));
     expect(full.length, "expected the three full snapshot tuples").toBe(3);
     for (const tuple of full) {
       for (const name of REMINDER_STATE) {

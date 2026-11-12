@@ -77,6 +77,11 @@ const SYSTEM = {
 // the component that renders and saves it.
 const ARBEITSZEIT_PAGE = "/verwalten/regeln/arbeitszeit";
 const ARBEITSZEIT_DIR = "lib/components/admin/arbeitszeit";
+const FROM_VACATION = {
+  page: ARBEITSZEIT_PAGE,
+  source: "/admin/vacation",
+  requires: VACATION_REQUIRES,
+} as const;
 const FROM_SYSTEM = {
   page: ARBEITSZEIT_PAGE,
   source: "/admin/system",
@@ -135,6 +140,54 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "bsSlotBlockWeekMinutes",
     ],
     renderedBy: `${ARBEITSZEIT_DIR}/VocationalSlotsSection.svelte`,
+  },
+  {
+    ...FROM_VACATION,
+    id: "arbeitszeit-standard",
+    title: "Standard-Arbeitszeit",
+    endpoint: "/settings/work",
+    // The last four ride along only for a confirmed bulk apply (Issue #568): the server's own selection.
+    keys: [
+      "defaultWeeklyHours",
+      "defaultMondayHours",
+      "defaultTuesdayHours",
+      "defaultWednesdayHours",
+      "defaultThursdayHours",
+      "defaultFridayHours",
+      "defaultSaturdayHours",
+      "defaultSundayHours",
+      "overtimeThreshold",
+      "allowOvertimePayout",
+      "applyToExisting",
+      "applyEmployeeIds",
+      "previewFingerprint",
+      "effectiveFrom",
+    ],
+    renderedBy: `${ARBEITSZEIT_DIR}/DefaultHoursSection.svelte`,
+  },
+  {
+    ...FROM_VACATION,
+    id: "arbeitszeit-ueberstunden",
+    title: "Überstunden",
+    endpoint: "/settings/security",
+    keys: ["maxNegativeBalanceMinutes"],
+    renderedBy: `${ARBEITSZEIT_DIR}/MaxNegativeSection.svelte`,
+  },
+  {
+    ...FROM_VACATION,
+    id: "arbeitszeit-compliance",
+    title: "ArbZG-Prüfung",
+    endpoint: "/settings/work",
+    keys: ["arbzgEnabled"],
+    renderedBy: `${ARBEITSZEIT_DIR}/ComplianceSection.svelte`,
+  },
+  {
+    ...FROM_VACATION,
+    id: "arbeitszeit-offene-eintraege",
+    title: "Offene Einträge",
+    endpoint: "/settings/work",
+    keys: ["autoDeleteOpenHours"],
+    renderedBy: `${ARBEITSZEIT_DIR}/OpenEntriesSection.svelte`,
   },
 
   // ── /admin/system ──────────────────────────────────────────────────────────────────────────────
@@ -245,36 +298,21 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { ...SYSTEM, id: "system-api-keys", title: "API Keys", endpoint: null, keys: [] },
 
   // ── /admin/vacation ────────────────────────────────────────────────────────────────────────────
-  // One page-wide save today (`saveGlobal`, one button); the bulk-apply body keys ride in the same PUT. The
-  // page plans split it into sections of their own, one section per save.
+  // One page-wide save today (`saveGlobal`, one button); the page plans split it into sections of their own, one
+  // section per save. The working-time defaults, ArbZG, open entries and the negative-balance limit left it
+  // for Regeln › Arbeitszeit & Verträge (plan 854-07).
   {
     id: "vacation-global",
     page: "/verwalten/regeln/urlaub",
     title: "Standards und Regeln",
     endpoint: "/settings/work",
     keys: [
-      "defaultWeeklyHours",
-      "defaultMondayHours",
-      "defaultTuesdayHours",
-      "defaultWednesdayHours",
-      "defaultThursdayHours",
-      "defaultFridayHours",
-      "defaultSaturdayHours",
-      "defaultSundayHours",
-      "overtimeThreshold",
-      "allowOvertimePayout",
       "carryOverDeadlineDay",
       "carryOverDeadlineMonth",
       "defaultVacationDays",
       "defaultApprenticeVacationDays",
-      "arbzgEnabled",
-      "applyToExisting",
-      "applyEmployeeIds",
-      "previewFingerprint",
-      "effectiveFrom",
       "clockOutReminderHours",
       "missingEntriesDays",
-      "autoDeleteOpenHours",
       "christmasEveRule",
       "newYearsEveRule",
       "holidayRulesValidFromYear",
@@ -301,17 +339,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "reminderOffsetMinutes",
       "reminderDayCloseTime",
     ],
-    source: "/admin/vacation",
-    requires: VACATION_REQUIRES,
-    renderedBy: VACATION_PAGE,
-  },
-  {
-    // The second request of `saveGlobal`, on the security endpoint.
-    id: "vacation-max-negative",
-    page: "/verwalten/regeln/urlaub",
-    title: "Negativer Überstundensaldo",
-    endpoint: "/settings/security",
-    keys: ["maxNegativeBalanceMinutes"],
     source: "/admin/vacation",
     requires: VACATION_REQUIRES,
     renderedBy: VACATION_PAGE,

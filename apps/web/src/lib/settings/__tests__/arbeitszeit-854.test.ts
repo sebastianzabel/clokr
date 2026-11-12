@@ -6,11 +6,23 @@ import {
   breaksFrom,
   breaksMessages,
   breaksWire,
+  complianceFrom,
+  complianceWire,
   coreHoursFrom,
   coreHoursMessages,
   coreHoursWire,
+  defaultHoursComparable,
+  defaultHoursFrom,
+  defaultHoursMessages,
+  defaultHoursWire,
+  maxNegativeFrom,
+  maxNegativeMessages,
+  maxNegativeWire,
   messageCount,
   minutesAsHours,
+  openEntriesFrom,
+  openEntriesMessages,
+  openEntriesWire,
   retroFrom,
   retroMessages,
   retroWire,
@@ -18,6 +30,7 @@ import {
   vocationalSlotsFrom,
   vocationalSlotsMessages,
   vocationalSlotsWire,
+  weeklyHoursOf,
   workDaysFrom,
   workDaysMessages,
   workDaysWire,
@@ -265,5 +278,160 @@ describe("Berufsschule", () => {
     expect(minutesAsHours(480)).toBe("= 8 h");
     expect(minutesAsHours(450)).toBe("= 7,5 h");
     expect(minutesAsHours(null)).toBe("");
+  });
+});
+
+describe("Standard-Arbeitszeit", () => {
+  const STORED = {
+    defaultMondayHours: "8.00",
+    defaultTuesdayHours: "8.00",
+    defaultWednesdayHours: "8.00",
+    defaultThursdayHours: "8.00",
+    defaultFridayHours: "8.00",
+    defaultSaturdayHours: "0.00",
+    defaultSundayHours: "0.00",
+    overtimeThreshold: "60.00",
+    allowOvertimePayout: true,
+  };
+
+  it("reads the string decimals of the API as numbers and falls back to Mo-Fr 8 h", () => {
+    const values = defaultHoursFrom(STORED);
+    expect(values.days).toEqual({ mon: 8, tue: 8, wed: 8, thu: 8, fri: 8, sat: 0, sun: 0 });
+    expect(values.overtimeThreshold).toBe(60);
+    expect(values.allowOvertimePayout).toBe(true);
+    expect(defaultHoursFrom({}).days.fri).toBe(8);
+    expect(defaultHoursFrom({}).days.sat).toBe(0);
+    expect(defaultHoursFrom({}).overtimeThreshold).toBe(60);
+  });
+
+  it("the weekly total is the sum of the valid days, rounded to hundredths", () => {
+    expect(weeklyHoursOf(defaultHoursFrom(STORED).days)).toBe(40);
+    expect(weeklyHoursOf({ mon: 7.1, tue: 7.2, wed: null, thu: 0, fri: 0, sat: 0, sun: 0 })).toBe(
+      14.3,
+    );
+  });
+
+  it("a stored configuration has no message; each bad field names itself", () => {
+    const ok = defaultHoursFrom(STORED);
+    expect(messageCount(defaultHoursMessages(ok))).toBe(0);
+    expect(
+      defaultHoursMessages({ ...ok, days: { ...ok.days, mon: 25 } }).defaultMondayHours,
+    ).toBeTruthy();
+    expect(
+      defaultHoursMessages({ ...ok, days: { ...ok.days, tue: null } }).defaultTuesdayHours,
+    ).toBeTruthy();
+    expect(defaultHoursMessages({ ...ok, overtimeThreshold: 0 }).overtimeThreshold).toBeTruthy();
+    expect(defaultHoursMessages({ ...ok, overtimeThreshold: 501 }).overtimeThreshold).toBeTruthy();
+    expect(defaultHoursMessages({ ...ok, overtimeThreshold: null }).overtimeThreshold).toBeTruthy();
+    const zero = { ...ok, days: { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 } };
+    expect(defaultHoursMessages(zero).defaultWeeklyHours).toContain("1 und 60");
+    const heavy = { ...ok, days: { mon: 20, tue: 20, wed: 20, thu: 1, fri: 0, sat: 0, sun: 0 } };
+    expect(defaultHoursMessages(heavy).defaultWeeklyHours).toContain("1 und 60");
+  });
+
+  it("the plain save carries the defaults and applyToExisting false, no selection", () => {
+    const wire = defaultHoursWire(defaultHoursFrom(STORED), null);
+    expect(wire).toMatchObject({
+      defaultWeeklyHours: 40,
+      defaultMondayHours: 8,
+      defaultSaturdayHours: 0,
+      overtimeThreshold: 60,
+      allowOvertimePayout: true,
+      applyToExisting: false,
+    });
+    expect(wire.applyEmployeeIds).toBeUndefined();
+    expect(wire.previewFingerprint).toBeUndefined();
+    expect(wire.effectiveFrom).toBeUndefined();
+    expect(Object.keys(wire).sort()).toEqual(
+      [...settingsSection("arbeitszeit-standard").keys].sort(),
+    );
+  });
+
+  it("a confirmed bulk apply adds the server's selection unchanged", () => {
+    const wire = defaultHoursWire(defaultHoursFrom(STORED), {
+      applyEmployeeIds: ["a", "b"],
+      previewFingerprint: "fp",
+      effectiveFrom: "2026-12-01",
+    });
+    expect(wire).toMatchObject({
+      applyToExisting: true,
+      applyEmployeeIds: ["a", "b"],
+      previewFingerprint: "fp",
+      effectiveFrom: "2026-12-01",
+    });
+  });
+
+  it("the comparable record has one field per weekday plus threshold and payout (no derived total)", () => {
+    const comparable = defaultHoursComparable(defaultHoursFrom(STORED));
+    expect(Object.keys(comparable).sort()).toEqual(
+      [
+        "allowOvertimePayout",
+        "defaultFridayHours",
+        "defaultMondayHours",
+        "defaultSaturdayHours",
+        "defaultSundayHours",
+        "defaultThursdayHours",
+        "defaultTuesdayHours",
+        "defaultWednesdayHours",
+        "overtimeThreshold",
+      ].sort(),
+    );
+  });
+});
+
+describe("Überstunden-Limit", () => {
+  it("no stored limit is off; a stored one shows as hours", () => {
+    expect(maxNegativeFrom({})).toEqual({ enabled: false, hours: 20 });
+    expect(maxNegativeFrom({ maxNegativeBalanceMinutes: null }).enabled).toBe(false);
+    expect(maxNegativeFrom({ maxNegativeBalanceMinutes: 90 })).toEqual({
+      enabled: true,
+      hours: 1.5,
+    });
+    expect(maxNegativeFrom({ maxNegativeBalanceMinutes: 0 }).enabled).toBe(true);
+  });
+
+  it("checks the hours only while the limit is on (1..999)", () => {
+    expect(messageCount(maxNegativeMessages({ enabled: false, hours: null }))).toBe(0);
+    expect(messageCount(maxNegativeMessages({ enabled: true, hours: 1 }))).toBe(0);
+    expect(messageCount(maxNegativeMessages({ enabled: true, hours: 999 }))).toBe(0);
+    for (const hours of [0.5, 1000, null]) {
+      expect(messageCount(maxNegativeMessages({ enabled: true, hours }))).toBe(1);
+    }
+  });
+
+  it("sends whole minutes while on and null while off, under the registry key", () => {
+    expect(maxNegativeWire({ enabled: true, hours: 12.5 })).toEqual({
+      maxNegativeBalanceMinutes: 750,
+    });
+    expect(maxNegativeWire({ enabled: false, hours: 12.5 })).toEqual({
+      maxNegativeBalanceMinutes: null,
+    });
+    expect(Object.keys(maxNegativeWire({ enabled: true, hours: 1 }))).toEqual(
+      settingsSection("arbeitszeit-ueberstunden").keys,
+    );
+  });
+});
+
+describe("ArbZG-Prüfung and Offene Einträge", () => {
+  it("the ArbZG check is on unless stored off", () => {
+    expect(complianceFrom({})).toEqual({ arbzgEnabled: true });
+    expect(complianceFrom({ arbzgEnabled: false })).toEqual({ arbzgEnabled: false });
+    expect(Object.keys(complianceWire({ arbzgEnabled: true }))).toEqual(
+      settingsSection("arbeitszeit-compliance").keys,
+    );
+  });
+
+  it("open entries default to 14 hours; 0 (off) .. 168 are valid", () => {
+    expect(openEntriesFrom({})).toEqual({ autoDeleteOpenHours: 14 });
+    for (const hours of [0, 14, 168]) {
+      expect(messageCount(openEntriesMessages({ autoDeleteOpenHours: hours }))).toBe(0);
+    }
+    for (const hours of [-1, 169, null]) {
+      expect(messageCount(openEntriesMessages({ autoDeleteOpenHours: hours }))).toBe(1);
+    }
+    expect(openEntriesWire({ autoDeleteOpenHours: 24.9 })).toEqual({ autoDeleteOpenHours: 24 });
+    expect(Object.keys(openEntriesWire({ autoDeleteOpenHours: 1 }))).toEqual(
+      settingsSection("arbeitszeit-offene-eintraege").keys,
+    );
   });
 });

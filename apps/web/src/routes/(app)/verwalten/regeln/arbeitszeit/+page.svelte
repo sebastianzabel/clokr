@@ -24,6 +24,10 @@
   import WorkDaysSection from "$lib/components/admin/arbeitszeit/WorkDaysSection.svelte";
   import CoreHoursSection from "$lib/components/admin/arbeitszeit/CoreHoursSection.svelte";
   import VocationalSlotsSection from "$lib/components/admin/arbeitszeit/VocationalSlotsSection.svelte";
+  import DefaultHoursSection from "$lib/components/admin/arbeitszeit/DefaultHoursSection.svelte";
+  import MaxNegativeSection from "$lib/components/admin/arbeitszeit/MaxNegativeSection.svelte";
+  import ComplianceSection from "$lib/components/admin/arbeitszeit/ComplianceSection.svelte";
+  import OpenEntriesSection from "$lib/components/admin/arbeitszeit/OpenEntriesSection.svelte";
 
   let config = $state<WorkConfig | null>(null);
   let loadError = $state("");
@@ -37,6 +41,10 @@
     arbeitstage: 0,
     gleitzeit: 0,
     berufsschule: 0,
+    standard: 0,
+    ueberstunden: 0,
+    compliance: 0,
+    offeneEintraege: 0,
   });
   const totalChanges = $derived(Object.values(changes).reduce((sum, n) => sum + n, 0));
 
@@ -56,6 +64,10 @@
     arbeitstage: mayOpenSection(user, settingsSection("arbeitszeit-arbeitstage")),
     gleitzeit: mayOpenSection(user, settingsSection("arbeitszeit-gleitzeit")),
     berufsschule: mayOpenSection(user, settingsSection("arbeitszeit-berufsschule")),
+    standard: mayOpenSection(user, settingsSection("arbeitszeit-standard")),
+    ueberstunden: mayOpenSection(user, settingsSection("arbeitszeit-ueberstunden")),
+    compliance: mayOpenSection(user, settingsSection("arbeitszeit-compliance")),
+    offeneEintraege: mayOpenSection(user, settingsSection("arbeitszeit-offene-eintraege")),
   });
 
   onMount(async () => {
@@ -90,17 +102,29 @@
 {:else if loadError || config === null}
   <div role="alert"><Note tone="bad">{loadError}</Note></div>
 {:else}
-  {#if show.pausen}
-    <BreaksSection {config} bind:changes={changes.pausen} />
+  {#if show.standard}
+    <DefaultHoursSection {config} bind:changes={changes.standard} />
   {/if}
-  {#if show.rueckwirkend}
-    <RetroWindowSection {config} bind:changes={changes.rueckwirkend} />
+  {#if show.ueberstunden}
+    <MaxNegativeSection {config} bind:changes={changes.ueberstunden} />
   {/if}
   {#if show.arbeitstage}
     <WorkDaysSection {config} bind:changes={changes.arbeitstage} />
   {/if}
   {#if show.gleitzeit}
     <CoreHoursSection {config} bind:changes={changes.gleitzeit} />
+  {/if}
+  {#if show.pausen}
+    <BreaksSection {config} bind:changes={changes.pausen} />
+  {/if}
+  {#if show.compliance}
+    <ComplianceSection {config} bind:changes={changes.compliance} />
+  {/if}
+  {#if show.offeneEintraege}
+    <OpenEntriesSection {config} bind:changes={changes.offeneEintraege} />
+  {/if}
+  {#if show.rueckwirkend}
+    <RetroWindowSection {config} bind:changes={changes.rueckwirkend} />
   {/if}
   {#if show.berufsschule}
     <VocationalSlotsSection {config} bind:changes={changes.berufsschule} />
