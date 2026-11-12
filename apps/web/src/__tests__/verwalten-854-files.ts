@@ -83,9 +83,12 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/allgemein/TwoFactorSection.svelte",
   "lib/components/admin/allgemein/PasswordSection.svelte",
   "lib/components/admin/allgemein/SessionSection.svelte",
-  // Plan 854-16 (System › Phorest): the rebuilt page shell and its connection panel.
+  // Plan 854-16 (System › Phorest): the rebuilt page shell and its two panels.
   "routes/(app)/admin/phorest/+page.svelte",
   "lib/components/admin/phorest/PhorestConnectionPanel.svelte",
+  "lib/components/admin/phorest/PhorestSyncPanel.svelte",
+  // Plan 854-16 (System › Branding & Themes): the rebuilt page.
+  "routes/(app)/admin/themes/+page.svelte",
 ];
 
 export interface VerwaltenFile {

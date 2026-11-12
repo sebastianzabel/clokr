@@ -110,6 +110,25 @@
       "path": "/verwalten/system/allgemein",
       "heading": "Allgemein",
       "tabs": []
+    },
+    {
+      "slug": "system-phorest",
+      "path": "/verwalten/system/phorest",
+      "heading": "Phorest",
+      "tabs": [
+        {
+          "label": "Verbindung"
+        },
+        {
+          "label": "Abgleich"
+        }
+      ]
+    },
+    {
+      "slug": "system-branding",
+      "path": "/verwalten/system/branding",
+      "heading": "Branding & Themes",
+      "tabs": []
     }
   ]
 }
