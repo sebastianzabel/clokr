@@ -104,6 +104,12 @@
           "label": "API-Schlüssel"
         }
       ]
+    },
+    {
+      "slug": "system-allgemein",
+      "path": "/verwalten/system/allgemein",
+      "heading": "Allgemein",
+      "tabs": []
     }
   ]
 }

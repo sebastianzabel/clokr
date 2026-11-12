@@ -77,6 +77,12 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/PairingGuide.svelte",
   "lib/components/admin/TerminalSalonCell.svelte",
   "lib/components/admin/ModuleHint.svelte",
+  // Plan 854-15 (System › Allgemein): the rewritten System page and its four sections.
+  "routes/(app)/admin/system/+page.svelte",
+  "lib/components/admin/allgemein/CompanySection.svelte",
+  "lib/components/admin/allgemein/TwoFactorSection.svelte",
+  "lib/components/admin/allgemein/PasswordSection.svelte",
+  "lib/components/admin/allgemein/SessionSection.svelte",
 ];
 
 export interface VerwaltenFile {

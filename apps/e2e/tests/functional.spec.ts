@@ -284,13 +284,27 @@ test.describe("Functional — happy paths across primary surfaces", () => {
   });
 
   test.describe("Admin System surface", () => {
-    test("admin/system page mounts with documented testid", async ({ page, tenant }) => {
+    test("admin/system page mounts with documented testid and its four sections", async ({
+      page,
+      tenant,
+    }) => {
       // Merged from ui-audit.spec.ts "admin system page loads all sections".
       // Trimmed to the testid contract emitted by Phase 73-05.
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/admin/system");
 
       await expect(page.getByTestId("admin-system-page")).toBeAttached();
+      // Issue #854 (plan 854-15): System › Allgemein holds the company and the sign-in security, no tabs.
+      await expect(page.getByRole("heading", { level: 1, name: "Allgemein" })).toBeVisible();
+      for (const title of [
+        "Unternehmen & Region",
+        "Zwei-Faktor-Authentifizierung",
+        "Passwort-Richtlinie",
+        "Sitzungen",
+      ]) {
+        await expect(page.getByRole("heading", { level: 2, name: title })).toBeVisible();
+      }
+      await expect(page.getByRole("tab")).toHaveCount(0);
     });
   });
 
