@@ -25,7 +25,14 @@
     { id: "kommunikation", label: "Kommunikation" },
     { id: "integration", label: "Integration" },
   ];
-  let activeTab = $state<string>("allgemein");
+  // Issue #847: a link may name the tab as the URL hash (e.g. „Mailserver einrichten“ on
+  // Verwalten › Übersicht → #kommunikation), the pattern of the employee page's #berechtigungen.
+  function tabFromHash(): string {
+    if (typeof window === "undefined" || !window.location.hash) return "allgemein";
+    const hash = decodeURIComponent(window.location.hash.slice(1));
+    return TABS.some((t) => t.id === hash) ? hash : "allgemein";
+  }
+  let activeTab = $state<string>(tabFromHash());
 
   interface TenantConfig {
     tenantName?: string;

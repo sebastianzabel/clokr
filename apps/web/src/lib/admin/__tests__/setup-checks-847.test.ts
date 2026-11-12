@@ -68,6 +68,59 @@ describe("setupChecks", () => {
   });
 });
 
+describe("setupChecks — each link opens the tab that holds its setting", () => {
+  const read = (rel: string) => readFileSync(resolve(__dirname, rel), "utf8");
+  const PAGES: Record<string, string> = {
+    "/verwalten/system/allgemein": "../../../routes/(app)/admin/system/+page.svelte",
+    "/verwalten/regeln/urlaub": "../../../routes/(app)/admin/vacation/+page.svelte",
+  };
+  // the source of one tab branch: from its `currentTab === "<tab>"` to the next branch
+  const branch = (src: string, tab: string) => {
+    const start = src.indexOf(`currentTab === "${tab}"}`);
+    expect(start, `tab branch ${tab}`).toBeGreaterThan(0);
+    const next = src.indexOf("currentTab ===", start + 20);
+    return src.slice(start, next === -1 ? undefined : next);
+  };
+
+  it("rules, mail and terminals name their tab, and the tab holds the setting", () => {
+    const checks = setupChecks(
+      {
+        salons: null,
+        employees: null,
+        smtp: { deliveryReady: false },
+        work: { arbzgEnabled: false },
+        terminals: [],
+      },
+      TODAY,
+    );
+    const byKey = Object.fromEntries(checks.map((c) => [c.key, c.href]));
+    const expected: Array<[string, string, string]> = [
+      ["rules", "/verwalten/regeln/urlaub#arbzg", "bind:checked={gArbzgEnabled}"],
+      [
+        "smtp",
+        "/verwalten/system/allgemein#kommunikation",
+        'data-testid="admin-system-email-emailNotificationsEnabled"',
+      ],
+      ["terminals", "/verwalten/system/allgemein#integration", "onclick={createTerminalKey}"],
+    ];
+    for (const [key, href, marker] of expected) {
+      expect(byKey[key]).toBe(href);
+      const [path, tab] = href.split("#");
+      const src = read(PAGES[path]);
+      expect(src).toContain(`{ id: "${tab}"`);
+      expect(src).toContain("let activeTab = $state<string>(tabFromHash());");
+      expect(branch(src, tab)).toContain(marker);
+    }
+  });
+
+  it("the overview strips the hash before it asks the route table", () => {
+    const overview = read("../../../routes/(app)/verwalten/+page.svelte");
+    expect(overview).toContain('mayOpenPath($authStore.user, href.split("#")[0])');
+    expect(overview).toContain('href="/verwalten/system/allgemein#kommunikation"');
+    expect(overview).not.toMatch(/mayOpenPath\(\$authStore\.user, c\.href\)/);
+  });
+});
+
 describe("admin tasks", () => {
   it("counts open invitations and persons without a contract among today's staff", () => {
     const counts = adminTaskCounts(

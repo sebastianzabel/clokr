@@ -114,7 +114,9 @@
   const mailWarning = $derived(mailWithoutDelivery(security, smtp));
 
   /** A derivation link only where the caller may open the target (no dead link). */
-  const linkIf = (href: string) => (mayOpenPath($authStore.user, href) ? href : undefined);
+  // A link may name a tab of its page as the hash (#847); the route table knows only the path.
+  const mayOpen = (href: string) => mayOpenPath($authStore.user, href.split("#")[0]);
+  const linkIf = (href: string) => (mayOpen(href) ? href : undefined);
 
   const tasks = $derived.by((): KpiItem[] => {
     const items: KpiItem[] = [];
@@ -175,7 +177,7 @@
         <div data-testid="mail-warning">
           <Note tone="bad"
             >{MAIL_WITHOUT_DELIVERY_TEXT}
-            <a href="/verwalten/system/allgemein">Mailserver einrichten</a></Note
+            <a href="/verwalten/system/allgemein#kommunikation">Mailserver einrichten</a></Note
           >
         </div>
       {/if}
@@ -206,14 +208,14 @@
                   title={c.title}
                   subtitle={c.detail}
                   avatar={false}
-                  href={mayOpenPath($authStore.user, c.href) ? c.href : undefined}
+                  href={mayOpen(c.href) ? c.href : undefined}
                 >
                   {#snippet trailing()}
                     <span class="vw-row-end" data-check={c.key} data-state={c.state}>
                       <Chip tone={c.state === "erledigt" ? "ok" : "warn"}
                         >{c.state === "erledigt" ? "Erledigt" : "Offen"}</Chip
                       >
-                      {#if mayOpenPath($authStore.user, c.href)}
+                      {#if mayOpen(c.href)}
                         <a
                           class="btn btn-sm"
                           class:btn-outline={c.state === "offen"}

@@ -68,7 +68,14 @@ test.describe("Verwalten › Übersicht (#847)", () => {
     await expect(page.getByTestId("setup-checks")).toBeVisible();
     await expect(page.getByTestId("mail-warning")).toHaveCount(deliveryReady ? 0 : 1);
 
-    await page.goto("/verwalten/system/allgemein");
+    // The setup check „E-Mail-Versand eingerichtet“ links to the tab that holds the mail settings;
+    // following that link must land on them (the page opens the tab named by the hash).
+    const mailLink = page
+      .getByTestId("setup-checks")
+      .getByRole("link", { name: "E-Mail", exact: true });
+    await expect(mailLink).toHaveAttribute("href", "/verwalten/system/allgemein#kommunikation");
+    await mailLink.click();
+    await expect(page).toHaveURL(/\/verwalten\/system\/allgemein#kommunikation$/);
     await expect(page.getByTestId("admin-system-email-emailNotificationsEnabled")).toBeAttached();
     await expect(page.getByTestId("mail-warning-smtp")).toHaveCount(deliveryReady ? 0 : 1);
   });

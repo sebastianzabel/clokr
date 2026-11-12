@@ -120,7 +120,7 @@ export function setupChecks(input: CheckInputs, today: string): SetupCheck[] {
         ? "Die Prüfung nach Arbeitszeitgesetz ist eingeschaltet."
         : "Die Prüfung nach Arbeitszeitgesetz ist ausgeschaltet.",
       state: input.work.arbzgEnabled ? "erledigt" : "offen",
-      href: "/verwalten/system/allgemein",
+      href: "/verwalten/regeln/urlaub#arbzg",
       action: "Regeln",
     });
   }
@@ -132,7 +132,7 @@ export function setupChecks(input: CheckInputs, today: string): SetupCheck[] {
         ? "E-Mails können verschickt werden."
         : "Es ist kein Mailserver eingerichtet.",
       state: canDeliver(input.smtp) ? "erledigt" : "offen",
-      href: "/verwalten/system/allgemein",
+      href: "/verwalten/system/allgemein#kommunikation",
       action: "E-Mail",
     });
   }
@@ -161,7 +161,7 @@ export function setupChecks(input: CheckInputs, today: string): SetupCheck[] {
           ? `${plural(live.length, "aktives Terminal", "aktive Terminals")}`
           : "Noch kein Terminal verbunden.",
       state: live.length > 0 ? "erledigt" : "offen",
-      href: "/verwalten/system/allgemein",
+      href: "/verwalten/system/allgemein#integration",
       action: "Terminals",
     });
   }
