@@ -50,10 +50,6 @@
         "count": 1,
         "ticket": "#854"
       },
-      "apps/web/src/routes/(app)/admin/shutdowns/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/leave/+page.svelte": {
         "count": 4,
         "ticket": "#851"
@@ -209,10 +205,6 @@
       },
       "apps/web/src/routes/(app)/admin/phorest/+page.svelte": {
         "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/shutdowns/+page.svelte": {
-        "count": 1,
         "ticket": "#854"
       },
       "apps/web/src/routes/(app)/admin/shutdowns/[id]/+page.svelte": {

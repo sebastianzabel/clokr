@@ -8,14 +8,18 @@
 // nothing reports OK forever, so the walked sets carry non-empty floors and every detector has a
 // positive control and a clean control (the same discipline as no-loading-text-843).
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { detectPagePatterns } from "../../scripts/lint-ui-classes.mjs";
 import { APP_ROUTES } from "$lib/nav/routes";
 import { pageLabel } from "$lib/nav/page-labels";
 
+import { SRC_ROOT } from "./design-source-files";
 import {
   MIGRATED_854,
+  isRedirectStub,
   verwaltenComponentFiles,
   verwaltenRouteFiles,
   type VerwaltenFile,
@@ -234,9 +238,11 @@ describe("Verwalten pages guard - the walked set is not empty", () => {
     );
     const rels = new Set(routeFiles.map((f) => f.rel));
     for (const route of entries.filter((e) => e.file !== undefined)) {
-      expect(rels, `${route.href} -> ${route.file}`).toContain(
-        `routes/(app)${route.file}/+page.svelte`,
-      );
+      const page = `routes/(app)${route.file}/+page.svelte`;
+      // A redirect stub renders nothing of its own (its content lives on the page it redirects to, e.g.
+      // /admin/shutdowns -> Abwesenheiten › Betriebsurlaub, plan 854-12) and is never walked.
+      if (isRedirectStub(readFileSync(join(SRC_ROOT, page), "utf8"))) continue;
+      expect(rels, `${route.href} -> ${route.file}`).toContain(page);
     }
   });
 

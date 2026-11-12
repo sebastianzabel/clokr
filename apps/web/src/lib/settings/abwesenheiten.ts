@@ -6,9 +6,68 @@
 // The server stays the authority for every rule (the Zod schema of `PUT /settings/work`); the checks here only
 // save a round trip and mirror the bounds the page always showed.
 
+import type { PermissionHolder } from "$lib/permissions";
 import { messageCount, type FieldMessages } from "$lib/settings/arbeitszeit";
+import { mayOpenSection, settingsSection } from "$lib/settings/settings-pages";
 
 export { messageCount, type FieldMessages };
+
+// ── The tabs of the page ─────────────────────────────────────────────────────────────────────────
+
+export interface AbwesenheitenTab {
+  value: "urlaub" | "sonderurlaub" | "uebertrag" | "betriebsurlaub";
+  label: string;
+  /** The registry sections the tab shows; the tab is offered when the person may open at least one. */
+  sections: readonly string[];
+  /** True for a tab whose sections read and write `/settings/work` (the page loads the config for them). */
+  usesConfig: boolean;
+}
+
+/** The tabs of Regeln › Abwesenheiten in strip order. */
+export const ABWESENHEITEN_TABS: readonly AbwesenheitenTab[] = [
+  {
+    value: "urlaub",
+    label: "Urlaub",
+    sections: [
+      "abwesenheiten-anspruch",
+      "abwesenheiten-antraege",
+      "abwesenheiten-krankheit",
+      "abwesenheiten-feiertage",
+    ],
+    usesConfig: true,
+  },
+  {
+    value: "sonderurlaub",
+    label: "Sonderurlaub",
+    sections: ["abwesenheiten-sonderurlaub"],
+    usesConfig: false,
+  },
+  {
+    value: "uebertrag",
+    label: "Übertrag",
+    sections: ["abwesenheiten-uebertrag", "abwesenheiten-verfallswarnung"],
+    usesConfig: true,
+  },
+  {
+    value: "betriebsurlaub",
+    label: "Betriebsurlaub",
+    sections: ["abwesenheiten-betriebsurlaub"],
+    usesConfig: false,
+  },
+];
+
+/**
+ * The tabs `user` may open (T-854-30): the page merges sections of two old pages (the vacation page and the
+ * company shutdowns) and opens under the union of their gates (D-854-05), so a person sees a tab only under
+ * the alternatives of its own sections. Presentation only; the API's 403 stays the authority.
+ */
+export function visibleAbwesenheitenTabs(
+  user: PermissionHolder | null | undefined,
+): AbwesenheitenTab[] {
+  return ABWESENHEITEN_TABS.filter((tab) =>
+    tab.sections.some((id) => mayOpenSection(user, settingsSection(id))),
+  );
+}
 
 export type HolidayRule = "NORMAL" | "HALF_DAY" | "FULL_DAY_OFF";
 

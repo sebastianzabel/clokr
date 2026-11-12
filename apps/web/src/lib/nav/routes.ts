@@ -325,13 +325,19 @@ export const APP_ROUTES: readonly AppRoute[] = [
     label: "Abwesenheiten",
     icon: "umbrella",
     width: "read",
-    requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
+    // The union of the vacation page's and the company shutdowns' alternatives (D-854-05).
+    requires: [
+      [Z("tenant-settings:update")],
+      [Z("leave-config:manage")],
+      [Z("company-shutdown:manage")],
+    ],
     file: "/admin/vacation",
     inNav: false,
     parent: "/verwalten/regeln",
     description: "Urlaub, Sonderurlaub, Betriebsurlaub, Urlaubsgrenzen und Übertrag",
   },
-  // writes /company-shutdowns
+  // writes /company-shutdowns. The list is the „Betriebsurlaub“ tab of Abwesenheiten (the route file is a redirect
+  // stub, #854); the entry stays as the carrier of the detail sub-route /verwalten/regeln/betriebsurlaub/<id>.
   {
     href: "/verwalten/regeln/betriebsurlaub",
     area: "verwalten",
@@ -341,8 +347,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: [[Z("company-shutdown:manage")]],
     file: "/admin/shutdowns",
     inNav: false,
-    parent: "/verwalten/regeln",
-    description: "Zeiträume, in denen der ganze Betrieb geschlossen hat",
+    parent: "/verwalten/regeln/abwesenheiten",
+    description: "Ein Betriebsurlaub im Detail",
   },
   // GET /leave/limits (handler checks: leave-limit:manage or leave-request:approve)
   {

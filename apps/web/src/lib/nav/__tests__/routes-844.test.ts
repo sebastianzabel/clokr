@@ -319,6 +319,35 @@ describe("navigation (Z-01, AC: kein Eintrag doppelt)", () => {
   });
 });
 
+describe("Betriebsurlaub (plan 854-12)", () => {
+  it("is no child of the Regeln hub any more: its list is a tab of Abwesenheiten", () => {
+    const hrefs = visibleChildren(user("ADMIN"), "/verwalten/regeln", ALL).map((r) => r.href);
+    expect(hrefs).not.toContain("/verwalten/regeln/betriebsurlaub");
+    expect(hrefs).toContain("/verwalten/regeln/abwesenheiten");
+  });
+
+  it("stays a route entry under Abwesenheiten that carries the detail sub-route and its gate", () => {
+    const entry = APP_ROUTES.find((r) => r.href === "/verwalten/regeln/betriebsurlaub")!;
+    expect(entry.parent).toBe("/verwalten/regeln/abwesenheiten");
+    expect(entry.file).toBe("/admin/shutdowns");
+    expect(rerouteTarget("/verwalten/regeln/betriebsurlaub/s1")).toBe("/admin/shutdowns/s1");
+    const holder = { permissions: ["company-shutdown:manage:ZUGEWIESEN"] };
+    expect(mayOpenPath(holder, "/verwalten/regeln/betriebsurlaub/s1")).toBe(true);
+    expect(
+      mayOpenPath(
+        { permissions: ["leave-config:manage:ZUGEWIESEN"] },
+        "/verwalten/regeln/betriebsurlaub/s1",
+      ),
+    ).toBe(false);
+  });
+
+  it("the Abwesenheiten page opens for a holder of company-shutdown:manage alone", () => {
+    const holder = { permissions: ["company-shutdown:manage:ZUGEWIESEN"] };
+    expect(mayOpenPath(holder, "/verwalten/regeln/abwesenheiten")).toBe(true);
+    expect(mayOpenPath({ permissions: [] }, "/verwalten/regeln/abwesenheiten")).toBe(false);
+  });
+});
+
 describe("phone tabs (D-844-13)", () => {
   it("team reach: Salon · Aufgaben · Mein Tag · Abwesend", () => {
     expect(mobileTabs(user("ADMIN"), ALL).map((t) => t.href)).toEqual([

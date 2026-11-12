@@ -440,6 +440,7 @@ describe("registry helpers", () => {
     expect(pageAlternatives("/verwalten/regeln/abwesenheiten")).toEqual([
       ["tenant-settings:update:ZUGEWIESEN"],
       ["leave-config:manage:ZUGEWIESEN"],
+      ["company-shutdown:manage:ZUGEWIESEN"],
     ]);
   });
 

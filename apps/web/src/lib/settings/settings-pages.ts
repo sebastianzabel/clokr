@@ -58,6 +58,7 @@ const VACATION_REQUIRES: PermissionAlternatives = [
   [Z("tenant-settings:update")],
   [Z("leave-config:manage")],
 ];
+const SHUTDOWN_REQUIRES: PermissionAlternatives = [[Z("company-shutdown:manage")]];
 const EXPORT_REQUIRES: PermissionAlternatives = [[Z("report:export")]];
 const AUDIT_REQUIRES: PermissionAlternatives = [[Z("audit-log:read")]];
 const PHOREST_REQUIRES: PermissionAlternatives = [[Z("integration:manage")]];
@@ -501,6 +502,19 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     // The pre-#854 page /admin/special-leave redirects here (alias with `to`); it carries the same gate.
     source: "/admin/special-leave",
     renderedBy: `${ABWESENHEITEN_DIR}/SonderurlaubPanel.svelte`,
+  },
+
+  // Plan 854-12: the company shutdowns of the former /admin/shutdowns list, a tab of the Abwesenheiten page. The
+  // list acts at once (create in a Dialog, delete behind a confirmation); a shutdown's detail is a sub-route.
+  {
+    page: ABWESENHEITEN_PAGE,
+    id: "abwesenheiten-betriebsurlaub",
+    title: "Betriebsurlaub",
+    endpoint: null,
+    keys: [],
+    source: "/admin/shutdowns",
+    requires: SHUTDOWN_REQUIRES,
+    renderedBy: `${ABWESENHEITEN_DIR}/BetriebsurlaubPanel.svelte`,
   },
 
   // ── /admin/export ──────────────────────────────────────────────────────────────────────────────
