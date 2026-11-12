@@ -28,9 +28,10 @@ model Tenant {
 
   // Issue #93 (Phase 93b) — support access grants of the operator for this tenant. Plural name on
   // purpose: the tenant-scoping model graph skips plural collections.
-  supportAccesses   SupportAccess[]
+  supportAccesses    SupportAccess[]
   // Issue #608 — Prisma-only back-relation, push devices of this tenant's users.
-  pushSubscriptions PushSubscription[]
+  pushSubscriptions  PushSubscription[]
+  calendarFeedTokens CalendarFeedToken[] // Issue #597
 
   // Phase 566 (#566) — booked packages per tenant. Unterbau-Erweiterung: additive, no existing reader
   // has to change. Written only by the operator and read only through
@@ -401,15 +402,16 @@ model User {
   createdAt              DateTime  @default(now()) @db.Timestamptz
   updatedAt              DateTime  @updatedAt @db.Timestamptz
 
-  employee          Employee?
-  refreshTokens     RefreshToken[]
-  otpTokens         OtpToken[]
-  auditLogs         AuditLog[]
-  notifications     Notification[]
+  employee           Employee?
+  refreshTokens      RefreshToken[]
+  otpTokens          OtpToken[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
   // Phase 74b (issue #74) — role assignments held by this user
-  roleAssignments   RoleAssignment[]
+  roleAssignments    RoleAssignment[]
   // Issue #608 — Prisma-only back-relation, the devices this user opted into push on
-  pushSubscriptions PushSubscription[]
+  pushSubscriptions  PushSubscription[]
+  calendarFeedTokens CalendarFeedToken[] // Issue #597
 }
 
 model RefreshToken {
@@ -450,6 +452,25 @@ model PushSubscription {
 
   @@index([tenantId])
   @@index([userId])
+}
+
+// Issue #597 — the secret of a person's subscribable calendar feed („Mein Dienstplan“). One row per
+// user; only the SHA-256 of the token is stored (the token itself is shown once, at creation or
+// rotation). Not retention-relevant (a credential, not a record): hard-deleted on revoke, with the
+// user (Cascade), on anonymization and by the int refresh. Unterbau, like PushSubscription.
+model CalendarFeedToken {
+  id         String    @id @default(uuid())
+  tenantId   String
+  userId     String    @unique
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+  rotatedAt  DateTime? @db.Timestamptz
+  lastUsedAt DateTime? @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 model OtpToken {

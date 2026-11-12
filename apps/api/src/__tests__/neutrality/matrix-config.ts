@@ -450,6 +450,42 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "gone. Proven by `leave-plan-tracer-835.test.ts`.",
   },
   {
+    route: "GET /api/v1/me/calendar-feed",
+    reason:
+      "New route added in Issue #597, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, own token state only) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `calendar-feed-597.test.ts`.",
+  },
+  {
+    route: "POST /api/v1/me/calendar-feed",
+    reason:
+      "New route added in Issue #597, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, `shift:read:EIGENE` or `leave-request:read:EIGENE`, own token only) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `calendar-feed-597.test.ts`.",
+  },
+  {
+    route: "DELETE /api/v1/me/calendar-feed",
+    reason:
+      "New route added in Issue #597, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, own token only) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `calendar-feed-597.test.ts`.",
+  },
+  {
+    route: "GET /api/v1/calendar-feed/dienstplan.ics",
+    reason:
+      "New route added in Issue #597, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (no bearer at all: the token query parameter is the credential, resolved by `resolveCalendarFeedToken` against the own-read permissions) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `calendar-feed-597.test.ts`.",
+  },
+  {
     route: "POST /api/v1/month-corrections",
     reason:
       "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
