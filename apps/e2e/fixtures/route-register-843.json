@@ -118,18 +118,6 @@
       "fill": "shutdown"
     },
     {
-      "page": "(app)/admin/special-leave/+page.svelte",
-      "path": "/admin/special-leave",
-      "auth": "tenant-admin",
-      "skip": "Redirect-only page: onMount sends the browser to /admin/vacation#sonderurlaub, which is measured as the /admin/vacation route."
-    },
-    {
-      "page": "(app)/admin/special-leave/[id]/+page.svelte",
-      "path": "/admin/special-leave/example",
-      "auth": "tenant-admin",
-      "skip": "Redirect stub with no content of its own (it sends the browser to /admin/vacation#sonderurlaub); the target is measured as the /admin/vacation route."
-    },
-    {
       "page": "(app)/admin/support-access/+page.svelte",
       "path": "/verwalten/daten/support-zugriffe",
       "auth": "tenant-admin"

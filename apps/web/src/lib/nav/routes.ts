@@ -500,20 +500,53 @@ export const APP_ROUTES: readonly AppRoute[] = [
 ];
 
 /**
- * Redirect-only aliases that still have a page file of their own, with the permission alternatives their old
- * guard used (the admin layout guards them before their own redirect runs; it lands on an old URL, which then
- * redirects once more).
+ * An old URL that has no route-table entry of its own: its permission alternatives (the old guard) and, since
+ * #854, optionally the page that now holds its content.
  */
-export const LEGACY_ROUTE_REDIRECTS: readonly { href: string; requires: PermissionAlternatives }[] =
-  [
-    // → /admin/vacation#sonderurlaub (its own onMount redirect)
-    {
-      href: "/admin/special-leave",
-      requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
-    },
-    // → /admin/integrations (301 from its +page.server.ts)
-    { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },
-  ];
+export interface LegacyRedirect {
+  href: string;
+  requires: PermissionAlternatives;
+  /**
+   * An old page whose content now lives on another page (#854): the old URL and every sub-path redirect to
+   * `to` (a constant of this table, never derived from the request). May end in `#<tab>`. Such an alias has no
+   * page file; `rerouteTarget` renders the page of `to` so the `(app)` layout load can send the redirect.
+   */
+  to?: string;
+}
+
+/**
+ * Redirect-only aliases with the permission alternatives their old guard used (the admin layout guards them
+ * before their own redirect runs). An alias without `to` still has a page file of its own that redirects once
+ * more; an alias with `to` is redirected on the server and has no file.
+ */
+export const LEGACY_ROUTE_REDIRECTS: readonly LegacyRedirect[] = [
+  // The Sonderurlaub rules are a tab of the vacation rules page.
+  {
+    href: "/admin/special-leave",
+    requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
+    to: "/verwalten/regeln/urlaub#sonderurlaub",
+  },
+  // → /admin/integrations (301 from its +page.server.ts)
+  { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },
+];
+
+/** The folded-page alias `pathname` belongs to, or null. */
+function foldedAlias(pathname: string): (LegacyRedirect & { to: string }) | null {
+  const alias = LEGACY_ROUTE_REDIRECTS.find(
+    (entry) => entry.to !== undefined && matchesRoute(entry.href, pathname),
+  );
+  return alias === undefined ? null : (alias as LegacyRedirect & { to: string });
+}
+
+/**
+ * The redirect location of `target` with the request's query string kept: the query goes BEFORE the fragment
+ * (`/a#t` + `?x=1` → `/a?x=1#t`), appending it to the whole target would put it behind the fragment.
+ */
+export function redirectLocation(target: string, search: string): string {
+  const hashAt = target.indexOf("#");
+  if (hashAt === -1) return target + search;
+  return target.slice(0, hashAt) + search + target.slice(hashAt);
+}
 
 const ROUTE_HREFS = APP_ROUTES.map((route) => route.href);
 const FILE_ROUTES = APP_ROUTES.filter(
@@ -539,6 +572,12 @@ function rest(pathname: string, base: string): string {
 /** The route file a new URL renders (`/verwalten/personen/1` → `/admin/employees/1`), or null when the path is
  *  not a rerouted URL (a page created by #844, an old URL, an unknown path). Used by `src/hooks.ts` `reroute`. */
 export function rerouteTarget(pathname: string): string | null {
+  // A folded old page has no file: render the page that holds its content, the layout load then redirects.
+  const folded = foldedAlias(pathname);
+  if (folded !== null) {
+    const toPath = folded.to.split("#")[0];
+    return rerouteTarget(toPath) ?? toPath;
+  }
   const route = routeFor(pathname);
   if (route === null || route.file === undefined) return null;
   return route.file + rest(pathname, route.href);
@@ -548,6 +587,8 @@ export function rerouteTarget(pathname: string): string | null {
  *  `/verwalten/personen/1`), or null when `pathname` is not an old URL. Used by `routes/(app)/+layout.ts`. */
 export function legacyRedirectTarget(pathname: string): string | null {
   if (pathname === "/admin" || pathname === "/admin/") return "/verwalten";
+  const folded = foldedAlias(pathname);
+  if (folded !== null) return folded.to;
   // No new href lies under a file path (`routes-844.test.ts`), so a new URL never matches here.
   const file = activeNavHref(FILE_HREFS, pathname);
   if (file === null) return null;

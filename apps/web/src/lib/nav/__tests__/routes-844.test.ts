@@ -9,6 +9,7 @@ import {
   mayOpenRoute,
   mobileTabs,
   pageWidthForPath,
+  redirectLocation,
   rerouteTarget,
   routeFor,
   visibleChildren,
@@ -61,8 +62,11 @@ describe("route table (D-844-01..08)", () => {
 
 describe("reroute and redirect are inverse (D-844-03/04)", () => {
   const filed = APP_ROUTES.filter((r) => r.file !== undefined);
+  const folded = LEGACY_ROUTE_REDIRECTS.filter((a) => a.to !== undefined);
+  // Both kinds are moved pages: a filed one is rerouted to its old file, a folded one to the page that now
+  // holds its content (#854).
   it("covers at least 28 moved pages (non-vacuity)", () =>
-    expect(filed.length).toBeGreaterThanOrEqual(28));
+    expect(filed.length + folded.length).toBeGreaterThanOrEqual(28));
   for (const route of filed) {
     it(`${route.href} ⇄ ${route.file}`, () => {
       expect(rerouteTarget(route.href)).toBe(route.file);
@@ -88,6 +92,40 @@ describe("reroute and redirect are inverse (D-844-03/04)", () => {
   });
 });
 
+describe("folded old pages (#854)", () => {
+  const folded = LEGACY_ROUTE_REDIRECTS.filter((a) => a.to !== undefined);
+
+  it("has at least one folded page (non-vacuity)", () =>
+    expect(folded.length).toBeGreaterThanOrEqual(1));
+
+  for (const alias of folded) {
+    it(`${alias.href} → ${alias.to}`, () => {
+      expect(legacyRedirectTarget(alias.href)).toBe(alias.to);
+      expect(legacyRedirectTarget(`${alias.href}/x`)).toBe(alias.to);
+      // Without a page file the URL must still resolve to a route so the layout load can redirect.
+      expect(rerouteTarget(alias.href)).not.toBeNull();
+      expect(rerouteTarget(`${alias.href}/x`)).not.toBeNull();
+      // The target is a page of the table, and the alias keeps its old alternatives.
+      expect(routeFor(alias.to!.split("#")[0])).not.toBeNull();
+      const holder = { permissions: alias.requires[0].map((key) => key) };
+      expect(mayOpenPath(holder, alias.href)).toBe(true);
+      expect(mayOpenPath({ permissions: [] }, alias.href)).toBe(false);
+    });
+  }
+
+  it("special-leave rerouting renders the page the redirect lands on", () => {
+    expect(rerouteTarget("/admin/special-leave")).toBe("/admin/vacation");
+    expect(rerouteTarget("/admin/special-leave/42")).toBe("/admin/vacation");
+  });
+
+  it("redirectLocation puts the query before the fragment", () => {
+    expect(redirectLocation("/a#t", "?x=1")).toBe("/a?x=1#t");
+    expect(redirectLocation("/a", "?x=1")).toBe("/a?x=1");
+    expect(redirectLocation("/a#t", "")).toBe("/a#t");
+    expect(redirectLocation("/a", "")).toBe("/a");
+  });
+});
+
 describe("old URLs of the acceptance criteria land on the new place", () => {
   const CASES: [string, string][] = [
     ["/dashboard", "/ich/tag"],
@@ -106,6 +144,7 @@ describe("old URLs of the acceptance criteria land on the new place", () => {
     ["/admin", "/verwalten"],
     ["/admin/employees/abc", "/verwalten/personen/abc"],
     ["/admin/vacation", "/verwalten/regeln/urlaub"],
+    ["/admin/special-leave", "/verwalten/regeln/urlaub#sonderurlaub"],
     ["/admin/system", "/verwalten/system/allgemein"],
     ["/admin/month-close", "/verwalten/monatsabschluss"],
     ["/admin/audit/42", "/verwalten/daten/protokoll/42"],
