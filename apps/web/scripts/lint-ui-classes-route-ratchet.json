@@ -38,10 +38,6 @@
         "count": 1,
         "ticket": "#854"
       },
-      "apps/web/src/routes/(app)/admin/availability/+page.svelte": {
-        "count": 1,
-        "ticket": "#853"
-      },
       "apps/web/src/routes/(app)/admin/employees/+page.svelte": {
         "count": 7,
         "ticket": "#854"
