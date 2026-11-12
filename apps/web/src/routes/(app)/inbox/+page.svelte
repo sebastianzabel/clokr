@@ -13,7 +13,7 @@
   import CardHeader from "$components/ui/CardHeader.svelte";
   import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
   import List from "$components/ui/List.svelte";
-  import ApprovalRow from "$components/ui/ApprovalRow.svelte"; // retro list only, until the Zeitnachtrag rows join the one list
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // § 9 reject reason (moved from /team/leave, #840)
   import EmptyState from "$components/ui/EmptyState.svelte";
@@ -26,9 +26,13 @@
     taskRowsFrom,
     taskCounts,
     taskKindLabel,
+    rowsForView,
+    filterByKind,
+    TASK_KIND_VALUES,
     type TaskKind,
     type TaskRowModel,
   } from "$lib/team/task-model"; // Issue #853 (D-853-06)
+  import { urlState, oneOf } from "$lib/table/url-state"; // Issue #853 (D-853-06)
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
   import { parseInboxDeepLink, type InboxDeepLink } from "$lib/leave/inbox-deep-link"; // Issue #840 (D-840-05)
 
@@ -76,8 +80,6 @@
     createdAt: string;
   }
 
-  type RetroTabKey = "open" | "approved" | "rejected" | "all";
-
   // LEAVE_TYPE_OPTIONS has no HOLIDAY entry (it is the nine-element set of types a
   // LeaveRequest can actually carry — team-calendar-visibility.ts:106-108). typeName("HOLIDAY")
   // would fall back to the raw code, but LeaveRequest.typeCode can never be HOLIDAY — that value
@@ -96,6 +98,15 @@
   let loading = $state(true);
   let error = $state("");
 
+  // Issue #853 (D-853-06, D-853-19): the type filter and the „Offen · Entschieden“ view live in the
+  // URL. `urlState` keeps every other key (`request`, `year`, `section9`, `salonId`) as it is; the
+  // deep-link keys are still read only by `parseInboxDeepLink`.
+  const taskUrl = urlState({
+    typ: oneOf(["alle", ...TASK_KIND_VALUES] as const, "alle"),
+    ansicht: oneOf(["offen", "entschieden"] as const, "offen"),
+  });
+  const taskView = $derived(taskUrl.read());
+
   // Detail modal — Phase 255: markup and mutation now live in the shared LeaveReviewDialog
   // component; the page only keeps the two pieces of state that select which request is
   // under review.
@@ -105,7 +116,6 @@
   // ── RetroEntryRequest state ──────────────────────────────────────────────
   let retroRequests: RetroEntryRequest[] = $state([]);
   let retroLoading = $state(true);
-  let retroTab: RetroTabKey = $state("open");
 
   // Retro detail/review modal
   let retroDetail: RetroEntryRequest | null = $state(null);
@@ -137,6 +147,13 @@
     hasAnyPermission($authStore.user, ["leave-request:approve:ZUGEWIESEN"]),
   );
 
+  // Same hint for the Zeitnachträge: the list is read only by an approver, because `GET
+  // /retro-entry-requests` also answers a caller with the EIGENE reach, and her own requests would
+  // otherwise show up as items to decide. A UX hint; the API decides.
+  const canRetro = $derived(
+    hasAnyPermission($authStore.user, ["retro-request:approve:ZUGEWIESEN"]),
+  );
+
   /** Reloads what a § 9 decision can change: the § 9 cases, and the leave list for an approver only. */
   async function reloadAfterSection9() {
     await Promise.all([canListLeave ? loadRequests() : Promise.resolve(), loadSection9Cases()]);
@@ -162,7 +179,9 @@
     const link = parseInboxDeepLink($page.url.searchParams, currentYear);
     const hadLinkParams = DEEP_LINK_PARAMS.some((name) => $page.url.searchParams.has(name));
     void (async () => {
-      const loads: Promise<unknown>[] = [loadRetroRequests()];
+      const loads: Promise<unknown>[] = [];
+      if (canRetro) loads.push(loadRetroRequests());
+      else retroLoading = false;
       // The leave list is skipped for a role that only decides § 9 cases: it would answer 403 and
       // show an error alert for a list that role never sees.
       if (canListLeave) {
@@ -281,26 +300,34 @@
     return `${d}.${m}.${y}`;
   }
 
-  function initials(first: string, last: string): string {
-    return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
-  }
-
-  // ── Derived: the open leave requests as task rows + the KPI band ─────────────
+  // ── Derived: the leave requests and Zeitnachträge as task rows + the KPI band ──
+  // Open = every open request in the approve reach (all years, #840 E-02); decided = the current
+  // year's list, as the removed „Genehmigt“ / „Abgelehnt“ tabs showed it.
   let openRequests = $derived(
     pendingRequests.filter((r) => r.status === "PENDING" || r.status === "CANCELLATION_REQUESTED"),
   );
+  let approvedRequests = $derived(requests.filter((r) => r.status === "APPROVED"));
+  let rejectedRequests = $derived(requests.filter((r) => r.status === "REJECTED"));
 
-  // The one task list (D-853-06): oldest first. The day figure is always the shared helper.
-  const taskRows = $derived(
+  // The one task list (D-853-06). The day figure is always the shared helper.
+  const allTaskRows = $derived(
     taskRowsFrom(
-      { leave: openRequests },
+      {
+        leave: [...openRequests, ...approvedRequests, ...rejectedRequests],
+        retro: retroRequests,
+      },
       { leaveDays: (r) => leaveDaysLabel(Number(r.days), r.halfDay, r.typeCode as TypeCode) },
     ),
   );
-  const taskOpenCounts = $derived(taskCounts(taskRows));
+  const openTaskRows = $derived(rowsForView(allTaskRows, "offen"));
+  const decidedTaskRows = $derived(rowsForView(allTaskRows, "entschieden"));
+  const taskOpenCounts = $derived(taskCounts(openTaskRows));
 
-  // A kind is offered only to a caller who can decide it (same hint as the loaders; the API decides).
-  const availableKinds = $derived<TaskKind[]>(canListLeave ? ["urlaub"] : []);
+  // A kind is offered only to a caller who can decide it (same hints as the loaders; the API decides).
+  const availableKinds = $derived<TaskKind[]>([
+    ...(canListLeave ? (["urlaub"] as const) : []),
+    ...(canRetro ? (["nachtrag"] as const) : []),
+  ]);
   const kpiItems = $derived<KpiItem[]>(
     availableKinds.map((kind) => ({
       label: `Offen · ${taskKindLabel(kind)}`,
@@ -309,9 +336,49 @@
     })),
   );
 
+  // The URL decides view and type; a type the caller cannot decide reads as „Alle“.
+  const activeTyp = $derived<TaskKind | "alle">(
+    taskView.typ !== "alle" && availableKinds.includes(taskView.typ) ? taskView.typ : "alle",
+  );
+  const viewRows = $derived(taskView.ansicht === "offen" ? openTaskRows : decidedTaskRows);
+  const viewCounts = $derived(taskCounts(viewRows));
+  const visibleTaskRows = $derived(filterByKind(viewRows, activeTyp));
+
+  const typOptions = $derived([
+    { value: "alle", label: `Alle (${viewRows.length})` },
+    ...availableKinds.map((kind) => ({
+      value: kind,
+      label: `${taskKindLabel(kind)} (${viewCounts[kind]})`,
+    })),
+  ]);
+  const ansichtOptions = $derived([
+    { value: "offen", label: `Offen (${openTaskRows.length})` },
+    { value: "entschieden", label: "Entschieden" },
+  ]);
+
+  const tasksLoading = $derived((canListLeave && loading) || (canRetro && retroLoading));
+
+  function onTypSelected(value: string) {
+    taskUrl.write({ typ: value as TaskKind | "alle" });
+  }
+  function onAnsichtSelected(value: string) {
+    taskUrl.write({ ansicht: value === "entschieden" ? "entschieden" : "offen" });
+  }
+
   /** The request a task row stands for (the open list first, as the deep link does). */
   function leaveOf(row: TaskRowModel): LeaveRequest | null {
-    return pendingRequests.find((r) => r.id === row.sourceId) ?? null;
+    if (row.kind !== "urlaub") return null;
+    return (
+      pendingRequests.find((r) => r.id === row.sourceId) ??
+      requests.find((r) => r.id === row.sourceId) ??
+      null
+    );
+  }
+
+  /** The Zeitnachtrag a task row stands for. */
+  function retroOf(row: TaskRowModel): RetroEntryRequest | null {
+    if (row.kind !== "nachtrag") return null;
+    return retroRequests.find((r) => r.id === row.sourceId) ?? null;
   }
 
   // ── Detail modal ─────────────────────────────────────────────────────────
@@ -323,20 +390,6 @@
   function isRetroSelfApproval(req: RetroEntryRequest): boolean {
     return req.employeeId === $authStore.user?.employeeId;
   }
-
-  // ── Retro derived: filtered lists + KPI ──────────────────────────────────
-  let retroOpenRequests = $derived(retroRequests.filter((r) => r.status === "PENDING"));
-  let retroApprovedRequests = $derived(
-    retroRequests.filter((r) => r.status === "APPROVED" || r.status === "USED"),
-  );
-  let retroRejectedRequests = $derived(retroRequests.filter((r) => r.status === "REJECTED"));
-
-  let retroVisible = $derived.by(() => {
-    if (retroTab === "open") return retroOpenRequests;
-    if (retroTab === "approved") return retroApprovedRequests;
-    if (retroTab === "rejected") return retroRejectedRequests;
-    return retroRequests;
-  });
 
   // ── Retro detail modal ────────────────────────────────────────────────────
   function openRetroDetail(req: RetroEntryRequest) {
@@ -601,34 +654,79 @@
   </div>
 {/if}
 
-<!-- ── The task list: every open decision in one place, oldest first ──────────── -->
-{#if canListLeave}
-  <div class="aufgaben-list">
-    {#if loading}
-      <Skeleton shape="row" count={3} />
-    {:else if taskRows.length === 0}
-      <EmptyState
-        icon="inbox"
-        title="Keine offenen Anträge"
-        description="Alle Anträge sind bearbeitet."
+<!-- ── The task list: every decision in one place, oldest first ─────────────────── -->
+{#if availableKinds.length > 0}
+  <div class="aufgaben-controls">
+    {#if availableKinds.length > 1}
+      <SegmentedControl
+        options={typOptions}
+        value={activeTyp}
+        name="aufgaben-typ"
+        ariaLabel="Art der Aufgabe"
+        size="sm"
+        onchange={onTypSelected}
       />
+    {/if}
+    <SegmentedControl
+      options={ansichtOptions}
+      value={taskView.ansicht}
+      name="aufgaben-ansicht"
+      ariaLabel="Ansicht"
+      size="sm"
+      onchange={onAnsichtSelected}
+    />
+  </div>
+
+  <div class="aufgaben-list">
+    {#if tasksLoading}
+      <Skeleton shape="row" count={3} />
+    {:else if visibleTaskRows.length === 0}
+      {#if activeTyp !== "alle"}
+        <EmptyState
+          variant="noMatches"
+          description="In dieser Art gibt es hier nichts."
+          actionLabel="Alle anzeigen"
+          onaction={() => taskUrl.write({ typ: "alle" })}
+        />
+      {:else if taskView.ansicht === "entschieden"}
+        <EmptyState
+          icon="inbox"
+          title="Noch nichts entschieden"
+          description={`Im Jahr ${currentYear} liegt keine entschiedene Aufgabe vor.`}
+        />
+      {:else}
+        <EmptyState
+          icon="inbox"
+          title="Keine offenen Aufgaben"
+          description="Alle Anträge sind bearbeitet."
+        />
+      {/if}
     {:else}
       <List ariaLabel="Aufgaben" testId="inbox-task-list">
-        {#each taskRows as row (row.key)}
+        {#each visibleTaskRows as row (row.key)}
           {@const request = leaveOf(row)}
+          {@const retro = retroOf(row)}
           <TaskRow
             {row}
             typeLabel={row.typeCode ? typeName(row.typeCode) : undefined}
-            onOpen={request ? () => openDetail(request) : undefined}
+            onOpen={request
+              ? () => openDetail(request)
+              : retro
+                ? () => openRetroDetail(retro)
+                : undefined}
           >
             {#snippet actions()}
-              {#if request}
-                <!--
-                  One neutral „Prüfen“ button: the approve/reject controls live inside the dialog,
-                  behind an explicit confirmation step (REVIEW WR-02), so the row never offers an
-                  immediate decision.
-                -->
-                <button class="btn btn-primary btn-sm" onclick={() => openDetail(request)}>
+              <!--
+                One neutral „Prüfen“ button on an open row: the approve/reject controls live inside
+                the dialog, behind an explicit confirmation step (REVIEW WR-02), so the row never
+                offers an immediate decision. A decided row has no button; its title opens the
+                details.
+              -->
+              {#if !row.decided}
+                <button
+                  class="btn btn-primary btn-sm"
+                  onclick={() => (request ? openDetail(request) : retro && openRetroDetail(retro))}
+                >
                   Prüfen
                 </button>
               {/if}
@@ -639,138 +737,6 @@
     {/if}
   </div>
 {/if}
-
-<!-- ── Detail modal ──────────────────────────────────────────────────────── -->
-<!-- ── Retro-Anträge view-tabs ─────────────────────────────────────────── -->
-<div class="view-tabs retro-tabs" role="tablist">
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={retroTab === "open"}
-    role="tab"
-    aria-selected={retroTab === "open"}
-    onclick={() => (retroTab = "open")}
-  >
-    Offen
-    {#if retroOpenRequests.length > 0}
-      <span class="tab-badge">{retroOpenRequests.length}</span>
-    {/if}
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={retroTab === "approved"}
-    role="tab"
-    aria-selected={retroTab === "approved"}
-    onclick={() => (retroTab = "approved")}
-  >
-    Genehmigt
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={retroTab === "rejected"}
-    role="tab"
-    aria-selected={retroTab === "rejected"}
-    onclick={() => (retroTab = "rejected")}
-  >
-    Abgelehnt
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={retroTab === "all"}
-    role="tab"
-    aria-selected={retroTab === "all"}
-    onclick={() => (retroTab = "all")}
-  >
-    Alle
-  </button>
-</div>
-
-<!-- ── Retro-Anträge list card ────────────────────────────────────────── -->
-<Card animate class="list-card retro-list-card" style="padding: 0;">
-  <div class="list-card-header">
-    <CardHeader
-      title="Nachträgliche Zeiterfassungs-Anträge"
-      sub="Anträge auf rückwirkende Einträge außerhalb des Selbstbearbeitungsfensters"
-    />
-  </div>
-
-  {#if retroLoading}
-    <Skeleton shape="row" count={3} />
-  {:else if retroVisible.length === 0}
-    {#if retroTab === "open"}
-      <EmptyState
-        icon="inbox"
-        title="Keine Retro-Anträge"
-        description="Alle Anträge auf rückwirkende Einträge wurden bearbeitet."
-      />
-    {:else if retroTab === "approved"}
-      <EmptyState
-        icon="inbox"
-        title="Keine Retro-Anträge"
-        description="In diesem Zeitraum wurden keine Retro-Anträge genehmigt."
-      />
-    {:else if retroTab === "rejected"}
-      <EmptyState
-        icon="inbox"
-        title="Keine Retro-Anträge"
-        description="In diesem Zeitraum wurden keine Retro-Anträge abgelehnt."
-      />
-    {:else}
-      <EmptyState
-        icon="inbox"
-        title="Keine Retro-Anträge"
-        description="Keine Anträge auf rückwirkende Einträge vorhanden."
-      />
-    {/if}
-  {:else}
-    {#each retroVisible as req (req.id)}
-      <ApprovalRow
-        avatar={initials(req.employee.firstName, req.employee.lastName)}
-        name={`${req.employee.firstName} ${req.employee.lastName}`}
-        dates={`Eintrag vom ${fmtDate(req.targetDate)}${req.startTime && req.endTime ? ` · ${req.startTime}–${req.endTime}` : ""} · Alter: ${req.entryAgeInDays ?? "?"} Tage`}
-        onPrimary={() => openRetroDetail(req)}
-      >
-        {#snippet metaContent()}
-          <span class="chip chip-warn">Rückwirkend</span>
-          <span class="chip">{fmtDate(req.targetDate)}</span>
-          {#if req.status === "PENDING"}
-            <span class="badge badge-yellow">Ausstehend</span>
-          {:else if req.status === "APPROVED"}
-            <span class="badge badge-green">Genehmigt</span>
-          {:else if req.status === "REJECTED"}
-            <span class="badge badge-red">Abgelehnt</span>
-          {:else if req.status === "USED"}
-            <span class="badge badge-gray">Verwendet</span>
-          {/if}
-        {/snippet}
-        {#snippet actions()}
-          {#if req.status === "PENDING"}
-            <button
-              class="btn btn-primary btn-sm"
-              onclick={(e) => {
-                e.stopPropagation();
-                openRetroDetail(req);
-              }}
-            >
-              Prüfen
-            </button>
-          {:else}
-            <button
-              class="btn btn-ghost btn-sm"
-              onclick={(e) => {
-                e.stopPropagation();
-                openRetroDetail(req);
-              }}>Details</button
-            >
-          {/if}
-        {/snippet}
-      </ApprovalRow>
-    {/each}
-  {/if}
-</Card>
 
 <!-- ── § 9 BUrlG — Fälle (Phase 104-10, R6/D-27/D-11; moved here from /team/leave, #840 D-840-05) ── -->
 {#if canSection9}
@@ -1133,9 +1099,13 @@
     margin-bottom: var(--s-4);
   }
 
-  /* ── Retro section spacing ────────────────────────────────────────────── */
-  .retro-tabs {
-    margin-top: 28px;
+  /* The type and view segments share one row; they wrap on a phone. */
+  .aufgaben-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2) var(--s-4);
+    margin-bottom: var(--s-3);
   }
 
   /* ── List card (overrides .card padding for full-bleed rows) ─────────── */

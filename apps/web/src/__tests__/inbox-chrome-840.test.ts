@@ -64,6 +64,27 @@ describe("Issue #840 G-8 / G-3 - the inbox chrome", () => {
     expect(INBOX.split("<KpiStrip").length - 1).toBe(1);
   });
 
+  it("[#853 D-853-06] one list, a type segment and an „Offen · Entschieden“ segment, no tab strip", () => {
+    expect(INBOX).not.toContain("view-tab");
+    expect(INBOX.split("<List ").length - 1).toBe(1);
+    expect(INBOX).toContain('name="aufgaben-typ"');
+    expect(INBOX).toContain('name="aufgaben-ansicht"');
+    // The leave and the Zeitnachtrag rows share the list; both open the existing dialogs.
+    expect(INBOX).toContain("openDetail(request)");
+    expect(INBOX).toContain("openRetroDetail(retro)");
+    // The type control is offered only when there is a choice, and only for kinds the caller can decide.
+    expect(INBOX).toContain("{#if availableKinds.length > 1}");
+    expect(INBOX).toContain("...(canRetro ?");
+  });
+
+  it("[#853 D-853-08] the review dialog receives the fact permissions from the caller's held keys", () => {
+    expect(INBOX).toContain('"leave-entitlement:read:ZUGEWIESEN"');
+    expect(INBOX).toContain('"shift:read:ZUGEWIESEN"');
+    expect(INBOX).toContain('"employee:read:ZUGEWIESEN"');
+    expect(INBOX.split("canReadEntitlement=").length - 1).toBe(1);
+    expect(INBOX).not.toMatch(/user\??\.role\b/);
+  });
+
   it("[#558] the inbox stays an unfiltered work queue: no salon filter identifier, not even in a comment", () => {
     expect(INBOX).not.toContain("salonPageFilter");
     expect(INBOX).not.toContain("withSalonId(");
