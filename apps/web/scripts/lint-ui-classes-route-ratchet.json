@@ -215,10 +215,6 @@
         "count": 2,
         "ticket": "#854"
       },
-      "apps/web/src/routes/(app)/admin/salons/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/admin/shutdowns/+page.svelte": {
         "count": 1,
         "ticket": "#854"
