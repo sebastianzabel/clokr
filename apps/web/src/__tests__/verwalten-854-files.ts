@@ -52,6 +52,11 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/benachrichtigungen/SmtpSection.svelte",
   "lib/components/admin/benachrichtigungen/EmailSection.svelte",
   "lib/components/admin/benachrichtigungen/RemindersSection.svelte",
+  // Plan 854-09 (Regeln › Dienstplan): the rebuilt page shell and its three panels.
+  "routes/(app)/admin/shifts/+page.svelte",
+  "lib/components/admin/dienstplan/ShiftTemplatesPanel.svelte",
+  "lib/components/admin/dienstplan/CoverageRulesPanel.svelte",
+  "lib/components/admin/dienstplan/WeekPatternsPanel.svelte",
 ];
 
 export interface VerwaltenFile {

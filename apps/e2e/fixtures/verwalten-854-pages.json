@@ -47,6 +47,22 @@
       "path": "/verwalten/regeln/benachrichtigungen",
       "heading": "Benachrichtigungen & E-Mail",
       "tabs": []
+    },
+    {
+      "slug": "regeln-dienstplan",
+      "path": "/verwalten/regeln/dienstplan",
+      "heading": "Dienstplan",
+      "tabs": [
+        {
+          "label": "Schichtvorlagen"
+        },
+        {
+          "label": "Bedarfsregeln"
+        },
+        {
+          "label": "Wochenmuster"
+        }
+      ]
     }
   ]
 }
