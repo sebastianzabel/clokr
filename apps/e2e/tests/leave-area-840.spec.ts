@@ -234,7 +234,14 @@ async function animationsSettled(page: Page): Promise<void> {
  * Selectors of the markup this phase introduced; the colour contrast of exactly these is checked
  * (the shared shell, KPI strip and badge tokens are not part of the phase, see below).
  */
-const PHASE_MARKUP = [".leave-toolbar", '[data-testid="absence-timeline"]', ".leave-legend"];
+// `.lv-controls` is the Team page's toolbar since #853 (`.leave-toolbar` stays on the own /leave page);
+// both are listed so the contrast pass covers the toolbar on either page.
+const PHASE_MARKUP = [
+  ".leave-toolbar",
+  ".lv-controls",
+  '[data-testid="absence-timeline"]',
+  ".leave-legend",
+];
 
 function describeViolations(
   violations: Awaited<ReturnType<AxeBuilder["analyze"]>>["violations"],

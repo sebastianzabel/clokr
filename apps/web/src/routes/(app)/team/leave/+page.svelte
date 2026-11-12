@@ -1076,28 +1076,32 @@
   sub="Sieh, wer wann fehlt, prüfe Anträge und plane den Urlaub deines Teams."
 >
   {#snippet actions()}
-    {#if activeTab === "planung"}
-      {#if canManagePlan}
-        <button
-          type="button"
-          class="btn btn-primary btn-sm"
-          data-testid="leave-plan-manage"
-          onclick={() => (manageOpen = true)}
-        >
-          Planung verwalten
-        </button>
+    <!-- The two head actions are wider than a 320 px phone together: this page-local group lets the
+         second one wrap below the first (the Seitenkopf block itself stays unchanged). -->
+    <div class="lv-head-actions">
+      {#if activeTab === "planung"}
+        {#if canManagePlan}
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            data-testid="leave-plan-manage"
+            onclick={() => (manageOpen = true)}
+          >
+            Planung verwalten
+          </button>
+        {/if}
+      {:else if canCreateForOthers || canCreateOwn}
+        <button class="btn btn-primary btn-sm" onclick={openCreate}>Abwesenheit eintragen</button>
       {/if}
-    {:else if canCreateForOthers || canCreateOwn}
-      <button class="btn btn-primary btn-sm" onclick={openCreate}>Abwesenheit eintragen</button>
-    {/if}
-    <button
-      type="button"
-      class="btn btn-secondary btn-sm"
-      data-testid="leave-team-ical"
-      onclick={() => (icalOpen = true)}
-    >
-      Kalender abonnieren
-    </button>
+      <button
+        type="button"
+        class="btn btn-secondary btn-sm"
+        data-testid="leave-team-ical"
+        onclick={() => (icalOpen = true)}
+      >
+        Kalender abonnieren
+      </button>
+    </div>
   {/snippet}
 </PageHead>
 
@@ -1863,5 +1867,11 @@
     .review-grid {
       grid-template-columns: 1fr;
     }
+  }
+  .lv-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    min-width: 0;
   }
 </style>
