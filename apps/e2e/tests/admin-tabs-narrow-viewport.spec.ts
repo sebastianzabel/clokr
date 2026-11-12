@@ -34,12 +34,11 @@ type Theme = (typeof THEMES)[number];
 /**
  * Pages whose SectionStack renders a tab strip. `/admin/system` had the widest one (5 tabs) until the
  * Verwalten rebuild (Issue #854) moved its Arbeitszeit tab to Regeln; with fewer tabs it no longer has to
- * overflow a phone, so the overflow assertion (`widest`) is off for it.
+ * overflow a phone, so the overflow assertion (`widest`) is off for it. `/admin/vacation` (now Regeln ›
+ * Abwesenheiten with PageTabs, plan 854-11) left this list: the PageTabs strip of every migrated Verwalten page is
+ * covered by verwalten-854.spec.ts (keyboard navigation, no horizontal overflow at 390 and 1440 px).
  */
-const PAGES = [
-  { path: "/admin/system", widest: false },
-  { path: "/admin/vacation", widest: false },
-] as const;
+const PAGES = [{ path: "/admin/system", widest: false }] as const;
 
 async function login(request: APIRequestContext, tenant: TestTenant, theme: Theme) {
   const res = await request.post(`${API_BASE}/api/v1/auth/login`, {

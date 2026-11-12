@@ -93,10 +93,10 @@
     },
     {
       id: "admin-vacation",
-      label: pageLabel("/verwalten/regeln/urlaub"),
-      description: "Urlaub, Sonderurlaub und Arbeitszeit-Vorgaben",
+      label: pageLabel("/verwalten/regeln/abwesenheiten"),
+      description: "Urlaub, Sonderurlaub und Übertrag",
       icon: "settings",
-      href: "/verwalten/regeln/urlaub",
+      href: "/verwalten/regeln/abwesenheiten",
       group: "Admin",
     },
     {

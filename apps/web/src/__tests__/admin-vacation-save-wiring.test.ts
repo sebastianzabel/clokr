@@ -1,12 +1,13 @@
-// Phase 109 (Issue #35), Plan 09, Task 1 — Wave-0 gap-closure regression net for
-// `admin/vacation/+page.svelte` (1632 lines, zero prior test coverage).
+// Phase 109 (Issue #35) / Issue #854 (plan 854-11) - source pins for the page `admin/vacation/+page.svelte`,
+// which is Verwalten › Regeln › Abwesenheiten since plan 854-11, and its panels.
 //
-// This is a source-read PIN, not a behaviour test: `apps/web/vitest.config.ts` has no `$app`
-// alias, so a route page cannot be mounted (see `nav-guard.test.ts` for the established
-// precedent of reading route source with `readFileSync` instead). The `saveGlobal` payload
-// key census below is the CONTRACT that plan 109-11 must snapshot field-for-field: an
-// incomplete snapshot tuple would produce neither a marker nor a guard, and would fail
-// silently because nothing else knows the field set — this file is that knowledge.
+// Source-read pins, not behaviour tests: `apps/web/vitest.config.ts` has no `$app` alias, so a route page
+// cannot be mounted (see `nav-guard.test.ts` for the established precedent of reading route source with
+// `readFileSync`). Until plan 854-11 the page saved 43 fields (later 20) with ONE `saveGlobal`; it now has no
+// page-wide save. Each section of the panels saves only its own registry keys - the section census itself is
+// proven for every file by `settings-pages-854.test.ts` (one place per key, own fields only, gates); what stays
+// here is what is specific to this page: the 20 keys are all still saved somewhere, the unsaved registration,
+// and the click-only saves.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -14,8 +15,10 @@ import { fileURLToPath } from "node:url";
 
 import { describe, it, expect } from "vitest";
 
+import { sectionsOfPage } from "$lib/settings/settings-pages";
+
 // fileURLToPath decodes the %28/%29 that the "(app)" route group produces in import.meta.url.
-function readRouteFile(relativeFromHere: string, relativeFromCwd: string): string {
+function readSource(relativeFromHere: string, relativeFromCwd: string): string {
   try {
     return readFileSync(fileURLToPath(new URL(relativeFromHere, import.meta.url)), "utf8");
   } catch {
@@ -24,263 +27,130 @@ function readRouteFile(relativeFromHere: string, relativeFromCwd: string): strin
   }
 }
 
-const PAGE = readRouteFile(
+const PAGE = readSource(
   "../routes/(app)/admin/vacation/+page.svelte",
   "src/routes/(app)/admin/vacation/+page.svelte",
 );
+const PANEL_FILES = ["UrlaubPanel", "UebertragPanel"] as const;
+const PANELS = Object.fromEntries(
+  PANEL_FILES.map((name) => [
+    name,
+    readSource(
+      `../lib/components/admin/abwesenheiten/${name}.svelte`,
+      `src/lib/components/admin/abwesenheiten/${name}.svelte`,
+    ),
+  ]),
+) as Record<(typeof PANEL_FILES)[number], string>;
 
-function fnBody(marker: string): string {
-  const start = PAGE.indexOf(marker);
-  expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
-  const end = PAGE.indexOf("\n  }", start);
-  expect(end, `unterminated function: ${marker}`).toBeGreaterThan(start);
-  return PAGE.slice(start, end);
-}
+// The 20 keys the former page-wide `saveGlobal` carried after the working-time defaults (plan 854-07), the
+// reminders (plans 854-08 and 854-10) had left it. Issue #435 D-03 added defaultApprenticeVacationDays,
+// Issue #835 leavePlanDeadlineLocksWishes.
+const FORMER_SAVE_GLOBAL_KEYS = [
+  "autoCalcPartTimeVacation",
+  "carryOverDeadlineDay",
+  "carryOverDeadlineMonth",
+  "carryOverRequiresReason",
+  "carryoverWarningEnabled",
+  "carryoverWarningThresholds",
+  "christmasEveRule",
+  "defaultApprenticeVacationDays",
+  "defaultVacationDays",
+  "enforceMinVacation",
+  "fullTimeWorkDaysPerWeek",
+  "halfDayAllowed",
+  "holidayRulesValidFromYear",
+  "leavePlanDeadlineLocksWishes",
+  "newYearsEveRule",
+  "sickNoteRequiredAfterDays",
+  "sickSelfReport",
+  "vacationLeadTimeDays",
+  "vacationMaxAdvanceMonths",
+  "vacationReminderStartMonth",
+] as const;
 
-// Extracts the top-level object-literal keys of the `api.put("/settings/work", { ... })` call
-// body inside `saveGlobal`. Object literals on this page mix `key: value` pairs with ES2015
-// shorthand properties (`christmasEveRule,` — same-named local variable, no colon) — the
-// extractor must accept both forms or it silently undercounts by exactly the shorthand keys.
-function extractObjectKeys(objectLiteralBody: string): string[] {
-  const keys: string[] = [];
-  for (const rawLine of objectLiteralBody.split("\n")) {
-    const line = rawLine.trim();
-    if (line.startsWith("//")) continue;
-    const m = line.match(/^([a-zA-Z][a-zA-Z0-9]*)[:,]/);
-    if (m) keys.push(m[1]);
-  }
-  return keys;
-}
+const SETTINGS_SECTIONS = sectionsOfPage("/verwalten/regeln/abwesenheiten").filter(
+  (section) => section.endpoint !== null,
+);
 
-function sliceBalancedObject(source: string, openBraceIndex: number): string {
-  let depth = 0;
-  let i = openBraceIndex;
-  for (; i < source.length; i++) {
-    if (source[i] === "{") depth++;
-    else if (source[i] === "}") {
-      depth--;
-      if (depth === 0) break;
+describe("D-854-04 - the page-wide save is gone", () => {
+  it("the page and its panels have no saveGlobal, no sticky global save bar and no page-wide snapshot", () => {
+    for (const [name, source] of Object.entries({ page: PAGE, ...PANELS })) {
+      expect(source, name).not.toContain("saveGlobal");
+      expect(source, name).not.toContain("vac-save-bar");
+      expect(source, name).not.toContain("globalSnapshot");
+      expect(source, name).not.toContain("globalDirty");
     }
-  }
-  return source.slice(openBraceIndex + 1, i);
-}
-
-describe("D-01 — the global settings form saves only on its button", () => {
-  it.each(["saveGlobal", "saveSLCreate", "saveSLEdit"])(
-    "%s is onclick-only, never onchange",
-    (name) => {
-      expect(PAGE).toContain(`onclick={${name}}`);
-      expect(PAGE).not.toContain(`onchange={${name}}`);
-    },
-  );
-});
-
-describe("saveGlobal payload census — the field list plan 109-11 must snapshot", () => {
-  // Measured against apps/web/src/routes/(app)/admin/vacation/+page.svelte on 2026-08-30. Every key
-  // below is backed by a `$state` variable that plan 109-11's `globalSnapshot` must include.
-  // Issue #854 (plan 854-07): the 16 keys of the default hours, the overtime threshold and payout, the
-  // bulk-apply modifiers, arbzgEnabled and autoDeleteOpenHours moved to Regeln › Arbeitszeit & Verträge
-  // (47 -> 31); they are pinned there by settings-pages-854 and arbeitszeit-save-wiring-854. Plan 854-08 moved
-  // the six keys of the clock-out, missing-entries, pending-leave and upcoming-absence reminders to
-  // Regeln › Benachrichtigungen & E-Mail (31 -> 25; settings-pages-854 and benachrichtigungen-854).
-  const WORK_KEYS = [
-    "autoCalcPartTimeVacation",
-    "carryOverDeadlineDay",
-    "carryOverDeadlineMonth",
-    "carryOverRequiresReason",
-    "carryoverWarningEnabled",
-    "carryoverWarningThresholds",
-    "christmasEveRule",
-    // Issue #435 D-03: +defaultApprenticeVacationDays (37 → 38)
-    "defaultApprenticeVacationDays",
-    "defaultVacationDays",
-    "enforceMinVacation",
-    "fullTimeWorkDaysPerWeek",
-    "halfDayAllowed",
-    "holidayRulesValidFromYear",
-    // Issue #835 (AC-13): +1 deadline lock of the leave planner (46 -> 47)
-    "leavePlanDeadlineLocksWishes",
-    "newYearsEveRule",
-    // Issue #609 added the five shift reminder keys here; Issue #854 (plan 854-10) moved them to Regeln ›
-    // Dienstplan › Einstellungen (section dienstplan-erinnerungen, dienstplan-settings-854.test.ts).
-    "sickNoteRequiredAfterDays",
-    "sickSelfReport",
-    "vacationLeadTimeDays",
-    "vacationMaxAdvanceMonths",
-    "vacationReminderStartMonth",
-  ] as const;
-
-  it("PUT /settings/work carries exactly the 25 known keys, no more, no fewer", () => {
-    const saveGlobalBody = fnBody("async function saveGlobal");
-    const bodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
-    expect(bodyStart, 'api.put("/settings/work", {...}) call not found').toBeGreaterThan(-1);
-    const objStart = saveGlobalBody.indexOf("{", bodyStart);
-    const keys = extractObjectKeys(sliceBalancedObject(saveGlobalBody, objStart)).sort();
-    expect(keys).toEqual([...WORK_KEYS].sort());
   });
 
-  // Issue #854 (plan 854-07): the guarded bulk apply of Issue #568 (the preview dialog before any
-  // write, only the dialog's confirmation sets the selection, the one-shot state reset, the defaults-only
-  // action), the security request of the negative-balance limit and the derived weekly total moved with
-  // their section to Regeln › Arbeitszeit & Verträge. The same pins hold there, on the mounted
-  // component: DefaultHoursSection-854.test.ts (no write before the confirmation, the server's selection
-  // and effective date are sent unchanged, a plain save carries no bulk key) and
-  // sections-vacation-854.test.ts (MaxNegativeSection: its own request to /settings/security, one key).
-});
-
-describe("D-11 — this page has no Section footer to carry the marker", () => {
-  it("SectionStack contains exactly one footer snippet (the Sonderurlaub '+ Neue Regel' button)", () => {
-    const stackStart = PAGE.indexOf("<SectionStack");
-    const stackEnd = PAGE.indexOf("</SectionStack>", stackStart);
-    expect(stackStart).toBeGreaterThan(-1);
-    expect(stackEnd).toBeGreaterThan(stackStart);
-    const stackBody = PAGE.slice(stackStart, stackEnd);
-    const footerCount = (stackBody.match(/\{#snippet footer\(\)\}/g) ?? []).length;
-    expect(footerCount).toBe(1);
-  });
-
-  it("global save uses a dedicated sticky save bar, not a Section footer", () => {
-    expect(PAGE).toContain('class="vac-save-bar"');
-    expect(PAGE).toContain('<span class="saved-hint">');
-  });
-
-  // Section.svelte only renders its `dirty` hint inside `{#if footer}` — on this page a
-  // `dirty=` prop on any given `<Section>` would therefore be invisible to the user, because
-  // the section that holds the global settings has no footer at all. Plan 109-11 must render
-  // the global unsaved hint directly in `.vac-save-bar`, the same way `admin/system` does for
-  // "Standard-Arbeitstage".
-  it("the two Modal footers belong to the Sonderurlaub create/edit dialogs, not SectionStack", () => {
-    const stackStart = PAGE.indexOf("<SectionStack");
-    const stackEnd = PAGE.indexOf("</SectionStack>", stackStart);
-    const afterStack = PAGE.slice(stackEnd);
-    const modalFooterCount = (afterStack.match(/\{#snippet footer\(\)\}/g) ?? []).length;
-    expect(modalFooterCount).toBe(2);
-  });
-});
-
-// Phase 109, Plan 11, Task 2 — pins for the globalSnapshot/globalDirty wiring 109-11 adds
-// on top of the read-only census above (D-11/D-12, WR-01, T-109-24).
-describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation", () => {
-  // Function names/keywords that appear inside a value expression but are not the underlying
-  // state variable itself, e.g. `clampKarenzDays(sickNoteRequiredAfterDays)` or
-  // `parseThresholdsInput(carryoverWarningThresholdsText)`.
-  const STOPWORDS = new Set([
-    "Math",
-    "round",
-    "null",
-    "clampKarenzDays",
-    "parseThresholdsInput",
-    // Issue #609: value helpers of the shift reminder keys
-    "clampReminderOffsetInput",
-    "normalizeDayCloseTimeInput",
-  ]);
-
-  function valueIdentifiers(objectLiteralBody: string): string[] {
-    const ids: string[] = [];
-    for (const rawLine of objectLiteralBody.split("\n")) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith("//")) continue;
-      const afterColon = line.includes(":") ? line.slice(line.indexOf(":") + 1) : line;
-      for (const m of afterColon.matchAll(/[a-zA-Z_][a-zA-Z0-9_]*/g)) {
-        if (!STOPWORDS.has(m[0])) ids.push(m[0]);
-      }
+  it("the sections with settings are the six of the registry, each saving through pickSection of its own id", () => {
+    expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
+      "abwesenheiten-anspruch",
+      "abwesenheiten-antraege",
+      "abwesenheiten-krankheit",
+      "abwesenheiten-feiertage",
+      "abwesenheiten-uebertrag",
+      "abwesenheiten-verfallswarnung",
+    ]);
+    for (const section of SETTINGS_SECTIONS) {
+      const source = section.renderedBy.endsWith("UrlaubPanel.svelte")
+        ? PANELS.UrlaubPanel
+        : PANELS.UebertragPanel;
+      expect(source, section.id).toContain(`settingsSection("${section.id}").keys`);
     }
-    return ids;
-  }
-
-  function sliceBalancedParen(source: string, openParenIndex: number): string {
-    let depth = 0;
-    let i = openParenIndex;
-    for (; i < source.length; i++) {
-      if (source[i] === "(") depth++;
-      else if (source[i] === ")") {
-        depth--;
-        if (depth === 0) break;
-      }
-    }
-    return source.slice(openParenIndex + 1, i);
-  }
-
-  function globalDirtySnapArgs(): string {
-    const marker = "let globalDirty = $derived(";
-    const idx = PAGE.indexOf(marker);
-    expect(idx, "globalDirty derivation not found").toBeGreaterThan(-1);
-    const snapIdx = PAGE.indexOf("snap(", idx);
-    expect(snapIdx, "snap( call not found inside globalDirty").toBeGreaterThan(-1);
-    return sliceBalancedParen(PAGE, snapIdx + 4);
-  }
-
-  it("globalDirty is derived from a snapshot, not hand-set", () => {
-    expect(PAGE).toMatch(/let globalDirty = \$derived\(\s*snap\(/);
-    expect(PAGE).not.toMatch(/globalDirty = (true|false)/);
-  });
-
-  it("the snapshot covers every state variable saveGlobal submits", () => {
-    const saveGlobalBody = fnBody("async function saveGlobal");
-    const workBodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
-    const workObjStart = saveGlobalBody.indexOf("{", workBodyStart);
-    const workObj = sliceBalancedObject(saveGlobalBody, workObjStart);
-
-    const submitted = new Set(valueIdentifiers(workObj));
-    const snapArgs = new Set(
-      globalDirtySnapArgs()
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
+    // One request per section: the six pickSection saves are the only settings writes.
+    const puts = Object.values(PANELS).flatMap(
+      (s) => s.match(/api\.put\(\s*"\/settings\/work"/g) ?? [],
     );
+    expect(puts).toHaveLength(6);
+  });
 
-    for (const id of submitted) {
-      expect(snapArgs.has(id), `globalDirty's snap(...) is missing "${id}"`).toBe(true);
+  it("no setting was lost: the sections together carry exactly the 20 keys of the former page-wide save", () => {
+    const keys = SETTINGS_SECTIONS.flatMap((s) => [...s.keys]).sort();
+    expect(keys).toEqual([...FORMER_SAVE_GLOBAL_KEYS].sort());
+  });
+});
+
+describe("D-01 - a section saves only on its SaveBar button", () => {
+  it.each([
+    ["UrlaubPanel", ["saveAnspruch", "saveAntraege", "saveKrankheit", "saveFeiertage"]],
+    ["UebertragPanel", ["saveUebertrag", "saveVerfall"]],
+  ] as const)("%s: %j are onSave handlers, never onchange", (file, names) => {
+    for (const name of names) {
+      expect(PANELS[file]).toContain(`onSave={${name}}`);
+      expect(PANELS[file]).not.toContain(`onchange={${name}}`);
     }
   });
+});
 
-  it("the registration is gated on snapshotsReady (WR-01)", () => {
-    expect(PAGE).toContain('markUnsaved("admin-vacation", snapshotsReady && globalDirty)');
-    expect(PAGE).not.toMatch(/markUnsaved\("admin-vacation", globalDirty\)/);
+describe("D-11/D-12 - unsaved marker and guard registration on admin/vacation", () => {
+  it("one registration sums the counts of both panels", () => {
+    const registrations = PAGE.match(/markUnsaved\("admin-vacation"/g) ?? [];
+    // one in the effect, one in its cleanup
+    expect(registrations).toHaveLength(2);
+    expect(PAGE).toContain(
+      'markUnsaved("admin-vacation", snapshotsReady && urlaubChanges + uebertragChanges > 0)',
+    );
+    for (const name of PANEL_FILES) expect(PAGE, name).toContain(`bind:changes=`);
   });
 
-  it("snapshotsReady is set inside onMount's try, after the last field assignment", () => {
-    const onMountStart = PAGE.indexOf("onMount(async (");
-    expect(onMountStart, "onMount not found").toBeGreaterThan(-1);
-    const catchIdx = PAGE.indexOf("} catch", onMountStart);
-    expect(catchIdx, "onMount's catch not found").toBeGreaterThan(onMountStart);
-    const onMountTry = PAGE.slice(onMountStart, catchIdx);
-
-    const lastFieldIdx = onMountTry.lastIndexOf("carryoverWarningThresholdsText =");
-    const readyIdx = onMountTry.indexOf("snapshotsReady = true");
-    expect(
-      lastFieldIdx,
-      "carryoverWarningThresholdsText assignment not found in onMount",
-    ).toBeGreaterThan(-1);
-    expect(readyIdx, "snapshotsReady = true not found in onMount's try").toBeGreaterThan(-1);
-    expect(readyIdx).toBeGreaterThan(lastFieldIdx);
-
-    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
+  it("the registration is gated on snapshotsReady, which is set only after a successful load (WR-01)", () => {
+    expect(PAGE).not.toMatch(/markUnsaved\("admin-vacation", (?!snapshotsReady|false)/);
+    const load = PAGE.slice(PAGE.indexOf("async function loadConfig"));
+    const tryAt = load.indexOf("try {");
+    const catchAt = load.indexOf("} catch");
+    expect(load.slice(tryAt, catchAt)).toContain("snapshotsReady = true");
+    expect(load.slice(catchAt)).not.toMatch(/snapshotsReady\s*=\s*true/);
   });
 
   it("the effect de-registers on unmount", () => {
     expect(PAGE).toContain('return () => markUnsaved("admin-vacation", false)');
   });
 
-  it("T-109-24: no snapshot reset is the first statement of a finally block", () => {
-    const lines = PAGE.split("\n");
-    lines.forEach((line, i) => {
-      if (!line.includes("globalSnapshot = snap(")) return;
-      const before = lines.slice(Math.max(0, i - 3), i).join("\n");
-      expect(
-        before,
-        `line ${i + 1}: a "finally" appears within 3 lines above a globalSnapshot reset`,
-      ).not.toContain("finally");
-    });
-  });
-
-  it("the marker is the global recipe, rendered inline (no Section footer on this page)", () => {
-    expect(PAGE).toContain('<span class="unsaved-hint" role="status">Nicht gespeichert</span>');
-    expect(PAGE).not.toContain("dirty={");
-  });
-
-  it("the save bar stays visible while something is unsaved", () => {
-    expect(PAGE).toContain("{#if !loading && !error && (globalDirty ||");
+  it("each panel reports the sum of its sections' counts through a bindable `changes`", () => {
+    expect(PANELS.UrlaubPanel).toContain(
+      "changes = anspruchChanges + antraegeChanges + krankheitChanges + feiertageChanges",
+    );
+    expect(PANELS.UebertragPanel).toContain("changes = uebertragChanges + verfallChanges");
   });
 
   it("the registry id is unique across admin routes", () => {
@@ -303,11 +173,11 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation"
     }
 
     const files = adminPageFiles();
-    // Phase 235 (Group D, D-02/D-05) — non-emptiness on the walked set itself, distinct from the
+    // Phase 235 (Group D, D-02/D-05) - non-emptiness on the walked set itself, distinct from the
     // "exactly one hit" assertion below on the FILTERED (output) set.
     expect(
       files.length,
-      "no admin page scanned — src/routes/(app)/admin moved or emptied",
+      "no admin page scanned - src/routes/(app)/admin moved or emptied",
     ).toBeGreaterThan(0);
     const hits = files.filter((f) =>
       readFileSync(f, "utf8").includes('markUnsaved("admin-vacation"'),
@@ -317,7 +187,7 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation"
   });
 });
 
-describe("AK-02 — no text/number input writes inline on this page", () => {
+describe("AK-02 - no text/number input writes inline on this page", () => {
   function textOrNumberInputHandlers(source: string): string[] {
     const found: string[] = [];
     for (const tag of source.match(/<input\b[\s\S]*?>/g) ?? []) {
@@ -328,15 +198,22 @@ describe("AK-02 — no text/number input writes inline on this page", () => {
     return found;
   }
 
-  it("no text/number input on admin/vacation carries an inline write handler", () => {
-    expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
+  it("no text/number input of the page or its panels carries an inline write handler", () => {
+    for (const [name, source] of Object.entries({ page: PAGE, ...PANELS })) {
+      expect(textOrNumberInputHandlers(source), name).toEqual([]);
+    }
+  });
+
+  it("is not vacuous: the panels hold number and text inputs", () => {
+    const inputs = Object.values(PANELS).flatMap((s) => s.match(/type="(number|text)"/g) ?? []);
+    expect(inputs.length).toBeGreaterThanOrEqual(8);
   });
 });
 
 // Issue #854 (plan 854-10): the shift reminders (Issue #609, D-01/D-15) left this page together with the
 // Erinnerungen tab; the clamp rule, the three-tuple rule of the snapshot and the D-15 hint are pinned where
 // they live now (`dienstplan-settings-854.test.ts`, section dienstplan-erinnerungen).
-describe("Issue #854 — the shift reminders no longer live on admin/vacation", () => {
+describe("Issue #854 - the shift reminders no longer live on admin/vacation", () => {
   it("names none of the five reminder keys and has no Erinnerungen tab", () => {
     for (const name of [
       "reminderShiftStartEnabled",
@@ -346,7 +223,8 @@ describe("Issue #854 — the shift reminders no longer live on admin/vacation", 
       "reminderDayCloseTime",
       "clampReminderOffsetInput",
     ])
-      expect(PAGE, name).not.toContain(name);
+      for (const [file, source] of Object.entries({ page: PAGE, ...PANELS }))
+        expect(source, `${file}: ${name}`).not.toContain(name);
     expect(PAGE).not.toContain('id: "erinnerungen"');
     expect(PAGE).not.toContain('title="Schicht-Erinnerungen"');
   });

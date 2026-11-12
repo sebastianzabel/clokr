@@ -149,18 +149,12 @@ describe("Issue #878 — each section sends only its own fields", () => {
     }
   });
 
-  it("/admin/vacation sends one page-wide payload without a spread (its own fields, one save button)", () => {
-    const puts = settingsWorkPuts(readRoute("vacation"));
-    expect(puts.map((p) => p.fn)).toEqual(["saveGlobal"]);
-    expect(puts[0].spread).toBe(false);
-    for (const k of [
-      "autoBreakEnabled",
-      "defaultBreakStart",
-      "federalState",
-      "timezone",
-      "datevUrlaubNr",
-    ]) {
-      expect(puts[0].keys).not.toContain(k);
-    }
+  // Issue #854 (plan 854-11): the page-wide `saveGlobal` of /admin/vacation is gone; its twenty keys are saved by six
+  // sections of the Abwesenheiten panels, each through pickSection of its own registry keys. Those keys are
+  // pinned by settings-pages-854 (3) (every settings PUT of lib/components/admin sends one section's keys, no
+  // spread) and admin-vacation-save-wiring (the six sections together carry exactly the former twenty keys). The
+  // page itself writes no tenant setting any more.
+  it("/admin/vacation writes no settings key itself (its sections are registry sections of the panels)", () => {
+    expect(settingsWorkPuts(readRoute("vacation"))).toEqual([]);
   });
 });

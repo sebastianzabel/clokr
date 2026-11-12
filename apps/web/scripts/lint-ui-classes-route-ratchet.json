@@ -104,10 +104,6 @@
         "count": 2,
         "ticket": "#854"
       },
-      "apps/web/src/routes/(app)/admin/vacation/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/dashboard/+page.svelte": {
         "count": 13,
         "ticket": "#845"

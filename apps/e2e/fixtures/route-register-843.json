@@ -140,7 +140,7 @@
     },
     {
       "page": "(app)/admin/vacation/+page.svelte",
-      "path": "/verwalten/regeln/urlaub",
+      "path": "/verwalten/regeln/abwesenheiten",
       "auth": "tenant-admin"
     },
     {

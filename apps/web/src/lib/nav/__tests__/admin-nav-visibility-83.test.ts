@@ -64,7 +64,7 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
       "Arbeitszeit & Verträge",
       "Monatsabschluss",
       "Benachrichtigungen & E-Mail",
-      "Urlaubsverwaltung",
+      "Abwesenheiten",
       "Betriebsurlaub",
       "Urlaubsgrenzen & Sperren",
       "Dienstplan",

@@ -320,16 +320,16 @@ export const APP_ROUTES: readonly AppRoute[] = [
   },
   // no read guard; the page's writes decide (PUT /settings/work, /settings/leave-types)
   {
-    href: "/verwalten/regeln/urlaub",
+    href: "/verwalten/regeln/abwesenheiten",
     area: "verwalten",
-    label: "Urlaubsverwaltung",
+    label: "Abwesenheiten",
     icon: "umbrella",
     width: "read",
     requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
     file: "/admin/vacation",
     inNav: false,
     parent: "/verwalten/regeln",
-    description: "Arbeitszeit-Vorgaben, Urlaubsanspruch, Anträge, Erinnerungen und Sonderurlaub",
+    description: "Urlaub, Sonderurlaub, Betriebsurlaub, Urlaubsgrenzen und Übertrag",
   },
   // writes /company-shutdowns
   {
@@ -586,11 +586,17 @@ export interface LegacyRedirect {
  * more; an alias with `to` is redirected on the server and has no file.
  */
 export const LEGACY_ROUTE_REDIRECTS: readonly LegacyRedirect[] = [
-  // The Sonderurlaub rules are a tab of the vacation rules page.
+  // The Sonderurlaub rules are a tab of the Abwesenheiten page.
   {
     href: "/admin/special-leave",
     requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
-    to: "/verwalten/regeln/urlaub#sonderurlaub",
+    to: "/verwalten/regeln/abwesenheiten#sonderurlaub",
+  },
+  // The #844 URL of the vacation page (renamed by #854, plan 854-11); it may be bookmarked.
+  {
+    href: "/verwalten/regeln/urlaub",
+    requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
+    to: "/verwalten/regeln/abwesenheiten",
   },
   // → /admin/integrations (301 from its +page.server.ts)
   { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },

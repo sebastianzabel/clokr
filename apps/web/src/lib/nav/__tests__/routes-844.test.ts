@@ -119,6 +119,17 @@ describe("folded old pages (#854)", () => {
     expect(rerouteTarget("/admin/special-leave/42")).toBe("/admin/vacation");
   });
 
+  it("the renamed #844 vacation URL renders the Abwesenheiten page and keeps its gate", () => {
+    expect(rerouteTarget("/verwalten/regeln/urlaub")).toBe("/admin/vacation");
+    expect(legacyRedirectTarget("/verwalten/regeln/urlaub")).toBe(
+      "/verwalten/regeln/abwesenheiten",
+    );
+    expect(
+      mayOpenPath({ permissions: ["leave-config:manage:ZUGEWIESEN"] }, "/verwalten/regeln/urlaub"),
+    ).toBe(true);
+    expect(mayOpenPath({ permissions: [] }, "/verwalten/regeln/urlaub")).toBe(false);
+  });
+
   it("redirectLocation puts the query before the fragment", () => {
     expect(redirectLocation("/a#t", "?x=1")).toBe("/a?x=1#t");
     expect(redirectLocation("/a", "?x=1")).toBe("/a?x=1");
@@ -144,8 +155,9 @@ describe("old URLs of the acceptance criteria land on the new place", () => {
     ["/shifts/conflicts", "/team/dienstplan/konflikte"],
     ["/admin", "/verwalten"],
     ["/admin/employees/abc", "/verwalten/personen/abc"],
-    ["/admin/vacation", "/verwalten/regeln/urlaub"],
-    ["/admin/special-leave", "/verwalten/regeln/urlaub#sonderurlaub"],
+    ["/admin/vacation", "/verwalten/regeln/abwesenheiten"],
+    ["/verwalten/regeln/urlaub", "/verwalten/regeln/abwesenheiten"], // the renamed #844 URL (alias)
+    ["/admin/special-leave", "/verwalten/regeln/abwesenheiten#sonderurlaub"],
     ["/admin/system", "/verwalten/system/allgemein"],
     ["/admin/month-close", "/verwalten/monatsabschluss"],
     ["/admin/audit/42", "/verwalten/daten/protokoll/42"],
@@ -284,9 +296,9 @@ describe("navigation (Z-01, AC: kein Eintrag doppelt)", () => {
     expect(sections.map((s) => s.label)).toEqual(["Ich", "Team", "Verwalten"]);
     const verwalten = sections[2].items.map((i) => i.href);
     expect(verwalten).toContain("/verwalten/regeln");
-    expect(verwalten).not.toContain("/verwalten/regeln/urlaub");
+    expect(verwalten).not.toContain("/verwalten/regeln/abwesenheiten");
     expect(visibleChildren(user("ADMIN"), "/verwalten/regeln", ALL).map((r) => r.href)).toContain(
-      "/verwalten/regeln/urlaub",
+      "/verwalten/regeln/abwesenheiten",
     );
   });
 
@@ -353,7 +365,7 @@ describe("page widths (owner 09.11.2026)", () => {
     for (const href of [
       "/ich/profil",
       "/verwalten/regeln",
-      "/verwalten/regeln/urlaub",
+      "/verwalten/regeln/abwesenheiten",
       "/verwalten/system/allgemein",
       "/verwalten/salons/1",
     ]) {

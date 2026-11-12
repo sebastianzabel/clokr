@@ -431,7 +431,7 @@ describe("registry helpers", () => {
   });
 
   it("a page deduplicates the alternatives of its sections", () => {
-    expect(pageAlternatives("/verwalten/regeln/urlaub")).toEqual([
+    expect(pageAlternatives("/verwalten/regeln/abwesenheiten")).toEqual([
       ["tenant-settings:update:ZUGEWIESEN"],
       ["leave-config:manage:ZUGEWIESEN"],
     ]);

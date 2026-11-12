@@ -2149,8 +2149,8 @@
               />
               <p class="hint">
                 Leer = Azubi-Standard für Auszubildende, sonst Unternehmensstandard (beides unter
-                Urlaubsverwaltung → Standards). Gilt für künftige Urlaubsjahre; bestehende Ansprüche
-                ändern sich nur im Tab Urlaub (mit Protokoll).
+                Regeln › Abwesenheiten). Gilt für künftige Urlaubsjahre; bestehende Ansprüche ändern
+                sich nur im Tab Urlaub (mit Protokoll).
               </p>
               {#if eAnnualVacationMinimum && eAnnualVacationDays !== null && eAnnualVacationDays < eAnnualVacationMinimum.days}
                 <div class="callout error">

@@ -128,6 +128,15 @@ const DIENSTPLAN_FROM_VACATION = {
   requires: VACATION_REQUIRES,
 } as const;
 
+// Plan 854-11: the vacation page itself, rewritten in place as Regeln › Abwesenheiten (route file /admin/vacation).
+const ABWESENHEITEN_PAGE = "/verwalten/regeln/abwesenheiten";
+const ABWESENHEITEN_DIR = "lib/components/admin/abwesenheiten";
+const ABWESENHEITEN = {
+  page: ABWESENHEITEN_PAGE,
+  source: "/admin/vacation",
+  requires: VACATION_REQUIRES,
+} as const;
+
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   // ── Regeln › Arbeitszeit & Verträge ────────────────────────────────────────────────────────────
   {
@@ -418,50 +427,80 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { ...SYSTEM, id: "system-terminals", title: "NFC-Terminals", endpoint: null, keys: [] },
   { ...SYSTEM, id: "system-api-keys", title: "API Keys", endpoint: null, keys: [] },
 
-  // ── /admin/vacation ────────────────────────────────────────────────────────────────────────────
-  // One page-wide save today (`saveGlobal`, one button); the page plans split it into sections of their own, one
-  // section per save. The working-time defaults, ArbZG, open entries and the negative-balance limit left it
-  // for Regeln › Arbeitszeit & Verträge (plan 854-07).
+  // ── Regeln › Abwesenheiten ─────────────────────────────────────────────────────────────────────
+  // The vacation, sick-leave, holiday-rule and carry-over settings of the former Urlaubsverwaltung, one section
+  // per concern (plan 854-11; its page-wide save is gone). Betriebsurlaub and Urlaubsgrenzen join the page in
+  // plans 854-12 and 854-13. The working-time defaults, ArbZG, open entries and the negative-balance limit left
+  // the old page for Regeln › Arbeitszeit & Verträge (plan 854-07), the reminders for Benachrichtigungen and
+  // Dienstplan (plan 854-08, 854-10).
   {
-    id: "vacation-global",
-    page: "/verwalten/regeln/urlaub",
-    title: "Standards und Regeln",
+    ...ABWESENHEITEN,
+    id: "abwesenheiten-anspruch",
+    title: "Urlaubsanspruch",
     endpoint: "/settings/work",
     keys: [
-      "carryOverDeadlineDay",
-      "carryOverDeadlineMonth",
       "defaultVacationDays",
       "defaultApprenticeVacationDays",
-      "christmasEveRule",
-      "newYearsEveRule",
-      "holidayRulesValidFromYear",
+      "autoCalcPartTimeVacation",
+      "fullTimeWorkDaysPerWeek",
+      "enforceMinVacation",
+    ],
+    renderedBy: `${ABWESENHEITEN_DIR}/UrlaubPanel.svelte`,
+  },
+  {
+    ...ABWESENHEITEN,
+    id: "abwesenheiten-antraege",
+    title: "Urlaubsanträge",
+    endpoint: "/settings/work",
+    keys: [
       "vacationLeadTimeDays",
       "vacationMaxAdvanceMonths",
       "halfDayAllowed",
       "leavePlanDeadlineLocksWishes",
-      "sickSelfReport",
-      "sickNoteRequiredAfterDays",
-      "autoCalcPartTimeVacation",
-      "fullTimeWorkDaysPerWeek",
-      "enforceMinVacation",
-      "carryOverRequiresReason",
-      "vacationReminderStartMonth",
-      "carryoverWarningEnabled",
-      "carryoverWarningThresholds",
     ],
-    source: "/admin/vacation",
-    requires: VACATION_REQUIRES,
-    renderedBy: VACATION_PAGE,
+    renderedBy: `${ABWESENHEITEN_DIR}/UrlaubPanel.svelte`,
   },
   {
-    id: "vacation-special-leave",
-    page: "/verwalten/regeln/urlaub",
+    ...ABWESENHEITEN,
+    id: "abwesenheiten-krankheit",
+    title: "Krankmeldung",
+    endpoint: "/settings/work",
+    keys: ["sickSelfReport", "sickNoteRequiredAfterDays"],
+    renderedBy: `${ABWESENHEITEN_DIR}/UrlaubPanel.svelte`,
+  },
+  {
+    ...ABWESENHEITEN,
+    id: "abwesenheiten-feiertage",
+    title: "Heiligabend und Silvester",
+    endpoint: "/settings/work",
+    keys: ["christmasEveRule", "newYearsEveRule", "holidayRulesValidFromYear"],
+    renderedBy: `${ABWESENHEITEN_DIR}/UrlaubPanel.svelte`,
+  },
+  {
+    ...ABWESENHEITEN,
+    id: "abwesenheiten-uebertrag",
+    title: "Übertrag ins neue Jahr",
+    endpoint: "/settings/work",
+    keys: ["carryOverDeadlineDay", "carryOverDeadlineMonth", "carryOverRequiresReason"],
+    renderedBy: `${ABWESENHEITEN_DIR}/UebertragPanel.svelte`,
+  },
+  {
+    ...ABWESENHEITEN,
+    id: "abwesenheiten-verfallswarnung",
+    title: "Warnung vor Verfall",
+    endpoint: "/settings/work",
+    // `vacationReminderStartMonth` is the month the reminders about expiring leave start (EuGH C-684/16).
+    keys: ["vacationReminderStartMonth", "carryoverWarningEnabled", "carryoverWarningThresholds"],
+    renderedBy: `${ABWESENHEITEN_DIR}/UebertragPanel.svelte`,
+  },
+  {
+    ...ABWESENHEITEN,
+    id: "abwesenheiten-sonderurlaub",
     title: "Sonderurlaubs-Regeln",
     endpoint: null,
     keys: [],
     // The pre-#854 page /admin/special-leave redirects here (alias with `to`); it carries the same gate.
     source: "/admin/special-leave",
-    requires: VACATION_REQUIRES,
     renderedBy: VACATION_PAGE,
   },
 
