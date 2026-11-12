@@ -76,10 +76,10 @@ function settingsWorkPuts(source: string): Put[] {
 // settings PUT of `lib/components/admin/` and requires `pickSection(…, settingsSection("<id>").keys)` or a
 // literal inside one registered section, and arbeitszeit-save-wiring-854 names each section. The same holds for
 // plan 854-08: toggleBlockMonthCloseOnUnconfirmedBreak and saveCloseMonthWithGaps became `BreakBlockSection` and
-// `GapsSection` of Regeln › Monatsabschluss (monatsabschluss-854.test.ts).
+// `GapsSection` of Regeln › Monatsabschluss (monatsabschluss-854.test.ts). Plan 854-10 did the same for
+// saveShiftHoursMode (-> the Öffnungszeiten section of `DienstplanSettingsPanel`).
 const EXPECTED: Record<string, Record<string, string[]>> = {
   system: {
-    saveShiftHoursMode: ["shiftStoreHoursMode"],
     saveFederalState: ["federalState", "tenantName", "timezone"],
     saveAvailabilityEnabled: ["availabilityEnabled"],
     saveVocationalSchoolAutoCleanupShifts: ["vocationalSchoolAutoCleanupShifts"],

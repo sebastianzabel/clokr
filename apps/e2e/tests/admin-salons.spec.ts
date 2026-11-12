@@ -280,15 +280,20 @@ test.describe("admin salons (Issue #563)", () => {
     await expect(page.getByRole("link", { name: "Salon anlegen" })).toHaveCount(0);
   });
 
-  test("admin/system keeps only the shift check mode and saves nothing else", async ({
+  test("the shift check mode is set on Regeln › Dienstplan › Einstellungen and saves nothing else", async ({
     page,
     request,
     tenant,
   }) => {
     await signIn(page, request, tenant);
-    await page.goto("/admin/system");
 
-    await expect(page.getByText("Schichtprüfung gegen Öffnungszeiten")).toBeVisible();
+    // Issue #854: the mode left the System page; it lives only on the Dienstplan page now.
+    await page.goto("/verwalten/system/allgemein");
+    await expect(page.getByText("Unternehmen & Region").first()).toBeVisible();
+    await expect(page.locator('input[name="shiftStoreHoursMode"]')).toHaveCount(0);
+
+    await page.goto("/verwalten/regeln/dienstplan#einstellungen");
+    await expect(page.getByRole("heading", { name: "Schichten und Öffnungszeiten" })).toBeVisible();
     await expect(page.locator('input[name="shiftStoreHoursMode"]')).toHaveCount(3);
     await expect(page.getByText("Wochentag", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Öffnung", { exact: true })).toHaveCount(0);

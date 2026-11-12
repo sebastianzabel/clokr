@@ -42,8 +42,6 @@
     carryOverDeadlineMonth: number;
     // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
     availabilityEnabled?: boolean;
-    // Check mode of shifts against the opening hours of their salon (the hours live on the salon)
-    shiftStoreHoursMode?: "STRICT" | "DAY_ONLY" | "OFF";
     // Phase 67.2 — Auto-Cleanup für Berufsschultag-Schichten (Plan 04 backend hook,
     // Plan 05 surfaces toggle here). Wenn true (Default): künftige Shifts auf neuen
     // BS-Tagen werden vom Generator weich-gelöscht; in der Vergangenheit nur markiert.
@@ -103,29 +101,8 @@
   // DATEV Lohnartennummern moved to /admin/export (Phase 58) — TenantConfig fields
   // datevNormalstundenNr / datevUrlaubNr / datevKrankNr / datevSonderurlaubNr live there.
 
-  // ── Shift check mode against opening hours (a tenant policy; the hours live on the salon, #563) ──
-  let shiftStoreHoursMode: "STRICT" | "DAY_ONLY" | "OFF" = $state("DAY_ONLY");
-  let shiftHoursModeSaving = $state(false);
-  let shiftHoursModeMsg = $state("");
-
-  // Minimal payload on purpose: only the changed field (Issue #878, N-09 — every section of this
-  // page does the same).
-  async function saveShiftHoursMode() {
-    shiftHoursModeSaving = true;
-    shiftHoursModeMsg = "";
-    try {
-      await api.put("/settings/work", { shiftStoreHoursMode });
-      shiftHoursModeMsg = "Gespeichert.";
-      shiftHoursModeSnapshot = snap(shiftStoreHoursMode); // Phase 109 — section is clean again
-      toasts.success("Prüfmodus gespeichert.");
-    } catch (e: unknown) {
-      shiftHoursModeMsg = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-      toasts.error(shiftHoursModeMsg);
-    } finally {
-      shiftHoursModeSaving = false;
-      setTimeout(() => (shiftHoursModeMsg = ""), 2500);
-    }
-  }
+  // The shift check mode against the opening hours moved to Regeln › Dienstplan › Einstellungen
+  // (Issue #854, plan 854-10).
 
   // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
   let availabilityEnabled = $state(true);
@@ -261,9 +238,6 @@
   let companySnapshot = $state("");
   let companyDirty = $derived(snap(gTenantName, gFederalState, gTimezone) !== companySnapshot);
 
-  let shiftHoursModeSnapshot = $state("");
-  let shiftHoursModeDirty = $derived(snap(shiftStoreHoursMode) !== shiftHoursModeSnapshot);
-
   let sessionSnapshot = $state("");
   let sessionDirty = $derived(
     snap(
@@ -286,7 +260,7 @@
   // Phase 109 (D-12) — one registry entry per PAGE, not per section: the guard only needs to know
   // whether anything is unsaved. The cleanup de-registers on unmount so a saved-and-left page cannot
   // leave a stale entry behind.
-  let anyUnsaved = $derived(companyDirty || shiftHoursModeDirty || sessionDirty || pwDirty);
+  let anyUnsaved = $derived(companyDirty || sessionDirty || pwDirty);
 
   // Gate the registration on "the baseline has been taken" (WR-01). Every snapshot starts as ""
   // and only gets its real value at the end of onMount's try, so every *Dirty flag reads true
@@ -327,7 +301,6 @@
 
       // Phase 67.2 (Plan 05) — load tenant-wide BS-Shift-Auto-Cleanup toggle
       vocationalSchoolAutoCleanupShifts = cfg.vocationalSchoolAutoCleanupShifts ?? true;
-      shiftStoreHoursMode = cfg.shiftStoreHoursMode ?? "DAY_ONLY";
 
       try {
         const sec = await api.get<SecurityConfig>("/settings/security");
@@ -363,7 +336,6 @@
 
       // Phase 109 — baseline for the unsaved markers. Must run after ALL state above is hydrated.
       companySnapshot = snap(gTenantName, gFederalState, gTimezone);
-      shiftHoursModeSnapshot = snap(shiftStoreHoursMode);
       sessionSnapshot = snap(
         sessionTimeoutMinutes,
         refreshTokenDays,
@@ -736,73 +708,6 @@
               </select>
               <p class="form-hint text-muted">Zuordnung von Zeitstempeln zu Tagen.</p>
             </div>
-          </div>
-        </Section>
-
-        <!-- ── Shift check mode against opening hours ────────────────────── -->
-        <Section
-          title="Schichtprüfung gegen Öffnungszeiten"
-          sub="Wie streng Schichten an die Öffnungszeiten des jeweiligen Salons gebunden werden."
-          dirty={shiftHoursModeDirty}
-        >
-          {#snippet footer()}
-            <button
-              type="button"
-              class="btn btn-primary btn-sm"
-              onclick={saveShiftHoursMode}
-              disabled={shiftHoursModeSaving}
-            >
-              {shiftHoursModeSaving ? "Speichern …" : "Prüfmodus speichern"}
-            </button>
-            {#if shiftHoursModeMsg}
-              <span class="cfg-muted cfg-msg">{shiftHoursModeMsg}</span>
-            {/if}
-          {/snippet}
-
-          <p class="form-hint">
-            Die Öffnungszeiten selbst pflegst du je Salon unter Administration › Salons.
-          </p>
-
-          <div class="cfg-section-title">Schicht-Zeiten an Öffnungszeiten binden</div>
-          <div class="cfg-mode-options">
-            <label class="cfg-mode-option">
-              <input
-                type="radio"
-                name="shiftStoreHoursMode"
-                value="DAY_ONLY"
-                checked={shiftStoreHoursMode === "DAY_ONLY"}
-                onchange={() => (shiftStoreHoursMode = "DAY_ONLY")}
-              />
-              <span>
-                <strong>Nur geschlossene Tage blockieren</strong> (Standard) — Schichten dürfen vor Öffnung
-                beginnen / nach Schließung enden (Vor- &amp; Nachbereitung). An geschlossenen Tagen ist
-                keine Schicht möglich.
-              </span>
-            </label>
-            <label class="cfg-mode-option">
-              <input
-                type="radio"
-                name="shiftStoreHoursMode"
-                value="STRICT"
-                checked={shiftStoreHoursMode === "STRICT"}
-                onchange={() => (shiftStoreHoursMode = "STRICT")}
-              />
-              <span>
-                <strong>Strikt</strong> — Schichten müssen vollständig in den Öffnungszeiten liegen.
-              </span>
-            </label>
-            <label class="cfg-mode-option">
-              <input
-                type="radio"
-                name="shiftStoreHoursMode"
-                value="OFF"
-                checked={shiftStoreHoursMode === "OFF"}
-                onchange={() => (shiftStoreHoursMode = "OFF")}
-              />
-              <span>
-                <strong>Deaktiviert</strong> — keine Bindung an Öffnungszeiten.
-              </span>
-            </label>
           </div>
         </Section>
 
@@ -1567,46 +1472,6 @@
     .opt-control {
       justify-content: flex-end;
     }
-  }
-
-  /* ── Schichtprüfung gegen Öffnungszeiten (Phase 58) ──────── */
-  .cfg-muted {
-    color: var(--text-2);
-    font-size: 13.5px;
-  }
-  .cfg-section-title {
-    margin: 24px 0 8px;
-    font-weight: 600;
-    font-size: 0.9375rem;
-    color: var(--text);
-  }
-  .cfg-mode-options {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 16px;
-  }
-  .cfg-mode-option {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 12px;
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    background: var(--card);
-    cursor: pointer;
-    font-size: 0.875rem;
-    color: var(--text);
-    transition: border-color 0.12s var(--ease);
-  }
-  .cfg-mode-option:hover {
-    border-color: var(--brand);
-  }
-  .cfg-mode-option input {
-    margin-top: 2px;
-  }
-  .cfg-mode-option strong {
-    color: var(--text);
   }
 
   /* Inline create row (NFC/API key creation) */

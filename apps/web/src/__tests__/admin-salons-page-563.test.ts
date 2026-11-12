@@ -39,6 +39,11 @@ const SYSTEM = readRouteFile(
   "../routes/(app)/admin/system/+page.svelte",
   "src/routes/(app)/admin/system/+page.svelte",
 );
+// Issue #854 (plan 854-10): the shift check mode moved from admin/system to Regeln › Dienstplan › Einstellungen.
+const DIENSTPLAN_SETTINGS = readRouteFile(
+  "../lib/components/admin/dienstplan/DienstplanSettingsPanel.svelte",
+  "src/lib/components/admin/dienstplan/DienstplanSettingsPanel.svelte",
+);
 
 /** The text of `signature { ... }` up to its matching closing brace. */
 function fnBody(source: string, signature: string): string {
@@ -361,20 +366,22 @@ describe("salon list page", () => {
   });
 });
 
-describe("admin/system keeps only the shift check mode (D-12)", () => {
-  it("no longer holds the opening-hours editor or any tenant-level hours", () => {
+describe("the shift check mode lives on Regeln › Dienstplan › Einstellungen (D-12, #854)", () => {
+  it("admin/system no longer holds the opening-hours editor, any tenant-level hours or the mode", () => {
     expect(SYSTEM).not.toContain("OpeningHoursEditor");
     expect(SYSTEM).not.toMatch(/\bstoreHours\b/);
+    expect(SYSTEM).not.toContain("shiftStoreHoursMode");
   });
 
-  it("still renders the three shiftStoreHoursMode radios", () => {
-    expect((SYSTEM.match(/name="shiftStoreHoursMode"/g) ?? []).length).toBe(3);
+  it("renders the three shiftStoreHoursMode radios from the choice list", () => {
+    expect((DIENSTPLAN_SETTINGS.match(/name="shiftStoreHoursMode"/g) ?? []).length).toBe(1);
+    expect(DIENSTPLAN_SETTINGS).toContain("{#each STORE_HOURS_MODES as mode");
   });
 
   it("saves the mode with the minimal payload, never the full other-fields spread", () => {
-    const body = fnBody(SYSTEM, "async function saveShiftHoursMode");
-    expect(body).toContain('api.put("/settings/work"');
-    expect(body).toContain("shiftStoreHoursMode");
+    const body = fnBody(DIENSTPLAN_SETTINGS, "async function saveHours");
+    expect(body).toContain('api.put(\n        "/settings/work"');
+    expect(body).toContain('settingsSection("dienstplan-oeffnungszeiten").keys');
     expect(body).not.toContain("_gOtherFields");
   });
 });

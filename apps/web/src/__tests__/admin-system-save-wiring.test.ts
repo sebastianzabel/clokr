@@ -209,7 +209,8 @@ describe("D-07 — security-relevant settings stay button-gated", () => {
 
 describe("D-01 — genuine form groups stay button-gated", () => {
   const BUTTON_ONLY_GROUPS = [
-    "saveShiftHoursMode",
+    // Issue #854 (plan 854-10): saveShiftHoursMode moved to Regeln › Dienstplan › Einstellungen, a section
+    // with a SaveBar (dienstplan-settings-854.test.ts).
     "saveFederalState",
     // Issue #854 (plan 854-07): saveCoreDefaults, saveBsSlots and saveDefaultWorkDays moved to the
     // Arbeitszeit page, where every section is button-gated through its SaveBar
@@ -261,14 +262,15 @@ describe("Issue #854 — the Kommunikation controls are gone from admin/system",
 });
 
 describe("D-11/D-12 — unsaved markers on admin/system", () => {
-  const SECTIONS = ["companyDirty", "shiftHoursModeDirty", "sessionDirty", "pwDirty"] as const;
+  // Issue #854 (plan 854-10): shiftHoursModeDirty left with the section (Regeln › Dienstplan).
+  const SECTIONS = ["companyDirty", "sessionDirty", "pwDirty"] as const;
 
   it.each(SECTIONS)("%s is derived, not hand-set", (name) => {
     expect(PAGE).toContain(`let ${name} = $derived(`);
   });
 
   it("every button-gated Section receives a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(4);
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(3);
   });
 
   it("the page registers itself under one id and de-registers on unmount", () => {

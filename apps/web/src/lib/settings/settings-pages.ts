@@ -107,14 +107,19 @@ const BENACHRICHTIGUNGEN_PAGE = "/verwalten/regeln/benachrichtigungen";
 const BENACHRICHTIGUNGEN_DIR = "lib/components/admin/benachrichtigungen";
 
 // Plan 854-09: the shift configuration of /admin/shifts lives on Regeln › Dienstplan as three management
-// panels (lists with their own endpoints, no configuration keys); the settings of System and Urlaub that join
-// the page follow in plan 854-10.
+// panels (lists with their own endpoints, no configuration keys); plan 854-10 adds the settings of System and
+// Urlaub (opening-hours binding, availability, Berufsschul clean-up, shift reminders) as the „Einstellungen“ tab.
 const DIENSTPLAN_PAGE = "/verwalten/regeln/dienstplan";
 const DIENSTPLAN_DIR = "lib/components/admin/dienstplan";
 const FROM_SHIFTS = {
   page: DIENSTPLAN_PAGE,
   source: "/admin/shifts",
   requires: SHIFTS_REQUIRES,
+} as const;
+const DIENSTPLAN_FROM_SYSTEM = {
+  page: DIENSTPLAN_PAGE,
+  source: "/admin/system",
+  requires: SYSTEM_REQUIRES,
 } as const;
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
@@ -293,6 +298,43 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     renderedBy: `${BENACHRICHTIGUNGEN_DIR}/RemindersSection.svelte`,
   },
 
+  // ── Regeln › Dienstplan ────────────────────────────────────────────────────────────────────────
+  // The three panels are management sections (lists with their own endpoints, no configuration keys); the
+  // four settings sections of the „Einstellungen“ tab came from System and Urlaub (plan 854-10). The order
+  // below is the order of the page's union gate (`pageAlternatives`).
+  {
+    ...FROM_SHIFTS,
+    id: "dienstplan-vorlagen",
+    title: "Schichtvorlagen",
+    endpoint: null,
+    keys: [],
+    renderedBy: `${DIENSTPLAN_DIR}/ShiftTemplatesPanel.svelte`,
+  },
+  {
+    ...FROM_SHIFTS,
+    id: "dienstplan-bedarf",
+    title: "Bedarfsregeln",
+    endpoint: null,
+    keys: [],
+    renderedBy: `${DIENSTPLAN_DIR}/CoverageRulesPanel.svelte`,
+  },
+  {
+    ...FROM_SHIFTS,
+    id: "dienstplan-muster",
+    title: "Wochenmuster",
+    endpoint: null,
+    keys: [],
+    renderedBy: `${DIENSTPLAN_DIR}/WeekPatternsPanel.svelte`,
+  },
+  {
+    ...DIENSTPLAN_FROM_SYSTEM,
+    id: "dienstplan-oeffnungszeiten",
+    title: "Schichten und Öffnungszeiten",
+    endpoint: "/settings/work",
+    keys: ["shiftStoreHoursMode"],
+    renderedBy: `${DIENSTPLAN_DIR}/DienstplanSettingsPanel.svelte`,
+  },
+
   // ── /admin/system ──────────────────────────────────────────────────────────────────────────────
   {
     ...SYSTEM,
@@ -300,13 +342,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     title: "Unternehmen & Region",
     endpoint: "/settings/work",
     keys: ["tenantName", "federalState", "timezone"],
-  },
-  {
-    ...SYSTEM,
-    id: "system-shift-hours",
-    title: "Schichtprüfung gegen Öffnungszeiten",
-    endpoint: "/settings/work",
-    keys: ["shiftStoreHoursMode"],
   },
   {
     ...SYSTEM,
@@ -351,30 +386,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     ],
   },
   // Management sections: lists with their own endpoints, no configuration keys.
-  {
-    ...FROM_SHIFTS,
-    id: "dienstplan-vorlagen",
-    title: "Schichtvorlagen",
-    endpoint: null,
-    keys: [],
-    renderedBy: `${DIENSTPLAN_DIR}/ShiftTemplatesPanel.svelte`,
-  },
-  {
-    ...FROM_SHIFTS,
-    id: "dienstplan-bedarf",
-    title: "Bedarfsregeln",
-    endpoint: null,
-    keys: [],
-    renderedBy: `${DIENSTPLAN_DIR}/CoverageRulesPanel.svelte`,
-  },
-  {
-    ...FROM_SHIFTS,
-    id: "dienstplan-muster",
-    title: "Wochenmuster",
-    endpoint: null,
-    keys: [],
-    renderedBy: `${DIENSTPLAN_DIR}/WeekPatternsPanel.svelte`,
-  },
   { ...SYSTEM, id: "system-terminals", title: "NFC-Terminals", endpoint: null, keys: [] },
   { ...SYSTEM, id: "system-api-keys", title: "API Keys", endpoint: null, keys: [] },
 

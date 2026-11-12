@@ -57,6 +57,7 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/dienstplan/ShiftTemplatesPanel.svelte",
   "lib/components/admin/dienstplan/CoverageRulesPanel.svelte",
   "lib/components/admin/dienstplan/WeekPatternsPanel.svelte",
+  "lib/components/admin/dienstplan/DienstplanSettingsPanel.svelte",
 ];
 
 export interface VerwaltenFile {

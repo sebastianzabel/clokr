@@ -12,23 +12,27 @@
     type PatternRow,
     type ShiftTemplate,
   } from "$lib/shifts/dienstplan-config";
+  import { authStore } from "$stores/auth";
   import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
+  import { visibleDienstplanTabs, type DienstplanConfig } from "$lib/settings/dienstplan";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import CoverageRulesPanel from "$lib/components/admin/dienstplan/CoverageRulesPanel.svelte";
+  import DienstplanSettingsPanel from "$lib/components/admin/dienstplan/DienstplanSettingsPanel.svelte";
   import ShiftTemplatesPanel from "$lib/components/admin/dienstplan/ShiftTemplatesPanel.svelte";
   import WeekPatternsPanel from "$lib/components/admin/dienstplan/WeekPatternsPanel.svelte";
   import ErrorState from "$components/ui/ErrorState.svelte";
+  import Note from "$components/ui/Note.svelte";
   import PageTabs from "$components/ui/PageTabs.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
 
-  // The panels of the page, in the order of the tab strip; the URL hash names one (D-854-03).
-  const TABS = [
-    { value: "vorlagen", label: "Schichtvorlagen" },
-    { value: "bedarf", label: "Bedarfsregeln" },
-    { value: "muster", label: "Wochenmuster" },
-  ] as const;
-  const TAB_IDS = TABS.map((tab) => tab.value);
-  let activeTab = $state<string>(TAB_IDS[0]);
+  // The tabs a person may open (D-854-05): the page merges sections of three old pages, so the shift tabs
+  // and „Einstellungen“ are each offered under the alternatives of their own sections.
+  const user = $derived($authStore.user);
+  const visibleTabs = $derived(visibleDienstplanTabs(user));
+  const visibleTabIds = $derived(visibleTabs.map((tab) => tab.value));
+  const showShiftData = $derived(visibleTabIds.some((id) => id !== "einstellungen"));
+  const showSettings = $derived(visibleTabIds.includes("einstellungen"));
+  let activeTab = $state<string>("");
 
   function selectTab(next: string) {
     activeTab = next;
@@ -38,7 +42,7 @@
   // Issue #83 (D-13): access is decided by the admin layout guard (admin-route-permissions.ts);
   // the API answers 403 regardless.
   onMount(() => {
-    activeTab = tabFromHash($page.url.hash, TAB_IDS);
+    activeTab = visibleTabIds.length > 0 ? tabFromHash($page.url.hash, visibleTabIds) : "";
     void loadAll();
   });
 
@@ -47,11 +51,14 @@
   let coverageRules: CoverageRule[] = $state([]);
   let shiftEmployees: PatternEmployee[] = $state([]);
   let patterns: PatternRow[] = $state([]);
+  let settingsConfig = $state<DienstplanConfig | null>(null);
   let loading = $state(true);
   let error = $state("");
 
-  // Number of persons with unsaved pattern edits, reported by the Wochenmuster panel.
+  // Number of persons with unsaved pattern edits, reported by the Wochenmuster panel, and the number of
+  // unsaved changes of the Einstellungen sections.
   let patternChanges = $state(0);
+  let settingsChanges = $state(0);
 
   // Gate the registration on "the panels have their baseline" (WR-01): loadAll can fail (its catch
   // sets `error`) or never run at all, and an unregistered page must not be able to arm the
@@ -60,26 +67,37 @@
   let snapshotsReady = $state(false);
 
   $effect(() => {
-    markUnsaved("admin-shifts", snapshotsReady && patternChanges > 0);
+    markUnsaved("admin-shifts", snapshotsReady && patternChanges + settingsChanges > 0);
     return () => markUnsaved("admin-shifts", false);
   });
 
   // ── Load all config ─────────────────────────────────────────
+  // Only what the person's tabs need: the shift lists answer 403 without the shift permissions, so a
+  // person who holds only a settings permission must not trigger them (and see an error page).
+  async function loadShiftData() {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const [tpls, rules, week, tenantPatterns] = await Promise.all([
+      api.get<ShiftTemplate[]>("/shifts/templates"),
+      api.get<CoverageRule[]>("/shifts/coverage-rules"),
+      api.get<{ employees: PatternEmployee[] }>(`/shifts/week?date=${todayIso}`),
+      api.get<PatternRow[]>("/shift-patterns/tenant"),
+    ]);
+    templates = tpls;
+    coverageRules = rules;
+    shiftEmployees = shiftBasedEmployees(week.employees ?? []);
+    patterns = tenantPatterns;
+  }
+
   async function loadAll() {
     loading = true;
     error = "";
     try {
-      const todayIso = new Date().toISOString().slice(0, 10);
-      const [tpls, rules, week, tenantPatterns] = await Promise.all([
-        api.get<ShiftTemplate[]>("/shifts/templates"),
-        api.get<CoverageRule[]>("/shifts/coverage-rules"),
-        api.get<{ employees: PatternEmployee[] }>(`/shifts/week?date=${todayIso}`),
-        api.get<PatternRow[]>("/shift-patterns/tenant"),
+      await Promise.all([
+        showShiftData ? loadShiftData() : Promise.resolve(),
+        showSettings
+          ? api.get<DienstplanConfig>("/settings/work").then((cfg) => (settingsConfig = cfg))
+          : Promise.resolve(),
       ]);
-      templates = tpls;
-      coverageRules = rules;
-      shiftEmployees = shiftBasedEmployees(week.employees ?? []);
-      patterns = tenantPatterns;
       snapshotsReady = true;
     } catch (e) {
       console.error(e);
@@ -110,16 +128,20 @@
 
 <PageHead
   title={pageLabel("/admin/shifts")}
-  sub="Schichtvorlagen, Bedarfsregeln und Wochenmuster deines Unternehmens."
+  sub="Schichtvorlagen, Bedarfsregeln, Wochenmuster und Einstellungen für den Dienstplan deines Unternehmens."
 />
 
-{#if error}
+{#if visibleTabs.length === 0}
+  <div role="alert">
+    <Note tone="bad">Du hast keine Berechtigung für die Einstellungen des Dienstplans.</Note>
+  </div>
+{:else if error}
   <ErrorState message={error} onRetry={loadAll} retrying={loading} />
 {:else if loading}
   <Skeleton shape="card" count={2} lines={3} />
 {:else}
   <PageTabs
-    tabs={[...TABS]}
+    tabs={visibleTabs.map(({ value, label }) => ({ value, label }))}
     tab={activeTab}
     onTabChange={selectTab}
     tabsLabel="Bereiche des Dienstplans"
@@ -136,6 +158,8 @@
           {templates}
           bind:changes={patternChanges}
         />
+      {:else if value === "einstellungen" && settingsConfig !== null}
+        <DienstplanSettingsPanel config={settingsConfig} bind:changes={settingsChanges} />
       {/if}
     {/snippet}
   </PageTabs>
