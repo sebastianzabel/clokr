@@ -365,7 +365,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     title: "Bedarfsregeln",
     endpoint: null,
     keys: [],
-    renderedBy: "routes/(app)/admin/shifts/+page.svelte",
+    renderedBy: `${DIENSTPLAN_DIR}/CoverageRulesPanel.svelte`,
   },
   {
     ...FROM_SHIFTS,
@@ -373,7 +373,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     title: "Wochenmuster",
     endpoint: null,
     keys: [],
-    renderedBy: "routes/(app)/admin/shifts/+page.svelte",
+    renderedBy: `${DIENSTPLAN_DIR}/WeekPatternsPanel.svelte`,
   },
   { ...SYSTEM, id: "system-terminals", title: "NFC-Terminals", endpoint: null, keys: [] },
   { ...SYSTEM, id: "system-api-keys", title: "API Keys", endpoint: null, keys: [] },

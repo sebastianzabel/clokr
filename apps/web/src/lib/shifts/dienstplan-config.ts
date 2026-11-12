@@ -70,3 +70,44 @@ export function resolveShiftToken(name: string, fallback = ""): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
 }
+
+/** matrix[employeeId][0..6] = templateId | null */
+export type PatternMatrix = Record<string, Array<string | null>>;
+
+/** The SHIFT_BASED persons of `GET /shifts/week`, sorted by last name, first name (German collation). */
+export function shiftBasedEmployees(all: readonly PatternEmployee[]): PatternEmployee[] {
+  return all
+    .filter((employee) => employee.workSchedules?.[0]?.type === "SHIFT_BASED")
+    .sort((a, b) =>
+      `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`, "de"),
+    );
+}
+
+/** One row of seven cells per person, filled from the stored tenant patterns. */
+export function buildPatternMatrix(
+  employees: readonly PatternEmployee[],
+  patterns: readonly PatternRow[],
+): PatternMatrix {
+  const matrix: PatternMatrix = {};
+  for (const employee of employees) matrix[employee.id] = Array(7).fill(null);
+  for (const pattern of patterns) {
+    if (matrix[pattern.employeeId] && pattern.dayOfWeek >= 0 && pattern.dayOfWeek <= 6) {
+      matrix[pattern.employeeId][pattern.dayOfWeek] = pattern.templateId;
+    }
+  }
+  return matrix;
+}
+
+/**
+ * The Soll hint of a weekday column: the average weekly hours divided by 5, for Mo-Fr only. Null for
+ * Sa/So (most salons are closed) and when no clean signal is available.
+ */
+export function sollHintForDay(employees: readonly PatternEmployee[], dow: number): string | null {
+  if (dow > 4 || employees.length === 0) return null;
+  const hours = employees
+    .map((employee) => Number(employee.workSchedules?.[0]?.weeklyHours ?? NaN))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (hours.length === 0) return null;
+  const perDay = hours.reduce((sum, n) => sum + n, 0) / hours.length / 5;
+  return `Ø ${perDay.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} h`;
+}

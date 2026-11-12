@@ -189,6 +189,7 @@
 <Dialog bind:open={editorOpen} title={editingId ? "Vorlage bearbeiten" : "Vorlage anlegen"}>
   <form
     id="shift-template-form"
+    novalidate
     class="dp-form"
     onsubmit={(event) => {
       event.preventDefault();
