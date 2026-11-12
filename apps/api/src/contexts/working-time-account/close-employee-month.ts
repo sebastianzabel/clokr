@@ -181,6 +181,18 @@ export type CloseMonthInput = {
   }>;
   holidayDateStrings: Set<string>; // YYYY-MM-DD in tenant TZ
 
+  /**
+   * Issue #599 — approved corrections of a CLOSED month, booked as an account movement on their
+   * `date` (the tenant-local approval day, `MonthCorrectionRequest.bookingDate`). Optional in the
+   * type only so the pure-core unit fixtures stay as they are; EVERY production call site passes it
+   * explicitly (a forgotten caller would silently drop a booked correction) — pinned by
+   * `month-correction-saldo-callers-599.test.ts`. Absent reads as `[]`. Rows outside
+   * `[effectiveStart, effectiveEnd]` are ignored here, so a caller may pass a wider set; callers
+   * that only read Soll/Ist (week progress, the MONTHLY_HOURS month Soll) pass `[]`. Read only
+   * through {@link toCloseMonthAccountCorrections} / `getBookedMonthCorrections`.
+   */
+  accountCorrections?: ReadonlyArray<{ date: Date; minutes: number }>;
+
   // Tenant config
   tenantConfig: {
     defaultBreakOver6h: number;
@@ -267,6 +279,14 @@ export type CloseMonthResult = {
    * re-deriving it; no production writer consumes it today.
    */
   overtimeCompensationMinutes: number;
+
+  /**
+   * Issue #599 — the sum of the `accountCorrections` booked inside `[effectiveStart, effectiveEnd]`,
+   * in minutes (signed), already ADDED to `balanceMinutes` (and therefore to `carryOverOut`).
+   * Like the withdrawal it moves the balance only: `workedMinutes` and `expectedMinutes` stay as
+   * they are, the correction is no record of this month's work.
+   */
+  accountCorrectionMinutes: number;
 
   // Gap detection results (for warning UX in 76.28)
   gaps: WorkdayGap[];
@@ -405,6 +425,8 @@ export function monthlyHoursMonthSollMinutes(input: {
       unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
     })),
     holidayDateStrings: input.holidayDateStrings,
+    // Issue #599: the Soll alone is asked for; a correction moves the balance, never the Soll.
+    accountCorrections: [],
     tenantConfig: {
       defaultBreakOver6h: 30,
       defaultBreakOver9h: 45,
@@ -591,6 +613,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
         effectiveCarryOverOut: carryOverIn,
         snapshotExpectedMinutes: 0,
         overtimeCompensationMinutes: 0,
+        accountCorrectionMinutes: 0,
         gaps: [],
         coveredDates: new Set<string>(),
       };
@@ -1272,9 +1295,20 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   const withdrawalMinutes = Math.round(overtimeCompensationMinutes);
   // Issue #780: a month without an agreed contract (`month-contract.ts`) owes nothing and moves no
   // balance - Ist stays reported in `workedMinutes`, the carry passes through unchanged.
+  // Issue #599 — approved corrections of a closed month, booked on a day of this window. An account
+  // movement like the withdrawal above: outside the § 615 clauses, Soll and Ist untouched. Compared
+  // by calendar day (`bookingDate` is a @db.Date, the window bounds are UTC-midnight days).
+  const windowFromDay = effectiveStart.toISOString().slice(0, 10);
+  const windowToDay = effectiveEnd.toISOString().slice(0, 10);
+  let accountCorrectionMinutes = 0;
+  for (const c of input.accountCorrections ?? []) {
+    const day = c.date.toISOString().slice(0, 10);
+    if (day >= windowFromDay && day <= windowToDay) accountCorrectionMinutes += c.minutes;
+  }
+  accountCorrectionMinutes = Math.round(accountCorrectionMinutes);
   const balanceMinutes = isNoContractSchedule(schedule)
     ? 0
-    : grossBalanceMinutes - withdrawalMinutes;
+    : grossBalanceMinutes - withdrawalMinutes + accountCorrectionMinutes;
 
   const carryOverOut = carryOverIn + balanceMinutes;
 
@@ -1304,6 +1338,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     effectiveCarryOverOut,
     snapshotExpectedMinutes,
     overtimeCompensationMinutes: withdrawalMinutes,
+    accountCorrectionMinutes: isNoContractSchedule(schedule) ? 0 : accountCorrectionMinutes,
     gaps,
     coveredDates,
   };
@@ -1550,6 +1585,8 @@ export async function computeWeekProgress(
       employeeSlots,
       patternSlots,
       patternUnterrichtsMinutenByDow,
+      // Issue #599: week progress reads Soll and Ist only; a correction moves no week figure.
+      accountCorrections: [],
     };
 
     // Whole piece, no entries — the piece's own Soll (D-06: the WHOLE week's net Soll).

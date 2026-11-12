@@ -185,7 +185,8 @@ test.describe("Functional — happy paths across primary surfaces", () => {
 
       await sickLink.click();
       await page.waitForURL(/\/verwalten\/berichte\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
-      expect(page.url()).toContain(href);
+      // #844: the link's /reports URL redirects to Verwalten › Berichte and keeps its whole query
+      expect(page.url()).toContain(href.replace(/^\/reports\?/, "/verwalten/berichte?"));
     });
   });
 

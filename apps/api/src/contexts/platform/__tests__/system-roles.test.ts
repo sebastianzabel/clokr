@@ -15,7 +15,7 @@
  *   (iv)  the sets derived from the doc equal `SYSTEM_ROLE_PERMISSIONS`, element by element and in
  *         catalog order: Admin = ZUGEWIESEN keys admitting A plus every EIGENE key, Manager =
  *         ZUGEWIESEN keys admitting M plus every EIGENE key, Mitarbeiter = every EIGENE key;
- *   (v)   the sizes are 89 / 63 / 22;
+ *   (v)   the sizes are 94 / 68 / 24 (#599: +5 / +5 / +2 month-correction keys);
  *   (vi)  both sections yielded enough rows to mean something (input proof — an emptied or
  *         renamed section must turn this red, never let it pass having compared nothing).
  *
@@ -352,11 +352,11 @@ describe("Phase 75b — system-role permission sets derived from docs/permission
     expect([...SYSTEM_ROLE_PERMISSIONS.EMPLOYEE]).toEqual(docDerivedSet(null));
   });
 
-  it("(v) the sizes are Admin 89, Manager 63, Mitarbeiter 22", () => {
-    expect(PERMISSIONS.length).toBe(89);
-    expect(SYSTEM_ROLE_PERMISSIONS.ADMIN).toHaveLength(89);
-    expect(SYSTEM_ROLE_PERMISSIONS.MANAGER).toHaveLength(63);
-    expect(SYSTEM_ROLE_PERMISSIONS.EMPLOYEE).toHaveLength(22);
+  it("(v) the sizes are Admin 94, Manager 68, Mitarbeiter 24", () => {
+    expect(PERMISSIONS.length).toBe(94);
+    expect(SYSTEM_ROLE_PERMISSIONS.ADMIN).toHaveLength(94);
+    expect(SYSTEM_ROLE_PERMISSIONS.MANAGER).toHaveLength(68);
+    expect(SYSTEM_ROLE_PERMISSIONS.EMPLOYEE).toHaveLength(24);
   });
 });
 
@@ -423,6 +423,9 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     "leave-limit:manage:ZUGEWIESEN",
     "leave-plan:manage:ZUGEWIESEN",
     "vocational-school:read:ZUGEWIESEN",
+    "month-correction:read:ZUGEWIESEN", // #599
+    "month-correction:create:ZUGEWIESEN", // #599
+    "month-correction:approve:ZUGEWIESEN", // #599
     "shift:read:ZUGEWIESEN",
     "shift:plan:ZUGEWIESEN",
     "shift-pattern:read:ZUGEWIESEN",
@@ -459,8 +462,8 @@ describe("Phase 76b — system-role templates (Issue #76)", () => {
     "shift:read:ZUGEWIESEN",
   ];
 
-  it("(D-05) Salonmanager equals the hand-written literal list, 26 entries", () => {
-    expect(SALON_MANAGER_EXPECTED).toHaveLength(26);
+  it("(D-05) Salonmanager equals the hand-written literal list, 29 entries", () => {
+    expect(SALON_MANAGER_EXPECTED).toHaveLength(29);
     expect([...SYSTEM_ROLE_PERMISSIONS.SALON_MANAGER]).toEqual(SALON_MANAGER_EXPECTED);
   });
 
