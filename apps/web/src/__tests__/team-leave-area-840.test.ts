@@ -1,5 +1,10 @@
 // Issue #840 (plan 840-10; E-01, E-02, E-06, D-840-01/13/14/17) - source pins of the team absence
-// page: one page „Abwesenheiten“ with the tabs Übersicht / Anträge / Planung on ONE toolbar.
+// page: one page „Abwesenheiten“ with the tabs Übersicht / Anträge / Planung on ONE tab strip.
+//
+// Issue #853 (plan 853-08, D-853-11/18/19): the page head is the #887 head (no eyebrow), the strip
+// is the PageTabs block in panel mode (it replaced LeaveToolbar on this page), and the period,
+// zoom, search and „Personenkreis“ filter sit in one toolbar row inside the panel. The pins below
+// keep their meaning and read the new markup.
 //
 // Why source-read and not mounted: the page imports `$app/stores` and `$app/navigation`, mounts a
 // dozen dialogs and fires its requests on mount (the same wall `team-leave-salon-558.test.ts`
@@ -39,30 +44,42 @@ function functionBody(name: string): string {
   return PAGE.slice(start, end);
 }
 
-describe("Issue #840 E-01 - one page, one toolbar, one timeline", () => {
+describe("Issue #840 E-01 - one page, one tab strip, one timeline", () => {
   it("[vacuity gate] the page source is loaded and is the host page", () => {
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain('<PageHead eyebrow="Team" title={pageLabel("/team/leave")}>');
+    // #853 (D-853-19): the head tag names the route label and passes no eyebrow and no accent.
+    expect(PAGE).toMatch(/<PageHead\s+title=\{pageLabel\("\/team\/leave"\)\}/);
+    const head = PAGE.slice(PAGE.indexOf("<PageHead"), PAGE.indexOf("</PageHead>"));
+    expect(head).not.toContain("eyebrow");
+    expect(head).not.toContain("accent");
   });
 
-  it("[one toolbar] exactly one LeaveToolbar carries tabs, period, zoom and the person filter", () => {
-    expect(count(PAGE, "<LeaveToolbar")).toBe(1);
-    expect(PAGE).toContain('ariaLabel="Abwesenheiten"');
+  it("[one tab strip] exactly one PageTabs carries the tabs; period, zoom, search and the planner controls sit in the panels' toolbar row", () => {
+    expect(count(PAGE, "<PageTabs")).toBe(1);
+    expect(count(PAGE, "<LeaveToolbar")).toBe(0);
+    expect(PAGE).toContain('tabsLabel="Abwesenheiten"');
     expect(PAGE).toContain('testIdPrefix="leave-team-view"');
-    expect(PAGE).toContain("tabs={toolbarTabs}");
-    // #840 G-6: on Planung the filter slot holds the planner controls (status, deadline, add).
-    expect(PAGE).toContain('filters={activeTab === "planung" ? plannerControls : personFilter}');
+    expect(PAGE).toContain("tabs={leaveTabs}");
+    expect(PAGE).toContain("panel={leavePanel}");
+    expect(count(PAGE, "<PeriodSwitcher")).toBe(1);
+    expect(count(PAGE, "<SegmentedControl")).toBe(1);
+    expect(count(PAGE, "<TableToolbar")).toBe(1);
+    // #840 G-6: on Planung the toolbar row holds the planner controls (status, deadline, add).
+    expect(PAGE).toContain("{@render plannerControls()}");
     expect(count(PAGE, "<LeavePlanControls")).toBe(1);
   });
 
   it("[tabs] the three tabs are Übersicht / Anträge / Planung, the Anträge one badged and named „list“", () => {
-    expect(PAGE).toContain('{ id: "uebersicht", label: "Übersicht" }');
+    expect(PAGE).toContain('{ value: "uebersicht", label: "Übersicht" }');
     // #840 G-1: the count is the open requests of the salon selection (NOT narrowed by the person
     // filter), with its explanation, and a click on it opens the „Offen“ filter.
     expect(PAGE).toContain("openRequestsSummary(pendingRequests)");
     expect(PAGE).not.toContain("filteredPendingRequests");
-    const tabs = PAGE.slice(PAGE.indexOf("const toolbarTabs = $derived("));
-    const antraege = tabs.slice(tabs.indexOf('id: "antraege"'), tabs.indexOf('id: "planung"'));
+    const tabs = PAGE.slice(PAGE.indexOf("const leaveTabs = $derived("));
+    const antraege = tabs.slice(
+      tabs.indexOf('value: "antraege"'),
+      tabs.indexOf('value: "planung"'),
+    );
     expect(antraege).toContain("badge: openSummary?.count");
     expect(antraege).toContain("badgeLabel: openSummary?.label");
     expect(antraege).toContain("onBadgeSelect: openOpenRequests");
@@ -71,8 +88,9 @@ describe("Issue #840 E-01 - one page, one toolbar, one timeline", () => {
     const selectBody = select.slice(0, select.indexOf("\n  }\n"));
     expect(selectBody).toContain('tab: "antraege"');
     expect(selectBody).toContain('status: "PENDING"');
-    expect(selectBody).toContain('filterEmployeeId = ""');
-    expect(PAGE).toContain('{ id: "planung", label: "Planung" }');
+    // The type filter is the one page-local filter that could still hide a counted row.
+    expect(selectBody).toContain('filterLeaveType = ""');
+    expect(PAGE).toContain('{ value: "planung", label: "Planung" }');
     // The old tabs are gone.
     expect(PAGE).not.toContain("Genehmigungen");
     expect(PAGE).not.toContain('"approvals"');
@@ -88,17 +106,22 @@ describe("Issue #840 E-01 - one page, one toolbar, one timeline", () => {
     expect(navigate).toContain("noScroll: true");
     // A tab change is a history entry, a zoom / period / filter change replaces it.
     expect(functionBody("selectTab")).toContain("void navigate({ tab })");
-    expect(PAGE).toContain("void navigate({ zoom }, true)");
+    expect(functionBody("onZoomSelected")).toContain("void navigate({ zoom }, true)");
     expect(PAGE).toContain("void navigate({ datum: today }, true)");
     expect(PAGE).toContain("shiftPeriod(toolbarPeriod.zoom, urlState.datum, step)");
   });
 
-  it("[panels] every tab panel carries role=tabpanel and names its tab", () => {
+  it("[panels] every tab has its own panel, rendered by PageTabs (role=tabpanel, labelled by its tab)", () => {
+    // PageTabs in panel mode renders one bits-ui Tabs.Content per tab (role=tabpanel,
+    // aria-labelledby its trigger - proven in PageTabs-853.test.ts); the page fills each through the
+    // `leavePanel` snippet, which holds content only for the active tab.
+    expect(PAGE).toContain("{#snippet leavePanel(value: string)}");
+    expect(PAGE).toContain("{#if value === activeTab}");
     for (const id of ["uebersicht", "antraege", "planung"]) {
-      expect(PAGE).toContain(
-        `<div role="tabpanel" id="leave-panel-${id}" aria-labelledby="leave-tab-${id}">`,
-      );
+      expect(PAGE, id).toMatch(new RegExp(`\\{(#|:else )if value === "${id}"\\}`));
     }
+    // The old hand-written panel wrappers are gone.
+    expect(PAGE).not.toContain('role="tabpanel"');
   });
 
   it("[one timeline] the Übersicht mounts one AbsenceTimeline and the phone list, both on the same rows", () => {
@@ -110,9 +133,29 @@ describe("Issue #840 E-01 - one page, one toolbar, one timeline", () => {
     expect(PAGE).toContain("load={overviewLoad}");
   });
 
+  it("[circle] the default circle comes from the model and the URL, never from a role or permission (#853, D-853-12)", () => {
+    const at = PAGE.indexOf("const circlePeople = $derived(");
+    expect(at).toBeGreaterThan(-1);
+    const circle = PAGE.slice(at, PAGE.indexOf("\n  );", at));
+    expect(circle).toContain("inLeaderReach(");
+    expect(circle).toContain("rosterIds");
+    expect(circle).toContain("urlState.allSalons");
+    expect(circle).not.toContain("hasPermission");
+    expect(circle).not.toContain("role");
+    // One filter „Personenkreis“ with the one option „Alle Salons“, written to the URL (kreis=alle).
+    expect(PAGE).toContain('label: "Personenkreis"');
+    expect(PAGE).toContain('options: [{ value: "alle", label: "Alle Salons" }]');
+    expect(PAGE).toContain('void navigate({ allSalons: picked === "alle" }, true)');
+  });
+
   it("[rows] every person of the page's own list is a row even without a bar", () => {
     expect(PAGE).toContain("overviewPersons(overviewRows, employees,");
-    expect(PAGE).toContain("filterEmployeeId || undefined");
+    // #853 (D-853-12): the default circle is the leader's reach, decided in the model; the search
+    // narrows the circle by name and replaced the hand-rolled person filter.
+    expect(PAGE).toContain("inLeaderReach(");
+    expect(PAGE).toContain("urlState.allSalons");
+    expect(PAGE).toContain("matchesSearch(row.name, personQuery)");
+    expect(PAGE).not.toContain("filterEmployeeId");
   });
 
   it("[closed days] they come from the calendar answer's salons through closedDaysFor, with the legend hint", () => {
@@ -295,7 +338,7 @@ describe("Issue #840 D-840-17/03/31 - Planung tab, legacy links, create link on 
     expect(panel).toContain("onViewer={(viewer) => (canManagePlan = viewer.canManage)}");
     // #570: an animated block traps fixed dialogs. The panel's host div and its ancestors carry no
     // `animate` / `card-animate` (the panel animates its own cards).
-    const tabPanel = PAGE.lastIndexOf('<div role="tabpanel" id="leave-panel-planung"', at);
+    const tabPanel = PAGE.lastIndexOf('{:else if value === "planung"}', at);
     expect(tabPanel).toBeGreaterThan(-1);
     expect(PAGE.slice(tabPanel, at)).not.toContain("animate");
     expect(PAGE.slice(0, at)).not.toMatch(/<Card animate[^>]*>(?![\s\S]*<\/Card>)/);
@@ -318,7 +361,7 @@ describe("Issue #840 D-840-17/03/31 - Planung tab, legacy links, create link on 
     expect(head.slice(manage)).toContain("Planung verwalten");
     expect(head.slice(manage)).toContain("manageOpen = true");
     // The create action belongs to the other two tabs; the old planner link button is gone.
-    expect(head.indexOf("Neue Abwesenheit")).toBeGreaterThan(head.indexOf("{:else if"));
+    expect(head.indexOf("Abwesenheit eintragen")).toBeGreaterThan(head.indexOf("{:else if"));
     expect(PAGE).not.toContain("leave-plan-link");
     expect(PAGE).not.toContain("Urlaubsplanung</a");
   });
