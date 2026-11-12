@@ -42,10 +42,11 @@ const EXEMPT_PAGES: ReadonlyArray<{
     reason: "configuration picker: every employee must be selectable (D-11)",
   },
   {
-    page: "admin/shutdowns",
-    file: "(app)/admin/shutdowns/+page.svelte",
-    loads: "/employees",
-    reason: "configuration picker: a company shutdown applies to employees of every salon (D-11)",
+    // The list left the route file with #854 (plan 854-12): it is the Betriebsurlaub tab of Abwesenheiten.
+    page: "BetriebsurlaubPanel",
+    file: "../lib/components/admin/abwesenheiten/BetriebsurlaubPanel.svelte",
+    loads: "/company-shutdowns",
+    reason: "configuration list: a company shutdown applies to employees of every salon (D-11)",
   },
   {
     page: "admin/shutdowns/[id]",
