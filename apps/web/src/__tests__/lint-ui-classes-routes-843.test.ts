@@ -278,7 +278,8 @@ describe("the checked-in ratchet register", () => {
 
   it("is not empty (the ratchet is not vacuous) and `--print` reproduces it", () => {
     const entries = RATCHET_RULES.flatMap((rule) => Object.keys(checkedIn.rules[rule]));
-    expect(entries.length).toBeGreaterThan(40);
+    // #854 empties the register page by page (it only falls); the floor proves it is not vacuous.
+    expect(entries.length).toBeGreaterThan(20);
     expect(registerFromCounts(found, checkedIn)).toEqual(checkedIn);
   });
 

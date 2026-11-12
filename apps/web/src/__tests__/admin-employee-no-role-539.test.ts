@@ -20,6 +20,11 @@ const PAGE = readRouteFile(
   "../routes/(app)/admin/employees/[id]/+page.svelte",
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
+// Since Issue #854 (plan 854-20) the Zugang tab component shows the account and the hint.
+const ZUGANG = readRouteFile(
+  "../lib/components/employees/detail/ZugangTab.svelte",
+  "src/lib/components/employees/detail/ZugangTab.svelte",
+);
 const LIST = readRouteFile(
   "../routes/(app)/admin/employees/+page.svelte",
   "src/routes/(app)/admin/employees/+page.svelte",
@@ -30,8 +35,8 @@ describe("/admin/employees/[id] - a person without a role (Issue #539)", () => {
   // (initialFormRole, roleForSave, the eRole state, the empty first option); their absence is
   // asserted in admin-employee-role-assignments-580.test.ts. The display rules below still hold.
   it("imports the no-role rule and hint from form-role.ts", () => {
-    expect(PAGE).toMatch(/import \{[^}]*\bhasNoRole\b[^}]*\} from "\$lib\/employees\/form-role"/);
-    expect(PAGE).toMatch(
+    expect(ZUGANG).toMatch(/import \{[^}]*\bhasNoRole\b[^}]*\} from "\$lib\/employees\/form-role"/);
+    expect(ZUGANG).toMatch(
       /import \{[^}]*\bNO_ROLE_HINT\b[^}]*\} from "\$lib\/employees\/form-role"/,
     );
   });
@@ -42,22 +47,22 @@ describe("/admin/employees/[id] - a person without a role (Issue #539)", () => {
   });
 
   it("renders the hint under hasNoRole, outside the canAssignRoles condition", () => {
-    const tab = PAGE.slice(PAGE.indexOf('tab === "zugang"'));
+    const tab = ZUGANG.slice(ZUGANG.indexOf('aria-labelledby="{uid}-roles"'));
     const hintAt = tab.indexOf("{NO_ROLE_HINT}");
     expect(hintAt).toBeGreaterThan(-1);
-    const guard = tab.lastIndexOf("{#if hasNoRole(accountUser)}", hintAt);
+    const guard = tab.lastIndexOf("{#if hasNoRole(account)}", hintAt);
     expect(guard).toBeGreaterThan(-1);
     expect(hintAt - guard).toBeLessThan(300);
     // The permission block opens before the hint and is closed again before the hint's guard.
-    const permissionBlock = tab.indexOf("{#if canAssignRoles}");
+    const permissionBlock = tab.indexOf("{#if rights.canAssignRoles}");
     expect(permissionBlock).toBeGreaterThan(-1);
     expect(permissionBlock).toBeLessThan(guard);
     const between = tab.slice(permissionBlock, guard);
     const opens = (between.match(/\{#if /g) ?? []).length;
     const closes = (between.match(/\{\/if\}/g) ?? []).length;
     expect(closes).toBe(opens);
-    // Existing recipe, no invented class.
-    expect(tab.slice(guard, hintAt)).toContain('class="callout"');
+    // Existing block, no invented class: the warn Note.
+    expect(tab.slice(guard, hintAt)).toContain('<Note tone="warn">');
   });
 });
 

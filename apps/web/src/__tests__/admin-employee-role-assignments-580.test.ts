@@ -18,7 +18,12 @@ const DETAIL = readRouteFile(
   "../routes/(app)/admin/employees/[id]/+page.svelte",
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
-// Since Issue #854 (plan 854-20) the Stammdaten saves live in the Person tab component.
+// Since Issue #854 (plan 854-20) the roles live in the Zugang tab component and the Stammdaten saves
+// in the Person tab component.
+const ZUGANG_TAB = readRouteFile(
+  "../lib/components/employees/detail/ZugangTab.svelte",
+  "src/lib/components/employees/detail/ZugangTab.svelte",
+);
 const PERSON_TAB = readRouteFile(
   "../lib/components/employees/detail/PersonTab.svelte",
   "src/lib/components/employees/detail/PersonTab.svelte",
@@ -56,10 +61,15 @@ describe("/admin/employees/[id] — Berechtigungen (#580)", () => {
     expect(LIST.length).toBeGreaterThan(20_000);
   });
 
-  // The Zugang tab holds the roles first and the anonymise / delete groups last (#854).
-  const start = DETAIL.indexOf('tab === "zugang"');
-  const end = DETAIL.indexOf("{#if rights.canAnonymize}");
-  const tab = DETAIL.slice(start, end);
+  // The Zugang tab holds the roles first, then the login and the deletion groups (#854).
+  const start = ZUGANG_TAB.indexOf('aria-labelledby="{uid}-roles"');
+  const end = ZUGANG_TAB.indexOf('aria-labelledby="{uid}-login"');
+  const tab = ZUGANG_TAB.slice(start, end);
+
+  it("the page mounts the Zugang tab for the employee", () => {
+    expect(DETAIL).toContain('tab === "zugang"');
+    expect(DETAIL).toContain("<ZugangTab");
+  });
 
   it("renders the block for the employee's user, with a change handler", () => {
     expect(start).toBeGreaterThan(-1);
@@ -84,12 +94,12 @@ describe("/admin/employees/[id] — Berechtigungen (#580)", () => {
   });
 
   it("loads the assignments only with role-assignment:manage", () => {
-    expect(DETAIL).toContain("listRoleAssignments(");
-    expect(DETAIL).toMatch(/if \(!userId \|\| !canAssignRoles\) return;/);
+    expect(ZUGANG_TAB).toContain("listRoleAssignments(");
+    expect(ZUGANG_TAB).toMatch(/if \(!userId \|\| !rights\.canAssignRoles\) return;/);
   });
 
   it("never re-initialises the form after an assignment change", () => {
-    expect(fnBody(DETAIL, "onRoleAssignmentsChanged")).not.toContain("initFields(");
+    expect(fnBody(ZUGANG_TAB, "onRoleAssignmentsChanged")).not.toContain("initFields(");
   });
 });
 

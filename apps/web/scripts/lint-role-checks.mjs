@@ -145,6 +145,12 @@ export const SCOPE_FILES = [
   // Issue #854 (plan 854-20): the Person tab of the employee detail shows its controls by
   // employee:update (`canEdit`), never by a role.
   "apps/web/src/lib/components/employees/detail/PersonTab.svelte",
+  // Its siblings: Urlaub shows its fields by leave-entitlement:update, Zugang its three groups by
+  // employee:manage-access, role-assignment:manage and employee:anonymize; the Salons section by
+  // employee:update.
+  "apps/web/src/lib/components/employees/detail/UrlaubTab.svelte",
+  "apps/web/src/lib/components/employees/detail/ZugangTab.svelte",
+  "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte",
 ];
 
 /** (file, exact trimmed line text) pairs that may keep a flagged line. Empty since #538: the last

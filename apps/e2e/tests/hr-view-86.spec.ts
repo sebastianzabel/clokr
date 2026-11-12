@@ -26,7 +26,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { APIRequestContext, Page, Route } from "@playwright/test";
+import type { APIRequestContext, Locator, Page, Route } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import type { TestTenant } from "../fixtures";
 import { measurePageOverflow } from "../helpers/viewport-geometry";
@@ -86,6 +86,16 @@ function addDays(day: string, n: number): string {
 }
 
 /** `YYYY-MM-DD` to the German `DD.MM.YYYY` the pages print. */
+/**
+ * Types an ISO day into a DatePicker field (segments Tag, Monat, Jahr in the German order): focus the
+ * first segment and type the digits as a person would; the field advances by itself.
+ */
+async function typeDay(field: Locator, isoDay: string): Promise<void> {
+  const [year, month, day] = isoDay.split("-");
+  await field.getByRole("spinbutton").first().click();
+  await field.page().keyboard.type(`${day}${month}${year}`);
+}
+
 function deDate(day: string): string {
   const [y, m, d] = day.split("-");
   return `${d}.${m}.${y}`;
@@ -435,15 +445,22 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(assignments.locator("tbody tr")).toHaveCount(1);
     await expect(assignments).toContainText("Stammsalon");
     await page.getByTestId("salon-assignment-add").click();
-    await page.locator("#sa-salon").selectOption({ label: SECOND_SALON_NAME });
-    await page.locator("#sa-from").fill(hireDay);
+    // #854: the form is a dialog; the days are DatePickers (segments Tag, Monat, Jahr).
+    const assignmentDialog = page.getByRole("dialog");
+    await assignmentDialog.getByLabel("Salon", { exact: true }).selectOption({
+      label: SECOND_SALON_NAME,
+    });
+    await typeDay(assignmentDialog.locator('[aria-label="Gültig ab"]'), hireDay);
     await page.getByTestId("salon-assignment-submit").click();
     const deployment = assignments.locator("tbody tr").filter({ hasText: SECOND_SALON_NAME });
     await expect(deployment).toHaveCount(1);
     await expect(deployment).toContainText("Einsatzsalon");
     await expect(deployment).not.toContainText("beendet");
     await deployment.getByRole("button", { name: "Beenden" }).click();
-    await page.locator("#sa-end").fill(addDays(hireDay, 9));
+    await typeDay(
+      page.getByRole("dialog").locator('[aria-label="Beendet zum"]'),
+      addDays(hireDay, 9),
+    );
     await page.getByTestId("salon-assignment-submit").click();
     await expect(deployment).toContainText("beendet");
     await expect(deployment.getByRole("button", { name: "Beenden" })).toHaveCount(0);
@@ -476,14 +493,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await page.getByRole("tab", { name: "Person" }).click();
     // #854: the exit date is a DatePicker (segments Tag, Monat, Jahr) in the group „Austritt und
     // Urlaubsbasis“ with its own SaveBar; the answer is a toast.
-    const [exitYear, exitMonth, exitDom] = exitDay.split("-");
     const employment = page.getByRole("region", { name: "Austritt und Urlaubsbasis" });
-    await employment
-      .locator('[aria-label="Austrittsdatum"]')
-      .getByRole("spinbutton")
-      .first()
-      .click();
-    await page.keyboard.type(`${exitDom}${exitMonth}${exitYear}`);
+    await typeDay(employment.locator('[aria-label="Austrittsdatum"]'), exitDay);
     const exitSaved = page.waitForResponse(
       (r) => r.request().method() === "PATCH" && r.url().endsWith(`/api/v1/employees/${x.id}`),
     );

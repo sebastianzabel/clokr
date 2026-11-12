@@ -7,11 +7,6 @@
         "ticket": "#845",
         "reason": "Salon choice select styled with the filter recipe; folds into the Stage block"
       },
-      "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte": {
-        "count": 1,
-        "ticket": "#854",
-        "reason": "Action row of the assignment section matched by the toolbar rule"
-      },
       "apps/web/src/lib/components/leave/LeaveToolbar.svelte": {
         "count": 2,
         "ticket": "#851",
@@ -72,10 +67,6 @@
         "count": 4,
         "ticket": "#854"
       },
-      "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/dashboard/+page.svelte": {
         "count": 1,
         "ticket": "#845"
@@ -94,10 +85,6 @@
       }
     },
     "own-data-table": {
-      "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/lib/components/leave/ParentalReductionDialog.svelte": {
         "count": 1,
         "ticket": "#853"

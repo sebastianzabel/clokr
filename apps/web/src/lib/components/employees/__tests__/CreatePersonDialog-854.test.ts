@@ -336,7 +336,7 @@ describe("CreatePersonDialog - role drafts (Issue #580)", () => {
     const onCreated = mount();
     await draftRoleAndGoToEnd();
     await clickIn("Person anlegen");
-    await waitFor(() => expect(goto).toHaveBeenCalledWith("/admin/employees/e-new#berechtigungen"));
+    await waitFor(() => expect(goto).toHaveBeenCalledWith("/admin/employees/e-new#zugang"));
     expect(onCreated).toHaveBeenCalledWith("e-new");
     expect(error).toHaveBeenCalledTimes(1);
     expect(String(error.mock.calls[0][0])).toContain("Die Person ist angelegt.");

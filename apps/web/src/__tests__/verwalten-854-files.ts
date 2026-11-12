@@ -103,6 +103,12 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/employees/CreatePersonDialog.svelte",
   "lib/components/employees/BulkRoleDialog.svelte",
   "lib/components/employees/HomeSalonField.svelte",
+  // Plan 854-20 (Person detail, part I): the Person, Urlaub and Zugang tabs and the Salons section.
+  // The detail page itself joins in plan 854-22, once its Vertrag panel is rebuilt.
+  "lib/components/employees/detail/PersonTab.svelte",
+  "lib/components/employees/detail/UrlaubTab.svelte",
+  "lib/components/employees/detail/ZugangTab.svelte",
+  "lib/components/employees/SalonAssignmentsSection.svelte",
 ];
 
 export interface VerwaltenFile {

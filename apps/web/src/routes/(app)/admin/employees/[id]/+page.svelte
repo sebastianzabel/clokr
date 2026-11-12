@@ -9,7 +9,7 @@
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
-  import { onMount, untrack } from "svelte";
+  import { onMount } from "svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import PageTabs from "$components/ui/PageTabs.svelte";
@@ -17,9 +17,8 @@
   import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
   import { employmentState, localCalendarDay } from "$lib/employees/employment-state";
   import { dayOf, type PersonEmployee } from "$lib/employees/person-form";
+  import type { VacationEntitlement } from "$lib/employees/urlaub-form";
   import Section from "$lib/components/admin/Section.svelte";
-  import DangerZone from "$lib/components/admin/DangerZone.svelte";
-  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import RetroactiveBSWizard from "$lib/components/vocational-school/RetroactiveBSWizard.svelte";
   import OvertimeModeField from "$lib/components/schedule/OvertimeModeField.svelte";
@@ -39,24 +38,11 @@
     buildUsualWorkDaysBackfillPayload,
     type ContractHistoryRow,
   } from "$lib/utils/work-schedule";
-  import { type FormRole, NO_ROLE_HINT, hasNoRole } from "$lib/employees/form-role";
-  import PersonRoleAssignments from "$lib/components/admin/roles/PersonRoleAssignments.svelte";
-  import {
-    listAssignablePeople,
-    listRoleAssignments,
-    loadAssignmentChoices,
-    type AccessRole,
-    type AssignablePerson,
-    type RoleAssignment,
-  } from "$lib/api/roles";
+  import type { FormRole } from "$lib/employees/form-role";
+  import UrlaubTab from "$lib/components/employees/detail/UrlaubTab.svelte";
+  import ZugangTab from "$lib/components/employees/detail/ZugangTab.svelte";
   import { salonContext } from "$stores/salon-context";
   import { hasPermission } from "$lib/permissions";
-  import {
-    CARRY_OVER_REASON_OPTIONS,
-    carryOverReasonLabel,
-    carryOverReasonPatch,
-    carryOverReasonHint,
-  } from "$lib/leave/carry-over-reason";
 
   // ── Types ──────────────────────────────────────────────────────────────────
   type ScheduleType = "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
@@ -84,20 +70,6 @@
     contractWorkDaysPerWeek?: number | null;
     // Phase 436 Plan 02 (D-06): SHIFT_BASED-only "übliche Arbeitstage" Angabe.
     usualWorkDays?: number[];
-  }
-
-  interface VacationEntitlement {
-    year: number;
-    totalDays: number | null;
-    usedDays: number;
-    carriedOverDays: number;
-    carryOverDeadline: string | null;
-    // Issue #451 / #445 addendum (D-09) — the documented carry-over reason and note.
-    carryOverReason?: string | null;
-    carryOverNote?: string | null;
-    // Issue #435 (D-14) — server's own regular-entitlement suggestion and statutory minimum.
-    regularDays?: number;
-    statutoryMinimumDays?: number;
   }
 
   interface Employee {
@@ -131,6 +103,8 @@
     bsSlotSecondLongDayMinutes?: number | null;
     bsSlotShortDayMinutes?: number | null;
     bsSlotBlockWeekMinutes?: number | null;
+    // Issue #854: the Zugang tab words the account state from it (GET /employees/:id sends it).
+    invitationStatus?: "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
     user?: {
       role: FormRole | null;
       email: string;
@@ -418,12 +392,6 @@
         empBsSlotShortDay,
         empBsSlotBlockWeek,
       );
-      vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);
-      // Issue #451 / #445 addendum (D-09) — a second snap() for the Übertragsgrund fields,
-      // kept separate so the pinned `vacationSnapshot = snap(vacYear` baseline text (WR-01,
-      // admin-employee-save-wiring.test.ts) stays byte-identical rather than wrapping past the
-      // 100-col print width once two more fields are appended to the same call.
-      vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);
       snapshotsReady = true;
     } catch {
       loadError = "Fehler beim Laden des Mitarbeiters.";
@@ -448,58 +416,13 @@
   // hides. Setting a role needs role-assignment:manage; the § 18 ArbZG exemption rides on the
   // employee PATCH, hence employee:update.
   let rights = $derived(employeeAdminRights($authStore.user));
-  let canAssignRoles = $derived(rights.canAssignRoles);
   let canReadRoles = $derived(hasPermission($authStore.user, "role:read:ZUGEWIESEN"));
-
-  // ── Role assignments (Issue #580, D-580-01/D-580-07) ────────────────────────
-  // The tab „Berechtigungen“ shows and changes the person's assignments through the shared block.
-  // Every read needs role-assignment:manage, so nothing is requested without it (no 403s).
-  let roleAssignments = $state<RoleAssignment[]>([]);
-  let rolePeople = $state<AssignablePerson[]>([]);
-  let roleChoices = $state<AccessRole[]>([]);
-  let roleMandantIds = $state<string[]>([]);
-  let roleDataState = $state<"idle" | "loading" | "ready" | "error">("idle");
-  let roleDataError = $state("");
-
-  async function loadRoleData(userId: string) {
-    roleDataState = "loading";
-    try {
-      const [assignments, people, choices] = await Promise.all([
-        listRoleAssignments(userId),
-        listAssignablePeople(),
-        loadAssignmentChoices(canReadRoles),
-      ]);
-      roleAssignments = assignments;
-      rolePeople = people;
-      roleChoices = choices.roles;
-      roleMandantIds = choices.mandantRoleIds;
-      roleDataState = "ready";
-    } catch (err) {
-      roleDataError =
-        err instanceof Error ? err.message : "Die Rollen konnten nicht geladen werden.";
-      roleDataState = "error";
-    }
-  }
-
-  $effect(() => {
-    const userId = employee?.userId;
-    if (!userId || !canAssignRoles) return;
-    untrack(() => {
-      if (roleDataState === "idle") void loadRoleData(userId);
-    });
-  });
-
-  // After a grant, change or revoke: reload the assignments and refresh only the account part, so
-  // the no-role hint follows. Never initFields() here — it would discard unsaved edits elsewhere.
-  async function onRoleAssignmentsChanged() {
-    if (!employee) return;
-    roleAssignments = await listRoleAssignments(employee.userId);
-    const fresh = await api.get<Employee>(`/employees/${employee.id}`);
-    employee = { ...employee, user: fresh.user };
-  }
   let tabs = $derived(employeeDetailTabs(rights));
   let canDiscardShifts = $derived(contractShiftRights($authStore.user).canDiscardShifts);
   let canUpdateEmployee = $derived(rights.canUpdate);
+  let canEditVacation = $derived(
+    hasPermission($authStore.user, "leave-entitlement:update:ZUGEWIESEN"),
+  );
   // Phase 65 — Per-employee Pausendauer override (BREAK-06)
   // String state lets us distinguish "" (= null, use tenant) from typed integer values
   let eBreakOver6hOverride = $state<string>("");
@@ -744,20 +667,6 @@
     eValidFrom = sched
       ? String(sched.validFrom).split("T")[0]
       : new Date().toISOString().split("T")[0];
-
-    const vacData = vacationEntitlement;
-    eVacTotal = vacData?.totalDays ?? null;
-    eVacCarried = vacData?.carriedOverDays ?? 0;
-    eVacDeadline = vacData?.carryOverDeadline
-      ? String(vacData.carryOverDeadline).split("T")[0]
-      : "";
-    // Issue #451 / #445 addendum (D-09) — `loadedVacReason`/`loadedVacReasonNote` track what
-    // the server last confirmed, so saveVacation's carryOverReasonPatch only sends a key when
-    // the admin actually changed it (#445 D-16 semantics — see carry-over-reason.ts header).
-    eVacReason = vacData?.carryOverReason ?? null;
-    eVacReasonNote = vacData?.carryOverNote ?? "";
-    loadedVacReason = vacData?.carryOverReason ?? null;
-    loadedVacReasonNote = vacData?.carryOverNote ?? null;
   }
 
   // Phase 65 — Persist per-employee Pausendauer override (BREAK-06)
@@ -1557,62 +1466,10 @@
     eType = "SHIFT_BASED";
   }
 
-  // ── Urlaub state ───────────────────────────────────────────────────────────
+  // ── Urlaub ─────────────────────────────────────────────────────────────────
+  // The entitlement of the current year is read here with the rest of the page and handed to the
+  // Urlaub tab, which owns its form, its snapshot and its save.
   const vacYear = new Date().getFullYear();
-  // Issue #435 (D-14) — the server's own regular-entitlement suggestion (classification-aware
-  // base value from resolveVacationBaseDays(), Issue #482, scaled to contract workdays, hire-year
-  // pro-rata applied) replaces the former client-side flat-30-days formula, which ignored the
-  // per-person base value entirely.
-  let eVacSuggestion = $derived(vacationEntitlement?.regularDays ?? 0);
-  let eVacMinimum = $derived(vacationEntitlement?.statutoryMinimumDays ?? 0);
-  let eVacTotal = $state<number | null>(null);
-  let eVacCarried = $state<number>(0);
-  let eVacDeadline = $state<string>("");
-  // Issue #451 / #445 addendum (D-09) — Übertragsgrund / Notiz zum Übertrag.
-  let eVacReason = $state<string | null>(null);
-  let eVacReasonNote = $state<string>("");
-  // The pair last confirmed by the server — carryOverReasonPatch diffs against THIS, never
-  // against a hardcoded default, so an unrelated save never sends an unintended null (T-451-26).
-  let loadedVacReason = $state<string | null>(null);
-  let loadedVacReasonNote = $state<string | null>(null);
-  let eVacReasonHint = $derived(carryOverReasonHint(eVacReason, eVacReasonNote, eVacDeadline));
-  // The select's "Kein Grund" option has to carry a real value (empty string — a native
-  // <select> cannot bind an option to `null`), so the binding converts "" <-> null here.
-  function setEVacReason(value: string) {
-    eVacReason = value === "" ? null : value;
-  }
-  let urlaubSaving = $state(false);
-  let urlaubError = $state("");
-  let urlaubSaved = $state(false);
-
-  async function saveVacation() {
-    if (!employee) return;
-    urlaubSaving = true;
-    urlaubError = "";
-    urlaubSaved = false;
-    try {
-      await api.put(`/settings/vacation/${employee.id}`, {
-        year: vacYear,
-        totalDays: eVacTotal ?? eVacSuggestion,
-        carriedOverDays: eVacCarried,
-        carryOverDeadline: eVacDeadline || null,
-        ...carryOverReasonPatch(
-          { reason: loadedVacReason, note: loadedVacReasonNote },
-          { reason: eVacReason, note: eVacReasonNote },
-        ),
-      });
-      urlaubSaved = true;
-      loadedVacReason = eVacReason;
-      loadedVacReasonNote = eVacReasonNote.trim() === "" ? null : eVacReasonNote.trim();
-      vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);
-      vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);
-      setTimeout(() => (urlaubSaved = false), 3000);
-    } catch (e: unknown) {
-      urlaubError = e instanceof Error ? e.message : "Fehler beim Speichern";
-    } finally {
-      urlaubSaving = false;
-    }
-  }
 
   // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
   // One snapshot per button-gated group, taken at load (onMount above) and re-taken after each
@@ -1687,16 +1544,6 @@
       bsSlotEmpSnapshot,
   );
 
-  let vacationSnapshot = $state("");
-  // Issue #451 / #445 addendum (D-09) — separate snapshot for Übertragsgrund/Notiz (see the
-  // onMount comment on vacationReasonSnapshot for why this is a second snap() rather than more
-  // arguments on the one above).
-  let vacationReasonSnapshot = $state("");
-  let vacationDirty = $derived(
-    snap(vacYear, eVacTotal, eVacCarried, eVacDeadline) !== vacationSnapshot ||
-      snap(eVacReason, eVacReasonNote) !== vacationReasonSnapshot,
-  );
-
   // Phase 109 (D-12) — one registry entry per page. Cleanup de-registers on unmount so a saved
   // page that the operator leaves cannot strand a stale entry and trap the next navigation
   // (T-109-27, mirrors T-109-23 on admin/system). Registry id ("admin-employee-detail") is
@@ -1704,6 +1551,7 @@
   // The Person tab owns its snapshots and reports the count of unsaved changes through
   // `bind:changes`; this page sums everything into ONE registration.
   let personChanges = $state(0);
+  let vacationChanges = $state(0);
   let anyUnsaved = $derived(
     personChanges > 0 ||
       scheduleDirty ||
@@ -1711,7 +1559,7 @@
       phorestPufferDirty ||
       patternsDirty ||
       bsSlotEmpDirty ||
-      vacationDirty,
+      vacationChanges > 0,
   );
 
   // Gate the registration on "the baseline has been taken" (WR-01). Every snapshot starts as ""
@@ -1725,38 +1573,6 @@
     markUnsaved("admin-employee-detail", snapshotsReady && anyUnsaved);
     return () => markUnsaved("admin-employee-detail", false);
   });
-
-  // ── Anonymize / hard-delete state ──────────────────────────────────────────────────────
-  let anonConfirmOpen = $state(false);
-  let hardDelConfirmOpen = $state(false);
-  let hardDeleteForce = $state(false);
-  let hardDeleteRetentionExpiresAt = $state<string | null>(null);
-  let hardDeleteError = $state("");
-
-  async function anonymize() {
-    if (!employee) return;
-    await api.delete(`/employees/${employee.id}`);
-    goto("/admin/employees");
-  }
-
-  async function hardDelete() {
-    if (!employee) return;
-    hardDeleteError = "";
-    try {
-      const body = hardDeleteForce ? { forceDelete: true } : undefined;
-      await api.delete(`/employees/${employee.id}/hard-delete`, body);
-      goto("/admin/employees");
-    } catch (e: unknown) {
-      if (e instanceof Error) {
-        hardDeleteError = e.message;
-        const apiData = (e as { data?: { retentionExpiresAt?: string } }).data;
-        hardDeleteRetentionExpiresAt = apiData?.retentionExpiresAt ?? null;
-      } else {
-        hardDeleteError = "Fehler beim endgültigen Löschen";
-      }
-      throw e;
-    }
-  }
 
   // ── Derived display ────────────────────────────────────────────────────────
   let displayName = $derived(`${employee?.firstName ?? ""} ${employee?.lastName ?? ""}`.trim());
@@ -3294,280 +3110,30 @@
           </div>
         {/if}
       {:else if tab === "urlaub"}
-        <!-- ── Urlaub ───────────────────────────────────────────────────────── -->
-        <Section
-          title="Urlaubsanspruch {vacYear}"
-          sub="Jahresurlaub, Übertrag und Verfalldatum"
-          dirty={vacationDirty}
-        >
-          {#snippet footer()}
-            <button class="btn btn-primary" onclick={saveVacation} disabled={urlaubSaving}>
-              {urlaubSaving ? "Speichern…" : "Speichern"}
-            </button>
-            {#if urlaubSaved}<span class="saved-hint">Gespeichert</span>{/if}
-          {/snippet}
-
-          {#if urlaubError}
-            <div class="callout error">{urlaubError}</div>
-          {/if}
-
-          <p class="form-hint">
-            Regulärer Anspruch {vacYear}:
-            <strong
-              >{eVacSuggestion.toLocaleString("de-DE", {
-                maximumFractionDigits: 2,
-              })} Tage</strong
-            >
-            (Basiswert der Person bzw. Unternehmensstandard, umgerechnet auf die Vertragstage, im Eintrittsjahr
-            ggf. anteilig). Gesetzlicher Mindesturlaub: {eVacMinimum.toLocaleString("de-DE", {
-              maximumFractionDigits: 2,
-            })} Tage.
-          </p>
-
-          <div class="extra-row">
-            <div class="form-group">
-              <label class="form-label" for="e-vac-total">Urlaubstage gesamt</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="e-vac-total"
-                  type="number"
-                  min="0"
-                  max="365"
-                  step="0.01"
-                  bind:value={eVacTotal}
-                  placeholder={String(eVacSuggestion)}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">Tage</span>
-              </div>
-              <p class="form-hint">Leer lassen für automatischen Wert ({eVacSuggestion})</p>
-              {#if eVacTotal !== null && eVacTotal < eVacMinimum}
-                <div class="callout error">
-                  Unter dem gesetzlichen Mindesturlaub – das Speichern wird abgelehnt, sofern sich
-                  der Wert ändert.
-                </div>
-              {/if}
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="e-vac-carried">Resturlaub Vorjahr</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="e-vac-carried"
-                  type="number"
-                  min="0"
-                  max="365"
-                  step="0.5"
-                  bind:value={eVacCarried}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">Tage</span>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="e-vac-deadline">Resturlaub verfällt am</label>
-              <input id="e-vac-deadline" type="date" bind:value={eVacDeadline} class="form-input" />
-              <p class="form-hint">Leer lassen für globale Einstellung</p>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="e-vac-reason">Übertragsgrund</label>
-              <select
-                id="e-vac-reason"
-                bind:value={() => eVacReason ?? "", setEVacReason}
-                class="form-input"
-              >
-                <option value="">Kein Grund</option>
-                {#each CARRY_OVER_REASON_OPTIONS as option (option.value)}
-                  <option value={option.value}>{option.label}</option>
-                {/each}
-                {#if eVacReason !== null && !CARRY_OVER_REASON_OPTIONS.some((o) => o.value === eVacReason)}
-                  <!-- Issue #451 (D-09): a legacy stored value (e.g. OPERATIONAL) is shown,
-                       read-only, instead of being silently replaced by "Kein Grund". -->
-                  <option value={eVacReason} disabled selected
-                    >{carryOverReasonLabel(eVacReason)}</option
-                  >
-                {/if}
-              </select>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="e-vac-reason-note">Notiz zum Übertrag</label>
-            <textarea
-              id="e-vac-reason-note"
-              class="form-input"
-              rows="2"
-              maxlength="500"
-              bind:value={eVacReasonNote}
-            ></textarea>
-            {#if eVacReasonHint}
-              <p class={eVacReasonHint.includes("erforderlich.") ? "form-error" : "form-hint"}>
-                {eVacReasonHint}
-              </p>
-            {/if}
-          </div>
-
-          {#if vacationEntitlement}
-            <div class="vac-summary-row">
-              <span class="vac-stat">
-                <span class="vac-label">Genommen</span>
-                <span class="vac-value">{vacationEntitlement.usedDays}</span>
-              </span>
-              <span class="vac-stat">
-                <span class="vac-label">Übertrag</span>
-                <span class="vac-value">{vacationEntitlement.carriedOverDays}</span>
-              </span>
-            </div>
-          {/if}
-        </Section>
+        <UrlaubTab
+          {employeeId}
+          year={vacYear}
+          entitlement={vacationEntitlement}
+          canEdit={canEditVacation}
+          bind:changes={vacationChanges}
+        />
       {:else if tab === "salons"}
         <!-- ── Salons (Issue #86, AC-86-5) ────────────────────────────────── -->
         <SalonAssignmentsSection {employeeId} canEdit={rights.canUpdate} />
       {:else if tab === "zugang"}
-        <!-- ── Berechtigungen ─────────────────────────────────────────────── -->
-        <!-- The tab snippet loses the `!employee` narrowing of the page branch. -->
-        {@const accountUser = employee?.user}
-        <Section title="Rollen" sub="Welche Rollen diese Person in welchem Bereich hat">
-          {#if canAssignRoles}
-            {#if roleDataState === "error"}
-              <div class="callout error" role="alert">{roleDataError}</div>
-            {:else if roleDataState !== "ready"}
-              <Skeleton shape="row" count={2} />
-            {:else if employee}
-              <PersonRoleAssignments
-                personName={displayName || "Person"}
-                userId={employee.userId}
-                items={roleAssignments}
-                roles={roleChoices}
-                mandantRoleIds={roleMandantIds}
-                salons={$salonContext.salons}
-                salonsLoaded={$salonContext.loaded}
-                people={rolePeople}
-                canManage={canAssignRoles}
-                {canReadRoles}
-                onChanged={onRoleAssignmentsChanged}
-              />
-            {/if}
-          {:else}
-            <div class="callout">
-              Welche Rollen diese Person hat, siehst du nur mit dem Recht, Rollen zuzuweisen.
-            </div>
-          {/if}
-          {#if hasNoRole(accountUser)}
-            <div class="callout">{NO_ROLE_HINT}</div>
-          {/if}
-        </Section>
-
-        <Section title="Zugang" sub="Benutzerkonto und Anmeldung">
-          <div class="form-grid">
-            {#if accountUser}
-              <div class="form-group">
-                <span class="form-label">E-Mail</span>
-                <p class="field-value">{accountUser.email}</p>
-              </div>
-              <div class="form-group">
-                <span class="form-label">Status</span>
-                <p class="field-value">
-                  {#if accountUser.isActive}
-                    <span class="badge badge-ok">Aktiv</span>
-                  {:else}
-                    <span class="badge badge-muted">Inaktiv</span>
-                  {/if}
-                </p>
-              </div>
-              {#if accountUser.lastLoginAt}
-                <div class="form-group">
-                  <span class="form-label">Letzter Login</span>
-                  <p class="field-value">
-                    {new Date(accountUser.lastLoginAt).toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
-                </div>
-              {/if}
-            {/if}
-          </div>
-        </Section>
-        {#if rights.canAnonymize}
-          <!-- ── Gefahrenzone ────────────────────────────────────────────────── -->
-          <DangerZone
-            title="Anonymisieren (DSGVO Art. 17)"
-            description="Persönliche Daten werden anonymisiert (Name → 'Gelöscht / GELÖSCHT-Personalnummer', E-Mail anonymisiert). Die Personalnummer bleibt für die Lohnunterlagen erhalten (§ 41 EStG, § 147 AO). Ist kein Austrittsdatum eingetragen, wird das heutige Datum als Austrittsdatum gesetzt; Abwesenheiten nach dem Austritt werden storniert. Zeiterfassungen, Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist (10 Jahre nach § 147 AO) erhalten."
-            animate
-          >
-            {#snippet actions()}
-              <button class="btn btn-danger" onclick={() => (anonConfirmOpen = true)}>
-                Anonymisieren
-              </button>
-            {/snippet}
-          </DangerZone>
-
-          <DangerZone
-            title="Endgültig löschen"
-            description="Datensatz permanent entfernen. Nur möglich nach Anonymisierung und Ablauf der gesetzlichen Aufbewahrungsfrist (§ 147 AO, 10 Jahre)."
-            animate
-          >
-            {#snippet actions()}
-              {#if hardDeleteError}
-                <div class="callout error">{hardDeleteError}</div>
-              {/if}
-              {#if hardDeleteRetentionExpiresAt}
-                <div class="callout">
-                  <b>Aufbewahrungsfrist noch nicht abgelaufen.</b>
-                  Die gesetzliche Aufbewahrungsfrist (<span translate="no">§ 147 AO</span>, 10
-                  Jahre) läuft ab am:
-                  <strong>
-                    {new Date(hardDeleteRetentionExpiresAt).toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                    })}
-                  </strong>.
-                </div>
-                <label class="force-delete-checkbox">
-                  <input type="checkbox" bind:checked={hardDeleteForce} />
-                  Ich bestätige, dass ich diese Aufbewahrungsfrist kenne und den Datensatz trotzdem unwiderruflich
-                  löschen möchte (z. B. Testdaten). Diese Aktion wird im Audit-Log protokolliert.
-                </label>
-              {/if}
-              <button
-                class="btn btn-danger"
-                onclick={() => (hardDelConfirmOpen = true)}
-                disabled={hardDeleteRetentionExpiresAt !== null && !hardDeleteForce}
-              >
-                Endgültig löschen
-              </button>
-            {/snippet}
-          </DangerZone>
+        {#if employee}
+          <ZugangTab
+            {employee}
+            {rights}
+            {canReadRoles}
+            salons={$salonContext.salons}
+            salonsLoaded={$salonContext.loaded}
+            onRemoved={() => goto("/admin/employees")}
+          />
         {/if}
       {/if}
     {/snippet}
   </PageTabs>
-
-  <!-- ── Confirm Dialogs ─────────────────────────────────────────────────────── -->
-  <ConfirmDialog
-    bind:open={anonConfirmOpen}
-    title="Mitarbeiter anonymisieren?"
-    description="Möchtest du diese Person wirklich anonymisieren? Persönliche Daten (Name, E-Mail, Notizen) werden gemäß DSGVO gelöscht; die Personalnummer bleibt erhalten. Ein leeres Austrittsdatum wird auf heute gesetzt, Abwesenheiten nach dem Austritt werden storniert. Zeiteinträge, Urlaubsanträge und Salden bleiben erhalten."
-    confirmLabel="Anonymisieren"
-    danger
-    onConfirm={anonymize}
-  />
-
-  <ConfirmDialog
-    bind:open={hardDelConfirmOpen}
-    title="Datensatz endgültig löschen?"
-    description="Den anonymisierten Datensatz endgültig und unwiderruflich löschen? Diese Aktion entfernt alle verbleibenden Daten dauerhaft (DSGVO Art. 17)."
-    confirmLabel="Endgültig löschen"
-    danger
-    onConfirm={hardDelete}
-  />
 
   <!-- Phase 103 plan 04 — 3-step retroactive BS-pattern wizard, replacing the plan-01
        tracer's single-step confirm dialog. Mounted only once a preview is loaded, so
@@ -3593,13 +3159,6 @@
 
   .page-error {
     color: var(--bad);
-  }
-
-  /* ── Form grid ──────────────────────────────────────────────────────────── */
-  .form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--s-4);
   }
 
   .form-group {
@@ -3854,55 +3413,6 @@
     height: 16px;
   }
 
-  /* ── Force delete checkbox ──────────────────────────────────────────────── */
-  .force-delete-checkbox {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--s-2);
-    font-size: 13px;
-    color: var(--text);
-    cursor: pointer;
-    line-height: 1.5;
-  }
-
-  /* ── Vacation summary row ───────────────────────────────────────────────── */
-  .vac-summary-row {
-    display: flex;
-    gap: var(--s-6);
-    margin-top: var(--s-4);
-    padding-top: var(--s-4);
-    border-top: 1px solid var(--line);
-  }
-
-  .vac-stat {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-1);
-  }
-
-  .vac-label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-2);
-    font-weight: 600;
-  }
-
-  .vac-value {
-    font-size: 24px;
-    font-weight: 700;
-    font-family: var(--font-ui);
-    color: var(--text);
-  }
-
-  /* ── Berechtigungen: field value display ────────────────────────────────── */
-  .field-value {
-    font-size: 14px;
-    color: var(--text);
-    margin: 0;
-    padding: var(--s-2) 0;
-  }
-
   .badge {
     display: inline-flex;
     align-items: center;
@@ -3910,18 +3420,6 @@
     border-radius: var(--r-control);
     font-size: 12px;
     font-weight: 600;
-  }
-
-  .badge-ok {
-    background: var(--ok-soft);
-    color: var(--ok);
-    border: 1px solid var(--ok);
-  }
-
-  .badge-muted {
-    background: var(--sunk);
-    color: var(--text-2);
-    border: 1px solid var(--line);
   }
 
   /* ── Orphan shifts overlay (inline, not modal) ──────────────────────────── */

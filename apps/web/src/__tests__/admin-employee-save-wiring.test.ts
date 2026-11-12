@@ -38,6 +38,16 @@ const PERSON_TAB = readRouteFile(
   "src/lib/components/employees/detail/PersonTab.svelte",
 );
 
+// The Urlaub tab (plan 854-20) owns the vacation form: one group, one snapshot, one PUT.
+const URLAUB_TAB = readRouteFile(
+  "../lib/components/employees/detail/UrlaubTab.svelte",
+  "src/lib/components/employees/detail/UrlaubTab.svelte",
+);
+const URLAUB_MODEL = readRouteFile(
+  "../lib/employees/urlaub-form.ts",
+  "src/lib/employees/urlaub-form.ts",
+);
+
 // The plan's reference slicer (`vacation-summary.test.ts:47-55`) finds a function's end by
 // searching for the next "\n  }" (a two-space-indented closing brace) after the marker. That
 // heuristic breaks on this page: several save functions take an optional object-typed
@@ -108,12 +118,17 @@ describe("N-02 — every save path on this page is already button-gated", () => 
     "savePhorestPuffer",
     "saveBsSlotEmp",
     "savePatterns",
-    "saveVacation",
   ] as const;
 
   it.each(BUTTON_GATED)("%s is wired via onclick=, never onchange=", (name) => {
     expect(PAGE).toContain(`onclick={${name}}`);
     expect(PAGE).not.toContain(`onchange={${name}}`);
+  });
+
+  it("the Urlaub tab saves through its SaveBar, never through a change handler", () => {
+    expect(URLAUB_TAB).toContain("onSave={saveVacation}");
+    expect(URLAUB_TAB).not.toContain("onchange={saveVacation}");
+    expect(fnBody("async function saveVacation", URLAUB_TAB)).toContain("vacationBody");
   });
 
   it("the Person tab groups save through their SaveBar, never through a change handler", () => {
@@ -160,7 +175,6 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     "phorestPufferDirty",
     "patternsDirty",
     "bsSlotEmpDirty",
-    "vacationDirty",
   ] as const;
 
   it.each(FLAGS)("%s is derived from a snapshot", (name) => {
@@ -169,14 +183,17 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
 
   // Issue #580 removed the footer of the Berechtigungen tab: role assignments save in their own
   // dialog (docs/ADMIN_STRUCTURE.md §3.2.1). Since #854 the Person tab owns its three groups and
-  // reports their change count (`bind:changes`), so six footer Sections remain on this page.
-  it("all six footer Sections receive a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(6);
+  // reports their change count (`bind:changes`), as does the Urlaub tab, so five footer Sections
+  // remain on this page.
+  it("all five footer Sections receive a dirty prop", () => {
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(5);
   });
 
-  it("the Person tab's unsaved changes are summed into the one registration", () => {
+  it("the Person and Urlaub tabs' unsaved changes are summed into the one registration", () => {
     expect(PAGE).toContain("bind:changes={personChanges}");
+    expect(PAGE).toContain("bind:changes={vacationChanges}");
     expect(PAGE).toMatch(/let anyUnsaved = \$derived\(\s*personChanges > 0/);
+    expect(PAGE).toContain("vacationChanges > 0");
   });
 
   it("registers under its own id and de-registers on unmount", () => {
@@ -194,7 +211,7 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
   });
 
   it("WR-01: snapshotsReady is set only after the last baseline snapshot, inside the try", () => {
-    const iVacation = PAGE.indexOf("vacationSnapshot = snap(vacYear");
+    const iVacation = PAGE.indexOf("bsSlotEmpSnapshot = snap(");
     const iReady = PAGE.indexOf("snapshotsReady = true");
     const iCatch = PAGE.indexOf('loadError = "Fehler beim Laden des Mitarbeiters."');
     expect(iVacation).toBeGreaterThan(-1);
@@ -241,9 +258,10 @@ describe("Issue #435 — server-driven vacation values", () => {
     expect(PAGE).not.toMatch(/30\s*\*\s*eWorkingDays/);
   });
 
-  it("eVacSuggestion is derived from the server's regularDays, not a local formula", () => {
-    const line = PAGE.split("\n").find((l) => l.includes("let eVacSuggestion = $derived("));
-    expect(line, "eVacSuggestion derivation not found").toBeDefined();
+  it("the suggestion is derived from the server's regularDays, not a local formula", () => {
+    expect(URLAUB_TAB).not.toMatch(/30\s*\*\s*eWorkingDays/);
+    const line = URLAUB_TAB.split("\n").find((l) => l.includes("const suggestion = $derived("));
+    expect(line, "suggestion derivation not found").toBeDefined();
     expect(line).toContain("regularDays");
   });
 
@@ -260,62 +278,60 @@ describe("Issue #435 — server-driven vacation values", () => {
 });
 
 describe("Issue #451 D-09 — carry-over reason select/note stay button-gated and snapshotted", () => {
+  /** The element opened by `<tag` after the FormField labelled `label`, up to its close. */
+  function controlAfter(label: string, tag: "select" | "textarea"): string | undefined {
+    const from = URLAUB_TAB.indexOf(`label="${label}"`);
+    if (from < 0) return undefined;
+    return URLAUB_TAB.slice(from).match(new RegExp(`<${tag}\\b[\\s\\S]*?</${tag}>`))?.[0];
+  }
+
   it("the Übertragsgrund select carries no onchange=/oninput= handler", () => {
-    const tag = PAGE.match(/<select\s+id="e-vac-reason"[\s\S]*?<\/select>/)?.[0];
-    expect(tag, "#e-vac-reason select not found").toBeDefined();
+    const tag = controlAfter("Übertragsgrund", "select");
+    expect(tag, "Übertragsgrund select not found").toBeDefined();
     expect(tag).not.toMatch(/on(?:change|input)=\{/);
   });
 
   it("the Notiz zum Übertrag textarea carries no onchange=/oninput= handler", () => {
-    const tag = PAGE.match(/<textarea\s+id="e-vac-reason-note"[\s\S]*?<\/textarea>/)?.[0];
-    expect(tag, "#e-vac-reason-note textarea not found").toBeDefined();
+    const tag = controlAfter("Notiz zum Übertrag", "textarea");
+    expect(tag, "Notiz textarea not found").toBeDefined();
     expect(tag).not.toMatch(/on(?:change|input)=\{/);
   });
 
-  // The vacation section snapshots eVacReason/eVacReasonNote via a SECOND snap() call
-  // (vacationReasonSnapshot) rather than appending them to the existing `vacationSnapshot =
-  // snap(vacYear, ...)` call — appending would push that line past the 100-col print width and
-  // Prettier would wrap it, breaking the WR-01 pin above (`vacationSnapshot = snap(vacYear`).
-  // All three sites (onMount baseline, saveVacation re-take, vacationDirty) must carry BOTH
-  // snap() calls.
-  it("the onMount baseline takes both vacation snapshots", () => {
-    const idx = PAGE.indexOf(
-      "vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);\n",
-    );
-    expect(idx, "onMount vacationSnapshot baseline not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 600);
-    expect(slice).toContain("vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);");
+  // The vacation group counts reason and note against its snapshot together with the amounts, and
+  // the body carries them change-only against what the server last confirmed (#445 D-16).
+  it("the change count covers the reason and the note", () => {
+    expect(URLAUB_TAB).toContain("countChanges(snapshot, values, VACATION_KEYS)");
+    const keys = URLAUB_MODEL.slice(URLAUB_MODEL.indexOf("export const VACATION_KEYS"));
+    const list = keys.slice(0, keys.indexOf("]"));
+    expect(list).toContain('"carryOverReason"');
+    expect(list).toContain('"carryOverNote"');
   });
 
-  it("saveVacation re-takes both vacation snapshots on the success path", () => {
-    const idx = PAGE.indexOf("async function saveVacation()");
-    expect(idx, "saveVacation not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 1200);
-    expect(slice).toContain(
-      "vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);",
-    );
-    expect(slice).toContain("vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);");
+  it("saveVacation re-takes the snapshot and the confirmed pair only on the success path", () => {
+    const body = fnBody("async function saveVacation", URLAUB_TAB);
+    const put = body.indexOf("api.put(");
+    expect(put).toBeGreaterThan(-1);
+    for (const retake of ["loadedReason = values.carryOverReason", "snapshot = { ...values }"]) {
+      expect(body.indexOf(retake), retake).toBeGreaterThan(put);
+    }
+    expect(body.indexOf("finally")).toBeGreaterThan(body.indexOf("snapshot = { ...values }"));
   });
 
-  it("vacationDirty compares against both snapshots", () => {
-    const idx = PAGE.indexOf("let vacationDirty = $derived(");
-    expect(idx, "vacationDirty derivation not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 300);
-    expect(slice).toContain("vacationSnapshot");
-    expect(slice).toContain("vacationReasonSnapshot");
-    expect(slice).toContain("eVacReason");
-    expect(slice).toContain("eVacReasonNote");
+  it("the body is built change-only against the confirmed pair", () => {
+    expect(fnBody("async function saveVacation", URLAUB_TAB)).toContain(
+      "{ reason: loadedReason, note: loadedNote }",
+    );
+    expect(URLAUB_MODEL).toContain("carryOverReasonPatch(loaded,");
   });
 
   it("a legacy stored value is shown read-only via a disabled option, never silently dropped", () => {
-    expect(PAGE).toContain("disabled selected");
-    expect(PAGE).toContain("carryOverReasonLabel(eVacReason)");
+    expect(URLAUB_TAB).toContain("disabled selected");
+    expect(URLAUB_TAB).toContain("carryOverReasonLabel(values.carryOverReason)");
   });
 
-  it("the Notiz textarea shows the carryOverReasonHint below it", () => {
-    const idx = PAGE.indexOf('id="e-vac-reason-note"');
-    expect(idx, "#e-vac-reason-note not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 400);
-    expect(slice).toContain("eVacReasonHint");
+  it("the Notiz field shows the carry-over hint with it", () => {
+    const idx = URLAUB_TAB.indexOf('label="Notiz zum Übertrag"');
+    expect(idx, "Notiz field not found").toBeGreaterThan(-1);
+    expect(URLAUB_TAB.slice(idx, idx + 300)).toContain("hint");
   });
 });
