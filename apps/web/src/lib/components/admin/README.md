@@ -306,7 +306,7 @@ Usage (detail mode with tabs):
 </ListDetail>
 ```
 
-List-mode consumer with a `<Modal>` form: `admin/leave-limits` (Urlaubsgrenzen & Sperren, Issue #836).
+No route page uses list mode any more: its last consumer, `admin/leave-limits` (Issue #836), became the Urlaubsgrenzen & Sperren tab of Regeln › Abwesenheiten (`UrlaubsgrenzenPanel`, Issue #854).
 
 ---
 

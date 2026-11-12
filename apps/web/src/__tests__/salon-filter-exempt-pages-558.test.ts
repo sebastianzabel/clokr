@@ -88,8 +88,9 @@ const EXEMPT_PAGES: ReadonlyArray<{
       "work queue that follows the caller's shift:read reach on the server since #645 (all three buckets); a header salon filter is not its fix, the page lists every conflict the caller may see",
   },
   {
-    page: "admin/leave-limits",
-    file: "(app)/admin/leave-limits/+page.svelte",
+    // The page left its route file with #854 (plan 854-13): it is the Urlaubsgrenzen tab of Abwesenheiten.
+    page: "UrlaubsgrenzenPanel",
+    file: "../lib/components/admin/abwesenheiten/UrlaubsgrenzenPanel.svelte",
     loads: "fetchLeaveLimitRules",
     reason:
       "configuration page with its own salon selection; the header salon is not a filter here",
