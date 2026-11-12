@@ -110,9 +110,9 @@ describe("wiring (source pins)", () => {
     expect(otp).not.toContain('goto("/dashboard")');
   });
 
-  it("both forced-logout redirects of the API client keep the target", () => {
+  it("all three forced-logout redirects of the API client (JSON, upload, file download) keep the target", () => {
     const client = read("lib/api/client.ts");
-    expect(client.match(/loginPathWithNext\(window\.location\)/g)).toHaveLength(2);
+    expect(client.match(/loginPathWithNext\(window\.location\)/g)).toHaveLength(3);
     expect(client).not.toContain('window.location.href = "/login"');
   });
 });

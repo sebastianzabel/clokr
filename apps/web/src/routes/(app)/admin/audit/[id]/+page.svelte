@@ -91,23 +91,28 @@
 </svelte:head>
 
 <div data-testid="admin-audit-detail-page" style="display: contents;">
+  <Breadcrumb
+    crumbs={[
+      { label: pageLabel("/admin/audit"), href: "/admin/audit" },
+      { label: entry ? `Eintrag vom ${fmtDate(entry.createdAt)}` : "Eintrag" },
+    ]}
+  />
   {#if loading}
     <Skeleton shape="card" lines={4} />
   {:else if loadError || !entry}
-    <Breadcrumb
-      crumbs={[{ label: pageLabel("/admin/audit"), href: backHref }, { label: "Eintrag" }]}
-    />
     <div role="alert">
       <Note tone="bad">{loadError || "Dieser Protokolleintrag wurde nicht gefunden."}</Note>
     </div>
+    <a class="btn btn-secondary" href={backHref}>Zurück zum Protokoll</a>
   {:else}
-    <Breadcrumb
-      crumbs={[
-        { label: pageLabel("/admin/audit"), href: backHref },
-        { label: `Eintrag vom ${fmtDate(entry.createdAt)}` },
-      ]}
-    />
-    <PageHead {title} sub="Was in diesem Eintrag festgehalten wurde." />
+    <PageHead {title} sub="Was in diesem Eintrag festgehalten wurde.">
+      {#snippet actions()}
+        <!-- The crumb leads to the plain list; this link keeps the filters the entry was opened from. -->
+        <a class="btn btn-secondary" href={backHref} data-testid="admin-audit-back"
+          >Zurück zum Protokoll</a
+        >
+      {/snippet}
+    </PageHead>
 
     <section class="settings-group" aria-labelledby="audit-who-title">
       <h2 class="settings-group-title" id="audit-who-title">Wer und wann</h2>
