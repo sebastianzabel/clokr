@@ -637,7 +637,13 @@ test.describe("Issue #612 — Berichtsseite: Zeitraum im Browser", () => {
     await expect(monthSelect).toBeVisible();
     await expect(monthSelect).toHaveValue(ymKey(now));
     await expect(monthSelect.locator("option")).toHaveCount(3);
-    await expect(dialog.getByText("DATEV-Export", { exact: true })).toBeVisible();
+    // Issue #854 (D-854-22): no DATEV download here - the row links to Daten › Export with the
+    // chosen month preselected.
+    await expect(dialog.getByRole("button", { name: /DATEV/ })).toHaveCount(0);
+    await expect(dialog.getByRole("link", { name: "Zu Daten › Export" })).toHaveAttribute(
+      "href",
+      `/verwalten/daten/export?year=${now.year}&month=${now.month}`,
+    );
   });
 });
 

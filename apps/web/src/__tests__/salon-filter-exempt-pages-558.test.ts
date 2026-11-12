@@ -146,13 +146,6 @@ const EXEMPT_BLOCKS: ReadonlyArray<{
   reason: string;
 }> = [
   {
-    block: "DATEV download",
-    fn: "downloadDatev",
-    loads: "/reports/datev?month=",
-    reason:
-      "the payroll file must stay complete: a salon-narrowed DATEV would silently drop people from payroll (OD-2, § 41 EStG)",
-  },
-  {
     block: "per-person DATEV download",
     fn: "downloadEmployeeDatev",
     loads: "/reports/datev/employee",
@@ -174,10 +167,20 @@ describe("Issue #542 — blocks of Berichte that stay unfiltered", () => {
     // Issue #612: the page shrank when the attendance list and the export cards moved out (measured
     // 47 618 bytes after 612-06); the floor keeps the check non-vacuous.
     expect(REPORTS_PAGE.length).toBeGreaterThan(30_000);
-    expect(EXEMPT_BLOCKS.length).toBeGreaterThanOrEqual(3);
+    expect(EXEMPT_BLOCKS.length).toBeGreaterThanOrEqual(2);
     for (const { fn } of EXEMPT_BLOCKS) {
       expect(reportsFunctionBody(fn).length, `function ${fn} not found`).toBeGreaterThan(100);
     }
+  });
+
+  // Issue #854 (D-854-22): the tenant DATEV download left this page (Daten › Export is the one place,
+  // where the payroll file stays complete and is never salon-narrowed, OD-2, § 41 EStG). The only
+  // DATEV route left here is the per-person file of the drill-down.
+  it("the page starts no tenant DATEV download; its only DATEV route is the per-person file", () => {
+    expect(reportsFunctionBody("downloadDatev")).toBe("");
+    expect(REPORTS_PAGE).not.toContain("/reports/datev?");
+    expect((REPORTS_PAGE.match(/\/reports\/datev/g) ?? []).length).toBe(1);
+    expect(REPORTS_PAGE).toContain("/reports/datev/employee");
   });
 
   for (const { block, fn, loads, reason } of EXEMPT_BLOCKS) {

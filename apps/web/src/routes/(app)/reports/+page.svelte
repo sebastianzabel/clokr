@@ -215,8 +215,9 @@
   // answer and the Monatsexport and CSV downloads. The page decides only through `salonPageFilter`
   // (never the store's raw selection); the loaders read `pageSalonId` when they are called and one
   // effect below reruns the two list loads on a change. Presentation only: the API validates every
-  // `salonId` and answers one 404 for every rejection cause. The DATEV file, the per-person
-  // documents and the carry-over notice never send a salon (pinned with their reasons in
+  // `salonId` and answers one 404 for every rejection cause. This page starts no tenant DATEV
+  // download any more (Daten › Export is the one place, Issue #854), and the per-person documents
+  // and the carry-over notice never send a salon (pinned with their reasons in
   // `salon-filter-exempt-pages-558.test.ts`), and neither does the § 9 hint of the Monatsexport:
   // it comes from `/reports/monthly`, whose person rule is not the export's.
   const contextLoaded = $derived($salonContext.loaded);
@@ -548,31 +549,6 @@
     }
   }
 
-  // The payroll file of ONE month: never narrowed by the header salon (OD-2, § 41 EStG). A failure
-  // is thrown to the export dialog, which reports it.
-  async function downloadDatev(year: number, month: number) {
-    const { authStore: authSt } = await import("$stores/auth");
-    const { get } = await import("svelte/store");
-    const auth = get(authSt);
-
-    const res = await fetch(`/api/v1/reports/datev?month=${month}&year=${year}`, {
-      headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
-    });
-
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error((data as { error?: string }).error ?? "Download fehlgeschlagen");
-    }
-
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `DATEV_${year}_${String(month).padStart(2, "0")}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   async function downloadPdf(url: string, filename: string) {
     const { authStore: authSt } = await import("$stores/auth");
     const { get } = await import("svelte/store");
@@ -857,7 +833,6 @@
       salonRejected={exportSalonRejected}
       loadSection9Note={loadExportSection9Note}
       onMonthlyExport={downloadMonthlyExport}
-      onDatev={downloadDatev}
       onCsv={downloadPeriodCsv}
       onAbsenceCsv={downloadAbsencesCsv}
       onError={(message) => toasts.error(message)}

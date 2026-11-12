@@ -140,6 +140,8 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/reports/PeriodBar.svelte",
   "lib/components/reports/PeriodRangeDialog.svelte",
   "lib/components/reports/TodayAttendance.svelte",
+  // Export dialog of Berichte: Dialog + List, no DATEV download (links to Daten > Export).
+  "lib/components/reports/ExportDialog.svelte",
 ];
 
 export interface VerwaltenFile {

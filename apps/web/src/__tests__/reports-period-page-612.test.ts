@@ -473,11 +473,10 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     expect(TEMPLATE).toContain("bind:open={exportOpen}");
   });
 
-  it("wires the four downloads, the § 9 loader and the error toast", () => {
+  it("wires the three downloads, the § 9 loader and the error toast (no DATEV, Issue #854)", () => {
     for (const wiring of [
       "loadSection9Note={loadExportSection9Note}",
       "onMonthlyExport={downloadMonthlyExport}",
-      "onDatev={downloadDatev}",
       "onCsv={downloadPeriodCsv}",
       "onAbsenceCsv={downloadAbsencesCsv}", // Issue #713
       "onError={(message) => toasts.error(message)}",
@@ -486,11 +485,12 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     }
   });
 
-  it("Monatsexport and CSV carry the salon, DATEV never does", () => {
+  it("Monatsexport and CSV carry the salon; the page starts no tenant DATEV download (Issue #854)", () => {
     expect(functionBody("downloadMonthlyExport")).toContain("withSalonId(");
     expect(functionBody("downloadPeriodCsv")).toContain("pageSalonId");
-    expect(functionBody("downloadDatev")).not.toContain("pageSalonId");
-    expect(functionBody("downloadDatev")).not.toContain("withSalonId(");
+    expect(SCRIPT).not.toContain("function downloadDatev(");
+    expect(SCRIPT).not.toContain("/reports/datev?");
+    expect(TEMPLATE).not.toContain("onDatev");
   });
 
   // Issue #713 (D-11): the Abwesenheiten file asks the same question as the table and carries the
@@ -506,7 +506,6 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     expect(body).toContain("isSalonFilterRejected(e)");
     expect(body).toContain("exportSalonRejected = true;");
     expect(body).toContain("throw e;");
-    expect(functionBody("downloadDatev")).not.toContain("pageSalonId");
   });
 
   it("the CSV is saved as Zeiten-und-Konten_<from>_<to>.csv", () => {
