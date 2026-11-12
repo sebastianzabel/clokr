@@ -1,9 +1,11 @@
 # Admin Layout Primitives
 
-> **Status: ACTIVE (Phase 50, v1.6.1).**
-> These five components are the canonical page-shell and section-card primitives for all admin routes.
-> Consuming a route MUST use one of the three page shells (`SectionStack`, `ListDetail`, or `ToolPage`)
-> instead of building a layout by hand.
+> **Status: LEGACY SHELLS (since Issue #854).**
+> `Section`, `SectionStack`, `ListDetail` and `ToolPage` are no longer used by any Verwalten page. The
+> Verwalten area is built from the #843 blocks (`PageHead`, `PageTabs`, `DataTable`, `SettingsGroup`,
+> `SaveBar`, `Dialog` …) and `verwalten-pages-blocks-854.test.ts` fails on an import of these shells there.
+> They remain only for the operator console (`/betreiber`), the personal `/settings` page and the
+> availability pages of #853, which migrate with their own tickets. Do not use them for new pages.
 
 This directory provides the **enforceable contract** for admin-area layouts. If an admin route builds
 raw sections, headings, or tab strips by hand it bypasses this spec and will fail the lint gate
@@ -58,12 +60,11 @@ interface Props {
 `animate` is inherited from the `admin-animate` Svelte context set by the parent shell. Pass an
 explicit `animate` prop to override the context.
 
-**`footer` blast radius (Phase 109, N-03):** the `footer` snippet has **14** consumers across the
-admin area, not the smaller count an earlier count assumed — any change to `Section`'s footer
-markup (such as the `dirty` prop above) affects all of them: `admin/audit`, `admin/employees`,
-`admin/employees/[id]`, `admin/export`, `admin/import`, `admin/integrations`, `admin/month-close`,
-`admin/phorest`, `admin/shifts`, `admin/shutdowns`, `admin/shutdowns/[id]`, `admin/system`,
-`admin/vacation`, `inbox`.
+**`footer` blast radius (Phase 109, N-03; updated for #854):** after #854 the `footer` snippet and the
+`dirty` prop of `Section` are consumed only by the operator console, the personal `/settings` page and the
+availability pages (`admin/availability`, `admin/availability/[employeeId]`) - the Verwalten pages
+(`admin/audit`, `admin/employees`, `admin/export`, `admin/import`, `admin/phorest`, `admin/system`,
+`admin/vacation`, `admin/shutdowns`, …) use `SettingsGroup` + `SaveBar` instead.
 
 Usage:
 

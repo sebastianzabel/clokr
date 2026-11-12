@@ -967,6 +967,8 @@ Read these before modifying any page in `apps/web` — they are checked in, unli
 | `apps/web/src/tailwind-theme.css` | Tailwind 4 as token pipeline only — the roles of `tokens.css` mapped as `var(--<role>)`; the ONE named `lint:tokens` carve-out for the `--color-` / `--radius-` prefixes (D-843-13) |
 | `apps/web/scripts/lint-ui-classes-route-ratchet.json` | Page-own patterns (filter bar, period control, KPI card, data table) in routes and area components: falling-only, every entry with its page ticket (#845–#854), null only with a written reason (Issue #843) |
 | `apps/web/scripts/lint-no-alert.mjs` | `lint:no-alert`: no `alert(` / `confirm(` / `prompt(` in `apps/web/src` outside tests (Issue #843) |
+| `apps/web/src/lib/settings/settings-pages.ts` | The one place a tenant setting is assigned to a Verwalten page and section — keys, endpoint, rendering file and permission alternatives per section (Issue #854); proof `settings-pages-854.test.ts`, which also carries the #878 own-fields rule |
+| `packages/types/audit-labels.json` | The one audit vocabulary (German action and entity labels) shared by the web list and the API CSV export (Issue #854); proof `labels-854.test.ts` |
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
 
