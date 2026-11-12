@@ -218,7 +218,9 @@ describe("excluded pages register nothing", () => {
 // their pages here.
 const VERWALTEN_ROOT = resolve(process.cwd(), "src/routes/(app)/verwalten");
 
-const VERWALTEN_REGISTERED: Record<string, string> = {};
+const VERWALTEN_REGISTERED: Record<string, string> = {
+  "regeln/arbeitszeit/+page.svelte": "regeln-arbeitszeit",
+};
 
 const VERWALTEN_EXCLUDED: Record<string, string> = {
   "+page.svelte": "hub page, no form state",

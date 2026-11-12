@@ -42,13 +42,8 @@
     defaultVacationDays: number;
     carryOverDeadlineDay: number;
     carryOverDeadlineMonth: number;
-    // ArbZG § 4 — Auto-Pausen (Pflege hier, nicht mehr auf /admin/vacation)
-    autoBreakEnabled?: boolean;
-    defaultBreakStart?: string | null;
-    // Phase 64/65 — Konfigurierbare Pausendauer (ArbZG §4 Floor: 30/45 Min)
-    defaultBreakOver6h?: number;
-    defaultBreakOver9h?: number;
-    // Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01)
+    // Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01); the Pausen themselves are saved on
+    // Regeln › Arbeitszeit & Verträge (Issue #854)
     enforceBreakConfirmation?: boolean;
     blockMonthCloseOnUnconfirmedBreak?: boolean;
     // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
@@ -159,20 +154,6 @@
       setTimeout(() => (shiftHoursModeMsg = ""), 2500);
     }
   }
-
-  // ArbZG § 4 — Auto-Pausen (moved from /admin/vacation in v1.6.5)
-  let autoBreakEnabled = $state(false);
-  let defaultBreakStart = $state("12:00");
-  let autoBreakSaving = $state(false);
-  let autoBreakSaved = $state(false);
-  let autoBreakError = $state("");
-
-  // Phase 65 — Tenant-Default Pausendauer (BREAK-05)
-  let defaultBreakOver6h = $state(30);
-  let defaultBreakOver9h = $state(45);
-  let breakDefaultsSaving = $state(false);
-  let breakDefaultsSaved = $state(false);
-  let breakDefaultsError = $state("");
 
   // Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01)
   let enforceBreakConfirmation = $state(false);
@@ -440,12 +421,6 @@
     snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays) !== coreDefaultsSnapshot,
   );
 
-  // Only the two number fields — autoBreakEnabled / defaultBreakStart are instant (D-03).
-  let breakDefaultsSnapshot = $state("");
-  let breakDefaultsDirty = $derived(
-    snap(defaultBreakOver6h, defaultBreakOver9h) !== breakDefaultsSnapshot,
-  );
-
   let retroWindowSnapshot = $state("");
   let retroWindowDirty = $derived(snap(retroEntryWindowDays) !== retroWindowSnapshot);
 
@@ -497,7 +472,6 @@
     companyDirty ||
       shiftHoursModeDirty ||
       coreDefaultsDirty ||
-      breakDefaultsDirty ||
       retroWindowDirty ||
       bsSlotDirty ||
       sessionDirty ||
@@ -540,13 +514,7 @@
       gTenantName = cfg.tenantName ?? "";
       gTimezone = cfg.timezone ?? "Europe/Berlin";
       settingsLoaded = true;
-      // ArbZG § 4 — Auto-Pausen (moved from /admin/vacation in v1.6.5)
-      autoBreakEnabled = cfg.autoBreakEnabled ?? false;
-      defaultBreakStart = cfg.defaultBreakStart ?? "12:00";
-      // Phase 65 — Hydrate tenant break defaults (defaults match Phase 64 BREAK-08 = ArbZG floor)
-      defaultBreakOver6h = cfg.defaultBreakOver6h ?? 30;
-      defaultBreakOver9h = cfg.defaultBreakOver9h ?? 45;
-      // Phase 93.06 — v1.9.3 Pausen-Bestätigung flags (default off)
+      // Phase 93.06 — Pausen-Bestätigung flag, read-only here (saved on Regeln › Arbeitszeit & Verträge)
       enforceBreakConfirmation = cfg.enforceBreakConfirmation ?? false;
       blockMonthCloseOnUnconfirmedBreak = cfg.blockMonthCloseOnUnconfirmedBreak ?? false;
       // Phase 47.3 — Verfügbarkeits-System Feature-Toggle (default on)
@@ -643,7 +611,6 @@
       companySnapshot = snap(gTenantName, gFederalState, gTimezone);
       shiftHoursModeSnapshot = snap(shiftStoreHoursMode);
       coreDefaultsSnapshot = snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays);
-      breakDefaultsSnapshot = snap(defaultBreakOver6h, defaultBreakOver9h);
       retroWindowSnapshot = snap(retroEntryWindowDays);
       bsSlotSnapshot = snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek);
       sessionSnapshot = snap(
@@ -703,132 +670,12 @@
 
   // saveDatev moved to /admin/export (Phase 58).
 
-  // ArbZG § 4 — Auto-Pausen-Toggle (moved from /admin/vacation in v1.6.5).
-  // When enabled, the time-entries pipeline deducts 30min (>6h) / 45min (>9h)
-  // breaks on clock-out (apps/api/src/contexts/time-tracking/api/time-entries.ts:400,641,909).
-  async function toggleAutoBreak() {
-    // bind:checked has already written the new value into the state, so the DOM and the state
-    // agree and an explicit revert actually lands (WR-02). This drives the § 4 ArbZG
-    // auto-deduction, so the checkbox must never outlive a failed save. Error feedback stays the
-    // section's own inline banner (autoBreakError, rendered above the toggle).
-    const previous = !autoBreakEnabled;
-    if (!settingsLoaded) {
-      autoBreakEnabled = previous;
-      autoBreakError = "Einstellungen sind noch nicht geladen.";
-      return;
-    }
-    autoBreakSaving = true;
-    autoBreakError = "";
-    autoBreakSaved = false;
-    try {
-      await api.put("/settings/work", {
-        autoBreakEnabled,
-        defaultBreakStart: autoBreakEnabled ? defaultBreakStart : null,
-      });
-      autoBreakSaved = true;
-      setTimeout(() => (autoBreakSaved = false), 2500);
-    } catch (e: unknown) {
-      autoBreakEnabled = previous;
-      autoBreakError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      autoBreakSaving = false;
-    }
-  }
-
-  async function saveDefaultBreakStart() {
-    if (!settingsLoaded) return;
-    if (!autoBreakEnabled) return; // No-op when toggle is off — field would be cleared anyway.
-    if (!/^\d{2}:\d{2}$/.test(defaultBreakStart)) {
-      autoBreakError = "Format HH:MM erwartet.";
-      return;
-    }
-    autoBreakSaving = true;
-    autoBreakError = "";
-    autoBreakSaved = false;
-    try {
-      await api.put("/settings/work", {
-        autoBreakEnabled: true,
-        defaultBreakStart,
-      });
-      autoBreakSaved = true;
-      setTimeout(() => (autoBreakSaved = false), 2500);
-    } catch (e: unknown) {
-      autoBreakError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      autoBreakSaving = false;
-    }
-  }
-
-  // Phase 65 — Persist Tenant-Default Pausendauer (BREAK-05, mirrors saveDefaultBreakStart pattern)
-  async function saveBreakDefaults() {
-    if (!settingsLoaded) return;
-    // Client-side native range check; server is authoritative (Phase 64 D-07)
-    if (
-      !Number.isFinite(defaultBreakOver6h) ||
-      defaultBreakOver6h < 30 ||
-      defaultBreakOver6h > 120
-    ) {
-      breakDefaultsError = "Pause >6h muss zwischen 30 und 120 Minuten liegen.";
-      return;
-    }
-    if (
-      !Number.isFinite(defaultBreakOver9h) ||
-      defaultBreakOver9h < 45 ||
-      defaultBreakOver9h > 180
-    ) {
-      breakDefaultsError = "Pause >9h muss zwischen 45 und 180 Minuten liegen.";
-      return;
-    }
-    breakDefaultsSaving = true;
-    breakDefaultsError = "";
-    breakDefaultsSaved = false;
-    try {
-      await api.put("/settings/work", {
-        defaultBreakOver6h: Math.trunc(defaultBreakOver6h),
-        defaultBreakOver9h: Math.trunc(defaultBreakOver9h),
-      });
-      breakDefaultsSaved = true;
-      breakDefaultsSnapshot = snap(defaultBreakOver6h, defaultBreakOver9h); // Phase 109 — clean again
-      setTimeout(() => (breakDefaultsSaved = false), 2500);
-    } catch (e: unknown) {
-      // Server message is German + user-friendly (Phase 64 D-07) — surface verbatim
-      breakDefaultsError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      breakDefaultsSaving = false;
-    }
-  }
-
-  // Phase 93.06 — v1.9.3 Pausen-Bestätigung toggles (BREAK-05 / BREAK-01).
-  // Each toggle sends only its own flag (Issue #878): sending the other one from the page state
-  // could overwrite a change saved in the meantime. blockMonthCloseOnUnconfirmedBreak is only
-  // meaningful while enforceBreakConfirmation is on (UI disables toggle #2).
-  async function toggleEnforceBreakConfirmation() {
-    // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
-    const previous = !enforceBreakConfirmation;
-    if (!settingsLoaded) {
-      enforceBreakConfirmation = previous;
-      breakConfirmError = "Einstellungen sind noch nicht geladen.";
-      return;
-    }
-    breakConfirmSaving = true;
-    breakConfirmError = "";
-    breakConfirmSaved = false;
-    try {
-      await api.put("/settings/work", {
-        enforceBreakConfirmation,
-      });
-      breakConfirmSaved = true;
-      setTimeout(() => (breakConfirmSaved = false), 2500);
-    } catch (e: unknown) {
-      enforceBreakConfirmation = previous;
-      breakConfirmError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      breakConfirmSaving = false;
-    }
-  }
-
+  // Monatsabschluss bei unbestätigten Pausen (Phase 93.06, BREAK-05 / BREAK-01). Sends only its own flag
+  // (Issue #878). It is only meaningful while enforceBreakConfirmation is on (the switch is disabled
+  // otherwise); that flag is saved on Regeln › Arbeitszeit & Verträge and only read here.
   async function toggleBlockMonthCloseOnUnconfirmedBreak() {
-    // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
+    // bind:checked has already written the new value into the state, so the DOM and the state agree and an
+    // explicit revert actually lands (WR-02); the toggle must never outlive a failed save.
     const previous = !blockMonthCloseOnUnconfirmedBreak;
     if (!settingsLoaded) {
       blockMonthCloseOnUnconfirmedBreak = previous;
@@ -860,7 +707,7 @@
 
   // Phase 47.3 / 49.4 — Tenant Feature-Toggle: Verfügbarkeits-System
   async function saveAvailabilityEnabled() {
-    // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
+    // bind:checked already applied the new value — see toggleBlockMonthCloseOnUnconfirmedBreak (WR-02).
     const previous = !availabilityEnabled;
     if (!settingsLoaded) {
       availabilityEnabled = previous;
@@ -886,7 +733,7 @@
   // Mirrors saveAvailabilityEnabled exactly; the backend reads
   // TenantConfig.vocationalSchoolAutoCleanupShifts in shift-cleanup.ts.
   async function saveVocationalSchoolAutoCleanupShifts() {
-    // bind:checked already applied the new value — see toggleAutoBreak (WR-02).
+    // bind:checked already applied the new value — see toggleBlockMonthCloseOnUnconfirmedBreak (WR-02).
     const previous = !vocationalSchoolAutoCleanupShifts;
     if (!settingsLoaded) {
       vocationalSchoolAutoCleanupShifts = previous;
@@ -909,7 +756,7 @@
 
   // Phase 76.29 — Monatsabschluss mit Lücken toggle
   async function saveCloseMonthWithGaps() {
-    // bind:checked already applied the new value — see toggleAutoBreak (WR-02). This one
+    // bind:checked already applied the new value — see toggleBlockMonthCloseOnUnconfirmedBreak (WR-02). This one
     // gates Monatsabschluss with missing entries, so a silently-wrong checkbox is a compliance
     // problem, not just a cosmetic one.
     const previous = !closeMonthWithGapsAllowed;
@@ -1129,7 +976,7 @@
   }
 
   async function toggleTwoFa() {
-    // bind:checked already applied the new value — see toggleAutoBreak (WR-02). 2FA is the
+    // bind:checked already applied the new value — see toggleBlockMonthCloseOnUnconfirmedBreak (WR-02). 2FA is the
     // most security-relevant toggle on the page; it must never claim a state the server rejected.
     const previous = !twoFaEnabled;
     twoFaSaving = true;
@@ -1612,141 +1459,19 @@
           </div>
         </Section>
       {:else if currentTab === "arbeitszeit"}
-        <!-- ── Automatische Pausen (§ 4 ArbZG) ──────────────────────────────── -->
+        <!-- ── Monatsabschluss bei unbestätigten Pausen ─────────────────────────
+             The Pausen section itself (automatic deduction, durations, confirmation) moved to
+             Regeln › Arbeitszeit & Verträge (Issue #854); this switch stays with the
+             Monatsabschluss settings until they get a page of their own. -->
         <Section
-          title="Pausen automatisch abziehen"
-          sub="Pflicht-Pausen nach § 4 ArbZG (>6h: 30 Min., >9h: 45 Min.)"
-          dirty={breakDefaultsDirty}
+          title="Monatsabschluss bei unbestätigten Pausen"
+          sub={`Wirkt nur, solange die Pausen-Bestätigung unter „${pageLabel("/verwalten/regeln/arbeitszeit")}“ eingeschaltet ist.`}
         >
-          {#snippet footer()}
-            <button
-              class="btn btn-primary"
-              onclick={saveBreakDefaults}
-              disabled={breakDefaultsSaving}
-              data-testid="admin-system-pausendauer-save"
-            >
-              {#if breakDefaultsSaving}<Spinner />{/if}
-              Speichern
-            </button>
-            {#if breakDefaultsSaved}
-              <span class="saved-hint">✓ Gespeichert</span>
-            {/if}
-          {/snippet}
-
-          {#if autoBreakError}
-            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-              <span>⚠</span><span>{autoBreakError}</span>
-            </div>
-          {/if}
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label">Pausen automatisch abziehen</span>
-              <p class="form-hint text-muted">
-                Beim Ausstempeln wird die gesetzliche Pflichtpause automatisch als Pausen-Eintrag
-                angelegt und von der gestempelten Arbeitszeit abgezogen — 30 Min. ab 6h
-                Bruttoarbeitszeit, 45 Min. ab 9h. Wirkt auf neue Einträge ab Aktivierung.
-              </p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Pausen automatisch abziehen"
-                bind:checked={autoBreakEnabled}
-                onchange={toggleAutoBreak}
-                disabled={autoBreakSaving}
-                data-testid="admin-system-pausendauer-autoBreakEnabled"
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          {#if autoBreakEnabled}
-            <div class="form-group" style="margin-top: 1rem;">
-              <label class="form-label" for="sys-break-start">Standard-Pausenbeginn</label>
-              <input
-                id="sys-break-start"
-                type="time"
-                bind:value={defaultBreakStart}
-                onchange={saveDefaultBreakStart}
-                class="form-input modal-input-sm"
-                disabled={autoBreakSaving}
-              />
-              <p class="form-hint text-muted">
-                Vorgeschlagene Uhrzeit, ab der die automatische Pause gelegt wird. Liegt sie
-                außerhalb des gestempelten Zeitraums, fällt das System auf die Tagesmitte zurück.
-              </p>
-            </div>
-          {/if}
-          <!-- Phase 65 — Tenant-Default Pausendauer (BREAK-05, D-01..D-03)
-             Always visible (not gated on autoBreakEnabled): admins should
-             be able to pre-configure the defaults so that turning Auto-Pause ON
-             later picks them up.
-             Phase 109 (D-02/AK-02): number fields never write on their own. Both values are sent
-             together by the section's Speichern button below — one operator decision, one audit
-             row. -->
-          <div class="form-group" style="margin-top: 1rem;">
-            <label class="form-label" for="sys-break-over6h">Pause &gt;6h (Min)</label>
-            <input
-              id="sys-break-over6h"
-              type="number"
-              min="30"
-              max="120"
-              step="1"
-              bind:value={defaultBreakOver6h}
-              class="form-input modal-input-sm"
-              disabled={breakDefaultsSaving}
-              data-testid="admin-system-pausendauer-over6h"
-            />
-            <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
-          </div>
-          <div class="form-group" style="margin-top: 1rem;">
-            <label class="form-label" for="sys-break-over9h">Pause &gt;9h (Min)</label>
-            <input
-              id="sys-break-over9h"
-              type="number"
-              min="45"
-              max="180"
-              step="1"
-              bind:value={defaultBreakOver9h}
-              class="form-input modal-input-sm"
-              disabled={breakDefaultsSaving}
-              data-testid="admin-system-pausendauer-over9h"
-            />
-            <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
-          </div>
-          {#if breakDefaultsError}
-            <div class="alert alert-error" role="alert" style="margin-top: 0.75rem;">
-              <span>⚠</span><span>{breakDefaultsError}</span>
-            </div>
-          {/if}
-          {#if autoBreakSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
-
-          <!-- Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01) -->
-          <h4 class="sys-subtitle" style="margin-top: 1.5rem;">Pausen-Bestätigung (ArbZG §4)</h4>
           {#if breakConfirmError}
             <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
               <span>⚠</span><span>{breakConfirmError}</span>
             </div>
           {/if}
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label">Pausen-Bestätigung erforderlich</span>
-              <p class="form-hint text-muted">
-                Mitarbeiter müssen automatisch eingetragene Pflichtpausen bestätigen, anpassen oder
-                als „durchgearbeitet“ kennzeichnen. (Standard: aus)
-              </p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Pausen-Bestätigung erforderlich"
-                bind:checked={enforceBreakConfirmation}
-                onchange={toggleEnforceBreakConfirmation}
-                disabled={breakConfirmSaving}
-                data-testid="admin-system-pausen-enforceBreakConfirmation"
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
           <div class="toggle-row">
             <div class="toggle-info">
               <span class="toggle-row-label"

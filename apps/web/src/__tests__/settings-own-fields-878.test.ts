@@ -69,14 +69,15 @@ function settingsWorkPuts(source: string): Put[] {
   return puts;
 }
 
+// Issue #854 (plan 854-07): the saves that moved to Regeln › Arbeitszeit & Verträge (toggleAutoBreak,
+// saveDefaultBreakStart, saveBreakDefaults, toggleEnforceBreakConfirmation -> `BreaksSection`, ...) are no longer
+// pages of /admin; their own-fields rule is pinned where they live: settings-pages-854 (3) reads every
+// settings PUT of `lib/components/admin/` and requires `pickSection(…, settingsSection("<id>").keys)` or a
+// literal inside one registered section, and arbeitszeit-save-wiring-854 names each section.
 const EXPECTED: Record<string, Record<string, string[]>> = {
   system: {
     saveShiftHoursMode: ["shiftStoreHoursMode"],
     saveFederalState: ["federalState", "tenantName", "timezone"],
-    toggleAutoBreak: ["autoBreakEnabled", "defaultBreakStart"],
-    saveDefaultBreakStart: ["autoBreakEnabled", "defaultBreakStart"],
-    saveBreakDefaults: ["defaultBreakOver6h", "defaultBreakOver9h"],
-    toggleEnforceBreakConfirmation: ["enforceBreakConfirmation"],
     toggleBlockMonthCloseOnUnconfirmedBreak: ["blockMonthCloseOnUnconfirmedBreak"],
     saveAvailabilityEnabled: ["availabilityEnabled"],
     saveVocationalSchoolAutoCleanupShifts: ["vocationalSchoolAutoCleanupShifts"],

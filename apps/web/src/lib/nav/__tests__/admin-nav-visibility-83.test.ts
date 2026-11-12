@@ -57,8 +57,11 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
     });
   });
 
-  it("Regeln and System list today's pages unchanged (D-04: #854 regroups them later)", () => {
+  // Issue #854 regroups the pages one plan at a time: Regeln gained „Arbeitszeit & Verträge“ (plan 854-07),
+  // the other children are still today's pages.
+  it("Regeln and System list today's pages plus the pages #854 added", () => {
     expect(labelsOf("/verwalten/regeln")).toEqual([
+      "Arbeitszeit & Verträge",
       "Urlaubsverwaltung",
       "Betriebsurlaub",
       "Urlaubsgrenzen & Sperren",

@@ -72,7 +72,34 @@ const SYSTEM = {
   renderedBy: SYSTEM_PAGE,
 } as const;
 
+// Plan 854-07: the working-time defaults of the System and Urlaub pages live on Regeln › Arbeitszeit &
+// Verträge. A moved section keeps `source` and `requires` of the page it came from (D-854-05) and names
+// the component that renders and saves it.
+const ARBEITSZEIT_PAGE = "/verwalten/regeln/arbeitszeit";
+const ARBEITSZEIT_DIR = "lib/components/admin/arbeitszeit";
+const FROM_SYSTEM = {
+  page: ARBEITSZEIT_PAGE,
+  source: "/admin/system",
+  requires: SYSTEM_REQUIRES,
+} as const;
+
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
+  // ── Regeln › Arbeitszeit & Verträge ────────────────────────────────────────────────────────────
+  {
+    ...FROM_SYSTEM,
+    id: "arbeitszeit-pausen",
+    title: "Pausen",
+    endpoint: "/settings/work",
+    keys: [
+      "autoBreakEnabled",
+      "defaultBreakStart",
+      "defaultBreakOver6h",
+      "defaultBreakOver9h",
+      "enforceBreakConfirmation",
+    ],
+    renderedBy: `${ARBEITSZEIT_DIR}/BreaksSection.svelte`,
+  },
+
   // ── /admin/system ──────────────────────────────────────────────────────────────────────────────
   {
     ...SYSTEM,
@@ -98,16 +125,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   {
     ...SYSTEM,
     id: "system-breaks",
-    title: "Pausen automatisch abziehen",
+    title: "Monatsabschluss bei unbestätigten Pausen",
     endpoint: "/settings/work",
-    keys: [
-      "autoBreakEnabled",
-      "defaultBreakStart",
-      "defaultBreakOver6h",
-      "defaultBreakOver9h",
-      "enforceBreakConfirmation",
-      "blockMonthCloseOnUnconfirmedBreak",
-    ],
+    keys: ["blockMonthCloseOnUnconfirmedBreak"],
   },
   {
     ...SYSTEM,

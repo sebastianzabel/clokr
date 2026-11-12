@@ -136,6 +136,9 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/stores/auth.ts",
   "apps/web/src/routes/(auth)/login/+page.svelte",
   "apps/web/src/routes/(auth)/otp/+page.svelte",
+  // Issue #854 (plan 854-07): Regeln › Arbeitszeit & Verträge shows a section by the permission
+  // alternatives of the page it came from (`mayOpenSection`), never by a role.
+  "apps/web/src/routes/(app)/verwalten/regeln/arbeitszeit/+page.svelte",
 ];
 
 /** (file, exact trimmed line text) pairs that may keep a flagged line. Empty since #538: the last

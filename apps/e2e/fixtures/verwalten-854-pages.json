@@ -1,7 +1,10 @@
 {
   "description": "Issue #854 (D-854-17): the one list of migrated Verwalten pages. apps/e2e/tests/verwalten-854.spec.ts (gating, e2e-ci) proves for every entry the H1 text, axe WCAG 2 A/AA with colour contrast on the page and on each of its tabs, tab keyboard navigation and no horizontal overflow at 390 and 1440 px; apps/e2e/tests/screenshots-854.spec.ts (project screenshots, non-gating) captures every entry at 1440 and 390 px. Every page plan of #854 appends its migrated page here in the same commit. `path` is the route table's URL (never an old URL that only redirects); a placeholder such as :salonId is filled from `fill` (a fixture-tenant entity created through the API with synthetic names: salon). `heading` is the exact H1 text; the value :salonName stands for the name of the entity created for `fill`. `tabs` lists the tab triggers of the page in strip order (empty for a page without tabs).",
   "fills": {
-    "salon": { "placeholder": ":salonId", "nameToken": ":salonName" }
+    "salon": {
+      "placeholder": ":salonId",
+      "nameToken": ":salonName"
+    }
   },
   "pages": [
     {
@@ -15,7 +18,23 @@
       "path": "/verwalten/salons/:salonId",
       "heading": ":salonName",
       "fill": "salon",
-      "tabs": [{ "label": "Stammdaten" }, { "label": "Öffnungszeiten" }, { "label": "Feiertage" }]
+      "tabs": [
+        {
+          "label": "Stammdaten"
+        },
+        {
+          "label": "Öffnungszeiten"
+        },
+        {
+          "label": "Feiertage"
+        }
+      ]
+    },
+    {
+      "slug": "regeln-arbeitszeit",
+      "path": "/verwalten/regeln/arbeitszeit",
+      "heading": "Arbeitszeit & Verträge",
+      "tabs": []
     }
   ]
 }

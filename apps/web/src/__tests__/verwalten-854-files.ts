@@ -27,6 +27,11 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/OpeningHoursEditor.svelte",
   "lib/components/admin/SalonHolidays.svelte",
   "lib/components/admin/salons/SalonMasterDataForm.svelte",
+  // Plan 854-07 (Regeln › Arbeitszeit & Verträge): the native page, its section frame and sections.
+  "routes/(app)/verwalten/regeln/arbeitszeit/+page.svelte",
+  "lib/components/admin/settings/SettingsGroup.svelte",
+  "lib/components/admin/settings/ToggleField.svelte",
+  "lib/components/admin/arbeitszeit/BreaksSection.svelte",
 ];
 
 export interface VerwaltenFile {

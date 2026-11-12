@@ -73,14 +73,17 @@ function fnBody(marker: string): string {
   return PAGE.slice(bodyStart, j + 1);
 }
 
-describe("D-03/N-11 — the eight instant handlers stay instant", () => {
+// Issue #854 (plan 854-07): the Pausen section moved to Regeln › Arbeitszeit & Verträge, where it is ONE
+// section with a SaveBar (`BreaksSection.svelte`). The three instant Pausen handlers (`toggleAutoBreak`,
+// `saveDefaultBreakStart`, `toggleEnforceBreakConfirmation`) and `saveBreakDefaults` left this page with it.
+// Their keys are pinned by settings-pages-854 ((1) one place per key, (3) the section sends its own keys and
+// every registry key is sent) and the behaviour by arbeitszeit-save-wiring-854.test.ts and
+// BreaksSection-854.test.ts; nothing here was relaxed, the controls no longer exist on this page.
+describe("D-03/N-11 — the five instant handlers stay instant", () => {
   const INSTANT_HANDLERS = [
     "saveAvailabilityEnabled",
     "saveVocationalSchoolAutoCleanupShifts",
-    "saveDefaultBreakStart",
     "saveCloseMonthWithGaps",
-    "toggleAutoBreak",
-    "toggleEnforceBreakConfirmation",
     "toggleBlockMonthCloseOnUnconfirmedBreak",
     "toggleTwoFa",
   ] as const;
@@ -94,10 +97,11 @@ describe("D-03/N-11 — the eight instant handlers stay instant", () => {
   // name it. Owner decision recorded in 109-CONTEXT.md: leave it as-is (status quo) unless
   // explicitly decided otherwise. This count pins that the list above is exactly the eight
   // handlers the research established — not four, not five, not ten.
-  // Issue #433 (D-04): the count drops from nine to eight because saveHolidayDeduction and its
-  // toggle were removed — the control no longer exists, not because a check was relaxed.
-  it("there are exactly eight instant handlers (D-04 correction, not nine)", () => {
-    expect(INSTANT_HANDLERS.length).toBe(8);
+  // Issue #433 (D-04): the count dropped from nine to eight because saveHolidayDeduction and its
+  // toggle were removed; Issue #854 (plan 854-07) took it to five: the three Pausen handlers moved to
+  // the Arbeitszeit page's SaveBar — the controls no longer exist here, not because a check was relaxed.
+  it("there are exactly five instant handlers (#433 and #854 corrections)", () => {
+    expect(INSTANT_HANDLERS.length).toBe(5);
   });
 });
 
@@ -116,23 +120,22 @@ describe("D-03/N-11 — the eight instant handlers stay instant", () => {
 //
 // `saveDefaultBreakStart` is excluded: it sits on a `type="time"` input, not a checkbox, so the
 // DOM/state divergence described above does not apply to it.
-describe("WR-02 — the seven instant checkbox toggles roll back and report on failure", () => {
+describe("WR-02 — the five instant checkbox toggles roll back and report on failure", () => {
   /** handler → the state variable it owns */
   const TOGGLES: Record<string, string> = {
     saveAvailabilityEnabled: "availabilityEnabled",
     saveVocationalSchoolAutoCleanupShifts: "vocationalSchoolAutoCleanupShifts",
     saveCloseMonthWithGaps: "closeMonthWithGapsAllowed",
-    toggleAutoBreak: "autoBreakEnabled",
-    toggleEnforceBreakConfirmation: "enforceBreakConfirmation",
     toggleBlockMonthCloseOnUnconfirmedBreak: "blockMonthCloseOnUnconfirmedBreak",
     toggleTwoFa: "twoFaEnabled",
   };
   const ENTRIES = Object.entries(TOGGLES);
 
-  // Issue #433 (D-04): the count drops from eight to seven because saveHolidayDeduction and its
-  // toggle were removed — the control no longer exists, not because a check was relaxed.
-  it("there are exactly seven of them (saveDefaultBreakStart is a time input, not a checkbox)", () => {
-    expect(ENTRIES.length).toBe(7);
+  // Issue #433 (D-04) took the count from eight to seven (saveHolidayDeduction removed), Issue #854 from
+  // seven to five (toggleAutoBreak and toggleEnforceBreakConfirmation moved to the Arbeitszeit page's
+  // SaveBar) — the controls no longer exist here, not because a check was relaxed.
+  it("there are exactly five of them", () => {
+    expect(ENTRIES.length).toBe(5);
   });
 
   // This is the assertion that would have FAILED against the old source: every one of these
@@ -179,9 +182,9 @@ describe("WR-02 — the seven instant checkbox toggles roll back and report on f
     }
   });
 
-  it("the compliance-weighted three are covered by name (2FA, Monatsabschluss, § 4 ArbZG)", () => {
+  it("the compliance-weighted two are covered by name (2FA, Monatsabschluss)", () => {
     expect(Object.keys(TOGGLES)).toEqual(
-      expect.arrayContaining(["toggleTwoFa", "saveCloseMonthWithGaps", "toggleAutoBreak"]),
+      expect.arrayContaining(["toggleTwoFa", "saveCloseMonthWithGaps"]),
     );
   });
 });
@@ -237,13 +240,10 @@ describe("AK-02 — text/number inputs never write outside a button-gated group"
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
   });
 
-  it.each(["saveBreakDefaults", "saveRetroEntryWindowDays"])(
-    "%s is button-gated, never onblur (D-02/N-01)",
-    (name) => {
-      expect(PAGE).toContain(`onclick={${name}}`);
-      expect(PAGE).not.toContain(`onblur={${name}}`);
-    },
-  );
+  it.each(["saveRetroEntryWindowDays"])("%s is button-gated, never onblur (D-02/N-01)", (name) => {
+    expect(PAGE).toContain(`onclick={${name}}`);
+    expect(PAGE).not.toContain(`onblur={${name}}`);
+  });
 });
 
 describe("D-01/AK-01 — the eight E-Mail-Benachrichtigungs-Toggles save instantly", () => {
@@ -309,7 +309,6 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
     "companyDirty",
     "shiftHoursModeDirty",
     "coreDefaultsDirty",
-    "breakDefaultsDirty",
     "retroWindowDirty",
     "bsSlotDirty",
     "sessionDirty",
@@ -323,7 +322,7 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
   });
 
   it("every button-gated Section receives a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(9);
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(8);
   });
 
   it("the page registers itself under one id and de-registers on unmount", () => {
@@ -355,15 +354,6 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
     const line = PAGE.split("\n").find((l) => l.includes("smtpPassword.length > 0"));
     expect(line).toBeDefined();
     expect(PAGE).not.toContain("snap(smtpPassword)");
-  });
-
-  it("D-03: the Pausendauer snapshot excludes the two instant controls", () => {
-    const slice = PAGE.slice(
-      PAGE.indexOf("let breakDefaultsSnapshot"),
-      PAGE.indexOf("let retroWindowSnapshot"),
-    );
-    expect(slice).not.toContain("autoBreakEnabled");
-    expect(slice).not.toContain("defaultBreakStart");
   });
 
   // T-109-24: re-taking a snapshot inside `finally` would clear the "Nicht gespeichert" marker
