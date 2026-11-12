@@ -948,10 +948,8 @@
       to={urlState.to}
       {today}
       loading={periodLoading}
-      canExport={false}
       onChange={onPeriodChange}
       onOpenRange={openRange}
-      onOpenExport={openExport}
     />
 
     {#if exportOnly}

@@ -21,8 +21,9 @@
  *                   big figures, 30 people) at 390 and 360 px × light/dark on both period tabs and the
  *                   drill-down: whole-page geometry, clipped-content probe, and axe `nested-interactive`
  *                   on the two mobile lists (with a positive control, so the rule is proven to see).
- *   layout checks — the month picker is not clipped (`document.elementFromPoint` inside
- *                   `.month-picker`) in pflaume/salz/petrol × light/dark at 1280 and 390 px; no KPI value
+ *   layout checks — the range dialog opened from the period label is not clipped
+ *                   (`document.elementFromPoint` inside the dialog) in pflaume/salz/petrol ×
+ *                   light/dark at 1280 and 390 px; no KPI value
  *                   overflows its tile at 961, 1280 and 1440 px; the sticky table header is never hidden
  *                   behind the period bar (pflaume/salz/petrol, #842 D-842-16: the former spacing axis is gone).
  *
@@ -445,7 +446,12 @@ test.describe("Issue #612 — Berichtsseite: Zeitraum im Browser", () => {
     const from3 = addMonths(now, -2);
     const beforePreset = urls.length;
     const threeRes = periodResponse(page, from3, now);
-    await page.getByRole("button", { name: "Letzte 3 Monate" }).click();
+    // The presets live in the range dialog (opened from the period label).
+    await page.getByTestId("reports-period-label").click();
+    await page
+      .getByRole("dialog", { name: "Zeitraum wählen" })
+      .getByRole("button", { name: "Letzte 3 Monate" })
+      .click();
     const threeAnswer = await answerOf(await threeRes);
     await waitKpisSettled(page);
     expect(urls, "one period request for the preset").toHaveLength(beforePreset + 1);
@@ -1119,7 +1125,7 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
         { width: 1280, height: 800 },
         { width: 390, height: 844 },
       ]) {
-        test(`Monatsauswahl nicht beschnitten — ${theme}, ${mode}, ${viewport.width} px`, async ({
+        test(`Zeitraumdialog nicht beschnitten — ${theme}, ${mode}, ${viewport.width} px`, async ({
           page,
           request,
           tenant,
@@ -1127,13 +1133,13 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
           await page.setViewportSize(viewport);
           await openSynthetic(page, request, tenant, { theme, mode });
           await page.getByTestId("reports-period-label").click();
-          const picker = page.getByTestId("reports-period-picker");
-          await expect(picker).toBeVisible();
+          const dialog = page.getByRole("dialog", { name: "Zeitraum wählen" });
+          await expect(dialog).toBeVisible();
           await settle(page);
 
-          const hit = await picker.evaluate((el) => {
+          const hit = await dialog.evaluate((el) => {
             const r = el.getBoundingClientRect();
-            const insetPx = 6;
+            const insetPx = 14;
             const points = {
               centre: [r.left + r.width / 2, r.top + r.height / 2],
               topLeft: [r.left + insetPx, r.top + insetPx],
@@ -1144,11 +1150,7 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
             const out: Record<string, string> = {};
             for (const [name, [x, y]] of Object.entries(points)) {
               const top = document.elementFromPoint(x, y);
-              out[name] = top?.closest(".month-picker")
-                ? "inside"
-                : top
-                  ? `covered by ${top.tagName.toLowerCase()}.${[...top.classList].join(".")}`
-                  : "outside the viewport";
+              out[name] = top && el.contains(top) ? "inside" : "covered";
             }
             return {
               out,
@@ -1158,22 +1160,27 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
           });
           // eslint-disable-next-line no-console
           console.log(
-            `[reports-period picker] ${theme}/${mode}/${viewport.width}: ${JSON.stringify(hit)}`,
+            `[reports-period dialog] ${theme}/${mode}/${viewport.width}: ${JSON.stringify(hit)}`,
           );
-          expect(hit.out, `picker hit test (${JSON.stringify(hit.rect)})`).toEqual({
+          expect(hit.out, `dialog hit test (${JSON.stringify(hit.rect)})`).toEqual({
             centre: "inside",
             topLeft: "inside",
             topRight: "inside",
             bottomLeft: "inside",
             bottomRight: "inside",
           });
+          expect(hit.rect.left, "the dialog starts inside the viewport").toBeGreaterThanOrEqual(0);
+          expect(hit.rect.right, "the dialog ends inside the viewport").toBeLessThanOrEqual(
+            hit.viewport.w,
+          );
 
           // Control: the hit test tells inside from outside - the top-left corner of the page is
-          // not the picker.
+          // not the dialog.
           const outside = await page.evaluate(
-            () => document.elementFromPoint(2, 2)?.closest(".month-picker") ?? null,
+            (selector) => document.elementFromPoint(2, 2)?.closest(selector) ?? null,
+            '[role="dialog"]',
           );
-          expect(outside, "a point outside the picker does not resolve into it").toBeNull();
+          expect(outside, "a point outside the dialog does not resolve into it").toBeNull();
         });
       }
     }

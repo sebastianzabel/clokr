@@ -285,6 +285,46 @@ export function canStepNext(from: YearMonth, to: YearMonth, today: YearMonth): b
   return stepPeriod(from, to, 1, today) !== null;
 }
 
+// ── Zoom (the PeriodPicker segment) ──────────────────────────────────────────
+
+/** The zoom levels the period bar offers; a free range has none selected. */
+export type ReportZoom = "monat" | "quartal" | "jahr";
+
+/** The zoom level a detected period kind sits on, or `null` for a free range. */
+export function zoomOfKind(kind: PeriodKind): ReportZoom | null {
+  switch (kind) {
+    case "month":
+      return "monat";
+    case "quarter":
+      return "quartal";
+    case "year":
+      return "jahr";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The period a zoom level shows around `anchor` (the bar passes the end of the current period):
+ * the month itself, its calendar quarter or its calendar year, the end clamped to `today` (P-16).
+ */
+export function periodForZoom(
+  zoom: ReportZoom,
+  anchor: YearMonth,
+  today: YearMonth,
+): { from: YearMonth; to: YearMonth } {
+  const at = clampToToday(anchor, today);
+  if (zoom === "monat") return { from: at, to: { ...at } };
+  if (zoom === "quartal") {
+    const from = { year: at.year, month: at.month - ((at.month - 1) % 3) };
+    return { from, to: clampToToday(addMonths(from, 2), today) };
+  }
+  return {
+    from: { year: at.year, month: 1 },
+    to: clampToToday({ year: at.year, month: 12 }, today),
+  };
+}
+
 // ── Presets ──────────────────────────────────────────────────────────────────
 
 export type PresetKey = "this-month" | "previous-month" | "quarter" | "year" | "last-3-months";

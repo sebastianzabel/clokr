@@ -459,7 +459,7 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     const body = functionBody("openExport");
     expect(body).toContain("focusReturnTo = trigger;");
     expect(body).toContain("exportOpen = true;");
-    expect(TEMPLATE).toContain("onOpenExport={openExport}");
+    expect(TEMPLATE).toContain("onclick={(e) => openExport(e.currentTarget)}");
   });
 
   it("renders one <ExportDialog after the period panel, only for report:export", () => {
@@ -810,7 +810,7 @@ describe("/reports (Issue #612) - staggered reveal", () => {
     expect(TEMPLATE).toMatch(/<div class="period-body"[^>]*>\s*<PeriodKpis/);
     expect(COMPONENTS.TimesAccountsTable).toContain('<section class="card-animate period-section"');
     expect(countOf(COMPONENTS.VacationAbsenceTab, "<Card animate>")).toBe(2);
-    expect(COMPONENTS.TodayAttendance).toContain("<Card animate");
+    expect(COMPONENTS.TodayAttendance).toContain('<section class="settings-group"');
     // Data changes swap the content inside the blocks: nothing is keyed.
     expect(countOf(TEMPLATE, "{#key")).toBe(0);
     for (const name of COMPONENT_NAMES) {
@@ -818,7 +818,7 @@ describe("/reports (Issue #612) - staggered reveal", () => {
     }
   });
 
-  it("mounted: both tab components emit .card-animate sections", () => {
+  it("mounted: the vacation tab emits .card-animate sections, the Heute tab its group section", () => {
     const vacation = renderWithTheme(VacationAbsenceTab, {
       vacation: null,
       absences: null,
@@ -841,7 +841,7 @@ describe("/reports (Issue #612) - staggered reveal", () => {
       canAddTeamEntry: false,
       canRecordTeamAbsence: false,
     });
-    expect(document.querySelectorAll("section.card.card-animate")).toHaveLength(1);
+    expect(document.querySelectorAll("section.settings-group")).toHaveLength(1);
     today.unmount();
     renderWithTheme(TimesAccountsTable, { ...TABLE_PROPS, rows: [person("A")] });
     expect(screen.getByTestId("period-section").classList.contains("card-animate")).toBe(true);

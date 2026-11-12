@@ -12,11 +12,13 @@ import {
   periodEyebrow,
   periodKind,
   periodLabel,
+  periodForZoom,
   periodSearch,
   presetPeriods,
   RANGE_ERROR_TEXT,
   stepPeriod,
   validateRange,
+  zoomOfKind,
 } from "../period-state";
 
 const TODAY = { year: 2026, month: 10 };
@@ -381,5 +383,53 @@ describe("clampToToday / isPlainLeftClick", () => {
     expect(isPlainLeftClick({ ...base, shiftKey: true })).toBe(false);
     expect(isPlainLeftClick({ ...base, altKey: true })).toBe(false);
     expect(isPlainLeftClick({ ...base, button: 1 })).toBe(false);
+  });
+});
+
+// Issue #854: the PeriodPicker segment of the period bar.
+describe("zoomOfKind / periodForZoom", () => {
+  it("maps a period kind to its zoom level and a free range to none", () => {
+    expect(zoomOfKind("month")).toBe("monat");
+    expect(zoomOfKind("quarter")).toBe("quartal");
+    expect(zoomOfKind("year")).toBe("jahr");
+    expect(zoomOfKind("range")).toBeNull();
+  });
+
+  it("zooms to the month, quarter and year around the anchor", () => {
+    expect(periodForZoom("monat", ym(2026, 8), TODAY)).toEqual({
+      from: ym(2026, 8),
+      to: ym(2026, 8),
+    });
+    expect(periodForZoom("quartal", ym(2026, 8), TODAY)).toEqual({
+      from: ym(2026, 7),
+      to: ym(2026, 9),
+    });
+    expect(periodForZoom("jahr", ym(2025, 8), TODAY)).toEqual({
+      from: ym(2025, 1),
+      to: ym(2025, 12),
+    });
+  });
+
+  it("clamps the end to the current month (P-16) and an anchor in the future to today", () => {
+    expect(periodForZoom("quartal", ym(2026, 10), TODAY)).toEqual({
+      from: ym(2026, 10),
+      to: ym(2026, 10),
+    });
+    expect(periodForZoom("jahr", ym(2026, 3), TODAY)).toEqual({
+      from: ym(2026, 1),
+      to: ym(2026, 10),
+    });
+    expect(periodForZoom("monat", ym(2027, 1), TODAY)).toEqual({ from: TODAY, to: TODAY });
+  });
+
+  it("every zoom result is a period the detector maps back to the same zoom", () => {
+    for (const zoom of ["monat", "quartal", "jahr"] as const) {
+      for (const anchor of [ym(2026, 1), ym(2026, 5), ym(2026, 10), ym(2025, 12)]) {
+        const p = periodForZoom(zoom, anchor, TODAY);
+        expect(zoomOfKind(periodKind(p.from, p.to, TODAY)), `${zoom} ${anchor.month}`).toBe(
+          zoom === "quartal" && p.from.month === p.to.month ? "monat" : zoom,
+        );
+      }
+    }
   });
 });

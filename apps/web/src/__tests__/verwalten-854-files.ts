@@ -136,6 +136,10 @@ export const MIGRATED_854: readonly string[] = [
   // Plan 854-27 (Berichte I): the page shell with PageTabs over period-state and the period KPI strips.
   "routes/(app)/reports/+page.svelte",
   "lib/components/reports/PeriodKpis.svelte",
+  // Plan 854-27 (Berichte I): the period bar (PeriodPicker), the range dialog and the Heute tab.
+  "lib/components/reports/PeriodBar.svelte",
+  "lib/components/reports/PeriodRangeDialog.svelte",
+  "lib/components/reports/TodayAttendance.svelte",
 ];
 
 export interface VerwaltenFile {

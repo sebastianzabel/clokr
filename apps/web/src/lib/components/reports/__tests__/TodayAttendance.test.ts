@@ -70,7 +70,7 @@ describe("TodayAttendance - header and states", () => {
     renderWithTheme(TodayAttendance, props());
     expect(screen.getByText("Heutige Anwesenheit")).toBeTruthy();
     expect(screen.getByText("Stand heute, unabhängig vom Zeitraum")).toBeTruthy();
-    expect(screen.getByText("2026-10-15")).toBeTruthy();
+    expect(screen.getByText("15.10.2026")).toBeTruthy();
   });
 
   it("shows the loading text, the error text and the calm salon state", () => {
@@ -100,7 +100,7 @@ describe("TodayAttendance - header and states", () => {
 describe("TodayAttendance - summary and table", () => {
   it("shows the summary chips with the words of the status vocabulary, the holiday chip only above 0", () => {
     const first = renderWithTheme(TodayAttendance, props());
-    const labels = Array.from(document.querySelectorAll(".summary-chip .label")).map(
+    const labels = Array.from(document.querySelectorAll(".kpi-strip .kpi-label")).map(
       (e) => e.textContent,
     );
     expect(labels).toEqual(["Anwesend", "Eingestempelt", "Abwesend", DAY_STATUS_LABEL.missing]);
@@ -143,13 +143,24 @@ describe("TodayAttendance - summary and table", () => {
     expect(source).not.toContain("Fehlend");
   });
 
-  it("words the status through the status badge class of the status", () => {
-    renderWithTheme(
-      TodayAttendance,
-      props({ attendance: data([person(1, { status: "clocked_in" })]) }),
-    );
-    const badge = document.querySelector(".status-badge");
-    expect(badge?.classList.contains("status-clocked-in")).toBe(true);
+  it("shows the status as a Chip whose tone follows the status", () => {
+    const tones: Record<string, string> = {
+      present: "chip-ok",
+      clocked_in: "chip-ok",
+      absent: "chip-warn",
+      missing: "chip-bad",
+      holiday: "chip-brand",
+      scheduled: "chip-neutral",
+    };
+    for (const [status, tone] of Object.entries(tones)) {
+      const view = renderWithTheme(
+        TodayAttendance,
+        props({ attendance: data([person(1, { status: status as TodayEmployee["status"] })]) }),
+      );
+      const chip = document.querySelector("tbody .chip");
+      expect(chip?.classList.contains(tone), status).toBe(true);
+      view.unmount();
+    }
   });
 
   it("shows the salon badge for a person who worked in another salon", () => {
@@ -212,9 +223,11 @@ describe("TodayAttendance - action links of a „Fehlt“ row (Issue #587)", () 
 
   it("the action cell stays a table cell and wraps a div (Issue #442)", () => {
     links(true, true);
-    const cell = document.querySelector("td.attendance-actions");
-    expect(cell?.firstElementChild?.tagName).toBe("DIV");
-    expect(cell?.firstElementChild?.classList.contains("row-actions__group")).toBe(true);
+    const group = document.querySelector(".row-actions__group");
+    const cell = group?.closest("td");
+    expect(cell?.tagName).toBe("TD");
+    expect(cell?.firstElementChild).toBe(group);
+    expect(group?.tagName).toBe("DIV");
   });
 });
 
@@ -222,6 +235,15 @@ describe("TodayAttendance - source", () => {
   it("[vacuity gate] the source is loaded and imports no $app module", () => {
     expect(source.length).toBeGreaterThan(2000);
     expect(source).not.toMatch(/from "\$app\//);
+  });
+
+  it("is built from the KpiStrip, DataTable and Chip blocks, not from page-own chrome", () => {
+    expect(source).toContain("<KpiStrip");
+    expect(source).toContain("<DataTable");
+    expect(source).toContain("<Chip");
+    expect(source).not.toContain("<Card");
+    expect(source).not.toContain("<table");
+    expect(source).not.toMatch(/text-transform:\s*uppercase|letter-spacing/);
   });
 
   it("owns no request: it renders the data it is given", () => {
