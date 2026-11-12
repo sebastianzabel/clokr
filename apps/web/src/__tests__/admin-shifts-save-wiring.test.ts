@@ -87,7 +87,8 @@ describe("the pattern panel carries its own baseline — plan 109-12 reuses it",
   });
 
   it("the page seeds the panel from the freshly loaded rows", () => {
-    const body = fnBody(PAGE, "async function loadAll");
+    // Issue #854 (plan 854-10): the shift lists load in loadShiftData, only for a person with a shift tab.
+    const body = fnBody(PAGE, "async function loadShiftData");
     expect(body).toContain("shiftEmployees = shiftBasedEmployees(week.employees ?? [])");
     expect(body).toContain("patterns = tenantPatterns");
     expect(PAGE).toContain("{patterns}");
@@ -153,17 +154,24 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/shifts", 
   });
 
   it("the registration is gated on snapshotsReady (WR-01)", () => {
-    expect(PAGE).toContain('markUnsaved("admin-shifts", snapshotsReady && patternChanges > 0)');
+    // Plan 854-10 adds the unsaved count of the Einstellungen sections (one registration for the page).
+    expect(PAGE).toContain("bind:changes={settingsChanges}");
+    expect(PAGE).toContain(
+      'markUnsaved("admin-shifts", snapshotsReady && patternChanges + settingsChanges > 0)',
+    );
     expect(PAGE).not.toContain('markUnsaved("admin-shifts", patternChanges');
   });
 
   it("snapshotsReady is set in loadAll's try, right after the data", () => {
     const body = fnBody(PAGE, "async function loadAll");
     const catchIdx = body.indexOf("} catch");
-    const dataIdx = body.indexOf("patterns = tenantPatterns");
+    // The data of both halves (shift lists and settings) is awaited together before the flag is set.
+    const dataIdx = body.indexOf("await Promise.all(");
     const readyIdx = body.indexOf("snapshotsReady = true");
     expect(catchIdx).toBeGreaterThan(-1);
     expect(dataIdx).toBeGreaterThan(-1);
+    expect(body).toContain("loadShiftData()");
+    expect(body).toContain('"/settings/work"');
     expect(readyIdx).toBeGreaterThan(dataIdx);
     expect(readyIdx).toBeLessThan(catchIdx);
     expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
@@ -190,5 +198,26 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/shifts", 
 
   it("the effect de-registers on unmount", () => {
     expect(PAGE).toContain('return () => markUnsaved("admin-shifts", false)');
+  });
+});
+
+// Issue #854 (plan 854-10, T-854-26): the page merges sections of three old pages, so what it shows and loads
+// follows the person's permissions; the rule itself is unit-tested in dienstplan-settings-854.test.ts.
+describe("Regeln › Dienstplan offers and loads only what the person may open", () => {
+  it("takes its tabs from visibleDienstplanTabs and lets the URL hash pick only among them", () => {
+    expect(PAGE).toContain("visibleDienstplanTabs(user)");
+    expect(PAGE).toContain("tabFromHash($page.url.hash, visibleTabIds)");
+    expect(PAGE).toContain("tabs={visibleTabs.map(");
+  });
+
+  it("loads the shift lists only for a shift tab and the settings only for Einstellungen", () => {
+    const body = fnBody(PAGE, "async function loadAll");
+    expect(body).toContain("showShiftData ? loadShiftData()");
+    expect(body).toContain("showSettings");
+  });
+
+  it("renders the Einstellungen panel inside its tab", () => {
+    expect(PAGE).toContain('value === "einstellungen"');
+    expect(PAGE).toContain("<DienstplanSettingsPanel");
   });
 });
