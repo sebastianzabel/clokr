@@ -9,9 +9,12 @@
   import { authStore } from "$stores/auth";
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte"; // Issue #853 (D-853-10)
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import PersonPicker from "$lib/components/team/zeiten/PersonPicker.svelte";
+  import { personOptions } from "$lib/team/person-options";
   import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-fkz
   import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-fkz
   import Modal from "$components/ui/Modal.svelte";
@@ -221,6 +224,8 @@
     id: string;
     firstName: string;
     lastName: string;
+    /** Served by GET /employees; the picker finds a person by it. */
+    employeeNumber?: string | null;
   }
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -279,6 +284,10 @@
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
   let teView = $state<"calendar" | "list">("calendar");
+  const VIEW_OPTIONS = [
+    { value: "calendar", label: "Kalender" },
+    { value: "list", label: "Liste" },
+  ];
 
   // §615 Team-Zeiten display: month-saldo from the shared §615 core (SHIFT_BASED only).
   // For non-SHIFT schedule types this stays null and existing derived values apply unchanged.
@@ -374,8 +383,6 @@
   // ── Employee selector state ────────────────────────────────────────────────
   let employees: Employee[] = $state([]);
   let selectedEmployeeId = $state<string | null>(null);
-  let empSearch = $state("");
-  let empDropdownOpen = $state(false);
 
   // Issue #558 D-14: the salon narrows only who can be picked; the chosen person's month is a
   // contract figure and is never split by salon. A person chosen before a salon change stays
@@ -403,6 +410,11 @@
   // "person" = the per-person view (unchanged); "salon" = every entry recorded in one salon for the
   // shown month. `mode=salon` in the URL selects the salon view.
   let teamMode = $state<"person" | "salon">("person");
+  // The tabs of the Seitenkopf (Issue #853, D-853-10); the order is the order they are shown in.
+  const viewTabs = [
+    { value: "person", label: "Personenansicht" },
+    { value: "salon", label: "Salonansicht" },
+  ];
   let salonViewDays = $state<SalonViewDay[]>([]);
   let salonViewStatus = $state<SalonViewStatus>("prompt");
   let salonViewCapHit = $state(false);
@@ -463,13 +475,20 @@
     if (mode === "person") await loadAll();
   }
 
-  let filteredEmployees = $derived(
-    employees.filter((e) => {
-      if (!empSearch.trim()) return true;
-      const q = empSearch.toLowerCase();
-      return e.firstName.toLowerCase().includes(q) || e.lastName.toLowerCase().includes(q);
-    }),
+  // Issue #853 (D-853-10): the picker's items. A person kept selected across a salon change (the
+  // chosen record, see above) stays in the list so the picker keeps showing who is chosen.
+  let pickerItems = $derived(
+    personOptions(
+      selectedEmployee !== null && !employees.some((e) => e.id === selectedEmployee.id)
+        ? [...employees, selectedEmployee]
+        : employees,
+    ),
   );
+
+  async function pickEmployee(id: string) {
+    const emp = employees.find((e) => e.id === id);
+    if (emp) await selectEmployee(emp);
+  }
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
@@ -758,8 +777,6 @@
   async function selectEmployee(emp: Employee) {
     selectedEmployeeId = emp.id;
     selectedEmployeeRecord = emp;
-    empSearch = "";
-    empDropdownOpen = false;
     await loadAll();
   }
 
@@ -1763,7 +1780,10 @@
   }}
 />
 
-<PageHead eyebrow="Team" title={pageLabel("/team/time-entries")} accent="Zeiten">
+<PageHead
+  title={pageLabel("/team/time-entries")}
+  sub="Arbeitszeiten deines Teams, pro Person oder für einen ganzen Salon."
+>
   {#snippet actions()}
     {#if teamMode === "person" && selectedEmployee}
       <!-- quick 260820-fkz — Gesamt-Saldo moved OUT of the page head entirely, into the
@@ -1775,101 +1795,22 @@
   {/snippet}
 </PageHead>
 
-<!-- ── Ansicht: Person oder Salon (Issue #85, D-09) ───────────────────── -->
-<div class="view-tabs" role="group" aria-label="Ansicht">
-  <button
-    class="view-tab"
-    class:view-tab--active={teamMode === "person"}
-    aria-pressed={teamMode === "person"}
-    onclick={() => setTeamMode("person")}
-  >
-    Personenansicht
-  </button>
-  <button
-    class="view-tab"
-    class:view-tab--active={teamMode === "salon"}
-    aria-pressed={teamMode === "salon"}
-    onclick={() => setTeamMode("salon")}
-  >
-    Salonansicht
-  </button>
-</div>
+<!-- ── Ansicht: Person oder Salon (Issue #85, D-09) ─────────────────────
+     The two views are the tabs of the Seitenkopf (Issue #853, D-853-10). The content of the
+     active view follows below as page blocks, not inside the tab panel: the reach pins read the
+     person view as one top-level block (team-time-entries-salon-558). -->
+<PageTabs
+  tabs={viewTabs}
+  tab={teamMode}
+  onTabChange={(value) => setTeamMode(value === "salon" ? "salon" : "person")}
+  tabsLabel="Ansicht"
+/>
 
-{#if teamMode === "person"}
-  <SalonScopeLabel label={scopeLabel} rejected={listRejected} />
-  <!-- ── Mitarbeiter-Auswahl ─────────────────────────────────────────── -->
-  <div class="employee-selector">
-    <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="emp-input-wrap" onclick={() => (empDropdownOpen = !empDropdownOpen)}>
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <input
-          class="emp-search-input"
-          type="text"
-          placeholder={selectedEmployee
-            ? `${selectedEmployee.firstName} ${selectedEmployee.lastName}`
-            : "Mitarbeiter auswählen…"}
-          bind:value={empSearch}
-          onclick={(e) => {
-            e.stopPropagation();
-            empDropdownOpen = true;
-          }}
-          onfocus={() => (empDropdownOpen = true)}
-          oninput={() => (empDropdownOpen = true)}
-          aria-label="Mitarbeiter suchen"
-          autocomplete="off"
-        />
-        <svg
-          class="emp-chevron"
-          class:emp-chevron--up={empDropdownOpen}
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"
-          aria-hidden="true"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </div>
-      {#if empDropdownOpen}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="emp-backdrop" onclick={() => (empDropdownOpen = false)}></div>
-        <ul class="emp-dropdown" role="listbox" aria-label="Mitarbeiterliste">
-          {#if filteredEmployees.length === 0}
-            <li class="emp-dropdown-empty">Keine Treffer</li>
-          {:else}
-            {#each filteredEmployees as emp (emp.id)}
-              <li
-                class="emp-dropdown-item"
-                class:emp-dropdown-item--active={emp.id === selectedEmployeeId}
-                role="option"
-                aria-selected={emp.id === selectedEmployeeId}
-                tabindex="0"
-                onclick={() => selectEmployee(emp)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") selectEmployee(emp);
-                }}
-              >
-                {emp.lastName}, {emp.firstName}
-              </li>
-            {/each}
-          {/if}
-        </ul>
-      {/if}
-    </div>
-  </div>
-{/if}
-
-<!-- ── Month navigation (quick 260820-fkz) ─────────────────────────────
-     Bare nav only — no stats/statRenders/extraActions, so MonthBar's tile cluster stays
-     empty (D-NAV). Used in TWO places: passed as MonatSaldoCard's monthNav slot when an
-     employee is selected, and rendered inside the existing .te-monthbar-card in the
-     no-employee branch, so month navigation keeps working before an employee is picked. -->
+<!-- ── Period control (quick 260820-fkz, Issue #853 D-853-18) ──────────
+     Bare month bar, no stats and no eyebrow (the month figures live in the figures of the person
+     view). Rendered once per view, in the toolbar row under the tabs. -->
 {#snippet monthNavBar()}
   <MonthBar
-    eyebrow="Buchungsmonat"
     date={calMonth}
     onPrev={() => gotoMonth(-1)}
     onNext={() => gotoMonth(1)}
@@ -1878,10 +1819,41 @@
   />
 {/snippet}
 
-{#if teamMode === "salon"}
-  <Card animate class="te-monthbar-card">
+{#if teamMode === "person"}
+  <SalonScopeLabel label={scopeLabel} rejected={listRejected} />
+  <!-- Prototype .toolbar2: person picker (once a person is chosen; before that it sits in the
+       empty state), the month and the Kalender/Liste segment. -->
+  <div class="te-controls-row">
+    {#if selectedEmployee}
+      <div class="employee-selector">
+        <PersonPicker
+          items={pickerItems}
+          value={selectedEmployeeId ?? ""}
+          onValueChange={pickEmployee}
+        />
+      </div>
+    {/if}
     {@render monthNavBar()}
-  </Card>
+    {#if selectedEmployee}
+      <div class="te-view-segment">
+        <SegmentedControl
+          options={VIEW_OPTIONS}
+          value={teView}
+          onchange={(value) => (teView = value === "list" ? "list" : "calendar")}
+          ariaLabel="Darstellung"
+          name="te-view"
+          size="sm"
+        />
+      </div>
+    {/if}
+  </div>
+{:else}
+  <div class="te-controls-row">
+    {@render monthNavBar()}
+  </div>
+{/if}
+
+{#if teamMode === "salon"}
   {#if salonViewError}
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{salonViewError}</span></div>
   {:else}
@@ -1893,31 +1865,14 @@
     />
   {/if}
 {:else if selectedEmployee}
-  <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
-  <div class="view-tabs">
-    <button
-      class="view-tab"
-      class:view-tab--active={teView === "calendar"}
-      onclick={() => (teView = "calendar")}
-    >
-      Kalender
-    </button>
-    <button
-      class="view-tab"
-      class:view-tab--active={teView === "list"}
-      onclick={() => (teView = "list")}
-    >
-      Liste
-    </button>
-  </div>
-
   {#if error}
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
   {/if}
 
   <!-- Metrics row (design variant 1c "Fortschritt", quick 260820-fkz).
        Mirrors /time-entries (commit d88cdcba). Rendered ONLY with an employee
-       selected (D-01); the no-employee branch keeps its own bare nav card. -->
+       selected (D-01); the period control is not part of it (Issue #853), it sits in the
+       toolbar row above. -->
   <div class="te-metrics" class:te-metrics--single={overtimeDenied}>
     <MonatSaldoCard
       sollToDateMin={monthMetrics.sollToDateMin}
@@ -1931,7 +1886,6 @@
       loading={saldoCardState === "loading"}
       error={saldoCardState === "error"}
       onRetry={loadAll}
-      monthNav={monthNavBar}
     />
     {#if !overtimeDenied}
       <KontoSaldoCard
@@ -2267,44 +2221,23 @@
     </div>
   {/if}
 {:else}
-  <Card animate class="te-monthbar-card">
-    {@render monthNavBar()}
-  </Card>
-  <!-- Empty calendar when no employee selected -->
-  {@const y = calMonth.getFullYear()}
-  {@const m = calMonth.getMonth()}
-  {@const firstDay = new Date(y, m, 1)}
-  {@const startDow = (firstDay.getDay() + 6) % 7}
-  {@const daysInMonth = new Date(y, m + 1, 0).getDate()}
-  {@const totalCells = startDow + daysInMonth + ((7 - ((startDow + daysInMonth) % 7)) % 7)}
-  <div class="cal-section card card-animate">
-    <div class="cal-grid cal-header-row">
-      {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
-        <div class="cal-dow">{d}</div>
-      {/each}
-    </div>
-    <div class="cal-grid">
-      {#each Array(totalCells) as _, i (i)}
-        {@const dayNum = i - startDow + 1}
-        {@const isCurrentMonth = dayNum >= 1 && dayNum <= daysInMonth}
-        {@const displayDay = isCurrentMonth
-          ? dayNum
-          : dayNum < 1
-            ? new Date(y, m, dayNum).getDate()
-            : new Date(y, m + 1, dayNum - daysInMonth).getDate()}
-        {@const cellDow = i % 7}
-        <div
-          class="cal-cell cal-cell--noExpect"
-          class:cal-other={!isCurrentMonth}
-          class:cal-current={isCurrentMonth}
-          class:cal-weekend={cellDow >= 5}
-        >
-          <span class="cal-day-num">{displayDay}</span>
-        </div>
-      {/each}
-    </div>
-    <p class="no-emp-hint">Mitarbeiter auswählen, um Zeiteinträge anzuzeigen.</p>
-  </div>
+  <!-- S-11 (D-853-10): without a chosen person there is one empty state with the picker as its
+       action - never an empty calendar. -->
+  <EmptyState
+    icon="users"
+    title="Wähle eine Person"
+    description="Wessen Zeiten möchtest du sehen? Such nach dem Namen oder der Personalnummer."
+  >
+    {#snippet action()}
+      <div class="employee-selector">
+        <PersonPicker
+          items={pickerItems}
+          value={selectedEmployeeId ?? ""}
+          onValueChange={pickEmployee}
+        />
+      </div>
+    {/snippet}
+  </EmptyState>
 {/if}
 
 <!-- ── Modal (Modal primitive — owns backdrop/escape/focus-trap) ────────── -->
@@ -2553,17 +2486,29 @@
 />
 
 <style>
-  /* ── MonthBar card spacing (primitive owns its 18px 24px inner padding,
-       same as .cal-monthbar — so header height matches /leave et al.) ──── */
-  :global(.te-monthbar-card) {
-    padding: 0;
-    margin-bottom: 18px;
-    /* Allow month-picker dropdown to escape .card overflow:clip and lift
-       above sibling .card stacking contexts (each .card creates its own via
-       backdrop-filter). Without these three lines the dropdown is invisible. */
-    overflow: visible;
+  /* ── Toolbar row (Issue #853, D-853-18; prototype .toolbar2) ─────────────────────
+       Person picker, month and Kalender/Liste segment in one row under the tabs. The row lifts
+       above the cards that follow so the month grid dropdown of the period control is not hidden
+       by their backdrop-filter stacking contexts. */
+  .te-controls-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2) var(--s-4);
+    margin-bottom: var(--s-3);
     position: relative;
     z-index: 30;
+  }
+
+  /* The period keeps its label and arrows (block); only its page-sized padding goes, so the row
+     starts at the page edge like the prototype's .period. */
+  .te-controls-row :global(.month-bar) {
+    padding: 0;
+  }
+
+  .te-view-segment {
+    margin-left: auto;
   }
 
   /* MonthBar + mini-stats styles live in the MonthBar primitive. */
@@ -2575,12 +2520,7 @@
     grid-template-columns: 1.55fr 1fr;
     gap: var(--s-4);
     margin-bottom: 18px;
-    /* Load-bearing, not decoration: the month/year picker dropdown (now rendered
-       inside MonatSaldoCard's nav row) must escape .card's overflow:clip and lift
-       above the calendar card's own backdrop-filter stacking context. */
     overflow: visible;
-    position: relative;
-    z-index: 30;
   }
 
   @media (max-width: 1000px) {
@@ -2597,15 +2537,6 @@
     margin: calc(-1 * var(--s-2)) 0 18px;
     font-size: 0.875rem;
   }
-
-  /* MonthBar owns its 18px 24px inner padding by default; reset it here since it now
-     renders inside MonatSaldoCard's own padded card body. */
-  .te-metrics :global(.month-bar) {
-    padding: 0 0 var(--s-3);
-  }
-
-  /* ── View Tabs ───────────────────────────────────────── */
-  /* view-tabs, view-tab → global in app.css */
 
   /* ── Day bar above the list (Issue #70): the focused day and its per-day add ─── */
   .list-day-bar {
@@ -3221,135 +3152,14 @@
     }
   }
 
-  /* ── Mitarbeiter-Auswahl ─────────────────────────────────────────── */
+  /* ── Person picker (Issue #853, D-853-10) ──────────────────────────── */
+  /* In the toolbar row the flex basis decides; in the empty state (a shrink-wrapped column) the
+     width does, so the placeholder is never cut. */
   .employee-selector {
-    margin-bottom: 0.75rem;
-    position: relative;
-    z-index: 60; /* v1.8.8 — must beat sibling .te-monthbar-card / .te-metrics (z=30) so dropdown is clickable */
-  }
-
-  .emp-combobox {
-    position: relative;
-    max-width: 360px;
-  }
-
-  .emp-input-wrap {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.875rem;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    box-shadow: var(--shadow);
-    cursor: pointer;
-    min-height: 2.5rem;
-  }
-
-  .emp-combobox--open .emp-input-wrap {
-    border-color: var(--brand);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 20%, transparent);
-  }
-
-  .emp-search-input {
-    flex: 1;
-    border: none;
-    outline: none;
-    background: transparent;
-    font-size: 0.9375rem;
-    color: var(--text);
+    flex: 0 1 22rem;
+    width: 22rem;
     min-width: 0;
-  }
-
-  .emp-search-input::placeholder {
-    color: var(--text-2);
-  }
-
-  .emp-chevron {
-    flex-shrink: 0;
-    color: var(--text-2);
-    transition: transform 0.15s;
-  }
-
-  .emp-chevron--up {
-    transform: rotate(180deg);
-  }
-
-  .emp-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-  }
-
-  .emp-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    box-shadow: var(--shadow-pop);
-    list-style: none;
-    margin: 0;
-    padding: 0.25rem 0;
-    max-height: 280px;
-    overflow-y: auto;
-    z-index: 50;
-  }
-
-  .emp-dropdown-item {
-    padding: 0.5rem 0.875rem;
-    font-size: 0.9375rem;
-    color: var(--text);
-    cursor: pointer;
-    transition: background 0.1s;
-  }
-
-  .emp-dropdown-item:hover,
-  .emp-dropdown-item:focus {
-    background: var(--sunk);
-    outline: none;
-  }
-
-  .emp-dropdown-item--active {
-    color: var(--brand);
-    font-weight: 600;
-  }
-
-  .emp-dropdown-empty {
-    padding: 0.75rem 0.875rem;
-    font-size: 0.875rem;
-    color: var(--text-2);
-  }
-
-  /* ── No-employee empty state ──────────────────────────────────────── */
-  .no-emp-hint {
-    text-align: center;
-    padding: 1.5rem 1rem;
-    color: var(--text-2);
-    font-size: 0.875rem;
-    margin: 0;
-  }
-  .no-emp-card {
-    padding: 3rem 2rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-    text-align: center;
-  }
-
-  .no-emp-icon {
-    color: var(--brand);
-    opacity: 0.5;
-  }
-
-  .no-emp-text {
-    font-size: 0.9375rem;
-    color: var(--text-2);
-    max-width: 32rem;
-    margin: 0;
-    line-height: 1.6;
+    max-width: 100%;
+    text-align: left;
   }
 </style>

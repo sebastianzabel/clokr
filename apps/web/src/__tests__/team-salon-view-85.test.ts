@@ -52,9 +52,32 @@ describe("Issue #85 — the Salonansicht of /team/time-entries", () => {
   // true against an empty string, and the person view must still be there.
   it("[vacuity gate] the page source is loaded and still carries the person view", () => {
     expect(PAGE.length).toBeGreaterThan(50_000);
-    expect(PAGE).toContain('aria-label="Mitarbeiter suchen"');
+    // Issue #853: the hand-rolled search field (aria-label "Mitarbeiter suchen") is the
+    // PersonPicker block now; the pin still proves the person view's selector is on the page.
+    expect(PAGE).toContain("<PersonPicker");
     expect(PAGE).toContain("Personenansicht");
     expect(PAGE).toContain("Salonansicht");
+  });
+
+  // Issue #853 (D-853-10): the two views are the PageTabs of the Seitenkopf; the tab value is the
+  // page's teamMode and a tab change goes through setTeamMode (so a switch back to the person view
+  // still catches up on the month loads).
+  it("[tabs] Personenansicht and Salonansicht are PageTabs on teamMode, switching via setTeamMode", () => {
+    expect(PAGE).toMatch(/<PageTabs[^>]*tab=\{teamMode\}/);
+    expect(PAGE).toContain('{ value: "person", label: "Personenansicht" }');
+    expect(PAGE).toContain('{ value: "salon", label: "Salonansicht" }');
+    expect(PAGE).toMatch(
+      /onTabChange=\{\(value\) =>\s*setTeamMode\(value === "salon" \? "salon" : "person"\)/,
+    );
+    // The hand-rolled strips are gone.
+    expect(PAGE).not.toContain("view-tab");
+  });
+
+  it("[segment] Kalender and Liste are one SegmentedControl on teView", () => {
+    expect(PAGE.split("<SegmentedControl").length - 1).toBe(1);
+    expect(PAGE).toContain("value={teView}");
+    expect(PAGE).toContain('{ value: "calendar", label: "Kalender" }');
+    expect(PAGE).toContain('{ value: "list", label: "Liste" }');
   });
 
   it("[D-09] the salon comes only from teamSalonViewSalon($salonContext), never the raw selection getter", () => {
