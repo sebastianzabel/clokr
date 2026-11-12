@@ -15,7 +15,7 @@
   import PersonTab from "$lib/components/employees/detail/PersonTab.svelte";
   import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
   import { employmentState, localCalendarDay } from "$lib/employees/employment-state";
-  import { dayOf, type PersonEmployee } from "$lib/employees/person-form";
+  import type { PersonEmployee } from "$lib/employees/person-form";
   import type { VacationEntitlement } from "$lib/employees/urlaub-form";
   import Section from "$lib/components/admin/Section.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
@@ -29,6 +29,7 @@
   import type { FormRole } from "$lib/employees/form-role";
   import UrlaubTab from "$lib/components/employees/detail/UrlaubTab.svelte";
   import VertragTab from "$lib/components/employees/detail/VertragTab.svelte";
+  import VertragOverrides from "$lib/components/employees/detail/VertragOverrides.svelte";
   import type { ContractSchedule } from "$lib/employees/vertrag-form";
   import ZugangTab from "$lib/components/employees/detail/ZugangTab.svelte";
   import { salonContext } from "$stores/salon-context";
@@ -318,8 +319,6 @@
 
       // Phase 109 (D-11/D-12) — baseline snapshots, taken once every field above is hydrated,
       // so no section starts marked "Nicht gespeichert" right after load.
-      pausendauerSnapshot = snap(eBreakOver6hOverride, eBreakOver9hOverride);
-      phorestPufferSnapshot = snap(ePhorestPrepOverride, ePhorestWrapupOverride);
       patternsSnapshot = snap(bsPatterns);
       bsSlotEmpSnapshot = snap(
         empBsSlotFirstLong,
@@ -360,22 +359,6 @@
   let canEditVacation = $derived(
     hasPermission($authStore.user, "leave-entitlement:update:ZUGEWIESEN"),
   );
-  // Phase 65 — Per-employee Pausendauer override (BREAK-06)
-  // String state lets us distinguish "" (= null, use tenant) from typed integer values
-  let eBreakOver6hOverride = $state<string>("");
-  let eBreakOver9hOverride = $state<string>("");
-  let pausendauerSaving = $state(false);
-  let pausendauerError = $state("");
-  let pausendauerSaved = $state(false);
-
-  // Phase 85.1.1 (D-01, D-03) — Per-employee Phorest Vor-/Nachbereitungszeit override
-  // String state lets us distinguish "" (= null, use tenant) from typed integer values
-  let ePhorestPrepOverride = $state<string>("");
-  let ePhorestWrapupOverride = $state<string>("");
-  let phorestPufferSaving = $state(false);
-  let phorestPufferError = $state("");
-  let phorestPufferSaved = $state(false);
-
   // Phase 76.36 — per-employee bsSlot* overrides (BBIG-V19-03 employee layer).
   // "" = inherit (field cleared → PATCH sends null → re-enables inheritance).
   // Bounds mirror apps/api/src/contexts/absence/vocational-school-constants.ts.
@@ -489,59 +472,10 @@
     })(),
   );
 
-  /**
-   * Pure age-at-date helper (mirrors apps/api/src/contexts/absence/jarbschg.ts ageAtDate, no date-fns dep).
-   * Returns full years between birthDate and atDate. Returns NaN for invalid input.
-   */
-  function ageAtDate(birthDate: string | Date | null | undefined, atDate: Date): number {
-    if (!birthDate) return Number.NaN;
-    const b = birthDate instanceof Date ? birthDate : new Date(birthDate);
-    if (Number.isNaN(b.getTime())) return Number.NaN;
-    let age = atDate.getFullYear() - b.getFullYear();
-    const m = atDate.getMonth() - b.getMonth();
-    if (m < 0 || (m === 0 && atDate.getDate() < b.getDate())) {
-      age--;
-    }
-    return age;
-  }
-
-  // Issue #574 (D-574-12) — § 11 JArbSchG applies to ANY person under 18, whatever the
-  // classification (the API decides the break regime per work date the same way): 30/60 Min
-  // suggestion. Read from the saved birth date of the Person tab (plan 854-20: the field has its own
-  // SaveBar there, the Vertrag tab follows what the record holds).
-  let birthDay = $derived(dayOf(employee?.birthDate));
   let classification = $derived<EmployeeClassification>(employee?.classification ?? "VOLLZEIT");
-  let isUnder18 = $derived(
-    Number.isFinite(ageAtDate(birthDay, new Date())) && ageAtDate(birthDay, new Date()) < 18,
-  );
-  let bothOverridesEmpty = $derived(eBreakOver6hOverride === "" && eBreakOver9hOverride === "");
-  let showUnder18SuggestionButton = $derived(isUnder18 && bothOverridesEmpty);
 
   function initFields() {
     if (!employee) return;
-    // Phase 65 — override fields ("" = null in PATCH body, fall back to tenant default)
-    eBreakOver6hOverride =
-      employee.breakOver6hOverride !== undefined && employee.breakOver6hOverride !== null
-        ? String(employee.breakOver6hOverride)
-        : "";
-    eBreakOver9hOverride =
-      employee.breakOver9hOverride !== undefined && employee.breakOver9hOverride !== null
-        ? String(employee.breakOver9hOverride)
-        : "";
-
-    // Phase 85.1.1 (D-01, D-03) — override fields ("" = null in PATCH body,
-    // fall back to tenant default)
-    ePhorestPrepOverride =
-      employee.phorestPrepMinutesOverride !== undefined &&
-      employee.phorestPrepMinutesOverride !== null
-        ? String(employee.phorestPrepMinutesOverride)
-        : "";
-    ePhorestWrapupOverride =
-      employee.phorestWrapupMinutesOverride !== undefined &&
-      employee.phorestWrapupMinutesOverride !== null
-        ? String(employee.phorestWrapupMinutesOverride)
-        : "";
-
     // Phase 76.36 — hydrate per-employee bsSlot* overrides ("" = null, inherit from lower layer)
     empBsSlotFirstLong =
       employee.bsSlotFirstLongDayMinutes != null ? String(employee.bsSlotFirstLongDayMinutes) : "";
@@ -553,99 +487,6 @@
       employee.bsSlotShortDayMinutes != null ? String(employee.bsSlotShortDayMinutes) : "";
     empBsSlotBlockWeek =
       employee.bsSlotBlockWeekMinutes != null ? String(employee.bsSlotBlockWeekMinutes) : "";
-  }
-
-  // Phase 65 — Persist per-employee Pausendauer override (BREAK-06)
-  async function savePausendauer() {
-    if (!employee) return;
-    pausendauerSaving = true;
-    pausendauerError = "";
-    pausendauerSaved = false;
-
-    // Empty/cleared → null (fall back to tenant); typed → integer.
-    // NOTE: Even though state is typed `string`, Svelte 5 `bind:value` on
-    // `<input type="number">` coerces the bound value to `number | null` at
-    // runtime. Accept both shapes so .trim() never lands on a non-string.
-    const parse = (v: string | number | null | undefined): number | null => {
-      if (v === null || v === undefined) return null;
-      if (typeof v === "number") return Number.isFinite(v) ? Math.trunc(v) : null;
-      if (v.trim() === "") return null;
-      const n = Number.parseInt(v, 10);
-      return Number.isFinite(n) ? n : null;
-    };
-
-    try {
-      const newOver6 = parse(eBreakOver6hOverride);
-      const newOver9 = parse(eBreakOver9hOverride);
-      await api.patch(`/employees/${employee.id}`, {
-        breakOver6hOverride: newOver6,
-        breakOver9hOverride: newOver9,
-      });
-      // Reflect persisted state so derived flags (suggestion button visibility) update
-      employee = {
-        ...employee,
-        breakOver6hOverride: newOver6,
-        breakOver9hOverride: newOver9,
-      };
-      pausendauerSaved = true;
-      pausendauerSnapshot = snap(eBreakOver6hOverride, eBreakOver9hOverride);
-      setTimeout(() => (pausendauerSaved = false), 3000);
-    } catch (e: unknown) {
-      // Server returns one of 4 verbatim German messages (Phase 64 D-08) — surface as-is
-      pausendauerError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      pausendauerSaving = false;
-    }
-  }
-
-  // Phase 85.1.1 (D-01, D-03) — Persist per-employee Phorest puffer override
-  async function savePhorestPuffer() {
-    if (!employee) return;
-    phorestPufferSaving = true;
-    phorestPufferError = "";
-    phorestPufferSaved = false;
-
-    // Empty/cleared → null (fall back to tenant); typed → integer.
-    // NOTE: Even though state is typed `string`, Svelte 5 `bind:value` on
-    // `<input type="number">` coerces the bound value to `number | null` at
-    // runtime. Accept both shapes so .trim() never lands on a non-string.
-    const parse = (v: string | number | null | undefined): number | null => {
-      if (v === null || v === undefined) return null;
-      if (typeof v === "number") return Number.isFinite(v) ? Math.trunc(v) : null;
-      if (v.trim() === "") return null;
-      const n = Number.parseInt(v, 10);
-      return Number.isFinite(n) ? n : null;
-    };
-
-    try {
-      const newPrep = parse(ePhorestPrepOverride);
-      const newWrapup = parse(ePhorestWrapupOverride);
-      await api.patch(`/employees/${employee.id}`, {
-        phorestPrepMinutesOverride: newPrep,
-        phorestWrapupMinutesOverride: newWrapup,
-      });
-      // Reflect persisted state so derived flags update
-      employee = {
-        ...employee,
-        phorestPrepMinutesOverride: newPrep,
-        phorestWrapupMinutesOverride: newWrapup,
-      };
-      phorestPufferSaved = true;
-      phorestPufferSnapshot = snap(ePhorestPrepOverride, ePhorestWrapupOverride);
-      setTimeout(() => (phorestPufferSaved = false), 3000);
-    } catch (e: unknown) {
-      phorestPufferError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      phorestPufferSaving = false;
-    }
-  }
-
-  // Phase 65 / Issue #574 — one-click § 11 JArbSchG suggestion for a person under 18
-  function applyUnder18Suggestion() {
-    // § 11 Abs. 1 JArbSchG: 30 Min above 4.5 h, 60 Min above 6 h — so both the ">6h" and the
-    // ">9h" field carry 60; the 4.5 h band is enforced by the API's break regime for minors.
-    eBreakOver6hOverride = "60";
-    eBreakOver9hOverride = "60";
   }
 
   // Phase 76.36 — Persist per-employee bsSlot* overrides (BBIG-V19-03).
@@ -1069,16 +910,6 @@
     return JSON.stringify(values);
   }
 
-  let pausendauerSnapshot = $state("");
-  let pausendauerDirty = $derived(
-    snap(eBreakOver6hOverride, eBreakOver9hOverride) !== pausendauerSnapshot,
-  );
-
-  let phorestPufferSnapshot = $state("");
-  let phorestPufferDirty = $derived(
-    snap(ePhorestPrepOverride, ePhorestWrapupOverride) !== phorestPufferSnapshot,
-  );
-
   // bsPatterns is the whole array savePatterns() maps over — snapshotting it as one JSON string
   // catches every field of every row (add/remove/reorder included), not just edits to one field.
   let patternsSnapshot = $state("");
@@ -1099,11 +930,11 @@
   let personChanges = $state(0);
   let vacationChanges = $state(0);
   let vertragChanges = $state(0);
+  let overrideChanges = $state(0);
   let anyUnsaved = $derived(
     personChanges > 0 ||
       vertragChanges > 0 ||
-      pausendauerDirty ||
-      phorestPufferDirty ||
+      overrideChanges > 0 ||
       patternsDirty ||
       bsSlotEmpDirty ||
       vacationChanges > 0,
@@ -1143,6 +974,11 @@
   /** The Vertrag tab reports the saved schedule; the Überschreibungen below read its weekly hours. */
   function onContractSaved(saved: ContractSchedule) {
     workSchedule = saved;
+  }
+
+  /** The override groups report what a PATCH wrote; the record follows (the BS slots read it). */
+  function onOverridesSaved(written: Partial<Employee>) {
+    if (employee) employee = { ...employee, ...written };
   }
 
   /** The Person tab reports what a PATCH wrote; the record (and so the head and the Vertrag tab) follows. */
@@ -1191,167 +1027,17 @@
           {canDiscardShifts}
           bind:changes={vertragChanges}
           onSaved={onContractSaved}
-        />
-
-        <!-- Phase 65 — Pausendauer (Optional) per-Employee Override (BREAK-06, BREAK-07, D-04..D-07) -->
-        <!-- Phase 73-05: data-testid surface for the per-employee Pausendauer editor.
-             Clokr's break model has 2 fixed thresholds (>6h / >9h), not a table of N
-             rows — so the plan's pausendauer-row-${i} pattern doesn't apply. Plan
-             says: "apply only to elements that exist; don't invent UI." -->
-        <div data-testid="pausendauer-editor" style="display: contents;">
-          <Section
-            title="Pausendauer (Optional)"
-            sub="Überschreibt den Unternehmensstandard für diese Person. Leer = Standard verwenden."
-            dirty={pausendauerDirty}
-          >
-            {#snippet footer()}
-              <button
-                class="btn btn-primary"
-                onclick={savePausendauer}
-                disabled={pausendauerSaving}
-                data-testid="pausendauer-save"
-              >
-                {pausendauerSaving ? "Speichern…" : "Speichern"}
-              </button>
-              {#if pausendauerSaved}<span class="saved-hint">Gespeichert</span>{/if}
-            {/snippet}
-
-            {#if pausendauerError}
-              <div class="callout error" data-testid="pausendauer-error">{pausendauerError}</div>
-            {/if}
-
-            {#if isUnder18}
-              <!-- § 11 JArbSchG info pill (recommendation, not violation — uses .alert-info per app.css) -->
-              <div
-                class="alert alert-info"
-                role="status"
-                style="margin-bottom: 1rem;"
-                data-testid="pausendauer-azubi-pill"
-              >
-                <span>ℹ️</span><span>Unter 18 — Pausen nach § 11 JArbSchG</span>
-              </div>
-              {#if showUnder18SuggestionButton}
-                <div style="margin-bottom: 1rem;">
-                  <button
-                    type="button"
-                    class="btn btn-secondary"
-                    onclick={applyUnder18Suggestion}
-                    data-testid="pausendauer-azubi-apply"
-                    >Vorschlag nach § 11 JArbSchG übernehmen (60 Min ab 6 h)</button
-                  >
-                </div>
-              {/if}
-            {/if}
-
-            <p class="form-hint text-muted" style="margin-bottom: 1rem;">
-              Leer = Unternehmensstandard ({tenantBreakConfig?.defaultBreakOver6h ??
-                30}/{tenantBreakConfig?.defaultBreakOver9h ?? 45} Min)
-            </p>
-
-            <div class="form-group">
-              <label class="form-label" for="emp-break-over6h">Pause &gt;6h (Min)</label>
-              <input
-                id="emp-break-over6h"
-                type="number"
-                min="30"
-                max="120"
-                step="1"
-                bind:value={eBreakOver6hOverride}
-                placeholder={isUnder18
-                  ? "60 Min — nach § 11 JArbSchG"
-                  : `Standard: ${tenantBreakConfig?.defaultBreakOver6h ?? 30} Min`}
-                class="form-input"
-                disabled={pausendauerSaving}
-                data-testid="pausendauer-over6h"
-              />
-              <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
-            </div>
-
-            <div class="form-group" style="margin-top: 1rem;">
-              <label class="form-label" for="emp-break-over9h">Pause &gt;9h (Min)</label>
-              <input
-                id="emp-break-over9h"
-                type="number"
-                min="45"
-                max="180"
-                step="1"
-                bind:value={eBreakOver9hOverride}
-                placeholder={isUnder18
-                  ? "60 Min — nach § 11 JArbSchG"
-                  : `Standard: ${tenantBreakConfig?.defaultBreakOver9h ?? 45} Min`}
-                class="form-input"
-                disabled={pausendauerSaving}
-                data-testid="pausendauer-over9h"
-              />
-              <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
-            </div>
-          </Section>
-        </div>
-
-        <!-- Phase 85.1.1 (D-01, D-03) — Phorest Vor-/Nachbereitungszeit (Optional) per-Employee
-             Override. Mirrors the Pausendauer (Optional) Section above end-to-end. -->
-        <div data-testid="phorest-puffer-editor" style="display: contents;">
-          <Section
-            title="Phorest Vor-/Nachbereitungszeit (Optional)"
-            sub="Überschreibt den Unternehmensstandard für diese Person. Leer = Standard verwenden."
-            dirty={phorestPufferDirty}
-          >
-            {#snippet footer()}
-              <button
-                class="btn btn-primary"
-                onclick={savePhorestPuffer}
-                disabled={phorestPufferSaving}
-                data-testid="phorest-puffer-save"
-              >
-                {phorestPufferSaving ? "Speichern…" : "Speichern"}
-              </button>
-              {#if phorestPufferSaved}<span class="saved-hint">Gespeichert</span>{/if}
-            {/snippet}
-
-            {#if phorestPufferError}
-              <div class="callout error" data-testid="phorest-puffer-error">
-                {phorestPufferError}
-              </div>
-            {/if}
-
-            <p class="form-hint text-muted" style="margin-bottom: 1rem;">
-              Leer = Firmenstandard nutzen ({tenantBreakConfig?.phorestPrepMinutes ??
-                0}/{tenantBreakConfig?.phorestWrapupMinutes ?? 0} Min)
-            </p>
-
-            <div class="form-group">
-              <label class="form-label" for="emp-phorest-prep">Vorbereitungszeit (Min.)</label>
-              <input
-                id="emp-phorest-prep"
-                type="number"
-                min="0"
-                max="30"
-                step="1"
-                bind:value={ePhorestPrepOverride}
-                placeholder={`Standard: ${tenantBreakConfig?.phorestPrepMinutes ?? 0} Min`}
-                class="form-input"
-                disabled={phorestPufferSaving}
-                data-testid="phorest-puffer-prep"
-              />
-            </div>
-
-            <div class="form-group" style="margin-top: 1rem;">
-              <label class="form-label" for="emp-phorest-wrapup">Nachbereitungszeit (Min.)</label>
-              <input
-                id="emp-phorest-wrapup"
-                type="number"
-                min="0"
-                max="30"
-                step="1"
-                bind:value={ePhorestWrapupOverride}
-                placeholder={`Standard: ${tenantBreakConfig?.phorestWrapupMinutes ?? 0} Min`}
-                class="form-input"
-                disabled={phorestPufferSaving}
-                data-testid="phorest-puffer-wrapup"
-              />
-            </div>
-          </Section>
-        </div>
+        >
+          {#if employee}
+            <VertragOverrides
+              {employee}
+              tenant={tenantBreakConfig}
+              canEdit={canUpdateEmployee}
+              bind:changes={overrideChanges}
+              onSaved={onOverridesSaved}
+            />
+          {/if}
+        </VertragTab>
 
         <!-- Phase 67 (BERSCH-15) — Berufsschultag (Optional) editor (full edit semantics) -->
         {#if classification === "AZUBI"}

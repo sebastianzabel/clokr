@@ -12,7 +12,7 @@
   (`MONTH_FIRST_ERROR`, `WEEKLY_HOURS_MISMATCH` #848, the usualWorkDays rule #481); the 409 with pending
   shifts opens a dialog (the choice follows the `shift:plan` right, the preview is redacted by the API).
   The Minijob hint is advisory (D-854-08) and never blocks. The per-person overrides of the former
-  Arbeitszeit tab follow in plan 854-22.
+  Arbeitszeit tab (Pausendauer, Phorest, Berufsschule) are the `children` the page renders below.
 
   The baseline is read once on purpose: the snapshot is the group's own afterwards, and a reload of the
   `schedule` prop must not discard what was typed.
@@ -26,9 +26,10 @@
     changes           bindable, the number of unsaved changes (the page sums it into markUnsaved)
     onSaved           called with the saved schedule
     today             the calendar day the default „Gültig ab“ counts from (default: the local day)
+    children          the override groups rendered after the contract groups (same column, same gap)
 -->
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, untrack, type Snippet } from "svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import Chip from "$components/ui/Chip.svelte";
@@ -84,6 +85,8 @@
     changes?: number;
     onSaved?: (schedule: ContractSchedule) => void;
     today?: string;
+    /** The per-person override groups the page renders below the contract (plan 854-22). */
+    children?: Snippet;
   }
 
   // `changes` is write-only here: the page reads it through `bind:changes`.
@@ -97,6 +100,7 @@
     changes = $bindable(),
     onSaved,
     today: todayProp,
+    children,
   }: Props = $props();
 
   const todayIso = untrack(() => todayProp ?? localCalendarDay());
@@ -629,6 +633,8 @@
       {/each}
     </SettingsGroup>
   {/if}
+
+  {@render children?.()}
 </div>
 
 <Dialog

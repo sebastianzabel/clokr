@@ -58,6 +58,12 @@ const VERTRAG_MODEL = readRouteFile(
   "src/lib/employees/vertrag-form.ts",
 );
 
+// The per-person override groups (plan 854-22): Pausendauer and Phorest, each with its own SaveBar.
+const VERTRAG_OVERRIDES = readRouteFile(
+  "../lib/components/employees/detail/VertragOverrides.svelte",
+  "src/lib/components/employees/detail/VertragOverrides.svelte",
+);
+
 // The plan's reference slicer (`vacation-summary.test.ts:47-55`) finds a function's end by
 // searching for the next "\n  }" (a two-space-indented closing brace) after the marker. That
 // heuristic breaks on this page: several save functions take an optional object-typed
@@ -122,16 +128,23 @@ describe("D-08/AK-10 — Vertragsdaten mit validFrom stay button-gated", () => {
 });
 
 describe("N-02 — every save path on this page is already button-gated", () => {
-  const BUTTON_GATED = [
-    "savePausendauer",
-    "savePhorestPuffer",
-    "saveBsSlotEmp",
-    "savePatterns",
-  ] as const;
+  const BUTTON_GATED = ["saveBsSlotEmp", "savePatterns"] as const;
 
   it.each(BUTTON_GATED)("%s is wired via onclick=, never onchange=", (name) => {
     expect(PAGE).toContain(`onclick={${name}}`);
     expect(PAGE).not.toContain(`onchange={${name}}`);
+  });
+
+  it("the override groups save through their SaveBar, never through a change handler", () => {
+    for (const name of ["savePause", "savePhorest"]) {
+      expect(VERTRAG_OVERRIDES, name).toContain(`onSave={${name}}`);
+      expect(VERTRAG_OVERRIDES, name).not.toContain(`onchange={${name}}`);
+      // each group sends exactly its own keys (#878), never a spread of the record
+      expect(fnBody(`async function ${name}`, VERTRAG_OVERRIDES), name).toContain("pickSection(");
+      expect(fnBody(`async function ${name}`, VERTRAG_OVERRIDES), name).toContain("api.patch");
+    }
+    expect(fnBody("async function savePause", VERTRAG_OVERRIDES)).toContain("PAUSE_KEYS");
+    expect(fnBody("async function savePhorest", VERTRAG_OVERRIDES)).toContain("PHOREST_KEYS");
   });
 
   it("the Urlaub tab saves through its SaveBar, never through a change handler", () => {
@@ -180,29 +193,27 @@ describe("AK-02 — no text/number input writes inline on this page", () => {
 });
 
 describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
-  const FLAGS = [
-    "pausendauerDirty",
-    "phorestPufferDirty",
-    "patternsDirty",
-    "bsSlotEmpDirty",
-  ] as const;
+  const FLAGS = ["patternsDirty", "bsSlotEmpDirty"] as const;
 
   it.each(FLAGS)("%s is derived from a snapshot", (name) => {
     expect(PAGE).toContain(`let ${name} = $derived(`);
   });
 
   // Issue #580 removed the footer of the Berechtigungen tab: role assignments save in their own
-  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1). Since #854 the Person, Vertrag and Urlaub tabs own their
-  // groups and report their change count (`bind:changes`), so four footer Sections remain on this page
-  // (the overrides, until plan 854-22).
-  it("all four remaining footer Sections receive a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(4);
+  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1). Since #854 the Person, Vertrag and Urlaub tabs and the
+  // Pausendauer / Phorest override groups own their groups and report their change count
+  // (`bind:changes`), so two footer Sections remain on this page (the Berufsschule ones, until the
+  // next commit of plan 854-22).
+  it("both remaining footer Sections receive a dirty prop", () => {
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(2);
   });
 
   it("the Person, Vertrag and Urlaub tabs' unsaved changes are summed into the one registration", () => {
     expect(PAGE).toContain("bind:changes={personChanges}");
     expect(PAGE).toContain("bind:changes={vertragChanges}");
     expect(PAGE).toContain("bind:changes={vacationChanges}");
+    expect(PAGE).toContain("bind:changes={overrideChanges}");
+    expect(PAGE).toContain("overrideChanges > 0");
     expect(PAGE).toContain("vertragChanges > 0");
     expect(PAGE).toMatch(/let anyUnsaved = \$derived\(\s*personChanges > 0/);
     expect(PAGE).toContain("vacationChanges > 0");

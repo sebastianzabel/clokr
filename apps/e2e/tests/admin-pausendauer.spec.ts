@@ -8,7 +8,7 @@
  *   - tenant fixture (73-02 D-04) for per-test isolation
  *   - data-testid selectors from 73-05:
  *       Regeln › Arbeitszeit & Verträge (Issue #854): arbeitszeit-pausen-{autoBreakEnabled,over6h,over9h}
- *       admin/employees/[id]: pausendauer-{over6h,over9h,save,azubi-pill,azubi-apply}
+ *       admin/employees/[id]: pausendauer-{over6h,over9h,azubi-pill,azubi-apply} (the group's SaveBar replaced pausendauer-save)
  *   - waitForResponse instead of waitForTimeout
  *
  * Flow A — tenant defaults round-trip:
@@ -116,7 +116,7 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     await loginAsTenantAdmin(page, tenant);
 
     await page.goto(`/admin/employees/${employeeId}`);
-    // The Pausendauer Section lives under the Vertrag tab (formerly Arbeitszeit) on the detail page.
+    // The Pausendauer group lives under the Vertrag tab (formerly Arbeitszeit) on the detail page.
     await page.getByRole("tab", { name: "Vertrag" }).click();
 
     const editor = page.getByTestId("pausendauer-editor");
@@ -136,7 +136,8 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     );
     await over6h.fill("40");
     await over9h.fill("50");
-    await page.getByTestId("pausendauer-save").click();
+    // Issue #854: the group saves through its own SaveBar.
+    await page.getByRole("button", { name: "Pausendauer speichern" }).click();
     await savePromise;
 
     await page.reload();
@@ -150,7 +151,7 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     const clearPromise = page.waitForResponse(
       (res) => res.url().includes(`/employees/${employeeId}`) && res.request().method() === "PATCH",
     );
-    await page.getByTestId("pausendauer-save").click();
+    await page.getByRole("button", { name: "Pausendauer speichern" }).click();
     await clearPromise;
   });
 });

@@ -42,6 +42,7 @@ const PHOREST_ALLOWED = [
   "src/routes/(operator)/", // operator console: salon coupling
   "src/lib/components/admin/",
   "src/lib/components/schedule/", // contract fields edited in Verwaltung
+  "src/lib/components/employees/detail/", // the person detail's per-person Phorest buffer (#854), a Verwaltung page
   "src/lib/components/operator/",
   "src/lib/operator/",
   "src/lib/nav/routes.ts", // the page names (#844): the Phorest entry is shown only under Verwalten › System

@@ -154,6 +154,8 @@ export const SCOPE_FILES = [
   // Issue #854 (plan 854-21): the Vertrag tab shows its fields by contract:update (`canEdit`) and the
   // pending-shift choice by shift:plan (`canDiscardShifts`), never by a role.
   "apps/web/src/lib/components/employees/detail/VertragTab.svelte",
+  // Issue #854 (plan 854-22): the override groups show their fields by employee:update (`canEdit`).
+  "apps/web/src/lib/components/employees/detail/VertragOverrides.svelte",
 ];
 
 /** (file, exact trimmed line text) pairs that may keep a flagged line. Empty since #538: the last
