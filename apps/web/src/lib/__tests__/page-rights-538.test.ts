@@ -236,12 +236,15 @@ describe("reports attendance list - action links (Issue #587, source pin)", () =
     "../../routes/(app)/reports/+page.svelte",
     "src/routes/(app)/reports/+page.svelte",
   );
-  const tableStart = REPORTS.indexOf('<table class="attendance-table">');
-  const table = REPORTS.slice(tableStart, REPORTS.indexOf("</table>", tableStart));
+  // Issue #854: the list is a DataTable; the action cell is the `attendanceCell` snippet.
+  const tableStart = REPORTS.indexOf("<DataTable");
+  const cellStart = REPORTS.indexOf("{#snippet attendanceCell(");
+  const table = REPORTS.slice(cellStart, REPORTS.indexOf("{/snippet}", cellStart));
 
   it("anchors are present (non-vacuous)", () => {
     expect(tableStart).toBeGreaterThan(-1);
-    expect(table).toContain("pagedTodayRows");
+    expect(cellStart).toBeGreaterThan(-1);
+    expect(REPORTS).toContain("rows={pagedTodayRows}");
   });
 
   it("offers the two links only on a missing row, each behind its flag", () => {
