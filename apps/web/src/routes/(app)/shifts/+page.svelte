@@ -2300,6 +2300,7 @@
     color: var(--text-2);
     padding: 12px 8px;
     border-top: 1px solid var(--line);
+    background: var(--card);
   }
   .sp-coverage-cell {
     display: flex;
@@ -2312,6 +2313,7 @@
     text-align: center;
     font-size: 12px;
     color: var(--text-2);
+    background: var(--card);
   }
   .sp-coverage-cell--under {
     color: var(--bad);
@@ -2464,6 +2466,7 @@
 
   /* Phase 45: SHIFT_BASED Soll-Row */
   .sp-soll-label {
+    background: var(--card);
     padding: 8px 8px 12px;
     border-top: 2px solid var(--line-2);
     display: flex;
