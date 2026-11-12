@@ -183,10 +183,6 @@
         "count": 2,
         "ticket": "#854"
       },
-      "apps/web/src/lib/components/team/SalonTimeEntries.svelte": {
-        "count": 1,
-        "ticket": "#853"
-      },
       "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte": {
         "count": 1,
         "ticket": "#854"

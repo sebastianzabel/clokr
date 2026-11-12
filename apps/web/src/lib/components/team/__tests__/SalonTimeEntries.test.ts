@@ -70,6 +70,28 @@ describe("SalonTimeEntries — rows", () => {
     expect(document.body.textContent ?? "").not.toMatch(/Summe|Gesamt/);
   });
 
+  // Issue #853 (D-853-10, D-853-18): one TeamSection with one DataTable per day, no card.
+  it("renders each day as a section with its own table, and no card", () => {
+    renderWithTheme(SalonTimeEntries, {
+      days,
+      status: "rows",
+      capReached: false,
+      salonName: "Hauptsalon",
+    });
+    const headings = screen.getAllByRole("heading", { level: 3 });
+    expect(headings.map((h) => h.textContent?.trim())).toEqual([
+      "Mo, 15.06.2026",
+      "Di, 16.06.2026",
+    ]);
+    const tables = document.querySelectorAll("table");
+    expect(tables).toHaveLength(2);
+    expect(screen.getByRole("table", { name: "Einträge am Mo, 15.06.2026" })).toBeTruthy();
+    expect(document.querySelector(".card")).toBeNull();
+    expect(screen.getByTestId("salon-time-entries")).toBeTruthy();
+    // The invalid entry of the second day is tinted by the block's row tone.
+    expect(document.querySelectorAll('tr[data-tone="warn"]')).toHaveLength(1);
+  });
+
   it("shows the Skeleton loading state", () => {
     renderWithTheme(SalonTimeEntries, {
       days: [],

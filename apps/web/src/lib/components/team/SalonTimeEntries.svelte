@@ -2,13 +2,17 @@
   // Issue #85 D-09 — the Salonansicht of `/team/time-entries`: every entry recorded in one salon
   // for the shown month, grouped by day and person. Presentation only (the server decides what is
   // visible) and per-entry details only — it sums nothing, by design (see salon-time-entries.ts).
+  // Issue #853 (D-853-10, D-853-18): one TeamSection per day, each holding one DataTable.
   // Mountable: no `$app` import, no request; the page loads the data and passes the status.
   import { format } from "date-fns";
-  import type { SalonViewDay, SalonViewStatus } from "$lib/team/salon-time-entries";
+  import type { SalonViewDay, SalonViewEntry, SalonViewStatus } from "$lib/team/salon-time-entries";
   import { salonNameLabel } from "$lib/salons/page-scope";
   import SalonScopeLabel from "./SalonScopeLabel.svelte";
   import { TRAVEL_TEXTS, isTravelRow, travelRouteLabel } from "$lib/time-entries/travel-entry-form";
   import Skeleton from "$components/ui/Skeleton.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import TeamSection from "./TeamSection.svelte";
 
   interface Props {
     days: SalonViewDay[];
@@ -19,6 +23,23 @@
   }
 
   let { days, status, capReached = false, salonName = null }: Props = $props();
+
+  // A type alias, because DataTable's row generic wants an index-signature-compatible type.
+  type DayRow = { id: string; name: string; entry: SalonViewEntry };
+
+  const COLUMNS: DataTableColumn[] = [
+    { key: "name", label: "Mitarbeiter", primary: true },
+    { key: "start", label: "Beginn" },
+    { key: "end", label: "Ende" },
+    { key: "break", label: "Pause" },
+    { key: "work", label: "Arbeitszeit" },
+  ];
+
+  function rowsOf(day: SalonViewDay): DayRow[] {
+    return day.persons.flatMap((person) =>
+      person.entries.map((entry) => ({ id: entry.id, name: person.name, entry })),
+    );
+  }
 
   function time(iso: string): string {
     return format(new Date(iso), "HH:mm");
@@ -61,44 +82,34 @@
       <SalonScopeLabel label={salonNameLabel(salonName)} />
     {/if}
     {#each days as day (day.dateKey)}
-      <section class="card salon-view-day">
-        <h3 class="salon-view-day-title">{day.label}</h3>
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Mitarbeiter</th>
-                <th>Beginn</th>
-                <th>Ende</th>
-                <th>Pause</th>
-                <th>Arbeitszeit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each day.persons as person (person.employeeId)}
-                {#each person.entries as entry (entry.id)}
-                  <tr>
-                    <td
-                      >{person.name}{#if isTravelRow(entry)}
-                        <span class="badge badge-gray">{TRAVEL_TEXTS.badge}</span>
-                        <span class="salon-view-route">{travelRouteLabel(entry)}</span>{/if}</td
-                    >
-                    <td>{time(entry.startTime)}</td>
-                    <td>{entry.endTime ? time(entry.endTime) : "offen"}</td>
-                    <td>{entry.breakMinutes} min</td>
-                    <td>
-                      {hoursMinutes(entry.workingMinutes)}
-                      {#if entry.isInvalid}
-                        <span class="badge badge-gray">ungültig</span>
-                      {/if}
-                    </td>
-                  </tr>
-                {/each}
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <TeamSection title={day.label} headingLevel={3}>
+        <DataTable
+          columns={COLUMNS}
+          rows={rowsOf(day)}
+          rowKey={(row) => row.id}
+          rowTone={(row) => (row.entry.isInvalid ? "warn" : undefined)}
+          caption={`Einträge am ${day.label}`}
+        >
+          {#snippet cell(row, column)}
+            {#if column.key === "name"}
+              {row.name}{#if isTravelRow(row.entry)}
+                <Chip>{TRAVEL_TEXTS.badge}</Chip>
+                <span class="salon-view-route">{travelRouteLabel(row.entry)}</span>{/if}
+            {:else if column.key === "start"}
+              {time(row.entry.startTime)}
+            {:else if column.key === "end"}
+              {row.entry.endTime ? time(row.entry.endTime) : "offen"}
+            {:else if column.key === "break"}
+              {row.entry.breakMinutes} min
+            {:else if column.key === "work"}
+              {hoursMinutes(row.entry.workingMinutes)}
+              {#if row.entry.isInvalid}
+                <Chip tone="warn">ungültig</Chip>
+              {/if}
+            {/if}
+          {/snippet}
+        </DataTable>
+      </TeamSection>
     {/each}
   {/if}
 </div>
@@ -108,15 +119,6 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
-  }
-  .salon-view-day {
-    padding: 1rem;
-  }
-  .salon-view-day-title {
-    margin: 0 0 0.75rem;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text);
   }
   .salon-view-route {
     display: inline-block;
