@@ -23,14 +23,14 @@ import {
 
 const TODAY = { year: 2026, month: 10 };
 const ym = (year: number, month: number) => ({ year, month });
-const TABS = ["zeiten", "urlaub", "heute"] as const;
+const TABS = ["zeiten", "urlaub", "heute", "verlaeufe"] as const;
 const UUID_A = "3f2b8c1e-6d4a-4b7e-9a10-5c2d8e7f1a33";
 const UUID_B = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
 
 function parse(
   query: string,
   today = TODAY,
-  tabs: readonly ("zeiten" | "urlaub" | "heute")[] = TABS,
+  tabs: readonly ("zeiten" | "urlaub" | "heute" | "verlaeufe")[] = TABS,
 ) {
   return parsePeriodState(new URLSearchParams(query), today, tabs);
 }
@@ -110,6 +110,14 @@ describe("parsePeriodState", () => {
     expect(parse("tab=bogus").tab).toBe("zeiten");
     expect(parse("tab=heute", TODAY, ["heute"]).tab).toBe("heute");
     expect(parse("", TODAY, ["heute"]).tab).toBe("heute");
+  });
+
+  it("accepts the Verläufe tab (Issue #895) only for a caller who may see it, and writes it back", () => {
+    expect(parse("tab=verlaeufe").tab).toBe("verlaeufe");
+    expect(parse("tab=verlaeufe", TODAY, ["zeiten", "urlaub"]).tab).toBe("zeiten");
+    expect(periodSearch(parse("tab=verlaeufe&from=2026-09&to=2026-10"))).toBe(
+      "from=2026-09&to=2026-10&tab=verlaeufe",
+    );
   });
 
   it("drops a malformed person and salonId", () => {

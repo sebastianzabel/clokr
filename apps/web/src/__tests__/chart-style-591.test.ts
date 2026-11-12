@@ -55,19 +55,17 @@ const BUILDER_FILE = "lib/dashboard/team-charts.ts";
 /** The files that draw a chart, measured 18.10.2026 on the tree of #591-01. */
 const EXPECTED_CHART_FILES = [
   "lib/components/dashboard/TeamSaldoCard.svelte",
-  // Issue #846 (D-04): the start page draws no chart any more; its three trends move to
-  // Verwalten › Berichte with #895 (see RESERVED_FOR_895).
+  // Issue #895: the three team trends live on Verwalten › Berichte (tab „Verläufe“); the start
+  // pages draw no chart (no-start-page-chart-854.test.ts).
+  "lib/components/reports/TeamTrendsTab.svelte",
 ];
 /**
- * Builders that no page draws while #895 moves the team trends from the start page to Verwalten ›
- * Berichte. They stay in the runtime table (G4 keeps proving their style); G3 requires that exactly
- * these are unused, so the register can only shrink — the day #895 lands it must be empty.
+ * Builders that no page draws. Issue #846 reserved the three team trends here while they had no
+ * page; #895 gave them one (TeamTrendsTab), so the register is EMPTY and G3 requires that every
+ * builder of the runtime table is drawn somewhere. A builder that loses its page again must be
+ * deleted, not parked here.
  */
-const RESERVED_FOR_895 = [
-  "teamHoursChartConfig",
-  "teamSaldoTrendChartConfig",
-  "teamSickDaysChartConfig",
-];
+const RESERVED_FOR_895: readonly string[] = [];
 /**
  * Walk floor: 281 non-test `.ts`/`.svelte` files measured on 18.10.2026, minus about 5 %. The
  * literal is the floor (the vacuity gate only reads a numeric literal as proof).
@@ -425,8 +423,8 @@ describe("Issue #591 - one chart style (D-591-5)", () => {
       [],
     );
     const table = Object.keys(RUNTIME_TABLE).sort();
-    expect(RESERVED_FOR_895.every((name) => table.includes(name))).toBe(true);
-    expect([...used].sort()).toEqual(table.filter((name) => !RESERVED_FOR_895.includes(name)));
+    expect(RESERVED_FOR_895, "the #895 reservation is spent").toEqual([]);
+    expect([...used].sort()).toEqual(table);
     expect([...exported].sort()).toEqual(table);
   });
 

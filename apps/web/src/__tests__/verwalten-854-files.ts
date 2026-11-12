@@ -149,6 +149,9 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/reports/ExitedFinalSaldoSection.svelte",
   "lib/components/reports/SalonWorkedSection.svelte",
   "lib/components/reports/PersonDrilldown.svelte",
+  // Plan 854-29 (Berichte III, #895): the tab „Verläufe“ with the team trend charts (the card „Salden“ it
+  // shows is the #588 dashboard component, which stays outside this list).
+  "lib/components/reports/TeamTrendsTab.svelte",
 ];
 
 export interface VerwaltenFile {

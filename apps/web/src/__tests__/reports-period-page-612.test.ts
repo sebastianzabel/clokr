@@ -662,9 +662,24 @@ describe("/reports (Issue #612) - who sees what is decided by permissions", () =
     expect(combinations).toBe(32);
   });
 
-  it("a holder of team-overview:read without report:read sees only the Heute tab by default", () => {
+  it("a holder of team-overview:read without report:read sees the Heute and Verläufe tabs, Heute first", () => {
     const rights = reportRights({ permissions: ["team-overview:read:ZUGEWIESEN"] });
-    expect([...rights.periodTabs]).toEqual(["heute"]);
+    expect([...rights.periodTabs]).toEqual(["heute", "verlaeufe"]);
+  });
+
+  it("Issue #895: the Verläufe tab renders TeamTrendsTab behind the team-overview right, fed with the page's salon filter and saldo rows", () => {
+    expect(PAGE).toContain('verlaeufe: "Verläufe"');
+    expect(TEMPLATE).toContain('{:else if value === "verlaeufe"}');
+    const panel = /\{#snippet verlaeufePanel\(\)\}([\s\S]*?)\{\/snippet\}/.exec(TEMPLATE);
+    expect(panel, "verlaeufePanel snippet").not.toBeNull();
+    const body = panel![1];
+    expect(body).toContain("{#if canTeamAttendance}");
+    expect(body).toContain("salonId={pageSalonId}");
+    expect(body).toContain("saldoRows={overtimeSections.active}");
+    // The tab is not period-driven: the period bar and the period request belong to zeiten/urlaub only.
+    expect(PAGE).toContain(
+      'const periodTabActive = $derived(activeTab === "zeiten" || activeTab === "urlaub");',
+    );
   });
 });
 

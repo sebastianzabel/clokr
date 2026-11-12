@@ -37,7 +37,7 @@ describe("reportRights (/reports)", () => {
         canRecordTeamAbsence: true,
         // Issue #612: the day list right and the tabs of the period area.
         canTimeEntryRead: true,
-        periodTabs: ["zeiten", "urlaub", "heute"],
+        periodTabs: ["zeiten", "urlaub", "heute", "verlaeufe"],
       });
     }
   });
@@ -100,11 +100,11 @@ describe("reportRights (/reports)", () => {
 describe("reportRights - period tabs and day list right (Issue #612)", () => {
   it("persona table of the tabs and canTimeEntryRead", () => {
     const table: Record<string, { tabs: string[]; timeEntryRead: boolean }> = {
-      ADMIN: { tabs: ["zeiten", "urlaub", "heute"], timeEntryRead: true },
-      OWNER: { tabs: ["zeiten", "urlaub", "heute"], timeEntryRead: true },
-      MANAGER: { tabs: ["zeiten", "urlaub", "heute"], timeEntryRead: true },
+      ADMIN: { tabs: ["zeiten", "urlaub", "heute", "verlaeufe"], timeEntryRead: true },
+      OWNER: { tabs: ["zeiten", "urlaub", "heute", "verlaeufe"], timeEntryRead: true },
+      MANAGER: { tabs: ["zeiten", "urlaub", "heute", "verlaeufe"], timeEntryRead: true },
       // The Salonleitung holds team-overview:read but neither report:read nor overtime:read.
-      SALON_MANAGER: { tabs: ["heute"], timeEntryRead: true },
+      SALON_MANAGER: { tabs: ["heute", "verlaeufe"], timeEntryRead: true },
       // HR: report:read + overtime:read, no team overview, no time-entry read.
       HR: { tabs: ["zeiten", "urlaub"], timeEntryRead: false },
       // The Ausbilder reads time entries of the apprentices but holds no report right.
@@ -126,19 +126,19 @@ describe("reportRights - period tabs and day list right (Issue #612)", () => {
     expect(r.canTeamAttendance).toBe(false);
   });
 
-  it("the tab order is zeiten, urlaub, heute and each tab needs its own permission", () => {
+  it("the tab order is zeiten, urlaub, heute, verlaeufe and each tab needs its own permission", () => {
     expect([...reportRights({ permissions: ["report:read:ZUGEWIESEN"] }).periodTabs]).toEqual([
       "zeiten",
       "urlaub",
     ]);
     expect([
       ...reportRights({ permissions: ["team-overview:read:ZUGEWIESEN"] }).periodTabs,
-    ]).toEqual(["heute"]);
+    ]).toEqual(["heute", "verlaeufe"]);
     expect([
       ...reportRights({
         permissions: ["team-overview:read:ZUGEWIESEN", "report:read:ZUGEWIESEN"],
       }).periodTabs,
-    ]).toEqual(["zeiten", "urlaub", "heute"]);
+    ]).toEqual(["zeiten", "urlaub", "heute", "verlaeufe"]);
   });
 
   it("a custom role with only report:export gets no period tab (export is a dialog of the bar)", () => {

@@ -31,6 +31,7 @@
   import PeriodKpis from "$lib/components/reports/PeriodKpis.svelte"; // Issue #612
   import PeriodRangeDialog from "$lib/components/reports/PeriodRangeDialog.svelte"; // Issue #612
   import PersonDrilldown from "$lib/components/reports/PersonDrilldown.svelte"; // Issue #612
+  import TeamTrendsTab from "$lib/components/reports/TeamTrendsTab.svelte"; // Issue #895
   import TodayAttendance from "$lib/components/reports/TodayAttendance.svelte"; // Issue #612
   import SalonWorkedSection from "$lib/components/reports/SalonWorkedSection.svelte"; // Issue #714
   import TimesAccountsTable from "$lib/components/reports/TimesAccountsTable.svelte"; // Issue #612
@@ -137,6 +138,7 @@
     zeiten: "Zeiten & Konten",
     urlaub: "Urlaub & Abwesenheit",
     heute: "Heute",
+    verlaeufe: "Verläufe",
   };
 
   function writeState(next: PeriodState): void {
@@ -769,6 +771,8 @@
         {#if value === activeTab}
           {#if value === "heute"}
             {@render heutePanel()}
+          {:else if value === "verlaeufe"}
+            {@render verlaeufePanel()}
           {:else}
             {@render periodPanel()}
           {/if}
@@ -981,6 +985,20 @@
       rejected={attendanceSalonRejected}
       {canAddTeamEntry}
       {canRecordTeamAbsence}
+    />
+  {/if}
+{/snippet}
+
+{#snippet verlaeufePanel()}
+  <!-- Issue #895: the team trends and the saldo card; not period-driven, the salon filter applies. -->
+  {#if canTeamAttendance}
+    <TeamTrendsTab
+      salonId={pageSalonId}
+      ready={contextLoaded}
+      saldoRows={overtimeSections.active}
+      saldoFiltered={overtimeOverview?.salonId !== undefined}
+      saldoLoading={overtimeOverview === null && overtimeError === "" && !overviewSalonRejected}
+      saldoError={overtimeError}
     />
   {/if}
 {/snippet}
