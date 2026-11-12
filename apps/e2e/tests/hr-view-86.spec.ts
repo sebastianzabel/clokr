@@ -516,7 +516,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
 
     // ── 8. the salon admin opens ──────────────────────────────────────────────────────────────
     await page.goto(`${tenant.baseUrl}/admin/salons`);
-    await expect(page.getByRole("link", { name: SECOND_SALON_NAME })).toBeVisible();
+    // #854: the salon list is a DataTable; a row opens through its primary-cell button.
+    await expect(page.getByRole("button", { name: SECOND_SALON_NAME })).toBeVisible();
 
     // eslint-disable-next-line no-console
     console.log(`[hr-view-86 walk traffic]\n${traffic.lines().join("\n")}`);
