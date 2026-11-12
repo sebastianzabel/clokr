@@ -21,7 +21,6 @@
   import KpiStrip from "$components/ui/KpiStrip.svelte";
   import Note from "$components/ui/Note.svelte";
   import PeriodPicker from "$components/ui/PeriodPicker.svelte";
-  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import CloseStepper from "$lib/components/admin/monatsabschluss/CloseStepper.svelte";
@@ -631,14 +630,24 @@
       onPrev={() => changeYear(-1)}
       onNext={() => changeYear(1)}
     />
-    <SegmentedControl
-      options={filterOptions}
-      value={statusFilter}
-      name="month-close-status"
-      ariaLabel="Status der Monate"
-      size="sm"
-      onchange={setStatusFilter}
-    />
+    <div class="mc-filter">
+      <FormField label="Status">
+        {#snippet field({ id, describedBy })}
+          <select
+            {id}
+            class="form-input"
+            value={statusFilter}
+            aria-describedby={describedBy}
+            data-testid="month-close-status"
+            onchange={(event) => setStatusFilter(event.currentTarget.value)}
+          >
+            {#each filterOptions as opt (opt.value)}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+          </select>
+        {/snippet}
+      </FormField>
+    </div>
   </div>
 
   {#if loading}
@@ -800,10 +809,14 @@
 </Dialog>
 
 <style>
+  .mc-filter {
+    min-width: min(100%, 220px);
+  }
+
   .mc-controls {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
     gap: var(--s-3) var(--s-6);
     margin: var(--s-4) 0;

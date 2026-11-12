@@ -206,6 +206,12 @@
       "path": "/verwalten/daten/support-zugriffe",
       "heading": "Support-Zugriffe",
       "tabs": []
+    },
+    {
+      "slug": "monatsabschluss",
+      "path": "/verwalten/monatsabschluss",
+      "heading": "Monatsabschluss",
+      "tabs": []
     }
   ]
 }

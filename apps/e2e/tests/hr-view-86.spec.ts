@@ -470,21 +470,21 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(assignments.locator("tbody tr")).toHaveCount(2);
 
     // ── 3b. the month close shows counts, never dates, for another person's gaps ──────────────
-    await page.goto(`${tenant.baseUrl}/admin/month-close`);
-    const yearSelect = page.getByTestId("month-close-year");
-    await expect(yearSelect).toBeVisible();
-    await yearSelect.selectOption(hireDay.slice(0, 4));
+    // #854: the year is part of the URL (the PeriodPicker steps it), the persons of a month are a table.
+    await page.goto(`${tenant.baseUrl}/admin/month-close?year=${hireDay.slice(0, 4)}`);
+    await expect(page.getByTestId("month-close-year-label")).toHaveText(hireDay.slice(0, 4));
     const monthRow = page.getByTestId(`month-close-row-${Number(hireDay.slice(5, 7))}`);
     await expect(monthRow).toBeVisible();
-    await monthRow.click();
-    const xDetail = page.locator(".detail-table tr").filter({ hasText: x.lastName });
+    await monthRow.locator("button.dt-primary").click();
+    const monthPersons = page.getByTestId("month-close-detail");
+    const xDetail = monthPersons.locator("tr").filter({ hasText: x.lastName });
     await expect(xDetail).toBeVisible();
     await expect(xDetail).toContainText(/\d+ Tage? ohne Eintrag/);
     await expect(xDetail).not.toContainText(/\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\./);
     await expect(page.getByTestId("month-close-withheld-hint")).toBeVisible();
     // The redaction follows the person: HR's own row (time-entry:read EIGENE over herself) keeps
     // its dates, which also proves the assertion above is not satisfied by an empty page.
-    await expect(page.locator(".detail-table tr").filter({ hasText: hr.lastName })).toContainText(
+    await expect(monthPersons.locator("tr").filter({ hasText: hr.lastName })).toContainText(
       /\d{2}\.\d{2}\./,
     );
 
@@ -956,9 +956,9 @@ test.describe("Issue #86 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         await page.goto(`${tenant.baseUrl}/admin/month-close`);
         await expect(page.getByTestId("month-close-withheld-hint")).toBeVisible();
         await expect(page.getByTestId("month-close-deferred")).toContainText("4 Tage ohne Eintrag");
-        await page.getByTestId("month-close-row-3").click();
+        await page.getByTestId("month-close-row-3").locator("button.dt-primary").click();
         await expect(
-          page.locator(".detail-table tr").filter({ hasText: "Probe, Anna" }),
+          page.getByTestId("month-close-detail").locator("tr").filter({ hasText: "Probe, Anna" }),
         ).toContainText("4 Tage ohne Eintrag");
         results.push(await checkCell(page, "month-close", viewport.width, mode));
 
