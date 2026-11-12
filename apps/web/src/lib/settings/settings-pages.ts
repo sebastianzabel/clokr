@@ -59,6 +59,11 @@ const VACATION_REQUIRES: PermissionAlternatives = [
   [Z("leave-config:manage")],
 ];
 const SHUTDOWN_REQUIRES: PermissionAlternatives = [[Z("company-shutdown:manage")]];
+// The leave-limit routes decide per handler (leave-limit:manage or leave-request:approve), see the pre-844 pin.
+const LEAVE_LIMITS_REQUIRES: PermissionAlternatives = [
+  [Z("leave-limit:manage")],
+  [Z("leave-request:approve")],
+];
 const EXPORT_REQUIRES: PermissionAlternatives = [[Z("report:export")]];
 const AUDIT_REQUIRES: PermissionAlternatives = [[Z("audit-log:read")]];
 const PHOREST_REQUIRES: PermissionAlternatives = [[Z("integration:manage")]];
@@ -429,7 +434,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 
   // ── Regeln › Abwesenheiten ─────────────────────────────────────────────────────────────────────
   // The vacation, sick-leave, holiday-rule and carry-over settings of the former Urlaubsverwaltung, one section
-  // per concern (plan 854-11; its page-wide save is gone). Betriebsurlaub and Urlaubsgrenzen join the page in
+  // per concern (plan 854-11; its page-wide save is gone). Betriebsurlaub and Urlaubsgrenzen joined the page in
   // plans 854-12 and 854-13. The working-time defaults, ArbZG, open entries and the negative-balance limit left
   // the old page for Regeln › Arbeitszeit & Verträge (plan 854-07), the reminders for Benachrichtigungen and
   // Dienstplan (plan 854-08, 854-10).
@@ -515,6 +520,19 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     source: "/admin/shutdowns",
     requires: SHUTDOWN_REQUIRES,
     renderedBy: `${ABWESENHEITEN_DIR}/BetriebsurlaubPanel.svelte`,
+  },
+
+  // Plan 854-13: the leave limits and blackouts (#836) of the former /admin/leave-limits page, the last tab of the
+  // Abwesenheiten page. Rules are created and edited in a Dialog and act at once; a removed rule stays traceable.
+  {
+    page: ABWESENHEITEN_PAGE,
+    id: "abwesenheiten-urlaubsgrenzen",
+    title: "Urlaubsgrenzen & Sperren",
+    endpoint: null,
+    keys: [],
+    source: "/admin/leave-limits",
+    requires: LEAVE_LIMITS_REQUIRES,
+    renderedBy: `${ABWESENHEITEN_DIR}/UrlaubsgrenzenPanel.svelte`,
   },
 
   // ── /admin/export ──────────────────────────────────────────────────────────────────────────────

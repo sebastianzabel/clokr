@@ -441,6 +441,8 @@ describe("registry helpers", () => {
       ["tenant-settings:update:ZUGEWIESEN"],
       ["leave-config:manage:ZUGEWIESEN"],
       ["company-shutdown:manage:ZUGEWIESEN"],
+      ["leave-limit:manage:ZUGEWIESEN"],
+      ["leave-request:approve:ZUGEWIESEN"],
     ]);
   });
 

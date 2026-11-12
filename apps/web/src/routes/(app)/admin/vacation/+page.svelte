@@ -11,14 +11,15 @@
   import BetriebsurlaubPanel from "$lib/components/admin/abwesenheiten/BetriebsurlaubPanel.svelte";
   import SonderurlaubPanel from "$lib/components/admin/abwesenheiten/SonderurlaubPanel.svelte";
   import UebertragPanel from "$lib/components/admin/abwesenheiten/UebertragPanel.svelte";
+  import UrlaubsgrenzenPanel from "$lib/components/admin/abwesenheiten/UrlaubsgrenzenPanel.svelte";
   import UrlaubPanel from "$lib/components/admin/abwesenheiten/UrlaubPanel.svelte";
   import ErrorState from "$components/ui/ErrorState.svelte";
   import Note from "$components/ui/Note.svelte";
   import PageTabs from "$components/ui/PageTabs.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
 
-  // ── Tabs (D-854-26: lowercase German ids; Urlaubsgrenzen joins in plan 854-13) ──
-  // The page merges sections of two old pages, so each tab is offered under the alternatives of its own
+  // ── Tabs (D-854-26: lowercase German ids) ──
+  // The page merges sections of three old pages, so each tab is offered under the alternatives of its own
   // sections (D-854-05, T-854-30).
   const user = $derived($authStore.user);
   const visibleTabs = $derived(visibleAbwesenheitenTabs(user));
@@ -85,7 +86,7 @@
 
 <PageHead
   title={pageLabel("/admin/vacation")}
-  sub="Urlaub, Sonderurlaub, Übertrag und Betriebsurlaub für das ganze Unternehmen."
+  sub="Urlaub, Sonderurlaub, Übertrag, Betriebsurlaub und Urlaubsgrenzen für das ganze Unternehmen."
 />
 
 {#if visibleTabs.length === 0}
@@ -112,6 +113,8 @@
         <UebertragPanel {config} bind:changes={uebertragChanges} onSaved={merge} />
       {:else if value === "betriebsurlaub"}
         <BetriebsurlaubPanel active={activeTab === "betriebsurlaub"} />
+      {:else if value === "urlaubsgrenzen"}
+        <UrlaubsgrenzenPanel active={activeTab === "urlaubsgrenzen"} />
       {/if}
     {/snippet}
   </PageTabs>

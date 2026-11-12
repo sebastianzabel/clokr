@@ -195,10 +195,6 @@
         "count": 3,
         "ticket": "#854"
       },
-      "apps/web/src/routes/(app)/admin/leave-limits/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/admin/month-close/+page.svelte": {
         "count": 1,
         "ticket": "#854"

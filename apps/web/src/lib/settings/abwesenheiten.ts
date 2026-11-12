@@ -15,7 +15,7 @@ export { messageCount, type FieldMessages };
 // ── The tabs of the page ─────────────────────────────────────────────────────────────────────────
 
 export interface AbwesenheitenTab {
-  value: "urlaub" | "sonderurlaub" | "uebertrag" | "betriebsurlaub";
+  value: "urlaub" | "sonderurlaub" | "uebertrag" | "betriebsurlaub" | "urlaubsgrenzen";
   label: string;
   /** The registry sections the tab shows; the tab is offered when the person may open at least one. */
   sections: readonly string[];
@@ -52,6 +52,12 @@ export const ABWESENHEITEN_TABS: readonly AbwesenheitenTab[] = [
     value: "betriebsurlaub",
     label: "Betriebsurlaub",
     sections: ["abwesenheiten-betriebsurlaub"],
+    usesConfig: false,
+  },
+  {
+    value: "urlaubsgrenzen",
+    label: "Urlaubsgrenzen & Sperren",
+    sections: ["abwesenheiten-urlaubsgrenzen"],
     usesConfig: false,
   },
 ];

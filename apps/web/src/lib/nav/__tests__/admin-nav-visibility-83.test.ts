@@ -57,16 +57,14 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
     });
   });
 
-  // Issue #854 regroups the pages one plan at a time: Regeln gained „Arbeitszeit & Verträge“ (plan 854-07),
-  // „Monatsabschluss“ and „Benachrichtigungen & E-Mail“ (plan 854-08), the other children are still today's pages.
-  it("Regeln and System list today's pages plus the pages #854 added", () => {
+  // Issue #854 regrouped the pages one plan at a time; Regeln now lists the five themes of D-854-03 (plan 854-13).
+  it("Regeln lists the five themes of D-854-03 and System today's pages", () => {
     expect(labelsOf("/verwalten/regeln")).toEqual([
       "Arbeitszeit & Verträge",
+      "Abwesenheiten",
+      "Dienstplan",
       "Monatsabschluss",
       "Benachrichtigungen & E-Mail",
-      "Abwesenheiten",
-      "Urlaubsgrenzen & Sperren",
-      "Dienstplan",
     ]);
     expect(labelsOf("/verwalten/system")).toEqual([
       "Allgemein",
@@ -94,7 +92,7 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
       "/verwalten/monatsabschluss",
       "/verwalten/berichte",
     ]);
-    // Issue #836: SALON_MANAGER holds leave-request:approve, so Regeln (Urlaubsgrenzen & Sperren) joins;
+    // Issue #836: SALON_MANAGER holds leave-request:approve, so Regeln (Abwesenheiten › Urlaubsgrenzen & Sperren) joins;
     // the team availability moved to the Team area (D-05).
     expect(visibleAdminNavItems({ permissions: p.SALON_MANAGER }, on).map((i) => i.href)).toEqual([
       "/verwalten",
@@ -105,7 +103,7 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
       visibleChildren({ permissions: p.SALON_MANAGER }, "/verwalten/regeln", on).map(
         (r) => r.label,
       ),
-    ).toEqual(["Urlaubsgrenzen & Sperren"]);
+    ).toEqual(["Abwesenheiten"]);
     expect(visibleAdminNavItems({ permissions: p.EMPLOYEE }, on)).toEqual([]);
   });
 

@@ -71,11 +71,6 @@
       "auth": "tenant-admin"
     },
     {
-      "page": "(app)/admin/leave-limits/+page.svelte",
-      "path": "/verwalten/regeln/urlaubsgrenzen",
-      "auth": "tenant-admin"
-    },
-    {
       "page": "(app)/admin/month-close/+page.svelte",
       "path": "/verwalten/monatsabschluss",
       "auth": "tenant-admin"

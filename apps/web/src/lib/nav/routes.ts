@@ -260,7 +260,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: "children",
     inNav: true,
     parent: "/verwalten",
-    description: "Arbeitszeit, Urlaub, Betriebsurlaub, Urlaubsgrenzen und Schichten",
+    description: "Arbeitszeit, Abwesenheiten, Dienstplan, Monatsabschluss und Benachrichtigungen",
   },
   // Issue #854: a page created by the Verwalten rebuild (no route file of its own before). Its sections come from
   // /admin/system and /admin/vacation; the registry (settings-pages.ts) pins `requires` to the union of theirs.
@@ -280,6 +280,63 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inNav: false,
     parent: "/verwalten/regeln",
     description: "Standard-Arbeitszeit, Pausen, Überstunden, Gleitzeit und Berufsschule",
+  },
+  // no read guard; the page's writes decide (PUT /settings/work, /settings/leave-types)
+  {
+    href: "/verwalten/regeln/abwesenheiten",
+    area: "verwalten",
+    label: "Abwesenheiten",
+    icon: "umbrella",
+    width: "read",
+    // The union of the alternatives of the vacation page, the company shutdowns and the leave limits (D-854-05).
+    requires: [
+      [Z("tenant-settings:update")],
+      [Z("leave-config:manage")],
+      [Z("company-shutdown:manage")],
+      [Z("leave-limit:manage")],
+      [Z("leave-request:approve")],
+    ],
+    file: "/admin/vacation",
+    inNav: false,
+    parent: "/verwalten/regeln",
+    description: "Urlaub, Sonderurlaub, Betriebsurlaub, Urlaubsgrenzen und Übertrag",
+  },
+  // writes /company-shutdowns. The list is the „Betriebsurlaub“ tab of Abwesenheiten (the route file is a redirect
+  // stub, #854); the entry stays as the carrier of the detail sub-route /verwalten/regeln/betriebsurlaub/<id>.
+  {
+    href: "/verwalten/regeln/betriebsurlaub",
+    area: "verwalten",
+    label: "Betriebsurlaub",
+    icon: "calendar",
+    width: "read",
+    requires: [[Z("company-shutdown:manage")]],
+    file: "/admin/shutdowns",
+    inNav: false,
+    parent: "/verwalten/regeln/abwesenheiten",
+    description: "Ein Betriebsurlaub im Detail",
+  },
+  // Promise.all of templates/coverage, week, patterns
+  {
+    href: "/verwalten/regeln/dienstplan",
+    area: "verwalten",
+    label: "Dienstplan",
+    icon: "grid",
+    width: "read",
+    // Issue #854: the union of the gates of its sections (settings-pages.ts, D-854-05) - the shift
+    // configuration plus the System and Urlaub settings that joined it; the tabs narrow it per person.
+    requires: [
+      [Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")],
+      [Z("tenant-settings:read")],
+      [Z("tenant-settings:update")],
+      [Z("terminal:manage")],
+      [Z("api-key:manage")],
+      [Z("leave-config:manage")],
+    ],
+    file: "/admin/shifts",
+    inNav: false,
+    parent: "/verwalten/regeln",
+    description:
+      "Schichtvorlagen, Bedarfsregeln, Wochenmuster, Öffnungszeiten-Bindung und Erinnerungen",
   },
   // Issue #854: a page created by the Verwalten rebuild. Its sections come from /admin/system; the registry
   // (settings-pages.ts) pins `requires` to the union of theirs. The close WORKFLOW is /verwalten/monatsabschluss.
@@ -317,74 +374,6 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inNav: false,
     parent: "/verwalten/regeln",
     description: "E-Mail-Server, Benachrichtigungen und Erinnerungen",
-  },
-  // no read guard; the page's writes decide (PUT /settings/work, /settings/leave-types)
-  {
-    href: "/verwalten/regeln/abwesenheiten",
-    area: "verwalten",
-    label: "Abwesenheiten",
-    icon: "umbrella",
-    width: "read",
-    // The union of the vacation page's and the company shutdowns' alternatives (D-854-05).
-    requires: [
-      [Z("tenant-settings:update")],
-      [Z("leave-config:manage")],
-      [Z("company-shutdown:manage")],
-    ],
-    file: "/admin/vacation",
-    inNav: false,
-    parent: "/verwalten/regeln",
-    description: "Urlaub, Sonderurlaub, Betriebsurlaub, Urlaubsgrenzen und Übertrag",
-  },
-  // writes /company-shutdowns. The list is the „Betriebsurlaub“ tab of Abwesenheiten (the route file is a redirect
-  // stub, #854); the entry stays as the carrier of the detail sub-route /verwalten/regeln/betriebsurlaub/<id>.
-  {
-    href: "/verwalten/regeln/betriebsurlaub",
-    area: "verwalten",
-    label: "Betriebsurlaub",
-    icon: "calendar",
-    width: "read",
-    requires: [[Z("company-shutdown:manage")]],
-    file: "/admin/shutdowns",
-    inNav: false,
-    parent: "/verwalten/regeln/abwesenheiten",
-    description: "Ein Betriebsurlaub im Detail",
-  },
-  // GET /leave/limits (handler checks: leave-limit:manage or leave-request:approve)
-  {
-    href: "/verwalten/regeln/urlaubsgrenzen",
-    area: "verwalten",
-    label: "Urlaubsgrenzen & Sperren",
-    icon: "umbrella",
-    width: "read",
-    requires: [[Z("leave-limit:manage")], [Z("leave-request:approve")]],
-    file: "/admin/leave-limits",
-    inNav: false,
-    parent: "/verwalten/regeln",
-    description: "Wie viele Personen gleichzeitig Urlaub haben dürfen",
-  },
-  // Promise.all of templates/coverage, week, patterns
-  {
-    href: "/verwalten/regeln/dienstplan",
-    area: "verwalten",
-    label: "Dienstplan",
-    icon: "grid",
-    width: "read",
-    // Issue #854: the union of the gates of its sections (settings-pages.ts, D-854-05) - the shift
-    // configuration plus the System and Urlaub settings that joined it; the tabs narrow it per person.
-    requires: [
-      [Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")],
-      [Z("tenant-settings:read")],
-      [Z("tenant-settings:update")],
-      [Z("terminal:manage")],
-      [Z("api-key:manage")],
-      [Z("leave-config:manage")],
-    ],
-    file: "/admin/shifts",
-    inNav: false,
-    parent: "/verwalten/regeln",
-    description:
-      "Schichtvorlagen, Bedarfsregeln, Wochenmuster, Öffnungszeiten-Bindung und Erinnerungen",
   },
   // GET /overtime/close-month/status
   {
@@ -603,6 +592,18 @@ export const LEGACY_ROUTE_REDIRECTS: readonly LegacyRedirect[] = [
     href: "/verwalten/regeln/urlaub",
     requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
     to: "/verwalten/regeln/abwesenheiten",
+  },
+  // The leave limits and blackouts (#836) are a tab of the Abwesenheiten page (plan 854-13). Both URLs keep the
+  // old guard: a holder of leave-request:approve reaches the page and sees this tab alone.
+  {
+    href: "/admin/leave-limits",
+    requires: [[Z("leave-limit:manage")], [Z("leave-request:approve")]],
+    to: "/verwalten/regeln/abwesenheiten#urlaubsgrenzen",
+  },
+  {
+    href: "/verwalten/regeln/urlaubsgrenzen",
+    requires: [[Z("leave-limit:manage")], [Z("leave-request:approve")]],
+    to: "/verwalten/regeln/abwesenheiten#urlaubsgrenzen",
   },
   // → /admin/integrations (301 from its +page.server.ts)
   { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },

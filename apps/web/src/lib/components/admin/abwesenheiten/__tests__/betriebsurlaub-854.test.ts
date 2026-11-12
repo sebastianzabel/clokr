@@ -140,7 +140,7 @@ describe("tab gating (T-854-30)", () => {
   it("a holder of both sees all four tabs in strip order", () => {
     expect(
       tabsOf(["leave-config:manage:ZUGEWIESEN", "company-shutdown:manage:ZUGEWIESEN"]),
-    ).toEqual(ABWESENHEITEN_TABS.map((tab) => tab.value));
+    ).toEqual(["urlaub", "sonderurlaub", "uebertrag", "betriebsurlaub"]);
   });
 
   it("only the settings tabs read the tenant config", () => {

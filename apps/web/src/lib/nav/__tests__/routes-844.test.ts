@@ -158,6 +158,8 @@ describe("old URLs of the acceptance criteria land on the new place", () => {
     ["/admin/vacation", "/verwalten/regeln/abwesenheiten"],
     ["/verwalten/regeln/urlaub", "/verwalten/regeln/abwesenheiten"], // the renamed #844 URL (alias)
     ["/admin/special-leave", "/verwalten/regeln/abwesenheiten#sonderurlaub"],
+    ["/admin/leave-limits", "/verwalten/regeln/abwesenheiten#urlaubsgrenzen"],
+    ["/verwalten/regeln/urlaubsgrenzen", "/verwalten/regeln/abwesenheiten#urlaubsgrenzen"],
     ["/admin/system", "/verwalten/system/allgemein"],
     ["/admin/month-close", "/verwalten/monatsabschluss"],
     ["/admin/audit/42", "/verwalten/daten/protokoll/42"],
@@ -345,6 +347,52 @@ describe("Betriebsurlaub (plan 854-12)", () => {
     const holder = { permissions: ["company-shutdown:manage:ZUGEWIESEN"] };
     expect(mayOpenPath(holder, "/verwalten/regeln/abwesenheiten")).toBe(true);
     expect(mayOpenPath({ permissions: [] }, "/verwalten/regeln/abwesenheiten")).toBe(false);
+  });
+});
+
+describe("Urlaubsgrenzen & Sperren (plan 854-13)", () => {
+  const MANAGER = { permissions: ["leave-request:approve:ZUGEWIESEN"] };
+
+  it("both URLs are aliases of the Abwesenheiten tab and no table entry or page file is left", () => {
+    for (const href of ["/admin/leave-limits", "/verwalten/regeln/urlaubsgrenzen"]) {
+      expect(legacyRedirectTarget(href)).toBe("/verwalten/regeln/abwesenheiten#urlaubsgrenzen");
+      expect(rerouteTarget(href)).toBe("/admin/vacation");
+      expect(APP_ROUTES.some((r) => r.href === href || r.file === href)).toBe(false);
+    }
+  });
+
+  it("the aliases keep the pinned pre-844 alternatives of the leave-limits page", () => {
+    const pinned = (pre844.admin as Record<string, string[][]>)["/admin/leave-limits"];
+    expect(pinned.length).toBeGreaterThan(0);
+    for (const href of ["/admin/leave-limits", "/verwalten/regeln/urlaubsgrenzen"]) {
+      const alias = LEGACY_ROUTE_REDIRECTS.find((a) => a.href === href)!;
+      expect(alias.requires).toEqual(pinned);
+    }
+  });
+
+  it("a manager who could open the old page still reaches the Abwesenheiten page", () => {
+    expect(mayOpenPath(MANAGER, "/admin/leave-limits")).toBe(true);
+    expect(mayOpenPath(MANAGER, "/verwalten/regeln/urlaubsgrenzen")).toBe(true);
+    expect(mayOpenPath(MANAGER, "/verwalten/regeln/abwesenheiten")).toBe(true);
+    expect(
+      mayOpenPath(
+        { permissions: ["leave-limit:manage:ZUGEWIESEN"] },
+        "/verwalten/regeln/abwesenheiten",
+      ),
+    ).toBe(true);
+    expect(mayOpenPath({ permissions: [] }, "/admin/leave-limits")).toBe(false);
+  });
+});
+
+describe("Regeln hub (plan 854-13, D-854-03)", () => {
+  it("lists exactly the five themes of D-854-03, in that order, for the ADMIN persona", () => {
+    expect(visibleChildren(user("ADMIN"), "/verwalten/regeln", ALL).map((r) => r.href)).toEqual([
+      "/verwalten/regeln/arbeitszeit",
+      "/verwalten/regeln/abwesenheiten",
+      "/verwalten/regeln/dienstplan",
+      "/verwalten/regeln/monatsabschluss",
+      "/verwalten/regeln/benachrichtigungen",
+    ]);
   });
 });
 
