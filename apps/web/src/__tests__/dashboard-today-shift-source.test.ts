@@ -48,7 +48,8 @@ describe("Phase 267 — the dashboard reads its own shift, not the tenant's earl
   it("[vacuity gate] the dashboard source is actually loaded", () => {
     expect(DASHBOARD.length).toBeGreaterThan(50_000);
     expect(DASHBOARD).toContain("todayShift");
-    expect(DASHBOARD).toContain("timer-shift-label");
+    // Issue #845: the shift is a line of the clock stage
+    expect(DASHBOARD).toContain("`${todayShift.startTime}–${todayShift.endTime}`");
   });
 
   it("asks GET /shifts/my-week for the hero card's shift", () => {

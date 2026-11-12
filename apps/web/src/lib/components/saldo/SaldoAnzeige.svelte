@@ -249,7 +249,7 @@
       data-testid="saldo-skeleton"
     ></div>
   {:else if error}
-    <!-- UI-SPEC F2 — matches the established MyWeekView.svelte / MyShiftsWeek.svelte
+    <!-- UI-SPEC F2 — matches the established dashboard week cards (removed with #845)
          error-copy pattern verbatim in structure. -->
     <div class="saldo__error" data-testid="saldo-error">
       <Icon name="alert" size={16} />

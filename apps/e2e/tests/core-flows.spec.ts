@@ -67,8 +67,8 @@ test.describe("Core Flows — clock on an own tenant", () => {
   test("clock in and verify running state", async ({ page, tenant }) => {
     await loginAsTenantAdmin(page, tenant);
 
-    // Precondition: nothing recorded today, so the hero card is idle and offers "Einstempeln".
-    const header = page.locator(".timer-hd");
+    // Precondition: nothing recorded today, so the clock stage is idle and offers "Einstempeln".
+    const header = page.locator(".clock-stage");
     await expect(header).toHaveAttribute("data-day-state", "idle");
     const clockIn = page.getByRole("button", { name: "Einstempeln", exact: true });
     await expect(clockIn).toBeVisible();
@@ -88,7 +88,7 @@ test.describe("Core Flows — clock on an own tenant", () => {
     expect(body.resolution.entry.id).toBeTruthy();
 
     await expect(header).toHaveAttribute("data-day-state", "running");
-    await expect(header).toContainText("Du arbeitest gerade");
+    await expect(header).toContainText("Du arbeitest");
     await expect(page.getByRole("button", { name: "Ausstempeln", exact: true })).toBeVisible();
 
     await screenshotPage(page, "flow-clock-in-active");
@@ -107,7 +107,7 @@ test.describe("Core Flows — clock on an own tenant", () => {
 
     await loginAsTenantAdmin(page, tenant);
 
-    const header = page.locator(".timer-hd");
+    const header = page.locator(".clock-stage");
     await expect(header).toHaveAttribute("data-day-state", "running");
     const clockOut = page.getByRole("button", { name: "Ausstempeln", exact: true });
     await expect(clockOut).toBeVisible();
@@ -128,7 +128,9 @@ test.describe("Core Flows — clock on an own tenant", () => {
     expect(body.resolution.kind).toBe("CLOCKED_OUT");
 
     await expect(header).toHaveAttribute("data-day-state", "finished");
-    await expect(header).toContainText("Tag abgeschlossen");
+    // Issue #845 (D-02): the finished stage says when, never „Tag abgeschlossen“.
+    await expect(header).toContainText(/Ausgestempelt um \d{2}:\d{2}/);
+    await expect(header).not.toContainText("Tag abgeschlossen");
     // A finished day offers no primary clock action (day-state.ts:118-124).
     await expect(page.getByRole("button", { name: /^(Ein|Aus)stempeln$/ })).toHaveCount(0);
 

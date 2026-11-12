@@ -72,7 +72,7 @@ test.describe("Error Handling + UX Plausibility", () => {
     await screenshotPage(page, "flow-error-password-change");
   });
 
-  test("dashboard provides clear information hierarchy", async ({ page }, testInfo) => {
+  test("dashboard provides clear information hierarchy", async ({ page }) => {
     await page.goto("/dashboard");
 
     // 1. The H1 is the page name (Issue #574: H1 = menu name); the greeting is the PageHead sub.
@@ -81,32 +81,25 @@ test.describe("Error Handling + UX Plausibility", () => {
     await expect(dashboardHead.locator(".sub")).toHaveText(/Guten (Morgen|Tag|Abend)/);
 
     // 2. The hero clock is prominent.
-    const clock = page.locator(".timer-card-wrap .timer-display");
+    const clock = page.getByTestId("clock-big");
     await expect(clock).toBeVisible();
     const fontSize = await clock.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
     expect(fontSize).toBeGreaterThanOrEqual(24);
 
-    // 3. Hierarchy: the hero starts inside the device's first viewport on EVERY project, and the
-    // KPI pair never starts above the hero. The layout goes single-column at max-width 900px
-    // (dashboard +page.svelte:2019): there the KPI pair is stacked under the hero, so it must start
-    // at or below the hero's bottom; in the two-column layout both start in the same row, so it
-    // must start at or below the hero's top.
-    //
-    // Decision for issue #506 (orchestrator, 2026-10-08): "KPI pair inside the first viewport" is
-    // NOT a requirement on the phone project. The calm mobile layout puts the clock first and lets
-    // the content follow by scrolling (measured on Pixel 7: KPI top ~1124px vs viewport 839px), and
-    // the former fixed 600px check never ran on mobile, so no such requirement was ever
-    // established. It still holds on desktop-chrome and tablet. The device distinction is this ONE
-    // bound; the mobile project is not skipped and still asserts the order above.
+    // 3. Hierarchy: the clock stage starts inside the device's first viewport on EVERY project and
+    // the Kennzahlen never start above it. Below 760 px the page is one column, so the Kennzahlen
+    // sit under the stage. Issue #845 (D-01, owner 09.11.2026) replaces the #506 phone exemption:
+    // on the phone too the Kennzahlen start in the first viewport (their full visibility at
+    // 390×844 is proven by mein-tag-845.spec.ts).
     const viewport = page.viewportSize();
     expect(viewport).not.toBeNull();
     const viewportHeight = viewport?.height ?? 0;
-    const singleColumn = (viewport?.width ?? 0) <= 900;
-    const kpiMustBeInFirstViewport = testInfo.project.name !== "mobile-chrome";
-    const kpiViewportBound = kpiMustBeInFirstViewport ? viewportHeight : Number.POSITIVE_INFINITY;
+    // The stage and the Kennzahlen are always stacked (one column of the page).
+    const singleColumn = true;
+    const kpiViewportBound = viewportHeight;
 
-    const hero = page.locator(".timer-card-wrap");
-    const kpiPair = page.locator(".kpi-pair");
+    const hero = page.getByTestId("mein-tag-stage");
+    const kpiPair = page.getByTestId("mein-tag-kpis");
     await expect(hero).toBeVisible();
     await expect(kpiPair).toBeVisible();
     const heroBox = await hero.boundingBox();

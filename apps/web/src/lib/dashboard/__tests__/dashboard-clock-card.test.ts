@@ -74,12 +74,15 @@ describe("the finished day has its own face", () => {
     expect(PAGE).toContain('day.kind === "finished"');
   });
 
-  it("it is called 'Tag abgeschlossen', not 'Noch nicht eingestempelt'", () => {
-    expect(PAGE).toContain("Tag abgeschlossen");
+  // Issue #845 (D-02, owner 09.11.2026): the finished face says when the person clocked out and
+  // what was recorded — never „Tag abgeschlossen“ (another clock-in is possible).
+  it("it is called 'Ausgestempelt um …', not 'Noch nicht eingestempelt' and never 'Tag abgeschlossen'", () => {
+    expect(PAGE).toContain("`Ausgestempelt um ${entryEndHHMM}`");
+    expect(PAGE).not.toContain("Tag abgeschlossen");
   });
 
-  it("the sub line names what the big readout shows", () => {
-    expect(PAGE).toContain("Erfasste Arbeitszeit heute");
+  it("the meta line names what the big readout shows (the day's net time)", () => {
+    expect(PAGE).toMatch(/label: "Netto", value: `\$\{fmtClock\(entryWorkedMin\)\} h`/);
   });
 
   it("the state is exposed on the header for tests and debugging", () => {
@@ -93,7 +96,7 @@ describe("the finished day has its own face", () => {
 
 describe("no primary Einstempeln action on a finished day (acceptance criterion #2)", () => {
   it("the primary button is not rendered, not merely disabled", () => {
-    expect(PAGE).toContain("{#if primaryLabel}");
+    expect(PAGE).toMatch(/\{#if primaryLabel\b/);
   });
 
   it("its label comes from the module that returns null for a finished day", () => {
@@ -101,22 +104,22 @@ describe("no primary Einstempeln action on a finished day (acceptance criterion 
   });
 
   it("the reopen action is secondary — no btn-primary anywhere near it", () => {
-    expect(PAGE).not.toMatch(/btn-primary[\s\S]{0,400}Erneut einstempeln/);
+    expect(PAGE).not.toMatch(/btn-primary[\s\S]{0,400}Wieder einstempeln/);
   });
 
   // Issue #546 (discriminator swap): the primary card button no longer composes `btn-primary`, so
   // the negative regex above would stay green even if the reopen action became primary in the new
   // composition (`timer-cta-primary`). This pins the reopen button's own classes instead.
-  it("the reopen button is the card's ghost variant, never the primary composition", () => {
+  it("the reopen button is a secondary stage button, never the primary one", () => {
     // The label also occurs in a comment and in the confirm dialog props; only a <button> element
     // whose body carries it counts.
     const buttons = [...PAGE.matchAll(/<button\b[\s\S]*?<\/button\s*>/g)]
       .map((m) => m[0])
-      .filter((b) => b.includes("Erneut einstempeln"));
+      .filter((b) => b.includes("Wieder einstempeln"));
     expect(buttons, "exactly one reopen <button> element").toHaveLength(1);
-    const tag = buttons[0].slice(0, buttons[0].indexOf("Erneut einstempeln"));
-    expect(tag).toContain("timer-cta-ghost");
-    expect(tag).not.toContain("timer-cta-primary");
+    const tag = buttons[0].slice(0, buttons[0].indexOf("Wieder einstempeln"));
+    expect(tag).toContain("onclick={openReopenDialog}");
+    expect(tag).toMatch(/class="btn btn-outline"/);
     expect(tag).not.toMatch(/btn-primary/);
   });
 
@@ -132,7 +135,7 @@ describe("the Rückfrage names its consequence (acceptance criterion #4)", () =>
   });
 
   it("the dialog asks before it acts", () => {
-    expect(PAGE).toContain('title="Erneut einstempeln?"');
+    expect(PAGE).toContain('title="Wieder einstempeln?"');
   });
 
   it("the dialog is bound to the page's own open state", () => {
@@ -148,16 +151,15 @@ describe("the Rückfrage names its consequence (acceptance criterion #4)", () =>
   });
 });
 
-describe("the untouched states stay untouched", () => {
-  // idle and running were not reworded; the Playwright visual baselines depend on it.
+describe("the four stage states keep their owner-decided words (Issue #845, D-02)", () => {
+  // ruhig / arbeitet / Pause / fertig; the e2e mein-tag-845 spec and the visual baselines read them.
   const PRESERVED = [
-    "Noch nicht eingestempelt",
-    "Bereit zum Einstempeln",
-    "Bereit für deinen Tag",
-    "Du arbeitest gerade",
-    "Zeiterfassung läuft",
-    "Pause starten",
-    "Pause beenden",
+    '"Noch nicht eingestempelt"',
+    '"Du arbeitest"',
+    '? "Pause"',
+    '"Weiterarbeiten"',
+    '{ label: "Arbeitszeit", value: "steht" }',
+    "Wieder einstempeln",
   ];
 
   for (const phrase of PRESERVED) {

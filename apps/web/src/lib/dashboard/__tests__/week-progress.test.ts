@@ -66,15 +66,18 @@ const PAGE = readRouteFile(
   "src/routes/(app)/dashboard/+page.svelte",
 );
 
-describe("dashboard +page.svelte source pin — FLEXTIME tile delta via weekProgressDelta(stats.week)", () => {
-  it("B1: imports weekProgressDelta from $lib/dashboard/week-progress", () => {
-    expect(PAGE).toMatch(
-      /import\s*\{\s*weekProgressDelta\s*\}\s*from\s*["']\$lib\/dashboard\/week-progress["']/,
-    );
+// Owner acceptance #845 (09.11.2026, prototype v5): the „Diese Woche“ cell reads „worked / Soll ·
+// n Tage geplant“ and shows no delta line any more. The pins therefore guard that no delta is
+// computed on the page at all — and never from the whole-week pair (D-06's defect).
+describe("dashboard +page.svelte source pin — no week delta on Mein Tag (#845), never the whole-week pair", () => {
+  it("B1: the page source is loaded (anti-vacuity) and shows the week cell", () => {
+    expect(PAGE.length).toBeGreaterThan(50_000);
+    expect(PAGE).toContain('label: "Diese Woche"');
   });
 
-  it("B2: the FLEXTIME tile computes its delta via weekProgressDelta(stats.week)", () => {
-    expect(PAGE).toMatch(/weekProgressDelta\(stats\.week\)/);
+  it("B2: no week delta is derived on the page (a delta, if it returns, goes through weekProgressDelta)", () => {
+    expect(PAGE).not.toMatch(/stats\.week\.workedToDateHours|stats\.week\.targetToDateHours/);
+    expect(PAGE).not.toMatch(/weekDiff/);
   });
 
   it("B3: the page no longer subtracts targetHours from workedHours inline for the week delta", () => {
