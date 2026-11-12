@@ -25,10 +25,9 @@ export type AvailabilityRow = {
   searchText: string;
 };
 
-export type AvailabilitySortKey = "name" | "number";
-
 export interface AvailabilitySort {
-  key: AvailabilitySortKey;
+  /** The only sortable column is the name; the key stays explicit so a column can be added without a new signature. */
+  key: "name";
   dir: "asc" | "desc";
 }
 
@@ -54,25 +53,16 @@ export function filterAvailability(rows: readonly AvailabilityRow[], q: string):
   return rows.filter((row) => matchesSearch(row.searchText, q));
 }
 
-const collator = new Intl.Collator("de", { numeric: true });
+const collator = new Intl.Collator("de");
 
-/**
- * A new, sorted array. A person without a Personalnummer sorts last in both directions; ties fall back
- * to the name and then the id, so the order is total and stable.
- */
+/** A new, sorted array: by „Nachname, Vorname“, ties by the id, so the order is total and stable. */
 export function sortAvailability(
   rows: readonly AvailabilityRow[],
   sort: AvailabilitySort,
 ): AvailabilityRow[] {
   const sign = sort.dir === "desc" ? -1 : 1;
-  const byName = (a: AvailabilityRow, b: AvailabilityRow): number =>
-    collator.compare(a.sortName, b.sortName) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-  const primary = (a: AvailabilityRow, b: AvailabilityRow): number => {
-    if (sort.key === "name") return sign * collator.compare(a.sortName, b.sortName);
-    if (a.number === "" && b.number === "") return 0;
-    if (a.number === "") return 1;
-    if (b.number === "") return -1;
-    return sign * collator.compare(a.number, b.number);
-  };
-  return [...rows].sort((a, b) => primary(a, b) || byName(a, b));
+  return [...rows].sort(
+    (a, b) =>
+      sign * collator.compare(a.sortName, b.sortName) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
 }

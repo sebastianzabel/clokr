@@ -76,16 +76,14 @@ describe("sortAvailability", () => {
     ]);
   });
 
-  it("orders numbers naturally (P-2 before P-10) and keeps a missing number last in both directions", () => {
-    expect(sortAvailability(rows, { key: "number", dir: "asc" }).map((r) => r.id)).toEqual([
-      "1",
-      "3",
-      "2",
+  it("ties on the name fall back to the id, so the order is stable", () => {
+    const twins = availabilityRows([
+      { id: "b", firstName: "Anna", lastName: "Meier", employeeNumber: "2" },
+      { id: "a", firstName: "Anna", lastName: "Meier", employeeNumber: "1" },
     ]);
-    expect(sortAvailability(rows, { key: "number", dir: "desc" }).map((r) => r.id)).toEqual([
-      "3",
-      "1",
-      "2",
+    expect(sortAvailability(twins, { key: "name", dir: "asc" }).map((r) => r.id)).toEqual([
+      "a",
+      "b",
     ]);
   });
 

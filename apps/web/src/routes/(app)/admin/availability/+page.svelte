@@ -17,6 +17,7 @@
     type DataTableColumn,
     type DataTableSort,
   } from "$components/ui/DataTable.svelte";
+  import { avatarIndex, initialsOf } from "$components/ui/ListRow.svelte";
   import PageTabs from "$components/ui/PageTabs.svelte";
   import TableToolbar from "$components/ui/TableToolbar.svelte";
   import {
@@ -24,7 +25,6 @@
     filterAvailability,
     sortAvailability,
     type AvailabilityEmployee,
-    type AvailabilitySortKey,
   } from "$lib/team/availability-list";
 
   let employees = $state<AvailabilityEmployee[]>([]);
@@ -40,14 +40,13 @@
   const allRows = $derived(availabilityRows(employees));
   const shownRows = $derived(
     sortAvailability(filterAvailability(allRows, search), {
-      key: (sort?.key ?? "name") as AvailabilitySortKey,
+      key: "name",
       dir: sort?.dir ?? "asc",
     }),
   );
 
   const columns: DataTableColumn[] = [
     { key: "name", label: "Name", primary: true, sortable: true },
-    { key: "number", label: "Personalnummer", sortable: true },
     { key: "open", label: "Verfügbarkeit", align: "end" },
   ];
 
@@ -108,9 +107,17 @@
     {/snippet}
     {#snippet cell(row, column)}
       {#if column.key === "name"}
-        {row.name}
-      {:else if column.key === "number"}
-        <span class="av-number">{row.number === "" ? "—" : row.number}</span>
+        <span class="av-name">
+          <span
+            class="av-avatar"
+            style="--av: var(--a{avatarIndex(row.name)}); --av-t: var(--a{avatarIndex(row.name)}-t)"
+            aria-hidden="true">{initialsOf(row.name)}</span
+          >
+          <span class="av-text">
+            <span class="av-title">{row.name}</span>
+            {#if row.number !== ""}<span class="av-number">{row.number}</span>{/if}
+          </span>
+        </span>
       {:else if column.key === "open"}
         <a
           class="av-open"
@@ -123,9 +130,43 @@
 </div>
 
 <style>
+  .av-name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-width: 0;
+  }
+
+  .av-avatar {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--av);
+    color: var(--av-t);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+  }
+
+  .av-text {
+    display: inline-flex;
+    flex-direction: column;
+    min-width: 0;
+    text-align: start;
+  }
+
+  .av-title {
+    font-weight: 600;
+    color: var(--text);
+  }
+
   .av-number {
-    color: var(--text-2);
-    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    font-size: var(--fs-xs);
+    font-weight: 400;
   }
 
   .av-open {
