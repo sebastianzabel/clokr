@@ -88,6 +88,22 @@
           "label": "Urlaubsgrenzen & Sperren"
         }
       ]
+    },
+    {
+      "slug": "system-integrationen",
+      "path": "/verwalten/system/integrationen",
+      "heading": "Integrationen",
+      "tabs": [
+        {
+          "label": "WLAN-Anwesenheit"
+        },
+        {
+          "label": "NFC-Terminals"
+        },
+        {
+          "label": "API-Schlüssel"
+        }
+      ]
     }
   ]
 }

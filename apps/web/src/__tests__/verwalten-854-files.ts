@@ -68,6 +68,15 @@ export const MIGRATED_854: readonly string[] = [
   // Plan 854-13 (Regeln › Abwesenheiten, part III): the Urlaubsgrenzen & Sperren tab.
   "lib/components/admin/abwesenheiten/UrlaubsgrenzenPanel.svelte",
   "routes/(app)/admin/shutdowns/[id]/+page.svelte",
+  // Plan 854-14 (System › Integrationen): the rebuilt page shell, its three panels and what they use.
+  "routes/(app)/admin/integrations/+page.svelte",
+  "lib/components/admin/integrationen/PresenceSourcesPanel.svelte",
+  "lib/components/admin/integrationen/TerminalsPanel.svelte",
+  "lib/components/admin/integrationen/ApiKeysPanel.svelte",
+  "lib/components/admin/integrationen/OneTimeKey.svelte",
+  "lib/components/admin/PairingGuide.svelte",
+  "lib/components/admin/TerminalSalonCell.svelte",
+  "lib/components/admin/ModuleHint.svelte",
 ];
 
 export interface VerwaltenFile {
