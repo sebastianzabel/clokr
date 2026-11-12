@@ -173,7 +173,10 @@ describe("AK-02 - no text/number input writes inline on this page", () => {
 describe("D-11/D-12 - unsaved markers and guard registration on admin/phorest", () => {
   it("the page registers ONE marker from the panel's change count and de-registers on unmount", () => {
     expect((PAGE_CODE.match(/markUnsaved\("admin-phorest"/g) ?? []).length).toBe(2);
-    expect(PAGE_CODE).toContain('markUnsaved("admin-phorest", connectionChanges > 0)');
+    expect(PAGE_CODE).toContain(
+      'markUnsaved("admin-phorest", snapshotsReady && connectionChanges > 0)',
+    );
+    expect(PAGE_CODE).not.toContain('markUnsaved("admin-phorest", connectionChanges > 0)');
     expect(PAGE_CODE).toContain('return () => markUnsaved("admin-phorest", false)');
     expect(PANEL_CODE).not.toContain("markUnsaved");
   });

@@ -22,7 +22,8 @@
 
   Props:
     status  - bindable, what the page's status strip shows; this panel writes the connection and mapping figures
-    changes - bindable, the number of unsaved changes (the page sums it into markUnsaved)
+    changes - bindable, the number of unsaved changes (the page reads it for markUnsaved)
+    ready   - bindable, true once the form has taken its baseline from the server (the page gates the marker on it)
 -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -66,11 +67,12 @@
   interface Props {
     status: PhorestStatus;
     changes?: number;
+    ready?: boolean;
   }
 
-  // `changes` is write-only here: the parent reads it through `bind:changes`.
+  // `changes` and `ready` are write-only here: the parent reads them through `bind:`.
   // eslint-disable-next-line no-useless-assignment
-  let { status = $bindable(), changes = $bindable(0) }: Props = $props();
+  let { status = $bindable(), changes = $bindable(0), ready = $bindable(false) }: Props = $props();
 
   const keys = settingsSection("phorest-verbindung").keys as readonly PhorestField[];
   const LOAD_ERROR = "Die Phorest-Einstellungen konnten nicht geladen werden.";
@@ -134,6 +136,7 @@
       phSoleSalon = config.branchIdEditable;
       phServerBranchId = config.branchId;
       phConfigLoaded = true;
+      ready = true;
       status.configured = config.configured;
       status.autoSync = loaded.phorestAutoSync;
       status.syncCron = loaded.phorestSyncCron;

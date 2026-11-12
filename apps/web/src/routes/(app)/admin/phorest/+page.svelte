@@ -5,7 +5,7 @@
   `phorest-verbindung` - and the staff mapping) and „Abgleich“ (run the sync, last run, history).
 
   The panels own their forms and requests; the page owns the shared status the strip shows and sums the unsaved
-  count into ONE `markUnsaved("admin-phorest", …)`. Both panels stay mounted (PageTabs keeps every panel in the
+  count into ONE unsaved-guard registration. Both panels stay mounted (PageTabs keeps every panel in the
   DOM), so the strip is complete whichever tab is open. Access is decided by the admin layout guard and the API
   (`integration:manage`).
 -->
@@ -43,13 +43,15 @@
   // What the status strip shows; the panels write to it as they load and save.
   let status = $state(emptyPhorestStatus());
   let connectionChanges = $state(0);
+  // True once the connection form has its baseline from the server (WR-01).
+  let snapshotsReady = $state(false);
   let connection: PhorestConnectionPanel | undefined = $state();
 
   const items = $derived(statusItems(status));
 
-  // Only a loaded panel counts changes, so a page that shows nothing but errors never arms the navigation guard.
+  // Gated on a baseline: a page that shows nothing but errors never arms the navigation guard.
   $effect(() => {
-    markUnsaved("admin-phorest", connectionChanges > 0);
+    markUnsaved("admin-phorest", snapshotsReady && connectionChanges > 0);
     return () => markUnsaved("admin-phorest", false);
   });
 </script>
@@ -68,7 +70,12 @@
 <PageTabs tabs={TABS} tab={activeTab} onTabChange={selectTab} tabsLabel="Bereiche von Phorest">
   {#snippet panel(value)}
     {#if value === "verbindung"}
-      <PhorestConnectionPanel bind:this={connection} bind:status bind:changes={connectionChanges} />
+      <PhorestConnectionPanel
+        bind:this={connection}
+        bind:status
+        bind:changes={connectionChanges}
+        bind:ready={snapshotsReady}
+      />
     {:else if value === "abgleich"}
       <PhorestSyncPanel bind:status onsynced={() => connection?.reloadMapping()} />
     {/if}
