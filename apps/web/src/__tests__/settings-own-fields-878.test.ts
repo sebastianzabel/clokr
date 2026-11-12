@@ -70,7 +70,8 @@ function settingsWorkPuts(source: string): Put[] {
 }
 
 // Issue #854 (plan 854-07): the saves that moved to Regeln › Arbeitszeit & Verträge (toggleAutoBreak,
-// saveDefaultBreakStart, saveBreakDefaults, toggleEnforceBreakConfirmation -> `BreaksSection`, ...) are no longer
+// saveDefaultBreakStart, saveBreakDefaults, toggleEnforceBreakConfirmation -> `BreaksSection`; saveRetroEntryWindowDays,
+// saveBsSlots, saveDefaultWorkDays and saveCoreDefaults -> the other sections of that page) are no longer
 // pages of /admin; their own-fields rule is pinned where they live: settings-pages-854 (3) reads every
 // settings PUT of `lib/components/admin/` and requires `pickSection(…, settingsSection("<id>").keys)` or a
 // literal inside one registered section, and arbeitszeit-save-wiring-854 names each section.
@@ -82,15 +83,6 @@ const EXPECTED: Record<string, Record<string, string[]>> = {
     saveAvailabilityEnabled: ["availabilityEnabled"],
     saveVocationalSchoolAutoCleanupShifts: ["vocationalSchoolAutoCleanupShifts"],
     saveCloseMonthWithGaps: ["closeMonthWithGapsAllowed"],
-    saveRetroEntryWindowDays: ["retroEntryWindowDays"],
-    saveBsSlots: [
-      "bsSlotBlockWeekMinutes",
-      "bsSlotFirstLongDayMinutes",
-      "bsSlotSecondLongDayMinutes",
-      "bsSlotShortDayMinutes",
-    ],
-    saveDefaultWorkDays: ["defaultWorkDays"],
-    saveCoreDefaults: ["defaultCoreDays", "defaultCoreEnd", "defaultCoreStart"],
   },
   export: {
     saveDatev: [

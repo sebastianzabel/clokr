@@ -99,6 +99,43 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     ],
     renderedBy: `${ARBEITSZEIT_DIR}/BreaksSection.svelte`,
   },
+  {
+    ...FROM_SYSTEM,
+    id: "arbeitszeit-rueckwirkend",
+    title: "Rückwirkende Einträge",
+    endpoint: "/settings/work",
+    keys: ["retroEntryWindowDays"],
+    renderedBy: `${ARBEITSZEIT_DIR}/RetroWindowSection.svelte`,
+  },
+  {
+    ...FROM_SYSTEM,
+    id: "arbeitszeit-arbeitstage",
+    title: "Arbeitstage",
+    endpoint: "/settings/work",
+    keys: ["defaultWorkDays"],
+    renderedBy: `${ARBEITSZEIT_DIR}/WorkDaysSection.svelte`,
+  },
+  {
+    ...FROM_SYSTEM,
+    id: "arbeitszeit-gleitzeit",
+    title: "Gleitzeit",
+    endpoint: "/settings/work",
+    keys: ["defaultCoreStart", "defaultCoreEnd", "defaultCoreDays"],
+    renderedBy: `${ARBEITSZEIT_DIR}/CoreHoursSection.svelte`,
+  },
+  {
+    ...FROM_SYSTEM,
+    id: "arbeitszeit-berufsschule",
+    title: "Berufsschule",
+    endpoint: "/settings/work",
+    keys: [
+      "bsSlotFirstLongDayMinutes",
+      "bsSlotSecondLongDayMinutes",
+      "bsSlotShortDayMinutes",
+      "bsSlotBlockWeekMinutes",
+    ],
+    renderedBy: `${ARBEITSZEIT_DIR}/VocationalSlotsSection.svelte`,
+  },
 
   // ── /admin/system ──────────────────────────────────────────────────────────────────────────────
   {
@@ -120,7 +157,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     id: "system-features",
     title: "Features",
     endpoint: "/settings/work",
-    keys: ["availabilityEnabled", "vocationalSchoolAutoCleanupShifts", "defaultWorkDays"],
+    keys: ["availabilityEnabled", "vocationalSchoolAutoCleanupShifts"],
   },
   {
     ...SYSTEM,
@@ -131,36 +168,10 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   },
   {
     ...SYSTEM,
-    id: "system-core-hours",
-    title: "Kernarbeitszeit-Defaults (Gleitzeit)",
-    endpoint: "/settings/work",
-    keys: ["defaultCoreStart", "defaultCoreEnd", "defaultCoreDays"],
-  },
-  {
-    ...SYSTEM,
     id: "system-close-month-gaps",
     title: "Monatsabschluss mit Lücken",
     endpoint: "/settings/work",
     keys: ["closeMonthWithGapsAllowed"],
-  },
-  {
-    ...SYSTEM,
-    id: "system-retro-window",
-    title: "Rückwirkende Einträge",
-    endpoint: "/settings/work",
-    keys: ["retroEntryWindowDays"],
-  },
-  {
-    ...SYSTEM,
-    id: "system-bs-slots",
-    title: "Berufsschule — Zeitgutschrift",
-    endpoint: "/settings/work",
-    keys: [
-      "bsSlotFirstLongDayMinutes",
-      "bsSlotSecondLongDayMinutes",
-      "bsSlotShortDayMinutes",
-      "bsSlotBlockWeekMinutes",
-    ],
   },
   {
     ...SYSTEM,

@@ -20,6 +20,10 @@
   import Note from "$components/ui/Note.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import BreaksSection from "$lib/components/admin/arbeitszeit/BreaksSection.svelte";
+  import RetroWindowSection from "$lib/components/admin/arbeitszeit/RetroWindowSection.svelte";
+  import WorkDaysSection from "$lib/components/admin/arbeitszeit/WorkDaysSection.svelte";
+  import CoreHoursSection from "$lib/components/admin/arbeitszeit/CoreHoursSection.svelte";
+  import VocationalSlotsSection from "$lib/components/admin/arbeitszeit/VocationalSlotsSection.svelte";
 
   let config = $state<WorkConfig | null>(null);
   let loadError = $state("");
@@ -27,7 +31,13 @@
 
   // The unsaved counts of the sections, summed into ONE registration (a second registration under the
   // same id would let one section's cleanup disarm the others).
-  const changes = $state({ pausen: 0 });
+  const changes = $state({
+    pausen: 0,
+    rueckwirkend: 0,
+    arbeitstage: 0,
+    gleitzeit: 0,
+    berufsschule: 0,
+  });
   const totalChanges = $derived(Object.values(changes).reduce((sum, n) => sum + n, 0));
 
   // Gated on "the baseline has been taken": a failed load must not arm the navigation guard on a page
@@ -40,7 +50,13 @@
   });
 
   const user = $derived($authStore.user);
-  const showBreaks = $derived(mayOpenSection(user, settingsSection("arbeitszeit-pausen")));
+  const show = $derived({
+    pausen: mayOpenSection(user, settingsSection("arbeitszeit-pausen")),
+    rueckwirkend: mayOpenSection(user, settingsSection("arbeitszeit-rueckwirkend")),
+    arbeitstage: mayOpenSection(user, settingsSection("arbeitszeit-arbeitstage")),
+    gleitzeit: mayOpenSection(user, settingsSection("arbeitszeit-gleitzeit")),
+    berufsschule: mayOpenSection(user, settingsSection("arbeitszeit-berufsschule")),
+  });
 
   onMount(async () => {
     try {
@@ -73,6 +89,20 @@
   <Skeleton shape="card" lines={4} />
 {:else if loadError || config === null}
   <div role="alert"><Note tone="bad">{loadError}</Note></div>
-{:else if showBreaks}
-  <BreaksSection {config} bind:changes={changes.pausen} />
+{:else}
+  {#if show.pausen}
+    <BreaksSection {config} bind:changes={changes.pausen} />
+  {/if}
+  {#if show.rueckwirkend}
+    <RetroWindowSection {config} bind:changes={changes.rueckwirkend} />
+  {/if}
+  {#if show.arbeitstage}
+    <WorkDaysSection {config} bind:changes={changes.arbeitstage} />
+  {/if}
+  {#if show.gleitzeit}
+    <CoreHoursSection {config} bind:changes={changes.gleitzeit} />
+  {/if}
+  {#if show.berufsschule}
+    <VocationalSlotsSection {config} bind:changes={changes.berufsschule} />
+  {/if}
 {/if}

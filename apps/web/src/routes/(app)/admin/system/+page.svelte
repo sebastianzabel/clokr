@@ -46,28 +46,16 @@
     // Regeln › Arbeitszeit & Verträge (Issue #854)
     enforceBreakConfirmation?: boolean;
     blockMonthCloseOnUnconfirmedBreak?: boolean;
-    // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
-    defaultCoreStart?: string | null;
-    defaultCoreEnd?: string | null;
-    defaultCoreDays?: number[];
     // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
     availabilityEnabled?: boolean;
-    // Phase 49.5 — Standard-Arbeitstage (0=So..6=Sa)
-    defaultWorkDays?: number[];
     // Check mode of shifts against the opening hours of their salon (the hours live on the salon)
     shiftStoreHoursMode?: "STRICT" | "DAY_ONLY" | "OFF";
     // Phase 67.2 — Auto-Cleanup für Berufsschultag-Schichten (Plan 04 backend hook,
     // Plan 05 surfaces toggle here). Wenn true (Default): künftige Shifts auf neuen
     // BS-Tagen werden vom Generator weich-gelöscht; in der Vergangenheit nur markiert.
     vocationalSchoolAutoCleanupShifts?: boolean;
-    // Phase 76.29 — Monatsabschluss mit Lücken + Rückwirkende Einträge
+    // Phase 76.29 — Monatsabschluss mit Lücken
     closeMonthWithGapsAllowed?: boolean;
-    retroEntryWindowDays?: number;
-    // Phase 76.31 D-06 / 76.35 — 4-layer bsSlot* override (TenantConfig layer)
-    bsSlotFirstLongDayMinutes?: number | null;
-    bsSlotSecondLongDayMinutes?: number | null;
-    bsSlotShortDayMinutes?: number | null;
-    bsSlotBlockWeekMinutes?: number | null;
   }
 
   interface SecurityConfig {
@@ -170,68 +158,9 @@
   let vocationalSchoolAutoCleanupShifts = $state(true);
   let vsAutoCleanupSaving = $state(false);
 
-  // Phase 76.29 — Monatsabschluss mit Lücken (toggle) + Rückwirkende Einträge (number)
+  // Phase 76.29 — Monatsabschluss mit Lücken (toggle)
   let closeMonthWithGapsAllowed = $state(true);
   let closeMonthWithGapsSaving = $state(false);
-  let retroEntryWindowDays = $state(10);
-  let retroWindowSaving = $state(false);
-  let retroWindowSaved = $state(false);
-  let retroWindowError = $state("");
-
-  // Phase 76.35 — Berufsschule Zeitgutschrift (bsSlot* TenantConfig overrides).
-  // Empty string = inherited (no explicit tenant override); numeric string = explicit value.
-  // Bounds mirror the server Zod schema (vocational-school-constants.ts):
-  //   daily slots [240..600 min], block week [1200..3000 min].
-  const BS_DAILY_MIN = 240;
-  const BS_DAILY_MAX = 600;
-  const BS_BLOCK_MIN = 1200;
-  const BS_BLOCK_MAX = 3000;
-
-  let bsSlotFirstLong = $state(""); // bsSlotFirstLongDayMinutes — "" = inherited
-  let bsSlotSecondLong = $state(""); // bsSlotSecondLongDayMinutes
-  let bsSlotShortDay = $state(""); // bsSlotShortDayMinutes
-  let bsSlotBlockWeek = $state(""); // bsSlotBlockWeekMinutes
-
-  let bsSlotSaving = $state(false);
-  let bsSlotSaved = $state(false);
-  let bsSlotError = $state("");
-  let bsSlotWarnings = $state<string[]>([]);
-
-  // Stunden-hints (derive from the raw input strings)
-  let bsSlotFirstLongHint = $derived(
-    bsSlotFirstLong !== "" && Number.isFinite(Number(bsSlotFirstLong))
-      ? `= ${(Number(bsSlotFirstLong) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
-      : "",
-  );
-  let bsSlotSecondLongHint = $derived(
-    bsSlotSecondLong !== "" && Number.isFinite(Number(bsSlotSecondLong))
-      ? `= ${(Number(bsSlotSecondLong) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
-      : "",
-  );
-  let bsSlotShortDayHint = $derived(
-    bsSlotShortDay !== "" && Number.isFinite(Number(bsSlotShortDay))
-      ? `= ${(Number(bsSlotShortDay) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
-      : "",
-  );
-  let bsSlotBlockWeekHint = $derived(
-    bsSlotBlockWeek !== "" && Number.isFinite(Number(bsSlotBlockWeek))
-      ? `= ${(Number(bsSlotBlockWeek) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
-      : "",
-  );
-
-  // Phase 49.5 — Standard-Arbeitstage (Mo-Fr default)
-  let defaultWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
-  let workDaysSaving = $state(false);
-  let workDaysSaved = $state(false);
-  let workDaysError = $state("");
-
-  // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
-  let defaultCoreStart = $state("");
-  let defaultCoreEnd = $state("");
-  let defaultCoreDays = $state<number[]>([]);
-  let coreDefaultsSaving = $state(false);
-  let coreDefaultsSaved = $state(false);
-  let coreDefaultsError = $state("");
 
   let smtpHost = $state("");
   let smtpPort = $state(587);
@@ -416,19 +345,6 @@
   let shiftHoursModeSnapshot = $state("");
   let shiftHoursModeDirty = $derived(snap(shiftStoreHoursMode) !== shiftHoursModeSnapshot);
 
-  let coreDefaultsSnapshot = $state("");
-  let coreDefaultsDirty = $derived(
-    snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays) !== coreDefaultsSnapshot,
-  );
-
-  let retroWindowSnapshot = $state("");
-  let retroWindowDirty = $derived(snap(retroEntryWindowDays) !== retroWindowSnapshot);
-
-  let bsSlotSnapshot = $state("");
-  let bsSlotDirty = $derived(
-    snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek) !== bsSlotSnapshot,
-  );
-
   let sessionSnapshot = $state("");
   let sessionDirty = $derived(
     snap(
@@ -462,22 +378,11 @@
     ) !== smtpSnapshot,
   );
 
-  let workDaysSnapshot = $state("");
-  let workDaysDirty = $derived(snap(defaultWorkDays) !== workDaysSnapshot);
-
   // Phase 109 (D-12) — one registry entry per PAGE, not per section: the guard only needs to know
   // whether anything is unsaved. The cleanup de-registers on unmount so a saved-and-left page cannot
   // leave a stale entry behind.
   let anyUnsaved = $derived(
-    companyDirty ||
-      shiftHoursModeDirty ||
-      coreDefaultsDirty ||
-      retroWindowDirty ||
-      bsSlotDirty ||
-      sessionDirty ||
-      pwDirty ||
-      smtpDirty ||
-      workDaysDirty,
+    companyDirty || shiftHoursModeDirty || sessionDirty || pwDirty || smtpDirty,
   );
 
   // Gate the registration on "the baseline has been taken" (WR-01). Every snapshot starts as ""
@@ -522,26 +427,8 @@
 
       // Phase 67.2 (Plan 05) — load tenant-wide BS-Shift-Auto-Cleanup toggle
       vocationalSchoolAutoCleanupShifts = cfg.vocationalSchoolAutoCleanupShifts ?? true;
-      // Phase 76.29 — Monatsabschluss mit Lücken + Rückwirkende Einträge
+      // Phase 76.29 — Monatsabschluss mit Lücken
       closeMonthWithGapsAllowed = cfg.closeMonthWithGapsAllowed ?? true;
-      retroEntryWindowDays = cfg.retroEntryWindowDays ?? 10;
-      // Phase 76.35 — bsSlot* tenant overrides: null/undefined = inherited (empty string)
-      bsSlotFirstLong =
-        cfg.bsSlotFirstLongDayMinutes != null ? String(cfg.bsSlotFirstLongDayMinutes) : "";
-      bsSlotSecondLong =
-        cfg.bsSlotSecondLongDayMinutes != null ? String(cfg.bsSlotSecondLongDayMinutes) : "";
-      bsSlotShortDay = cfg.bsSlotShortDayMinutes != null ? String(cfg.bsSlotShortDayMinutes) : "";
-      bsSlotBlockWeek =
-        cfg.bsSlotBlockWeekMinutes != null ? String(cfg.bsSlotBlockWeekMinutes) : "";
-      // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
-      defaultCoreStart = cfg.defaultCoreStart ?? "";
-      defaultCoreEnd = cfg.defaultCoreEnd ?? "";
-      defaultCoreDays = Array.isArray(cfg.defaultCoreDays) ? [...cfg.defaultCoreDays] : [];
-      // Phase 49.5 — Standard-Arbeitstage
-      defaultWorkDays =
-        Array.isArray(cfg.defaultWorkDays) && cfg.defaultWorkDays.length > 0
-          ? [...cfg.defaultWorkDays]
-          : [1, 2, 3, 4, 5];
       shiftStoreHoursMode = cfg.shiftStoreHoursMode ?? "DAY_ONLY";
 
       try {
@@ -610,9 +497,6 @@
       // Phase 109 — baseline for the unsaved markers. Must run after ALL state above is hydrated.
       companySnapshot = snap(gTenantName, gFederalState, gTimezone);
       shiftHoursModeSnapshot = snap(shiftStoreHoursMode);
-      coreDefaultsSnapshot = snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays);
-      retroWindowSnapshot = snap(retroEntryWindowDays);
-      bsSlotSnapshot = snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek);
       sessionSnapshot = snap(
         sessionTimeoutMinutes,
         refreshTokenDays,
@@ -638,7 +522,6 @@
         smtpSecure,
         smtpPassword.length > 0,
       );
-      workDaysSnapshot = snap(defaultWorkDays);
       snapshotsReady = true;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
@@ -776,151 +659,6 @@
       toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       closeMonthWithGapsSaving = false;
-    }
-  }
-
-  // Phase 76.29 — Rückwirkende Einträge Selbstbearbeitungsfenster (Phase 109 D-02: button-gated
-  // — a number field never writes on its own)
-  async function saveRetroEntryWindowDays() {
-    if (!settingsLoaded) return;
-    retroWindowError = "";
-    retroWindowSaved = false;
-    const val = Math.trunc(retroEntryWindowDays);
-    if (!Number.isFinite(val) || val < 1 || val > 90) {
-      retroWindowError = "Bitte gib einen Wert zwischen 1 und 90 Tagen ein.";
-      return;
-    }
-    retroWindowSaving = true;
-    try {
-      await api.put("/settings/work", {
-        retroEntryWindowDays: val,
-      });
-      retroEntryWindowDays = val;
-      retroWindowSaved = true;
-      retroWindowSnapshot = snap(retroEntryWindowDays); // Phase 109 — section is clean again
-      setTimeout(() => (retroWindowSaved = false), 2500);
-    } catch (e: unknown) {
-      retroWindowError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      retroWindowSaving = false;
-    }
-  }
-
-  // Phase 76.35 — Berufsschule Zeitgutschrift speichern.
-  // Client-side bounds mirror the server Zod schema (vocational-school-constants.ts).
-  // An empty string field sends explicit null → clears the tenant override so resolution
-  // delegates down to the per-employee daily-Soll fallback.
-  async function saveBsSlots() {
-    if (!settingsLoaded) return;
-    bsSlotError = "";
-    bsSlotSaved = false;
-    bsSlotWarnings = [];
-
-    // Client-side validation — only reject values that are outside bounds;
-    // empty string is valid (means "inherit / clear override").
-    const parseSlot = (
-      raw: string,
-      min: number,
-      max: number,
-      label: string,
-    ): number | null | "error" => {
-      if (raw === "") return null; // explicit null → clear override
-      const n = Number(raw);
-      if (!Number.isFinite(n) || !Number.isInteger(n)) {
-        bsSlotError = `${label}: Bitte eine ganze Zahl eingeben.`;
-        return "error";
-      }
-      if (n < min || n > max) {
-        bsSlotError = `${label}: Wert muss zwischen ${min} und ${max} Minuten liegen.`;
-        return "error";
-      }
-      return n;
-    };
-
-    const v1 = parseSlot(bsSlotFirstLong, BS_DAILY_MIN, BS_DAILY_MAX, "1. Langtag");
-    if (v1 === "error") return;
-    const v2 = parseSlot(bsSlotSecondLong, BS_DAILY_MIN, BS_DAILY_MAX, "2. Langtag");
-    if (v2 === "error") return;
-    const v3 = parseSlot(bsSlotShortDay, BS_DAILY_MIN, BS_DAILY_MAX, "Kurztag");
-    if (v3 === "error") return;
-    const v4 = parseSlot(bsSlotBlockWeek, BS_BLOCK_MIN, BS_BLOCK_MAX, "Blockunterricht-Woche");
-    if (v4 === "error") return;
-
-    bsSlotSaving = true;
-    try {
-      const res = await api.put<{
-        warnings?: string[];
-        bsSlotFirstLongDayMinutes?: number | null;
-        bsSlotSecondLongDayMinutes?: number | null;
-        bsSlotShortDayMinutes?: number | null;
-        bsSlotBlockWeekMinutes?: number | null;
-      }>("/settings/work", {
-        bsSlotFirstLongDayMinutes: v1,
-        bsSlotSecondLongDayMinutes: v2,
-        bsSlotShortDayMinutes: v3,
-        bsSlotBlockWeekMinutes: v4,
-      });
-      // Surface SC-3 over-crediting warnings (non-blocking)
-      if (res.warnings && res.warnings.length > 0) {
-        bsSlotWarnings = res.warnings;
-      }
-      bsSlotSaved = true;
-      bsSlotSnapshot = snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek); // Phase 109 — clean again
-      setTimeout(() => (bsSlotSaved = false), 3000);
-    } catch (e: unknown) {
-      bsSlotError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      bsSlotSaving = false;
-    }
-  }
-
-  // Phase 49.5 — Standard-Arbeitstage speichern
-  function toggleDefaultWorkDay(dow: number) {
-    defaultWorkDays = defaultWorkDays.includes(dow)
-      ? defaultWorkDays.filter((d) => d !== dow)
-      : [...defaultWorkDays, dow].sort((a, b) => a - b);
-  }
-
-  async function saveDefaultWorkDays() {
-    if (!settingsLoaded) return;
-    workDaysError = "";
-    workDaysSaved = false;
-    if (defaultWorkDays.length === 0) {
-      workDaysError = "Mindestens ein Arbeitstag muss aktiv sein.";
-      return;
-    }
-    workDaysSaving = true;
-    try {
-      await api.put("/settings/work", {
-        defaultWorkDays,
-      });
-      workDaysSaved = true;
-      workDaysSnapshot = snap(defaultWorkDays); // Phase 109 — section is clean again
-      setTimeout(() => (workDaysSaved = false), 3000);
-    } catch (e) {
-      workDaysError = e instanceof Error ? e.message : "Fehler beim Speichern";
-    } finally {
-      workDaysSaving = false;
-    }
-  }
-
-  async function saveCoreDefaults() {
-    coreDefaultsSaving = true;
-    coreDefaultsError = "";
-    coreDefaultsSaved = false;
-    try {
-      await api.put("/settings/work", {
-        defaultCoreStart: defaultCoreStart || null,
-        defaultCoreEnd: defaultCoreEnd || null,
-        defaultCoreDays,
-      });
-      coreDefaultsSaved = true;
-      coreDefaultsSnapshot = snap(defaultCoreStart, defaultCoreEnd, defaultCoreDays); // Phase 109 — clean again
-      setTimeout(() => (coreDefaultsSaved = false), 3000);
-    } catch (e: unknown) {
-      coreDefaultsError = e instanceof Error ? e.message : "Fehler";
-    } finally {
-      coreDefaultsSaving = false;
     }
   }
 
@@ -1404,59 +1142,6 @@
               <span class="switch-slider"></span>
             </label>
           </div>
-
-          <!-- Phase 49.5 — Standard-Arbeitstage/Woche (Anzahl) -->
-          <div class="workdays-section">
-            <div class="toggle-info" style="margin-bottom: 0.5rem;">
-              <span class="toggle-row-label">Standard-Arbeitstage pro Woche</span>
-              <p class="form-hint text-muted">
-                Wie viele Arbeitstage hat eine Vollzeit-Woche bei euch? Unabhängig vom
-                Arbeitszeitmodell — wird für Urlaubsverbrauch und Pro-Rata-Berechnung verwendet.
-                Standard-Reihenfolge Mo–Fr (Mo–Sa bei 6, Mo–So bei 7). Für einzelne Personen
-                überschreibbar unter
-                <a href="/admin/vacation">Urlaubsverwaltung</a>.
-              </p>
-            </div>
-            <div class="workdays-row" style="align-items: center;">
-              <input
-                type="number"
-                min="1"
-                max="7"
-                step="1"
-                class="form-input"
-                style="max-width: 6rem;"
-                aria-label="Anzahl Arbeitstage pro Woche"
-                value={defaultWorkDays.length}
-                oninput={(ev) => {
-                  const n = Math.max(
-                    1,
-                    Math.min(7, Number((ev.target as HTMLInputElement).value) || 0),
-                  );
-                  const canonical = [1, 2, 3, 4, 5, 6, 0];
-                  defaultWorkDays = canonical.slice(0, n).sort((a, b) => a - b);
-                }}
-              />
-              <span class="form-hint" style="margin: 0;">Tage</span>
-            </div>
-            <div class="workdays-actions">
-              <button
-                class="btn btn-primary btn-sm"
-                onclick={saveDefaultWorkDays}
-                disabled={workDaysSaving || defaultWorkDays.length === 0}
-              >
-                {#if workDaysSaving}<Spinner />{/if}
-                Speichern
-              </button>
-              {#if workDaysSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
-              <!-- Phase 109 (D-02/Pitfall 4): this lone number field stays behind a button because
-                   D-02 is a type-based carve-out that overrides D-01's atomic-value framing — do
-                   NOT "fix" it into an instant save. No Section footer here (inline control), so
-                   the same global hint recipe (plan 109-02) is rendered directly, not via Section. -->
-              {#if workDaysDirty}<span class="unsaved-hint" role="status">Nicht gespeichert</span
-                >{/if}
-              {#if workDaysError}<span class="error-hint">{workDaysError}</span>{/if}
-            </div>
-          </div>
         </Section>
       {:else if currentTab === "arbeitszeit"}
         <!-- ── Monatsabschluss bei unbestätigten Pausen ─────────────────────────
@@ -1494,80 +1179,6 @@
           {#if breakConfirmSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
         </Section>
 
-        <!-- ── Kernarbeitszeit-Defaults (Gleitzeit) ─────────────────────────── -->
-        <Section
-          title="Kernarbeitszeit-Defaults (Gleitzeit)"
-          sub="Standard-Kernzeit für neue Gleitzeit-Mitarbeiter"
-          dirty={coreDefaultsDirty}
-        >
-          {#snippet footer()}
-            <button
-              class="btn btn-primary"
-              onclick={saveCoreDefaults}
-              disabled={coreDefaultsSaving}
-            >
-              {coreDefaultsSaving ? "Speichern…" : "Speichern"}
-            </button>
-            {#if coreDefaultsSaved}
-              <span class="saved-hint">✓ Gespeichert</span>
-            {/if}
-          {/snippet}
-          {#if coreDefaultsError}
-            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-              <span>⚠</span><span>{coreDefaultsError}</span>
-            </div>
-          {/if}
-          <p class="form-hint text-muted" style="margin-bottom: 1rem;">
-            Standard-Kernarbeitszeit für neue Gleitzeit-Mitarbeiter. Beim Anlegen wird vorbelegt,
-            kann pro Mitarbeiter überschrieben werden.
-          </p>
-          <div class="core-defaults-row">
-            <div class="form-group">
-              <label class="form-label" for="def-core-start">Kernzeitbeginn</label>
-              <input
-                id="def-core-start"
-                type="time"
-                bind:value={defaultCoreStart}
-                class="form-input modal-input-sm"
-                placeholder="—"
-              />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="def-core-end">Kernzeitende</label>
-              <input
-                id="def-core-end"
-                type="time"
-                bind:value={defaultCoreEnd}
-                class="form-input modal-input-sm"
-                placeholder="—"
-              />
-            </div>
-          </div>
-          <div class="form-group" style="margin-top: 0.75rem;">
-            <label class="form-label">Standard-Kernzeit-Tage</label>
-            <div class="weekday-chips" role="group" aria-label="Standard-Kerntage">
-              {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
-                <button
-                  type="button"
-                  class="wd-chip"
-                  class:wd-chip--active={defaultCoreDays.includes(day.value)}
-                  onclick={() => {
-                    if (defaultCoreDays.includes(day.value)) {
-                      defaultCoreDays = defaultCoreDays.filter((d) => d !== day.value);
-                    } else {
-                      defaultCoreDays = [...defaultCoreDays, day.value];
-                    }
-                  }}>{day.label}</button
-                >
-              {/each}
-            </div>
-            <p class="form-hint text-muted">
-              Leer lassen, wenn es keine Vorgabe für das Unternehmen geben soll (Mitarbeitende mit
-              Gleitzeit starten dann ohne vorausgewählte Kernzeit).
-            </p>
-          </div>
-        </Section>
-
         <!-- ── Monatsabschluss mit Lücken (Phase 76.29 CFG-01) ───────────────── -->
         <Section
           title="Monatsabschluss mit Lücken"
@@ -1592,247 +1203,6 @@
               />
               <span class="switch-slider"></span>
             </label>
-          </div>
-        </Section>
-
-        <!-- ── Rückwirkende Einträge — Selbstbearbeitungsfenster (Phase 76.29) ── -->
-        <Section
-          title="Rückwirkende Einträge"
-          sub="Frist für eigenständige Bearbeitung vergangener Zeiteinträge"
-          dirty={retroWindowDirty}
-        >
-          {#snippet footer()}
-            <button
-              class="btn btn-primary"
-              onclick={saveRetroEntryWindowDays}
-              disabled={retroWindowSaving}
-              data-testid="admin-system-retro-window-save"
-            >
-              {#if retroWindowSaving}<Spinner />{/if}
-              Speichern
-            </button>
-            {#if retroWindowSaved}
-              <span class="saved-hint">✓ Gespeichert</span>
-            {/if}
-          {/snippet}
-
-          {#if retroWindowError}
-            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-              <span>⚠</span><span>{retroWindowError}</span>
-            </div>
-          {/if}
-          <div class="form-group">
-            <label class="form-label" for="sys-retro-window">Selbstbearbeitungsfenster (Tage)</label
-            >
-            <input
-              id="sys-retro-window"
-              type="number"
-              min="1"
-              max="90"
-              step="1"
-              bind:value={retroEntryWindowDays}
-              class="form-input modal-input-sm"
-              disabled={retroWindowSaving}
-              data-testid="admin-system-arbeitszeit-retroEntryWindowDays"
-            />
-            <p class="form-hint text-muted">
-              Mitarbeiter können Einträge bis zu N Tage rückwirkend selbst bearbeiten. Ältere
-              Einträge erfordern einen Antrag mit Genehmigung durch einen Manager. Gesetzlicher
-              Referenzwert (ArbZG-Referentenentwurf 2023): 7 Tage. Standard: 10 Tage.
-            </p>
-          </div>
-        </Section>
-        <!-- ── Berufsschule — Zeitgutschrift (Phase 76.35) ─────────────────── -->
-        <Section
-          title="Berufsschule — Zeitgutschrift"
-          sub="Zeitgutschrift für Berufsschultage im ganzen Unternehmen (§ 15 Abs. 2 BBiG)"
-          dirty={bsSlotDirty}
-        >
-          {#snippet footer()}
-            <button
-              class="btn btn-primary"
-              onclick={saveBsSlots}
-              disabled={bsSlotSaving}
-              data-testid="admin-system-bsslot-save"
-            >
-              {#if bsSlotSaving}<Spinner />{/if}
-              Speichern
-            </button>
-            {#if bsSlotSaved}
-              <span class="saved-hint">✓ Gespeichert</span>
-            {/if}
-            <div class="alert alert-info bs-revision-alert" role="alert">
-              <span>ℹ</span><span>Änderungen wirken nur auf offene und künftige Monate.</span>
-            </div>
-          {/snippet}
-
-          <p class="form-hint text-muted" style="margin-bottom: 1.25rem;">
-            Überschreibt den systemweiten Fallback für alle Mitarbeitenden deines Unternehmens. Leer
-            lassen = Wert kommt aus dem Tages-Soll der Person (keine eigene Vorgabe des
-            Unternehmens). Tages-Slots: 240–600 Min (4–10 h). Blockunterricht-Woche: 1200–3000 Min
-            (20–50 h).
-          </p>
-
-          {#if bsSlotError}
-            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-              <span>⚠</span><span>{bsSlotError}</span>
-            </div>
-          {/if}
-
-          {#if bsSlotWarnings.length > 0}
-            {#each bsSlotWarnings as w (w)}
-              <div class="alert alert-warning" role="alert" style="margin-bottom: 0.75rem;">
-                <span>⚠</span><span>{w}</span>
-              </div>
-            {/each}
-          {/if}
-
-          <!-- 1. Langtag -->
-          <div class="form-group bs-slot-group">
-            <label class="form-label" for="bs-slot-first-long">
-              1. Berufsschul-Langtag (Minuten)
-            </label>
-            <div class="bs-slot-input-row">
-              <input
-                id="bs-slot-first-long"
-                type="number"
-                min={BS_DAILY_MIN}
-                max={BS_DAILY_MAX}
-                step="1"
-                class="form-input modal-input-sm"
-                bind:value={bsSlotFirstLong}
-                placeholder="Erbt aus: Tages-Soll"
-                data-testid="admin-system-bsslot-firstLong"
-              />
-              {#if bsSlotFirstLongHint}
-                <span class="bs-slot-hint">{bsSlotFirstLongHint}</span>
-              {/if}
-              {#if bsSlotFirstLong !== ""}
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-sm bs-clear-btn"
-                  onclick={() => (bsSlotFirstLong = "")}
-                  title="Auf Vorgabe zurücksetzen"
-                  aria-label="1. Langtag auf Vorgabe zurücksetzen"
-                >
-                  × Erben
-                </button>
-              {/if}
-            </div>
-            {#if bsSlotFirstLong === ""}
-              <p class="form-hint text-muted">Erbt aus: Tages-Soll des Mitarbeiters</p>
-            {/if}
-          </div>
-
-          <!-- 2. Langtag -->
-          <div class="form-group bs-slot-group">
-            <label class="form-label" for="bs-slot-second-long">
-              2. Berufsschul-Langtag (Minuten)
-            </label>
-            <div class="bs-slot-input-row">
-              <input
-                id="bs-slot-second-long"
-                type="number"
-                min={BS_DAILY_MIN}
-                max={BS_DAILY_MAX}
-                step="1"
-                class="form-input modal-input-sm"
-                bind:value={bsSlotSecondLong}
-                placeholder="Erbt aus: Tages-Soll"
-                data-testid="admin-system-bsslot-secondLong"
-              />
-              {#if bsSlotSecondLongHint}
-                <span class="bs-slot-hint">{bsSlotSecondLongHint}</span>
-              {/if}
-              {#if bsSlotSecondLong !== ""}
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-sm bs-clear-btn"
-                  onclick={() => (bsSlotSecondLong = "")}
-                  title="Auf Vorgabe zurücksetzen"
-                  aria-label="2. Langtag auf Vorgabe zurücksetzen"
-                >
-                  × Erben
-                </button>
-              {/if}
-            </div>
-            {#if bsSlotSecondLong === ""}
-              <p class="form-hint text-muted">Erbt aus: Tages-Soll des Mitarbeiters</p>
-            {/if}
-          </div>
-
-          <!-- Kurztag -->
-          <div class="form-group bs-slot-group">
-            <label class="form-label" for="bs-slot-short-day">
-              Berufsschul-Kurztag (Minuten)
-            </label>
-            <div class="bs-slot-input-row">
-              <input
-                id="bs-slot-short-day"
-                type="number"
-                min={BS_DAILY_MIN}
-                max={BS_DAILY_MAX}
-                step="1"
-                class="form-input modal-input-sm"
-                bind:value={bsSlotShortDay}
-                placeholder="Erbt aus: Tages-Soll"
-                data-testid="admin-system-bsslot-shortDay"
-              />
-              {#if bsSlotShortDayHint}
-                <span class="bs-slot-hint">{bsSlotShortDayHint}</span>
-              {/if}
-              {#if bsSlotShortDay !== ""}
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-sm bs-clear-btn"
-                  onclick={() => (bsSlotShortDay = "")}
-                  title="Auf Vorgabe zurücksetzen"
-                  aria-label="Kurztag auf Vorgabe zurücksetzen"
-                >
-                  × Erben
-                </button>
-              {/if}
-            </div>
-            {#if bsSlotShortDay === ""}
-              <p class="form-hint text-muted">Erbt aus: Tages-Soll des Mitarbeiters</p>
-            {/if}
-          </div>
-
-          <!-- Blockunterricht-Woche -->
-          <div class="form-group bs-slot-group">
-            <label class="form-label" for="bs-slot-block-week">
-              Blockunterricht-Woche (Minuten)
-            </label>
-            <div class="bs-slot-input-row">
-              <input
-                id="bs-slot-block-week"
-                type="number"
-                min={BS_BLOCK_MIN}
-                max={BS_BLOCK_MAX}
-                step="1"
-                class="form-input modal-input-sm"
-                bind:value={bsSlotBlockWeek}
-                placeholder="Erbt aus: Wochenstunden-Soll"
-                data-testid="admin-system-bsslot-blockWeek"
-              />
-              {#if bsSlotBlockWeekHint}
-                <span class="bs-slot-hint">{bsSlotBlockWeekHint}</span>
-              {/if}
-              {#if bsSlotBlockWeek !== ""}
-                <button
-                  type="button"
-                  class="btn btn-ghost btn-sm bs-clear-btn"
-                  onclick={() => (bsSlotBlockWeek = "")}
-                  title="Auf Vorgabe zurücksetzen"
-                  aria-label="Blockunterricht-Woche auf Vorgabe zurücksetzen"
-                >
-                  × Erben
-                </button>
-              {/if}
-            </div>
-            {#if bsSlotBlockWeek === ""}
-              <p class="form-hint text-muted">Erbt aus: Wochenstunden-Soll des Mitarbeiters</p>
-            {/if}
           </div>
         </Section>
       {:else if currentTab === "sicherheit"}
@@ -2689,13 +2059,6 @@
     min-width: 200px;
   }
 
-  .core-defaults-row {
-    display: flex;
-    gap: 1.5rem;
-    flex-wrap: wrap;
-    align-items: flex-start;
-  }
-
   .toggle-row {
     display: flex;
     align-items: center;
@@ -2825,95 +2188,6 @@
   .error-hint {
     color: var(--bad);
     font-size: 0.9375rem;
-  }
-
-  /* Phase 49.5 — Standard-Arbeitstage UI */
-  .workdays-section {
-    border-top: 1px solid var(--line);
-    margin-top: 1rem;
-    padding-top: 1rem;
-  }
-  .workdays-row {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.75rem;
-  }
-  .workday-chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 48px;
-    padding: 0.4rem 0.65rem;
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    background: var(--card);
-    color: var(--text-2);
-    font-weight: 600;
-    font-size: 0.875rem;
-    cursor: pointer;
-    user-select: none;
-    transition: all 0.15s ease;
-  }
-  .workday-chip:hover {
-    border-color: var(--brand);
-  }
-  .workday-chip--active {
-    background: var(--brand-soft);
-    border-color: var(--brand);
-    color: var(--brand);
-  }
-  .workday-chip input {
-    display: none;
-  }
-  .workdays-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  /* Weekday chip selector (shared between vacation modal and core-defaults section) */
-  .weekday-chips {
-    display: flex;
-    gap: 0.375rem;
-    flex-wrap: wrap;
-    margin-top: 0.375rem;
-    margin-bottom: 0.375rem;
-  }
-
-  .wd-chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 2.5rem;
-    height: 2rem;
-    padding: 0 0.625rem;
-    border-radius: var(--r-pill);
-    font-size: 0.8125rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition:
-      background 0.15s,
-      color 0.15s,
-      border-color 0.15s;
-    border: 1.5px solid var(--line);
-    background: transparent;
-    color: var(--text-2);
-  }
-
-  .wd-chip--active {
-    background: var(--brand);
-    border-color: var(--brand);
-    color: var(--brand-ink);
-  }
-
-  .wd-chip:hover:not(.wd-chip--active) {
-    border-color: var(--brand);
-    color: var(--brand);
-  }
-
-  .modal-input-sm {
-    max-width: 180px;
   }
 
   .federal-state-select {
@@ -3106,48 +2380,5 @@
     .inline-create {
       flex-direction: column;
     }
-  }
-
-  /* ── Berufsschule Zeitgutschrift (Phase 76.35) ──────────────────────────── */
-  .bs-slot-group {
-    margin-bottom: 1.25rem;
-  }
-
-  .bs-slot-input-row {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    flex-wrap: wrap;
-  }
-
-  .bs-slot-hint {
-    font-size: 0.8125rem;
-    color: var(--text-2);
-    font-family: var(--font-ui);
-  }
-
-  .bs-clear-btn {
-    font-size: 0.8125rem;
-    color: var(--text-2);
-    padding: 0.25rem 0.625rem;
-    min-height: unset;
-    height: 2rem;
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    background: transparent;
-    cursor: pointer;
-    transition:
-      color 0.12s var(--ease),
-      border-color 0.12s var(--ease);
-  }
-
-  .bs-clear-btn:hover {
-    color: var(--bad);
-    border-color: var(--bad);
-  }
-
-  .bs-revision-alert {
-    margin-top: 0.75rem;
-    width: 100%;
   }
 </style>

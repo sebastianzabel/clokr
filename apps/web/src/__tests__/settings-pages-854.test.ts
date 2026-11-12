@@ -455,7 +455,7 @@ describe("the checker can fail (controls)", () => {
     base().map((s) => (s.id === id ? { ...s, ...patch } : s));
 
   it("reports a key in two sections", () => {
-    const sections = edited("system-retro-window", {
+    const sections = edited("arbeitszeit-rueckwirkend", {
       keys: ["retroEntryWindowDays", "closeMonthWithGapsAllowed"],
     });
     expect(

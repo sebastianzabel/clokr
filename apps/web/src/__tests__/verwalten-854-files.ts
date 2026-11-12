@@ -31,7 +31,12 @@ export const MIGRATED_854: readonly string[] = [
   "routes/(app)/verwalten/regeln/arbeitszeit/+page.svelte",
   "lib/components/admin/settings/SettingsGroup.svelte",
   "lib/components/admin/settings/ToggleField.svelte",
+  "lib/components/admin/settings/WeekdayPicker.svelte",
   "lib/components/admin/arbeitszeit/BreaksSection.svelte",
+  "lib/components/admin/arbeitszeit/RetroWindowSection.svelte",
+  "lib/components/admin/arbeitszeit/WorkDaysSection.svelte",
+  "lib/components/admin/arbeitszeit/CoreHoursSection.svelte",
+  "lib/components/admin/arbeitszeit/VocationalSlotsSection.svelte",
 ];
 
 export interface VerwaltenFile {

@@ -208,12 +208,9 @@ describe("D-01 — genuine form groups stay button-gated", () => {
   const BUTTON_ONLY_GROUPS = [
     "saveShiftHoursMode",
     "saveFederalState",
-    "saveCoreDefaults",
-    "saveBsSlots",
-    // Pitfall 4: D-02 is a type-based carve-out for text/number inputs that overrides D-01's
-    // atomic-value framing — a lone number field still belongs behind a button, so this stays
-    // button-gated even though it could otherwise look like a single atomic value.
-    "saveDefaultWorkDays",
+    // Issue #854 (plan 854-07): saveCoreDefaults, saveBsSlots and saveDefaultWorkDays moved to the
+    // Arbeitszeit page, where every section is button-gated through its SaveBar
+    // (arbeitszeit-save-wiring-854.test.ts pins that no text/number input there writes inline).
   ] as const;
 
   it.each(BUTTON_ONLY_GROUPS)("%s is wired via onclick=, never onchange=", (name) => {
@@ -240,10 +237,8 @@ describe("AK-02 — text/number inputs never write outside a button-gated group"
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
   });
 
-  it.each(["saveRetroEntryWindowDays"])("%s is button-gated, never onblur (D-02/N-01)", (name) => {
-    expect(PAGE).toContain(`onclick={${name}}`);
-    expect(PAGE).not.toContain(`onblur={${name}}`);
-  });
+  // saveBreakDefaults and saveRetroEntryWindowDays (button-gated, never onblur, D-02/N-01) moved to the
+  // Arbeitszeit page (#854, plan 854-07): the same rule is pinned there for every section.
 });
 
 describe("D-01/AK-01 — the eight E-Mail-Benachrichtigungs-Toggles save instantly", () => {
@@ -308,13 +303,9 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
   const SECTIONS = [
     "companyDirty",
     "shiftHoursModeDirty",
-    "coreDefaultsDirty",
-    "retroWindowDirty",
-    "bsSlotDirty",
     "sessionDirty",
     "pwDirty",
     "smtpDirty",
-    "workDaysDirty",
   ] as const;
 
   it.each(SECTIONS)("%s is derived, not hand-set", (name) => {
@@ -322,7 +313,7 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
   });
 
   it("every button-gated Section receives a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(8);
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(5);
   });
 
   it("the page registers itself under one id and de-registers on unmount", () => {
@@ -340,12 +331,12 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
   });
 
   it("WR-01: snapshotsReady is set only after the last baseline snapshot, inside the try", () => {
-    const iWorkDays = PAGE.indexOf("workDaysSnapshot = snap(defaultWorkDays)");
+    const iLastSnapshot = PAGE.indexOf("smtpSnapshot = snap(");
     const iReady = PAGE.indexOf("snapshotsReady = true");
     const iCatch = PAGE.indexOf('error = e instanceof Error ? e.message : "Fehler beim Laden"');
-    expect(iWorkDays).toBeGreaterThan(-1);
+    expect(iLastSnapshot).toBeGreaterThan(-1);
     // After the last snapshot assignment...
-    expect(iReady).toBeGreaterThan(iWorkDays);
+    expect(iReady).toBeGreaterThan(iLastSnapshot);
     // ...and before the catch, i.e. still inside the try that a load failure short-circuits.
     expect(iReady).toBeLessThan(iCatch);
   });
@@ -360,15 +351,6 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
   // after a FAILED save, telling the operator their change is persisted when it is not.
   it("T-109-24: no snapshot reset is the first statement of a finally block", () => {
     expect(PAGE).not.toMatch(/finally \{\s*\n\s*\w+Snapshot = snap\(/);
-  });
-
-  // WARNING-01 (plan-checker): saveBsSlots submits FOUR parsed values
-  // (bsSlotFirstLong/Second/ShortDay/BlockWeek, see the v1..v4 parseSlot calls) — the snapshot
-  // must cover all four or editing bsSlotBlockWeek alone would silently never mark the section.
-  it("WARNING-01: the bsSlot snapshot covers all four fields the handler submits", () => {
-    expect(PAGE).toContain(
-      "snap(bsSlotFirstLong, bsSlotSecondLong, bsSlotShortDay, bsSlotBlockWeek)",
-    );
   });
 });
 
