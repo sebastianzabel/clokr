@@ -1375,8 +1375,8 @@
 <!-- ── Kalender abonnieren: the team absences as a .ics file ─────────────────────── -->
 <Dialog bind:open={icalOpen} title="Kalender abonnieren">
   <p>
-    Lade die Team-Abwesenheiten als .ics-Datei herunter und öffne sie in Outlook, Google Kalender
-    oder Apple Kalender.
+    Die Team-Abwesenheiten als .ics-Datei herunterladen und in Outlook, Google Kalender oder Apple
+    Kalender öffnen.
   </p>
   {#snippet footer()}
     <button type="button" class="btn btn-ghost" onclick={() => (icalOpen = false)}>
