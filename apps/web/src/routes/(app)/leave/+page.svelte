@@ -163,6 +163,12 @@
   // Enter-Space). Reset to "" by the plain "+ Neue Abwesenheit" button.
   let pendingInitialStart = $state("");
   let pendingInitialEnd = $state("");
+  // Issue #845: a start-page link opens the form directly (?antrag=urlaub|krank), then drops the param
+  let pendingInitialType = $state<"VACATION" | "SICK">("VACATION");
+  $effect(() => {
+    // every other way into the form starts as before: a closed form forgets the preset
+    if (!showForm) pendingInitialType = "VACATION";
+  });
 
   // Überstunden- / Urlaubskontostand
   let overtimeBalance: number | null = $state(null);
@@ -543,6 +549,22 @@
   // completed load, because the rows do not exist before it.
   let deepLinkRequestId: string | null = null;
   let firstLoadDone = false;
+
+  onMount(() => {
+    const antrag = $page.url.searchParams.get("antrag");
+    if (antrag === "urlaub" || antrag === "krank") {
+      pendingInitialType = antrag === "krank" ? "SICK" : "VACATION";
+      editingRequest = null;
+      showForm = true;
+      const url = new URL($page.url);
+      url.searchParams.delete("antrag");
+      void goto(`${url.pathname}${url.search}`, {
+        replaceState: true,
+        noScroll: true,
+        keepFocus: true,
+      });
+    }
+  });
 
   onMount(() => {
     deepLinkRequestId = urlState.requestId;
@@ -1115,6 +1137,7 @@
     {editingRequest}
     initialStartDate={pendingInitialStart}
     initialEndDate={pendingInitialEnd}
+    initialTypeCode={pendingInitialType}
     entitlementYear={calYear}
     onSaved={async (result) => {
       // Issue #836: limit warnings of the create — shown, never blocking.

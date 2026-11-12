@@ -5,6 +5,7 @@
   // (.kpi, .kpi-label, .kpi-value, .kpi-unit, .kpi-delta[-tone]) are the app.css recipes the
   // reports and operator tests read.
   import { countUp } from "$lib/motion";
+  import Chip from "./Chip.svelte";
 
   export interface KpiProgress {
     value: number;
@@ -27,6 +28,8 @@
     derivationHref?: string;
     /** Text of the derivation link. */
     derivationLabel?: string;
+    /** Issue #845: a short status chip next to the label (e.g. „Prognose“). */
+    badge?: string;
     /** Delta line below the value. */
     delta?: string;
     /** Tone of the delta line; "neutral" renders without a tone class. */
@@ -44,6 +47,7 @@
     format,
     unit,
     explanation,
+    badge,
     derivationHref,
     derivationLabel = "Herleitung →",
     delta,
@@ -71,7 +75,9 @@
 </script>
 
 <article class="kpi" class:kpi-cell--strip={strip} data-testid={testId}>
-  <div class="kpi-label">{label}</div>
+  <div class="kpi-label" class:kpi-label--badge={badge}>
+    {label}{#if badge}<Chip tone="info">{badge}</Chip>{/if}
+  </div>
   <div class="kpi-value" use:countUp={{ value, format }}>
     {display}{#if unit}<span class="kpi-unit"> {unit}</span>{/if}
   </div>
@@ -100,6 +106,12 @@
 </article>
 
 <style>
+  .kpi-label--badge {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
+  }
   /* Strip look: the figure is one --fs-kpi step, weight 600, tabular. The legacy tile (KPIStat)
      keeps the 38 px recipe of app.css. */
   .kpi-cell--strip {

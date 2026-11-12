@@ -263,6 +263,10 @@ export default defineConfig({
       //     the rail without scrolling at 1440 x 900 and 1024 x 768; tenant fixture plus API-created
       //     people with their system role templates
       //
+      // Issue #845 added a further file:
+      //   - mein-tag-845.spec.ts (the four clock stage states with their texts and toasts, the
+      //     standing working-time figure during a break, the 390 x 844 first screen and 360 px
+      //     without overflow on Ich › Mein Tag); tenant fixture only, no seed
       // Issue #854 (D-854-17, AC-4) added a further file:
       //   - verwalten-854.spec.ts (every migrated Verwalten page of fixtures/verwalten-854-pages.json:
       //     H1 text, axe WCAG 2 A/AA with colour contrast on the page and on each of its tabs, tab
@@ -295,6 +299,7 @@ export default defineConfig({
         /startpage-feedback-843\.spec\.ts/,
         /bausteine-843\.spec\.ts/,
         /all-routes-overflow-843\.spec\.ts/,
+        /mein-tag-845\.spec\.ts/,
         /shift-notices-850\.spec\.ts/,
         /verwalten-854\.spec\.ts/,
       ],

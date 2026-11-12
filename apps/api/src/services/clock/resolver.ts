@@ -5,12 +5,16 @@
 // Calls state-machine to decide, audit-actor to emit AuditLog (closes #215 / sub-req A),
 // consolidate to merge cross-source same-day entries (sub-req B / TIME-V19-04).
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { ClockEvent, ClockResolution, ClockState } from "./types";
-import { decide } from "./state-machine";
+import type { ClockEvent, ClockResolution, ClockState, BreakEvent, BreakResolution } from "./types";
+import { decide, decideBreak } from "./state-machine";
 import { emitClockAudit } from "./audit-actor";
 import { removeAutoBreaksOfEntry, auditRemovedAutoBreaks } from "./auto-break-replace"; // Issue #799
 import { consolidateSameDayEntries, calcBreakMinutesLocal } from "./consolidate";
-import { DOUBLE_TAP_DEBOUNCE_MS, CROSS_DAY_OPEN_ENTRY_FALLBACK_HOURS } from "./thresholds";
+import {
+  DOUBLE_TAP_DEBOUNCE_MS,
+  CROSS_DAY_OPEN_ENTRY_FALLBACK_HOURS,
+  MIN_RUNNING_BREAK_MS,
+} from "./thresholds";
 import { hasApprovedLeaveOnDate } from "../../contexts/absence"; // Phase 100b Plan 14 (AC-1) — index is the public surface
 import {
   invalidReasonFields,
@@ -37,6 +41,7 @@ import { resolveEntrySalon } from "../../contexts/time-tracking/entry-salon"; //
 import {
   materializeRemainder,
   activitySharesReplace,
+  validateActivityState,
 } from "../../contexts/time-tracking/activity-shares"; // Issue #81
 import { loadSharesOfEntry } from "../../contexts/time-tracking/activity-store"; // Issue #81
 
@@ -513,9 +518,19 @@ export async function resolveClockEvent(
             return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
           }
 
+          // Issue #596: a running break ends with the clock-out — it becomes a Break row first, so
+          // the closed entry carries every break as before and no break state is left behind.
+          const closedBreak = target.breakStartedAt
+            ? await closeRunningBreak(tx, target.id, target.breakStartedAt, event.timestamp)
+            : null;
           const updated = await tx.timeEntry.update({
             where: { id: decision.entryId },
-            data: { endTime: event.timestamp },
+            data: {
+              endTime: event.timestamp,
+              ...(closedBreak
+                ? { breakStartedAt: null, breakMinutes: closedBreak.breakMinutes }
+                : {}),
+            },
           });
 
           // Cross-source consolidation (sub-req B). Read tenant-specific gap window.
@@ -664,4 +679,131 @@ export async function resolveClockEvent(
     }
     throw err;
   }
+}
+
+type BreakTx = Parameters<Parameters<FastifyInstance["prisma"]["$transaction"]>[0]>[0];
+
+/**
+ * Issue #596 — turns the running break [startedAt, endedAt] into a Break row and returns the
+ * entry's recomputed break minutes (all Break rows, the sum the append route stores). A break
+ * shorter than a minute leaves no row (a double tap is no Ruhepause).
+ */
+async function closeRunningBreak(
+  tx: BreakTx,
+  entryId: string,
+  startedAt: Date,
+  endedAt: Date,
+): Promise<{ breakId: string | null; breakMinutes: number }> {
+  let breakId: string | null = null;
+  if (endedAt.getTime() - startedAt.getTime() >= MIN_RUNNING_BREAK_MS) {
+    const created = await tx.break.create({
+      data: { timeEntryId: entryId, startTime: startedAt, endTime: endedAt },
+    });
+    breakId = created.id;
+  }
+  const all = await tx.break.findMany({
+    where: { timeEntryId: entryId },
+    select: { startTime: true, endTime: true },
+  });
+  return { breakId, breakMinutes: Math.round(calcBreakMinutesLocal(all)) };
+}
+
+/**
+ * Issue #596 (#845) — the ONE place the running break of an open entry starts and ends, so a break
+ * started on one device (web, phone, terminal) is seen and ended on every other. Same transaction
+ * shape as `resolveClockEvent`: the Employee row lock first, then the entry, then the pure decision.
+ * A finished break is an ordinary Break row (saldo and § 4 evaluation unchanged); the running one
+ * lives only in `TimeEntry.breakStartedAt`. Audited as BREAK_START / BREAK_APPEND.
+ */
+export async function resolveBreakEvent(
+  app: FastifyInstance,
+  event: BreakEvent,
+  req?: FastifyRequest,
+): Promise<BreakResolution> {
+  return app.prisma.$transaction(async (tx) => {
+    await lockEmployeeForEntryWrite(tx, event.tenantId, event.employeeId);
+    const entry = await tx.timeEntry.findFirst({
+      where: {
+        id: event.entryId,
+        employeeId: event.employeeId,
+        employee: { tenantId: event.tenantId },
+        deletedAt: null,
+      },
+    });
+    if (!entry) return { kind: "CONFLICT", reason: "NOT_CLOCKED_IN" } as const;
+    const decision = decideBreak(entry, event.action);
+    if (decision.kind === "CONFLICT") {
+      app.log.warn(
+        { employeeId: event.employeeId, entryId: entry.id, reason: decision.reason },
+        "break_event_conflict",
+      );
+      return decision;
+    }
+    if (decision.kind === "BREAK_START") {
+      const updated = await tx.timeEntry.update({
+        where: { id: entry.id },
+        data: { breakStartedAt: event.timestamp },
+      });
+      const audit = await emitClockAudit(tx, {
+        action: "BREAK_START",
+        entity: "TimeEntry",
+        entityId: entry.id,
+        oldValue: { breakStartedAt: null },
+        newValue: { breakStartedAt: event.timestamp },
+        actor: event.actor,
+        req,
+      });
+      return { kind: "BREAK_STARTED", entry: updated, audit } as const;
+    }
+    // Issue #81 (D-05): a break shrinks the working time — the allocation must still fit
+    const shares = await loadSharesOfEntry(tx, event.tenantId, entry.id);
+    if (shares.length > 0) {
+      const known = await tx.break.findMany({
+        where: { timeEntryId: entry.id },
+        select: { startTime: true, endTime: true },
+      });
+      const check = validateActivityState(
+        {
+          kind: entry.activityKind,
+          shares,
+          startTime: entry.startTime,
+          endTime: entry.endTime,
+          breakMinutes: Math.round(
+            calcBreakMinutesLocal([
+              ...known,
+              { startTime: decision.startedAt, endTime: event.timestamp },
+            ]),
+          ),
+        },
+        { sharesWritten: false, wasClosed: false },
+      );
+      if (!check.ok) return { kind: "CONFLICT", reason: "ACTIVITY_SHARES_EXCEED" } as const;
+    }
+    const closed = await closeRunningBreak(tx, entry.id, decision.startedAt, event.timestamp);
+    const updated = await tx.timeEntry.update({
+      where: { id: entry.id },
+      // a human ended the break -> CONFIRMED, as the append route does (Phase 91, BREAK-01)
+      data: { breakStartedAt: null, breakMinutes: closed.breakMinutes, breakStatus: "CONFIRMED" },
+    });
+    const audit = await emitClockAudit(tx, {
+      action: "BREAK_APPEND",
+      entity: "TimeEntry",
+      entityId: entry.id,
+      oldValue: {
+        breakStartedAt: decision.startedAt,
+        breakMinutes: entry.breakMinutes,
+        breakStatus: entry.breakStatus,
+      },
+      newValue: {
+        breakId: closed.breakId,
+        startTime: decision.startedAt,
+        endTime: event.timestamp,
+        breakMinutes: closed.breakMinutes,
+        breakStatus: "CONFIRMED",
+      },
+      actor: event.actor,
+      req,
+    });
+    return { kind: "BREAK_ENDED", entry: updated, breakId: closed.breakId, audit } as const;
+  });
 }

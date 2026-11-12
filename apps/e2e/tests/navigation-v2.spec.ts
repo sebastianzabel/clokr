@@ -76,7 +76,12 @@ test.describe("Navigation v2 — start page per role (Z-02)", () => {
     const email = await createPerson(request, tenant, "mia");
     await login(page, email, PASSWORD);
     await expect(page).toHaveURL(/\/ich\/tag$/);
-    await expect(page.getByRole("heading", { level: 1, name: /Mein Tag/ })).toBeVisible();
+    // Since #845 the H1 of Ich › Mein Tag is the greeting (prototype); the page name stays the
+    // document title.
+    await expect(page).toHaveTitle("Mein Tag – Clokr");
+    await expect(
+      page.getByRole("heading", { level: 1, name: /^Guten (Morgen|Tag|Abend), \S/ }),
+    ).toBeVisible();
     // one role, one area (Z-01)
     const rail = page.getByRole("complementary", { name: "Hauptnavigation", exact: true });
     await expect(rail.getByRole("navigation")).toHaveCount(1);
