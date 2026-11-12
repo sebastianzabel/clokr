@@ -139,6 +139,15 @@ export function windowContains(from: Date, minutes: number, now: Date): boolean 
 }
 
 /** "09:00" -> "9:00", "13:30" -> "13:30" (the in-app texts name the stored time without a leading zero). */
+/**
+ * Issue #602: a tenant-local calendar day ("YYYY-MM-DD") as "TT.MM.JJJJ" for the in-app notice text.
+ * A stored notice is read later than it is sent, so it names its day instead of saying "heute".
+ */
+export function formatNoticeDay(day: string): string {
+  const [y, m, d] = day.split("-");
+  return `${d}.${m}.${y}`;
+}
+
 export function formatShiftTime(hhmm: string): string {
   const padded = padTime(hhmm);
   if (padded === null) return hhmm;
