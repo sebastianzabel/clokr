@@ -17,6 +17,9 @@ const PASSWORD = "test1234";
 /** The synthetic name of the salon a salon detail page is opened for. */
 export const FIXTURE_SALON_NAME = "Salon Nord";
 
+/** The synthetic person a person detail page is opened for (the H1 reads „first last“). */
+export const FIXTURE_EMPLOYEE_NAME = "Person A";
+
 export interface PageTab {
   label: string;
 }
@@ -54,6 +57,14 @@ for (const entry of list.pages) {
 }
 
 export const MIGRATED_PAGES: readonly MigratedPage[] = list.pages;
+
+/** First day of the previous month, so the fixture person has a hire date in the past. */
+function firstOfPreviousMonth(): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+    .toISOString()
+    .slice(0, 10);
+}
 
 /** The week a salon created through the API gets: Monday to Saturday open, Sunday closed. */
 const WEEK = [0, 1, 2, 3, 4, 5, 6].map((day) => ({
@@ -111,6 +122,27 @@ export async function resolvePage(
     return {
       url: entry.path.replace(fill.placeholder, id),
       heading: entry.heading.replace(fill.nameToken, FIXTURE_SALON_NAME),
+    };
+  }
+  if (entry.fill === "employee") {
+    const [firstName, lastName] = FIXTURE_EMPLOYEE_NAME.split(" ");
+    const res = await request.post(`${API_BASE}/api/v1/employees`, {
+      headers,
+      data: {
+        email: `person-a.${tenant.tenantId.toLowerCase()}@example.invalid`,
+        firstName,
+        lastName,
+        employeeNumber: `E854-${tenant.tenantId.slice(-4)}`,
+        hireDate: `${firstOfPreviousMonth()}T00:00:00.000Z`,
+        scheduleType: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+      },
+    });
+    expect(res.status(), `create employee (${await res.text()})`).toBe(201);
+    const id = ((await res.json()) as { id: string }).id;
+    return {
+      url: entry.path.replace(fill.placeholder, id),
+      heading: entry.heading.replace(fill.nameToken, FIXTURE_EMPLOYEE_NAME),
     };
   }
   throw new Error(`verwalten-854-pages.json: unknown fill ${entry.fill}`);

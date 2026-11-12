@@ -104,7 +104,6 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/employees/BulkRoleDialog.svelte",
   "lib/components/employees/HomeSalonField.svelte",
   // Plan 854-20 (Person detail, part I): the Person, Urlaub and Zugang tabs and the Salons section.
-  // The detail page itself joins in plan 854-22, once its Vertrag panel is rebuilt.
   "lib/components/employees/detail/PersonTab.svelte",
   "lib/components/employees/detail/UrlaubTab.svelte",
   "lib/components/employees/detail/ZugangTab.svelte",
@@ -114,6 +113,8 @@ export const MIGRATED_854: readonly string[] = [
   // Plan 854-22 (Person detail, part III): the per-person override groups of the Vertrag tab.
   "lib/components/employees/detail/VertragOverrides.svelte",
   "lib/components/employees/detail/BerufsschuleSection.svelte",
+  // The detail page itself: a shell over the five tab components, free of every legacy shell.
+  "routes/(app)/admin/employees/[id]/+page.svelte",
   // The Zugang tab opens it (deactivation with a last working day); it renders Dialog directly.
   "lib/components/admin/DeactivateEmployeeDialog.svelte",
 ];
