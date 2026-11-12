@@ -181,9 +181,10 @@
             title={roleOf(draft.accessRoleId)?.name ?? ""}
             subtitle={scopeLabel(draft.scope, ctx)}
             avatar={false}
+            variant="task"
             wrap
           >
-            {#snippet trailing()}
+            {#snippet actions()}
               {#if roleOf(draft.accessRoleId)?.isSystem}
                 <Chip tone="brand">{SYSTEM_ROLE_CHIP_LABEL}</Chip>
               {/if}
@@ -217,9 +218,10 @@
           title={assignment.roleName}
           subtitle={scopeLabel(assignment.scope, ctx)}
           avatar={false}
+          variant="task"
           wrap
         >
-          {#snippet trailing()}
+          {#snippet actions()}
             {#if assignment.isSystemRole}
               <Chip tone="brand">{SYSTEM_ROLE_CHIP_LABEL}</Chip>
             {/if}

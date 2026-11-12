@@ -89,6 +89,14 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/phorest/PhorestSyncPanel.svelte",
   // Plan 854-16 (System › Branding & Themes): the rebuilt page.
   "routes/(app)/admin/themes/+page.svelte",
+  // Plan 854-17 (System › Rollen & Rechte): the rebuilt page shell, both tabs, the editor, the assignment
+  // dialog and the shared role-assignment block (the person tab and the create flow consume it).
+  "routes/(app)/admin/roles/+page.svelte",
+  "lib/components/admin/roles/RolesTab.svelte",
+  "lib/components/admin/roles/RoleEditor.svelte",
+  "lib/components/admin/roles/AssignmentsTab.svelte",
+  "lib/components/admin/roles/AssignmentDialog.svelte",
+  "lib/components/admin/roles/PersonRoleAssignments.svelte",
 ];
 
 export interface VerwaltenFile {

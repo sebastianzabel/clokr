@@ -129,6 +129,19 @@
       "path": "/verwalten/system/branding",
       "heading": "Branding & Themes",
       "tabs": []
+    },
+    {
+      "slug": "system-rollen",
+      "path": "/verwalten/system/rollen",
+      "heading": "Rollen & Rechte",
+      "tabs": [
+        {
+          "label": "Rollen"
+        },
+        {
+          "label": "Zuweisungen"
+        }
+      ]
     }
   ]
 }
