@@ -2085,6 +2085,11 @@
     gap: 10px;
     flex-wrap: wrap;
   }
+  /* The picker keeps its own label and arrows (block); only its page-sized padding goes, so the period
+     starts at the page edge like the prototype's .period. */
+  .roster-period-row :global(.month-bar) {
+    padding: 0;
+  }
   .roster-scope {
     order: 2;
     flex: 1 1 240px;
@@ -2134,6 +2139,12 @@
   }
   .week-body {
     min-width: 0;
+  }
+  /* Narrow screens scroll the framed grid sideways instead of squeezing the shift pills to "0…". */
+  @media (max-width: 760px) {
+    .week-body .shift-grid {
+      min-width: 1000px;
+    }
   }
   .state-msg {
     padding: 40px;
