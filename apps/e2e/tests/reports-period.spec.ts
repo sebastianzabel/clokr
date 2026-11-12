@@ -374,10 +374,15 @@ async function waitKpisSettled(page: Page) {
 
 /** The cell of a table row under the column whose header starts with `header`. */
 async function tableCell(page: Page, rowText: string, header: RegExp) {
-  const headers = await page.locator("table.period-table thead th").allInnerTexts();
+  const headers = await page
+    .locator('[data-testid="period-section"] table thead th')
+    .allInnerTexts();
   const col = headers.findIndex((h) => header.test(h.trim()));
   expect(col, `column ${header} among ${JSON.stringify(headers)}`).toBeGreaterThanOrEqual(0);
-  return page.locator("tr.period-row", { hasText: rowText }).locator("th, td").nth(col);
+  return page
+    .locator('tr[data-testid^="period-row-"]', { hasText: rowText })
+    .locator("th, td")
+    .nth(col);
 }
 
 /** Waits until no finite animation or transition is still running and webfonts are loaded. */
@@ -436,7 +441,9 @@ test.describe("Issue #612 — Berichtsseite: Zeitraum im Browser", () => {
     await expect(kpiValue(page, "Ist")).toContainText(fmtHours(prevAnswer.kpis.workedMinutes));
     const annaRow = prevAnswer.rows.find((r) => r.employeeName === anna.fullName);
     expect(annaRow, "the answer lists the seeded person").toBeDefined();
-    await expect(page.locator("tr.period-row", { hasText: anna.lastName })).toHaveCount(1);
+    await expect(
+      page.locator('tr[data-testid^="period-row-"]', { hasText: anna.lastName }),
+    ).toHaveCount(1);
     await expect(await tableCell(page, anna.lastName, /^ist\b/i)).toContainText(
       fmtHours(annaRow!.workedMinutes),
     );
@@ -508,7 +515,9 @@ test.describe("Issue #612 — Berichtsseite: Zeitraum im Browser", () => {
 
     // And back to the first tab: the table of the same period is there again.
     await page.getByRole("tab", { name: "Zeiten & Konten" }).click();
-    await expect(page.locator("tr.period-row", { hasText: anna.lastName })).toHaveCount(1);
+    await expect(
+      page.locator('tr[data-testid^="period-row-"]', { hasText: anna.lastName }),
+    ).toHaveCount(1);
   });
 
   test("zwei Salons: der Link wählt den Salon, die Kopfauswahl schreibt ihn in URL und Anfrage, Neuladen behält ihn", async ({
@@ -1037,7 +1046,7 @@ test.describe("Issue #612 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         // violation. Without this the clean runs below could not tell "no violation" from "the rule
         // sees nothing on this page".
         await page.goto(`${base}&tab=zeiten`);
-        await expect(page.locator(".period-list li").first()).toBeVisible();
+        await expect(page.locator('tr[data-testid^="period-row-"]').first()).toBeVisible();
         await page.evaluate(() => {
           const host = document.createElement("div");
           host.id = "axe-control";
@@ -1050,18 +1059,18 @@ test.describe("Issue #612 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         );
         await page.evaluate(() => document.getElementById("axe-control")?.remove());
 
-        // 1. tab „Zeiten & Konten“ — the ApprovalRow list
+        // 1. tab „Zeiten & Konten“ — the table as cards
         await waitKpisSettled(page);
         await expect(page.getByRole("tab", { name: "Zeiten & Konten" })).toHaveAttribute(
           "aria-selected",
           "true",
         );
-        await expect(page.locator(".period-list li")).toHaveCount(25);
+        await expect(page.locator('tr[data-testid^="period-row-"]')).toHaveCount(25);
         await expect(page.getByTestId("reports-period-label")).toContainText("September 2026");
         results.push(
           await checkCell(page, "zeiten", viewport.width, mode, {
             axe: true,
-            listSelector: ".period-list .approval-row--stretched",
+            listSelector: 'tr[data-testid^="period-row-"]',
           }),
         );
 
@@ -1253,12 +1262,14 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
     }) => {
       await page.setViewportSize({ width: 1280, height: 720 });
       await openSynthetic(page, request, tenant, { theme, mode: "light" });
-      await expect(page.locator("tr.period-row")).toHaveCount(25);
+      await expect(page.locator('tr[data-testid^="period-row-"]')).toHaveCount(25);
       await settle(page);
 
       // Scroll until the table header would have left the screen without the sticky rule.
       await page.evaluate(() => {
-        const head = document.querySelector(".period-table thead tr") as HTMLElement;
+        const head = document.querySelector(
+          '[data-testid="period-section"] thead tr',
+        ) as HTMLElement;
         window.scrollTo(0, head.getBoundingClientRect().top + window.scrollY + 500);
       });
       await expect
@@ -1267,7 +1278,9 @@ test.describe("Issue #612 — Layoutprüfungen", () => {
 
       const geo = await page.evaluate(() => {
         const bar = document.querySelector(".period-sticky") as HTMLElement;
-        const headRow = document.querySelector(".period-table thead tr") as HTMLElement;
+        const headRow = document.querySelector(
+          '[data-testid="period-section"] thead tr',
+        ) as HTMLElement;
         const firstTh = headRow.querySelector("th") as HTMLElement;
         const b = bar.getBoundingClientRect();
         const h = headRow.getBoundingClientRect();
@@ -1414,13 +1427,10 @@ test.describe("Issue #714 — Salonwechsel: Stammsalon-Sicht im Blick", () => {
         await expectSeenInViewport(hint, "the Stammsalon hint callout");
         await expect(hint).toContainText(STAMMSALON_HINT);
 
-        const row =
-          viewport.width >= 768
-            ? page.locator("tr.period-row", { hasText: sina.fullName })
-            : page.locator(".period-list li", { hasText: sina.fullName });
+        const row = page.locator('tr[data-testid^="period-row-"]', { hasText: sina.fullName });
         await expectSeenInViewport(row, `the row of ${sina.fullName}`);
         await expect(
-          page.locator("tr.period-row, .period-list li", { hasText: ali.fullName }),
+          page.locator('tr[data-testid^="period-row-"]', { hasText: ali.fullName }),
           "the helper is not a table row",
         ).toHaveCount(0);
 

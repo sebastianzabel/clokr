@@ -579,23 +579,22 @@ describe("/reports (Issue #612, AC-612-1) - exactly one period control", () => {
     expect(countOf(SCRIPT, /<select\b/g)).toBe(0);
   });
 
-  it("the only month or year selects live in the two dialogs; the table holds one narrow sort select", () => {
+  it("the only month or year selects live in the two dialogs; the tables hold none", () => {
     const selects = Object.fromEntries(
       COMPONENT_NAMES.map((name) => [name, countOf(COMPONENTS[name], /<select\b/g)]),
     );
     // PeriodRangeDialog: month and year of „Von“ and „Bis“; ExportDialog: the month of
-    // Monatsexport and DATEV; TimesAccountsTable: the sort select of the narrow list, nothing else.
+    // Monatsexport and DATEV; the table sorts through its column heads and holds no select (#854).
     expect(selects).toEqual({
       PeriodBar: 0,
       PeriodKpis: 0,
       PeriodRangeDialog: 4,
       PersonDrilldown: 0,
-      TimesAccountsTable: 1,
+      TimesAccountsTable: 0,
       VacationAbsenceTab: 0,
       TodayAttendance: 0,
       ExportDialog: 1,
     });
-    expect(COMPONENTS.TimesAccountsTable).toContain('aria-label="Sortieren nach"');
     expect(COMPONENTS.ExportDialog).toContain("Monat für Monatsexport und DATEV");
   });
 
@@ -807,7 +806,9 @@ describe("/reports (Issue #612) - staggered reveal", () => {
   it("animates the bar wrapper, the KPI card and each section of the tabs, and re-keys none of them", () => {
     expect(COMPONENTS.PeriodBar).toContain('class="period-sticky card-animate"');
     expect(TEMPLATE).toMatch(/<div class="period-body"[^>]*>\s*<PeriodKpis/);
-    expect(COMPONENTS.TimesAccountsTable).toContain('<section class="card-animate period-section"');
+    expect(COMPONENTS.TimesAccountsTable).toMatch(
+      /<section\s+class="settings-group period-section"/,
+    );
     expect(countOf(COMPONENTS.VacationAbsenceTab, "<Card animate>")).toBe(2);
     expect(COMPONENTS.TodayAttendance).toContain('<section class="settings-group"');
     // Data changes swap the content inside the blocks: nothing is keyed.
@@ -843,7 +844,7 @@ describe("/reports (Issue #612) - staggered reveal", () => {
     expect(document.querySelectorAll("section.settings-group")).toHaveLength(1);
     today.unmount();
     renderWithTheme(TimesAccountsTable, { ...TABLE_PROPS, rows: [person("A")] });
-    expect(screen.getByTestId("period-section").classList.contains("card-animate")).toBe(true);
+    expect(screen.getByTestId("period-section").classList.contains("settings-group")).toBe(true);
   });
 });
 
