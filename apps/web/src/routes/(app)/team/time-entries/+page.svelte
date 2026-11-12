@@ -1827,14 +1827,21 @@
 
 <!-- ── Ansicht: Person oder Salon (Issue #85, D-09) ─────────────────────
      The two views are the tabs of the Seitenkopf (Issue #853, D-853-10). The content of the
-     active view follows below as page blocks, not inside the tab panel: the reach pins read the
-     person view as one top-level block (team-time-entries-salon-558). -->
+     active view is the tab panel the active tab controls (aria-controls), so a screen reader finds
+     the toolbar, the figures, the calendar and the lists inside the tabpanel; the inactive tab's
+     panel stays empty and hidden, so nothing is rendered twice. -->
 <PageTabs
   tabs={viewTabs}
   tab={teamMode}
   onTabChange={(value) => setTeamMode(value === "salon" ? "salon" : "person")}
   tabsLabel="Ansicht"
-/>
+>
+  {#snippet panel(value)}
+    {#if value === teamMode}
+      {@render viewBody()}
+    {/if}
+  {/snippet}
+</PageTabs>
 
 <!-- ── Period control (quick 260820-fkz, Issue #853 D-853-18) ──────────
      Bare month bar, no stats and no eyebrow (the month figures live in the figures of the person
@@ -1849,408 +1856,416 @@
   />
 {/snippet}
 
-{#if teamMode === "person"}
-  <SalonScopeLabel label={scopeLabel} rejected={listRejected} />
-  <!-- Prototype .toolbar2: person picker (once a person is chosen; before that it sits in the
+{#snippet viewBody()}
+  {#if teamMode === "person"}
+    <SalonScopeLabel label={scopeLabel} rejected={listRejected} />
+    <!-- Prototype .toolbar2: person picker (once a person is chosen; before that it sits in the
        empty state), the month and the Kalender/Liste segment. -->
-  <div class="te-controls-row">
-    {#if selectedEmployee}
-      <div class="employee-selector">
-        <PersonPicker
-          items={pickerItems}
-          value={selectedEmployeeId ?? ""}
-          onValueChange={pickEmployee}
-        />
-      </div>
-    {/if}
-    {@render monthNavBar()}
-    {#if selectedEmployee}
-      <div class="te-view-segment">
-        <SegmentedControl
-          options={VIEW_OPTIONS}
-          value={teView}
-          onchange={(value) => (teView = value === "list" ? "list" : "calendar")}
-          ariaLabel="Darstellung"
-          name="te-view"
-          size="sm"
-        />
-      </div>
-    {/if}
-  </div>
-{:else}
-  <div class="te-controls-row">
-    {@render monthNavBar()}
-  </div>
-{/if}
-
-{#if teamMode === "salon"}
-  {#if salonViewError}
-    <div class="alert alert-error" role="alert"><span>⚠</span><span>{salonViewError}</span></div>
+    <div class="te-controls-row">
+      {#if selectedEmployee}
+        <div class="employee-selector">
+          <PersonPicker
+            items={pickerItems}
+            value={selectedEmployeeId ?? ""}
+            onValueChange={pickEmployee}
+          />
+        </div>
+      {/if}
+      {@render monthNavBar()}
+      {#if selectedEmployee}
+        <div class="te-view-segment">
+          <SegmentedControl
+            options={VIEW_OPTIONS}
+            value={teView}
+            onchange={(value) => (teView = value === "list" ? "list" : "calendar")}
+            ariaLabel="Darstellung"
+            name="te-view"
+            size="sm"
+          />
+        </div>
+      {/if}
+    </div>
   {:else}
-    <SalonTimeEntries
-      days={salonViewDays}
-      status={salonViewStatus}
-      capReached={salonViewCapHit}
-      salonName={salonViewSalonName}
-    />
-  {/if}
-{:else if selectedEmployee}
-  {#if error}
-    <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
+    <div class="te-controls-row">
+      {@render monthNavBar()}
+    </div>
   {/if}
 
-  <!-- Figures strip (Issue #853, D-853-18; prototype #p-zeiten stats): the month and the account of
+  {#if teamMode === "salon"}
+    {#if salonViewError}
+      <div class="alert alert-error" role="alert"><span>⚠</span><span>{salonViewError}</span></div>
+    {:else}
+      <SalonTimeEntries
+        days={salonViewDays}
+        status={salonViewStatus}
+        capReached={salonViewCapHit}
+        salonName={salonViewSalonName}
+      />
+    {/if}
+  {:else if selectedEmployee}
+    {#if error}
+      <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
+    {/if}
+
+    <!-- Figures strip (Issue #853, D-853-18; prototype #p-zeiten stats): the month and the account of
        the chosen person in one Kennzahlenleiste under the toolbar row. Rendered ONLY with an employee
        selected (D-01). The cells are made by lib/team/zeiten-kpis.ts. -->
-  <div class="te-figures">
-    {#if saldoCardState === "loading"}
-      <Skeleton shape="block" height="6.5rem" />
-    {:else if saldoCardState === "error"}
-      <ErrorState message="Werte konnten nicht geladen werden." hint="" onRetry={loadAll} />
-    {:else}
-      <KpiStrip items={zeitenKpis} ariaLabel="Monat" />
+    <div class="te-figures">
+      {#if saldoCardState === "loading"}
+        <Skeleton shape="block" height="6.5rem" />
+      {:else if saldoCardState === "error"}
+        <ErrorState message="Werte konnten nicht geladen werden." hint="" onRetry={loadAll} />
+      {:else}
+        <KpiStrip items={zeitenKpis} ariaLabel="Monat" />
+      {/if}
+    </div>
+    {#if saldoDenied && !loading}
+      <p class="text-muted te-denied-note">
+        Soll und Saldo dieser Person sehen Inhaber, Personalabteilung und die Person selbst.
+      </p>
     {/if}
-  </div>
-  {#if saldoDenied && !loading}
-    <p class="text-muted te-denied-note">
-      Soll und Saldo dieser Person sehen Inhaber, Personalabteilung und die Person selbst.
-    </p>
-  {/if}
 
-  <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
+    <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
        nothing for a day without a cross-salon finding or a recorded day break, so single-entry
        days look exactly as before. Acknowledge/revoke are offered only where the server's
        mayAcknowledge allows (D-08); the page makes no permission decision of its own. -->
-  {#each dayChecks as dayCheck (dayCheck.date)}
-    <DayBreakPanel
-      check={dayCheck}
-      onAddBreak={(slot) => addDayBreak(dayCheck.date, slot)}
-      onDeleteBreak={deleteDayBreak}
-      onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
-      onRevoke={revokeDayAck}
-      travelOffers={travelOffersShown(dayCheck, multiEntryUi)}
-      onRecordTravel={(offer) => recordTravelOffer(dayCheck.date, offer)}
-    />
-  {/each}
+    {#each dayChecks as dayCheck (dayCheck.date)}
+      <DayBreakPanel
+        check={dayCheck}
+        onAddBreak={(slot) => addDayBreak(dayCheck.date, slot)}
+        onDeleteBreak={deleteDayBreak}
+        onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
+        onRevoke={revokeDayAck}
+        travelOffers={travelOffersShown(dayCheck, multiEntryUi)}
+        onRecordTravel={(offer) => recordTravelOffer(dayCheck.date, offer)}
+      />
+    {/each}
 
-  <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
-  {#if teView === "calendar"}
-    <div class="cal-section card card-animate">
-      <!-- Wochentage-Header -->
-      <div class="cal-grid cal-header-row">
-        {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
-          <div class="cal-dow">{d}</div>
-        {/each}
-      </div>
-
-      <!-- Tage -->
-      {#if loading}
-        <div class="cal-grid">
-          {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+    <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
+    {#if teView === "calendar"}
+      <div class="cal-section card card-animate">
+        <!-- Wochentage-Header -->
+        <div class="cal-grid cal-header-row">
+          {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
+            <div class="cal-dow">{d}</div>
+          {/each}
         </div>
-      {:else}
-        <div class="cal-grid">
-          {#each calendarDays as day (day.dateStr)}
-            {@const baseTitle = day.isBeforeHire
-              ? "Vor Eintrittsdatum"
-              : day.isHoliday
-                ? day.holidayName
-                : day.absenceType
-                  ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-                  : day.isVocationalSchoolNoLeave
-                    ? "Berufsschule – kein Urlaub"
-                    : day.isVocationalSchool
-                      ? "Berufsschule"
-                      : undefined}
-            <button
-              type="button"
-              data-date={day.dateStr}
-              class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
-                ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
-                : (day.isVocationalSchool || day.isVocationalSchoolNoLeave) &&
-                    !day.absenceType &&
-                    !day.isHoliday
-                  ? ' cal-abs cal-abs-vocational_school'
-                  : ''}"
-              class:cal-other={!day.isCurrentMonth}
-              class:cal-current={day.isCurrentMonth}
-              class:cal-today={day.isToday}
-              class:cal-weekend={day.isWeekend}
-              class:cal-holiday={day.isHoliday && day.isCurrentMonth}
-              class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
-              class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
-              disabled={day.isBeforeHire || !day.isCurrentMonth}
-              title={cellTitle(baseTitle, day.entryCount)}
-              onclick={() => onCellClick(day.dateStr)}
-            >
-              <span class="cal-day-num">{day.dayNum}</span>
-              {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
-                {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
-                <span
-                  class="cal-arbzg-mark"
-                  title={arbzgWarnings.map((w) => w.message).join("\n")}
-                  aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
-                  >⚠&#xFE0E;</span
-                >
-              {/if}
-              {#if day.isHoliday && day.isCurrentMonth}
-                <span class="cal-holiday-label">{day.holidayName}</span>
-              {:else if day.absenceType}
-                <span class="cal-abs-type"
-                  >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
-                >
-              {:else if (day.isVocationalSchool || day.isVocationalSchoolNoLeave) && day.isCurrentMonth}
-                <span class="cal-abs-type">Berufsschule</span>
-              {/if}
-              {#if day.isBeforeHire}
-                <span class="day-before-hire">—</span>
-              {:else if day.isCurrentMonth && day.hasEntries}
-                <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-                {#if isShiftBased}
-                  <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
+
+        <!-- Tage -->
+        {#if loading}
+          <div class="cal-grid">
+            {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+          </div>
+        {:else}
+          <div class="cal-grid">
+            {#each calendarDays as day (day.dateStr)}
+              {@const baseTitle = day.isBeforeHire
+                ? "Vor Eintrittsdatum"
+                : day.isHoliday
+                  ? day.holidayName
+                  : day.absenceType
+                    ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
+                    : day.isVocationalSchoolNoLeave
+                      ? "Berufsschule – kein Urlaub"
+                      : day.isVocationalSchool
+                        ? "Berufsschule"
+                        : undefined}
+              <button
+                type="button"
+                data-date={day.dateStr}
+                class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
+                  ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
+                  : (day.isVocationalSchool || day.isVocationalSchoolNoLeave) &&
+                      !day.absenceType &&
+                      !day.isHoliday
+                    ? ' cal-abs cal-abs-vocational_school'
+                    : ''}"
+                class:cal-other={!day.isCurrentMonth}
+                class:cal-current={day.isCurrentMonth}
+                class:cal-today={day.isToday}
+                class:cal-weekend={day.isWeekend}
+                class:cal-holiday={day.isHoliday && day.isCurrentMonth}
+                class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
+                class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
+                disabled={day.isBeforeHire || !day.isCurrentMonth}
+                title={cellTitle(baseTitle, day.entryCount)}
+                onclick={() => onCellClick(day.dateStr)}
+              >
+                <span class="cal-day-num">{day.dayNum}</span>
+                {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
+                  {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
+                  <span
+                    class="cal-arbzg-mark"
+                    title={arbzgWarnings.map((w) => w.message).join("\n")}
+                    aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
+                    >⚠&#xFE0E;</span
+                  >
+                {/if}
+                {#if day.isHoliday && day.isCurrentMonth}
+                  <span class="cal-holiday-label">{day.holidayName}</span>
+                {:else if day.absenceType}
+                  <span class="cal-abs-type"
+                    >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
+                  >
+                {:else if (day.isVocationalSchool || day.isVocationalSchoolNoLeave) && day.isCurrentMonth}
+                  <span class="cal-abs-type">Berufsschule</span>
+                {/if}
+                {#if day.isBeforeHire}
+                  <span class="day-before-hire">—</span>
+                {:else if day.isCurrentMonth && day.hasEntries}
+                  <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
+                  {#if isShiftBased}
+                    <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
                        a cumulative for this day (past days up to windowEnd). For today-not-yet-worked
                        and future days (no monthSaldoDayMap entry) show ONLY the hours — never fall back
                        to the per-day delta, which would look like a spurious "today penalty". -->
-                  {#if monthSaldoDayMap.has(day.dateStr)}
-                    {@const cum = monthSaldoDayMap.get(day.dateStr)!}
-                    <span class="day-bal {balClass(cum)}"
-                      >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
+                    {#if monthSaldoDayMap.has(day.dateStr)}
+                      {@const cum = monthSaldoDayMap.get(day.dateStr)!}
+                      <span class="day-bal {balClass(cum)}"
+                        >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
+                      >
+                    {/if}
+                  {:else if day.expectedMin > 0 && !isNoDailyTarget && !day.isToday}
+                    {@const b = day.workedMin - day.expectedMin}
+                    <span class="day-bal {balClass(b)}"
+                      >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
                     >
                   {/if}
-                {:else if day.expectedMin > 0 && !isNoDailyTarget && !day.isToday}
-                  {@const b = day.workedMin - day.expectedMin}
-                  <span class="day-bal {balClass(b)}"
-                    >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
-                  >
+                {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
+                  <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
                 {/if}
-              {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
-                <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
-              {/if}
-            </button>
-          {/each}
+              </button>
+            {/each}
+          </div>
+        {/if}
+
+        <!-- Legende -->
+        <div class="cal-legend">
+          {#if legendGroups.soll.length > 0}
+            <div class="leg-group">
+              <span class="leg-group-label">Soll-Status</span>
+              {#each legendGroups.soll as e (e.label)}<span class="leg {e.cls}">{e.label}</span
+                >{/each}
+            </div>
+          {/if}
+          {#if legendGroups.abwesenheit.length > 0}
+            <div class="leg-group">
+              <span class="leg-group-label">Abwesenheit</span>
+              {#each legendGroups.abwesenheit as e (e.label)}<span
+                  class="leg {e.cls}"
+                  style:--leg-fill={e.fill ? `var(${e.fill})` : undefined}>{e.label}</span
+                >{/each}
+            </div>
+          {/if}
+          {#if legendGroups.hinweise.length > 0}
+            <div class="leg-group">
+              <span class="leg-group-label">Hinweise</span>
+              {#each legendGroups.hinweise as e (e.label)}<span class="leg {e.cls}">{e.label}</span
+                >{/each}
+            </div>
+          {/if}
         </div>
-      {/if}
-
-      <!-- Legende -->
-      <div class="cal-legend">
-        {#if legendGroups.soll.length > 0}
-          <div class="leg-group">
-            <span class="leg-group-label">Soll-Status</span>
-            {#each legendGroups.soll as e (e.label)}<span class="leg {e.cls}">{e.label}</span
-              >{/each}
-          </div>
-        {/if}
-        {#if legendGroups.abwesenheit.length > 0}
-          <div class="leg-group">
-            <span class="leg-group-label">Abwesenheit</span>
-            {#each legendGroups.abwesenheit as e (e.label)}<span
-                class="leg {e.cls}"
-                style:--leg-fill={e.fill ? `var(${e.fill})` : undefined}>{e.label}</span
-              >{/each}
-          </div>
-        {/if}
-        {#if legendGroups.hinweise.length > 0}
-          <div class="leg-group">
-            <span class="leg-group-label">Hinweise</span>
-            {#each legendGroups.hinweise as e (e.label)}<span class="leg {e.cls}">{e.label}</span
-              >{/each}
-          </div>
-        {/if}
       </div>
-    </div>
-  {/if}
+    {/if}
 
-  <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
-  {#if teView === "list"}
-    <div class="card card-animate list-card">
-      {#if listState === "loading"}
-        <!-- Phase 116 (issue #119, Akzeptanzkriterium 3) — the mirror of the own page's fix.
+    <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
+    {#if teView === "list"}
+      <div class="card card-animate list-card">
+        {#if listState === "loading"}
+          <!-- Phase 116 (issue #119, Akzeptanzkriterium 3) — the mirror of the own page's fix.
              This page was built as a copy of /time-entries and inherited the same ungated
              empty state. -->
-        <div class="list-skeleton" data-testid="team-time-entries-list-skeleton" aria-hidden="true">
-          {#each Array(6) as _, i (i)}<div class="skeleton list-skel-row"></div>{/each}
-        </div>
-      {:else}
-        {#if multiEntryUi}
-          {#if rowsOfDay(selectedDate).length > 0}
-            <div class="list-day-bar" data-testid="team-time-entries-list-day-bar">
-              <span class="list-day-label"
-                >{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", {
-                  locale: de,
-                })}</span
-              >
-              <button
-                class="btn btn-outline btn-sm"
-                type="button"
-                onclick={() => openAdditionalEntry(selectedDate)}
-                data-testid="team-time-entries-add-additional"
-                >Weiteren Eintrag an diesem Tag</button
-              >
+          <div
+            class="list-skeleton"
+            data-testid="team-time-entries-list-skeleton"
+            aria-hidden="true"
+          >
+            {#each Array(6) as _, i (i)}<div class="skeleton list-skel-row"></div>{/each}
+          </div>
+        {:else}
+          {#if multiEntryUi}
+            {#if rowsOfDay(selectedDate).length > 0}
+              <div class="list-day-bar" data-testid="team-time-entries-list-day-bar">
+                <span class="list-day-label"
+                  >{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", {
+                    locale: de,
+                  })}</span
+                >
+                <button
+                  class="btn btn-outline btn-sm"
+                  type="button"
+                  onclick={() => openAdditionalEntry(selectedDate)}
+                  data-testid="team-time-entries-add-additional"
+                  >Weiteren Eintrag an diesem Tag</button
+                >
+              </div>
+            {/if}
+          {/if}
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Datum</th>
+                  {#if multiEntryUi}<th>Salon</th>{/if}
+                  <th>Von</th>
+                  <th>Bis</th>
+                  <th>Pause</th>
+                  <th>Netto</th>
+                  {#if isShiftBased && monthSaldo}
+                    <th
+                      title="Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kachel „Konto“."
+                      >Saldo seit Abschluss</th
+                    >
+                  {/if}
+                  <th>Quelle</th>
+                  <th>Notiz</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each allEntries as slot (slot.id)}
+                  {#if slot.kind === "TE"}
+                    {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+                    {@const slotArbzg = arbzgDayMap.get(slotDate)}
+                    <tr
+                      class:row-invalid={slot.isInvalid}
+                      class:row-day-focus={multiEntryUi && slotDate === selectedDate}
+                    >
+                      <td
+                        >{new Date(slot.startTime).toLocaleDateString("de-DE", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                        })}{#if slotArbzg}
+                          <span class="list-arbzg-hint"
+                            >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                              class="arbzg-tooltip"
+                              >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
+                                  />{/if}{/each}</span
+                            ></span
+                          >
+                        {/if}</td
+                      >
+                      {#if multiEntryUi}<td data-testid={`team-time-entry-row-${slot.id}-salon`}
+                          >{#if isTravelRow(slot)}<span
+                              class="badge badge-gray"
+                              data-testid={`team-time-entry-row-${slot.id}-travel-badge`}
+                              >{TRAVEL_TEXTS.badge}</span
+                            >
+                            <span
+                              class="travel-route"
+                              data-testid={`team-time-entry-row-${slot.id}-travel-route`}
+                              >{travelRouteLabel(slot)}</span
+                            >{:else}{slot.salonName ?? "—"}{/if}</td
+                        >{/if}
+                      <td>{fmtTime(slot.startTime)}</td>
+                      <td>
+                        {#if slot.endTime}{fmtTime(slot.endTime)}
+                        {:else}<span class="badge badge-green">Aktiv</span>{/if}
+                      </td>
+                      <td>{fmtBreaks(slot)}</td>
+                      <td class="font-medium">{slotNet(slot)}</td>
+                      {#if isShiftBased && monthSaldo}
+                        {@const cum = monthSaldoDayMap.get(slotDate)}
+                        <td class={cum != null ? balClass(cum) : ""}>
+                          {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
+                        </td>
+                      {/if}
+                      <td
+                        ><span class="badge {sourceBadge(slot.source)}"
+                          >{sourceLabel(slot.source)}</span
+                        ></td
+                      >
+                      <td class="note-cell text-muted">
+                        {#if slot.isInvalid && slot.invalidReason}
+                          <span class="invalid-reason">{slot.invalidReason}</span>
+                        {:else}
+                          {slot.note ?? "---"}
+                        {/if}
+                      </td>
+                      <td class="action-cell">
+                        {#if slot.isLocked}
+                          <!-- locked entries are read-only; no actions shown (D-08) -->
+                        {:else}
+                          <span class="row-actions row-actions--visible">
+                            <button
+                              class="btn-icon"
+                              onclick={() => openEdit(slot)}
+                              title="Bearbeiten">✏️</button
+                            >
+                            <button
+                              class="btn-icon btn-icon-danger"
+                              onclick={() => openDeleteDialog(slot.id)}
+                              title="Löschen">🗑</button
+                            >
+                          </span>
+                        {/if}
+                      </td>
+                    </tr>
+                  {:else}
+                    <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions. -->
+                    <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
+                      <td
+                        >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                        })}</td
+                      >
+                      {#if multiEntryUi}<td class="text-muted">—</td>{/if}
+                      <td class="text-muted">—</td>
+                      <td class="text-muted">—</td>
+                      <td class="text-muted">—</td>
+                      <td class="font-medium text-muted">—</td>
+                      <td><span class="badge badge-blue">Berufsschule</span></td>
+                      <td class="note-cell text-muted"
+                        >{slot.source === "PATTERN"
+                          ? "Automatisch (Muster)"
+                          : "Manuell eingefügt"}</td
+                      >
+                      <td class="action-cell">
+                        <span
+                          class="text-muted"
+                          style="font-size: 0.75rem;"
+                          title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
+                        >
+                      </td>
+                    </tr>
+                  {/if}
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          {#if listState === "empty"}
+            <div class="empty-state">
+              <span class="empty-icon">📋</span>
+              <h3>Keine Einträge</h3>
+              <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
             </div>
           {/if}
         {/if}
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Datum</th>
-                {#if multiEntryUi}<th>Salon</th>{/if}
-                <th>Von</th>
-                <th>Bis</th>
-                <th>Pause</th>
-                <th>Netto</th>
-                {#if isShiftBased && monthSaldo}
-                  <th
-                    title="Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kachel „Konto“."
-                    >Saldo seit Abschluss</th
-                  >
-                {/if}
-                <th>Quelle</th>
-                <th>Notiz</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each allEntries as slot (slot.id)}
-                {#if slot.kind === "TE"}
-                  {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-                  {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                  <tr
-                    class:row-invalid={slot.isInvalid}
-                    class:row-day-focus={multiEntryUi && slotDate === selectedDate}
-                  >
-                    <td
-                      >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })}{#if slotArbzg}
-                        <span class="list-arbzg-hint"
-                          >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                            class="arbzg-tooltip"
-                            >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                                />{/if}{/each}</span
-                          ></span
-                        >
-                      {/if}</td
-                    >
-                    {#if multiEntryUi}<td data-testid={`team-time-entry-row-${slot.id}-salon`}
-                        >{#if isTravelRow(slot)}<span
-                            class="badge badge-gray"
-                            data-testid={`team-time-entry-row-${slot.id}-travel-badge`}
-                            >{TRAVEL_TEXTS.badge}</span
-                          >
-                          <span
-                            class="travel-route"
-                            data-testid={`team-time-entry-row-${slot.id}-travel-route`}
-                            >{travelRouteLabel(slot)}</span
-                          >{:else}{slot.salonName ?? "—"}{/if}</td
-                      >{/if}
-                    <td>{fmtTime(slot.startTime)}</td>
-                    <td>
-                      {#if slot.endTime}{fmtTime(slot.endTime)}
-                      {:else}<span class="badge badge-green">Aktiv</span>{/if}
-                    </td>
-                    <td>{fmtBreaks(slot)}</td>
-                    <td class="font-medium">{slotNet(slot)}</td>
-                    {#if isShiftBased && monthSaldo}
-                      {@const cum = monthSaldoDayMap.get(slotDate)}
-                      <td class={cum != null ? balClass(cum) : ""}>
-                        {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
-                      </td>
-                    {/if}
-                    <td
-                      ><span class="badge {sourceBadge(slot.source)}"
-                        >{sourceLabel(slot.source)}</span
-                      ></td
-                    >
-                    <td class="note-cell text-muted">
-                      {#if slot.isInvalid && slot.invalidReason}
-                        <span class="invalid-reason">{slot.invalidReason}</span>
-                      {:else}
-                        {slot.note ?? "---"}
-                      {/if}
-                    </td>
-                    <td class="action-cell">
-                      {#if slot.isLocked}
-                        <!-- locked entries are read-only; no actions shown (D-08) -->
-                      {:else}
-                        <span class="row-actions row-actions--visible">
-                          <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                            >✏️</button
-                          >
-                          <button
-                            class="btn-icon btn-icon-danger"
-                            onclick={() => openDeleteDialog(slot.id)}
-                            title="Löschen">🗑</button
-                          >
-                        </span>
-                      {/if}
-                    </td>
-                  </tr>
-                {:else}
-                  <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions. -->
-                  <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
-                    <td
-                      >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })}</td
-                    >
-                    {#if multiEntryUi}<td class="text-muted">—</td>{/if}
-                    <td class="text-muted">—</td>
-                    <td class="text-muted">—</td>
-                    <td class="text-muted">—</td>
-                    <td class="font-medium text-muted">—</td>
-                    <td><span class="badge badge-blue">Berufsschule</span></td>
-                    <td class="note-cell text-muted"
-                      >{slot.source === "PATTERN"
-                        ? "Automatisch (Muster)"
-                        : "Manuell eingefügt"}</td
-                    >
-                    <td class="action-cell">
-                      <span
-                        class="text-muted"
-                        style="font-size: 0.75rem;"
-                        title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
-                      >
-                    </td>
-                  </tr>
-                {/if}
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        {#if listState === "empty"}
-          <div class="empty-state">
-            <span class="empty-icon">📋</span>
-            <h3>Keine Einträge</h3>
-            <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
-          </div>
-        {/if}
-      {/if}
-    </div>
-  {/if}
-{:else}
-  <!-- S-11 (D-853-10): without a chosen person there is one empty state with the picker as its
-       action - never an empty calendar. -->
-  <EmptyState
-    icon="users"
-    title="Wähle eine Person"
-    description="Wessen Zeiten möchtest du sehen? Such nach dem Namen oder der Personalnummer."
-  >
-    {#snippet action()}
-      <div class="employee-selector">
-        <PersonPicker
-          items={pickerItems}
-          value={selectedEmployeeId ?? ""}
-          onValueChange={pickEmployee}
-        />
       </div>
-    {/snippet}
-  </EmptyState>
-{/if}
+    {/if}
+  {:else}
+    <!-- S-11 (D-853-10): without a chosen person there is one empty state with the picker as its
+       action - never an empty calendar. -->
+    <EmptyState
+      icon="users"
+      title="Wähle eine Person"
+      description="Wessen Zeiten möchtest du sehen? Such nach dem Namen oder der Personalnummer."
+    >
+      {#snippet action()}
+        <div class="employee-selector">
+          <PersonPicker
+            items={pickerItems}
+            value={selectedEmployeeId ?? ""}
+            onValueChange={pickEmployee}
+          />
+        </div>
+      {/snippet}
+    </EmptyState>
+  {/if}
+{/snippet}
 
 <!-- ── Modal (Modal primitive — owns backdrop/escape/focus-trap) ────────── -->
 <Modal

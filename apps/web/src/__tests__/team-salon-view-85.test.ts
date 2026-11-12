@@ -74,6 +74,26 @@ describe("Issue #85 — the Salonansicht of /team/time-entries", () => {
     expect(PAGE).not.toContain("view-tab");
   });
 
+  // Issue #853 (D-853-10, a11y): the tabs run in panel mode, so each trigger's aria-controls must lead
+  // to a rendered panel with the view in it. The page body (toolbar, figures, calendar, lists, the
+  // empty state) is ONE snippet, rendered by the panel of the ACTIVE tab only - never twice, never
+  // an empty tabpanel for the active view.
+  it("[panel] the view body is rendered inside the panel of the active tab only", () => {
+    expect(PAGE).toMatch(
+      /\{#snippet panel\(value\)\}\s*\{#if value === teamMode\}\s*\{@render viewBody\(\)\}/,
+    );
+    expect(PAGE.split("{@render viewBody()}").length - 1).toBe(1);
+    const body = PAGE.indexOf("{#snippet viewBody()}");
+    expect(body).toBeGreaterThan(-1);
+    // The person view, the salon view and the empty state are all inside the body snippet.
+    const bodyEnd = PAGE.indexOf("{/snippet}", PAGE.indexOf("<EmptyState", body));
+    for (const marker of ['{#if teamMode === "person"}', "<SalonTimeEntries", "<KpiStrip"]) {
+      const at = PAGE.indexOf(marker, body);
+      expect(at, marker).toBeGreaterThan(body);
+      expect(at, marker).toBeLessThan(bodyEnd);
+    }
+  });
+
   it("[segment] Kalender and Liste are one SegmentedControl on teView", () => {
     expect(PAGE.split("<SegmentedControl").length - 1).toBe(1);
     expect(PAGE).toContain("value={teView}");

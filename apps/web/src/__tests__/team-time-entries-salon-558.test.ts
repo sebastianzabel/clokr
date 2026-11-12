@@ -123,7 +123,9 @@ describe("Issue #558 — the person selector of /team/time-entries follows the h
 
   it("[label once] the shared label is rendered once, inside the person view before the selector", () => {
     expect(PAGE.split("<SalonScopeLabel").length - 1).toBe(1);
-    const person = PAGE.indexOf('{#if teamMode === "person"}\n  <SalonScopeLabel');
+    // Issue #853: the person view sits inside the tab panel's body snippet now, so its indentation is
+    // not pinned any more - the label still opens the person view, directly after the `{#if`.
+    const person = PAGE.search(/\{#if teamMode === "person"\}\s+<SalonScopeLabel/);
     expect(person).toBeGreaterThan(-1);
     expect(PAGE.indexOf('<div class="employee-selector">', person)).toBeGreaterThan(person);
   });
