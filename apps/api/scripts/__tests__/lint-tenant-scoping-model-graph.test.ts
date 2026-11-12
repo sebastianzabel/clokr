@@ -141,9 +141,10 @@ describe("buildModelGraph (live DMMF from @clokr/db)", () => {
   // models, own count 21 -> 22 — and Issue #610 (+ PresencePairingCode, own: it carries a `tenantId`
   // scalar) — 54 -> 55 models, own count 22 -> 23 — and Issue #836 (+ LeaveLimitRule, own: it
   // carries a `tenantId` scalar) — 55 -> 56 models, own count 23 -> 24 — and Issue #835 (+ LeavePlan
-  // and LeavePlanWish, own: both carry a `tenantId` scalar) — 56 -> 58 models, own count 24 -> 26.
-  it("classifies exactly 58 models with no residual category (D-05)", () => {
-    expect(graph.size).toBe(58);
+  // and LeavePlanWish, own: both carry a `tenantId` scalar) — 56 -> 58 models, own count 24 -> 26 —
+  // and Issue #599 (+ MonthCorrectionRequest, relation via `employee`) — 58 -> 59, own count unchanged.
+  it("classifies exactly 59 models with no residual category (D-05)", () => {
+    expect(graph.size).toBe(59);
     for (const [, tenancy] of graph) {
       expect(["own", "relation", "none"]).toContain(tenancy.kind);
     }
