@@ -990,7 +990,7 @@
      root without keying off CSS class hashes. -->
 <div data-testid="leave-page" style="display: contents">
   <!-- ── Header ─────────────────────────────────────────────────────────────── -->
-  <PageHead eyebrow="Mein Bereich" title={pageLabel("/leave")}>
+  <PageHead eyebrow="Ich" title={pageLabel("/leave")}>
     {#snippet actions()}
       {#if !showForm && activeTab !== "planung"}
         <button

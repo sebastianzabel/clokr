@@ -180,7 +180,9 @@ describe("/team/time-entries - guards itself by its own permission (Issue #86, A
     // no request between the start of onMount and the guard
     expect(TEAM_TIMES.slice(onMount, guard)).not.toMatch(/api\./);
     expect(TEAM_TIMES).toMatch(/mayOpenTeamPage\("\/team\/leave"/);
-    expect(TEAM_TIMES).toContain('"/dashboard"');
+    // #844: the fallback is the team absences under their new URL, else the person's start page
+    expect(TEAM_TIMES).toContain('"/team/abwesenheiten"');
+    expect(TEAM_TIMES).toContain("homeHref($authStore.user)");
   });
 });
 

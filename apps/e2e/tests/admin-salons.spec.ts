@@ -155,12 +155,12 @@ test.describe("admin salons (Issue #563)", () => {
     await page.goto("/dashboard");
 
     const link = page
-      .getByRole("navigation", { name: "PLANUNG" })
+      .getByRole("navigation", { name: "Verwalten" }) // #844: the Verwalten area
       .getByRole("link", { name: "Salons", exact: true });
     await expect(link).toBeVisible();
     await link.click();
 
-    await expect(page).toHaveURL(/\/admin\/salons$/);
+    await expect(page).toHaveURL(/\/verwalten\/salons$/);
     await expect(page.getByRole("heading", { name: "Salons", level: 1 })).toBeVisible();
     const row = page.getByRole("row", { name: /Niedersachsen/ });
     await expect(row).toHaveCount(1);
@@ -183,7 +183,7 @@ test.describe("admin salons (Issue #563)", () => {
       .getByRole("row", { name: /Niedersachsen/ })
       .getByRole("link")
       .click();
-    await expect(page).toHaveURL(new RegExp(`/admin/salons/${salon.id}$`));
+    await expect(page).toHaveURL(new RegExp(`/verwalten/salons/${salon.id}$`));
 
     const closed = page.getByLabel("Geschlossen Sonntag");
     await expect(closed).toBeChecked();
@@ -227,13 +227,13 @@ test.describe("admin salons (Issue #563)", () => {
 
     // Create: the list's own link navigates client-side.
     await page.getByRole("link", { name: "Salon anlegen" }).click();
-    await expect(page).toHaveURL(/\/admin\/salons\/neu$/);
+    await expect(page).toHaveURL(/\/verwalten\/salons\/neu$/);
     await page.getByLabel("Name *").fill(SECOND_SALON_NAME);
     await page.getByLabel("Bundesland *").selectOption("HESSEN");
     await page.getByRole("button", { name: "Salon anlegen" }).click();
 
     await expect(page.getByText("Salon angelegt.")).toBeVisible();
-    await expect(page).toHaveURL(/\/admin\/salons\/(?!neu$)[0-9a-f-]{36}$/);
+    await expect(page).toHaveURL(/\/verwalten\/salons\/(?!neu$)[0-9a-f-]{36}$/);
     await expect(switcher(page)).toBeVisible();
     await expect(switcher(page).locator("option")).toHaveText([
       "Alle Salons",

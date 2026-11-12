@@ -202,7 +202,7 @@
 </svelte:head>
 
 <ListDetail
-  eyebrow="Personal"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/leave-limits")}
   sub="Lege fest, wie viele Personen gleichzeitig im Urlaub sein dürfen, oder sperre einen Zeitraum."
   view="list"

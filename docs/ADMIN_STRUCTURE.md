@@ -12,7 +12,42 @@
 
 ## 1. Navigation Hierarchy
 
-### 1.1 The 5 Groups
+### 1.1 Three areas: Ich · Team · Verwalten (Issue #844)
+
+Since #844 the app has **three areas** (owner decisions Z-01…Z-03, design concept § 2) instead of the former
+„Mein Bereich“, „Team“ and five admin groups. Every navigable page is one entry of the route table
+`apps/web/src/lib/nav/routes.ts` — URL, area, name (= menu entry = H1 = crumb), icon, page width (`read` 1120 px
+or `full` 2400 px), permission alternatives and the route file it renders. The Sidebar, the mobile „Mehr“ sheet,
+the tab bar, the crumb, the command palette, the guards and the start page read that table and nothing else.
+
+```
+Ich         Mein Tag · Zeiten · Abwesenheiten · Dienstplan          (Profil in the avatar menu)
+Team        Heute im Salon · Aufgaben · Zeiten · Abwesenheiten · Dienstplan · Verfügbarkeit
+Verwalten   Übersicht · Personen · Salons · Regeln · Monatsabschluss · Berichte · Daten · System
+              Regeln: Urlaubsverwaltung · Betriebsurlaub · Urlaubsgrenzen & Sperren · Schichteinstellungen
+              Daten:  CSV-Import · DATEV-Export · Protokoll · Support-Zugriffe
+              System: Allgemein · Branding & Themes · Integrationen · Phorest · Rollen & Rechte
+```
+
+Regeln, Daten and System are **hub pages** (`HubPage.svelte`) that list the pages behind them; their children are
+no rail entries. Regrouping the settings by topic behind the hubs is #854; „Konto“ (Ich) follows with #594,
+Team › Personen with #851.
+
+**URLs and files.** New URLs (`/ich/…`, `/team/…`, `/verwalten/…`) render the existing route files through the
+`reroute` hook (`src/hooks.ts`); the files stay under `routes/(app)/admin/…` etc. An old URL redirects with 308
+to its new one (`routes/(app)/+layout.ts`), so bookmarks and e-mail or push links keep working. A new page that has
+no file yet (a hub, Heute im Salon) lives at its new URL.
+
+**Start page (Z-02).** Heute im Salon for whoever may open it (`team-overview:read`); Verwalten › Übersicht for an
+administration role (a Verwalten entry, no access to the team's time records — e.g. the Personalabteilung); Mein Tag
+for everyone else. Decided by `homeHref()` from permissions only.
+
+### 1.2 History: the five admin groups (until #844)
+
+The notes below describe the structure before #844 and stay for traceability; the routes they name are the route
+files, which since #844 are opened under their new URLs.
+
+#### The 5 Groups
 
 The admin sidebar is divided into **5 named groups**. Section labels are UPPERCASE, letter-spaced, and **visual-only** — they are never clickable. Each group contains 2–5 leaf entries.
 
@@ -59,7 +94,7 @@ These 5 groups and their exact entries are the authoritative target structure fo
 
 > **Note (Issue #836):** „Urlaubsgrenzen & Sperren“ (`/admin/leave-limits`, a list whose only form is a rule `<Modal>`) is the fourth PERSONAL entry — how many people of a salon may be on leave at the same time, and leave blackouts. It is visible with `leave-limit:manage` or `leave-request:approve`; changing a rule needs `leave-limit:manage` and the API decides per rule (`canManage`). The page has its own salon selection, so the header salon is not a filter here. The PERSONAL group went from 3 to 4 entries, within the §1.3 maximum.
 
-### 1.2 Group → Pages Mapping
+#### Group → Pages Mapping
 
 | Group      | Sidebar label            | Route                 | Was (if renamed)                                                                                |
 | ---------- | ------------------------ | --------------------- | ----------------------------------------------------------------------------------------------- |
@@ -83,10 +118,11 @@ These 5 groups and their exact entries are the authoritative target structure fo
 
 ### 1.3 Section Label Rules
 
-- Section group labels are rendered in **UPPERCASE** with `letter-spacing: 0.08em` (or `text-transform: uppercase; letter-spacing: 0.08em`).
-- Section labels are **never clickable** — they are decorative grouping headers only. Do not wrap them in `<a>` or `<button>`.
-- Each group contains a **maximum of 5 entries**. If a new feature would push a group past 5 entries, either create a new group or consolidate existing entries.
-- Section labels live in the sidebar (Phase 51 responsibility). They do NOT appear as page headings.
+- The rail shows one heading per area („Ich“, „Team“, „Verwalten“, #844); headings are **never clickable**.
+- A person sees only the areas with a visible entry (Z-01: one role, one area). Every entry of a role must fit
+  the rail without scrolling at 1440×900 and 1024×768 (`navigation-v2.spec.ts`); a new entry that breaks this
+  goes behind a hub instead.
+- Area headings live in the rail; on a page the area is the eyebrow of the heading and the first part of the crumb.
 
 ### 1.4 Nav Label ↔ Page H1 Matching Rule
 
@@ -110,8 +146,10 @@ Any mismatch between sidebar label and PageHead title is a **Regulatorium violat
 Every admin route has exactly one entry in `apps/web/src/lib/nav/admin-route-permissions.ts`: a list
 of alternatives, each a set of permissions that must all be held, derived from the API guards its
 page calls. The Sidebar, the mobile „Mehr“ sheet, the command palette and the admin route guard read
-it. An item the user may not open is not shown, and its URL redirects to `/dashboard`. A new admin
-route without an entry fails `admin-route-permissions.test.ts`.
+it. An item the user may not open is not shown, and its URL redirects to the person's start page. Since #844 the
+alternatives live in the route table (`routes.ts`), which `admin-route-permissions.ts` reads; `routes-844.test.ts`
+pins every pre-#844 alternative unchanged. A new admin route without an entry fails
+`admin-route-permissions.test.ts`.
 
 ## 2. Page Templates
 

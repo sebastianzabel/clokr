@@ -4,7 +4,9 @@
   import { activeNavHref } from "$lib/nav/active-route";
   import { visibleNavSections, type NavSection } from "$lib/nav/app-nav";
   import { pageLabel } from "$lib/nav/page-labels";
+  import { mobileTabs } from "$lib/nav/routes";
   import MobileMoreSheet from "./MobileMoreSheet.svelte";
+  import Icon from "$lib/components/Icon.svelte";
 
   interface Props {
     currentPath: string;
@@ -14,34 +16,33 @@
 
   type NavItem = { href: string; label: string; icon: string };
 
-  // The four primary tabs visible to every authenticated user.
-  // Labels come from $lib/nav/page-labels (Issue #574) — the one source of page names.
-  // The fourth slot ("Mehr") is rendered as a button, not a link, so it gets
-  // its own active state derived from the open-sheet flag.
-  const primaryTabs: NavItem[] = [
-    { href: "/dashboard", label: pageLabel("/dashboard"), icon: "dashboard" },
-    { href: "/time-entries", label: "Zeit", icon: "clock" }, // mobile short form (docs/glossar.md)
-    { href: "/leave", label: pageLabel("/leave"), icon: "umbrella" },
-  ];
+  // #844 (D-844-13): the tab-bar targets come from the route table — Salon · Aufgaben · Mein Tag · Abwesend for
+  // a team reach, Mein Tag · Zeiten · Abwesend · Plan otherwise; a target the user may not open is skipped.
+  // „Mehr“ is rendered as a button, not a link, so it gets its own active state from the open-sheet flag.
+  const primaryTabs = $derived(
+    mobileTabs($authStore.user, { availabilityEnabled: $tenantFeatures.availabilityEnabled }),
+  );
 
-  // The Mehr sheet shows the same sections as the desktop Sidebar, generated from the one
-  // navigation definition ($lib/nav/app-nav, #516) - nothing is hand-listed here. The primary
-  // tabs above are shortcuts to targets that the sheet lists as well, so every target has an
-  // entry that can be marked as the current page.
-  //
-  // Verfügbarkeits-System (Phase 47.3): the /availability entry is hidden when the tenant
-  // feature flag is off. Fail-open while the store is loading.
+  // The Mehr sheet shows the same areas as the desktop Sidebar, generated from the one navigation definition
+  // ($lib/nav/app-nav, #516) - nothing is hand-listed here. The primary tabs are shortcuts to targets the sheet
+  // lists as well, so every target has an entry that can be marked as the current page.
   const sections = $derived.by((): NavSection[] => {
     const nav = visibleNavSections($authStore.user, {
       availabilityEnabled: $tenantFeatures.availabilityEnabled,
     });
-    // The profile page has no sidebar entry (desktop reaches it from the top bar); it stays
-    // reachable here, under the personal heading.
-    nav[0].items.push({ href: "/settings", label: pageLabel("/settings"), icon: "settings" });
+    // The profile page has no rail entry (desktop reaches it from the avatar menu); it stays reachable here,
+    // under „Ich“, which every signed-in user has.
+    const ich = nav.find((section) => section.area === "ich");
+    ich?.items.push({
+      href: "/ich/profil",
+      label: pageLabel("/ich/profil"),
+      icon: "settings",
+      testId: "nav-settings",
+    });
     return nav;
   });
   const moreItems = $derived(sections.flatMap((section) => section.items));
-  const primaryHrefs = primaryTabs.map((tab) => tab.href);
+  const primaryHrefs = $derived(primaryTabs.map((tab) => tab.href));
 
   let sheetOpen = $state(false);
 
@@ -63,36 +64,25 @@
 </script>
 
 {#snippet tabIcon(name: string)}
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="22"
-    height="22"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="1.8"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    aria-hidden="true"
-  >
-    {#if name === "dashboard"}
-      <rect x="3" y="3" width="7" height="9" rx="1.5" />
-      <rect x="14" y="3" width="7" height="5" rx="1.5" />
-      <rect x="14" y="12" width="7" height="9" rx="1.5" />
-      <rect x="3" y="16" width="7" height="5" rx="1.5" />
-    {:else if name === "clock"}
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 2" />
-    {:else if name === "umbrella"}
-      <path d="M12 3v18M3 12a9 9 0 0 1 18 0H3z" />
-      <path d="M9 12a3 3 0 0 1 6 0" />
-      <path d="M12 21a2 2 0 0 1-2-2" />
-    {:else if name === "more"}
+  {#if name === "more"}
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      aria-hidden="true"
+    >
       <circle cx="5" cy="12" r="1.5" />
       <circle cx="12" cy="12" r="1.5" />
       <circle cx="19" cy="12" r="1.5" />
-    {/if}
-  </svg>
+    </svg>
+  {:else}
+    <Icon {name} size={22} />
+  {/if}
 {/snippet}
 
 <nav class="bottom-tab-bar" aria-label="Hauptnavigation (mobil)">
@@ -144,7 +134,8 @@
   @media (max-width: 960px) {
     .bottom-tab-bar {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-auto-flow: column;
+      grid-auto-columns: 1fr;
       position: fixed;
       bottom: 0;
       left: 0;

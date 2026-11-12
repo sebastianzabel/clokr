@@ -85,6 +85,11 @@ import {
   teamHoursChartDescriptor,
 } from "$lib/dashboard/team-charts";
 import { chartAriaLabel } from "$lib/utils/chart-theme";
+// #844: the team block renders on Team › Heute im Salon — the dashboard file read at that URL
+vi.mock("$app/stores", async () => {
+  const { readable } = await import("svelte/store");
+  return { page: readable({ url: new URL("http://localhost/team/heute"), state: {} }) };
+});
 import DashboardPage from "../routes/(app)/dashboard/+page.svelte";
 
 const SALON_A = "6f1d0c52-1a2b-4c3d-8e4f-5a6b7c8d9e01";

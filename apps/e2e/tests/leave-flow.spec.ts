@@ -44,7 +44,7 @@ async function loginAsTenantAdmin(
   await page.getByRole("button", { name: /anmelden/i }).click();
   // Wait for the app shell to take over — the redirect target may vary
   // (/dashboard, /time-entries, /) so wait on any (app)-layout marker.
-  await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+  await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
 }
 
 /**
@@ -276,7 +276,7 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await page.getByTestId("leave-team-view-list").click();
     await expect(reviewBtn).toBeVisible();
     await reviewBtn.click();
-    await page.waitForURL(/\/inbox/);
+    await page.waitForURL(/\/team\/aufgaben/);
 
     const modal = page.getByTestId("leave-approval-modal");
     await expect(modal).toBeAttached();

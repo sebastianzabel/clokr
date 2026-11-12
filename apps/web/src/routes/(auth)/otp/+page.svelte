@@ -1,5 +1,6 @@
 <script lang="ts">
   import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
+  import { homeHref } from "$lib/nav/routes";
   import { preventDefault } from "svelte/legacy";
 
   import { onMount } from "svelte";
@@ -43,7 +44,7 @@
 
       sessionStorage.removeItem("otp_userId");
       authStore.login(res.accessToken, res.refreshToken, res.user);
-      goto(next ?? "/dashboard");
+      goto(next ?? homeHref(res.user)); // #844 (Z-02): the start page of the person
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Ungültiger Code";
       if (msg.includes("abgelaufen")) {

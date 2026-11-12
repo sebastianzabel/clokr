@@ -14,6 +14,7 @@
   import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
   import WhatsNewPanel from "$lib/components/layout/WhatsNewPanel.svelte";
   import { labelForPath } from "$lib/nav/page-labels";
+  import { areaLabelForPath, pageWidthForPath } from "$lib/nav/routes";
   import { loginPathWithNext } from "$lib/nav/login-next";
   import { installPushNavigateListener } from "$lib/push/navigate-message";
 
@@ -26,6 +27,9 @@
   // ── Page label: the one table in $lib/nav/page-labels (Issue #574) ──
   let currentPath = $derived($page.url.pathname);
   let currentPageLabel = $derived(labelForPath(currentPath));
+  // #844 (D-844-11/12): the crumb's area and the page width come from the route table only
+  let currentAreaLabel = $derived(areaLabelForPath(currentPath));
+  let pageWidth = $derived(pageWidthForPath(currentPath));
 
   // ── Inactivity timer ───────────────────────────────────────────
   let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
@@ -142,9 +146,9 @@
   <div class="app">
     <a href="#main-content" class="skip-to-content">Zum Inhalt springen</a>
     <Sidebar {currentPath} />
-    <Topbar {currentPath} {currentPageLabel} />
+    <Topbar {currentPath} {currentPageLabel} {currentAreaLabel} />
     <main class="main" id="main-content">
-      <div class="page-fade">
+      <div class="page-fade page-frame" data-width={pageWidth} data-testid="page-frame">
         <ErrorBoundary scope="view">
           {@render children?.()}
         </ErrorBoundary>
@@ -169,7 +173,8 @@
 <style>
   .app {
     display: grid;
-    grid-template-columns: var(--sidebar-w) 1fr;
+    /* #844: minmax(0, 1fr) — the header's crumb never widens the column past the viewport */
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
     grid-template-rows: var(--topbar-h) 1fr;
     grid-template-areas:
       "sidebar topbar"
@@ -181,9 +186,22 @@
   .main {
     grid-area: main;
     padding: 28px 32px 60px;
-    max-width: 1400px;
     width: 100%;
     min-width: 0;
+  }
+
+  /* #844 (owner 09.11.2026): two page widths, chosen per route in $lib/nav/routes — reading width (forms,
+     settings, details) centred, full width (planners, calendars, tables, reports, start pages) up to 2400 px;
+     the 32 px side padding of .main is the margin. No page sets its own content max-width. */
+  .page-frame {
+    width: 100%;
+    margin: 0 auto;
+  }
+  .page-frame[data-width="read"] {
+    max-width: var(--page-read);
+  }
+  .page-frame[data-width="full"] {
+    max-width: var(--page-full);
   }
 
   .page-fade {
@@ -212,7 +230,7 @@
 
   @media (max-width: 960px) {
     .app {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: var(--topbar-h) 1fr;
       grid-template-areas:
         "topbar"

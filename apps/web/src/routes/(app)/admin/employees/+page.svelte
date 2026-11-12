@@ -744,7 +744,7 @@
 <div data-testid="admin-employees-page" style="display: contents;">
   <ListDetail
     view="list"
-    eyebrow="Personal"
+    eyebrow="Verwalten"
     title={pageLabel("/admin/employees")}
     sub="Lege Personen an, lade sie ein und verwalte ihre Daten."
   >

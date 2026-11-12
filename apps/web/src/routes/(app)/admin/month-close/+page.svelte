@@ -639,7 +639,7 @@
      stable page-root selector to E2E specs (74-01 reopen flow). -->
 <div data-testid="month-close-page" style="display: contents;">
   <ToolPage
-    eyebrow="Compliance"
+    eyebrow="Verwalten"
     title={pageLabel("/admin/month-close")}
     sub="Monat prüfen, korrigieren und sperren"
     steps={["Prüfen", "Korrigieren", "Bestätigen", "Sperren"]}

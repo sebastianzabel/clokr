@@ -40,7 +40,7 @@ async function loginAsTenantAdmin(page: Page, tenant: TestTenant): Promise<void>
   await page.getByLabel("E-Mail").fill(`admin@${tenant.tenantId}.test`);
   await page.getByLabel("Passwort", { exact: true }).fill(TEST_PASSWORD);
   await page.getByRole("button", { name: /anmelden/i }).click();
-  await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+  await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
 }
 
 test.describe("Functional — happy paths across primary surfaces", () => {
@@ -82,7 +82,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       // the divider scrolled to the top of the viewport its heading and its first figure (the
       // team median, or the empty text when nobody is in reach) are in view without scrolling on.
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/dashboard");
+      await page.goto("/team/heute"); // #844: the team block lives on Team › Heute im Salon
 
       const card = page.locator(".team-saldo-card");
       await expect(card).toBeVisible({ timeout: 15_000 });
@@ -120,7 +120,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
         "Dezember",
       ];
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/dashboard");
+      await page.goto("/team/heute"); // #844: the team block lives on Team › Heute im Salon
 
       const hoursCanvas = page.getByRole("img", {
         name: /^(Gruppiertes )?Säulendiagramm: .*Arbeitsstunden/,
@@ -161,7 +161,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(box).not.toBeNull();
       await hoursCanvas.click({ position: { x: box!.width * 0.9, y: box!.height * 0.45 } });
 
-      await page.waitForURL(/\/reports\?from=(\d{4}-\d{2})&to=\1&tab=zeiten/);
+      await page.waitForURL(/\/verwalten\/berichte\?from=(\d{4}-\d{2})&to=\1&tab=zeiten/);
       expect(new URL(page.url()).searchParams.get("to")).toBe(lastMonth);
       const [year, month] = lastMonth.split("-").map(Number);
       await expect(page.getByTestId("reports-period-label")).toContainText(
@@ -176,7 +176,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       // Issue #591 (P-591-06): a canvas click is not keyboard-operable, so the same drill-down
       // exists as a link in the card header.
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/dashboard");
+      await page.goto("/team/heute"); // #844: the team block lives on Team › Heute im Salon
 
       const sickLink = page.getByRole("link", { name: "Krankheitstage im Bericht öffnen" });
       await expect(sickLink).toBeVisible({ timeout: 15_000 });
@@ -184,8 +184,9 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(href).toMatch(/^\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub$/);
 
       await sickLink.click();
-      await page.waitForURL(/\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
-      expect(page.url()).toContain(href);
+      await page.waitForURL(/\/verwalten\/berichte\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
+      // #844: the link's /reports URL redirects to Verwalten › Berichte and keeps its whole query
+      expect(page.url()).toContain(href.replace(/^\/reports\?/, "/verwalten/berichte?"));
     });
   });
 
@@ -201,10 +202,11 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await expect(page.getByTestId("sidebar-brand")).toBeVisible();
 
       const targets = [
-        { testid: "nav-time-entries", url: /\/time-entries/ },
-        { testid: "nav-leave", url: /\/leave/ },
-        { testid: "nav-reports", url: /\/reports/ },
-        { testid: "nav-dashboard", url: /\/dashboard/ },
+        // #844: the test ids stay those of the route files, the URLs are the new ones
+        { testid: "nav-time-entries", url: /\/ich\/zeiten$/ },
+        { testid: "nav-leave", url: /\/ich\/abwesenheiten$/ },
+        { testid: "nav-reports", url: /\/verwalten\/berichte$/ },
+        { testid: "nav-dashboard", url: /\/ich\/tag$/ },
       ];
 
       for (const t of targets) {

@@ -425,7 +425,7 @@
 </svelte:head>
 
 <SectionStack
-  eyebrow="Planung"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/shifts")}
   sub="Vorlagen, Mindestbesetzung und Schicht-Muster"
   tabs={TABS}

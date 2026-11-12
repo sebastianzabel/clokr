@@ -43,7 +43,7 @@ const PHOREST_ALLOWED = [
   "src/lib/components/schedule/", // contract fields edited in Verwaltung
   "src/lib/components/operator/",
   "src/lib/operator/",
-  "src/lib/nav/page-labels.ts", // the admin page name, shown only in the Verwaltung section
+  "src/lib/nav/routes.ts", // the page names (#844): the Phorest entry is shown only under Verwalten › System
 ];
 /** Areas where "Mandant" may be named (D-574-04): the operator console speaks to the operator. */
 const MANDANT_ALLOWED = [

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { homeHref } from "$lib/nav/routes";
   import { pageLabel } from "$lib/nav/page-labels";
   import {
     STAFFING_EXPLANATION,
@@ -516,7 +517,7 @@
     mounted = true;
     if (!hasPermission($authStore.user, "shift:plan:ZUGEWIESEN")) {
       gated = true;
-      goto("/dashboard");
+      goto(homeHref($authStore.user));
       return;
     }
     // Issue #558: with the salon context not loaded yet the salon effect below issues the one

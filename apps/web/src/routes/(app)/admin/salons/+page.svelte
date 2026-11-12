@@ -53,7 +53,7 @@
 </script>
 
 <ListDetail
-  eyebrow="Administration"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/salons")}
   sub="Standorte deines Unternehmens mit Adresse und Öffnungszeiten."
   view="list"

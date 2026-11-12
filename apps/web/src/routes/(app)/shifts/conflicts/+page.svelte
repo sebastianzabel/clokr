@@ -13,6 +13,7 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import { pageLabel } from "$lib/nav/page-labels";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import {
     buildShiftNotices,
@@ -71,10 +72,10 @@
 </script>
 
 <svelte:head>
-  <title>Hinweise zur Schichtplanung – Clokr</title>
+  <title>{pageLabel("/shifts/conflicts")} – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow="Schichtplanung" title="Hinweise zur Schichtplanung" />
+<PageHead eyebrow={pageLabel("/shifts")} title={pageLabel("/shifts/conflicts")} />
 
 <section class="page">
   <div class="card-animate filter-card">

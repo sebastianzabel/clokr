@@ -74,6 +74,11 @@ import { renderWithTheme } from "$tests/test-utils";
 import { authStore } from "$stores/auth";
 import { salonContext } from "$stores/salon-context";
 import { ApiError } from "$api/client";
+// #844: the team block renders on Team › Heute im Salon — the dashboard file read at that URL
+vi.mock("$app/stores", async () => {
+  const { readable } = await import("svelte/store");
+  return { page: readable({ url: new URL("http://localhost/team/heute"), state: {} }) };
+});
 import DashboardPage from "../routes/(app)/dashboard/+page.svelte";
 
 const EMPLOYEE_ID = "3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b";

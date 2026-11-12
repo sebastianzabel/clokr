@@ -44,7 +44,7 @@
 {/snippet}
 
 <SectionStack
-  eyebrow="System"
+  eyebrow="Verwalten"
   title={pageLabel("/admin/roles")}
   sub="Rollen aus dem Rechte-Katalog zusammenstellen und Personen zuweisen"
   {tabs}

@@ -85,8 +85,9 @@ describe("Issue #836 - /admin/leave-limits", () => {
     expect(PAGE).toMatch(
       /title=(?:"Urlaubsgrenzen & Sperren"|\{pageLabel\("\/admin\/leave-limits"\)\})/,
     );
-    expect(readRouteFile("../lib/nav/page-labels.ts", "src/lib/nav/page-labels.ts")).toContain(
-      '"/admin/leave-limits": "Urlaubsgrenzen & Sperren"',
+    // #844: the name lives in the route table, on the entry whose route file is this page
+    expect(readRouteFile("../lib/nav/routes.ts", "src/lib/nav/routes.ts")).toMatch(
+      /label: "Urlaubsgrenzen & Sperren"[^}]*file: "\/admin\/leave-limits"/,
     );
   });
 });

@@ -5,6 +5,7 @@
   import { canAccessAdminPath, isAdminHref } from "$lib/nav/admin-route-permissions";
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
   import { pageLabel } from "$lib/nav/page-labels";
+  import { OPEN_PALETTE_EVENT } from "$lib/nav/palette-event";
 
   interface Action {
     id: string;
@@ -25,26 +26,26 @@
   const allActions: Action[] = [
     {
       id: "dashboard",
-      label: pageLabel("/dashboard"),
+      label: pageLabel("/ich/tag"),
       description: "Zur Startseite",
       icon: "home",
-      href: "/dashboard",
+      href: "/ich/tag",
       group: "Navigation",
     },
     {
       id: "time-entries",
-      label: pageLabel("/time-entries"),
+      label: pageLabel("/ich/zeiten"),
       description: "Arbeitszeiten verwalten",
       icon: "clock",
-      href: "/time-entries",
+      href: "/ich/zeiten",
       group: "Navigation",
     },
     {
       id: "leave",
-      label: pageLabel("/leave"),
+      label: pageLabel("/ich/abwesenheiten"),
       description: "Urlaub & Krankmeldungen",
       icon: "calendar",
-      href: "/leave",
+      href: "/ich/abwesenheiten",
       group: "Navigation",
     },
     {
@@ -52,7 +53,7 @@
       label: "Urlaubsplanung",
       description: "Urlaubswünsche fürs Jahr planen",
       icon: "calendar",
-      href: "/leave?tab=planung",
+      href: "/ich/abwesenheiten?tab=planung",
       group: "Navigation",
     },
     {
@@ -60,48 +61,50 @@
       label: "Team-Urlaubsplanung",
       description: "Urlaubswünsche des Teams planen",
       icon: "calendar",
-      href: "/team/leave?tab=planung",
+      href: "/team/abwesenheiten?tab=planung",
       group: "Navigation",
-      teamPage: "/team/leave",
+      teamPage: "/team/abwesenheiten",
     },
     {
       id: "reports",
       label: pageLabel("/reports"),
       description: "Auswertungen & Exporte",
       icon: "chart",
+      // #844: deliberately the old URL (it redirects to Verwalten › Berichte): the page also serves a person's
+      // own documents (report:export:EIGENE), so the entry must not be gated like the Verwalten rail entry.
       href: "/reports",
       group: "Navigation",
     },
     {
       id: "admin",
-      label: pageLabel("/admin"),
-      description: "Verwaltung",
+      label: pageLabel("/verwalten"),
+      description: "Verwalten",
       icon: "settings",
-      href: "/admin",
+      href: "/verwalten",
       group: "Navigation",
     },
     {
       id: "admin-shifts",
-      label: pageLabel("/admin/shifts"),
+      label: pageLabel("/verwalten/regeln/dienstplan"),
       description: "Vorlagen, Mindestbesetzung und Wochenmuster",
       icon: "calendar",
-      href: "/admin/shifts",
+      href: "/verwalten/regeln/dienstplan",
       group: "Admin",
     },
     {
       id: "admin-vacation",
-      label: pageLabel("/admin/vacation"),
+      label: pageLabel("/verwalten/regeln/urlaub"),
       description: "Urlaub, Sonderurlaub und Arbeitszeit-Vorgaben",
       icon: "settings",
-      href: "/admin/vacation",
+      href: "/verwalten/regeln/urlaub",
       group: "Admin",
     },
     {
       id: "admin-roles",
-      label: pageLabel("/admin/roles"),
+      label: pageLabel("/verwalten/system/rollen"),
       description: "Rollen anlegen und zuweisen",
       icon: "settings",
-      href: "/admin/roles",
+      href: "/verwalten/system/rollen",
       group: "Admin",
     },
   ];
@@ -154,6 +157,18 @@
       selectedIndex = 0;
     }
   }
+
+  /** #844: the header's search button opens the palette through a window event (no shared store). */
+  function handleOpenRequest() {
+    open = true;
+    query = "";
+    selectedIndex = 0;
+  }
+
+  $effect(() => {
+    window.addEventListener(OPEN_PALETTE_EVENT, handleOpenRequest);
+    return () => window.removeEventListener(OPEN_PALETTE_EVENT, handleOpenRequest);
+  });
 
   function handleInputKeydown(e: KeyboardEvent) {
     if (e.key === "ArrowDown") {

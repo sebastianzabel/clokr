@@ -152,8 +152,8 @@ describe("/reports period area (Issue #612) - one period control, no old selects
     expect(PAGE).toContain("<PeriodKpis");
   });
 
-  it("PageHead names the team eyebrow for team callers and keeps the personal one", () => {
-    expect(TEMPLATE).toContain('eyebrow={showTeamArea ? "Team" : "Mein Bereich"}');
+  it("PageHead names the Verwalten eyebrow for team callers and keeps the personal one (#844, Z-03)", () => {
+    expect(TEMPLATE).toContain('eyebrow={showTeamArea ? "Verwalten" : "Ich"}');
     expect(TEMPLATE).toContain(
       '"Zeiten, Konten und Urlaub für einen Zeitraum – bis zu 12 Monate."',
     );

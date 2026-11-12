@@ -1,16 +1,12 @@
-// Issue #83 (D-10, D-14, D-16) — the admin navigation: one item list for Sidebar and the mobile
-// Mehr sheet, filtered per item by the admin route map, plus source-level wiring of the three
-// navigation consumers (Sidebar and CommandPalette import `$app/*` and are not mountable here).
+// Issue #83 (D-10, D-14, D-16), since #844 the Verwalten area — one item list for Sidebar and the mobile Mehr
+// sheet, filtered per item by the route table, plus source-level wiring of the three navigation consumers
+// (Sidebar and CommandPalette import `$app/*` and are not mountable here). Expected lists are HAND-WRITTEN.
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  ADMIN_NAV_GROUPS,
-  ADMIN_ROUTE_PERMISSIONS,
-  visibleAdminNavGroups,
-  visibleAdminNavItems,
-} from "../admin-route-permissions";
+import { visibleAdminNavItems } from "../admin-route-permissions";
+import { APP_ROUTES, visibleChildren } from "../routes";
 import personas from "./fixtures/system-role-permissions.json";
 
 function webSrc(): string {
@@ -27,105 +23,101 @@ const SRC = webSrc();
 const read = (rel: string) => readFileSync(join(SRC, rel), "utf8");
 const p = personas as Record<string, string[]>;
 const on = { availabilityEnabled: true };
-/** The page H1: the label literally, or (Issue #574) the page-labels lookup of the same href. */
-const titleOf = (href: string, label: string) =>
-  new RegExp(`title=(?:"${label}"|\\{pageLabel\\("${href}"\\)\\})`);
+/** The page H1: the page-labels lookup of the page's own route file (Issue #574, #844). */
+const titleOf = (file: string) => new RegExp(`title=\\{pageLabel\\("${file}"\\)\\}`);
+const labelsOf = (hub: string) =>
+  visibleChildren({ permissions: p.ADMIN }, hub, on).map((r) => r.label);
 
-describe("admin navigation (Issue #83)", () => {
-  it("the nav groups list exactly the navigable route-map entries, in the same order", () => {
-    expect(ADMIN_NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href))).toEqual(
-      ADMIN_ROUTE_PERMISSIONS.filter((e) => e.inNav).map((e) => e.href),
-    );
-    const system = ADMIN_NAV_GROUPS.find((g) => g.label === "SYSTEM");
-    expect(system?.items[4]).toEqual({
-      href: "/admin/roles",
-      label: "Rollen & Rechte",
-      icon: "key",
-    });
-    for (const group of ADMIN_NAV_GROUPS) expect(group.items.length).toBeLessThanOrEqual(5);
+describe("Verwalten navigation (Issue #83, #844)", () => {
+  it("the rail lists the eight Verwalten entries of D-04 in order, Salons directly after Personen (#563)", () => {
+    expect(visibleAdminNavItems({ permissions: p.ADMIN }, on).map((i) => i.label)).toEqual([
+      "Übersicht",
+      "Personen",
+      "Salons",
+      "Regeln",
+      "Monatsabschluss",
+      "Berichte",
+      "Daten",
+      "System",
+    ]);
   });
 
-  it("COMPLIANCE is one group of three, Support-Zugriffe directly after Protokoll (Issue #93, #574)", () => {
-    const compliance = ADMIN_NAV_GROUPS.filter((g) => g.label === "COMPLIANCE");
-    expect(compliance).toHaveLength(1);
-    expect(compliance[0].items.map((i) => i.label)).toEqual([
-      "Monatsabschluss",
+  it("Daten lists Import, DATEV-Export, Protokoll, then Support-Zugriffe directly after Protokoll (#93, #574)", () => {
+    expect(labelsOf("/verwalten/daten")).toEqual([
+      "CSV-Import",
+      "DATEV-Export",
       "Protokoll",
       "Support-Zugriffe",
     ]);
-    expect(compliance[0].items[2]).toEqual({
-      href: "/admin/support-access",
+    const support = APP_ROUTES.find((r) => r.file === "/admin/support-access");
+    expect(support).toMatchObject({
+      href: "/verwalten/daten/support-zugriffe",
       label: "Support-Zugriffe",
       icon: "shield",
     });
   });
 
-  it("the nav label equals the list page's PageHead title character for character (Issue #93)", () => {
-    const page = read("routes/(app)/admin/support-access/+page.svelte");
-    expect(page).toMatch(titleOf("/admin/support-access", "Support-Zugriffe"));
-    expect(read("lib/nav/page-labels.ts")).toContain('"/admin/support-access": "Support-Zugriffe"');
-  });
-
-  it("PLANUNG is one group of three, Salons directly after Verfügbarkeit (Issue #563)", () => {
-    const planung = ADMIN_NAV_GROUPS.filter((g) => g.label === "PLANUNG");
-    expect(planung).toHaveLength(1);
-    expect(planung[0].items.map((i) => i.label)).toEqual([
+  it("Regeln and System list today's pages unchanged (D-04: #854 regroups them later)", () => {
+    expect(labelsOf("/verwalten/regeln")).toEqual([
+      "Urlaubsverwaltung",
+      "Betriebsurlaub",
+      "Urlaubsgrenzen & Sperren",
       "Schichteinstellungen",
-      "Verfügbarkeit",
-      "Salons",
     ]);
-    expect(planung[0].items[2].href).toBe("/admin/salons");
+    expect(labelsOf("/verwalten/system")).toEqual([
+      "Allgemein",
+      "Branding & Themes",
+      "Integrationen",
+      "Phorest",
+      "Rollen & Rechte",
+    ]);
   });
 
-  it("the nav label equals the salons list page's title character for character (Issue #563)", () => {
-    const label = ADMIN_NAV_GROUPS.flatMap((g) => g.items).find(
-      (i) => i.href === "/admin/salons",
-    )?.label;
-    expect(label).toBe("Salons");
-    const page = read("routes/(app)/admin/salons/+page.svelte");
-    expect(page).toMatch(titleOf("/admin/salons", label ?? ""));
-    expect(read("lib/nav/page-labels.ts")).toContain(`"/admin/salons": "${label}"`);
+  it("the nav label equals the list page's PageHead title character for character (#93, #563)", () => {
+    expect(read("routes/(app)/admin/support-access/+page.svelte")).toMatch(
+      titleOf("/admin/support-access"),
+    );
+    expect(read("routes/(app)/admin/salons/+page.svelte")).toMatch(titleOf("/admin/salons"));
+    expect(APP_ROUTES.find((r) => r.file === "/admin/salons")?.label).toBe("Salons");
   });
 
-  it("filters per item, drops empty groups and the availability item when the feature is off", () => {
-    // Issue #86 (owner decision 16.10.2026): salon:read adds the PLANUNG group (Salons only).
-    expect(visibleAdminNavGroups({ permissions: p.HR }, on).map((g) => g.label)).toEqual([
-      "PERSONAL",
-      "PLANUNG",
-      "COMPLIANCE",
+  it("filters per item and drops a hub without a visible child", () => {
+    // Issue #86 (owner decision 16.10.2026): HR holds salon:read, report:read and month-close:read.
+    expect(visibleAdminNavItems({ permissions: p.HR }, on).map((i) => i.href)).toEqual([
+      "/verwalten",
+      "/verwalten/personen",
+      "/verwalten/salons",
+      "/verwalten/monatsabschluss",
+      "/verwalten/berichte",
     ]);
-    // Issue #836: SALON_MANAGER holds leave-request:approve, so "Urlaubsgrenzen & Sperren" joins.
+    // Issue #836: SALON_MANAGER holds leave-request:approve, so Regeln (Urlaubsgrenzen & Sperren) joins;
+    // the team availability moved to the Team area (D-05).
     expect(visibleAdminNavItems({ permissions: p.SALON_MANAGER }, on).map((i) => i.href)).toEqual([
-      "/admin/employees",
-      "/admin/leave-limits",
-      "/admin/availability",
+      "/verwalten",
+      "/verwalten/personen",
+      "/verwalten/regeln",
     ]);
     expect(
-      visibleAdminNavItems({ permissions: p.SALON_MANAGER }, { availabilityEnabled: false }).map(
-        (i) => i.href,
+      visibleChildren({ permissions: p.SALON_MANAGER }, "/verwalten/regeln", on).map(
+        (r) => r.label,
       ),
-    ).toEqual(["/admin/employees", "/admin/leave-limits"]);
-    expect(visibleAdminNavGroups({ permissions: p.EMPLOYEE }, on)).toEqual([]);
-    expect(visibleAdminNavItems({ permissions: p.ADMIN }, on).map((i) => i.label)).toContain(
-      "Rollen & Rechte",
-    );
+    ).toEqual(["Urlaubsgrenzen & Sperren"]);
+    expect(visibleAdminNavItems({ permissions: p.EMPLOYEE }, on)).toEqual([]);
   });
 
-  it("Sidebar, BottomTabBar and CommandPalette read the route map, not the compat role", () => {
+  it("Sidebar, BottomTabBar and CommandPalette read the route table, not the compat role", () => {
     const sidebar = read("lib/components/layout/Sidebar.svelte");
-    // Since #516 both variants render `visibleNavSections()` (app-nav.ts), which reads the groups.
+    // Since #516 both variants render `visibleNavSections()` (app-nav.ts), which reads the route table.
     expect(sidebar).toContain("visibleNavSections($authStore.user");
-    expect(read("lib/nav/app-nav.ts")).toContain("visibleAdminNavGroups(user");
+    expect(read("lib/nav/app-nav.ts")).toContain("visibleRoute(user, route, options)");
     expect(sidebar).not.toContain("const adminNav");
-    expect(sidebar.match(/\.role\b/g) ?? []).toHaveLength(
-      (sidebar.match(/\$authStore\.user\.role === "(ADMIN|MANAGER)"/g) ?? []).length + 1,
-    );
+    expect(sidebar).not.toMatch(/\$authStore\.user\.role\b/);
     const bar = read("lib/components/layout/BottomTabBar.svelte");
     expect(bar).toContain("visibleNavSections($authStore.user");
     expect(bar).not.toMatch(/\brole\b\s*===|adminMore/);
     const palette = read("lib/components/ui/CommandPalette.svelte");
     expect(palette).toContain("canAccessAdminPath($authStore.user, a.href)");
     expect(palette).not.toMatch(/adminOnly|isManager|\.role\b/);
-    expect(palette).toContain('href: "/admin/roles"');
+    expect(palette).toContain('href: "/verwalten/system/rollen"');
   });
 });

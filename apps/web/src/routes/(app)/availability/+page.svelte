@@ -138,7 +138,7 @@
 </script>
 
 <PageHead
-  eyebrow="Mein Bereich"
+  eyebrow="Ich"
   title={pageLabel("/availability")}
   sub="Trage ein, wann du arbeiten kannst, nicht kannst oder bevorzugst zu arbeiten."
 >

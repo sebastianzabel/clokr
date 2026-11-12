@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { homeHref } from "$lib/nav/routes";
   import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, tick } from "svelte";
   import { goto, replaceState } from "$app/navigation";
@@ -147,7 +148,7 @@
       "section9:decide:ZUGEWIESEN",
     ]);
     if (!canDecide) {
-      void goto("/dashboard");
+      void goto(homeHref($authStore.user));
       return;
     }
     // The deep link is read ONCE, here, and applied after the first completed loads (the rows do not

@@ -1340,7 +1340,7 @@
      specs a stable page-root selector + the active tab as data-attribute. -->
 <div data-testid="admin-system-page" data-active-tab={activeTab} style="display: contents;">
   <SectionStack
-    eyebrow="System"
+    eyebrow="Verwalten"
     title={pageLabel("/admin/system")}
     sub="Einstellungen des Unternehmens, Sicherheit und Benachrichtigungen"
     tabs={TABS}
