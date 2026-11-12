@@ -15,7 +15,10 @@
   import EmptyState from "$components/ui/EmptyState.svelte";
   import PersonPicker from "$lib/components/team/zeiten/PersonPicker.svelte";
   import { personOptions } from "$lib/team/person-options";
-  import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-fkz
+  import KpiStrip from "$components/ui/KpiStrip.svelte"; // Issue #853 (D-853-18)
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
+  import { monthKpiItems } from "$lib/team/zeiten-kpis"; // Issue #853 (D-853-18)
   import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-fkz
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
@@ -1635,6 +1638,20 @@
     };
   });
   let runningCount = $derived(entries.filter((e) => !e.endTime).length);
+  // Issue #853 (D-853-18) - the month figures as the cells of the Kennzahlenleiste. Only a selection and
+  // formatting of what monthMetrics already holds (lib/team/zeiten-kpis.ts); no figure is computed here.
+  let zeitenKpis = $derived(
+    monthKpiItems({
+      sollToDateMin: monthMetrics.sollToDateMin,
+      istMin: monthMetrics.istMin,
+      saldoMin: monthMetrics.saldoMin,
+      noSollTarget: monthMetrics.noSollTarget,
+      sollLabel: monthMetrics.sollLabel,
+      workdaysSoFar: monthMetrics.workdaysSoFar,
+      runningCount,
+      isLocked: monthIsLocked || monthMetrics.closed,
+    }),
+  );
   // Issue #511 D-18 — the modal's findings are the server's answer for the PROPOSED entry together
   // with the day's other entries (POST /day-breaks/preview, debounced, a stale answer is dropped).
   // A failed preview leaves the list empty and never blocks saving. A hint (position of a break
@@ -1873,20 +1890,14 @@
        Mirrors /time-entries (commit d88cdcba). Rendered ONLY with an employee
        selected (D-01); the period control is not part of it (Issue #853), it sits in the
        toolbar row above. -->
-  <div class="te-metrics" class:te-metrics--single={overtimeDenied}>
-    <MonatSaldoCard
-      sollToDateMin={monthMetrics.sollToDateMin}
-      istMin={monthMetrics.istMin}
-      saldoMin={monthMetrics.saldoMin}
-      noSollTarget={monthMetrics.noSollTarget}
-      sollLabel={monthMetrics.sollLabel}
-      workdaysSoFar={monthMetrics.workdaysSoFar}
-      {runningCount}
-      isLocked={monthIsLocked || monthMetrics.closed}
-      loading={saldoCardState === "loading"}
-      error={saldoCardState === "error"}
-      onRetry={loadAll}
-    />
+  <div class="te-metrics">
+    {#if saldoCardState === "loading"}
+      <Skeleton shape="block" height="6.5rem" />
+    {:else if saldoCardState === "error"}
+      <ErrorState message="Werte konnten nicht geladen werden." hint="" onRetry={loadAll} />
+    {:else}
+      <KpiStrip items={zeitenKpis} ariaLabel="Monat" />
+    {/if}
     {#if !overtimeDenied}
       <KontoSaldoCard
         totalHours={overtimeTotalHours}
