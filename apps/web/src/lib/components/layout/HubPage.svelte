@@ -10,6 +10,7 @@
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { AREA_LABELS, visibleChildren } from "$lib/nav/routes";
+  import type { Snippet } from "svelte";
 
   interface Props {
     /** The hub's name (from pageLabel of the hub's href). */
@@ -17,9 +18,13 @@
     /** The hub's href in the route table. */
     hub: string;
     sub?: string;
+    /** Issue #847: the hub's own content above the list (Verwalten › Übersicht). */
+    intro?: Snippet;
+    /** Heading of the list when an intro precedes it. */
+    listTitle?: string;
   }
 
-  let { title, hub, sub }: Props = $props();
+  let { title, hub, sub, intro, listTitle }: Props = $props();
 
   const children = $derived(
     visibleChildren($authStore.user, hub, {
@@ -29,6 +34,9 @@
 </script>
 
 <PageHead eyebrow={AREA_LABELS.verwalten} {title} {sub} />
+
+{#if intro}{@render intro()}{/if}
+{#if listTitle && children.length > 0}<h2 class="hub-list-title">{listTitle}</h2>{/if}
 
 {#if children.length === 0}
   <p class="hub-empty">Hier gibt es für dich nichts zu verwalten.</p>
@@ -49,6 +57,11 @@
 {/if}
 
 <style>
+  .hub-list-title {
+    margin: var(--s-6) 0 var(--s-2);
+    font-size: var(--fs-h2);
+    font-weight: 600;
+  }
   .hub-list {
     list-style: none;
     margin: 0;
