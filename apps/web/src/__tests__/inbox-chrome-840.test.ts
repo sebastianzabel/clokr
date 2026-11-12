@@ -30,6 +30,8 @@ const TASK_ROW = readRouteFile(
   "../lib/components/team/aufgaben/TaskRow.svelte",
   "src/lib/components/team/aufgaben/TaskRow.svelte",
 );
+// Issue #853 (D-853-06): the kind helper that gates the Nachtrag segment.
+const TASK_MODEL = readRouteFile("../lib/team/task-model.ts", "src/lib/team/task-model.ts");
 
 describe("Issue #840 G-8 / G-3 - the inbox chrome", () => {
   it("[vacuity gate] the page source is loaded and is the inbox", () => {
@@ -37,6 +39,7 @@ describe("Issue #840 G-8 / G-3 - the inbox chrome", () => {
     expect(INBOX).toContain("<TaskRow");
     expect(INBOX).toContain("<List ");
     expect(TASK_ROW.length).toBeGreaterThan(500);
+    expect(TASK_MODEL.length).toBeGreaterThan(500);
   });
 
   it("[G-8] the header is the leave pages' PageHead: plain title „Aufgaben“ from page-labels.ts (Issue #574), no eyebrow and no accent (#853 D-853-19)", () => {
@@ -74,7 +77,11 @@ describe("Issue #840 G-8 / G-3 - the inbox chrome", () => {
     expect(INBOX).toContain("openRetroDetail(retro)");
     // The type control is offered only when there is a choice, and only for kinds the caller can decide.
     expect(INBOX).toContain("{#if availableKinds.length > 1}");
-    expect(INBOX).toContain("...(canRetro ?");
+    // The Nachtrag kind exists only for a caller who may decide Zeitnachträge: the page hands
+    // `canRetro` (retro-request:approve) to the kind helper, which adds "nachtrag" only then.
+    expect(INBOX).toContain("retro: canRetro,");
+    expect(INBOX).toContain('["retro-request:approve:ZUGEWIESEN"]');
+    expect(TASK_MODEL).toContain('if (input.retro) kinds.push("nachtrag");');
   });
 
   it("[#853 D-853-08] the review dialog receives the fact permissions from the caller's held keys", () => {
