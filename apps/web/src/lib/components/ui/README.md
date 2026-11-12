@@ -717,6 +717,7 @@ Further gates since Issue #843:
 - `pnpm --filter @clokr/web lint:ui-classes` also scans `src/routes` and the area components under `lib/components` (outside `ui/` and `layout/`) for page-own filter bars, period controls, KPI cards and data tables against `apps/web/scripts/lint-ui-classes-route-ratchet.json`; the counts may only fall.
 - `pnpm --filter @clokr/web lint:no-alert` fails on `alert(`, `confirm(` and `prompt(` in `apps/web/src` outside tests.
 - `lint:tokens` carves out exactly `src/tailwind-theme.css` from the `--color-` / `--radius-` prefix rule.
+- `src/__tests__/team-pages-blocks-853.test.ts` (Issue #853, in the web test run) scans every Team route file and every component below `lib/components/team/` and fails on a raw `<h1>`, a page-own KPI card, filter bar, period control, view-tabs strip or `<table>`, an import of the legacy `Card` / `CardHeader` / `KPIStat` / `ApprovalRow` / `LeaveToolbar`, loading text, a native dialog, and on `eyebrow` or `accent` on the page head; the head title must be the route-table label. A Team page is built from the blocks and passes no eyebrow or accent to its `PageHead`.
 
 ## Migration history
 

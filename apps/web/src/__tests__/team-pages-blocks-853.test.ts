@@ -1,16 +1,11 @@
 // Issue #853, AC-1 (D-853-03, D-853-18, D-853-19) - the guard of the Team pages: every Team route
-// file and every Team component is built from the #843 blocks, not from page-own chrome. This is the
-// SKELETON (plan 853-02): the walker, the detectors, the controls and the floors. The page plans do
-// not edit this file - enforcement is keyed on the migration state that already lives in the repo:
-//
-//   - a Team ROUTE file is enforced once its head tag passes neither `eyebrow` nor `accent` AND the
-//     falling-only ratchet register (`lint-ui-classes-route-ratchet.json`) holds no `#853` entry for
-//     it (a page migrated over two plans keeps its entry until its last plan);
-//   - a Team COMPONENT is enforced once the register holds no `#853` entry for it.
-//
-// Plan 853-16 adds the final assertion that every file is enforced. A walk that matches nothing
-// reports OK forever, so the walked sets carry non-empty floors and every detector has a positive
-// control and a clean control (the same discipline as no-loading-text-843).
+// file and every Team component is built from the #843 blocks, not from page-own chrome. Since plan
+// 853-16 the guard is fully enforced: there is no "not yet enforced" list any more, the falling-only
+// ratchet register (`lint-ui-classes-route-ratchet.json`) holds no `#853` entry, and every Team route
+// file and every file below `lib/components/team/` must be free of page-own chrome, loading text,
+// native dialogs and a head `eyebrow` / `accent`. A walk that matches nothing reports OK forever, so
+// the walked sets carry non-empty floors and every detector has a positive control and a clean control
+// (the same discipline as no-loading-text-843).
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -168,7 +163,6 @@ export function chromeFindings(
 
 // ── The walked sets ──────────────────────────────────────────────────────────
 
-const REPO_REL = "apps/web/src/";
 const RATCHET = JSON.parse(
   readFileSync(join(SRC_ROOT, "..", "scripts", "lint-ui-classes-route-ratchet.json"), "utf8"),
 ) as { rules: Record<string, Record<string, { ticket: string | null }>> };
@@ -216,32 +210,26 @@ export function teamComponentFiles(): TeamFile[] {
 const routeFiles = teamRouteFiles();
 const componentFiles = teamComponentFiles();
 
-function routeEnforced(file: TeamFile): boolean {
-  const head = headTagOf(file.text);
-  const headClean = head === null || !/\s(?:eyebrow|accent)\s*=/.test(head);
-  return headClean && !REGISTERED_853.has(REPO_REL + file.rel);
-}
-
-function componentEnforced(file: TeamFile): boolean {
-  return !REGISTERED_853.has(REPO_REL + file.rel);
-}
-
-const enforcedRoutes = routeFiles.filter(routeEnforced);
-const enforcedComponents = componentFiles.filter(componentEnforced);
-const pending = [
-  ...routeFiles.filter((f) => !routeEnforced(f)),
-  ...componentFiles.filter((f) => !componentEnforced(f)),
-].map((f) => f.rel);
-
 // ── The walk ─────────────────────────────────────────────────────────────────
 
 describe("Team pages guard - the walked set is not empty", () => {
-  it("walks at least 7 Team route files", () => {
-    expect(routeFiles.length).toBeGreaterThanOrEqual(7);
+  it("walks exactly the 8 Team route files of the route table (Heute is #846)", () => {
+    expect(routeFiles.map((f) => f.key).sort()).toEqual(
+      [
+        "/admin/availability",
+        "/shifts",
+        "/shifts/conflicts",
+        "/shifts/planning",
+        "/inbox",
+        "/team/leave",
+        "/team/personen",
+        "/team/time-entries",
+      ].sort(),
+    );
   });
 
-  it("walks at least 2 Team component files", () => {
-    expect(componentFiles.length).toBeGreaterThanOrEqual(2);
+  it("walks every component below lib/components/team (at least 6)", () => {
+    expect(componentFiles.length).toBeGreaterThanOrEqual(6);
   });
 
   it("every Team route of the table has its page file", () => {
@@ -268,21 +256,35 @@ describe("Team pages guard - the head names the page by its table label (D-853-1
   }
 });
 
-describe("Team pages guard - enforcement follows the migration state", () => {
-  it(`enforced: ${enforcedRoutes.length} route and ${enforcedComponents.length} component file(s); not yet enforced: ${pending.join(", ") || "none"}`, () => {
-    // The title carries the state; the assertion only keeps the two sets disjoint from `pending`.
-    for (const file of [...enforcedRoutes, ...enforcedComponents]) {
-      expect(pending).not.toContain(file.rel);
+describe("Team pages guard - every Team file is enforced (AC-1)", () => {
+  it("the register holds no #853 entry", () => {
+    expect([...REGISTERED_853]).toEqual([]);
+  });
+
+  it("the four roster pages are tabs of one page and share the H1 label Dienstplan (D-853-04)", () => {
+    const roster = ["/shifts", "/shifts/planning", "/shifts/conflicts", "/admin/availability"];
+    for (const key of roster) {
+      expect(
+        routeFiles.map((f) => f.key),
+        key,
+      ).toContain(key);
+      expect(pageLabel(key), key).toBe("Dienstplan");
     }
   });
 
-  for (const file of enforcedRoutes) {
+  for (const file of routeFiles) {
+    it(`route ${file.rel} passes neither eyebrow nor accent to its head (D-853-19)`, () => {
+      const head = headTagOf(file.text);
+      expect(head, "a page head tag").not.toBeNull();
+      expect(head).not.toMatch(/\s(?:eyebrow|accent)\s*=|\s\{eyebrow\}|\s\{accent\}|\s\{\.\.\./);
+    });
+
     it(`route ${file.rel} has no page-own chrome`, () => {
       expect(chromeFindings(file.text, "route")).toEqual([]);
     });
   }
 
-  for (const file of enforcedComponents) {
+  for (const file of componentFiles) {
     it(`component ${file.rel} has no page-own chrome`, () => {
       expect(chromeFindings(file.text, "component")).toEqual([]);
     });

@@ -15,7 +15,7 @@
       "apps/web/src/lib/components/leave/LeaveToolbar.svelte": {
         "count": 2,
         "ticket": "#851",
-        "reason": "Shared with /team/leave (#853); migrate with the first of the two pages"
+        "reason": "Used by /leave only since #853 moved /team/leave off it; migrates with the /leave page (#851)"
       },
       "apps/web/src/lib/components/operator/SupportAuditLog.svelte": {
         "count": 1,
