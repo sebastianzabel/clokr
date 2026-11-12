@@ -47,8 +47,15 @@ import AxeBuilder from "@axe-core/playwright";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import type { TestTenant } from "../fixtures";
+import {
+  API_BASE,
+  authHeaders,
+  chooseFromCombobox,
+  createEmployee,
+  ensureEntitlement,
+  fileVacation,
+} from "../helpers/team-seed";
 
-const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4001";
 const PASSWORD = "test1234";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -68,10 +75,6 @@ function nthMonday(first: Date, n: number): Date {
   return new Date(first.getTime() + (offset + (n - 1) * 7) * DAY_MS);
 }
 
-function authHeaders(tenant: TestTenant) {
-  return { "content-type": "application/json", Authorization: `Bearer ${tenant.adminToken}` };
-}
-
 async function loginViaForm(page: Page, email: string, password: string): Promise<void> {
   await page.goto("/login");
   await page.getByLabel("E-Mail").fill(email);
@@ -82,77 +85,6 @@ async function loginViaForm(page: Page, email: string, password: string): Promis
 
 async function loginAsTenantAdmin(page: Page, tenant: TestTenant): Promise<void> {
   await loginViaForm(page, `admin@${tenant.tenantId}.test`, PASSWORD);
-}
-
-interface Person {
-  id: string;
-  /** Present for a person created with a password. */
-  email: string;
-  firstName: string;
-  lastName: string;
-}
-
-/**
- * An employee homed in the tenant's default salon. A `password` gives the person a direct sign-in
- * (the Mitarbeiter role), the way an admin sets one at creation.
- */
-async function createEmployee(
-  request: APIRequestContext,
-  tenant: TestTenant,
-  spec: { key?: string; firstName?: string; lastName?: string; password?: string } = {},
-): Promise<Person> {
-  const key = spec.key ?? "uebersicht";
-  const firstName = spec.firstName ?? "Uebersicht";
-  const lastName = spec.lastName ?? "Balken";
-  const stamp = Date.now();
-  const email = `${key}-${stamp}@${tenant.tenantId}.test`;
-  const res = await request.post(`${API_BASE}/api/v1/employees`, {
-    headers: authHeaders(tenant),
-    data: {
-      usualWorkDays: [1, 2, 3, 4, 5],
-      email,
-      firstName,
-      lastName,
-      employeeNumber: `${key.slice(0, 2).toUpperCase()}-${stamp.toString(36).slice(-6)}`,
-      hireDate: new Date("2024-01-01T00:00:00.000Z").toISOString(),
-      role: "EMPLOYEE",
-      ...(spec.password ? { password: spec.password } : {}),
-    },
-  });
-  expect(res.status(), `create the employee (${await res.text()})`).toBeLessThan(300);
-  const body = (await res.json()) as { id: string };
-  return { id: body.id, email, firstName, lastName };
-}
-
-/** Reading the entitlements of a year creates the regular VACATION row for it, as the app does. */
-async function ensureEntitlement(
-  request: APIRequestContext,
-  tenant: TestTenant,
-  employeeId: string,
-  year: number,
-): Promise<void> {
-  const res = await request.get(
-    `${API_BASE}/api/v1/leave/entitlements/${employeeId}?year=${year}`,
-    {
-      headers: authHeaders(tenant),
-    },
-  );
-  expect(res.ok(), `read the ${year} entitlement (${res.status()})`).toBe(true);
-}
-
-async function fileVacation(
-  request: APIRequestContext,
-  tenant: TestTenant,
-  employeeId: string,
-  startDate: string,
-  endDate: string,
-): Promise<string> {
-  const res = await request.post(`${API_BASE}/api/v1/leave/requests`, {
-    headers: authHeaders(tenant),
-    data: { employeeId, type: "VACATION", startDate, endDate },
-  });
-  expect(res.status(), `file the request (${await res.text()})`).toBeLessThan(300);
-  return ((await res.json()) as { id: string }).id;
 }
 
 // ── Shared helpers of the later tests ────────────────────────────────────────────────────────
@@ -1145,8 +1077,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(who).toHaveValue("");
     await expect(page.locator("#f-type")).toBeHidden();
     await expect(page.locator("#f-start")).toBeHidden();
-    await who.fill("Zeile");
-    await page.getByRole("option", { name: /Zeile, Formular/ }).click();
+    await chooseFromCombobox(who, page.getByRole("option", { name: /Zeile, Formular/ }), "Zeile");
     await expect(who).toHaveValue(/Zeile, Formular/);
     await expect(page.locator("#f-type")).toBeVisible();
     await animationsSettled(page);
