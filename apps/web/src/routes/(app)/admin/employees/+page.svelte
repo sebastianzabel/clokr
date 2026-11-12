@@ -1,9 +1,9 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
-  import { onMount, untrack } from "svelte";
+  import { untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
-  import { employeeAdminRights, salonAdminRights } from "$lib/page-rights";
+  import { employeeAdminRights } from "$lib/page-rights";
   import { api } from "$api/client";
   import { salonContext } from "$stores/salon-context";
   import {
@@ -13,22 +13,13 @@
     loadAssignmentChoices,
     type AccessRole,
     type AssignablePerson,
-    type AssignmentDraft,
     type AssignmentScope,
     type RoleAssignment,
   } from "$lib/api/roles";
-  import PersonRoleAssignments from "$lib/components/admin/roles/PersonRoleAssignments.svelte";
-  import {
-    berechtigungenTabHref,
-    draftFailureMessage,
-    draftLabel,
-    draftsSavedMessage,
-    postAssignmentDrafts,
-  } from "$lib/roles/assignment-drafts";
+  import { draftLabel } from "$lib/roles/assignment-drafts";
   import { toasts } from "$stores/toast";
   import { hasPermission } from "$lib/permissions";
   import {
-    CREATE_DEFAULT_ROLE_NAME,
     NO_ASSIGNMENT_LABEL,
     assignedRoleNames,
     assignmentLabel,
@@ -58,37 +49,15 @@
   import Note from "$components/ui/Note.svelte";
   import BulkRoleDialog from "$lib/components/employees/BulkRoleDialog.svelte";
   import { listUrlSchema, sortEmployees } from "$lib/employees/list-url-state";
-  import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import DeactivateEmployeeDialog from "$lib/components/admin/DeactivateEmployeeDialog.svelte";
   import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
   import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import HomeSalonField from "$lib/components/employees/HomeSalonField.svelte";
-  import {
-    homeSalonOptions,
-    homeSalonPayload,
-    offerHomeSalonChoice,
-    type SalonRef,
-  } from "$lib/employees/salon-assignments";
-  import {
-    type EmployeeClassification,
-    CLASSIFICATION_OPTIONS,
-    CLASSIFICATION_LABELS,
-    applyDefaults,
-    isOverridden,
-  } from "$lib/employee-classification";
-  import {
-    statutoryMinimumFiveDayWeek,
-    MISSING_BIRTH_DATE_HINT,
-  } from "$lib/statutory-minimum-vacation";
-  import { vacationBaseDefaultFor, annualVacationDaysPayload } from "$lib/vacation-base-default";
-  import {
-    buildUsualWorkDaysPayload,
-    usualWorkDaysShortfall,
-    usualWorkDaysMissing,
-  } from "$lib/utils/work-schedule";
+  import CreatePersonDialog from "$lib/components/employees/CreatePersonDialog.svelte";
+  import { MISSING_BIRTH_DATE_HINT } from "$lib/statutory-minimum-vacation";
+  import type { EmployeeClassification } from "$lib/employee-classification";
 
   import {
     employmentState,
@@ -135,120 +104,13 @@
   let listGeneration = 0;
   let error = $state("");
 
-  // Create modal
+  // Create flow (Issue #854): the guided dialog owns the person's draft, the salon list and the
+  // tenant defaults. The role choices stay here because the bulk role dialog shares them.
   let createOpen = $state(false);
-  let creating = $state(false);
-  let createError = $state("");
-  let createEmailError = $state("");
-  let cFirstName = $state("");
-  let cLastName = $state("");
-  let cEmail = $state("");
-  let cEmployeeNumber = $state("");
-  let cHireDate = $state(new Date().toISOString().split("T")[0]);
-  // Role drafts of the create dialog (Issue #580, D-580-03): every new person gets the default
-  // role for the whole company from the API; further roles are drafted here and posted once the
-  // person exists.
-  const CREATE_FIXED_ROWS: { roleName: string; scope: AssignmentScope }[] = [
-    { roleName: CREATE_DEFAULT_ROLE_NAME, scope: { type: "TENANT" } },
-  ];
-  let cDrafts = $state<AssignmentDraft[]>([]);
   let createRoles = $state<AccessRole[]>([]);
   let createMandantRoleIds = $state<string[]>([]);
   let createPeople = $state<AssignablePerson[]>([]);
   let createRoleChoicesFailed = $state(false);
-  let createPersonName = $derived(`${cFirstName} ${cLastName}`.trim() || "Neue Person");
-  let cScheduleType = $state<"FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED">(
-    "FIXED_SCHEDULE",
-  );
-  let cWeeklyHours = $state(40);
-  let cMonthlyHours = $state<number | null>(null);
-  // Phase 436 Plan 02 (D-06) — SHIFT_BASED-only contract day count + übliche Arbeitstage.
-  // Without a contract field on create, POST would default to 5 and reject any Angabe
-  // below 5 days — exactly the issue's 4-day case (see this plan's <action>).
-  let cContractWorkDays = $state<number>(5);
-  let cUsualWorkDays = $state<number[]>([]);
-  // Issue #481 R5 — a SHIFT_BASED contract cannot be created without (enough) übliche Arbeitstage.
-  let createBlockedByUsualWorkDays = $derived(
-    cScheduleType === "SHIFT_BASED" &&
-      (usualWorkDaysMissing(cScheduleType, cUsualWorkDays) ||
-        usualWorkDaysShortfall(cUsualWorkDays, cContractWorkDays) > 0),
-  );
-  // Issue #86 (AC-86-1) — the Stammsalon is required in a tenant with several active salons. The
-  // salon list is read only for a caller who may list salons; null = not available, then no field
-  // is offered and the server's own German error answers a missing Stammsalon.
-  let createSalons = $state<SalonRef[] | null>(null);
-  let cHomeSalonId = $state("");
-  let createBlockedByHomeSalon = $derived(
-    createSalons !== null &&
-      offerHomeSalonChoice(true, homeSalonOptions(createSalons).length) &&
-      cHomeSalonId === "",
-  );
-  let cUsePassword = $state(false);
-  let cPassword = $state("");
-  // Phase 49.2 — FLEXTIME Kernarbeitszeit fields + tenant defaults for pre-fill
-  let cCoreStart = $state("");
-  let cCoreEnd = $state("");
-  let cCoreDays = $state<number[]>([]);
-  let tenantDefaultCoreStart = $state("");
-  let tenantDefaultCoreEnd = $state("");
-  let tenantDefaultCoreDays = $state<number[]>([]);
-  // Personalstruktur (Phase 41)
-  let cClassification: EmployeeClassification = $state("VOLLZEIT");
-  let cCoverageWeight = $state(1.0);
-  let cRequiresSupervision = $state(false);
-  // Issue #482: per-person vacation base value; null = the classification's own Standard,
-  // resolved server-side (resolveVacationBaseDays()).
-  let cAnnualVacationDays = $state<number | null>(null);
-  // Issue #435 (D-01/D-11) — tenant defaults loaded onMount, for the create-dialog pre-fill.
-  let tenantDefaultVacationDays = $state<number | null>(null);
-  let tenantDefaultApprenticeVacationDays = $state<number | null>(null);
-  let cBirthDate = $state("");
-  // The last value refreshVacationPrefill itself wrote — distinguishes "still the suggestion"
-  // from "the admin typed something", so a later classification/birth-date change only re-fills
-  // while the field still holds the form's own suggestion (never overwrites a typed value).
-  let cVacationPrefill = $state<number | null>(null);
-  // Without a birth date the adult minimum (§ 3 BUrlG) still applies — never "no minimum".
-  let cBirthMinimum = $derived(
-    statutoryMinimumFiveDayWeek(cBirthDate || null, Number(cHireDate.slice(0, 4))),
-  );
-
-  // ── Personalstruktur override badges (Phase 41 DD-03) ────────────────────
-  // Reactive: re-evaluate when classification or the field itself changes.
-  let cCoverageOverridden = $derived(
-    isOverridden(cClassification, "coverageWeight", cCoverageWeight),
-  );
-  let cSupervisionOverridden = $derived(
-    isOverridden(cClassification, "requiresSupervision", cRequiresSupervision),
-  );
-
-  // Issue #482 (G-7 display mirror) — proposes the classification's own Standard (Azubi-Standard
-  // or Unternehmensstandard), raised to the legal minimum (§ 19 JArbSchG with a birth date, else
-  // § 3 BUrlG); never overwrites a value the admin typed.
-  function refreshVacationPrefill() {
-    const base = vacationBaseDefaultFor(
-      cClassification,
-      tenantDefaultVacationDays,
-      tenantDefaultApprenticeVacationDays,
-    );
-    const next = base === null ? null : Math.max(base, cBirthMinimum.days);
-    if (cAnnualVacationDays === null || cAnnualVacationDays === cVacationPrefill) {
-      cAnnualVacationDays = next;
-    }
-    cVacationPrefill = next;
-  }
-
-  function onCreateClassificationChange() {
-    const def = applyDefaults(cClassification);
-    cCoverageWeight = def.coverageWeight;
-    cRequiresSupervision = def.requiresSupervision;
-    refreshVacationPrefill();
-  }
-  function resetCoverage() {
-    cCoverageWeight = applyDefaults(cClassification).coverageWeight;
-  }
-  function resetSupervision() {
-    cRequiresSupervision = applyDefaults(cClassification).requiresSupervision;
-  }
 
   // Controls follow the caller's permissions (Issue #538); the API refuses anything beyond them.
   let rights = $derived(employeeAdminRights($authStore.user));
@@ -257,21 +119,6 @@
   let canAssignRoles = $derived(rights.canAssignRoles);
   let canReadRoles = $derived(hasPermission($authStore.user, "role:read:ZUGEWIESEN"));
   let showActions = $derived(rights.showActions);
-  let canReadSalons = $derived(salonAdminRights($authStore.user).canRead);
-
-  async function loadCreateSalons() {
-    if (!canReadSalons) {
-      createSalons = null;
-      return;
-    }
-    try {
-      const res = await api.get<{ salons: SalonRef[] }>("/salons");
-      createSalons = res.salons;
-    } catch {
-      // Without the list no choice is offered; the API still answers a missing Stammsalon.
-      createSalons = null;
-    }
-  }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function isAnonymized(emp: Employee): boolean {
@@ -636,31 +483,6 @@
     });
   });
 
-  onMount(async () => {
-    // Phase 49.2 — load tenant FLEXTIME core defaults for pre-fill in create modal
-    // Issue #435 (D-01) — same fetch also reads the vacation-days tenant defaults.
-    try {
-      const cfg = await api.get<{
-        defaultCoreStart?: string | null;
-        defaultCoreEnd?: string | null;
-        defaultCoreDays?: number[];
-        defaultVacationDays?: number | string;
-        defaultApprenticeVacationDays?: number | string;
-      }>("/settings/work");
-      tenantDefaultCoreStart = cfg.defaultCoreStart ?? "";
-      tenantDefaultCoreEnd = cfg.defaultCoreEnd ?? "";
-      tenantDefaultCoreDays = Array.isArray(cfg.defaultCoreDays) ? [...cfg.defaultCoreDays] : [];
-      const vacDays = Number(cfg.defaultVacationDays);
-      tenantDefaultVacationDays = Number.isFinite(vacDays) ? vacDays : null;
-      const apprenticeVacDays = Number(cfg.defaultApprenticeVacationDays);
-      tenantDefaultApprenticeVacationDays = Number.isFinite(apprenticeVacDays)
-        ? apprenticeVacDays
-        : null;
-    } catch {
-      // non-critical — pre-fill just won't happen if this fails
-    }
-  });
-
   function roleNamesOf(emp: Employee): string[] | null {
     return assignmentsByUser === null ? null : assignedRoleNames(assignmentsOf(emp));
   }
@@ -739,146 +561,14 @@
   }
 
   function openCreate() {
-    cFirstName = "";
-    cLastName = "";
-    cEmail = "";
-    cEmployeeNumber = "";
-    cHireDate = new Date().toISOString().split("T")[0];
-    cDrafts = [];
     createRoleChoicesFailed = false;
     void loadCreateRoleChoices();
-    cScheduleType = "FIXED_SCHEDULE";
-    cWeeklyHours = 40;
-    cMonthlyHours = null;
-    // Phase 436 Plan 02 (D-06): reset alongside the other c* schedule fields.
-    cContractWorkDays = 5;
-    cUsualWorkDays = [];
-    cUsePassword = false;
-    cPassword = "";
-    // Phase 49.2 — reset core fields (no pre-fill here; pre-fill happens on FLEXTIME selection)
-    cCoreStart = "";
-    cCoreEnd = "";
-    cCoreDays = [];
-    // Personalstruktur defaults
-    cClassification = "VOLLZEIT";
-    const def = applyDefaults(cClassification);
-    cCoverageWeight = def.coverageWeight;
-    cRequiresSupervision = def.requiresSupervision;
-    // Issue #435 (D-01/D-13) — reset to "no value", then let the pre-fill propose one
-    cAnnualVacationDays = null;
-    cVacationPrefill = null;
-    cBirthDate = "";
-    refreshVacationPrefill();
-    cHomeSalonId = "";
-    void loadCreateSalons();
-    createError = "";
-    createEmailError = "";
     createOpen = true;
   }
 
-  // Phase 49.2 — pre-fill Kernarbeitszeit when FLEXTIME is selected and fields are empty
-  function onCreateScheduleTypeChange(
-    newType: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED",
-  ) {
-    cScheduleType = newType;
-    if (
-      newType === "FLEXTIME" &&
-      !cCoreStart &&
-      !cCoreEnd &&
-      cCoreDays.length === 0 &&
-      (tenantDefaultCoreStart || tenantDefaultCoreEnd || tenantDefaultCoreDays.length > 0)
-    ) {
-      cCoreStart = tenantDefaultCoreStart;
-      cCoreEnd = tenantDefaultCoreEnd;
-      cCoreDays = [...tenantDefaultCoreDays];
-    }
-  }
-
-  async function createEmployee() {
-    creating = true;
-    createError = "";
-    createEmailError = "";
-    try {
-      const payload: Record<string, unknown> = {
-        email: cEmail,
-        firstName: cFirstName,
-        lastName: cLastName,
-        employeeNumber: cEmployeeNumber,
-        hireDate: new Date(cHireDate).toISOString(),
-        scheduleType: cScheduleType,
-        weeklyHours:
-          cScheduleType === "FIXED_SCHEDULE" ||
-          cScheduleType === "FLEXTIME" ||
-          cScheduleType === "SHIFT_BASED"
-            ? cWeeklyHours
-            : 0,
-        monthlyHours: cScheduleType === "MONTHLY_HOURS" ? cMonthlyHours : null,
-        // Phase 49.2 — FLEXTIME Kernarbeitszeit
-        coreStart: cScheduleType === "FLEXTIME" ? cCoreStart || null : null,
-        coreEnd: cScheduleType === "FLEXTIME" ? cCoreEnd || null : null,
-        coreDays: cScheduleType === "FLEXTIME" ? cCoreDays : [],
-        // Phase 436 Plan 02 (D-02/D-06): SHIFT_BASED contract day count + übliche Arbeitstage.
-        contractWorkDaysPerWeek: cScheduleType === "SHIFT_BASED" ? cContractWorkDays : null,
-        ...buildUsualWorkDaysPayload(cScheduleType, cUsualWorkDays),
-        // Personalstruktur (Phase 41)
-        classification: cClassification,
-        coverageWeight: cCoverageWeight,
-        requiresSupervision: cRequiresSupervision,
-        // Issue #435 (D-11/D-12) — optional, drives the statutory-minimum pre-fill/hint only.
-        birthDate: cBirthDate ? new Date(cBirthDate).toISOString() : null,
-        // Issue #482 (G-5, mirrors #435 D-13): a value equal to the classification's OWN
-        // Standard (AZUBI -> Azubi-Standard, everyone else -> Unternehmensstandard) is sent as
-        // null, so the person keeps following later changes of that Standard instead of
-        // freezing today's number as an explicit override. A floor-raised minor suggestion
-        // stays explicit (unchanged #435 D-11 behaviour).
-        annualVacationDays: annualVacationDaysPayload(
-          cAnnualVacationDays,
-          cClassification,
-          tenantDefaultVacationDays,
-          tenantDefaultApprenticeVacationDays,
-        ),
-      };
-      Object.assign(payload, homeSalonPayload(cHomeSalonId));
-      if (cUsePassword && cPassword) payload.password = cPassword;
-      const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
-      employees = [...employees, res].sort((a, b) => a.lastName.localeCompare(b.lastName));
-      createOpen = false;
-      const drafts = cDrafts;
-      let failed = false;
-      try {
-        const failures = await postAssignmentDrafts(res.userId, drafts);
-        if (failures.length > 0) {
-          failed = true;
-          toasts.error(
-            draftFailureMessage(
-              failures.map((f) => ({
-                label: draftLabel(f.draft, createRoles, assignmentCtx),
-                message: f.message,
-              })),
-            ),
-            10000,
-          );
-        } else if (drafts.length > 0) {
-          toasts.success(draftsSavedMessage(drafts.length));
-        }
-      } catch {
-        failed = drafts.length > 0;
-      }
-      if (res.emailError) {
-        toasts.error(
-          `Mitarbeiter angelegt, aber Einladungsmail konnte nicht gesendet werden: ${res.emailError}`,
-        );
-      }
-      if (failed) {
-        await goto(berechtigungenTabHref(res.id));
-        return;
-      }
-      void loadRoleAssignments();
-    } catch (e: unknown) {
-      createError = e instanceof Error ? e.message : "Fehler beim Anlegen";
-    } finally {
-      creating = false;
-    }
+  // The dialog reports the new person as soon as it exists: the list and the role column reload.
+  async function onPersonCreated() {
+    await loadEmployees();
   }
 
   async function resendInvitation(emp: Employee) {
@@ -1148,366 +838,17 @@
   {/if}
 </div>
 
-<!-- ── Anlegen Modal ──────────────────────────────────────────────────────── -->
-<Modal bind:open={createOpen} eyebrow="Mitarbeiter einladen" title="Person einladen">
-  {#if createError}
-    <div class="callout error">{createError}</div>
-  {/if}
-  {#if createEmailError}
-    <div class="callout">
-      Mitarbeiter angelegt, aber: {createEmailError}
-    </div>
-  {:else}
-    <div class="form-grid">
-      <div class="form-group">
-        <label class="form-label" for="c-firstname">Vorname</label>
-        <input id="c-firstname" type="text" bind:value={cFirstName} class="input" required />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="c-lastname">Nachname</label>
-        <input id="c-lastname" type="text" bind:value={cLastName} class="input" required />
-      </div>
-      <div class="form-group form-group--full">
-        <label class="form-label" for="c-email">E-Mail-Adresse</label>
-        <input id="c-email" type="email" bind:value={cEmail} class="input" required />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="c-empno">Mitarbeiter-Nr.</label>
-        <input id="c-empno" type="text" bind:value={cEmployeeNumber} class="input" required />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="c-hiredate">Eintrittsdatum</label>
-        <input
-          id="c-hiredate"
-          type="date"
-          bind:value={cHireDate}
-          class="input"
-          required
-          onchange={refreshVacationPrefill}
-        />
-      </div>
-      <HomeSalonField salons={createSalons} bind:value={cHomeSalonId} />
-      <!-- ── Rollen (Issue #580, D-580-03) ──────────────────────────────── -->
-      <div class="form-group form-group--full form-subhead">
-        <h4 class="form-subhead-title">Rollen</h4>
-      </div>
-      <div class="form-group form-group--full">
-        {#if canAssignRoles}
-          <PersonRoleAssignments
-            personName={createPersonName}
-            bind:drafts={cDrafts}
-            fixedRows={CREATE_FIXED_ROWS}
-            roles={createRoles}
-            mandantRoleIds={createMandantRoleIds}
-            salons={$salonContext.salons}
-            salonsLoaded={$salonContext.loaded}
-            people={createPeople}
-            canManage={canAssignRoles}
-            {canReadRoles}
-            allowGrant={!createRoleChoicesFailed}
-          />
-          {#if createRoleChoicesFailed}
-            <div class="callout">
-              Rollen konnten nicht geladen werden. Weitere Rollen kannst du nach dem Anlegen im Tab
-              „Berechtigungen“ zuweisen.
-            </div>
-          {/if}
-        {/if}
-        <p class="form-hint">
-          Jede neue Person erhält die Rolle „{CREATE_DEFAULT_ROLE_NAME}“ für das ganze Unternehmen.
-          Weitere Rollen werden gespeichert, sobald die Person angelegt ist.
-        </p>
-      </div>
-      <!-- ── Personalstruktur (Phase 41) ────────────────────────────────── -->
-      <div class="form-group form-group--full form-subhead">
-        <h4 class="form-subhead-title">Personalstruktur</h4>
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="c-classification">Personalkategorie</label>
-        <select
-          id="c-classification"
-          bind:value={cClassification}
-          onchange={onCreateClassificationChange}
-          class="select"
-        >
-          {#each CLASSIFICATION_OPTIONS as opt (opt)}
-            <option value={opt}>{CLASSIFICATION_LABELS[opt]}</option>
-          {/each}
-        </select>
-      </div>
-      <!-- Issue #435 (D-11/D-12) — optional birth date drives the statutory-minimum pre-fill -->
-      <div class="form-group">
-        <label class="form-label" for="c-birthdate">Geburtsdatum (optional)</label>
-        <input
-          id="c-birthdate"
-          type="date"
-          class="input"
-          bind:value={cBirthDate}
-          onchange={refreshVacationPrefill}
-        />
-      </div>
-      {#if cClassification === "AZUBI" && !cBirthDate}
-        <div class="callout form-group--full">{MISSING_BIRTH_DATE_HINT}</div>
-      {/if}
-      <div class="form-group">
-        <label class="form-label" for="c-coverage">Schicht-Gewicht</label>
-        <input
-          id="c-coverage"
-          type="number"
-          bind:value={cCoverageWeight}
-          class="input"
-          min="0"
-          max="9.99"
-          step="0.05"
-        />
-        {#if cCoverageOverridden}
-          <div class="override-row">
-            <span class="chip chip-warn">Manuell überschrieben</span>
-            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetCoverage()}
-              >Auf Standard zurück</button
-            >
-          </div>
-        {/if}
-      </div>
-      <div class="form-group form-group--full">
-        <label class="toggle-label">
-          <input type="checkbox" bind:checked={cRequiresSupervision} />
-          Aufsichtspflichtig
-        </label>
-        {#if cSupervisionOverridden}
-          <div class="override-row">
-            <span class="chip chip-warn">Manuell überschrieben</span>
-            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetSupervision()}
-              >Auf Standard zurück</button
-            >
-          </div>
-        {/if}
-      </div>
-      <!-- ── Urlaub (Issue #435, D-13 tracer) ─────────────────────────────── -->
-      <div class="form-group form-group--full form-subhead">
-        <h4 class="form-subhead-title">Urlaub</h4>
-      </div>
-      <div class="form-group form-group--full">
-        <label class="form-label" for="c-annual-vacation-days">
-          Urlaubstage pro Jahr (5-Tage-Woche)
-        </label>
-        <input
-          id="c-annual-vacation-days"
-          type="number"
-          min="0.5"
-          max="365"
-          step="0.01"
-          class="input"
-          bind:value={cAnnualVacationDays}
-          data-testid="admin-employees-create-annual-vacation-days"
-        />
-        <p class="form-hint">
-          Vorschlag aus den Einstellungen des Unternehmens (Azubis: „Urlaubstage Azubis").
-          Entspricht der Wert dem Standard, wird kein eigener Wert gespeichert – die Person folgt
-          dann auch späteren Änderungen des Standards. Wird auf die vertraglichen Arbeitstage
-          umgerechnet und im Eintrittsjahr anteilig berechnet.
-        </p>
-        {#if cBirthMinimum && cAnnualVacationDays !== null && cAnnualVacationDays < cBirthMinimum.days}
-          <div class="callout error">
-            Unter dem gesetzlichen Mindesturlaub von {cBirthMinimum.days.toLocaleString("de-DE", {
-              maximumFractionDigits: 2,
-            })} Tagen ({cBirthMinimum.law}) – das Speichern wird abgelehnt.
-          </div>
-        {/if}
-      </div>
-      <div class="form-group form-group--full form-subhead">
-        <h4 class="form-subhead-title">Arbeitszeitmodell</h4>
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="c-schedule-type">Arbeitszeitmodell</label>
-        <select
-          id="c-schedule-type"
-          value={cScheduleType}
-          onchange={(e) =>
-            onCreateScheduleTypeChange(
-              (e.currentTarget as HTMLSelectElement).value as typeof cScheduleType,
-            )}
-          class="select"
-        >
-          <option value="FIXED_SCHEDULE">Feste Arbeitszeit</option>
-          <option value="FLEXTIME">Gleitzeit</option>
-          <option value="MONTHLY_HOURS">Monatsstunden</option>
-          <option value="SHIFT_BASED">Nach Schichtplan</option>
-        </select>
-      </div>
-      {#if cScheduleType === "FIXED_SCHEDULE" || cScheduleType === "FLEXTIME" || cScheduleType === "SHIFT_BASED"}
-        <div class="form-group">
-          <label class="form-label" for="c-hours">Wochenstunden</label>
-          <input
-            id="c-hours"
-            type="number"
-            bind:value={cWeeklyHours}
-            class="input"
-            min="1"
-            max="60"
-            step="0.5"
-          />
-        </div>
-      {:else}
-        <div class="form-group">
-          <label class="form-label" for="c-monthly-hours"
-            >Stunden/Monat <span class="text-muted">(optional)</span></label
-          >
-          <input
-            id="c-monthly-hours"
-            type="number"
-            bind:value={cMonthlyHours}
-            class="input"
-            min="0"
-            max="200"
-            step="0.5"
-            placeholder="z.B. 15 — leer = nur Tracking"
-          />
-        </div>
-      {/if}
-
-      {#if cScheduleType === "SHIFT_BASED"}
-        <div class="form-group">
-          <label class="form-label" for="c-contract-workdays">Arbeitstage/Woche</label>
-          <input
-            id="c-contract-workdays"
-            type="number"
-            min="1"
-            max="7"
-            step="1"
-            bind:value={cContractWorkDays}
-            class="input"
-          />
-          <p class="hint">
-            Vertragliche Anzahl Arbeitstage pro Woche. Welche Wochentage das konkret sind, bestimmt
-            der Schichtplan.
-          </p>
-        </div>
-        <div class="form-group form-group--full">
-          <!-- Issue #481 R5: required for SHIFT_BASED; the server is authoritative. -->
-          <label class="form-label"
-            >Übliche Arbeitstage <span class="badge badge-gray">Pflicht</span></label
-          >
-          <div class="weekday-chips" role="group" aria-label="Übliche Arbeitstage">
-            {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={cUsualWorkDays.includes(day.value)}
-                aria-pressed={cUsualWorkDays.includes(day.value)}
-                onclick={() => {
-                  if (cUsualWorkDays.includes(day.value)) {
-                    cUsualWorkDays = cUsualWorkDays.filter((d) => d !== day.value);
-                  } else {
-                    cUsualWorkDays = [...cUsualWorkDays, day.value].sort((a, b) => a - b);
-                  }
-                }}>{day.label}</button
-              >
-            {/each}
-          </div>
-          <p class="hint">
-            Pflicht bei Schichtbetrieb: mindestens so viele Tage wie Arbeitstage pro Woche. In
-            angebrochenen Urlaubswochen zählen nur Urlaubstage an diesen Wochentagen; eine volle
-            Urlaubswoche kostet immer die vertraglichen Arbeitstage.
-          </p>
-          {#if usualWorkDaysMissing(cScheduleType, cUsualWorkDays)}
-            <div class="callout">
-              Bitte die üblichen Arbeitstage ankreuzen – bei Schichtbetrieb Pflicht. Ohne Angabe
-              kann der Mitarbeiter nicht angelegt werden.
-            </div>
-          {:else if usualWorkDaysShortfall(cUsualWorkDays, cContractWorkDays) > 0}
-            <div class="callout">
-              Bitte mindestens {cContractWorkDays} Tage ankreuzen – so viele Arbeitstage hat der Vertrag.
-              Sonst wird die Angabe beim Speichern abgelehnt.
-            </div>
-          {/if}
-        </div>
-      {/if}
-
-      {#if cScheduleType === "FLEXTIME"}
-        <div class="form-group form-group--full form-subhead">
-          <h4 class="form-subhead-title">Kernarbeitszeit (optional)</h4>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="c-core-start">Kernzeitbeginn</label>
-          <input
-            id="c-core-start"
-            type="time"
-            bind:value={cCoreStart}
-            class="input"
-            placeholder="—"
-          />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="c-core-end">Kernzeitende</label>
-          <input id="c-core-end" type="time" bind:value={cCoreEnd} class="input" placeholder="—" />
-        </div>
-        <div class="form-group form-group--full">
-          <label class="form-label">Kerntage</label>
-          <div class="weekday-chips" role="group" aria-label="Kerntage">
-            {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={cCoreDays.includes(day.value)}
-                onclick={() => {
-                  if (cCoreDays.includes(day.value)) {
-                    cCoreDays = cCoreDays.filter((d) => d !== day.value);
-                  } else {
-                    cCoreDays = [...cCoreDays, day.value];
-                  }
-                }}>{day.label}</button
-              >
-            {/each}
-          </div>
-          <p class="hint">Leer lassen für reine Gleitzeit ohne Kernzeit.</p>
-        </div>
-      {/if}
-      <div class="form-group form-group--full">
-        <label class="toggle-label">
-          <input type="checkbox" bind:checked={cUsePassword} />
-          Passwort direkt setzen (statt Einladungsmail)
-        </label>
-      </div>
-      {#if cUsePassword}
-        <div class="form-group form-group--full">
-          <label class="form-label" for="c-password">Passwort</label>
-          <input
-            id="c-password"
-            type="password"
-            bind:value={cPassword}
-            class="input"
-            minlength="8"
-            placeholder="Mindestens 8 Zeichen"
-            required
-          />
-          <p class="hint">Mitarbeiter kann sich sofort anmelden. Kein Einladungslink nötig.</p>
-        </div>
-      {/if}
-    </div>
-
-    <div class="callout brand">
-      <div>
-        Die Person erhält per E-Mail einen Einladungslink. Stammdaten werden beim ersten Login
-        vervollständigt.
-      </div>
-    </div>
-  {/if}
-  {#snippet footer()}
-    {#if !createEmailError}
-      <button class="btn btn-ghost" onclick={() => (createOpen = false)}>Abbrechen</button>
-      <button
-        class="btn btn-primary"
-        onclick={createEmployee}
-        disabled={creating || createBlockedByUsualWorkDays || createBlockedByHomeSalon}
-      >
-        {creating ? "Anlegen…" : "Mitarbeiter anlegen"}
-      </button>
-    {:else}
-      <button class="btn btn-primary" onclick={() => (createOpen = false)}>Schließen</button>
-    {/if}
-  {/snippet}
-</Modal>
+<!-- ── Person anlegen: the guided dialog (Issue #854, D-854-06) ───────────────────────────── -->
+{#if canCreate}
+  <CreatePersonDialog
+    bind:open={createOpen}
+    onCreated={onPersonCreated}
+    roles={createRoles}
+    mandantRoleIds={createMandantRoleIds}
+    people={createPeople}
+    roleChoicesFailed={createRoleChoicesFailed}
+  />
+{/if}
 
 <!-- ── Bulk changes: choose the role, preview, one run (Issue #854) ──────────────────────── -->
 {#if canAssignRoles}
@@ -1653,110 +994,11 @@
     font-size: 12.5px;
   }
 
-  /* Form helpers used inside modals */
-  .form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-  }
-  @media (max-width: 480px) {
-    .form-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .form-group--full {
-    grid-column: 1 / -1;
-  }
-  .form-label {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .toggle-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13.5px;
-    color: var(--text);
-    cursor: pointer;
-  }
-
-  .hint {
-    font-size: 13px;
-    color: var(--text-2);
-    margin: 4px 0 0;
-  }
   .text-muted {
     color: var(--text-2);
     font-weight: 400;
   }
 
-  /* ── Personalstruktur (Phase 41) — subhead + override row ─────────────── */
-  .form-subhead {
-    margin-top: 6px;
-    border-top: 1px solid var(--line);
-    padding-top: 14px;
-  }
-  .form-subhead-title {
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-    margin: 0;
-  }
-  .override-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 4px;
-    flex-wrap: wrap;
-  }
-
-  /* ── Weekday chips (Phase 49.2 — FLEXTIME Kernarbeitszeit) ─────────────── */
-  .weekday-chips {
-    display: flex;
-    gap: 0.375rem;
-    flex-wrap: wrap;
-    margin-top: 0.375rem;
-    margin-bottom: 0.375rem;
-  }
-
-  .wd-chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 2.5rem;
-    height: 2rem;
-    padding: 0 0.625rem;
-    border-radius: var(--r-pill);
-    font-size: 0.8125rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition:
-      background 0.15s,
-      color 0.15s,
-      border-color 0.15s;
-    border: 1.5px solid var(--line);
-    background: transparent;
-    color: var(--text-2);
-  }
-
-  .wd-chip--active {
-    background: var(--brand);
-    border-color: var(--brand);
-    color: var(--brand-ink);
-  }
-
-  .wd-chip:hover:not(.wd-chip--active) {
-    border-color: var(--brand);
-    color: var(--brand);
-  }
   .role-chips {
     display: inline-flex;
     flex-wrap: wrap;

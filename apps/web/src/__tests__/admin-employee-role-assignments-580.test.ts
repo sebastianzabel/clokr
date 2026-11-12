@@ -22,6 +22,15 @@ const LIST = readRouteFile(
   "../routes/(app)/admin/employees/+page.svelte",
   "src/routes/(app)/admin/employees/+page.svelte",
 );
+// Since Issue #854 the create form is the guided dialog; its body comes from the create-person model.
+const CREATE_DIALOG = readRouteFile(
+  "../lib/components/employees/CreatePersonDialog.svelte",
+  "src/lib/components/employees/CreatePersonDialog.svelte",
+);
+const CREATE_MODEL = readRouteFile(
+  "../lib/employees/create-person.ts",
+  "src/lib/employees/create-person.ts",
+);
 
 /** The body of `function <name>` (balanced braces). */
 function fnBody(source: string, name: string): string {
@@ -86,26 +95,34 @@ describe("/admin/employees — the Rolle column (#580)", () => {
 });
 
 describe("/admin/employees — create dialog (#580)", () => {
+  it("[vacuity gate] the dialog and the model are loaded", () => {
+    expect(CREATE_DIALOG.length).toBeGreaterThan(8_000);
+    expect(CREATE_MODEL.length).toBeGreaterThan(3_000);
+  });
+
   it("sends no role with the new person and has no role select", () => {
-    const payload = LIST.slice(
-      LIST.indexOf("const payload"),
-      LIST.indexOf("Object.assign(payload"),
+    const payload = CREATE_MODEL.slice(
+      CREATE_MODEL.indexOf("const payload"),
+      CREATE_MODEL.indexOf("Object.assign(payload"),
     );
     expect(payload.length).toBeGreaterThan(200);
     expect(payload).not.toMatch(/\brole:/);
-    expect(LIST).not.toMatch(/\bcRole\b|id="c-role"/);
-    expect(LIST).not.toContain("Administrator");
+    expect(CREATE_MODEL).not.toMatch(/\brole\b\s*:/);
+    for (const source of [LIST, CREATE_DIALOG]) {
+      expect(source).not.toMatch(/\bcRole\b|id="c-role"/);
+      expect(source).not.toContain("Administrator");
+    }
   });
 
   it("drafts further roles in the shared block, after the fixed default role", () => {
-    expect(LIST).toContain("bind:drafts={cDrafts}");
-    expect(LIST).toContain("fixedRows={CREATE_FIXED_ROWS}");
-    expect(LIST).toMatch(/roleName: CREATE_DEFAULT_ROLE_NAME, scope: \{ type: "TENANT" \}/);
+    expect(CREATE_DIALOG).toContain("bind:drafts={roleDrafts}");
+    expect(CREATE_DIALOG).toContain("fixedRows={FIXED_ROWS}");
+    expect(CREATE_DIALOG).toMatch(/roleName: CREATE_DEFAULT_ROLE_NAME, scope: \{ type: "TENANT"/);
   });
 
   it("posts the drafts for the created user and hands a refusal over to the tab", () => {
-    expect(LIST).toContain("postAssignmentDrafts(res.userId, drafts)");
-    expect(LIST).toContain("goto(berechtigungenTabHref(res.id))");
+    expect(CREATE_DIALOG).toContain("postAssignmentDrafts(userId, drafts)");
+    expect(CREATE_DIALOG).toContain("goto(berechtigungenTabHref(res.id))");
   });
 
   it("loads the role choices only with role-assignment:manage", () => {
@@ -113,5 +130,11 @@ describe("/admin/employees — create dialog (#580)", () => {
     const guard = body.indexOf("if (!canAssignRoles)");
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(body.indexOf("listAssignablePeople("));
+  });
+
+  it("the page hands the loaded choices to the dialog", () => {
+    expect(LIST).toContain("roles={createRoles}");
+    expect(LIST).toContain("mandantRoleIds={createMandantRoleIds}");
+    expect(LIST).toContain("roleChoicesFailed={createRoleChoicesFailed}");
   });
 });

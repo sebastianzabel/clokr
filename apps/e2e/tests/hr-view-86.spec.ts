@@ -369,19 +369,27 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await page.goto(`${tenant.baseUrl}/admin/employees`);
     await expect(page.getByTestId(`admin-employees-row-${x.id}`)).toBeVisible();
     await page.getByTestId("admin-employees-add").click();
-    await page.locator("#c-firstname").fill("Yvonne");
-    await page.locator("#c-lastname").fill("Neuanlage");
-    await page.locator("#c-email").fill(`neu.${tenant.tenantId.toLowerCase()}@example.invalid`);
-    await page.locator("#c-empno").fill(`E86-neu-${tenant.tenantId.slice(-4)}`);
-    await page.getByLabel("Passwort direkt setzen (statt Einladungsmail)").check();
-    await page.locator("#c-password").fill(HR_PASSWORD);
-    const submit = page.getByRole("button", { name: "Mitarbeiter anlegen", exact: true });
-    // The Stammsalon is required with two active salons: nothing chosen, nothing to submit.
-    await expect(page.locator("#c-home-salon")).toBeVisible();
-    await expect(submit).toBeDisabled();
-    await page.locator("#c-home-salon").selectOption({ label: SECOND_SALON_NAME });
-    await expect(submit).toBeEnabled();
-    await submit.click();
+    // #854: the guided dialog - Person, Salon & Rolle, Vertrag, Einladung.
+    const dialog = page.getByRole("dialog", { name: "Person anlegen" });
+    const next = dialog.getByRole("button", { name: "Weiter", exact: true });
+    await dialog.getByLabel("Vorname").fill("Yvonne");
+    await dialog.getByLabel("Nachname").fill("Neuanlage");
+    await dialog
+      .getByLabel("E-Mail-Adresse")
+      .fill(`neu.${tenant.tenantId.toLowerCase()}@example.invalid`);
+    await dialog.getByLabel("Personalnummer").fill(`E86-neu-${tenant.tenantId.slice(-4)}`);
+    await next.click();
+    // The Stammsalon is required with two active salons: nothing chosen, the step is not left.
+    await expect(dialog.locator("#c-home-salon")).toBeVisible();
+    await next.click();
+    await expect(dialog.getByText("Wähle den Stammsalon.")).toBeVisible();
+    await expect(dialog.locator("#c-home-salon")).toBeVisible();
+    await dialog.locator("#c-home-salon").selectOption({ label: SECOND_SALON_NAME });
+    await next.click();
+    await next.click();
+    await dialog.getByRole("radio", { name: "Passwort setzen" }).click();
+    await dialog.locator('input[type="password"]').fill(HR_PASSWORD);
+    await dialog.getByRole("button", { name: "Person anlegen", exact: true }).click();
     await expect(page.getByRole("row", { name: /Neuanlage/ })).toBeVisible();
     // The chosen salon is what the server stored as the Stammsalon.
     const listRes = await request.get(`${API_BASE}/api/v1/employees`, {

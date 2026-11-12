@@ -24,9 +24,14 @@ const DETAIL = readRouteFile(
   "../routes/(app)/admin/employees/[id]/+page.svelte",
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
-const LIST = readRouteFile(
-  "../routes/(app)/admin/employees/+page.svelte",
-  "src/routes/(app)/admin/employees/+page.svelte",
+// Since Issue #854 the create form is the guided dialog; its rule lives in the create-person model.
+const CREATE_DIALOG = readRouteFile(
+  "../lib/components/employees/CreatePersonDialog.svelte",
+  "src/lib/components/employees/CreatePersonDialog.svelte",
+);
+const CREATE_MODEL = readRouteFile(
+  "../lib/employees/create-person.ts",
+  "src/lib/employees/create-person.ts",
 );
 
 /** Body of `async function <name>(` — fails loudly when the marker is missing. */
@@ -70,20 +75,28 @@ describe("Nachtrag section on admin/employees/[id] (Issue #481 R6/R7)", () => {
 });
 
 describe("übliche Arbeitstage are Pflicht in both contract entry points (Issue #481 R5/R7)", () => {
-  for (const [name, source] of [
-    ["detail page", DETAIL],
-    ["create dialog", LIST],
-  ] as const) {
-    it(`${name}: no '(optional)', a Pflicht badge, no 'Leer lassen'`, () => {
-      expect(source).not.toContain("Übliche Arbeitstage (optional)");
-      expect(source).toContain('class="badge badge-gray">Pflicht');
-      expect(source).not.toContain("Leer lassen, wenn es keine festen Tage gibt");
-    });
+  it("detail page: no '(optional)', a Pflicht badge, no 'Leer lassen'", () => {
+    expect(DETAIL).not.toContain("Übliche Arbeitstage (optional)");
+    expect(DETAIL).toContain('class="badge badge-gray">Pflicht');
+    expect(DETAIL).not.toContain("Leer lassen, wenn es keine festen Tage gibt");
+  });
 
-    it(`${name}: a callout guarded by usualWorkDaysMissing`, () => {
-      expect(source).toMatch(/usualWorkDaysMissing\([\s\S]{0,200}bei Schichtbetrieb Pflicht/);
-    });
-  }
+  it("detail page: a callout guarded by usualWorkDaysMissing", () => {
+    expect(DETAIL).toMatch(/usualWorkDaysMissing\([\s\S]{0,200}bei Schichtbetrieb Pflicht/);
+  });
+
+  it("create dialog: the label says Pflicht, no '(optional)', no 'Leer lassen'", () => {
+    expect(CREATE_DIALOG).toContain('legend="Übliche Arbeitstage (Pflicht)"');
+    expect(CREATE_DIALOG).not.toContain("Übliche Arbeitstage (optional)");
+    expect(CREATE_DIALOG).toContain("Pflicht bei Schichtbetrieb");
+    expect(CREATE_DIALOG).not.toContain("Leer lassen, wenn es keine festen Tage gibt");
+  });
+
+  it("create dialog: the message is guarded by usualWorkDaysMissing and the shortfall", () => {
+    expect(CREATE_MODEL).toMatch(/usualWorkDaysMissing\([\s\S]{0,200}bei Schichtbetrieb Pflicht/);
+    expect(CREATE_MODEL).toMatch(/usualWorkDaysShortfall\(/);
+    expect(CREATE_DIALOG).toContain("error={errors.usualWorkDays}");
+  });
 
   it("detail page: the Arbeitszeitmodell save is blocked by the Angabe rule", () => {
     expect(DETAIL).toContain("disabled={arbeitszeitSaving || scheduleBlockedByUsualWorkDays}");
@@ -92,13 +105,10 @@ describe("übliche Arbeitstage are Pflicht in both contract entry points (Issue 
     );
   });
 
-  it("create dialog: Anlegen is blocked by the Angabe rule", () => {
-    // Issue #86 appended the Stammsalon rule to the same expression; the Angabe rule stays in it.
-    expect(LIST).toContain(
-      "disabled={creating || createBlockedByUsualWorkDays || createBlockedByHomeSalon}",
-    );
-    expect(LIST).toMatch(
-      /createBlockedByUsualWorkDays = \$derived\([\s\S]{0,200}usualWorkDaysMissing\([\s\S]{0,120}usualWorkDaysShortfall\(/,
-    );
+  it("create dialog: leaving the Vertrag step and sending are blocked by the Angabe rule", () => {
+    // The Vertrag step validates before "Weiter"; the last step re-validates every step before the POST.
+    expect(CREATE_DIALOG).toMatch(/const found = validateStep\(step,/);
+    expect(CREATE_DIALOG).toMatch(/const invalid = firstInvalidStep\(snapshot, ctx\);/);
+    expect(CREATE_MODEL).toMatch(/function vertragErrors[\s\S]{0,2500}usualWorkDays/);
   });
 });

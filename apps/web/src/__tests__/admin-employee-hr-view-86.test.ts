@@ -58,6 +58,15 @@ const LIST = readRouteFile(
   "../routes/(app)/admin/employees/+page.svelte",
   "src/routes/(app)/admin/employees/+page.svelte",
 );
+// Since Issue #854 the create form is the guided dialog; the page only mounts it.
+const CREATE_DIALOG = readRouteFile(
+  "../lib/components/employees/CreatePersonDialog.svelte",
+  "src/lib/components/employees/CreatePersonDialog.svelte",
+);
+const CREATE_MODEL = readRouteFile(
+  "../lib/employees/create-person.ts",
+  "src/lib/employees/create-person.ts",
+);
 
 describe("/admin/employees/[id] - employment on today's model (Issue #86, D-01)", () => {
   it("renders the read-only Vertragsverlauf from contractHistoryRows(contractHistory)", () => {
@@ -183,25 +192,43 @@ describe("/team/time-entries - guards itself by its own permission (Issue #86, A
 });
 
 describe("/admin/employees - Stammsalon in the create form (Issue #86, AC-86-1)", () => {
-  it("reads GET /salons only for a caller with salon:read", () => {
-    expect(LIST).toMatch(/salonAdminRights\(\$authStore\.user\)\.canRead/);
-    expect(LIST).toMatch(/if \(!canReadSalons\) \{\s*createSalons = null;\s*return;/);
-    expect(LIST).toMatch(/api\.get<\{ salons: SalonRef\[\] \}>\("\/salons"\)/);
+  it("[vacuity gate] the page mounts the dialog and the dialog source is loaded", () => {
+    expect(LIST).toContain("<CreatePersonDialog");
+    expect(CREATE_DIALOG.length).toBeGreaterThan(8_000);
+    expect(CREATE_MODEL.length).toBeGreaterThan(3_000);
   });
 
-  it("renders the field, blocks the submit while a required Stammsalon is missing and refreshes the list when the dialog opens", () => {
-    expect(LIST).toMatch(/<HomeSalonField salons=\{createSalons\} bind:value=\{cHomeSalonId\} \/>/);
-    expect(LIST).toMatch(/createBlockedByHomeSalon[\s\S]{0,160}offerHomeSalonChoice\(true,/);
-    expect(LIST).toMatch(
-      /disabled=\{creating \|\| createBlockedByUsualWorkDays \|\| createBlockedByHomeSalon\}/,
+  it("reads GET /salons only for a caller with salon:read", () => {
+    expect(CREATE_DIALOG).toMatch(/salonAdminRights\(\$authStore\.user\)\.canRead/);
+    expect(CREATE_DIALOG).toMatch(/if \(!canReadSalons\) \{\s*salons = null;\s*return;/);
+    expect(CREATE_DIALOG).toMatch(/api\.get<\{ salons: SalonRef\[\] \}>\("\/salons"\)/);
+  });
+
+  it("renders the field, requires a Stammsalon before the step is left and re-reads the list whenever the dialog opens", () => {
+    expect(CREATE_DIALOG).toMatch(
+      /<HomeSalonField \{salons\} bind:value=\{draft\.homeSalonId\} error=\{errors\.homeSalonId\} \/>/,
     );
-    expect(LIST).toMatch(/cHomeSalonId = "";\s*void loadCreateSalons\(\);/);
+    expect(CREATE_DIALOG).toMatch(
+      /homeSalonRequired:\s*salons !== null && offerHomeSalonChoice\(true,/,
+    );
+    expect(CREATE_MODEL).toMatch(/ctx\.homeSalonRequired && draft\.homeSalonId === ""/);
+    expect(CREATE_DIALOG).toMatch(/untrack\(reset\)/);
+    expect(CREATE_DIALOG).toMatch(/void loadSalons\(\);/);
   });
 
   it("sends homeSalonId only through homeSalonPayload and shows the server's German error", () => {
-    expect(LIST).toMatch(/Object\.assign\(payload, homeSalonPayload\(cHomeSalonId\)\)/);
-    expect(LIST).not.toMatch(/homeSalonId:/);
-    expect(LIST).toMatch(/createError = e instanceof Error \? e\.message : "Fehler beim Anlegen"/);
-    expect(LIST).toMatch(/\{#if createError\}\s*<div class="callout error">\{createError\}<\/div>/);
+    expect(CREATE_MODEL).toMatch(
+      /Object\.assign\(payload, homeSalonPayload\(draft\.homeSalonId\)\)/,
+    );
+    // the body builder never spells the key itself (the draft field of the same name is not the body)
+    expect(
+      CREATE_MODEL.slice(CREATE_MODEL.indexOf("export function employeeCreatePayload")),
+    ).not.toMatch(/homeSalonId:/);
+    expect(CREATE_DIALOG).toMatch(
+      /submitError = e instanceof Error \? e\.message : "Fehler beim Anlegen"/,
+    );
+    expect(CREATE_DIALOG).toMatch(
+      /\{#if submitError\}\s*<div role="alert"><Note tone="bad">\{submitError\}<\/Note><\/div>/,
+    );
   });
 });
