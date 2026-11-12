@@ -7,6 +7,7 @@
   import { api } from "$api/client";
   import { salonContext } from "$stores/salon-context";
   import {
+    createRoleAssignment,
     listAssignablePeople,
     listRoleAssignments,
     loadAssignmentChoices,
@@ -47,6 +48,15 @@
   } from "$components/ui/DataTable.svelte";
   import { urlState } from "$lib/table/url-state";
   import { downloadCsv, rowsToCsv } from "$lib/table/csv-export";
+  import {
+    alreadyHoldsAssignment,
+    bulkSummaryText,
+    runPerPerson,
+    type BulkKind,
+  } from "$lib/employees/bulk-actions";
+  import BulkPreviewDialog from "$components/ui/BulkPreviewDialog.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import BulkRoleDialog from "$lib/components/employees/BulkRoleDialog.svelte";
   import { listUrlSchema, sortEmployees } from "$lib/employees/list-url-state";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
@@ -436,6 +446,99 @@
       Object.fromEntries(exported.map((column) => [column.key, exportText(emp, column.key)])),
     );
     downloadCsv(`personen-${today}.csv`, rowsToCsv(exported, records));
+  }
+
+  // ── Bulk changes (Issue #854, D-854-09, AC-2) ──────────────────────────────────────────────────
+  // „Einladung erneut senden“ and „Rolle zuweisen“ run the existing per-person request for every
+  // selected person, after a preview that lists exactly who is touched. The API stays the authority
+  // (reach, role-assignment:manage, package gate, four-eyes); a refusal is reported per person.
+  let bulkKind = $state<BulkKind>("invitation");
+  let bulkOpen = $state(false);
+  let bulkRunning = $state(false);
+  let bulkRoleOpen = $state(false);
+  let bulkChoice = $state<{ accessRoleId: string; scope: AssignmentScope } | null>(null);
+
+  function hasOpenInvitation(emp: Employee): boolean {
+    return (
+      !emp.user.isActive &&
+      (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")
+    );
+  }
+  function personName(emp: Employee): string {
+    return `${emp.lastName}, ${emp.firstName}`;
+  }
+
+  // Who the open preview would touch, and who is named as skipped (with the reason).
+  let bulkTargets = $derived(
+    bulkKind === "invitation"
+      ? selectedEmployees.filter(hasOpenInvitation)
+      : selectedEmployees.filter(
+          (emp) =>
+            !isAnonymized(emp) &&
+            !(bulkChoice && alreadyHoldsAssignment(assignmentsOf(emp), bulkChoice)),
+        ),
+  );
+  let bulkSkipped = $derived(selectedEmployees.filter((emp) => !bulkTargets.includes(emp)));
+  let bulkSkipReason = $derived(
+    bulkKind === "invitation"
+      ? "ohne offene Einladung"
+      : "anonymisiert oder hat diese Rolle bereits",
+  );
+
+  function askResendInvitations() {
+    bulkKind = "invitation";
+    bulkOpen = true;
+  }
+
+  async function askAssignRole() {
+    if (createRoles.length === 0 && !createRoleChoicesFailed) await loadCreateRoleChoices();
+    bulkChoice = null;
+    bulkRoleOpen = true;
+  }
+
+  function onBulkRoleChosen(choice: { accessRoleId: string; scope: AssignmentScope }) {
+    bulkChoice = choice;
+    bulkKind = "role";
+    bulkOpen = true;
+  }
+
+  function nameOfId(id: string): string {
+    const emp = employees.find((e) => e.id === id);
+    return emp ? personName(emp) : id;
+  }
+
+  async function runBulk() {
+    if (bulkRunning || bulkTargets.length === 0) return;
+    const kind = bulkKind;
+    const choice = bulkChoice;
+    bulkRunning = true;
+    try {
+      const userIdOf = new Map(bulkTargets.map((emp) => [emp.id, emp.userId]));
+      const result = await runPerPerson(
+        bulkTargets.map((emp) => emp.id),
+        (id) =>
+          kind === "invitation"
+            ? api.post(`/employees/${id}/resend-invitation`, {})
+            : createRoleAssignment({
+                userId: userIdOf.get(id) ?? "",
+                accessRoleId: choice?.accessRoleId ?? "",
+                scope: choice?.scope ?? { type: "TENANT" },
+              }),
+      );
+      bulkOpen = false;
+      const text = bulkSummaryText(kind, result, nameOfId);
+      if (result.failed.length === 0) toasts.success(text);
+      else toasts.error(text, 10000);
+      await loadEmployees();
+      // The failed rows stay selected, so the run can be repeated for exactly them.
+      selectedIds = result.failed.map((f) => f.id);
+    } finally {
+      bulkRunning = false;
+    }
+  }
+
+  function bulkChoiceLabel(): string {
+    return bulkChoice ? draftLabel({ key: "bulk", ...bulkChoice }, createRoles, assignmentCtx) : "";
   }
 
   // KPI mini-stats (exclude anonymized)
@@ -931,6 +1034,22 @@
                     onclick={exportSelectedCsv}
                     data-testid="admin-employees-export-csv">Als CSV exportieren</button
                   >
+                  {#if canManageAccess}
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm"
+                      onclick={askResendInvitations}
+                      data-testid="admin-employees-bulk-invite">Einladung erneut senden</button
+                    >
+                  {/if}
+                  {#if canAssignRoles && canReadRoles}
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm"
+                      onclick={askAssignRole}
+                      data-testid="admin-employees-bulk-role">Rolle zuweisen</button
+                    >
+                  {/if}
                   <button
                     type="button"
                     class="btn btn-ghost btn-sm"
@@ -1396,6 +1515,55 @@
   {/snippet}
 </Modal>
 
+<!-- ── Sammeländerungen: Rolle wählen, Vorschau, ein Lauf (Issue #854) ───────────────────── -->
+{#if canAssignRoles}
+  <BulkRoleDialog
+    bind:open={bulkRoleOpen}
+    personCount={selectedCount}
+    roles={createRoles}
+    mandantRoleIds={createMandantRoleIds}
+    salons={$salonContext.salons}
+    salonsLoaded={$salonContext.loaded}
+    people={createPeople}
+    onChoose={onBulkRoleChosen}
+  />
+{/if}
+
+<BulkPreviewDialog
+  bind:open={bulkOpen}
+  title={bulkKind === "invitation" ? "Einladungen erneut senden" : "Rolle zuweisen"}
+  eyebrow="Sammeländerung"
+  count={bulkTargets.length}
+  confirmLabel={bulkKind === "invitation" ? "Einladungen senden" : "Rolle zuweisen"}
+  pending={bulkRunning}
+  onConfirm={runBulk}
+>
+  {#snippet intro()}
+    {#if bulkKind === "role" && bulkChoice}
+      <Note tone="info">Zugewiesen wird: {bulkChoiceLabel()}</Note>
+    {/if}
+    {#if bulkSkipped.length > 0}
+      <Note tone="warn">
+        {bulkSkipped.length === 1
+          ? "Diese Person wird übersprungen"
+          : `Diese ${bulkSkipped.length} Personen werden übersprungen`} ({bulkSkipReason}): {bulkSkipped
+          .map(personName)
+          .join("; ")}
+      </Note>
+    {/if}
+  {/snippet}
+  {#snippet list()}
+    <p class="bulk-preview-count">
+      {bulkTargets.length === 1 ? "Betrifft 1 Person" : `Betrifft ${bulkTargets.length} Personen`}
+    </p>
+    <ul class="bulk-preview-list" data-testid="admin-employees-bulk-preview-list">
+      {#each bulkTargets as emp (emp.id)}
+        <li>{personName(emp)}</li>
+      {/each}
+    </ul>
+  {/snippet}
+</BulkPreviewDialog>
+
 <!-- ── Deaktivieren mit letztem Arbeitstag (Issue #615) ───────────────────── -->
 {#if deactivateDialog.emp}
   <DeactivateEmployeeDialog
@@ -1536,6 +1704,20 @@
     font-weight: 600;
     color: var(--text);
     margin-right: var(--s-2);
+  }
+
+  .bulk-preview-count {
+    margin: 0;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .bulk-preview-list {
+    margin: var(--s-2) 0 0;
+    padding-left: var(--s-5);
+    max-height: 260px;
+    overflow-y: auto;
+    color: var(--text);
+    font-size: var(--fs-base);
   }
 
   .action-group {
