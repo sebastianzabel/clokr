@@ -28,6 +28,7 @@
  */
 import { visualTest as test, expect } from "./visual.setup";
 import { seedDeterministicTenant, ANCHOR_DATE } from "../fixtures/visual-seed";
+import type { Locator, Page } from "@playwright/test";
 
 // Track the seed result across the test lifecycle so afterEach can drop the
 // tenant. Using an outer Map keyed by testInfo.testId avoids leakage between
@@ -80,6 +81,22 @@ test.afterEach(async ({ request }, testInfo) => {
   });
 });
 
+/**
+ * Issue #845: the parts of Ich › Mein Tag whose text follows the server's real date (the visual
+ * seed freezes only the browser clock): the Stundenkonto value with its line below, and the titles
+ * and subtitles of the „Für dich“ rows.
+ */
+function realDateMasks(page: Page): Locator[] {
+  const saldo = page.getByTestId("kpi-saldo");
+  const forYou = page.getByRole("list", { name: "Für dich", exact: true });
+  return [
+    saldo.locator(".kpi-value"),
+    saldo.locator(".kpi-explanation"),
+    forYou.locator(".list-title"),
+    forYou.locator(".list-subtitle"),
+  ];
+}
+
 test.describe("Phase 75 — Visual baselines", () => {
   test("01 — Dashboard", async ({ page }) => {
     await page.goto("/dashboard");
@@ -94,9 +111,13 @@ test.describe("Phase 75 — Visual baselines", () => {
     // Issue #588 (P-13): the card "Salden" shows figures the server computes against the real
     // date (the visual seed freezes only the browser clock), so its names order, values and median
     // move every day. The mask keeps the card's frame, heading and position in the comparison.
+    // Issue #845: Mein Tag shows two more figures the server computes against the real date — the
+    // Stundenkonto (saldo through yesterday) and the missing days under „Für dich“ (the newest
+    // workdays without an entry). Same reasoning as P-13: the values are masked, the KPI cell, the
+    // rows, their chips and buttons stay in the comparison.
     await expect(page).toHaveScreenshot("01-dashboard.png", {
       fullPage: true,
-      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values")],
+      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values"), ...realDateMasks(page)],
     });
   });
 
@@ -183,9 +204,10 @@ test.describe("Phase 75 — Visual baselines", () => {
     await page.waitForLoadState("networkidle");
     // Mask chart.js <canvas> (non-deterministic rasterization) — see test 01 — and the figures of
     // the card "Salden" (Issue #588, P-13: they move with the server's real date).
+    // Issue #845: the real-date figures of Mein Tag — see test 01.
     await expect(page).toHaveScreenshot("10-mobile-dashboard.png", {
       fullPage: true,
-      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values")],
+      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values"), ...realDateMasks(page)],
     });
   });
 

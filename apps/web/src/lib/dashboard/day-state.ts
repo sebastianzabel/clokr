@@ -89,6 +89,8 @@ export interface ClockDayEntry extends TravelRowFields {
   salonId?: string;
   /** Issue #70 — display name of `salonId` (GET /time-entries `salonName`). */
   salonName?: string;
+  /** Issue #596: start of the running break of an open row (server state), null otherwise. */
+  breakStartedAt?: string | null;
   /** Server-computed per-entry working minutes (closed rows); `null` for an open row. */
   workingMinutes?: number | null;
   /** Issue #657 — the Zeitnachtrag request this row is coupled to (control value, not display). */
