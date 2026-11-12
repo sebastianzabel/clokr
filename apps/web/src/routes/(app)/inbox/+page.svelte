@@ -6,20 +6,29 @@
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { hasAnyPermission } from "$lib/permissions"; // Phase 378 (#378)
+  import { hasAnyPermission, hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
-  import KPIStat from "$components/ui/KPIStat.svelte";
-  import ApprovalRow from "$components/ui/ApprovalRow.svelte";
+  import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
+  import List from "$components/ui/List.svelte";
+  import ApprovalRow from "$components/ui/ApprovalRow.svelte"; // retro list only, until the Zeitnachtrag rows join the one list
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // § 9 reject reason (moved from /team/leave, #840)
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
   import { LEAVE_TYPE_OPTIONS, type CalendarTypeCode } from "$lib/leave/team-calendar-visibility"; // Phase 262, Phase 255
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
-  import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"; // Issue #840 (G-3)
+  import TaskRow from "$lib/components/team/aufgaben/TaskRow.svelte"; // Issue #853 (D-853-06)
+  import {
+    taskRowsFrom,
+    taskCounts,
+    taskKindLabel,
+    type TaskKind,
+    type TaskRowModel,
+  } from "$lib/team/task-model"; // Issue #853 (D-853-06)
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
   import { parseInboxDeepLink, type InboxDeepLink } from "$lib/leave/inbox-deep-link"; // Issue #840 (D-840-05)
 
@@ -48,8 +57,6 @@
     attestValidTo: string | null;
   }
 
-  type TabKey = "open" | "approved" | "rejected" | "all";
-
   // ── RetroEntryRequest types ──────────────────────────────────────────────
   type RetroStatus = "PENDING" | "APPROVED" | "REJECTED" | "USED";
 
@@ -76,7 +83,7 @@
   // would fall back to the raw code, but LeaveRequest.typeCode can never be HOLIDAY — that value
   // exists only in CalendarTypeCode, for calendar holiday colouring (CONTEXT <deferred>,
   // RESEARCH § Vocabulary Duplication). Measured gap, not a bug.
-  function typeName(code: TypeCode): string {
+  function typeName(code: string): string {
     return LEAVE_TYPE_OPTIONS.find((t) => t.code === code)?.label ?? code;
   }
 
@@ -88,7 +95,6 @@
   let pendingRequests: LeaveRequest[] = $state([]);
   let loading = $state(true);
   let error = $state("");
-  let tab: TabKey = $state("open");
 
   // Detail modal — Phase 255: markup and mutation now live in the shared LeaveReviewDialog
   // component; the page only keeps the two pieces of state that select which request is
@@ -279,23 +285,34 @@
     return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
   }
 
-  // ── Derived: filtered lists + KPIs ───────────────────────────────────────
+  // ── Derived: the open leave requests as task rows + the KPI band ─────────────
   let openRequests = $derived(
     pendingRequests.filter((r) => r.status === "PENDING" || r.status === "CANCELLATION_REQUESTED"),
   );
-  let approvedRequests = $derived(requests.filter((r) => r.status === "APPROVED"));
-  let rejectedRequests = $derived(requests.filter((r) => r.status === "REJECTED"));
 
-  let visibleRequests = $derived.by(() => {
-    if (tab === "open") return openRequests;
-    if (tab === "approved") return approvedRequests;
-    if (tab === "rejected") return rejectedRequests;
-    return requests;
-  });
+  // The one task list (D-853-06): oldest first. The day figure is always the shared helper.
+  const taskRows = $derived(
+    taskRowsFrom(
+      { leave: openRequests },
+      { leaveDays: (r) => leaveDaysLabel(Number(r.days), r.halfDay, r.typeCode as TypeCode) },
+    ),
+  );
+  const taskOpenCounts = $derived(taskCounts(taskRows));
 
-  let kpiPending = $derived(openRequests.length);
-  let kpiApproved = $derived(approvedRequests.length);
-  let kpiRejected = $derived(rejectedRequests.length);
+  // A kind is offered only to a caller who can decide it (same hint as the loaders; the API decides).
+  const availableKinds = $derived<TaskKind[]>(canListLeave ? ["urlaub"] : []);
+  const kpiItems = $derived<KpiItem[]>(
+    availableKinds.map((kind) => ({
+      label: `Offen · ${taskKindLabel(kind)}`,
+      value: taskOpenCounts[kind],
+      testId: `inbox-kpi-${kind}`,
+    })),
+  );
+
+  /** The request a task row stands for (the open list first, as the deep link does). */
+  function leaveOf(row: TaskRowModel): LeaveRequest | null {
+    return pendingRequests.find((r) => r.id === row.sourceId) ?? null;
+  }
 
   // ── Detail modal ─────────────────────────────────────────────────────────
   function openDetail(req: LeaveRequest) {
@@ -320,8 +337,6 @@
     if (retroTab === "rejected") return retroRejectedRequests;
     return retroRequests;
   });
-
-  let kpiRetroPending = $derived(retroOpenRequests.length);
 
   // ── Retro detail modal ────────────────────────────────────────────────────
   function openRetroDetail(req: RetroEntryRequest) {
@@ -573,197 +588,57 @@
   <title>{pageLabel("/inbox")} – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow="Team" title={pageLabel("/inbox")} />
+<PageHead title={pageLabel("/inbox")} sub="Entscheidungen, die auf dich warten" />
 
 {#if error}
-  <div class="callout error" role="alert" style="margin-bottom: 16px;">
-    <span class="ico">⚠</span>
-    <p>{error}</p>
+  <ErrorState message={error} hint="" onRetry={() => void loadRequests()} retrying={loading} />
+{/if}
+
+<!-- ── One band: how many decisions wait, per kind the caller can take ─────────── -->
+{#if kpiItems.length > 0}
+  <div class="aufgaben-band">
+    <KpiStrip band ariaLabel="Offene Aufgaben" items={kpiItems} />
   </div>
 {/if}
 
-<!-- ── KPI row (4 stats: leave pending/approved/rejected + retro pending) ── -->
-<div class="kpi-row">
-  <Card animate>
-    <KPIStat
-      label="Offen"
-      value={String(kpiPending)}
-      unit={kpiPending === 1 ? "Antrag" : "Anträge"}
-    />
-  </Card>
-  <Card animate>
-    <KPIStat
-      label="Genehmigt"
-      value={String(kpiApproved)}
-      unit={kpiApproved === 1 ? "Antrag" : "Anträge"}
-    />
-  </Card>
-  <Card animate>
-    <KPIStat
-      label="Abgelehnt"
-      value={String(kpiRejected)}
-      unit={kpiRejected === 1 ? "Antrag" : "Anträge"}
-    />
-  </Card>
-  <Card animate>
-    <KPIStat
-      label="Retro-Anträge"
-      value={String(kpiRetroPending)}
-      unit={kpiRetroPending === 1 ? "offen" : "offen"}
-    />
-  </Card>
-</div>
-
-<!-- ── Global view-tabs above the list card ──────────────────────────────── -->
-<div class="view-tabs" role="tablist">
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={tab === "open"}
-    role="tab"
-    aria-selected={tab === "open"}
-    onclick={() => (tab = "open")}
-  >
-    Offen
-    {#if openRequests.length > 0}
-      <span class="tab-badge">{openRequests.length}</span>
-    {/if}
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={tab === "approved"}
-    role="tab"
-    aria-selected={tab === "approved"}
-    onclick={() => (tab = "approved")}
-  >
-    Genehmigt
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={tab === "rejected"}
-    role="tab"
-    aria-selected={tab === "rejected"}
-    onclick={() => (tab = "rejected")}
-  >
-    Abgelehnt
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={tab === "all"}
-    role="tab"
-    aria-selected={tab === "all"}
-    onclick={() => (tab = "all")}
-  >
-    Alle
-  </button>
-</div>
-
-<!-- ── List card with ApprovalRow entries ───────────────────────────────── -->
-<Card animate class="list-card" style="padding: 0;">
-  <div class="list-card-header">
-    <CardHeader
-      title="Anträge"
-      sub={tab === "open"
-        ? "Offen — auf Entscheidung wartend"
-        : tab === "approved"
-          ? `Genehmigt in ${currentYear}`
-          : tab === "rejected"
-            ? `Abgelehnt in ${currentYear}`
-            : `Alle Anträge in ${currentYear}`}
-    />
-  </div>
-
-  {#if loading}
-    <Skeleton shape="row" count={3} />
-  {:else if visibleRequests.length === 0}
-    {#if tab === "open"}
+<!-- ── The task list: every open decision in one place, oldest first ──────────── -->
+{#if canListLeave}
+  <div class="aufgaben-list">
+    {#if loading}
+      <Skeleton shape="row" count={3} />
+    {:else if taskRows.length === 0}
       <EmptyState
         icon="inbox"
         title="Keine offenen Anträge"
-        description="Alle Anträge in diesem Tab sind bearbeitet."
-      />
-    {:else if tab === "approved"}
-      <EmptyState
-        icon="inbox"
-        title="Keine genehmigten Anträge"
-        description={`Im Jahr ${currentYear} wurden keine Anträge genehmigt.`}
-      />
-    {:else if tab === "rejected"}
-      <EmptyState
-        icon="inbox"
-        title="Keine abgelehnten Anträge"
-        description={`Im Jahr ${currentYear} wurden keine Anträge abgelehnt.`}
+        description="Alle Anträge sind bearbeitet."
       />
     {:else}
-      <EmptyState
-        icon="inbox"
-        title="Keine Anträge"
-        description={`Im Jahr ${currentYear} liegen keine Anträge vor.`}
-      />
+      <List ariaLabel="Aufgaben" testId="inbox-task-list">
+        {#each taskRows as row (row.key)}
+          {@const request = leaveOf(row)}
+          <TaskRow
+            {row}
+            typeLabel={row.typeCode ? typeName(row.typeCode) : undefined}
+            onOpen={request ? () => openDetail(request) : undefined}
+          >
+            {#snippet actions()}
+              {#if request}
+                <!--
+                  One neutral „Prüfen“ button: the approve/reject controls live inside the dialog,
+                  behind an explicit confirmation step (REVIEW WR-02), so the row never offers an
+                  immediate decision.
+                -->
+                <button class="btn btn-primary btn-sm" onclick={() => openDetail(request)}>
+                  Prüfen
+                </button>
+              {/if}
+            {/snippet}
+          </TaskRow>
+        {/each}
+      </List>
     {/if}
-  {:else}
-    {#each visibleRequests as req (req.id)}
-      <ApprovalRow
-        avatar={initials(req.employee.firstName, req.employee.lastName)}
-        name={`${req.employee.firstName} ${req.employee.lastName}`}
-        dates={`${fmtDate(req.startDate)} – ${fmtDate(req.endDate)} · ${leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}`}
-        onPrimary={() => openDetail(req)}
-      >
-        {#snippet metaContent()}
-          <LeaveTypeChip
-            code={req.typeCode}
-            label={typeName(req.typeCode)}
-            requested={req.status === "PENDING"}
-          />
-          {#if req.status === "CANCELLATION_REQUESTED"}
-            <span class="chip chip-warn">Stornierung beantragt</span>
-          {:else if req.status === "PENDING"}
-            <span class="chip chip-warn">Ausstehend</span>
-          {:else if req.status === "APPROVED"}
-            <span class="chip chip-good">Genehmigt</span>
-          {:else if req.status === "REJECTED"}
-            <span class="chip chip-bad">Abgelehnt</span>
-          {/if}
-        {/snippet}
-        {#snippet actions()}
-          {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-            <!--
-              Previously this branch rendered two buttons labeled "Ablehnen"
-              and "Genehmigen" that both only opened the detail modal — a UX
-              correctness bug (REVIEW WR-02). A manager clicking "Ablehnen"
-              in a hurry would expect an immediate reject, not a modal open.
-              The actual approve/reject controls live inside the modal and
-              require an explicit confirmation step (and a reviewNote), so
-              the row now exposes a single neutral "Prüfen" button whose
-              label matches what the click actually does: open the detail
-              modal for review.
-            -->
-            <button
-              class="btn btn-primary sm"
-              onclick={(e) => {
-                e.stopPropagation();
-                openDetail(req);
-              }}
-            >
-              Prüfen
-            </button>
-          {:else}
-            <button
-              class="btn btn-ghost sm"
-              onclick={(e) => {
-                e.stopPropagation();
-                openDetail(req);
-              }}>Details</button
-            >
-          {/if}
-        {/snippet}
-      </ApprovalRow>
-    {/each}
-  {/if}
-</Card>
+  </div>
+{/if}
 
 <!-- ── Detail modal ──────────────────────────────────────────────────────── -->
 <!-- ── Retro-Anträge view-tabs ─────────────────────────────────────────── -->
@@ -1245,28 +1120,17 @@
   bind:open={detailOpen}
   request={detailRequest}
   currentEmployeeId={$authStore.user?.employeeId ?? null}
+  canReadEntitlement={hasPermission($authStore.user, "leave-entitlement:read:ZUGEWIESEN")}
+  canReadShifts={hasPermission($authStore.user, "shift:read:ZUGEWIESEN")}
+  canReadEmployee={hasPermission($authStore.user, "employee:read:ZUGEWIESEN")}
   onReviewed={loadRequests}
 />
 
 <style>
-  /* ── KPI row ──────────────────────────────────────────────────────────── */
-  .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    margin-bottom: 16px;
-  }
-
-  @media (max-width: 900px) {
-    .kpi-row {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-
-  @media (max-width: 560px) {
-    .kpi-row {
-      grid-template-columns: 1fr;
-    }
+  /* ── Page top (Issue #853): the band and the one list stack with the page rhythm ── */
+  .aufgaben-band,
+  .aufgaben-list {
+    margin-bottom: var(--s-4);
   }
 
   /* ── Retro section spacing ────────────────────────────────────────────── */

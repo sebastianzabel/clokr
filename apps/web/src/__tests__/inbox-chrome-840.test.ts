@@ -25,29 +25,43 @@ const INBOX = readRouteFile(
   "../routes/(app)/inbox/+page.svelte",
   "src/routes/(app)/inbox/+page.svelte",
 );
+// Issue #853 (D-853-06): the leave row is the TaskRow wrapper; the chip rule lives in its source.
+const TASK_ROW = readRouteFile(
+  "../lib/components/team/aufgaben/TaskRow.svelte",
+  "src/lib/components/team/aufgaben/TaskRow.svelte",
+);
 
 describe("Issue #840 G-8 / G-3 - the inbox chrome", () => {
   it("[vacuity gate] the page source is loaded and is the inbox", () => {
     expect(INBOX.length).toBeGreaterThan(20_000);
-    expect(INBOX).toContain("<ApprovalRow");
+    expect(INBOX).toContain("<TaskRow");
+    expect(INBOX).toContain("<List ");
+    expect(TASK_ROW.length).toBeGreaterThan(500);
   });
 
-  it("[G-8] the header is the leave pages' PageHead: eyebrow „Team“, plain title „Aufgaben“ from page-labels.ts (Issue #574)", () => {
-    expect(INBOX).toContain('<PageHead eyebrow="Team" title={pageLabel("/inbox")} />');
-    expect(INBOX).not.toContain('eyebrow="Manager"');
+  it("[G-8] the header is the leave pages' PageHead: plain title „Aufgaben“ from page-labels.ts (Issue #574), no eyebrow and no accent (#853 D-853-19)", () => {
+    expect(INBOX).toMatch(/<PageHead\s+title=\{pageLabel\("\/inbox"\)\}/);
+    expect(INBOX).not.toMatch(/<PageHead[^>]*eyebrow=/);
     expect(INBOX).not.toMatch(/<PageHead[^>]*accent=/);
   });
 
   it("[G-3] the type chip of a leave row is LeaveTypeChip, dashed for a PENDING request", () => {
-    expect(INBOX).toContain(
+    expect(TASK_ROW).toContain(
       'import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"',
     );
-    expect(INBOX).toContain("<LeaveTypeChip");
-    expect(INBOX).toContain("code={req.typeCode}");
-    expect(INBOX).toContain("label={typeName(req.typeCode)}");
-    expect(INBOX).toContain('requested={req.status === "PENDING"}');
-    // No type is drawn in the brand colour any more.
+    expect(TASK_ROW).toContain("<LeaveTypeChip");
+    expect(TASK_ROW).toContain("code={row.typeCode}");
+    expect(TASK_ROW).toContain("label={typeLabel ?? row.typeCode}");
+    expect(TASK_ROW).toContain('requested={row.status === "PENDING"}');
+    // The page hands the row the label of the existing type rule, never the code or the brand colour.
+    expect(INBOX).toContain("typeLabel={row.typeCode ? typeName(row.typeCode) : undefined}");
     expect(INBOX).not.toMatch(/chip-brand">\{typeName\(/);
+  });
+
+  it("[#853 D-853-18] the old structure is gone: no KPI cards, no tab strip, one KpiStrip band", () => {
+    expect(INBOX).not.toContain("KPIStat");
+    expect(INBOX).not.toContain("kpi-row");
+    expect(INBOX.split("<KpiStrip").length - 1).toBe(1);
   });
 
   it("[#558] the inbox stays an unfiltered work queue: no salon filter identifier, not even in a comment", () => {

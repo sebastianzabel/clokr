@@ -52,11 +52,9 @@ describe("Issue #840 E-02 - the Offen tab is not bound to the current year", () 
     expect(body).toContain("pendingRequests = openList");
   });
 
-  it("[derive] „Offen“ and its badge/KPI come from the all-years list, the other tabs stay year-bound", () => {
+  it("[derive] the open rows and their KPI cell come from the all-years list", () => {
     expect(INBOX).toMatch(/let openRequests = \$derived\(\s*pendingRequests\.filter\(/);
-    expect(INBOX).toContain('requests.filter((r) => r.status === "APPROVED")');
-    expect(INBOX).toContain('requests.filter((r) => r.status === "REJECTED")');
-    expect(INBOX).toContain('if (tab === "open") return openRequests;');
+    expect(INBOX).toContain("{ leave: openRequests");
   });
 
   it("[reload] a decision reloads both lists through the one loader", () => {
