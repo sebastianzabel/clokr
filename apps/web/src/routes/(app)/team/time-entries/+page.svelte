@@ -17,6 +17,10 @@
   import { personOptions } from "$lib/team/person-options";
   import KpiStrip from "$components/ui/KpiStrip.svelte"; // Issue #853 (D-853-18)
   import Skeleton from "$components/ui/Skeleton.svelte";
+  import DataTable, {
+    type DataTableColumn,
+    type DataTableRowTone,
+  } from "$components/ui/DataTable.svelte"; // Issue #853 (D-853-10)
   import ErrorState from "$components/ui/ErrorState.svelte";
   import { kontoKpiItem, monthKpiItems } from "$lib/team/zeiten-kpis"; // Issue #853 (D-853-18)
   import Modal from "$components/ui/Modal.svelte";
@@ -1203,7 +1207,7 @@
       teView = "list";
       await tick();
       document
-        .querySelector(".row-day-focus")
+        .querySelector('[data-tone="highlight"]')
         ?.scrollIntoView({ behavior: "smooth", block: "center" });
     } else {
       openAdd(day);
@@ -1782,6 +1786,33 @@
     });
   });
 
+  // Issue #853 (D-853-10): the list view is a DataTable. A row wraps the merged list entry (a
+  // type alias, because DataTable's row generic wants an index-signature-compatible type).
+  type ListTableRow = { id: string; slot: ListRow };
+  const listTableRows = $derived<ListTableRow[]>(allEntries.map((slot) => ({ id: slot.id, slot })));
+  const listColumns = $derived<DataTableColumn[]>([
+    { key: "date", label: "Datum", primary: true },
+    ...(multiEntryUi ? [{ key: "salon", label: "Salon" }] : []),
+    { key: "times", label: "Zeiten" },
+    { key: "break", label: "Pause" },
+    { key: "net", label: "Netto" },
+    ...(isShiftBased && monthSaldo ? [{ key: "saldo", label: "Saldo seit Abschluss" }] : []),
+    { key: "source", label: "Quelle" },
+    { key: "note", label: "Notiz" },
+    { key: "actions", label: "" },
+  ]);
+  // The row marking: an invalid entry is a warning, a Berufsschule row is informational, and the
+  // day the calendar cell sent the user to (Issue #70) is highlighted.
+  function listRowTone({ slot }: ListTableRow): DataTableRowTone | undefined {
+    if (slot.kind === "BS") return "info";
+    if (slot.isInvalid) return "warn";
+    const slotDate = (slot.date ?? slot.startTime).split("T")[0];
+    return multiEntryUi && slotDate === selectedDate ? "highlight" : undefined;
+  }
+  function listRowTestId({ slot }: ListTableRow): string | undefined {
+    return slot.kind === "BS" ? `bs-row-${slot.id}` : undefined;
+  }
+
   // Phase 116 (issue #119) — the ONE answer to "what does the list render right now".
   // `hasEmployeeLink` is always true where this renders (the markup sits inside
   // {#if selectedEmployee}), but it is passed honestly rather than hard-coded so the
@@ -2070,179 +2101,146 @@
 
     <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
     {#if teView === "list"}
-      <div class="card card-animate list-card">
-        {#if listState === "loading"}
-          <!-- Phase 116 (issue #119, Akzeptanzkriterium 3) — the mirror of the own page's fix.
-             This page was built as a copy of /time-entries and inherited the same ungated
-             empty state. -->
-          <div
-            class="list-skeleton"
-            data-testid="team-time-entries-list-skeleton"
-            aria-hidden="true"
-          >
-            {#each Array(6) as _, i (i)}<div class="skeleton list-skel-row"></div>{/each}
-          </div>
-        {:else}
-          {#if multiEntryUi}
-            {#if rowsOfDay(selectedDate).length > 0}
-              <div class="list-day-bar" data-testid="team-time-entries-list-day-bar">
-                <span class="list-day-label"
-                  >{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", {
-                    locale: de,
-                  })}</span
-                >
-                <button
-                  class="btn btn-outline btn-sm"
-                  type="button"
-                  onclick={() => openAdditionalEntry(selectedDate)}
-                  data-testid="team-time-entries-add-additional"
-                  >Weiteren Eintrag an diesem Tag</button
-                >
-              </div>
-            {/if}
-          {/if}
-          <div class="table-wrapper">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Datum</th>
-                  {#if multiEntryUi}<th>Salon</th>{/if}
-                  <th>Von</th>
-                  <th>Bis</th>
-                  <th>Pause</th>
-                  <th>Netto</th>
-                  {#if isShiftBased && monthSaldo}
-                    <th
-                      title="Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kachel „Konto“."
-                      >Saldo seit Abschluss</th
-                    >
-                  {/if}
-                  <th>Quelle</th>
-                  <th>Notiz</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each allEntries as slot (slot.id)}
-                  {#if slot.kind === "TE"}
-                    {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-                    {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                    <tr
-                      class:row-invalid={slot.isInvalid}
-                      class:row-day-focus={multiEntryUi && slotDate === selectedDate}
-                    >
-                      <td
-                        >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                          day: "2-digit",
-                          month: "2-digit",
-                          year: "numeric",
-                        })}{#if slotArbzg}
-                          <span class="list-arbzg-hint"
-                            >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                              class="arbzg-tooltip"
-                              >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                                  />{/if}{/each}</span
-                            ></span
-                          >
-                        {/if}</td
-                      >
-                      {#if multiEntryUi}<td data-testid={`team-time-entry-row-${slot.id}-salon`}
-                          >{#if isTravelRow(slot)}<span
-                              class="badge badge-gray"
-                              data-testid={`team-time-entry-row-${slot.id}-travel-badge`}
-                              >{TRAVEL_TEXTS.badge}</span
-                            >
-                            <span
-                              class="travel-route"
-                              data-testid={`team-time-entry-row-${slot.id}-travel-route`}
-                              >{travelRouteLabel(slot)}</span
-                            >{:else}{slot.salonName ?? "—"}{/if}</td
-                        >{/if}
-                      <td>{fmtTime(slot.startTime)}</td>
-                      <td>
-                        {#if slot.endTime}{fmtTime(slot.endTime)}
-                        {:else}<span class="badge badge-green">Aktiv</span>{/if}
-                      </td>
-                      <td>{fmtBreaks(slot)}</td>
-                      <td class="font-medium">{slotNet(slot)}</td>
-                      {#if isShiftBased && monthSaldo}
-                        {@const cum = monthSaldoDayMap.get(slotDate)}
-                        <td class={cum != null ? balClass(cum) : ""}>
-                          {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
-                        </td>
-                      {/if}
-                      <td
-                        ><span class="badge {sourceBadge(slot.source)}"
-                          >{sourceLabel(slot.source)}</span
-                        ></td
-                      >
-                      <td class="note-cell text-muted">
-                        {#if slot.isInvalid && slot.invalidReason}
-                          <span class="invalid-reason">{slot.invalidReason}</span>
-                        {:else}
-                          {slot.note ?? "---"}
-                        {/if}
-                      </td>
-                      <td class="action-cell">
-                        {#if slot.isLocked}
-                          <!-- locked entries are read-only; no actions shown (D-08) -->
-                        {:else}
-                          <span class="row-actions row-actions--visible">
-                            <button
-                              class="btn-icon"
-                              onclick={() => openEdit(slot)}
-                              title="Bearbeiten">✏️</button
-                            >
-                            <button
-                              class="btn-icon btn-icon-danger"
-                              onclick={() => openDeleteDialog(slot.id)}
-                              title="Löschen">🗑</button
-                            >
-                          </span>
-                        {/if}
-                      </td>
-                    </tr>
-                  {:else}
-                    <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions. -->
-                    <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
-                      <td
-                        >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
-                          day: "2-digit",
-                          month: "2-digit",
-                          year: "numeric",
-                        })}</td
-                      >
-                      {#if multiEntryUi}<td class="text-muted">—</td>{/if}
-                      <td class="text-muted">—</td>
-                      <td class="text-muted">—</td>
-                      <td class="text-muted">—</td>
-                      <td class="font-medium text-muted">—</td>
-                      <td><span class="badge badge-blue">Berufsschule</span></td>
-                      <td class="note-cell text-muted"
-                        >{slot.source === "PATTERN"
-                          ? "Automatisch (Muster)"
-                          : "Manuell eingefügt"}</td
-                      >
-                      <td class="action-cell">
-                        <span
-                          class="text-muted"
-                          style="font-size: 0.75rem;"
-                          title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
-                        >
-                      </td>
-                    </tr>
-                  {/if}
-                {/each}
-              </tbody>
-            </table>
-          </div>
-          {#if listState === "empty"}
-            <div class="empty-state">
-              <span class="empty-icon">📋</span>
-              <h3>Keine Einträge</h3>
-              <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
+      <div class="te-list" data-testid="team-time-entries-list">
+        {#if multiEntryUi}
+          {#if listState === "rows" && rowsOfDay(selectedDate).length > 0}
+            <div class="list-day-bar" data-testid="team-time-entries-list-day-bar">
+              <span class="list-day-label"
+                >{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", {
+                  locale: de,
+                })}</span
+              >
+              <button
+                class="btn btn-outline btn-sm"
+                type="button"
+                onclick={() => openAdditionalEntry(selectedDate)}
+                data-testid="team-time-entries-add-additional"
+                >Weiteren Eintrag an diesem Tag</button
+              >
             </div>
           {/if}
+        {/if}
+        {#if listState === "empty"}
+          <EmptyState
+            icon="inbox"
+            title="Keine Einträge"
+            description="Keine Zeiteinträge in diesem Monat."
+          />
+        {:else}
+          <!-- Phase 116 (issue #119, Akzeptanzkriterium 3): while loading there is a skeleton and
+             never the empty state. #853 D-853-10: the table is the DataTable block; its rows are
+             tinted by `listRowTone` (invalid entry, Berufsschule row, the focused day). -->
+          <DataTable
+            columns={listColumns}
+            rows={listTableRows}
+            rowKey={(row) => row.id}
+            rowTestId={listRowTestId}
+            rowTone={listRowTone}
+            loading={listState === "loading"}
+            caption="Einträge im Monat"
+          >
+            {#snippet cell(row, column)}
+              {@const slot = row.slot}
+              {#if slot.kind === "TE"}
+                {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+                {#if column.key === "date"}
+                  {@const slotArbzg = arbzgDayMap.get(slotDate)}
+                  {new Date(slot.startTime).toLocaleDateString("de-DE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  })}{#if slotArbzg}
+                    <span class="list-arbzg-hint"
+                      >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                        class="arbzg-tooltip"
+                        >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
+                            />{/if}{/each}</span
+                      ></span
+                    >
+                  {/if}
+                {:else if column.key === "salon"}
+                  {#if multiEntryUi}
+                    <span data-testid={`team-time-entry-row-${slot.id}-salon`}
+                      >{#if isTravelRow(slot)}<span
+                          class="badge badge-gray"
+                          data-testid={`team-time-entry-row-${slot.id}-travel-badge`}
+                          >{TRAVEL_TEXTS.badge}</span
+                        >
+                        <span
+                          class="travel-route"
+                          data-testid={`team-time-entry-row-${slot.id}-travel-route`}
+                          >{travelRouteLabel(slot)}</span
+                        >{:else}{slot.salonName ?? "—"}{/if}</span
+                    >
+                  {/if}
+                {:else if column.key === "times"}
+                  {fmtTime(slot.startTime)}–{#if slot.endTime}{fmtTime(slot.endTime)}{:else}<span
+                      class="badge badge-green">Aktiv</span
+                    >{/if}
+                {:else if column.key === "break"}
+                  {fmtBreaks(slot)}
+                {:else if column.key === "net"}
+                  <span class="font-medium">{slotNet(slot)}</span>
+                {:else if column.key === "saldo"}
+                  {#if isShiftBased && monthSaldo}
+                    {@const cum = monthSaldoDayMap.get(slotDate)}
+                    <span
+                      class={cum != null ? balClass(cum) : ""}
+                      title="Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kennzahl „Stundenkonto“."
+                    >
+                      {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
+                    </span>
+                  {/if}
+                {:else if column.key === "source"}
+                  <span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span>
+                {:else if column.key === "note"}
+                  <span class="list-note text-muted">
+                    {#if slot.isInvalid && slot.invalidReason}
+                      <span class="invalid-reason">{slot.invalidReason}</span>
+                    {:else}
+                      {slot.note ?? "---"}
+                    {/if}
+                  </span>
+                {:else if column.key === "actions"}
+                  {#if slot.isLocked}
+                    <!-- locked entries are read-only; no actions shown (D-08) -->
+                  {:else}
+                    <span class="row-actions row-actions--visible">
+                      <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
+                        >✏️</button
+                      >
+                      <button
+                        class="btn-icon btn-icon-danger"
+                        onclick={() => openDeleteDialog(slot.id)}
+                        title="Löschen">🗑</button
+                      >
+                    </span>
+                  {/if}
+                {/if}
+              {:else if column.key === "date"}
+                <!-- 260611-ly6 - BS row: read-only, single-day, no times, no breaks, no actions. -->
+                {new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                })}
+              {:else if column.key === "source"}
+                <span class="badge badge-blue">Berufsschule</span>
+              {:else if column.key === "note"}
+                <span class="list-note text-muted"
+                  >{slot.source === "PATTERN" ? "Automatisch (Muster)" : "Manuell eingefügt"}</span
+                >
+              {:else if column.key === "actions"}
+                <span
+                  class="text-muted"
+                  style="font-size: 0.75rem;"
+                  title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
+                >
+              {:else}
+                <span class="text-muted">—</span>
+              {/if}
+            {/snippet}
+          </DataTable>
         {/if}
       </div>
     {/if}
@@ -2556,8 +2554,6 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--s-2);
-    padding: var(--s-3) var(--s-4);
-    border-bottom: 1px solid var(--line);
   }
   .list-day-label {
     font-size: 0.875rem;
@@ -2585,50 +2581,19 @@
     display: flex;
     margin-top: var(--s-3);
   }
-  .data-table tbody tr.row-day-focus {
-    background: var(--sunk);
+  /* ── List view (Issue #853): the table is the DataTable block, its rows are tinted by the block's row tone. ── */
+  .te-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
   }
-
-  /* ── List card (v1.5) ────────────────────────────────── */
-  .list-card {
-    padding: 0;
+  .list-note {
+    display: inline-block;
+    max-width: 160px;
     overflow: hidden;
-  }
-  .list-card .table-wrapper {
-    overflow-x: auto;
-  }
-  /* Phase 116 (issue #119) — list-view loading skeleton. Reuses the global .skeleton shimmer
-     recipe (app.css:883); only the row geometry is page-scoped. */
-  .list-card .list-skeleton {
-    display: grid;
-    gap: 0.75rem;
-    padding: 1.25rem 1.5rem;
-  }
-  .list-card .list-skel-row {
-    height: 2.25rem;
-    border-radius: var(--r-control);
-  }
-  .list-card .empty-state {
-    padding: 48px 24px;
-    text-align: center;
-    color: var(--text-2);
-  }
-  .list-card .empty-state .empty-icon {
-    font-size: 32px;
-    display: block;
-    margin-bottom: 8px;
-    opacity: 0.6;
-  }
-  .list-card .empty-state h3 {
-    font-family: var(--font-ui);
-    font-weight: 400;
-    font-size: 18px;
-    margin: 0 0 4px;
-    color: var(--text);
-  }
-  .list-card .empty-state p {
-    margin: 0;
-    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
   }
 
   /* ── List view actions always visible ────────────────── */
@@ -2751,7 +2716,7 @@
 
   /* bs-tage-in-calendar — Berufsschultag cell background. Uses --brand at the
      same 15% mix as the other .cal-abs-* recipes in app.css. Scoped to this
-     page (mirrors the 260611-ly6 .row-bs scoped CSS pattern); a token-level
+     page (the Berufsschule list rows use the block's `info` row tone); a token-level
      leave type for Berufsschule would be the long-term home if BS gets promoted
      to a first-class leave type. */
   :global(.cal-cell.cal-abs-vocational_school:not(.cal-selected)) {
@@ -2869,33 +2834,14 @@
     opacity: 0;
     transition: opacity 0.15s;
   }
-  tr:hover .row-actions {
-    opacity: 1;
-  }
   .row-del td {
     background: var(--bad-soft);
   }
 
-  .row-invalid {
-    opacity: 0.5;
-  }
-  .row-invalid td {
-    text-decoration: line-through;
-    background: var(--bad-soft);
-  }
-  .row-invalid td:last-child {
-    text-decoration: none;
-  }
-  .row-invalid .invalid-reason {
+  .invalid-reason {
     color: var(--bad);
     font-size: 0.8rem;
     font-weight: 500;
-    text-decoration: none;
-  }
-
-  /* 260611-ly6 — Berufsschultag list-row tint. UI Style Guide v1.5: only var(--brand) via color-mix; no legacy tokens. */
-  .row-bs td {
-    background: color-mix(in srgb, var(--brand) 6%, transparent);
   }
 
   .btn-xs {
