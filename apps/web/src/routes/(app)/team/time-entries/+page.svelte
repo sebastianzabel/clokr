@@ -1196,6 +1196,17 @@
     openNew(day, action.start, action.end);
   }
 
+  // Issue #853 (AC-4): the Kalender/Liste switch sits above the figures strip, which on a phone fills
+  // the first screen - the chosen view is brought into the viewport (`nearest`: a view that is already
+  // visible does not move the page), so the click's result is never out of sight.
+  async function selectView(value: string) {
+    teView = value === "list" ? "list" : "calendar";
+    await tick();
+    document
+      .querySelector(teView === "list" ? '[data-testid="team-time-entries-list"]' : ".cal-section")
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
   // Issue #70: a calendar cell with one entry still opens it for editing, a cell with several
   // switches to the list focused on that day, an empty cell opens the new form.
   async function onCellClick(day: string) {
@@ -1908,7 +1919,7 @@
           <SegmentedControl
             options={VIEW_OPTIONS}
             value={teView}
-            onchange={(value) => (teView = value === "list" ? "list" : "calendar")}
+            onchange={(value) => void selectView(value)}
             ariaLabel="Darstellung"
             name="te-view"
             size="sm"
