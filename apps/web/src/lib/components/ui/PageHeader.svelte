@@ -133,6 +133,8 @@
     .page-head-actions {
       width: 100%;
       justify-content: flex-start;
+      /* Two actions may be wider than a 320 px phone together; the second one then takes a row. */
+      flex-wrap: wrap;
     }
   }
 </style>

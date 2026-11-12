@@ -166,6 +166,25 @@ function localDay(date = new Date()): string {
 /** Next calendar year: the planner year of every test that opens a plan (no wish is ever past). */
 const PLAN_YEAR = new Date().getFullYear() + 1;
 
+// Issue #851: the Abwesenheiten page's own fixed wording for the caller's own sick days. Any other
+// „Krank…“ text on the page would name a colleague's type and fails the privacy checks below.
+const OTHER_KRANK_TEXT = /Krank(?!heitstage|meldungen| melden)/;
+const OWN_KRANK_ATTRIBUTES = ["Urlaub und Krankheitstage"];
+
+/** Every title/aria-label on the page that contains „Krank“, de-duplicated and sorted. */
+async function krankAttributes(page: Page): Promise<string[]> {
+  const values = await page
+    .locator('[title*="Krank"], [aria-label*="Krank"]')
+    .evaluateAll((els) =>
+      els.flatMap((el) =>
+        [el.getAttribute("title"), el.getAttribute("aria-label")].filter(
+          (v): v is string => !!v && v.includes("Krank"),
+        ),
+      ),
+    );
+  return [...new Set(values)].sort();
+}
+
 /** The n-th Monday (1-based) of March of the plan year, as an ISO day. */
 function marchMonday(n: number): string {
   const first = new Date(Date.UTC(PLAN_YEAR, 2, 1));
@@ -555,20 +574,21 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(bar).toHaveCount(1);
     await expect(bar).toHaveAttribute("aria-label", /abwesend/);
     expect(await colleagueTrack.locator('[data-bar-style="gesetzt"]').count()).toBe(0);
-    // The page's KPI strip names „Krankheitstage“ (a count of the caller's own days); no other text
-    // and no attribute names the type.
-    await expect(page.locator("body")).not.toContainText(/Krank(?!heitstage)/);
+    // The page's own fixed wording names the kind for the caller themself (#851 prototype): the KPI
+    // „Krankheitstage“, the subtitle „Krankmeldungen“ and the action „Krank melden“. No other text
+    // and no other attribute names the type.
+    await expect(page.locator("body")).not.toContainText(OTHER_KRANK_TEXT);
     expect(
-      await page.locator('[title*="Krank"], [aria-label*="Krank"]').count(),
-      "no attribute names the type either",
-    ).toBe(0);
+      await krankAttributes(page),
+      "no attribute names the type either (only the KPI strip's own label)",
+    ).toEqual(OWN_KRANK_ATTRIBUTES);
 
     // ── Kalender: only own entries ─────────────────────────────────────────────────────────
     await page.getByTestId("leave-view-calendar").click();
     await expect(page).toHaveURL(/tab=kalender/);
     await expect(page.getByTestId("leave-page")).toBeVisible();
     await expect(page.locator("body")).not.toContainText(colleague.lastName);
-    await expect(page.locator("body")).not.toContainText(/Krank(?!heitstage)/);
+    await expect(page.locator("body")).not.toContainText(OTHER_KRANK_TEXT);
 
     // ── Planung: an own wish through the dialog; the colleague's row offers no edit ─────────
     await page.goto(`/leave?tab=planung&zoom=monat&datum=${PLAN_YEAR}-03-01`);
