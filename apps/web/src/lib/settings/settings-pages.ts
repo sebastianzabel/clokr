@@ -72,13 +72,14 @@ const SHIFTS_REQUIRES: PermissionAlternatives = [
   [Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")],
 ];
 
-const SYSTEM_PAGE = "routes/(app)/admin/system/+page.svelte";
+// Plan 854-15: System › Allgemein, the route file /admin/system rewritten in place; its four sections are
+// components of this directory.
+const ALLGEMEIN_DIR = "lib/components/admin/allgemein";
 
 const SYSTEM = {
   page: "/verwalten/system/allgemein",
   source: "/admin/system",
   requires: SYSTEM_REQUIRES,
-  renderedBy: SYSTEM_PAGE,
 } as const;
 
 // Plan 854-07: the working-time defaults of the System and Urlaub pages live on Regeln › Arbeitszeit &
@@ -388,25 +389,44 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     renderedBy: `${DIENSTPLAN_DIR}/DienstplanSettingsPanel.svelte`,
   },
 
-  // ── /admin/system ──────────────────────────────────────────────────────────────────────────────
+  // ── System › Allgemein (route file /admin/system) ──────────────────────────────────────────────
+  // What D-854-03 leaves on the former System page (plan 854-15): the company and region, and the sign-in
+  // security. The two-factor switch is one atomic value and saves instantly (§3.2.1); the other three sections
+  // are form groups with a SaveBar each.
   {
     ...SYSTEM,
-    id: "system-company",
+    id: "allgemein-unternehmen",
     title: "Unternehmen & Region",
     endpoint: "/settings/work",
     keys: ["tenantName", "federalState", "timezone"],
+    renderedBy: `${ALLGEMEIN_DIR}/CompanySection.svelte`,
   },
   {
     ...SYSTEM,
-    id: "system-two-fa",
-    title: "Sicherheit",
+    id: "allgemein-zwei-faktor",
+    title: "Zwei-Faktor-Authentifizierung",
     endpoint: "/settings/security",
     keys: ["twoFaEnabled"],
+    renderedBy: `${ALLGEMEIN_DIR}/TwoFactorSection.svelte`,
   },
   {
     ...SYSTEM,
-    id: "system-session",
-    title: "Session-Management",
+    id: "allgemein-passwort",
+    title: "Passwort-Richtlinie",
+    endpoint: "/settings/security",
+    keys: [
+      "passwordMinLength",
+      "passwordRequireUpper",
+      "passwordRequireLower",
+      "passwordRequireDigit",
+      "passwordRequireSpecial",
+    ],
+    renderedBy: `${ALLGEMEIN_DIR}/PasswordSection.svelte`,
+  },
+  {
+    ...SYSTEM,
+    id: "allgemein-sitzungen",
+    title: "Sitzungen",
     endpoint: "/settings/security",
     keys: [
       "sessionTimeoutMinutes",
@@ -417,19 +437,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "loginMaxAttempts",
       "loginLockoutMinutes",
     ],
-  },
-  {
-    ...SYSTEM,
-    id: "system-password",
-    title: "Passwort-Richtlinie",
-    endpoint: "/settings/security",
-    keys: [
-      "passwordMinLength",
-      "passwordRequireUpper",
-      "passwordRequireLower",
-      "passwordRequireDigit",
-      "passwordRequireSpecial",
-    ],
+    renderedBy: `${ALLGEMEIN_DIR}/SessionSection.svelte`,
   },
   // The NFC terminal keys and the API keys left this page for System › Integrationen (plan 854-14).
 

@@ -79,10 +79,10 @@ function settingsWorkPuts(source: string): Put[] {
 // `GapsSection` of Regeln › Monatsabschluss (monatsabschluss-854.test.ts). Plan 854-10 did the same for
 // saveShiftHoursMode, saveAvailabilityEnabled and saveVocationalSchoolAutoCleanupShifts (-> the sections of
 // `DienstplanSettingsPanel`, dienstplan-settings-854.test.ts).
+// Plan 854-15: the System page's one remaining `PUT /settings/work` (company, region) is the registry section
+// `allgemein-unternehmen` of `CompanySection`; settings-pages-854 (3) pins that it sends exactly its keys, and
+// `allgemein-854.test.ts` mounts it. The page itself writes no setting any more.
 const EXPECTED: Record<string, Record<string, string[]>> = {
-  system: {
-    saveFederalState: ["federalState", "tenantName", "timezone"],
-  },
   export: {
     saveDatev: [
       "datevBeraterNr",
@@ -125,28 +125,8 @@ describe("Issue #878 — each section sends only its own fields", () => {
     }
   });
 
-  it("the system page sends no field of /admin/vacation and the company fields only from its own section", () => {
-    const vacationOwned = [
-      "defaultWeeklyHours",
-      "defaultMondayHours",
-      "overtimeThreshold",
-      "allowOvertimePayout",
-      "defaultVacationDays",
-      "carryOverDeadlineDay",
-      "carryOverDeadlineMonth",
-    ];
-    for (const put of settingsWorkPuts(readRoute("system"))) {
-      expect(
-        put.keys.filter((k) => vacationOwned.includes(k)),
-        put.fn,
-      ).toEqual([]);
-      if (put.fn !== "saveFederalState") {
-        expect(
-          put.keys.filter((k) => ["federalState", "timezone", "tenantName"].includes(k)),
-          put.fn,
-        ).toEqual([]);
-      }
-    }
+  it("the system page writes no tenant setting itself (its sections are registry sections of components)", () => {
+    expect(settingsWorkPuts(readRoute("system"))).toEqual([]);
   });
 
   // Issue #854 (plan 854-11): the page-wide `saveGlobal` of /admin/vacation is gone; its twenty keys are saved by six

@@ -424,16 +424,25 @@ describe("settings registry against the sources (#854, D-854-03)", () => {
 describe("registry helpers", () => {
   it("settingsSection throws on an unknown id and sectionsOfPage lists a page in registry order", () => {
     expect(() => settingsSection("nope")).toThrow(/Unknown settings section/);
-    expect(settingsSection("system-company").keys).toEqual([
+    expect(settingsSection("allgemein-unternehmen").keys).toEqual([
       "tenantName",
       "federalState",
       "timezone",
     ]);
     const ids = sectionsOfPage("/verwalten/system/allgemein").map((s) => s.id);
-    expect(ids[0]).toBe("system-company");
-    expect(ids).toContain("system-password");
+    expect(ids[0]).toBe("allgemein-unternehmen");
+    expect(ids).toContain("allgemein-passwort");
     expect(sectionsOfPage("/nowhere")).toEqual([]);
     expect(pageAlternatives("/nowhere")).toEqual([]);
+  });
+
+  it("System › Allgemein lists exactly four sections, in page order (plan 854-15)", () => {
+    expect(sectionsOfPage("/verwalten/system/allgemein").map((s) => s.id)).toEqual([
+      "allgemein-unternehmen",
+      "allgemein-zwei-faktor",
+      "allgemein-passwort",
+      "allgemein-sitzungen",
+    ]);
   });
 
   it("a page deduplicates the alternatives of its sections", () => {
@@ -556,7 +565,7 @@ describe("the extractors read what they claim to", () => {
       const body: Record<string, unknown> = { p, q };
       if (r) body.r = r;
       await api.put("/settings/smtp", body);
-      await api.put("/settings/work", pickSection(draft, settingsSection("system-company").keys));
+      await api.put("/settings/work", pickSection(draft, settingsSection("allgemein-unternehmen").keys));
       await api.put(\`/settings/work/\${id}\`, { s: 1 });`;
     const puts = settingsPuts({ rel: "x.svelte", text });
     expect(puts.map((p) => p.endpoint)).toEqual([
@@ -568,6 +577,6 @@ describe("the extractors read what they claim to", () => {
     expect(puts[0].keys).toEqual(["x", "y"]);
     expect(puts[1].computed).toBe(true);
     expect(puts[2].keys).toEqual(["p", "q", "r"]);
-    expect(puts[3].sectionId).toBe("system-company");
+    expect(puts[3].sectionId).toBe("allgemein-unternehmen");
   });
 });

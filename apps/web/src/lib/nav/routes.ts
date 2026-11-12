@@ -491,7 +491,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     file: "/admin/system",
     inNav: false,
     parent: "/verwalten/system",
-    description: "Unternehmen, Sicherheit und Anmeldung",
+    description: "Unternehmen, Region und Sicherheit",
   },
   // no API guard (writes /me/preferences); grouped with the tenant settings
   {

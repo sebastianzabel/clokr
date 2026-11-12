@@ -11,9 +11,11 @@
     disabled?: boolean;
     /** Stable hook for the e2e specs. */
     testid?: string;
+    /** Only for an instant-save switch; runs after `checked` holds the new value. */
+    onchange?: () => void;
   }
 
-  let { checked = $bindable(), label, help, disabled = false, testid }: Props = $props();
+  let { checked = $bindable(), label, help, disabled = false, testid, onchange }: Props = $props();
 
   const uid = $props.id();
   const inputId = `${uid}-input`;
@@ -25,6 +27,7 @@
     id={inputId}
     type="checkbox"
     bind:checked
+    {onchange}
     {disabled}
     data-testid={testid}
     aria-describedby={help ? helpId : undefined}
