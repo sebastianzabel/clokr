@@ -128,11 +128,10 @@ test("every start-page write acknowledges its result in the toast status region"
     .click();
   const end = page.getByTestId("time-entry-modal-end");
   await expect(end).toBeVisible();
-  // The break the flow above booked can span less than a minute and then lies at one HH:MM in the
-  // form; the form would send it as an empty slot. The correction under test is the end time, so
-  // the slot is removed first.
-  await expect(page.getByTestId("break-slot-0")).toBeVisible();
-  await page.getByTestId("break-slot-0-remove").click();
+  // The break the flow above took lasted a few seconds. Since #596 (#845) the running break is a
+  // server state, and a break shorter than a minute leaves no Break row (a double tap is no
+  // Ruhepause), so the entry carries no break slot. The correction under test is the end time.
+  await expect(page.getByTestId("break-slot-0")).toHaveCount(0);
   await end.fill(oneMinuteLater(await end.inputValue()));
   await page.getByTestId("time-entry-modal-save").click();
   await expect(region).toContainText("Korrektur gespeichert");
