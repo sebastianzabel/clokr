@@ -2,12 +2,13 @@
 // clock, calendar or dashboard views, and never as a popup. Source-read pins (a route page cannot
 // be mounted, see admin-system-save-wiring.test.ts for the precedent).
 //
-// (a)/(b): the NFC-Terminals section of /admin/system holds exactly one hint for HARDWARE_CLOCK and
-// still holds its create markup (the hint replaces the row at runtime, never in the source).
+// (a)/(b): the NFC-Terminals panel of System > Integrationen (moved there from /admin/system, plan 854-14)
+// holds exactly one hint for HARDWARE_CLOCK and still holds its create action (the hint replaces the action at
+// runtime, never in the source).
 // (c): no file outside the admin set-up areas mentions the hint, "Zusatzmodul" or "Anbieter
 // schaltet".
-// (d)-(g) (Plan 566-10): the other three spots — API-Keys (/admin/system), Präsenz-Quellen
-// (/admin/integrations) and the Branch-ID field (/admin/phorest) — plus the total.
+// (d)-(g) (Plan 566-10): the other three spots — API-Schlüssel and Präsenz-Quellen (panels of System >
+// Integrationen) and the Branch-ID field (/admin/phorest) — plus the total.
 // (i) (Issue #563, D-18): the fifth spot — the salon create action on /admin/salons.
 // (j) (Issue #624): the sixth spot — the create action of /admin/roles.
 // Total: exactly six hint usages in the web source, all in an admin set-up area: routes/(app)/admin/ or, since
@@ -32,7 +33,8 @@ const ROUTES_APP = join(WEB_SRC, "routes", "(app)");
 const COMPONENTS = join(WEB_SRC, "lib", "components");
 const ADMIN_SYSTEM = join(ROUTES_APP, "admin", "system", "+page.svelte");
 const TERMINALS_PANEL = join(COMPONENTS, "admin", "integrationen", "TerminalsPanel.svelte");
-const ADMIN_INTEGRATIONS = join(ROUTES_APP, "admin", "integrations", "+page.svelte");
+const API_KEYS_PANEL = join(COMPONENTS, "admin", "integrationen", "ApiKeysPanel.svelte");
+const PRESENCE_PANEL = join(COMPONENTS, "admin", "integrationen", "PresenceSourcesPanel.svelte");
 const ADMIN_PHOREST = join(ROUTES_APP, "admin", "phorest", "+page.svelte");
 const ADMIN_SALONS = join(ROUTES_APP, "admin", "salons", "+page.svelte");
 const ADMIN_ROLES = join(ROUTES_APP, "admin", "roles", "+page.svelte");
@@ -131,58 +133,64 @@ describe("module teaser placement (Phase 566, D-12)", () => {
 });
 
 describe("module teaser placement — the other three set-up spots (Phase 566-10, D-05, D-12)", () => {
+  // Plan 854-14: the API keys and the presence sources live in panels of System > Integrationen.
   const system = stripComments(readFileSync(ADMIN_SYSTEM, "utf8"));
-  const integrations = stripComments(readFileSync(ADMIN_INTEGRATIONS, "utf8"));
+  const apiKeys = stripComments(readFileSync(API_KEYS_PANEL, "utf8"));
+  const presence = stripComments(readFileSync(PRESENCE_PANEL, "utf8"));
   const phorest = stripComments(readFileSync(ADMIN_PHOREST, "utf8"));
 
-  it("(d) API-Keys: one INTEGRATIONS hint inside its section, the create block only in the {:else}", () => {
-    expect(system.match(/<ModuleHint\s+module="INTEGRATIONS"/g)).toHaveLength(1);
-    const keys = sectionOf(system, "API Keys");
-    expect(keys).toMatch(/<ModuleHint\s+module="INTEGRATIONS"/);
-    expect(keys).toContain("{#if integrationsBooked === false}");
-    const branches = keys.split("{:else}");
-    expect(branches[0]).toContain("<ModuleHint");
-    expect(branches[0]).not.toContain("api-key-create");
-    expect(branches[1]).toContain('class="api-key-create"');
-    expect(branches[1]).toContain("createApiKey");
+  /** The two branches of the first `{#if <condition>} … {:else} … {/if}` of a panel. */
+  function branchesOf(source: string, condition: string): [string, string] {
+    const open = source.indexOf(`{#if ${condition}}`);
+    expect(open, condition).toBeGreaterThan(-1);
+    const [hintBranch, createBranch] = source
+      .slice(open, source.indexOf("{/if}", open))
+      .split("{:else}");
+    return [hintBranch, createBranch];
+  }
+
+  it("(d) API-Keys: one INTEGRATIONS hint in the panel, the create action only in the {:else}, /admin/system has none", () => {
+    expect(system).not.toContain("INTEGRATIONS");
+    expect(apiKeys.match(/<ModuleHint\s+module="INTEGRATIONS"/g)).toHaveLength(1);
+    const [hintBranch, createBranch] = branchesOf(apiKeys, "integrationsBooked === false");
+    expect(hintBranch).toContain("<ModuleHint");
+    expect(hintBranch).not.toContain("openCreate");
+    expect(createBranch).toContain("openCreate");
+    expect(apiKeys).toContain("createApiKey");
     // Existing keys stay listed and revocable.
-    expect(keys).toContain("revokeApiKey");
-    expect(keys.indexOf("revokeApiKey")).toBeGreaterThan(keys.indexOf('class="api-key-create"'));
-    expect(keys).toContain("pagedApiKeys");
+    expect(apiKeys).toContain("askRevoke");
+    expect(apiKeys.indexOf("askRevoke(row)")).toBeGreaterThan(apiKeys.indexOf("{/if}"));
   });
 
-  it("(d2) createApiKey surfaces a refusal as a toast and never as a browser popup", () => {
-    const start = system.indexOf("async function createApiKey");
-    const end = system.indexOf("async function revokeApiKey");
+  it("(d2) createApiKey surfaces a refusal inside the dialog, a revoke failure as a toast, never as a browser popup", () => {
+    const start = apiKeys.indexOf("async function createApiKey");
+    const end = apiKeys.indexOf("let revokeConfirm");
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
-    const body = system.slice(start, end);
-    expect(body).toContain("toasts.error(");
+    const body = apiKeys.slice(start, end);
+    expect(body).toContain("createError =");
     expect(body).not.toMatch(/\balert\(/);
+    expect(apiKeys).toContain("toasts.error(");
   });
 
-  it("(e) Präsenz-Quellen: one HARDWARE_CLOCK hint, the create row only in the {:else}, list and revoke stay", () => {
-    expect(integrations.match(/<ModuleHint\s+module="HARDWARE_CLOCK"/g)).toHaveLength(1);
-    const sources = sectionOf(integrations, "Präsenz-Quellen");
-    expect(sources).toContain("{#if hardwareBooked === false}");
-    const branches = sources.split("{:else}");
-    expect(branches[0]).toContain("<ModuleHint");
-    expect(branches[0]).not.toContain("source-create-row");
-    expect(branches[1]).toContain('class="source-create-row"');
-    expect(branches[1]).toContain("handleCreateSource");
-    expect(sources).toContain("askRevokeSource");
-    expect(sources.indexOf("askRevokeSource")).toBeGreaterThan(
-      sources.indexOf('class="source-create-row"'),
-    );
-    expect(sources).toContain("pagedSources");
+  it("(e) Präsenz-Quellen: one HARDWARE_CLOCK hint, the create action only in the {:else}, list and revoke stay", () => {
+    expect(presence.match(/<ModuleHint\s+module="HARDWARE_CLOCK"/g)).toHaveLength(1);
+    const [hintBranch, createBranch] = branchesOf(presence, "hardwareBooked === false");
+    expect(hintBranch).toContain("<ModuleHint");
+    expect(hintBranch).not.toContain("openCreateSource");
+    expect(createBranch).toContain("openCreateSource");
+    expect(presence).toContain("handleCreateSource");
+    expect(presence).toContain("askRevokeSource");
+    expect(presence.indexOf("askRevokeSource(row)")).toBeGreaterThan(presence.indexOf("{/if}"));
+    expect(presence).toContain("pagedSources");
   });
 
   it("(e2) a refused source creation shows the server message for 409 only", () => {
-    const start = integrations.indexOf("async function handleCreateSource");
-    const end = integrations.indexOf("function askRevokeSource");
+    const start = presence.indexOf("async function handleCreateSource");
+    const end = presence.indexOf("let revokeConfirm");
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
-    const body = integrations.slice(start, end);
+    const body = presence.slice(start, end);
     expect(body).toMatch(/err instanceof ApiError\s*&&\s*err\.status === 409/);
     expect(body).toContain("err.message");
     expect(body).toContain("Schlüssel konnte nicht erstellt werden.");
@@ -225,7 +233,8 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     expect(files).toEqual(
       expect.arrayContaining([
         ADMIN_SYSTEM,
-        ADMIN_INTEGRATIONS,
+        PRESENCE_PANEL,
+        API_KEYS_PANEL,
         ADMIN_PHOREST,
         ADMIN_SALONS,
         ADMIN_ROLES,
@@ -246,13 +255,15 @@ describe("module teaser placement — the other three set-up spots (Phase 566-10
     const bySpot = usages.map(({ file, tag }) => `${file}|${tag.match(/module="(\w+)"/)?.[1]}`);
     expect(bySpot.sort((a, b) => a.localeCompare(b))).toEqual(
       [
-        join("routes", "(app)", "admin", "integrations", "+page.svelte") + "|HARDWARE_CLOCK",
+        join("lib", "components", "admin", "integrationen", "ApiKeysPanel.svelte") +
+          "|INTEGRATIONS",
+        join("lib", "components", "admin", "integrationen", "PresenceSourcesPanel.svelte") +
+          "|HARDWARE_CLOCK",
         join("routes", "(app)", "admin", "phorest", "+page.svelte") + "|INTEGRATIONS",
         join("routes", "(app)", "admin", "roles", "+page.svelte") + "|CHAIN",
         join("routes", "(app)", "admin", "salons", "+page.svelte") + "|CHAIN",
         join("lib", "components", "admin", "integrationen", "TerminalsPanel.svelte") +
           "|HARDWARE_CLOCK",
-        join("routes", "(app)", "admin", "system", "+page.svelte") + "|INTEGRATIONS",
       ].sort((a, b) => a.localeCompare(b)),
     );
   });

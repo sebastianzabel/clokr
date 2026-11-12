@@ -1,8 +1,9 @@
 import { api } from "$api/client";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+// Type aliases, not interfaces: DataTable rows must be assignable to Record<string, unknown>.
 
-export interface PresenceSource {
+export type PresenceSource = {
   id: string;
   name: string;
   keyPrefix: string;
@@ -10,25 +11,25 @@ export interface PresenceSource {
   lastUsedAt: string | null;
   revokedAt: string | null;
   createdAt: string;
-}
+};
 
-export interface FritzDevice {
+export type FritzDevice = {
   mac: string;
   hostname: string;
   lastSeen: string | null;
   online: boolean;
   assignedEmployeeId: string | null;
   assignedEmployeeName: string | null;
-}
+};
 
-export interface OptedInEmployee {
+export type OptedInEmployee = {
   id: string;
   firstName: string;
   lastName: string;
   wifiPresenceEnabled: boolean;
   wifiOptInAt: string | null;
   wifiMacs: string[];
-}
+};
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 

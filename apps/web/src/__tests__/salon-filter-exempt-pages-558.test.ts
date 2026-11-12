@@ -61,8 +61,9 @@ const EXEMPT_PAGES: ReadonlyArray<{
     reason: "mapping picker: the Phorest staff mapping needs every employee (D-11)",
   },
   {
-    page: "admin/integrations",
-    file: "(app)/admin/integrations/+page.svelte",
+    // The page body left its route file with #854 (plan 854-14): it is the WLAN-Anwesenheit tab of Integrationen.
+    page: "PresenceSourcesPanel",
+    file: "../lib/components/admin/integrationen/PresenceSourcesPanel.svelte",
     loads: "/employees",
     reason: "tenant configuration, not a person view (D-11)",
   },

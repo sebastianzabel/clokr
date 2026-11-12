@@ -579,7 +579,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     keys: [],
     source: "/admin/integrations",
     requires: PRESENCE_REQUIRES,
-    renderedBy: "routes/(app)/admin/integrations/+page.svelte",
+    renderedBy: `${INTEGRATIONEN_DIR}/PresenceSourcesPanel.svelte`,
   },
   {
     page: INTEGRATIONEN_PAGE,
@@ -590,6 +590,16 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     source: "/admin/system",
     requires: SYSTEM_REQUIRES,
     renderedBy: `${INTEGRATIONEN_DIR}/TerminalsPanel.svelte`,
+  },
+  {
+    page: INTEGRATIONEN_PAGE,
+    id: "integrationen-api-schluessel",
+    title: "API-Schlüssel",
+    endpoint: null,
+    keys: [],
+    source: "/admin/system",
+    requires: SYSTEM_REQUIRES,
+    renderedBy: `${INTEGRATIONEN_DIR}/ApiKeysPanel.svelte`,
   },
 
   // ── /admin/phorest ─────────────────────────────────────────────────────────────────────────────

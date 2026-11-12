@@ -1,5 +1,5 @@
 <!--
-  TerminalSalonCell — the salon cell of one terminal row on /admin/system (Issue #541, D-08, D-11).
+  TerminalSalonCell — the salon cell of one terminal row on System › Integrationen (Issue #541, D-08, D-11).
 
   Presentation only: the API re-validates every binding (PATCH /terminals/:id). The cell shows
   - a select (instant save) while the key is active and either the tenant has salon options (the

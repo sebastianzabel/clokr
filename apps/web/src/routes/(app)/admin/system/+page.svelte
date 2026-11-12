@@ -1,13 +1,9 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
-  import { api, ApiError } from "$api/client";
-  import { authStore } from "$stores/auth";
-  import { salonContext, moduleBooked } from "$stores/salon-context";
-  import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
+  import { api } from "$api/client";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
-  import Pagination from "$components/ui/Pagination.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
@@ -16,7 +12,6 @@
   const TABS = [
     { id: "allgemein", label: "Allgemein" },
     { id: "sicherheit", label: "Sicherheit" },
-    { id: "integration", label: "Integration" },
   ];
   let activeTab = $state<string>("allgemein");
 
@@ -151,38 +146,6 @@
   let pwSaved = $state(false);
   let pwError = $state("");
 
-  // API Keys
-  interface ApiKeyEntry {
-    id: string;
-    name: string;
-    keyPrefix: string;
-    scopes: string[];
-    expiresAt: string | null;
-    lastUsedAt: string | null;
-    revokedAt: string | null;
-    createdAt: string;
-  }
-  let apiKeys: ApiKeyEntry[] = $state([]);
-  let akPage = $state(1);
-  let akPageSize = $state(10);
-  let pagedApiKeys = $derived(apiKeys.slice((akPage - 1) * akPageSize, akPage * akPageSize));
-  let newApiKeyName = $state("");
-  let newApiKeyScopes = $state<string[]>(["read:employees", "read:time-entries"]);
-  let newApiKeyRaw = $state("");
-  let showNewApiKey = $state(false);
-  let apiKeyLoading = $state(false);
-
-  const API_SCOPES = [
-    { scope: "read:employees", label: "Mitarbeiter lesen" },
-    { scope: "read:time-entries", label: "Zeiteinträge lesen" },
-    { scope: "write:time-entries", label: "Zeiteinträge schreiben" },
-    { scope: "read:leave", label: "Abwesenheiten lesen" },
-    { scope: "write:leave", label: "Abwesenheiten schreiben" },
-    { scope: "read:reports", label: "Berichte lesen" },
-    { scope: "read:overtime", label: "Überstunden lesen" },
-    { scope: "admin", label: "Voller Zugriff" },
-  ];
-
   // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
   // One snapshot per button-gated group, taken at load and re-taken after each successful save.
   // Snapshot comparison rather than per-field oninput flags: it is three lines per section instead
@@ -231,13 +194,7 @@
     return () => markUnsaved("admin-system", false);
   });
 
-  // Phase 566 (D-12): display only — the server answers 409 for an unbooked module either way.
-  // `=== false` only: an unknown state never hides the create row.
-  const integrationsBooked = $derived(moduleBooked($salonContext, "INTEGRATIONS"));
-
   onMount(async () => {
-    // Forced, so a freshly booked module shows without waiting for the navigation throttle.
-    void salonContext.load($authStore.user?.id ?? null, { force: true });
     try {
       const cfg = await api.get<TenantConfig>("/settings/work");
       gFederalState = cfg.federalState ?? "NIEDERSACHSEN";
@@ -262,12 +219,6 @@
         loginLockoutMinutes = sec.loginLockoutMinutes ?? 15;
       } catch {
         /* ignorieren */
-      }
-
-      try {
-        apiKeys = await api.get<ApiKeyEntry[]>("/api-keys");
-      } catch {
-        /* ignore */
       }
 
       // Phase 109 — baseline for the unsaved markers. Must run after ALL state above is hydrated.
@@ -404,49 +355,6 @@
   // writes land in one batch (a pre-flight throw, a cached response, a sync guard before the
   // await), Svelte sees `previous → previous`, applies nothing, and the browser's own flip stays on
   // screen. Writing `el.checked` directly is the one line that cannot be defeated that way.
-  async function createApiKey() {
-    if (!newApiKeyName.trim() || newApiKeyScopes.length === 0) return;
-    apiKeyLoading = true;
-    try {
-      const res = await api.post<ApiKeyEntry & { rawKey: string }>("/api-keys", {
-        name: newApiKeyName.trim(),
-        scopes: newApiKeyScopes,
-      });
-      newApiKeyRaw = res.rawKey;
-      showNewApiKey = true;
-      newApiKeyName = "";
-      apiKeys = await api.get<ApiKeyEntry[]>("/api-keys");
-    } catch (e: unknown) {
-      toasts.error(e instanceof Error ? e.message : "API-Schlüssel konnte nicht erstellt werden.");
-    } finally {
-      apiKeyLoading = false;
-    }
-  }
-
-  async function revokeApiKey(id: string) {
-    try {
-      await api.delete(`/api-keys/${id}`);
-      apiKeys = await api.get<ApiKeyEntry[]>("/api-keys");
-    } catch (e: unknown) {
-      toasts.error(
-        e instanceof Error
-          ? e.message
-          : "API-Schlüssel konnte nicht widerrufen werden. Versuche es noch einmal.",
-      );
-    }
-  }
-
-  function toggleScope(scope: string) {
-    if (newApiKeyScopes.includes(scope)) {
-      newApiKeyScopes = newApiKeyScopes.filter((s) => s !== scope);
-    } else {
-      newApiKeyScopes = [...newApiKeyScopes, scope];
-    }
-  }
-
-  function copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text);
-  }
 </script>
 
 <!-- Phase 73-05 (D-05): data-testid surface for admin-system flows.
@@ -828,107 +736,6 @@
             {/if}
           {/snippet}
         </Section>
-      {:else if currentTab === "integration"}
-        <!-- ── API Keys ─────────────────────────────────────────────────────── -->
-        <Section title="API Keys" sub="Schlüssel für externe Integrationen">
-          {#if showNewApiKey}
-            <div class="alert alert-success" style="margin-bottom: 1rem;">
-              <div>
-                <strong>API Key erstellt!</strong>
-                <p style="margin: 0.5rem 0;">
-                  Kopier den Schlüssel jetzt — er wird nicht erneut angezeigt:
-                </p>
-                <div class="key-display">
-                  <code class="key-code">{newApiKeyRaw}</code>
-                  <button
-                    class="btn btn-ghost btn-sm"
-                    onclick={() => navigator.clipboard.writeText(newApiKeyRaw)}>Kopieren</button
-                  >
-                </div>
-                <button
-                  class="btn btn-ghost btn-sm"
-                  style="margin-top: 0.5rem;"
-                  onclick={() => {
-                    showNewApiKey = false;
-                    newApiKeyRaw = "";
-                  }}>Schließen</button
-                >
-              </div>
-            </div>
-          {/if}
-
-          {#if integrationsBooked === false}
-            <ModuleHint module="INTEGRATIONS" subject="API-Schlüssel" />
-          {:else}
-            <div class="api-key-create">
-              <div class="inline-create">
-                <input
-                  type="text"
-                  class="form-input"
-                  bind:value={newApiKeyName}
-                  placeholder="Name (z.B. DATEV Export)"
-                />
-                <button
-                  class="btn btn-primary"
-                  onclick={createApiKey}
-                  disabled={apiKeyLoading || !newApiKeyName.trim() || newApiKeyScopes.length === 0}
-                >
-                  Key erstellen
-                </button>
-              </div>
-              <div class="scope-chips">
-                {#each API_SCOPES as s (s.scope)}
-                  <button
-                    class="btn btn-sm"
-                    class:btn-primary={newApiKeyScopes.includes(s.scope)}
-                    class:btn-ghost={!newApiKeyScopes.includes(s.scope)}
-                    onclick={() => toggleScope(s.scope)}>{s.label}</button
-                  >
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          {#if apiKeys.length > 0}
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr
-                    ><th>Name</th><th>Prefix</th><th>Scopes</th><th>Letzter Zugriff</th><th
-                    ></th></tr
-                  >
-                </thead>
-                <tbody>
-                  {#each pagedApiKeys as key (key.id)}
-                    <tr class:row-revoked={!!key.revokedAt}>
-                      <td>{key.name}</td>
-                      <td><code class="inline-code">{key.keyPrefix}…</code></td>
-                      <td class="scope-cell">{key.scopes.join(", ")}</td>
-                      <td>
-                        {key.lastUsedAt
-                          ? new Date(key.lastUsedAt).toLocaleDateString("de-DE")
-                          : "Nie"}
-                      </td>
-                      <td>
-                        {#if !key.revokedAt}
-                          <button
-                            class="btn btn-sm btn-ghost btn-danger-ghost"
-                            onclick={() => revokeApiKey(key.id)}>Widerrufen</button
-                          >
-                        {:else}
-                          <span class="text-muted revoked-label">Widerrufen</span>
-                        {/if}
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-              <Pagination total={apiKeys.length} bind:page={akPage} bind:pageSize={akPageSize} />
-            </div>
-          {:else}
-            <p class="text-muted">Keine API Keys vorhanden.</p>
-          {/if}
-        </Section>
       {/if}
     {/snippet}
   </SectionStack>
@@ -1037,15 +844,6 @@
     min-width: 220px;
   }
 
-  .row-revoked {
-    opacity: 0.5;
-  }
-
-  .table-wrap {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
   /* ── Option stack — one option per row, label/hint left, control right.
      Used by Sicherheit / Session-Management / Passwort-Richtlinie to avoid
      the chaotic mix of 2-column form-grids and stacked toggle-rows. ───── */
@@ -1117,67 +915,10 @@
     }
   }
 
-  /* Inline create row (NFC/API key creation) */
-  .inline-create {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
-  .inline-create .form-input {
-    flex: 1;
-  }
-
-  /* Key display (after creation, shown once) */
-  .key-display {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-  }
-  .key-code {
-    flex: 1;
-    padding: 0.5rem;
-    background: var(--sunk);
-    border-radius: var(--r-control);
-    word-break: break-all;
-    font-size: 0.8125rem;
-    font-family: var(--font-code);
-    color: var(--text);
-  }
-  .inline-code {
-    font-family: var(--font-code);
-    font-size: 0.8125rem;
-    color: var(--text);
-  }
-
-  /* API key scope chips */
-  .api-key-create {
-    margin-bottom: 1rem;
-  }
-  .scope-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.375rem;
-  }
-  .scope-cell {
-    font-size: 0.75rem;
-  }
-  .revoked-label {
-    font-size: 0.75rem;
-  }
-
-  /* Danger ghost button: ghost styling with --bad color */
-  .btn-danger-ghost {
-    color: var(--bad);
-  }
-
   @media (max-width: 640px) {
     .inline-fields {
       flex-direction: column;
       gap: 1rem;
-    }
-
-    .inline-create {
-      flex-direction: column;
     }
   }
 </style>
