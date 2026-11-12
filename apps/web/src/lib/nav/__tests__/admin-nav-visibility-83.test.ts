@@ -57,12 +57,13 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
     });
   });
 
-  // Issue #854 regroups the pages one plan at a time: Regeln gained „Arbeitszeit & Verträge“ (plan 854-07)
-  // and „Monatsabschluss“ (plan 854-08), the other children are still today's pages.
+  // Issue #854 regroups the pages one plan at a time: Regeln gained „Arbeitszeit & Verträge“ (plan 854-07),
+  // „Monatsabschluss“ and „Benachrichtigungen & E-Mail“ (plan 854-08), the other children are still today's pages.
   it("Regeln and System list today's pages plus the pages #854 added", () => {
     expect(labelsOf("/verwalten/regeln")).toEqual([
       "Arbeitszeit & Verträge",
       "Monatsabschluss",
+      "Benachrichtigungen & E-Mail",
       "Urlaubsverwaltung",
       "Betriebsurlaub",
       "Urlaubsgrenzen & Sperren",

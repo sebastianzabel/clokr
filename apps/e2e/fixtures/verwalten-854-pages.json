@@ -41,6 +41,12 @@
       "path": "/verwalten/regeln/monatsabschluss",
       "heading": "Monatsabschluss",
       "tabs": []
+    },
+    {
+      "slug": "regeln-benachrichtigungen",
+      "path": "/verwalten/regeln/benachrichtigungen",
+      "heading": "Benachrichtigungen & E-Mail",
+      "tabs": []
     }
   ]
 }

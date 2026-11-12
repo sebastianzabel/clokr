@@ -98,6 +98,11 @@ const MONATSABSCHLUSS_FROM_SYSTEM = {
   requires: SYSTEM_REQUIRES,
 } as const;
 
+// Plan 854-08: mail server, e-mail switches (System) and reminders (Urlaub) live on Regeln › Benachrichtigungen
+// & E-Mail; each section keeps the alternatives of the page it came from.
+const BENACHRICHTIGUNGEN_PAGE = "/verwalten/regeln/benachrichtigungen";
+const BENACHRICHTIGUNGEN_DIR = "lib/components/admin/benachrichtigungen";
+
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   // ── Regeln › Arbeitszeit & Verträge ────────────────────────────────────────────────────────────
   {
@@ -218,6 +223,62 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     renderedBy: `${MONATSABSCHLUSS_DIR}/BreakBlockSection.svelte`,
   },
 
+  // ── Regeln › Benachrichtigungen & E-Mail ───────────────────────────────────────────────────────
+  {
+    page: BENACHRICHTIGUNGEN_PAGE,
+    source: "/admin/system",
+    requires: SYSTEM_REQUIRES,
+    id: "benachrichtigungen-smtp",
+    title: "E-Mail-Server",
+    endpoint: "/settings/smtp",
+    keys: [
+      "smtpHost",
+      "smtpPort",
+      "smtpUser",
+      "smtpPassword",
+      "smtpFromEmail",
+      "smtpFromName",
+      "smtpSecure",
+    ],
+    renderedBy: `${BENACHRICHTIGUNGEN_DIR}/SmtpSection.svelte`,
+  },
+  {
+    page: BENACHRICHTIGUNGEN_PAGE,
+    source: "/admin/system",
+    requires: SYSTEM_REQUIRES,
+    id: "benachrichtigungen-email",
+    title: "E-Mail-Benachrichtigungen",
+    endpoint: "/settings/security",
+    keys: [
+      "emailNotificationsEnabled",
+      "emailOnLeaveRequest",
+      "emailOnLeaveDecision",
+      "emailOnOvertimeWarning",
+      "emailOnMissingEntries",
+      "emailOnClockOutReminder",
+      "emailOnMonthClose",
+      "emailOnRetroEntry",
+    ],
+    renderedBy: `${BENACHRICHTIGUNGEN_DIR}/EmailSection.svelte`,
+  },
+  {
+    page: BENACHRICHTIGUNGEN_PAGE,
+    source: "/admin/vacation",
+    requires: VACATION_REQUIRES,
+    id: "benachrichtigungen-erinnerungen",
+    title: "Erinnerungen",
+    endpoint: "/settings/work",
+    keys: [
+      "clockOutReminderHours",
+      "missingEntriesDays",
+      "reminderPendingLeaveEnabled",
+      "reminderPendingLeaveHours",
+      "reminderUpcomingAbsenceEnabled",
+      "reminderUpcomingAbsenceDays",
+    ],
+    renderedBy: `${BENACHRICHTIGUNGEN_DIR}/RemindersSection.svelte`,
+  },
+
   // ── /admin/system ──────────────────────────────────────────────────────────────────────────────
   {
     ...SYSTEM,
@@ -275,38 +336,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "passwordRequireSpecial",
     ],
   },
-  {
-    ...SYSTEM,
-    id: "system-email-notifications",
-    title: "E-Mail-Benachrichtigungen",
-    endpoint: "/settings/security",
-    keys: [
-      "emailNotificationsEnabled",
-      "emailOnLeaveRequest",
-      "emailOnLeaveDecision",
-      "emailOnOvertimeWarning",
-      "emailOnMissingEntries",
-      "emailOnClockOutReminder",
-      "emailOnMonthClose",
-      "emailOnRetroEntry",
-    ],
-    dynamicPayload: true,
-  },
-  {
-    ...SYSTEM,
-    id: "system-smtp",
-    title: "E-Mail / SMTP",
-    endpoint: "/settings/smtp",
-    keys: [
-      "smtpHost",
-      "smtpPort",
-      "smtpUser",
-      "smtpPassword",
-      "smtpFromEmail",
-      "smtpFromName",
-      "smtpSecure",
-    ],
-  },
   // Management sections: lists with their own endpoints, no configuration keys.
   { ...SYSTEM, id: "system-terminals", title: "NFC-Terminals", endpoint: null, keys: [] },
   { ...SYSTEM, id: "system-api-keys", title: "API Keys", endpoint: null, keys: [] },
@@ -325,8 +354,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "carryOverDeadlineMonth",
       "defaultVacationDays",
       "defaultApprenticeVacationDays",
-      "clockOutReminderHours",
-      "missingEntriesDays",
       "christmasEveRule",
       "newYearsEveRule",
       "holidayRulesValidFromYear",
@@ -343,10 +370,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "vacationReminderStartMonth",
       "carryoverWarningEnabled",
       "carryoverWarningThresholds",
-      "reminderPendingLeaveHours",
-      "reminderUpcomingAbsenceDays",
-      "reminderPendingLeaveEnabled",
-      "reminderUpcomingAbsenceEnabled",
       "reminderShiftStartEnabled",
       "reminderShiftEndEnabled",
       "reminderDayCloseEnabled",

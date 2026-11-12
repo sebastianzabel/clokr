@@ -246,6 +246,11 @@
       "auth": "tenant-admin"
     },
     {
+      "page": "(app)/verwalten/regeln/benachrichtigungen/+page.svelte",
+      "path": "/verwalten/regeln/benachrichtigungen",
+      "auth": "tenant-admin"
+    },
+    {
       "page": "(app)/verwalten/regeln/monatsabschluss/+page.svelte",
       "path": "/verwalten/regeln/monatsabschluss",
       "auth": "tenant-admin"

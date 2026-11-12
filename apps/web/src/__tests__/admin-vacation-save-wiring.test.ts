@@ -80,7 +80,9 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
   // below is backed by a `$state` variable that plan 109-11's `globalSnapshot` must include.
   // Issue #854 (plan 854-07): the 16 keys of the default hours, the overtime threshold and payout, the
   // bulk-apply modifiers, arbzgEnabled and autoDeleteOpenHours moved to Regeln › Arbeitszeit & Verträge
-  // (47 -> 31); they are pinned there by settings-pages-854 and arbeitszeit-save-wiring-854.
+  // (47 -> 31); they are pinned there by settings-pages-854 and arbeitszeit-save-wiring-854. Plan 854-08 moved
+  // the six keys of the clock-out, missing-entries, pending-leave and upcoming-absence reminders to
+  // Regeln › Benachrichtigungen & E-Mail (31 -> 25; settings-pages-854 and benachrichtigungen-854).
   const WORK_KEYS = [
     "autoCalcPartTimeVacation",
     "carryOverDeadlineDay",
@@ -89,7 +91,6 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "carryoverWarningEnabled",
     "carryoverWarningThresholds",
     "christmasEveRule",
-    "clockOutReminderHours",
     // Issue #435 D-03: +defaultApprenticeVacationDays (37 → 38)
     "defaultApprenticeVacationDays",
     "defaultVacationDays",
@@ -99,18 +100,13 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "holidayRulesValidFromYear",
     // Issue #835 (AC-13): +1 deadline lock of the leave planner (46 -> 47)
     "leavePlanDeadlineLocksWishes",
-    "missingEntriesDays",
     "newYearsEveRule",
     // Issue #609 (D-01): +5 shift reminder keys (41 -> 46)
     "reminderDayCloseEnabled",
     "reminderDayCloseTime",
     "reminderOffsetMinutes",
-    "reminderPendingLeaveEnabled",
-    "reminderPendingLeaveHours",
     "reminderShiftEndEnabled",
     "reminderShiftStartEnabled",
-    "reminderUpcomingAbsenceDays",
-    "reminderUpcomingAbsenceEnabled",
     "sickNoteRequiredAfterDays",
     "sickSelfReport",
     "vacationLeadTimeDays",
@@ -118,7 +114,7 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     "vacationReminderStartMonth",
   ] as const;
 
-  it("PUT /settings/work carries exactly the 31 known keys, no more, no fewer", () => {
+  it("PUT /settings/work carries exactly the 25 known keys, no more, no fewer", () => {
     const saveGlobalBody = fnBody("async function saveGlobal");
     const bodyStart = saveGlobalBody.indexOf('api.put("/settings/work", {');
     expect(bodyStart, 'api.put("/settings/work", {...}) call not found').toBeGreaterThan(-1);
@@ -254,9 +250,9 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation"
     expect(catchIdx, "onMount's catch not found").toBeGreaterThan(onMountStart);
     const onMountTry = PAGE.slice(onMountStart, catchIdx);
 
-    const lastFieldIdx = onMountTry.lastIndexOf("reminderUpcomingDays =");
+    const lastFieldIdx = onMountTry.lastIndexOf("reminderDayCloseTime =");
     const readyIdx = onMountTry.indexOf("snapshotsReady = true");
-    expect(lastFieldIdx, "reminderUpcomingDays assignment not found in onMount").toBeGreaterThan(
+    expect(lastFieldIdx, "reminderDayCloseTime assignment not found in onMount").toBeGreaterThan(
       -1,
     );
     expect(readyIdx, "snapshotsReady = true not found in onMount's try").toBeGreaterThan(-1);

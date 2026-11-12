@@ -299,6 +299,25 @@ export const APP_ROUTES: readonly AppRoute[] = [
     parent: "/verwalten/regeln",
     description: "Wann ein Monat abgeschlossen werden darf",
   },
+  // Issue #854: a page created by the Verwalten rebuild. Its sections come from /admin/system and /admin/vacation;
+  // the registry (settings-pages.ts) pins `requires` to the union of theirs.
+  {
+    href: "/verwalten/regeln/benachrichtigungen",
+    area: "verwalten",
+    label: "Benachrichtigungen & E-Mail",
+    icon: "inbox",
+    width: "read",
+    requires: [
+      [Z("tenant-settings:read")],
+      [Z("tenant-settings:update")],
+      [Z("terminal:manage")],
+      [Z("api-key:manage")],
+      [Z("leave-config:manage")],
+    ],
+    inNav: false,
+    parent: "/verwalten/regeln",
+    description: "E-Mail-Server, Benachrichtigungen und Erinnerungen",
+  },
   // no read guard; the page's writes decide (PUT /settings/work, /settings/leave-types)
   {
     href: "/verwalten/regeln/urlaub",

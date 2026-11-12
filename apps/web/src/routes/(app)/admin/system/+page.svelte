@@ -19,7 +19,6 @@
   const TABS = [
     { id: "allgemein", label: "Allgemein" },
     { id: "sicherheit", label: "Sicherheit" },
-    { id: "kommunikation", label: "Kommunikation" },
     { id: "integration", label: "Integration" },
   ];
   let activeTab = $state<string>("allgemein");
@@ -59,14 +58,6 @@
     passwordRequireDigit: boolean;
     passwordRequireSpecial: boolean;
     // Optional extended fields
-    emailNotificationsEnabled?: boolean;
-    emailOnLeaveRequest?: boolean;
-    emailOnLeaveDecision?: boolean;
-    emailOnOvertimeWarning?: boolean;
-    emailOnMissingEntries?: boolean;
-    emailOnClockOutReminder?: boolean;
-    emailOnMonthClose?: boolean;
-    emailOnRetroEntry?: boolean;
     sessionTimeoutMinutes?: number;
     refreshTokenDays?: number;
     rememberMeEnabled?: boolean;
@@ -144,22 +135,6 @@
   let vocationalSchoolAutoCleanupShifts = $state(true);
   let vsAutoCleanupSaving = $state(false);
 
-  let smtpHost = $state("");
-  let smtpPort = $state(587);
-  let smtpUser = $state("");
-  let smtpPassword = $state("");
-  let smtpFromEmail = $state("");
-  let smtpFromName = $state("");
-  let smtpSecure = $state(false);
-  let smtpPasswordSet = $state(false);
-  let smtpSaving = $state(false);
-  let smtpSaved = $state(false);
-  let smtpError = $state("");
-  let smtpTestEmail = $state("");
-  let smtpTesting = $state(false);
-  let smtpTestResult = $state("");
-  let smtpTestError = $state("");
-
   // Timezone
   let gTimezone = $state("Europe/Berlin");
   const TIMEZONE_OPTIONS = [
@@ -215,44 +190,6 @@
   let pwSaving = $state(false);
   let pwSaved = $state(false);
   let pwError = $state("");
-
-  // Phase 109 (D-01/D-03/D-04, AK-01/AK-03/AK-05) — the eight E-Mail-Benachrichtigungs-Toggles are
-  // atomic single values: each one is independently meaningful, so each one saves on flip.
-  // Keys are the `PUT /settings/security` field names verbatim, so the payload is `{ [flag]: next }`
-  // with no mapping layer — like every other save of this page, never a copy of the loaded
-  // settings (N-09, fixed in Issue #878).
-  type EmailFlag =
-    | "emailNotificationsEnabled"
-    | "emailOnLeaveRequest"
-    | "emailOnLeaveDecision"
-    | "emailOnOvertimeWarning"
-    | "emailOnMissingEntries"
-    | "emailOnClockOutReminder"
-    | "emailOnMonthClose"
-    | "emailOnRetroEntry";
-
-  const EMAIL_FLAG_LABELS: Record<EmailFlag, string> = {
-    emailNotificationsEnabled: "E-Mail-Benachrichtigungen",
-    emailOnLeaveRequest: "Neuer Urlaubsantrag",
-    emailOnLeaveDecision: "Urlaub genehmigt / abgelehnt",
-    emailOnOvertimeWarning: "Überstunden-Warnung",
-    emailOnMissingEntries: "Fehlende Zeiteinträge",
-    emailOnClockOutReminder: "Vergessene Stempelung",
-    emailOnMonthClose: "Monatsabschluss",
-    emailOnRetroEntry: "Zeitnachtrag",
-  };
-
-  let emailFlags = $state<Record<EmailFlag, boolean>>({
-    emailNotificationsEnabled: false,
-    emailOnLeaveRequest: true,
-    emailOnLeaveDecision: true,
-    emailOnOvertimeWarning: false,
-    emailOnMissingEntries: false,
-    emailOnClockOutReminder: false,
-    emailOnMonthClose: true,
-    emailOnRetroEntry: true,
-  });
-  let emailFlagSaving = $state<EmailFlag | null>(null);
 
   // NFC Terminals
   interface TerminalKey {
@@ -346,26 +283,10 @@
       pwSnapshot,
   );
 
-  // smtpPassword is write-only: record only WHETHER one was typed, never the value (T-109-22).
-  let smtpSnapshot = $state("");
-  let smtpDirty = $derived(
-    snap(
-      smtpHost,
-      smtpPort,
-      smtpUser,
-      smtpFromEmail,
-      smtpFromName,
-      smtpSecure,
-      smtpPassword.length > 0,
-    ) !== smtpSnapshot,
-  );
-
   // Phase 109 (D-12) — one registry entry per PAGE, not per section: the guard only needs to know
   // whether anything is unsaved. The cleanup de-registers on unmount so a saved-and-left page cannot
   // leave a stale entry behind.
-  let anyUnsaved = $derived(
-    companyDirty || shiftHoursModeDirty || sessionDirty || pwDirty || smtpDirty,
-  );
+  let anyUnsaved = $derived(companyDirty || shiftHoursModeDirty || sessionDirty || pwDirty);
 
   // Gate the registration on "the baseline has been taken" (WR-01). Every snapshot starts as ""
   // and only gets its real value at the end of onMount's try, so every *Dirty flag reads true
@@ -409,27 +330,6 @@
       shiftStoreHoursMode = cfg.shiftStoreHoursMode ?? "DAY_ONLY";
 
       try {
-        const smtp = await api.get<{
-          smtpHost: string | null;
-          smtpPort: number | null;
-          smtpUser: string | null;
-          smtpPasswordSet: boolean;
-          smtpFromEmail: string | null;
-          smtpFromName: string | null;
-          smtpSecure: boolean;
-        }>("/settings/smtp");
-        smtpHost = smtp.smtpHost ?? "";
-        smtpPort = smtp.smtpPort ?? 587;
-        smtpUser = smtp.smtpUser ?? "";
-        smtpPasswordSet = smtp.smtpPasswordSet;
-        smtpFromEmail = smtp.smtpFromEmail ?? "";
-        smtpFromName = smtp.smtpFromName ?? "";
-        smtpSecure = smtp.smtpSecure ?? false;
-      } catch {
-        /* ignorieren */
-      }
-
-      try {
         const sec = await api.get<SecurityConfig>("/settings/security");
         twoFaEnabled = sec.twoFaEnabled;
         pwMinLength = sec.passwordMinLength;
@@ -437,16 +337,6 @@
         pwRequireLower = sec.passwordRequireLower;
         pwRequireDigit = sec.passwordRequireDigit;
         pwRequireSpecial = sec.passwordRequireSpecial;
-        emailFlags = {
-          emailNotificationsEnabled: sec.emailNotificationsEnabled ?? false,
-          emailOnLeaveRequest: sec.emailOnLeaveRequest ?? true,
-          emailOnLeaveDecision: sec.emailOnLeaveDecision ?? true,
-          emailOnOvertimeWarning: sec.emailOnOvertimeWarning ?? false,
-          emailOnMissingEntries: sec.emailOnMissingEntries ?? false,
-          emailOnClockOutReminder: sec.emailOnClockOutReminder ?? false,
-          emailOnMonthClose: sec.emailOnMonthClose ?? true,
-          emailOnRetroEntry: sec.emailOnRetroEntry ?? true,
-        };
         sessionTimeoutMinutes = sec.sessionTimeoutMinutes ?? 60;
         refreshTokenDays = sec.refreshTokenDays ?? 7;
         rememberMeEnabled = sec.rememberMeEnabled ?? true;
@@ -489,15 +379,6 @@
         pwRequireLower,
         pwRequireDigit,
         pwRequireSpecial,
-      );
-      smtpSnapshot = snap(
-        smtpHost,
-        smtpPort,
-        smtpUser,
-        smtpFromEmail,
-        smtpFromName,
-        smtpSecure,
-        smtpPassword.length > 0,
       );
       snapshotsReady = true;
     } catch (e: unknown) {
@@ -577,57 +458,6 @@
       toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       vsAutoCleanupSaving = false;
-    }
-  }
-
-  async function saveSmtp() {
-    smtpSaving = true;
-    smtpError = "";
-    smtpSaved = false;
-    try {
-      const body: Record<string, unknown> = {
-        smtpHost,
-        smtpPort,
-        smtpUser,
-        smtpFromEmail,
-        smtpFromName,
-        smtpSecure,
-      };
-      if (smtpPassword) body.smtpPassword = smtpPassword;
-      await api.put("/settings/smtp", body);
-      smtpPassword = "";
-      smtpPasswordSet = true;
-      smtpSaved = true;
-      // Phase 109 — taken AFTER the smtpPassword reset above, so the cleared field is the
-      // new baseline; the snapshot itself stores only whether a password was typed (T-109-22).
-      smtpSnapshot = snap(
-        smtpHost,
-        smtpPort,
-        smtpUser,
-        smtpFromEmail,
-        smtpFromName,
-        smtpSecure,
-        smtpPassword.length > 0,
-      );
-      setTimeout(() => (smtpSaved = false), 3000);
-    } catch (e: unknown) {
-      smtpError = e instanceof Error ? e.message : "Fehler";
-    } finally {
-      smtpSaving = false;
-    }
-  }
-
-  async function testSmtp() {
-    smtpTesting = true;
-    smtpTestResult = "";
-    smtpTestError = "";
-    try {
-      await api.post("/settings/smtp/test", { email: smtpTestEmail });
-      smtpTestResult = "Testmail erfolgreich gesendet.";
-    } catch (e: unknown) {
-      smtpTestError = e instanceof Error ? e.message : "SMTP-Fehler";
-    } finally {
-      smtpTesting = false;
     }
   }
 
@@ -716,28 +546,6 @@
   // writes land in one batch (a pre-flight throw, a cached response, a sync guard before the
   // await), Svelte sees `previous → previous`, applies nothing, and the browser's own flip stays on
   // screen. Writing `el.checked` directly is the one line that cannot be defeated that way.
-  async function toggleEmailFlag(flag: EmailFlag, next: boolean, el?: HTMLInputElement) {
-    const previous = emailFlags[flag];
-    emailFlags[flag] = next; // optimistic — mirrors the checkbox the browser already flipped
-    emailFlagSaving = flag;
-    try {
-      const res = await api.put<SecurityConfig>("/settings/security", { [flag]: next });
-      const serverValue = res?.[flag];
-      emailFlags[flag] = typeof serverValue === "boolean" ? serverValue : next;
-      // The server may answer with a value other than `next`; resync the DOM unconditionally.
-      if (el) el.checked = emailFlags[flag];
-      toasts.success(
-        `${EMAIL_FLAG_LABELS[flag]} ${emailFlags[flag] ? "aktiviert" : "deaktiviert"}.`,
-      );
-    } catch (e: unknown) {
-      emailFlags[flag] = previous; // revert BEFORE the toast (D-04)
-      if (el) el.checked = previous;
-      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
-    } finally {
-      emailFlagSaving = null;
-    }
-  }
-
   async function createApiKey() {
     if (!newApiKeyName.trim() || newApiKeyScopes.length === 0) return;
     apiKeyLoading = true;
@@ -1348,300 +1156,6 @@
             {/if}
           {/snippet}
         </Section>
-      {:else if currentTab === "kommunikation"}
-        <!-- ── E-Mail-Benachrichtigungen ────────────────────────────────────── -->
-        <Section title="E-Mail-Benachrichtigungen" sub="Welche Ereignisse per E-Mail melden">
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label">E-Mail-Benachrichtigungen aktivieren</span>
-              <p class="form-hint text-muted">
-                Sendet zusätzlich zur In-App-Benachrichtigung eine E-Mail. SMTP muss konfiguriert
-                sein.
-              </p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="E-Mail-Benachrichtigungen aktivieren"
-                checked={emailFlags.emailNotificationsEnabled}
-                onchange={(ev) =>
-                  toggleEmailFlag(
-                    "emailNotificationsEnabled",
-                    (ev.currentTarget as HTMLInputElement).checked,
-                    ev.currentTarget as HTMLInputElement,
-                  )}
-                disabled={emailFlagSaving !== null}
-                data-testid="admin-system-email-emailNotificationsEnabled"
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          {#if emailFlags.emailNotificationsEnabled}
-            <h4 class="sys-subtitle" style="margin-top: 1rem;">Benachrichtigungstypen</h4>
-            <div class="toggle-row">
-              <span class="toggle-row-label">Neuer Urlaubsantrag</span>
-              <label class="switch">
-                <input
-                  type="checkbox"
-                  aria-label="Benachrichtigung: Neuer Urlaubsantrag"
-                  checked={emailFlags.emailOnLeaveRequest}
-                  onchange={(ev) =>
-                    toggleEmailFlag(
-                      "emailOnLeaveRequest",
-                      (ev.currentTarget as HTMLInputElement).checked,
-                      ev.currentTarget as HTMLInputElement,
-                    )}
-                  disabled={emailFlagSaving !== null}
-                  data-testid="admin-system-email-emailOnLeaveRequest"
-                />
-                <span class="switch-slider"></span>
-              </label>
-            </div>
-            <div class="toggle-row">
-              <span class="toggle-row-label">Urlaub genehmigt / abgelehnt</span>
-              <label class="switch">
-                <input
-                  type="checkbox"
-                  aria-label="Benachrichtigung: Urlaub genehmigt / abgelehnt"
-                  checked={emailFlags.emailOnLeaveDecision}
-                  onchange={(ev) =>
-                    toggleEmailFlag(
-                      "emailOnLeaveDecision",
-                      (ev.currentTarget as HTMLInputElement).checked,
-                      ev.currentTarget as HTMLInputElement,
-                    )}
-                  disabled={emailFlagSaving !== null}
-                  data-testid="admin-system-email-emailOnLeaveDecision"
-                />
-                <span class="switch-slider"></span>
-              </label>
-            </div>
-            <div class="toggle-row">
-              <span class="toggle-row-label">Überstunden-Warnung</span>
-              <label class="switch">
-                <input
-                  type="checkbox"
-                  aria-label="Benachrichtigung: Überstunden-Warnung"
-                  checked={emailFlags.emailOnOvertimeWarning}
-                  onchange={(ev) =>
-                    toggleEmailFlag(
-                      "emailOnOvertimeWarning",
-                      (ev.currentTarget as HTMLInputElement).checked,
-                      ev.currentTarget as HTMLInputElement,
-                    )}
-                  disabled={emailFlagSaving !== null}
-                  data-testid="admin-system-email-emailOnOvertimeWarning"
-                />
-                <span class="switch-slider"></span>
-              </label>
-            </div>
-            <div class="toggle-row">
-              <span class="toggle-row-label">Fehlende Zeiteinträge</span>
-              <label class="switch">
-                <input
-                  type="checkbox"
-                  aria-label="Benachrichtigung: Fehlende Zeiteinträge"
-                  checked={emailFlags.emailOnMissingEntries}
-                  onchange={(ev) =>
-                    toggleEmailFlag(
-                      "emailOnMissingEntries",
-                      (ev.currentTarget as HTMLInputElement).checked,
-                      ev.currentTarget as HTMLInputElement,
-                    )}
-                  disabled={emailFlagSaving !== null}
-                  data-testid="admin-system-email-emailOnMissingEntries"
-                />
-                <span class="switch-slider"></span>
-              </label>
-            </div>
-            <div class="toggle-row">
-              <span class="toggle-row-label">Vergessene Stempelung</span>
-              <label class="switch">
-                <input
-                  type="checkbox"
-                  aria-label="Benachrichtigung: Vergessene Stempelung"
-                  checked={emailFlags.emailOnClockOutReminder}
-                  onchange={(ev) =>
-                    toggleEmailFlag(
-                      "emailOnClockOutReminder",
-                      (ev.currentTarget as HTMLInputElement).checked,
-                      ev.currentTarget as HTMLInputElement,
-                    )}
-                  disabled={emailFlagSaving !== null}
-                  data-testid="admin-system-email-emailOnClockOutReminder"
-                />
-                <span class="switch-slider"></span>
-              </label>
-            </div>
-            <div class="toggle-row">
-              <span class="toggle-row-label" translate="no">Monatsabschluss</span>
-              <label class="switch">
-                <input
-                  type="checkbox"
-                  aria-label="Benachrichtigung: Monatsabschluss"
-                  checked={emailFlags.emailOnMonthClose}
-                  onchange={(ev) =>
-                    toggleEmailFlag(
-                      "emailOnMonthClose",
-                      (ev.currentTarget as HTMLInputElement).checked,
-                      ev.currentTarget as HTMLInputElement,
-                    )}
-                  disabled={emailFlagSaving !== null}
-                  data-testid="admin-system-email-emailOnMonthClose"
-                />
-                <span class="switch-slider"></span>
-              </label>
-            </div>
-            <div class="toggle-row">
-              <span class="toggle-row-label">Zeitnachtrag</span>
-              <label class="switch">
-                <input
-                  type="checkbox"
-                  aria-label="Benachrichtigung: Zeitnachtrag"
-                  checked={emailFlags.emailOnRetroEntry}
-                  onchange={(ev) =>
-                    toggleEmailFlag(
-                      "emailOnRetroEntry",
-                      (ev.currentTarget as HTMLInputElement).checked,
-                      ev.currentTarget as HTMLInputElement,
-                    )}
-                  disabled={emailFlagSaving !== null}
-                  data-testid="admin-system-email-emailOnRetroEntry"
-                />
-                <span class="switch-slider"></span>
-              </label>
-            </div>
-          {/if}
-        </Section>
-
-        <!-- ── E-Mail / SMTP ────────────────────────────────────────────────── -->
-        <Section title="E-Mail / SMTP" sub="Postausgangsserver konfigurieren" dirty={smtpDirty}>
-          {#if smtpError}
-            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-              <span>⚠</span><span>{smtpError}</span>
-            </div>
-          {/if}
-          {#if smtpSaved}
-            <div class="alert alert-success" role="alert" style="margin-bottom: 1rem;">
-              <span>✓</span><span>SMTP gespeichert.</span>
-            </div>
-          {/if}
-
-          <div class="smtp-grid">
-            <div class="form-group">
-              <label class="form-label" for="smtp-host">SMTP-Host</label>
-              <input
-                id="smtp-host"
-                type="text"
-                bind:value={smtpHost}
-                class="form-input"
-                placeholder="smtp.example.com"
-              />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="smtp-port">Port</label>
-              <input
-                id="smtp-port"
-                type="number"
-                bind:value={smtpPort}
-                class="form-input"
-                placeholder="587"
-                min="1"
-                max="65535"
-              />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="smtp-user">Benutzername</label>
-              <input
-                id="smtp-user"
-                type="text"
-                bind:value={smtpUser}
-                class="form-input"
-                placeholder="user@example.com"
-                autocomplete="off"
-              />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="smtp-pass">
-                Passwort
-                {#if smtpPasswordSet}<span class="badge-saved">gespeichert</span>{/if}
-              </label>
-              <input
-                id="smtp-pass"
-                type="password"
-                bind:value={smtpPassword}
-                class="form-input"
-                placeholder="Unverändert lassen"
-                autocomplete="new-password"
-              />
-              <p class="form-hint">
-                Gmail/Google: <a
-                  href="https://myaccount.google.com/apppasswords"
-                  target="_blank"
-                  rel="noopener">App-Passwort</a
-                > verwenden (2FA erforderlich). Outlook: App-Passwort in den Sicherheitseinstellungen.
-              </p>
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="smtp-from-email">Von E-Mail</label>
-              <input
-                id="smtp-from-email"
-                type="email"
-                bind:value={smtpFromEmail}
-                class="form-input"
-                placeholder="noreply@clokr.de"
-              />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="smtp-from-name">Von Name</label>
-              <input
-                id="smtp-from-name"
-                type="text"
-                bind:value={smtpFromName}
-                class="form-input"
-                placeholder="Clokr"
-              />
-            </div>
-            <div class="form-group form-group--full">
-              <label class="toggle-label">
-                <input type="checkbox" bind:checked={smtpSecure} class="toggle-cb" />
-                <span>TLS/SSL (Port 465)</span>
-              </label>
-            </div>
-          </div>
-
-          {#snippet footer()}
-            <button class="btn btn-primary" onclick={saveSmtp} disabled={smtpSaving}>
-              {smtpSaving ? "Speichern…" : "SMTP speichern"}
-            </button>
-          {/snippet}
-
-          <div class="smtp-test-section">
-            <span class="form-label">Testmail senden</span>
-            <div class="smtp-test-row">
-              <input
-                type="email"
-                bind:value={smtpTestEmail}
-                class="form-input"
-                placeholder="test@example.com"
-                style="max-width: 280px;"
-              />
-              <button
-                class="btn btn-ghost"
-                onclick={testSmtp}
-                disabled={smtpTesting || !smtpTestEmail}
-              >
-                {smtpTesting ? "Senden…" : "Testmail senden"}
-              </button>
-            </div>
-            {#if smtpTestResult}
-              <p class="smtp-test-success">✓ {smtpTestResult}</p>
-            {/if}
-            {#if smtpTestError}
-              <p class="smtp-test-error">⚠ {smtpTestError}</p>
-            {/if}
-          </div>
-        </Section>
       {:else if currentTab === "integration"}
         <!-- ── NFC-Terminals ────────────────────────────────────────────────── -->
         <Section title="NFC-Terminals" sub="API-Schlüssel für stationäre Geräte">
@@ -1896,15 +1410,6 @@
     color: var(--brand-hover);
   }
 
-  .sys-subtitle {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: var(--text-2);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin: 1rem 0 0.5rem;
-  }
-
   .inline-fields {
     display: flex;
     gap: 2rem;
@@ -1969,71 +1474,9 @@
     transform: translateX(22px);
   }
 
-  .smtp-test-section {
-    margin-top: 1.25rem;
-    padding-top: 1.25rem;
-    border-top: 1px solid var(--line);
-  }
-  .smtp-test-success {
-    color: var(--ok);
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-  }
-  .smtp-test-error {
-    color: var(--bad);
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-  }
-
   .form-hint {
     font-size: 0.8125rem;
     margin-top: 0.25rem;
-  }
-
-  .smtp-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    margin-bottom: 1.25rem;
-  }
-
-  .form-group--full {
-    grid-column: 1 / -1;
-  }
-
-  .smtp-test-row {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    margin-top: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .badge-saved {
-    display: inline-block;
-    font-size: 0.7rem;
-    font-weight: 600;
-    background: var(--ok-soft);
-    color: var(--ok);
-    padding: 0.1rem 0.4rem;
-    border-radius: var(--r-control);
-    margin-left: 0.5rem;
-    vertical-align: middle;
-  }
-
-  .toggle-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    font-weight: 500;
-    margin-top: 0.375rem;
-  }
-
-  .toggle-cb {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--brand);
   }
 
   .saved-hint {
@@ -2220,10 +1663,6 @@
   }
 
   @media (max-width: 640px) {
-    .smtp-grid {
-      grid-template-columns: 1fr;
-    }
-
     .inline-fields {
       flex-direction: column;
       gap: 1rem;

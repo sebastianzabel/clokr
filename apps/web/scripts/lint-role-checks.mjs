@@ -139,8 +139,9 @@ export const SCOPE_FILES = [
   // Issue #854 (plan 854-07): Regeln › Arbeitszeit & Verträge shows a section by the permission
   // alternatives of the page it came from (`mayOpenSection`), never by a role.
   "apps/web/src/routes/(app)/verwalten/regeln/arbeitszeit/+page.svelte",
-  // Issue #854 (plan 854-08): the same for Regeln › Monatsabschluss.
+  // Issue #854 (plan 854-08): the same for Regeln › Monatsabschluss and Benachrichtigungen & E-Mail.
   "apps/web/src/routes/(app)/verwalten/regeln/monatsabschluss/+page.svelte",
+  "apps/web/src/routes/(app)/verwalten/regeln/benachrichtigungen/+page.svelte",
 ];
 
 /** (file, exact trimmed line text) pairs that may keep a flagged line. Empty since #538: the last

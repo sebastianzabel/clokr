@@ -47,6 +47,11 @@ export const MIGRATED_854: readonly string[] = [
   "routes/(app)/verwalten/regeln/monatsabschluss/+page.svelte",
   "lib/components/admin/monatsabschluss/GapsSection.svelte",
   "lib/components/admin/monatsabschluss/BreakBlockSection.svelte",
+  // Plan 854-08 (Regeln › Benachrichtigungen & E-Mail): the native page and its three sections.
+  "routes/(app)/verwalten/regeln/benachrichtigungen/+page.svelte",
+  "lib/components/admin/benachrichtigungen/SmtpSection.svelte",
+  "lib/components/admin/benachrichtigungen/EmailSection.svelte",
+  "lib/components/admin/benachrichtigungen/RemindersSection.svelte",
 ];
 
 export interface VerwaltenFile {

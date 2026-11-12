@@ -191,7 +191,9 @@ describe("WR-02 — the three instant checkbox toggles roll back and report on f
 });
 
 describe("D-07 — security-relevant settings stay button-gated", () => {
-  const BUTTON_ONLY_SECURITY = ["savePasswordPolicy", "saveSessionConfig", "saveSmtp"] as const;
+  // Issue #854 (plan 854-08): saveSmtp moved to Regeln › Benachrichtigungen & E-Mail (`SmtpSection`, a form
+  // group with its own SaveBar; the SMTP credentials stay button-gated there - benachrichtigungen-854.test.ts).
+  const BUTTON_ONLY_SECURITY = ["savePasswordPolicy", "saveSessionConfig"] as const;
 
   it.each(BUTTON_ONLY_SECURITY)("%s is wired via onclick=, never onchange=", (name) => {
     expect(PAGE).toContain(`onclick={${name}}`);
@@ -242,79 +244,31 @@ describe("AK-02 — text/number inputs never write outside a button-gated group"
   // Arbeitszeit page (#854, plan 854-07): the same rule is pinned there for every section.
 });
 
-describe("D-01/AK-01 — the eight E-Mail-Benachrichtigungs-Toggles save instantly", () => {
-  const EMAIL_FLAGS = [
-    "emailNotificationsEnabled",
-    "emailOnLeaveRequest",
-    "emailOnLeaveDecision",
-    "emailOnOvertimeWarning",
-    "emailOnMissingEntries",
-    "emailOnClockOutReminder",
-    "emailOnMonthClose",
-    "emailOnRetroEntry",
-  ] as const;
-
-  it.each(EMAIL_FLAGS)("%s is wired to toggleEmailFlag, not to a button", (flag) => {
-    // Prettier wraps the multi-line arrow-function call, so `toggleEmailFlag(` and the flag
-    // literal land on separate lines — match across whitespace rather than a single substring.
-    expect(PAGE).toMatch(new RegExp(`toggleEmailFlag\\(\\s*"${flag}"`));
-  });
-
-  it("the section no longer has a save button", () => {
-    expect(PAGE).not.toContain("saveEmailConfig");
-  });
-
-  it("AK-03: the catch branch reverts BEFORE it toasts (toggleWifi order)", () => {
-    const body = fnBody("async function toggleEmailFlag");
-    const iRevert = body.indexOf("emailFlags[flag] = previous");
-    const iToast = body.indexOf("toasts.error");
-    expect(iRevert).toBeGreaterThan(-1);
-    expect(iToast).toBeGreaterThan(iRevert);
-  });
-
-  it("N-09: the payload is minimal — no _gOtherFields snapshot", () => {
-    expect(fnBody("async function toggleEmailFlag")).not.toContain("_gOtherFields");
-  });
-
-  // WR-03: the markup binds one-way, so the state revert only reaches the DOM if Svelte flushes
-  // between the optimistic write and the revert. Today the awaited fetch guarantees that task
-  // boundary, but a pre-flight throw / cached response / sync guard ahead of the await would put
-  // both writes in one batch — Svelte would see `previous → previous` and set_checked would
-  // early-return, leaving the browser's own flip on screen. Writing el.checked removes the
-  // dependency entirely.
-  it("WR-03: the rollback writes the DOM directly, not only the state", () => {
-    const body = fnBody("async function toggleEmailFlag");
-    expect(body).toContain("if (el) el.checked = previous;");
-  });
-
-  it("WR-03: the handler accepts the element and every call site passes it", () => {
-    expect(PAGE).toContain(
-      "async function toggleEmailFlag(flag: EmailFlag, next: boolean, el?: HTMLInputElement)",
-    );
-    // One element argument per flag — all eight toggles, none left on the flush-dependent path.
-    expect((PAGE.match(/^\s*ev\.currentTarget as HTMLInputElement,$/gm) ?? []).length).toBe(8);
-  });
-
-  it("AK-05: success feedback is the existing toast store, no new status component", () => {
-    expect(fnBody("async function toggleEmailFlag")).toContain("toasts.success");
+// Issue #854 (plan 854-08): the eight E-Mail-Benachrichtigungs-Toggles (`toggleEmailFlag`) and the SMTP server
+// moved to Regeln › Benachrichtigungen & E-Mail. There the eight keys are ONE form group (`EmailSection`) with a
+// SaveBar that sends exactly the registry keys of `benachrichtigungen-email` to PUT /settings/security. The pins
+// of the instant handler (revert before the toast, minimal payload, DOM rollback, toast feedback) went with it;
+// the replacement behaviour is pinned by settings-pages-854 (own fields only, every key sent) and
+// benachrichtigungen-854.test.ts (mounted: one request with the eight keys, failed save keeps the edit).
+describe("Issue #854 — the Kommunikation controls are gone from admin/system", () => {
+  it("carries neither the e-mail switches nor the SMTP form", () => {
+    expect(PAGE).not.toContain("toggleEmailFlag");
+    expect(PAGE).not.toContain("saveSmtp");
+    expect(PAGE).not.toContain("testSmtp");
+    expect(PAGE).not.toContain("smtpPassword");
+    expect(PAGE).not.toContain('id: "kommunikation"');
   });
 });
 
 describe("D-11/D-12 — unsaved markers on admin/system", () => {
-  const SECTIONS = [
-    "companyDirty",
-    "shiftHoursModeDirty",
-    "sessionDirty",
-    "pwDirty",
-    "smtpDirty",
-  ] as const;
+  const SECTIONS = ["companyDirty", "shiftHoursModeDirty", "sessionDirty", "pwDirty"] as const;
 
   it.each(SECTIONS)("%s is derived, not hand-set", (name) => {
     expect(PAGE).toContain(`let ${name} = $derived(`);
   });
 
   it("every button-gated Section receives a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(5);
+    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(4);
   });
 
   it("the page registers itself under one id and de-registers on unmount", () => {
@@ -332,7 +286,7 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
   });
 
   it("WR-01: snapshotsReady is set only after the last baseline snapshot, inside the try", () => {
-    const iLastSnapshot = PAGE.indexOf("smtpSnapshot = snap(");
+    const iLastSnapshot = PAGE.indexOf("pwSnapshot = snap(");
     const iReady = PAGE.indexOf("snapshotsReady = true");
     const iCatch = PAGE.indexOf('error = e instanceof Error ? e.message : "Fehler beim Laden"');
     expect(iLastSnapshot).toBeGreaterThan(-1);
@@ -342,11 +296,8 @@ describe("D-11/D-12 — unsaved markers on admin/system", () => {
     expect(iReady).toBeLessThan(iCatch);
   });
 
-  it("T-109-22: the SMTP snapshot records password PRESENCE, never the password", () => {
-    const line = PAGE.split("\n").find((l) => l.includes("smtpPassword.length > 0"));
-    expect(line).toBeDefined();
-    expect(PAGE).not.toContain("snap(smtpPassword)");
-  });
+  // T-109-22 (the SMTP snapshot records password PRESENCE, never the password) moved with the SMTP form: the
+  // section's snapshot is taken after the typed password was cleared (benachrichtigungen-854.test.ts).
 
   // T-109-24: re-taking a snapshot inside `finally` would clear the "Nicht gespeichert" marker
   // after a FAILED save, telling the operator their change is persisted when it is not.

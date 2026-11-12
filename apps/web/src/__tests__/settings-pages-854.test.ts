@@ -438,7 +438,7 @@ describe("registry helpers", () => {
   });
 
   it("mayOpenSection follows the section's own alternatives", () => {
-    const smtp = settingsSection("system-smtp");
+    const smtp = settingsSection("benachrichtigungen-smtp");
     expect(mayOpenSection({ permissions: ["terminal:manage:ZUGEWIESEN"] }, smtp)).toBe(true);
     expect(mayOpenSection({ permissions: ["report:read:ZUGEWIESEN"] }, smtp)).toBe(false);
     expect(mayOpenSection(null, smtp)).toBe(false);

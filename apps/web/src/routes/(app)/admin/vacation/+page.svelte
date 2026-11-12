@@ -69,8 +69,6 @@
     carryOverDeadlineDay: number;
     carryOverDeadlineMonth: number;
     federalState: string;
-    clockOutReminderHours: number;
-    missingEntriesDays: number;
     // Optional extended fields returned by /settings/work
     availabilityEnabled?: boolean;
     autoBreakEnabled?: boolean;
@@ -91,10 +89,6 @@
     vacationReminderStartMonth?: number;
     carryoverWarningEnabled?: boolean;
     carryoverWarningThresholds?: number[];
-    reminderPendingLeaveEnabled?: boolean;
-    reminderPendingLeaveHours?: number;
-    reminderUpcomingAbsenceEnabled?: boolean;
-    reminderUpcomingAbsenceDays?: number;
     // Shift reminders (Issue #609)
     reminderShiftStartEnabled?: boolean;
     reminderShiftEndEnabled?: boolean;
@@ -138,8 +132,6 @@
   // Issue #854 (plan 854-07): the working-time defaults (hours per weekday, overtime threshold and payout,
   // the bulk apply to existing contracts), the ArbZG check, the open-entries limit and the negative-balance
   // limit moved to Regeln › Arbeitszeit & Verträge.
-  let gClockOutHours = $state(10);
-  let gMissingDays = $state(7);
 
   // Abwesenheits-Konfiguration
   let christmasEveRule = $state("NORMAL");
@@ -163,11 +155,8 @@
   let sickNoteRequiredAfterDays = $state(3);
   let autoCalcPartTimeVacation = $state(true);
   let fullTimeWorkDaysPerWeek = $state(5);
-  // Erinnerungen
-  let reminderPendingEnabled = $state(true);
-  let reminderPendingHours = $state(48);
-  let reminderUpcomingEnabled = $state(true);
-  let reminderUpcomingDays = $state(3);
+  // Erinnerungen (the clock-out, missing-entries, pending-leave and upcoming-absence reminders moved to
+  // Regeln › Benachrichtigungen & E-Mail, Issue #854; the shift reminders follow with the roster settings)
   // Shift reminders (Issue #609, D-01) — off by default, the admin opts in
   let reminderShiftStartEnabled = $state(false);
   let reminderShiftEndEnabled = $state(false);
@@ -207,8 +196,6 @@
       gCarryOverMonth,
       gVacationDays,
       gApprenticeVacationDays,
-      gClockOutHours,
-      gMissingDays,
       christmasEveRule,
       newYearsEveRule,
       holidayRulesValidFromYear,
@@ -225,10 +212,6 @@
       vacationReminderStartMonth,
       carryoverWarningEnabled,
       carryoverWarningThresholdsText,
-      reminderPendingHours,
-      reminderUpcomingDays,
-      reminderPendingEnabled,
-      reminderUpcomingEnabled,
       reminderShiftStartEnabled,
       reminderShiftEndEnabled,
       reminderDayCloseEnabled,
@@ -257,8 +240,6 @@
       gCarryOverDay = cfg.carryOverDeadlineDay ?? 31;
       gCarryOverMonth = cfg.carryOverDeadlineMonth ?? 3;
       // v1.6.5: autoBreakEnabled + defaultBreakStart are managed on /admin/system → Arbeitszeit.
-      gClockOutHours = cfg.clockOutReminderHours ?? 10;
-      gMissingDays = cfg.missingEntriesDays ?? 7;
 
       // Leave/overtime config
       christmasEveRule = cfg.christmasEveRule ?? "NORMAL";
@@ -284,10 +265,6 @@
       carryoverWarningEnabled = cfg.carryoverWarningEnabled ?? true;
       const thresholds = cfg.carryoverWarningThresholds ?? [60, 30, 14, 7];
       carryoverWarningThresholdsText = thresholds.join(", ");
-      reminderPendingEnabled = cfg.reminderPendingLeaveEnabled ?? true;
-      reminderPendingHours = cfg.reminderPendingLeaveHours ?? 48;
-      reminderUpcomingEnabled = cfg.reminderUpcomingAbsenceEnabled ?? true;
-      reminderUpcomingDays = cfg.reminderUpcomingAbsenceDays ?? 3;
       reminderShiftStartEnabled = cfg.reminderShiftStartEnabled ?? false;
       reminderShiftEndEnabled = cfg.reminderShiftEndEnabled ?? false;
       reminderDayCloseEnabled = cfg.reminderDayCloseEnabled ?? false;
@@ -298,8 +275,6 @@
         gCarryOverMonth,
         gVacationDays,
         gApprenticeVacationDays,
-        gClockOutHours,
-        gMissingDays,
         christmasEveRule,
         newYearsEveRule,
         holidayRulesValidFromYear,
@@ -316,10 +291,6 @@
         vacationReminderStartMonth,
         carryoverWarningEnabled,
         carryoverWarningThresholdsText,
-        reminderPendingHours,
-        reminderUpcomingDays,
-        reminderPendingEnabled,
-        reminderUpcomingEnabled,
         reminderShiftStartEnabled,
         reminderShiftEndEnabled,
         reminderDayCloseEnabled,
@@ -361,8 +332,6 @@
         // v1.6.5: autoBreakEnabled + defaultBreakStart are owned by Regeln › Arbeitszeit & Verträge
         // (as are the default hours, the overtime threshold, arbzgEnabled, autoDeleteOpenHours and the
         // bulk apply since Issue #854) and intentionally not sent from this page to avoid clobbering.
-        clockOutReminderHours: gClockOutHours,
-        missingEntriesDays: gMissingDays,
         christmasEveRule,
         newYearsEveRule,
         holidayRulesValidFromYear,
@@ -381,10 +350,6 @@
         vacationReminderStartMonth,
         carryoverWarningEnabled,
         carryoverWarningThresholds: parseThresholdsInput(carryoverWarningThresholdsText),
-        reminderPendingLeaveHours: reminderPendingHours,
-        reminderUpcomingAbsenceDays: reminderUpcomingDays,
-        reminderPendingLeaveEnabled: reminderPendingEnabled,
-        reminderUpcomingAbsenceEnabled: reminderUpcomingEnabled,
         // Issue #609: the offset is clamped and an empty time falls back to 20:00 on the way
         // out — the API fields are .optional(), not .nullable(), and a rejected key fails the page.
         reminderShiftStartEnabled,
@@ -400,8 +365,6 @@
         gCarryOverMonth,
         gVacationDays,
         gApprenticeVacationDays,
-        gClockOutHours,
-        gMissingDays,
         christmasEveRule,
         newYearsEveRule,
         holidayRulesValidFromYear,
@@ -418,10 +381,6 @@
         vacationReminderStartMonth,
         carryoverWarningEnabled,
         carryoverWarningThresholdsText,
-        reminderPendingHours,
-        reminderUpcomingDays,
-        reminderPendingEnabled,
-        reminderUpcomingEnabled,
         reminderShiftStartEnabled,
         reminderShiftEndEnabled,
         reminderDayCloseEnabled,
@@ -631,57 +590,6 @@
       </Section>
     {:else if currentTab === "erinnerungen"}
       <!-- ── Tab: Erinnerungen ──────────────────────────────────────────── -->
-      <Section
-        title="Benachrichtigungen"
-        sub="Erinnerungen bei fehlenden oder offenen Zeiteinträgen"
-      >
-        <div class="settings-section">
-          <div class="inline-settings">
-            <div class="form-group">
-              <label class="form-label" for="g-clockout-hours"
-                >Erinnerung bei offener Stempelung nach</label
-              >
-              <div class="input-suffix-wrap">
-                <input
-                  id="g-clockout-hours"
-                  type="number"
-                  min="1"
-                  max="48"
-                  step="1"
-                  bind:value={gClockOutHours}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">Stunden</span>
-              </div>
-              <p class="form-hint">
-                Mitarbeiter werden erinnert, wenn sie länger als diese Zeit eingestempelt sind.
-              </p>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="g-missing-days"
-                >Erinnerung bei fehlenden Einträgen nach</label
-              >
-              <div class="input-suffix-wrap">
-                <input
-                  id="g-missing-days"
-                  type="number"
-                  min="1"
-                  max="90"
-                  step="1"
-                  bind:value={gMissingDays}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">Tagen</span>
-              </div>
-              <p class="form-hint">
-                Mitarbeiter und Vorgesetzte werden benachrichtigt, wenn keine Zeiteinträge erfasst
-                wurden.
-              </p>
-            </div>
-          </div>
-        </div>
-      </Section>
       <!-- Issue #609 (D-01/D-15): shift reminders, saved with the page's one section button -->
       <Section title="Schicht-Erinnerungen" sub="Erinnerungen an die Person mit geplanter Schicht">
         <div class="settings-section">
@@ -951,50 +859,6 @@
               </p>
             </div>
           </div>
-        </div>
-
-        <hr class="settings-divider" />
-
-        <div class="settings-section">
-          <h3 class="section-inner-title">Automatische Erinnerungen</h3>
-          <label class="form-label toggle-label">
-            <input type="checkbox" bind:checked={reminderPendingEnabled} />
-            Offene Urlaubsanträge — Manager erinnern
-          </label>
-          {#if reminderPendingEnabled}
-            <div class="inline-settings spaced-top-xs">
-              <div class="form-group">
-                <label class="form-label" for="rem-pending-h">Nach (Stunden)</label>
-                <input
-                  id="rem-pending-h"
-                  type="number"
-                  min="1"
-                  max="720"
-                  bind:value={reminderPendingHours}
-                  class="form-input"
-                />
-              </div>
-            </div>
-          {/if}
-          <label class="form-label toggle-label spaced-top-sm">
-            <input type="checkbox" bind:checked={reminderUpcomingEnabled} />
-            Bevorstehende Abwesenheiten — Mitarbeiter erinnern
-          </label>
-          {#if reminderUpcomingEnabled}
-            <div class="inline-settings spaced-top-xs">
-              <div class="form-group">
-                <label class="form-label" for="rem-upcoming-d">Tage vorher</label>
-                <input
-                  id="rem-upcoming-d"
-                  type="number"
-                  min="1"
-                  max="30"
-                  bind:value={reminderUpcomingDays}
-                  class="form-input"
-                />
-              </div>
-            </div>
-          {/if}
         </div>
       </Section>
     {:else if currentTab === "sonderurlaub"}
