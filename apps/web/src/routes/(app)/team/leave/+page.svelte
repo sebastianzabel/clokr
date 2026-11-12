@@ -12,6 +12,11 @@
   import PeriodSwitcher from "$components/ui/PeriodSwitcher.svelte"; // Issue #853 (D-853-11)
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
+  import DataTable, {
+    type DataTableColumn,
+    type DataTableRowTone,
+  } from "$components/ui/DataTable.svelte"; // Issue #853 (D-853-18)
+  import Chip, { type ChipTone } from "$components/ui/Chip.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Note from "$components/ui/Note.svelte";
@@ -390,6 +395,7 @@
     const id = bar.requestId;
     if (!id) return;
     filterLeaveType = "";
+    requestQuery = "";
     await navigate({ tab: "antraege", status: null, requestId: id });
     await tick();
     focusRequest(id);
@@ -755,18 +761,6 @@
     return `${d}.${m}.${y}`;
   }
 
-  function statusClass(s: Status) {
-    return s === "APPROVED"
-      ? "badge-green"
-      : s === "PENDING"
-        ? "badge-yellow"
-        : s === "REJECTED"
-          ? "badge-red"
-          : s === "CANCELLATION_REQUESTED"
-            ? "badge-orange"
-            : "badge-gray";
-  }
-
   function statusLabel(s: Status) {
     return s === "APPROVED"
       ? "Genehmigt"
@@ -791,6 +785,7 @@
   /** A click on the count: the Anträge list at „Offen“, with no type filter hiding a counted row. */
   function openOpenRequests() {
     filterLeaveType = "";
+    requestQuery = "";
     void navigate({ tab: "antraege", status: "PENDING" });
   }
 
@@ -925,6 +920,8 @@
   // carry it; the type filter stays page-local.
   const filterLeaveStatus = $derived<LeaveStatusFilter | "">(urlState.status ?? "");
   let filterLeaveType = $state<TypeCode | "">("");
+  // Issue #853: the Anträge search by person name (page-local, like the type filter).
+  let requestQuery = $state("");
   let teamReqPage = $state(1);
   let teamReqPageSize = $state(10);
 
@@ -938,6 +935,9 @@
     requestSource.filter((req) => {
       if (!matchesStatusFilter(req.status, urlState.status)) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
+      if (!matchesSearch(`${req.employee.firstName} ${req.employee.lastName}`, requestQuery)) {
+        return false;
+      }
       return true;
     }),
   );
@@ -950,6 +950,70 @@
     filteredTeamRequests.length;
     teamReqPage = 1;
   });
+
+  // The Anträge table (Issue #853, D-853-18): one row per request of the page, the toolbar's
+  // Status filter is the `status` URL key, the Art filter and the search are page-local.
+  type RequestRow = { id: string; req: LeaveRequest };
+  const REQUEST_COLUMNS: DataTableColumn[] = [
+    { key: "person", label: "Person", primary: true },
+    { key: "type", label: "Art" },
+    { key: "period", label: "Zeitraum" },
+    { key: "days", label: "Umfang" },
+    { key: "status", label: "Status" },
+    { key: "note", label: "Anmerkung" },
+    { key: "actions", label: "Aktionen" },
+  ];
+  const requestRows: RequestRow[] = $derived(pagedTeamRequests.map((req) => ({ id: req.id, req })));
+  const requestRowKey = (row: RequestRow) => row.id;
+  const requestRowTestId = (row: RequestRow) => `leave-team-row-${row.id}`;
+  const requestRowTone = (row: RequestRow): DataTableRowTone | undefined =>
+    highlightRequestId === row.id ? "highlight" : undefined;
+
+  const STATUS_FILTER_OPTIONS: Array<{ value: LeaveStatusFilter; label: string }> = [
+    { value: "PENDING", label: "Offen" },
+    { value: "APPROVED", label: "Genehmigt" },
+    { value: "CANCELLATION_REQUESTED", label: "Stornierung beantragt" },
+    { value: "REJECTED", label: "Abgelehnt" },
+    { value: "CANCELLED", label: "Storniert" },
+  ];
+  const requestFilters: ToolbarFilter[] = $derived([
+    { key: "status", label: "Status", options: STATUS_FILTER_OPTIONS, value: filterLeaveStatus },
+    {
+      key: "type",
+      label: "Art",
+      options: LEAVE_TYPE_OPTIONS.map((t) => ({ value: t.code, label: t.label })),
+      value: filterLeaveType,
+    },
+  ]);
+  const requestFiltersActive = $derived(
+    requestQuery !== "" || filterLeaveStatus !== "" || filterLeaveType !== "",
+  );
+
+  function onRequestFilterChange(key: string, picked: string) {
+    if (key === "status") {
+      void navigate({ status: (picked || null) as LeaveStatusFilter | null }, true);
+    } else if (key === "type") {
+      filterLeaveType = (LEAVE_TYPE_OPTIONS.find((t) => t.code === picked)?.code ?? "") as
+        TypeCode | "";
+    }
+  }
+
+  /** Search, Status and Art back to „Alle“ in one URL write. */
+  function resetRequestFilters() {
+    requestQuery = "";
+    filterLeaveType = "";
+    void navigate({ status: null }, true);
+  }
+
+  function statusTone(s: Status): ChipTone {
+    return s === "APPROVED"
+      ? "ok"
+      : s === "PENDING" || s === "CANCELLATION_REQUESTED"
+        ? "warn"
+        : s === "REJECTED"
+          ? "bad"
+          : "neutral";
+  }
 
   // ── iCal-Download ────────────────────────────────────────────────────────
   // „Kalender abonnieren“ opens a Dialog (Issue #853, D-853-18) in place of the old page section.
@@ -1131,211 +1195,189 @@
         />
       </div>
     {:else if value === "antraege"}
-      <!-- ── Anträge (E-02): the list with a status filter; open requests are decided in the inbox ─ -->
+      <!-- ── Anträge (E-02): a table with toolbar; open requests are decided in the inbox ─── -->
       <div class="lv-controls">
         {@render periodControls(false)}
       </div>
 
-      {#if loading}
-        <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
-      {:else}
-        <div class="filter-bar card-animate">
-          <select
-            class="form-input filter-select"
-            value={filterLeaveStatus}
-            onchange={(e) => {
-              const picked = e.currentTarget.value;
-              void navigate({ status: (picked || null) as LeaveStatusFilter | null }, true);
-            }}
-            aria-label="Nach Status filtern"
-            data-testid="leave-team-filter-status"
-          >
-            <option value="">Alle Status</option>
-            <option value="PENDING">Offen</option>
-            <option value="APPROVED">Genehmigt</option>
-            <option value="CANCELLATION_REQUESTED">Storno angefragt</option>
-            <option value="REJECTED">Abgelehnt</option>
-            <option value="CANCELLED">Storniert</option>
-          </select>
-          <select
-            class="form-input filter-select"
-            bind:value={filterLeaveType}
-            aria-label="Nach Art filtern"
-          >
-            <option value="">Alle Arten</option>
-            {#each LEAVE_TYPE_OPTIONS as t (t.code)}
-              <option value={t.code}>{t.label}</option>
-            {/each}
-          </select>
-          <span class="filter-count">{filteredTeamRequests.length} Anträge</span>
-        </div>
+      {#snippet requestsToolbar()}
+        <TableToolbar
+          bind:query={requestQuery}
+          count={filteredTeamRequests.length}
+          total={requestSource.length}
+          filters={requestFilters}
+          onFilterChange={onRequestFilterChange}
+          onReset={resetRequestFilters}
+          searchLabel="Person suchen"
+        />
+      {/snippet}
 
-        {#if filteredTeamRequests.length === 0}
-          {@const empty = emptyRequestsText(urlState.status, listYear, requestSource.length)}
-          <div class="empty-state card card-body card-animate" data-testid="leave-team-empty">
-            <span class="empty-icon">🏖️</span>
-            <h3>{empty.title}</h3>
-            <p class="text-muted">{empty.hint}</p>
-          </div>
-        {:else}
-          <div class="table-wrapper card card-animate">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Mitarbeiter</th>
-                  <th>Art</th>
-                  <th>Von</th>
-                  <th>Bis</th>
-                  <th class="text-center">Umfang</th>
-                  <th>Status</th>
-                  <th>Anmerkung</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each pagedTeamRequests as req (req.id)}
-                  <tr
-                    id="request-{req.id}"
-                    data-testid={`leave-team-row-${req.id}`}
-                    data-status={req.status}
-                    class:highlight-row={highlightRequestId === req.id}
+      {#if loading}
+        <DataTable
+          caption="Anträge"
+          columns={REQUEST_COLUMNS}
+          rows={[]}
+          rowKey={requestRowKey}
+          toolbar={requestsToolbar}
+          loading
+        />
+      {:else}
+        <div data-testid="leave-team-requests">
+          {#if filteredTeamRequests.length === 0}
+            {@const empty = emptyRequestsText(urlState.status, listYear, requestSource.length)}
+            <div class="dt-toolbar-row">{@render requestsToolbar()}</div>
+            <div data-testid="leave-team-empty">
+              <EmptyState
+                variant={requestFiltersActive ? "noMatches" : "noData"}
+                icon="calendar"
+                title={empty.title}
+                description={empty.hint}
+                onaction={requestFiltersActive ? resetRequestFilters : undefined}
+              />
+            </div>
+          {:else}
+            <DataTable
+              caption="Anträge"
+              columns={REQUEST_COLUMNS}
+              rows={requestRows}
+              rowKey={requestRowKey}
+              toolbar={requestsToolbar}
+              rowTestId={requestRowTestId}
+              rowTone={requestRowTone}
+            >
+              {#snippet cell(row, column)}
+                {@const req = row.req}
+                {#if column.key === "person"}
+                  <!-- The anchor of the notification/bar deep link (focusRequest scrolls to it). -->
+                  <span id="request-{req.id}">{req.employee.firstName} {req.employee.lastName}</span
                   >
-                    <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
-                    <td>
-                      <LeaveTypeChip
-                        code={req.typeCode}
-                        label={typeName(req.typeCode)}
-                        requested={req.status === "PENDING"}
-                        data-row-status={req.status}
-                        data-testid={`leave-team-row-${req.id}-type-chip`}
-                      />
-                    </td>
-                    <td>{fmtDate(req.startDate)}</td>
-                    <td>{fmtDate(req.endDate)}</td>
-                    <td class="text-center"
-                      >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</td
-                    >
-                    <td>
+                {:else if column.key === "type"}
+                  <LeaveTypeChip
+                    code={req.typeCode}
+                    label={typeName(req.typeCode)}
+                    requested={req.status === "PENDING"}
+                    data-row-status={req.status}
+                    data-testid={`leave-team-row-${req.id}-type-chip`}
+                  />
+                {:else if column.key === "period"}
+                  {fmtDate(req.startDate)} – {fmtDate(req.endDate)}
+                {:else if column.key === "days"}
+                  {leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}
+                {:else if column.key === "status"}
+                  <span class="req-status">
+                    <span data-testid={`leave-team-row-${req.id}-status-badge`}>
+                      <Chip tone={statusTone(req.status)}>{statusLabel(req.status)}</Chip>
+                    </span>
+                    {#if req.lastDaysAdjustment}
+                      {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
+                      <!-- Phase 107-07 (D-19/D-21): mirrors leave/+page.svelte's own request
+                   row exactly, so the approving manager sees the same signal on the
+                   request they approved. Persistent — not tied to notification
+                   read/dismissed state. -->
                       <span
-                        class="badge {statusClass(req.status)}"
-                        data-testid={`leave-team-row-${req.id}-status-badge`}
-                        >{statusLabel(req.status)}</span
+                        class={adjBadge.badgeClass}
+                        data-testid={`leave-team-row-${req.id}-adjustment-badge`}
+                        title={adjBadge.tooltip}
                       >
-                      {#if req.lastDaysAdjustment}
-                        {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
-                        <!-- Phase 107-07 (D-19/D-21): mirrors leave/+page.svelte's own request
-                         row exactly, so the approving manager sees the same signal on the
-                         request they approved. Persistent — not tied to notification
-                         read/dismissed state. -->
-                        <span
-                          class={adjBadge.badgeClass}
-                          data-testid={`leave-team-row-${req.id}-adjustment-badge`}
-                          title={adjBadge.tooltip}
-                        >
-                          {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
-                            ? "+"
-                            : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
-                            >{:else}{adjBadge.delta}{/if} Tag(e)
-                        </span>
-                      {/if}
-                      {#if req.daysProvisional}
-                        <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
-                         provisional request is fully valid and payable today. -->
-                        <span
-                          class="badge badge-yellow"
-                          data-testid={`leave-team-row-${req.id}-provisional-badge`}
+                        {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
+                          ? "+"
+                          : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
+                          >{:else}{adjBadge.delta}{/if} Tag(e)
+                      </span>
+                    {/if}
+                    {#if req.daysProvisional}
+                      <!-- Phase 107-07 (D-12): warn tone, NOT bad/row-invalid — a provisional
+                   request is fully valid and payable today. -->
+                      <span data-testid={`leave-team-row-${req.id}-provisional-badge`}>
+                        <Chip
+                          tone="warn"
                           title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
+                          >Vorläufig</Chip
                         >
-                          Vorläufig
-                        </span>
-                      {/if}
-                      {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                        <span
-                          class="badge badge-attest {req.attestPresent
-                            ? 'badge-green'
-                            : 'badge-gray'}"
+                      </span>
+                    {/if}
+                    {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+                      <Chip tone={req.attestPresent ? "ok" : "neutral"}
+                        >{req.attestPresent ? "Attest" : "Kein Attest"}</Chip
+                      >
+                    {/if}
+                  </span>
+                {:else if column.key === "note"}
+                  {#if req.status === "REJECTED" && req.reviewNote}
+                    <span class="req-note req-note--bad" title={req.reviewNote}
+                      >⚠ {req.reviewNote}</span
+                    >
+                  {:else}
+                    <span class="req-note" title={req.note ?? undefined}>{req.note ?? "—"}</span>
+                  {/if}
+                {:else if column.key === "actions"}
+                  <div class="action-cell__group">
+                    {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
+                      <!-- #840 (E-02): decisions are made in the inbox only; the action is offered
+                   to approvers (Pitfall 7: a reader sees the badge without it). -->
+                      {#if canApproveHint}
+                        <a
+                          data-testid={req.status === "CANCELLATION_REQUESTED"
+                            ? `leave-team-row-${req.id}-review-cancel`
+                            : `leave-team-row-${req.id}-review`}
+                          class="btn btn-sm btn-ghost"
+                          href={`/inbox?request=${req.id}&year=${req.startDate.slice(0, 4)}`}
                         >
-                          {req.attestPresent ? "Attest" : "Kein Attest"}
-                        </span>
+                          Im Posteingang prüfen
+                        </a>
                       {/if}
-                    </td>
-                    <td class="note-cell text-muted">
-                      {#if req.status === "REJECTED" && req.reviewNote}
-                        <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
-                      {:else}
-                        {req.note ?? "—"}
+                    {:else if req.status === "APPROVED"}
+                      <button
+                        data-testid={`leave-team-row-${req.id}-correct`}
+                        class="btn btn-sm btn-ghost"
+                        onclick={() => openCorrect(req)}
+                      >
+                        Korrigieren
+                      </button>
+                      {#if SICK_CODES.includes(req.typeCode)}
+                        <button
+                          data-testid={`leave-team-row-${req.id}-attest`}
+                          class="btn btn-sm btn-ghost"
+                          onclick={() => openAttest(req)}
+                        >
+                          {req.attestPresent ? "Attest ändern" : "Attest erfassen"}
+                        </button>
                       {/if}
-                    </td>
-                    <td class="action-cell">
-                      <div class="action-cell__group">
-                        {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-                          <!-- #840 (E-02): decisions are made in the inbox only; the action is offered
-                           to approvers (Pitfall 7: a reader sees the badge without it). -->
-                          {#if canApproveHint}
-                            <a
-                              data-testid={req.status === "CANCELLATION_REQUESTED"
-                                ? `leave-team-row-${req.id}-review-cancel`
-                                : `leave-team-row-${req.id}-review`}
-                              class="btn btn-sm btn-ghost"
-                              href={`/inbox?request=${req.id}&year=${req.startDate.slice(0, 4)}`}
-                            >
-                              Im Posteingang prüfen
-                            </a>
-                          {/if}
-                        {:else if req.status === "APPROVED"}
-                          <button
-                            data-testid={`leave-team-row-${req.id}-correct`}
-                            class="btn btn-sm btn-ghost"
-                            onclick={() => openCorrect(req)}
-                          >
-                            Korrigieren
-                          </button>
-                          {#if SICK_CODES.includes(req.typeCode)}
-                            <button
-                              data-testid={`leave-team-row-${req.id}-attest`}
-                              class="btn btn-sm btn-ghost"
-                              onclick={() => openAttest(req)}
-                            >
-                              {req.attestPresent ? "Attest ändern" : "Attest erfassen"}
-                            </button>
-                          {/if}
-                          {#if showsParentalReductionAction(req, $authStore.user)}
-                            <button
-                              data-testid={`leave-team-row-${req.id}-parental-reduction`}
-                              class="btn btn-sm btn-ghost"
-                              onclick={() => openParentalReduction(req)}
-                            >
-                              Elternzeit-Kürzung erklären
-                            </button>
-                          {/if}
-                        {/if}
-                        {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
-                          {@const kind = resolveStornoAction(
-                            req.status,
-                            req.employeeId === $authStore.user?.employeeId,
-                          )!}
-                          <button
-                            data-testid={`leave-team-row-${req.id}-storno`}
-                            data-storno-kind={kind}
-                            class="btn btn-sm btn-ghost text-red"
-                            onclick={() => openStorno(req)}
-                          >
-                            {stornoDialogCopy(kind).buttonLabel}
-                          </button>
-                        {/if}
-                      </div>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
+                      {#if showsParentalReductionAction(req, $authStore.user)}
+                        <button
+                          data-testid={`leave-team-row-${req.id}-parental-reduction`}
+                          class="btn btn-sm btn-ghost"
+                          onclick={() => openParentalReduction(req)}
+                        >
+                          Elternzeit-Kürzung erklären
+                        </button>
+                      {/if}
+                    {/if}
+                    {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
+                      {@const kind = resolveStornoAction(
+                        req.status,
+                        req.employeeId === $authStore.user?.employeeId,
+                      )!}
+                      <button
+                        data-testid={`leave-team-row-${req.id}-storno`}
+                        data-storno-kind={kind}
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => openStorno(req)}
+                      >
+                        {stornoDialogCopy(kind).buttonLabel}
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
+              {/snippet}
+            </DataTable>
             <Pagination
               total={filteredTeamRequests.length}
               bind:page={teamReqPage}
               bind:pageSize={teamReqPageSize}
             />
-          </div>
-        {/if}
+          {/if}
+        </div>
       {/if}
     {:else if value === "planung"}
       <!-- ── Planung (D-840-15/17): the #835 planner on the one timeline, team mode ─────────
@@ -1653,19 +1695,6 @@
     }
   }
 
-  /* ── Highlight from notification deep-link ────────────────────────── */
-  @keyframes highlight-fade {
-    0% {
-      background-color: var(--brand-soft);
-    }
-    100% {
-      background-color: transparent;
-    }
-  }
-  .highlight-row {
-    animation: highlight-fade 3s var(--ease-out) both;
-  }
-
   /* ── Attest ───────────────────────────────────────────────────────── */
   .attest-dates {
     display: flex;
@@ -1684,24 +1713,12 @@
   /* ── Pending Cards ────────────────────────────────────────────────── */
 
   /* ── Table ────────────────────────────────────────────────────────── */
-  .text-center {
-    text-align: center;
-  }
   .btn-sm {
     padding: 0.25rem 0.625rem;
     font-size: 0.8125rem;
   }
   .text-red {
     color: var(--bad);
-  }
-  .note-cell {
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .action-cell {
-    white-space: nowrap;
   }
   /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
      keeps display: table-cell and lines up with the rest of the row even when empty. */
@@ -1712,20 +1729,30 @@
     flex-wrap: wrap;
   }
 
-  /* ── Empty ────────────────────────────────────────────────────────── */
-  .empty-state {
-    text-align: center;
-    padding: 3rem 2rem;
-    display: flex;
-    flex-direction: column;
+  /* Status cell: the chip, then the persistent request flags beside it. */
+  .req-status {
+    display: inline-flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.625rem;
+    gap: var(--s-1) var(--s-2);
   }
-  .empty-icon {
-    font-size: 2.5rem;
+
+  /* The note stays one line; the full text is in the title. */
+  .req-note {
+    display: inline-block;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    color: var(--text-2);
   }
-  .empty-state h3 {
-    font-size: 1rem;
+  .req-note--bad {
+    color: var(--bad);
+  }
+
+  /* The toolbar above the empty state of the table (the table itself carries it otherwise). */
+  .dt-toolbar-row {
+    margin-bottom: var(--s-3);
   }
 
   /* ── Modal body helpers (Modal primitive owns chrome) ────────────── */
@@ -1819,10 +1846,6 @@
      dashed; the „Offen“ badge in the status cell says it in words. */
 
   /* #840 D-840-10: the legend is LeaveLegend.svelte. */
-  .badge-attest {
-    margin-left: 0.25rem;
-    font-size: 0.75rem;
-  }
   /* Shared with the correction modal and the standalone Attest modal (the § 9 modal moved to the inbox, #840) —
      NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-section {

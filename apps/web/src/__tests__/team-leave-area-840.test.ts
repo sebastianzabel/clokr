@@ -63,7 +63,9 @@ describe("Issue #840 E-01 - one page, one tab strip, one timeline", () => {
     expect(PAGE).toContain("panel={leavePanel}");
     expect(count(PAGE, "<PeriodSwitcher")).toBe(1);
     expect(count(PAGE, "<SegmentedControl")).toBe(1);
-    expect(count(PAGE, "<TableToolbar")).toBe(1);
+    // #853 (853-13): one toolbar per list tab - the person search of the Übersicht, and the
+    // Anträge toolbar (search, Status, Art) that is rendered through one snippet.
+    expect(count(PAGE, "<TableToolbar")).toBe(2);
     // #840 G-6: on Planung the toolbar row holds the planner controls (status, deadline, add).
     expect(PAGE).toContain("{@render plannerControls()}");
     expect(count(PAGE, "<LeavePlanControls")).toBe(1);
@@ -216,23 +218,34 @@ describe("Issue #840 E-01 - one page, one tab strip, one timeline", () => {
 });
 
 describe("Issue #840 E-02 - Anträge: a status filter, open requests marked, decisions only in the inbox", () => {
-  it("[status filter] six options, the state lives in the URL and the select writes it with replaceState", () => {
-    const at = PAGE.indexOf('data-testid="leave-team-filter-status"');
+  it("[status filter] six choices (five statuses and „Alle“), the state lives in the URL and the filter writes it with replaceState", () => {
+    // #853 (853-13): the two selects became the Status and Art filters of the table toolbar. The
+    // choices are the same; „Alle“ is the toolbar's own „off“ option, the rest is the option list.
+    const at = PAGE.indexOf("const STATUS_FILTER_OPTIONS");
     expect(at).toBeGreaterThan(-1);
-    const select = PAGE.slice(PAGE.lastIndexOf("<select", at), PAGE.indexOf("</select>", at));
+    const options = PAGE.slice(at, PAGE.indexOf("];", at));
     for (const option of [
-      '<option value="">Alle Status</option>',
-      '<option value="PENDING">Offen</option>',
-      '<option value="APPROVED">Genehmigt</option>',
-      '<option value="CANCELLATION_REQUESTED">Storno angefragt</option>',
-      '<option value="REJECTED">Abgelehnt</option>',
-      '<option value="CANCELLED">Storniert</option>',
+      '{ value: "PENDING", label: "Offen" }',
+      '{ value: "APPROVED", label: "Genehmigt" }',
+      '{ value: "CANCELLATION_REQUESTED", label: "Stornierung beantragt" }',
+      '{ value: "REJECTED", label: "Abgelehnt" }',
+      '{ value: "CANCELLED", label: "Storniert" }',
     ]) {
-      expect(select, option).toContain(option);
+      expect(options, option).toContain(option);
     }
-    expect(select).toContain("value={filterLeaveStatus}");
-    expect(select).toContain("void navigate({ status:");
-    expect(select).toContain("}, true)");
+    expect(PAGE).toContain(
+      '{ key: "status", label: "Status", options: STATUS_FILTER_OPTIONS, value: filterLeaveStatus }',
+    );
+    const change = functionBody("onRequestFilterChange");
+    expect(change).toContain("void navigate({ status:");
+    expect(change).toContain("}, true)");
+    // The reset is ONE URL write, and it clears the search and the Art filter with it.
+    const reset = functionBody("resetRequestFilters");
+    expect(reset).toContain("void navigate({ status: null }, true)");
+    expect(reset).toContain('filterLeaveType = ""');
+    expect(reset).toContain('requestQuery = ""');
+    expect(PAGE).toContain("onFilterChange={onRequestFilterChange}");
+    expect(PAGE).toContain("onReset={resetRequestFilters}");
     expect(PAGE).toContain(
       'const filterLeaveStatus = $derived<LeaveStatusFilter | "">(urlState.status ?? "")',
     );
@@ -256,7 +269,9 @@ describe("Issue #840 E-02 - Anträge: a status filter, open requests marked, dec
     expect(PAGE).toContain("data-row-status={req.status}");
     expect(PAGE).not.toContain("chip-brand");
     expect(PAGE).not.toContain("req-chip");
-    expect(PAGE).toContain('class="badge {statusClass(req.status)}"');
+    // #853 (853-13): the status badge is the Chip block, toned by the status.
+    expect(PAGE).toContain("<Chip tone={statusTone(req.status)}>{statusLabel(req.status)}</Chip>");
+    expect(PAGE).not.toContain("statusClass(");
   });
 
   it("[inbox link] the open row's action leads to the inbox, only behind the approve hint", () => {
@@ -302,7 +317,9 @@ describe("Issue #840 E-02 - Anträge: a status filter, open requests marked, dec
     expect(focus).toContain("highlightRequestId = requestId");
     expect(focus).not.toContain("goto(");
     expect(PAGE).toContain('id="request-{req.id}"');
-    expect(PAGE).toContain("class:highlight-row={highlightRequestId === req.id}");
+    // #853 (853-13): the mark is the DataTable's highlight row tone.
+    expect(PAGE).toContain('highlightRequestId === row.id ? "highlight" : undefined');
+    expect(PAGE).toContain("rowTone={requestRowTone}");
   });
 });
 

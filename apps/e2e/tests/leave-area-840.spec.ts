@@ -926,7 +926,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
       {
         name: "Team Anträge",
         path: `/team/leave?tab=antraege&datum=${datum}`,
-        ready: "leave-team-filter-status",
+        ready: "leave-team-requests",
       },
       {
         name: "Team Planung",
@@ -1078,7 +1078,8 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(page).toHaveURL(/status=PENDING/);
     const row = page.getByTestId(`leave-team-row-${pendingId}`);
     await expect(row).toBeVisible();
-    await expect(page.getByTestId("leave-team-filter-status")).toHaveValue("PENDING");
+    // #853: the Status filter is a toolbar filter; its active chip names the choice.
+    await expect(page.getByText("Status: Offen", { exact: true })).toBeVisible();
 
     // ── G-3: the chip of the PENDING row is dashed in the vacation colour ────────────────────
     const vacation = await tokenColor("--leave-type-vacation");
@@ -1089,7 +1090,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     // The approved sick row (all statuses, the current year) has a solid chip filled with the sick
     // colour. The list year follows the anchor day of the URL, so open it on today's year.
     await page.goto("/team/leave?tab=antraege");
-    await expect(page.getByTestId("leave-team-filter-status")).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Filter Status entfernen" })).toHaveCount(0);
     const sickChip = page
       .getByTestId(`leave-team-row-${sick.id}`)
       .getByTestId(`leave-team-row-${sick.id}-type-chip`);

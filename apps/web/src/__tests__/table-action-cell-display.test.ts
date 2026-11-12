@@ -124,7 +124,7 @@ describe("#442 — instrument controls (anti-vacuity)", () => {
   it("styleBlockOf(team/leave) really loaded — anti-vacuity", () => {
     const block = styleBlockOf(TEAM_LEAVE_PAGE);
     expect(block.length).toBeGreaterThan(5_000);
-    expect(block).toContain(".action-cell");
+    expect(block).toContain(".action-cell__group");
   });
 
   // Issue #442: reports/+page.svelte has a CSS comment mentioning the literal `<style>` tag text.
@@ -179,13 +179,16 @@ function teamLeaveStyleBlock(): string {
   return styleBlockOf(TEAM_LEAVE_PAGE);
 }
 
+// #853 (853-13): the table is the DataTable block, whose own cell carries `data-label` and no
+// page class; the page's action cell is the flex group INSIDE that plain cell (the rule of #442
+// is unchanged: the flex layout never sits on the `<td>` itself).
 function teamLeaveTableMarkup(): string {
   return `
-    <table class="data-table">
+    <table class="data-table dt-table">
       <tbody>
         <tr>
           <td>Row with action</td>
-          <td class="action-cell">
+          <td data-label="Aktionen">
             <div class="action-cell__group">
               <button class="btn btn-sm btn-ghost">Korrigieren</button>
             </div>
@@ -193,7 +196,7 @@ function teamLeaveTableMarkup(): string {
         </tr>
         <tr>
           <td>Row without action (Zurückgezogen)</td>
-          <td class="action-cell">
+          <td data-label="Aktionen">
             <div class="action-cell__group"></div>
           </td>
         </tr>
@@ -205,21 +208,21 @@ function teamLeaveTableMarkup(): string {
 describe.each([PHONE_WIDTH, DESKTOP_WIDTH])(
   "#442 — /team/leave action cell at %ipx (measured)",
   (width) => {
-    it("td.action-cell stays table-cell, with and without an action", () => {
+    it("the cell holding the action group stays table-cell, with and without an action", () => {
       probeAt(width, cssForViewport(teamLeaveStyleBlock(), width));
       document.body.innerHTML = teamLeaveTableMarkup();
-      const cells = document.querySelectorAll("td.action-cell");
+      const cells = document.querySelectorAll('td[data-label="Aktionen"]');
       expect(cells.length).toBe(2);
       cells.forEach((cell) => {
         expect(getComputedStyle(cell).display).toBe("table-cell");
       });
     });
 
-    it("positive control: td.action-cell still reads white-space nowrap (the page rule really hits it)", () => {
+    it("positive control: the group still reads align-items center (the page rule really hits it)", () => {
       probeAt(width, cssForViewport(teamLeaveStyleBlock(), width));
       document.body.innerHTML = teamLeaveTableMarkup();
-      const cell = document.querySelector("td.action-cell")!;
-      expect(getComputedStyle(cell).whiteSpace).toBe("nowrap");
+      const group = document.querySelector(".action-cell__group")!;
+      expect(getComputedStyle(group).alignItems).toBe("center");
     });
 
     it("the inner .action-cell__group carries the flex layout", () => {
@@ -236,11 +239,15 @@ describe.each([PHONE_WIDTH, DESKTOP_WIDTH])(
 );
 
 describe("#442 — /team/leave source pin", () => {
-  it("exactly one td.action-cell wraps its content in a single div.action-cell__group, blocks moved verbatim", () => {
-    const matches = TEAM_LEAVE_PAGE.match(/<td class="action-cell">/g) ?? [];
+  it("exactly one actions cell wraps its content in a single div.action-cell__group, blocks moved verbatim", () => {
+    // #853 (853-13): the page has no `<td>` of its own any more; its actions cell is the
+    // `actions` branch of the DataTable cell snippet, and the page renders no table markup.
+    expect(TEAM_LEAVE_PAGE).not.toMatch(/<td[\s>]/);
+    const matches = TEAM_LEAVE_PAGE.match(/\{:else if column\.key === "actions"\}/g) ?? [];
     expect(matches).toHaveLength(1);
-    const start = TEAM_LEAVE_PAGE.indexOf('<td class="action-cell">');
-    const end = TEAM_LEAVE_PAGE.indexOf("</td>", start);
+    expect(TEAM_LEAVE_PAGE.match(/<div class="action-cell__group">/g) ?? []).toHaveLength(1);
+    const start = TEAM_LEAVE_PAGE.indexOf('{:else if column.key === "actions"}');
+    const end = TEAM_LEAVE_PAGE.indexOf("{/snippet}", start);
     const cellBody = TEAM_LEAVE_PAGE.slice(start, end);
     expect(cellBody).toContain('<div class="action-cell__group">');
     // The three existing conditional blocks still live inside the wrapper, untouched.

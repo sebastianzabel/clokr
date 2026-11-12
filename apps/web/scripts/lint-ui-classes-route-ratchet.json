@@ -57,10 +57,6 @@
       "apps/web/src/routes/(app)/leave/+page.svelte": {
         "count": 4,
         "ticket": "#851"
-      },
-      "apps/web/src/routes/(app)/team/leave/+page.svelte": {
-        "count": 4,
-        "ticket": "#853"
       }
     },
     "own-period-control": {
@@ -228,10 +224,6 @@
         "ticket": "#851"
       },
       "apps/web/src/routes/(app)/shifts/planning/+page.svelte": {
-        "count": 1,
-        "ticket": "#853"
-      },
-      "apps/web/src/routes/(app)/team/leave/+page.svelte": {
         "count": 1,
         "ticket": "#853"
       },
