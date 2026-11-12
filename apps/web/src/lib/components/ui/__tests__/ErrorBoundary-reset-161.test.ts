@@ -45,16 +45,16 @@ describe("ErrorBoundary — resets on navigation (Issue #161)", () => {
 
   it("keeps the failure while the path stays, and drops it when the path changes", async () => {
     const { rerender } = renderWithTheme(BoundaryHarness, { scope: "view", when: "render" });
-    expect(document.querySelector(".callout.error")).not.toBeNull();
+    expect(document.querySelector("[data-boundary-failed]")).not.toBeNull();
 
     // The child would render now, but nothing navigated: the failure stays (no silent retry).
     await rerender({ scope: "view", when: "never" });
-    expect(document.querySelector(".callout.error")).not.toBeNull();
+    expect(document.querySelector("[data-boundary-failed]")).not.toBeNull();
     expect(screen.queryByTestId("throwing-child")).toBeNull();
 
     navigate("/leave");
     await tick();
-    expect(document.querySelector(".callout.error")).toBeNull();
+    expect(document.querySelector("[data-boundary-failed]")).toBeNull();
     expect(screen.getByTestId("throwing-child")).toBeInTheDocument();
   });
 
@@ -64,7 +64,7 @@ describe("ErrorBoundary — resets on navigation (Issue #161)", () => {
 
     navigate("/leave");
     await tick();
-    expect(document.querySelector(".callout.error")).not.toBeNull();
+    expect(document.querySelector("[data-boundary-failed]")).not.toBeNull();
     expect(errorMock).toHaveBeenCalledTimes(2);
   });
 
@@ -74,6 +74,6 @@ describe("ErrorBoundary — resets on navigation (Issue #161)", () => {
 
     navigate("/time-entries?view=list");
     await tick();
-    expect(document.querySelector(".callout.error")).not.toBeNull();
+    expect(document.querySelector("[data-boundary-failed]")).not.toBeNull();
   });
 });

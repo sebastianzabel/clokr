@@ -85,8 +85,8 @@ export default defineConfig({
       testMatch: /auth\.setup\.ts/,
     },
     {
-      // Phase 70 advisory a11y gate (DEVOPS-V8-05): scans the public /login page only,
-      // requires no auth/storageState.
+      // Phase 70 a11y gate (DEVOPS-V8-05, blocking since #275): scans the public pages - every
+      // signed-out page and state plus the 404 page (#855) - and requires no auth/storageState.
       name: "axe-scan",
       testMatch: /axe-scan\.spec\.ts/,
       use: {

@@ -12,6 +12,7 @@
   // in the layout) leaves the boundary's pinned position in both layouts unchanged.
   import { page } from "$app/stores";
   import { clientLogger } from "$lib/utils/logger";
+  import Note from "./Note.svelte";
 
   interface Props {
     scope: "view" | "app";
@@ -69,14 +70,29 @@
   {@render children?.()}
 
   {#snippet failed()}
-    <div class="callout error" role="alert">
-      <div>
-        <b>{message.title}</b>
-        <p>{message.detail}</p>
-        <button type="button" class="btn btn-outline btn-sm" onclick={reload}
-          >Seite neu laden</button
-        >
-      </div>
+    <!-- #855 (D-855-07): the failure view is the error state of the design system — a bad Note with
+         the reason and the one action a boundary can honestly offer. -->
+    <div class="boundary-failed boundary-failed--{scope}" role="alert" data-boundary-failed={scope}>
+      <Note tone="bad"><b>{message.title}</b> {message.detail}</Note>
+      <button type="button" class="btn btn-secondary btn-sm" onclick={reload}
+        >Seite neu laden</button
+      >
     </div>
   {/snippet}
 </svelte:boundary>
+
+<style>
+  .boundary-failed {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-3);
+  }
+
+  /* The app scope has no shell around it: centre the view on the page ground. */
+  .boundary-failed--app {
+    max-width: 520px;
+    margin: var(--s-16) auto;
+    padding: 0 var(--s-4);
+  }
+</style>
