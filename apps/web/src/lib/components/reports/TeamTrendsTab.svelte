@@ -251,8 +251,8 @@
     </div>
   {:else}
     <Note tone="info">
-      Die Verläufe zeigen immer die letzten sechs Monate, unabhängig vom Zeitraum der anderen
-      Reiter. Ein Klick auf einen Monat öffnet den Bericht dieses Monats.
+      Die Verläufe zeigen immer die letzten sechs Monate, unabhängig vom Zeitraum der anderen Tabs.
+      Ein Klick auf einen Monat öffnet den Bericht dieses Monats.
     </Note>
 
     {#if canSaldo && saldoError !== ""}

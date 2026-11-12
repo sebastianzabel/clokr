@@ -226,6 +226,9 @@
         },
         {
           "label": "Heute"
+        },
+        {
+          "label": "Verläufe"
         }
       ]
     }

@@ -82,7 +82,8 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       tenant,
     }) => {
       // Issue #846 (owner decision D-04): the card "Salden" (#588) and the three team charts (#591)
-      // left the start page; they move to Verwalten › Berichte with #895. Positive control first:
+      // left the start page; they live on Verwalten › Berichte, tab „Verläufe“ (#895), see below.
+      // Positive control first:
       // the Kennzahlen-Band has rendered, so the absences below are measured on a loaded page.
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/team/heute");
@@ -95,15 +96,11 @@ test.describe("Functional — happy paths across primary surfaces", () => {
     });
   });
 
-  // Issue #846 (D-04): the team charts left Heute im Salon and come back under Verwalten › Berichte
-  // with #895. Their drill-down contract (#591: a month column and the header link open the report
-  // of those months) stays here as the acceptance of that page; #895 points the two tests at their
-  // new place and removes the fixme. Until then there is no page that draws these charts.
-  test.describe("Dashboard charts", () => {
-    test.fixme("a month of the team charts opens the report of that month", async ({
-      page,
-      tenant,
-    }) => {
+  // Issue #895: the team charts live on Verwalten › Berichte, tab „Verläufe“ (they left Heute im Salon
+  // with #846). Their drill-down contract (#591: a month column and the header link open the report
+  // of those months) is the acceptance of that tab.
+  test.describe("Berichte › Verläufe charts", () => {
+    test("a month of the team charts opens the report of that month", async ({ page, tenant }) => {
       // Issue #591 (AC-591-3, D-591-3): the header links "Bericht →" and the click on a month
       // column both lead to the reports page; the URL is written by the reports page's own
       // serialiser, so the expectations below are the contract /reports?from&to&tab.
@@ -122,7 +119,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
         "Dezember",
       ];
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/team/heute"); // #844: the team block lives on Team › Heute im Salon
+      await page.goto("/verwalten/berichte?tab=verlaeufe"); // #895: the tab „Verläufe“ of Berichte
 
       const hoursCanvas = page.getByRole("img", {
         name: /^(Gruppiertes )?Säulendiagramm: .*Arbeitsstunden/,
@@ -171,14 +168,14 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       );
     });
 
-    test.fixme("the header link of Krankheitstage opens the urlaub tab over the chart's months", async ({
+    test("the header link of Krankheitstage opens the urlaub tab over the chart's months", async ({
       page,
       tenant,
     }) => {
       // Issue #591 (P-591-06): a canvas click is not keyboard-operable, so the same drill-down
       // exists as a link in the card header.
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/team/heute"); // #844: the team block lives on Team › Heute im Salon
+      await page.goto("/verwalten/berichte?tab=verlaeufe"); // #895: the tab „Verläufe“ of Berichte
 
       const sickLink = page.getByRole("link", { name: "Krankheitstage im Bericht öffnen" });
       await expect(sickLink).toBeVisible({ timeout: 15_000 });
