@@ -461,6 +461,8 @@ async function main() {
     const ids = wrongTenantEmps.map((e) => e.id);
     const uids = wrongTenantEmps.map((e) => e.userId);
     await prisma.timeEntry.deleteMany({ where: { employeeId: { in: ids } } });
+    // Issue #599 — MonthCorrectionRequest -> Employee is onDelete: Restrict.
+    await prisma.monthCorrectionRequest.deleteMany({ where: { employeeId: { in: ids } } });
     // Issue #835 (WR-10) — LeavePlanWish -> Employee and -> LeaveRequest are onDelete: Restrict:
     // a person's plan wishes go before the requests they may be linked to and before the person.
     await prisma.leavePlanWish.deleteMany({ where: { employeeId: { in: ids } } });
