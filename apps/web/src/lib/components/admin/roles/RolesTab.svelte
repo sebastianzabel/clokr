@@ -1,12 +1,17 @@
 <!--
-  RolesTab — the „Rollen“ tab of /admin/roles (Issue #83): system and own roles, create, edit, copy,
-  delete. Every rejection shows the server's German message (D-08); the four-eyes confirmation is
-  server-driven (D-07). Controls a caller may not use are disabled, never hidden (D-06).
+  RolesTab - the „Rollen“ tab of /admin/roles (Issue #83; rebuilt on the blocks of #843 in Issue #854):
+  system and own roles in a DataTable; create, edit, copy and delete. The editor is a Dialog
+  (RoleEditor) and is open exactly while a draft exists. Every rejection shows the server's German
+  message (D-08); the four-eyes confirmation is server-driven (D-07): a 409 with the code
+  FOUR_EYES_CONFIRMATION_REQUIRED opens a ConfirmDialog and resends with `confirm: true` only after an
+  explicit confirmation. Controls a caller may not use are disabled, never hidden (D-06).
 -->
 <script lang="ts">
-  import { onMount, tick } from "svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import { onMount } from "svelte";
+  import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import Note from "$components/ui/Note.svelte";
   import { toasts } from "$stores/toast";
   import { ApiError } from "$api/client";
   import {
@@ -46,6 +51,7 @@
 
   let groups = $state<PermissionCatalogGroup[]>([]);
   let roles = $state<AccessRole[]>([]);
+  let loaded = $state(false);
   let loadError = $state<string | null>(null);
   let errorText = $state<string | null>(null);
   let saving = $state(false);
@@ -69,6 +75,31 @@
     isSystem ? "system" : !canManage ? "read-only" : null,
   );
 
+  const columns: DataTableColumn[] = [
+    { key: "name", label: "Rolle", primary: true },
+    { key: "kind", label: "Art" },
+    { key: "rights", label: "Rechte" },
+    { key: "actions", label: "Aktionen", align: "end" },
+  ];
+
+  type RoleRow = {
+    id: string;
+    name: string;
+    kind: string;
+    rights: string;
+    role: AccessRole;
+  };
+
+  let rows = $derived<RoleRow[]>(
+    roles.map((role) => ({
+      id: role.id,
+      name: role.name,
+      kind: role.isSystem ? "Systemrolle" : "Eigene Rolle",
+      rights: `${role.permissions.length} von ${totalPermissions}`,
+      role,
+    })),
+  );
+
   function messageOf(err: unknown): string {
     if (err instanceof ApiError) return err.message;
     return "Die Anfrage ist fehlgeschlagen. Bitte versuch es noch einmal.";
@@ -83,6 +114,7 @@
       const [catalog, list] = await Promise.all([fetchPermissionCatalog(), listRoles()]);
       groups = catalog;
       roles = list;
+      loaded = true;
       onReady?.();
     } catch (err) {
       loadError = messageOf(err);
@@ -137,30 +169,19 @@
     select();
   }
 
-  let editorEl = $state<HTMLElement | null>(null);
-
-  /**
-   * The editor renders below the role table, outside the viewport on a laptop screen (#692):
-   * once it is in the DOM, scroll it into view and move focus into it — the name field when it is
-   * editable, otherwise the editor wrapper itself (locked roles have no enabled control).
-   */
-  async function revealEditor() {
-    await tick();
-    const el = editorEl;
-    if (!el) return;
-    const reduce =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
-    const name = el.querySelector<HTMLInputElement>("#role-editor-name");
-    (name && !name.disabled ? name : el).focus({ preventScroll: true });
+  /** The editor asked to close: a dirty draft asks first, a clean one just goes. */
+  function requestClose() {
+    if (!draft) return;
+    guardedSelect(() => {
+      errorText = null;
+      draft = null;
+    });
   }
 
   function openRole(role: AccessRole) {
     guardedSelect(() => {
       errorText = null;
       draft = draftFromRole(role);
-      void revealEditor();
     });
   }
 
@@ -168,7 +189,6 @@
     guardedSelect(() => {
       errorText = null;
       draft = newRoleDraft();
-      void revealEditor();
     });
   }
 
@@ -182,20 +202,20 @@
     if (current.roleId === null) {
       void runRoleWrite(
         (confirm) => createRole(confirm ? { ...body, confirm: true } : body),
-        async (role) => {
+        async () => {
           toasts.success("Rolle angelegt");
           await reloadRoles();
-          if (role) draft = draftFromRole(role);
+          draft = null;
         },
       );
     } else {
       const id = current.roleId;
       void runRoleWrite(
         (confirm) => updateRole(id, confirm ? { ...body, confirm: true } : body),
-        async (role) => {
+        async () => {
           toasts.success("Rolle gespeichert");
           await reloadRoles();
-          if (role) draft = draftFromRole(role);
+          draft = null;
         },
       );
     }
@@ -208,10 +228,7 @@
         async (created) => {
           toasts.success("Rolle kopiert");
           await reloadRoles();
-          if (created) {
-            draft = draftFromRole(created);
-            void revealEditor();
-          }
+          if (created) draft = draftFromRole(created);
         },
       );
     });
@@ -245,102 +262,86 @@
 </script>
 
 {#if loadError}
-  <div class="callout error" role="alert">{loadError}</div>
+  <div role="alert"><Note tone="bad">{loadError}</Note></div>
 {:else}
-  <Section title="Rollen" sub="Systemrollen und die eigenen Rollen des Unternehmens">
-    {#snippet actions()}
+  <section class="settings-group" aria-labelledby="roles-title">
+    <h2 class="settings-group-title" id="roles-title">Rollen</h2>
+    <p class="settings-group-desc">Systemrollen und die eigenen Rollen des Unternehmens.</p>
+
+    <div class="roles-bar">
       {#if createHint}
         {@render createHint()}
       {:else}
-        <button
-          type="button"
-          class="btn btn-primary btn-sm"
-          disabled={!canManage}
-          onclick={openNew}
-        >
+        <button type="button" class="btn btn-primary" disabled={!canManage} onclick={openNew}>
           Neue Rolle
         </button>
       {/if}
-    {/snippet}
+    </div>
 
     {#if errorText && !draft}
-      <div class="callout error" role="alert">{errorText}</div>
+      <div role="alert"><Note tone="bad">{errorText}</Note></div>
     {/if}
 
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th scope="col">Rolle</th>
-          <th scope="col">Art</th>
-          <th scope="col">Rechte</th>
-          <th scope="col"><span class="sr-only">Aktionen</span></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each roles as role (role.id)}
-          <tr class:roles-row-active={draft?.roleId === role.id}>
-            <td>{role.name}</td>
-            <td>
-              {#if role.isSystem}
-                <span class="chip chip-brand">Systemrolle</span>
-              {:else}
-                <span class="chip">Eigene Rolle</span>
-              {/if}
-            </td>
-            <td>{role.permissions.length} von {totalPermissions}</td>
-            <td class="roles-actions">
-              <button type="button" class="btn btn-ghost btn-sm" onclick={() => openRole(role)}>
-                {!role.isSystem && canManage ? "Bearbeiten" : "Ansehen"}
-              </button>
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm"
-                disabled={!canManage || !!createHint}
-                title={createHint
-                  ? "Eine Kopie ist eine neue Rolle und braucht das Ketten-Paket."
-                  : canManage
-                    ? undefined
-                    : "Dafür fehlt dir das Recht, Rollen zu verwalten."}
-                onclick={() => copy(role)}
-              >
-                Kopieren
-              </button>
-              <button
-                type="button"
-                class="btn btn-danger btn-sm"
-                disabled={role.isSystem || !canManage}
-                title={role.isSystem
-                  ? "Systemrollen können nicht gelöscht werden."
-                  : canManage
-                    ? undefined
-                    : "Dafür fehlt dir das Recht, Rollen zu verwalten."}
-                onclick={() => askDelete(role)}
-              >
-                Löschen
-              </button>
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </Section>
+    <DataTable {columns} {rows} rowKey={(row) => row.id} loading={!loaded} caption="Rollen">
+      {#snippet cell(row, column)}
+        {#if column.key === "name"}
+          {row.name}
+        {:else if column.key === "kind"}
+          <Chip tone={row.role.isSystem ? "brand" : "neutral"}>{row.kind}</Chip>
+        {:else if column.key === "rights"}
+          {row.rights}
+        {:else}
+          <span class="roles-actions">
+            <button type="button" class="btn btn-ghost btn-sm" onclick={() => openRole(row.role)}>
+              {!row.role.isSystem && canManage ? "Bearbeiten" : "Ansehen"}
+            </button>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              disabled={!canManage || !!createHint}
+              title={createHint
+                ? "Eine Kopie ist eine neue Rolle und braucht das Ketten-Paket."
+                : canManage
+                  ? undefined
+                  : "Dafür fehlt dir das Recht, Rollen zu verwalten."}
+              onclick={() => copy(row.role)}
+            >
+              Kopieren
+            </button>
+            <button
+              type="button"
+              class="btn btn-danger btn-sm"
+              disabled={row.role.isSystem || !canManage}
+              title={row.role.isSystem
+                ? "Systemrollen können nicht gelöscht werden."
+                : canManage
+                  ? undefined
+                  : "Dafür fehlt dir das Recht, Rollen zu verwalten."}
+              onclick={() => askDelete(row.role)}
+            >
+              Löschen
+            </button>
+          </span>
+        {/if}
+      {/snippet}
+    </DataTable>
+  </section>
 
   {#if draft}
-    <div class="roles-editor-anchor" bind:this={editorEl} tabindex="-1" aria-label="Rollen-Editor">
-      <RoleEditor
-        bind:draft
-        {groups}
-        locked={lockReason !== null}
-        {lockReason}
-        {saving}
-        {isSystem}
-        canCopy={canManage && !createHint}
-        {errorText}
-        onSubmit={save}
-        onDiscard={discard}
-        onCopy={selectedRole ? () => selectedRole && copy(selectedRole) : undefined}
-      />
-    </div>
+    <RoleEditor
+      bind:draft
+      {groups}
+      locked={lockReason !== null}
+      {lockReason}
+      {saving}
+      {isSystem}
+      canCopy={canManage && !createHint}
+      {errorText}
+      onSubmit={save}
+      onDiscard={discard}
+      onClose={requestClose}
+      onCopy={selectedRole ? () => selectedRole && copy(selectedRole) : undefined}
+    />
   {/if}
 {/if}
 
@@ -379,19 +380,15 @@
 />
 
 <style>
-  .roles-actions {
+  .roles-bar {
     display: flex;
     justify-content: flex-end;
-    gap: 6px;
+    margin-bottom: var(--s-3);
+  }
+  .roles-actions {
+    display: inline-flex;
+    justify-content: flex-end;
+    gap: var(--s-2);
     flex-wrap: wrap;
-  }
-  .roles-editor-anchor {
-    scroll-margin-top: 16px;
-  }
-  .roles-editor-anchor:focus {
-    outline: none;
-  }
-  .roles-row-active td {
-    background: var(--brand-soft);
   }
 </style>

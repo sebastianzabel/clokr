@@ -110,10 +110,6 @@
       }
     },
     "own-data-table": {
-      "apps/web/src/lib/components/admin/roles/RolesTab.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte": {
         "count": 1,
         "ticket": "#854"
