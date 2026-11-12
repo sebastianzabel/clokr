@@ -83,12 +83,12 @@ function fnBody(marker: string): string {
 // `toggleBlockMonthCloseOnUnconfirmedBreak`) moved to Regeln › Monatsabschluss, where each is a section with a
 // SaveBar (`GapsSection`, `BreakBlockSection`). The controls no longer exist here; their keys are pinned by
 // settings-pages-854 and the behaviour by monatsabschluss-854.test.ts - nothing was relaxed.
-describe("D-03/N-11 — the three instant handlers stay instant", () => {
-  const INSTANT_HANDLERS = [
-    "saveAvailabilityEnabled",
-    "saveVocationalSchoolAutoCleanupShifts",
-    "toggleTwoFa",
-  ] as const;
+// Issue #854 (plan 854-10): the two roster switches (`saveAvailabilityEnabled`,
+// `saveVocationalSchoolAutoCleanupShifts`) moved to Regeln › Dienstplan › Einstellungen, where each is a
+// section with a SaveBar (dienstplan-settings-854.test.ts: bind:checked, request keys, failed save keeps the
+// edit). The controls no longer exist here; only the 2FA switch stays instant.
+describe("D-03/N-11 — the instant handler stays instant", () => {
+  const INSTANT_HANDLERS = ["toggleTwoFa"] as const;
 
   it.each(INSTANT_HANDLERS)("%s is wired via onchange=, never onclick=", (name) => {
     expect(PAGE).toContain(`onchange={${name}}`);
@@ -102,9 +102,10 @@ describe("D-03/N-11 — the three instant handlers stay instant", () => {
   // Issue #433 (D-04): the count dropped from nine to eight because saveHolidayDeduction and its
   // toggle were removed; Issue #854 took it to five (plan 854-07: the three Pausen handlers moved to the
   // Arbeitszeit page's SaveBar) and to three (plan 854-08: the two Monatsabschluss switches moved to their
-  // own page's SaveBars) — the controls no longer exist here, not because a check was relaxed.
-  it("there are exactly three instant handlers (#433 and #854 corrections)", () => {
-    expect(INSTANT_HANDLERS.length).toBe(3);
+  // own page's SaveBars) and to one (plan 854-10: the two roster switches moved to the Dienstplan page's
+  // SaveBars) — the controls no longer exist here, not because a check was relaxed.
+  it("there is exactly one instant handler (#433 and #854 corrections)", () => {
+    expect(INSTANT_HANDLERS.length).toBe(1);
   });
 });
 
@@ -123,11 +124,9 @@ describe("D-03/N-11 — the three instant handlers stay instant", () => {
 //
 // `saveDefaultBreakStart` is excluded: it sits on a `type="time"` input, not a checkbox, so the
 // DOM/state divergence described above does not apply to it.
-describe("WR-02 — the three instant checkbox toggles roll back and report on failure", () => {
+describe("WR-02 — the instant checkbox toggle rolls back and reports on failure", () => {
   /** handler → the state variable it owns */
   const TOGGLES: Record<string, string> = {
-    saveAvailabilityEnabled: "availabilityEnabled",
-    saveVocationalSchoolAutoCleanupShifts: "vocationalSchoolAutoCleanupShifts",
     toggleTwoFa: "twoFaEnabled",
   };
   const ENTRIES = Object.entries(TOGGLES);
@@ -135,10 +134,10 @@ describe("WR-02 — the three instant checkbox toggles roll back and report on f
   // Issue #433 (D-04) took the count from eight to seven (saveHolidayDeduction removed), Issue #854 from
   // seven to five (toggleAutoBreak and toggleEnforceBreakConfirmation moved to the Arbeitszeit page's
   // SaveBar) and to three (plan 854-08: saveCloseMonthWithGaps and toggleBlockMonthCloseOnUnconfirmedBreak
-  // moved to the Monatsabschluss page's SaveBars) — the controls no longer exist here, not because a check
-  // was relaxed.
-  it("there are exactly three of them", () => {
-    expect(ENTRIES.length).toBe(3);
+  // moved to the Monatsabschluss page's SaveBars) and to one (plan 854-10: the two roster switches moved to
+  // the Dienstplan page's SaveBars) — the controls no longer exist here, not because a check was relaxed.
+  it("there is exactly one of them", () => {
+    expect(ENTRIES.length).toBe(1);
   });
 
   // This is the assertion that would have FAILED against the old source: every one of these

@@ -108,7 +108,8 @@ const BENACHRICHTIGUNGEN_DIR = "lib/components/admin/benachrichtigungen";
 
 // Plan 854-09: the shift configuration of /admin/shifts lives on Regeln › Dienstplan as three management
 // panels (lists with their own endpoints, no configuration keys); plan 854-10 adds the settings of System and
-// Urlaub (opening-hours binding, availability, Berufsschul clean-up, shift reminders) as the „Einstellungen“ tab.
+// Urlaub (opening-hours binding, availability, Berufsschul clean-up, shift reminders) as the „Einstellungen“ tab;
+// the System „Features“ section is gone.
 const DIENSTPLAN_PAGE = "/verwalten/regeln/dienstplan";
 const DIENSTPLAN_DIR = "lib/components/admin/dienstplan";
 const FROM_SHIFTS = {
@@ -120,6 +121,11 @@ const DIENSTPLAN_FROM_SYSTEM = {
   page: DIENSTPLAN_PAGE,
   source: "/admin/system",
   requires: SYSTEM_REQUIRES,
+} as const;
+const DIENSTPLAN_FROM_VACATION = {
+  page: DIENSTPLAN_PAGE,
+  source: "/admin/vacation",
+  requires: VACATION_REQUIRES,
 } as const;
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
@@ -334,6 +340,36 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     keys: ["shiftStoreHoursMode"],
     renderedBy: `${DIENSTPLAN_DIR}/DienstplanSettingsPanel.svelte`,
   },
+  {
+    ...DIENSTPLAN_FROM_SYSTEM,
+    id: "dienstplan-verfuegbarkeit",
+    title: "Verfügbarkeiten",
+    endpoint: "/settings/work",
+    keys: ["availabilityEnabled"],
+    renderedBy: `${DIENSTPLAN_DIR}/DienstplanSettingsPanel.svelte`,
+  },
+  {
+    ...DIENSTPLAN_FROM_SYSTEM,
+    id: "dienstplan-berufsschule",
+    title: "Berufsschule und Schichten",
+    endpoint: "/settings/work",
+    keys: ["vocationalSchoolAutoCleanupShifts"],
+    renderedBy: `${DIENSTPLAN_DIR}/DienstplanSettingsPanel.svelte`,
+  },
+  {
+    ...DIENSTPLAN_FROM_VACATION,
+    id: "dienstplan-erinnerungen",
+    title: "Schicht-Erinnerungen",
+    endpoint: "/settings/work",
+    keys: [
+      "reminderShiftStartEnabled",
+      "reminderShiftEndEnabled",
+      "reminderDayCloseEnabled",
+      "reminderOffsetMinutes",
+      "reminderDayCloseTime",
+    ],
+    renderedBy: `${DIENSTPLAN_DIR}/DienstplanSettingsPanel.svelte`,
+  },
 
   // ── /admin/system ──────────────────────────────────────────────────────────────────────────────
   {
@@ -342,13 +378,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     title: "Unternehmen & Region",
     endpoint: "/settings/work",
     keys: ["tenantName", "federalState", "timezone"],
-  },
-  {
-    ...SYSTEM,
-    id: "system-features",
-    title: "Features",
-    endpoint: "/settings/work",
-    keys: ["availabilityEnabled", "vocationalSchoolAutoCleanupShifts"],
   },
   {
     ...SYSTEM,
@@ -419,11 +448,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
       "vacationReminderStartMonth",
       "carryoverWarningEnabled",
       "carryoverWarningThresholds",
-      "reminderShiftStartEnabled",
-      "reminderShiftEndEnabled",
-      "reminderDayCloseEnabled",
-      "reminderOffsetMinutes",
-      "reminderDayCloseTime",
     ],
     source: "/admin/vacation",
     requires: VACATION_REQUIRES,

@@ -12,7 +12,6 @@
   import Pagination from "$components/ui/Pagination.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import { toasts } from "$stores/toast";
-  import { tenantFeatures } from "$stores/tenant-features";
   import { markUnsaved } from "$stores/unsaved";
 
   // ── Tabs (Phase 58: tabbed config layout) ──────────────────────────────────
@@ -40,12 +39,6 @@
     defaultVacationDays: number;
     carryOverDeadlineDay: number;
     carryOverDeadlineMonth: number;
-    // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
-    availabilityEnabled?: boolean;
-    // Phase 67.2 — Auto-Cleanup für Berufsschultag-Schichten (Plan 04 backend hook,
-    // Plan 05 surfaces toggle here). Wenn true (Default): künftige Shifts auf neuen
-    // BS-Tagen werden vom Generator weich-gelöscht; in der Vergangenheit nur markiert.
-    vocationalSchoolAutoCleanupShifts?: boolean;
   }
 
   interface SecurityConfig {
@@ -103,14 +96,6 @@
 
   // The shift check mode against the opening hours moved to Regeln › Dienstplan › Einstellungen
   // (Issue #854, plan 854-10).
-
-  // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
-  let availabilityEnabled = $state(true);
-  let availabilitySaving = $state(false);
-
-  // Phase 67.2 (Plan 05) — Auto-Cleanup für Berufsschultag-Schichten Toggle
-  let vocationalSchoolAutoCleanupShifts = $state(true);
-  let vsAutoCleanupSaving = $state(false);
 
   // Timezone
   let gTimezone = $state("Europe/Berlin");
@@ -296,11 +281,6 @@
       gTenantName = cfg.tenantName ?? "";
       gTimezone = cfg.timezone ?? "Europe/Berlin";
       settingsLoaded = true;
-      // Phase 47.3 — Verfügbarkeits-System Feature-Toggle (default on)
-      availabilityEnabled = cfg.availabilityEnabled ?? true;
-
-      // Phase 67.2 (Plan 05) — load tenant-wide BS-Shift-Auto-Cleanup toggle
-      vocationalSchoolAutoCleanupShifts = cfg.vocationalSchoolAutoCleanupShifts ?? true;
 
       try {
         const sec = await api.get<SecurityConfig>("/settings/security");
@@ -383,58 +363,8 @@
 
   // saveDatev moved to /admin/export (Phase 58).
 
-  // Phase 47.3 / 49.4 — Tenant Feature-Toggle: Verfügbarkeits-System
-  async function saveAvailabilityEnabled() {
-    // bind:checked has already written the new value into the state, so the DOM and the state agree and an
-    // explicit revert actually lands (WR-02); the toggle must never outlive a failed save.
-    const previous = !availabilityEnabled;
-    if (!settingsLoaded) {
-      availabilityEnabled = previous;
-      toasts.error("Einstellungen sind noch nicht geladen.");
-      return;
-    }
-    availabilitySaving = true;
-    try {
-      await api.put("/settings/work", {
-        availabilityEnabled,
-      });
-      tenantFeatures.applyLocal(availabilityEnabled); // propagate to Sidebar + BottomTabBar
-      toasts.success("Einstellung gespeichert.");
-    } catch (e: unknown) {
-      availabilityEnabled = previous;
-      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
-    } finally {
-      availabilitySaving = false;
-    }
-  }
-
-  // Phase 67.2 (Plan 05) — Tenant Feature-Toggle: BS-Shift-Auto-Cleanup.
-  // Mirrors saveAvailabilityEnabled exactly; the backend reads
-  // TenantConfig.vocationalSchoolAutoCleanupShifts in shift-cleanup.ts.
-  async function saveVocationalSchoolAutoCleanupShifts() {
-    // bind:checked already applied the new value — see saveAvailabilityEnabled (WR-02).
-    const previous = !vocationalSchoolAutoCleanupShifts;
-    if (!settingsLoaded) {
-      vocationalSchoolAutoCleanupShifts = previous;
-      toasts.error("Einstellungen sind noch nicht geladen.");
-      return;
-    }
-    vsAutoCleanupSaving = true;
-    try {
-      await api.put("/settings/work", {
-        vocationalSchoolAutoCleanupShifts,
-      });
-      toasts.success("Einstellung gespeichert.");
-    } catch (e: unknown) {
-      vocationalSchoolAutoCleanupShifts = previous;
-      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
-    } finally {
-      vsAutoCleanupSaving = false;
-    }
-  }
-
   async function toggleTwoFa() {
-    // bind:checked already applied the new value — see saveAvailabilityEnabled (WR-02). 2FA is the
+    // bind:checked already applied the new value (WR-02: the toggle rolls back on a failed save). 2FA is the
     // most security-relevant toggle on the page; it must never claim a state the server rejected.
     const previous = !twoFaEnabled;
     twoFaSaving = true;
@@ -708,70 +638,6 @@
               </select>
               <p class="form-hint text-muted">Zuordnung von Zeitstempeln zu Tagen.</p>
             </div>
-          </div>
-        </Section>
-
-        <!-- ── Features (Phase 47.3 / 49.4) ─────────────────────────────────── -->
-        <Section title="Features" sub="Funktionen für das ganze Unternehmen ein- und ausschalten">
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label">Verfügbarkeits-System aktiviert</span>
-              <p class="form-hint text-muted">
-                {#if availabilityEnabled}
-                  Mitarbeiter pflegen ihre Verfügbarkeit selbst (Sidebar &amp; BottomTab zeigen
-                  „Verfügbarkeit"). Auto-Generierung &amp; Woche-Kopieren respektieren „Nicht
-                  verfügbar"; Manager können bei UNAVAILABLE per ConfirmDialog überschreiben (mit
-                  Audit-Eintrag).
-                {:else}
-                  Deaktiviert. „Verfügbarkeit"-Navigation ist ausgeblendet, Resolver &amp; Auto-Gen
-                  ignorieren EmployeeAvailability-Markierungen. Bereits angelegte
-                  Verfügbarkeits-Daten bleiben in der DB erhalten.
-                {/if}
-              </p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Verfügbarkeits-System aktivieren"
-                bind:checked={availabilityEnabled}
-                onchange={saveAvailabilityEnabled}
-                disabled={availabilitySaving}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-
-          <!-- Phase 67.2 (Plan 05) — Tenant-weiter Toggle für BS-Shift-Auto-Cleanup.
-             Default ON: Generator entfernt künftige Shifts auf neuen BS-Tagen automatisch
-             (Vergangenheit wird nur markiert). OFF: Shifts werden ausschließlich als
-             Konflikt markiert, kein Auto-Soft-Delete. -->
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label"
-                >Schichten auf Berufsschultagen automatisch entfernen</span
-              >
-              <p class="form-hint text-muted">
-                {#if vocationalSchoolAutoCleanupShifts}
-                  Aktiv: Wenn der Generator neue Berufsschultage anlegt, werden zukünftige Schichten
-                  auf diesen Tagen automatisch entfernt (Soft-Delete, wiederherstellbar unter <a
-                    href="/shifts/conflicts">/shifts/conflicts</a
-                  >). Schichten in der Vergangenheit werden nur als Konflikt markiert.
-                {:else}
-                  Deaktiviert: Schichten auf neuen Berufsschultagen werden ausschließlich als
-                  Konflikt markiert. Manuelle Bereinigung erforderlich.
-                {/if}
-              </p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="BS-Shift-Auto-Cleanup aktivieren"
-                bind:checked={vocationalSchoolAutoCleanupShifts}
-                onchange={saveVocationalSchoolAutoCleanupShifts}
-                disabled={vsAutoCleanupSaving}
-              />
-              <span class="switch-slider"></span>
-            </label>
           </div>
         </Section>
       {:else if currentTab === "sicherheit"}

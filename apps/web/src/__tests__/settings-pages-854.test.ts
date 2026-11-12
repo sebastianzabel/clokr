@@ -411,7 +411,7 @@ describe("settings registry against the sources (#854, D-854-03)", () => {
       SETTINGS_SECTIONS.filter((s) => s.keys.includes("vocationalSchoolAutoCleanupShifts")).map(
         (s) => s.id,
       ),
-    ).toEqual(["system-features"]);
+    ).toEqual(["dienstplan-berufsschule"]);
   });
 });
 
@@ -464,8 +464,8 @@ describe("the checker can fail (controls)", () => {
   });
 
   it("reports a key the API schema would strip", () => {
-    const sections = edited("system-features", {
-      keys: ["availabilityEnabled", "defaultWorkDays", "vocationalSchoolAutoCleanupShiftsX"],
+    const sections = edited("dienstplan-berufsschule", {
+      keys: ["vocationalSchoolAutoCleanupShifts", "vocationalSchoolAutoCleanupShiftsX"],
     });
     expect(
       registryProblems(sections).some((p) =>

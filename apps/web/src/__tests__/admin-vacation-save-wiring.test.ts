@@ -101,12 +101,8 @@ describe("saveGlobal payload census — the field list plan 109-11 must snapshot
     // Issue #835 (AC-13): +1 deadline lock of the leave planner (46 -> 47)
     "leavePlanDeadlineLocksWishes",
     "newYearsEveRule",
-    // Issue #609 (D-01): +5 shift reminder keys (41 -> 46)
-    "reminderDayCloseEnabled",
-    "reminderDayCloseTime",
-    "reminderOffsetMinutes",
-    "reminderShiftEndEnabled",
-    "reminderShiftStartEnabled",
+    // Issue #609 added the five shift reminder keys here; Issue #854 (plan 854-10) moved them to Regeln ›
+    // Dienstplan › Einstellungen (section dienstplan-erinnerungen, dienstplan-settings-854.test.ts).
     "sickNoteRequiredAfterDays",
     "sickSelfReport",
     "vacationLeadTimeDays",
@@ -250,11 +246,12 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/vacation"
     expect(catchIdx, "onMount's catch not found").toBeGreaterThan(onMountStart);
     const onMountTry = PAGE.slice(onMountStart, catchIdx);
 
-    const lastFieldIdx = onMountTry.lastIndexOf("reminderDayCloseTime =");
+    const lastFieldIdx = onMountTry.lastIndexOf("carryoverWarningThresholdsText =");
     const readyIdx = onMountTry.indexOf("snapshotsReady = true");
-    expect(lastFieldIdx, "reminderDayCloseTime assignment not found in onMount").toBeGreaterThan(
-      -1,
-    );
+    expect(
+      lastFieldIdx,
+      "carryoverWarningThresholdsText assignment not found in onMount",
+    ).toBeGreaterThan(-1);
     expect(readyIdx, "snapshotsReady = true not found in onMount's try").toBeGreaterThan(-1);
     expect(readyIdx).toBeGreaterThan(lastFieldIdx);
 
@@ -336,54 +333,21 @@ describe("AK-02 — no text/number input writes inline on this page", () => {
   });
 });
 
-describe("Issue #609 (D-01/D-15) — shift reminders on the Erinnerungen tab", () => {
-  const REMINDER_STATE = [
-    "reminderShiftStartEnabled",
-    "reminderShiftEndEnabled",
-    "reminderDayCloseEnabled",
-    "reminderOffsetMinutes",
-    "reminderDayCloseTime",
-  ];
-
-  it("the offset and the evening time reach the wire only through the clamp helpers", () => {
-    const body = fnBody("async function saveGlobal");
-    expect(body).toContain(
-      "reminderOffsetMinutes: clampReminderOffsetInput(reminderOffsetMinutes)",
-    );
-    expect(body).toContain(
-      "reminderDayCloseTime: normalizeDayCloseTimeInput(reminderDayCloseTime)",
-    );
-  });
-
-  it("each state variable sits in all three snapshot tuples (dirty check, load-time, post-save)", () => {
-    // A tuple is the run of lines from `snap(` to its closing `)`; the three are the
-    // globalDirty derivation, the onMount snapshot and the post-save snapshot.
-    const tuples: string[] = [];
-    let from = 0;
-    for (;;) {
-      const idx = PAGE.indexOf("snap(\n", from);
-      if (idx === -1) break;
-      const end = PAGE.indexOf("\n      )", idx);
-      const end2 = PAGE.indexOf("\n        )", idx);
-      const stop = [end, end2].filter((n) => n > -1).sort((a, b) => a - b)[0];
-      tuples.push(PAGE.slice(idx, stop));
-      from = idx + 5;
-    }
-    const full = tuples.filter((t) => t.includes("carryoverWarningThresholdsText"));
-    expect(full.length, "expected the three full snapshot tuples").toBe(3);
-    for (const tuple of full) {
-      for (const name of REMINDER_STATE) {
-        expect(tuple, `a snapshot tuple is missing ${name}`).toContain(`${name},`);
-      }
-    }
-  });
-
-  it("the Erinnerungen tab carries the section and the D-15 hint", () => {
-    expect(PAGE).toContain('title="Schicht-Erinnerungen"');
-    expect(PAGE).toContain("Erinnerungen an die Person mit geplanter Schicht");
-    expect(PAGE).toContain(
-      "Schichten, die nach dieser Uhrzeit enden, bekommen an diesem Tag keine",
-    );
-    expect(PAGE).toContain("Clokr stempelt nie selbst");
+// Issue #854 (plan 854-10): the shift reminders (Issue #609, D-01/D-15) left this page together with the
+// Erinnerungen tab; the clamp rule, the three-tuple rule of the snapshot and the D-15 hint are pinned where
+// they live now (`dienstplan-settings-854.test.ts`, section dienstplan-erinnerungen).
+describe("Issue #854 — the shift reminders no longer live on admin/vacation", () => {
+  it("names none of the five reminder keys and has no Erinnerungen tab", () => {
+    for (const name of [
+      "reminderShiftStartEnabled",
+      "reminderShiftEndEnabled",
+      "reminderDayCloseEnabled",
+      "reminderOffsetMinutes",
+      "reminderDayCloseTime",
+      "clampReminderOffsetInput",
+    ])
+      expect(PAGE, name).not.toContain(name);
+    expect(PAGE).not.toContain('id: "erinnerungen"');
+    expect(PAGE).not.toContain('title="Schicht-Erinnerungen"');
   });
 });

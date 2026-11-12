@@ -6,12 +6,6 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
-  import {
-    clampReminderOffsetInput,
-    normalizeDayCloseTimeInput,
-    DEFAULT_REMINDER_OFFSET_MINUTES,
-    DEFAULT_DAY_CLOSE_TIME,
-  } from "$lib/settings/shift-reminder-settings";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
@@ -23,7 +17,6 @@
     { id: "uebersicht", label: "Übersicht" },
     { id: "standards", label: "Standards" },
     { id: "antraege", label: "Anträge & Krankheit" },
-    { id: "erinnerungen", label: "Erinnerungen" },
     { id: "sonderurlaub", label: "Sonderurlaub" },
   ];
   let activeTab = $state<string>("uebersicht");
@@ -89,12 +82,6 @@
     vacationReminderStartMonth?: number;
     carryoverWarningEnabled?: boolean;
     carryoverWarningThresholds?: number[];
-    // Shift reminders (Issue #609)
-    reminderShiftStartEnabled?: boolean;
-    reminderShiftEndEnabled?: boolean;
-    reminderDayCloseEnabled?: boolean;
-    reminderOffsetMinutes?: number;
-    reminderDayCloseTime?: string;
   }
 
   let loading = $state(true);
@@ -155,14 +142,8 @@
   let sickNoteRequiredAfterDays = $state(3);
   let autoCalcPartTimeVacation = $state(true);
   let fullTimeWorkDaysPerWeek = $state(5);
-  // Erinnerungen (the clock-out, missing-entries, pending-leave and upcoming-absence reminders moved to
-  // Regeln › Benachrichtigungen & E-Mail, Issue #854; the shift reminders follow with the roster settings)
-  // Shift reminders (Issue #609, D-01) — off by default, the admin opts in
-  let reminderShiftStartEnabled = $state(false);
-  let reminderShiftEndEnabled = $state(false);
-  let reminderDayCloseEnabled = $state(false);
-  let reminderOffsetMinutes = $state(DEFAULT_REMINDER_OFFSET_MINUTES);
-  let reminderDayCloseTime = $state(DEFAULT_DAY_CLOSE_TIME);
+  // Erinnerungen: the clock-out, missing-entries, pending-leave and upcoming-absence reminders moved to
+  // Regeln › Benachrichtigungen & E-Mail, the shift reminders to Regeln › Dienstplan › Einstellungen (Issue #854).
   // Carry-over / Mindesturlaub
   let enforceMinVacation = $state(true);
   let carryOverRequiresReason = $state(true);
@@ -212,11 +193,6 @@
       vacationReminderStartMonth,
       carryoverWarningEnabled,
       carryoverWarningThresholdsText,
-      reminderShiftStartEnabled,
-      reminderShiftEndEnabled,
-      reminderDayCloseEnabled,
-      reminderOffsetMinutes,
-      reminderDayCloseTime,
     ) !== globalSnapshot,
   );
 
@@ -265,11 +241,6 @@
       carryoverWarningEnabled = cfg.carryoverWarningEnabled ?? true;
       const thresholds = cfg.carryoverWarningThresholds ?? [60, 30, 14, 7];
       carryoverWarningThresholdsText = thresholds.join(", ");
-      reminderShiftStartEnabled = cfg.reminderShiftStartEnabled ?? false;
-      reminderShiftEndEnabled = cfg.reminderShiftEndEnabled ?? false;
-      reminderDayCloseEnabled = cfg.reminderDayCloseEnabled ?? false;
-      reminderOffsetMinutes = clampReminderOffsetInput(cfg.reminderOffsetMinutes);
-      reminderDayCloseTime = normalizeDayCloseTimeInput(cfg.reminderDayCloseTime);
       globalSnapshot = snap(
         gCarryOverDay,
         gCarryOverMonth,
@@ -291,11 +262,6 @@
         vacationReminderStartMonth,
         carryoverWarningEnabled,
         carryoverWarningThresholdsText,
-        reminderShiftStartEnabled,
-        reminderShiftEndEnabled,
-        reminderDayCloseEnabled,
-        reminderOffsetMinutes,
-        reminderDayCloseTime,
       );
       snapshotsReady = true;
     } catch (e: unknown) {
@@ -350,15 +316,8 @@
         vacationReminderStartMonth,
         carryoverWarningEnabled,
         carryoverWarningThresholds: parseThresholdsInput(carryoverWarningThresholdsText),
-        // Issue #609: the offset is clamped and an empty time falls back to 20:00 on the way
-        // out — the API fields are .optional(), not .nullable(), and a rejected key fails the page.
-        reminderShiftStartEnabled,
-        reminderShiftEndEnabled,
-        reminderDayCloseEnabled,
-        reminderOffsetMinutes: clampReminderOffsetInput(reminderOffsetMinutes),
-        reminderDayCloseTime: normalizeDayCloseTimeInput(reminderDayCloseTime),
       });
-      // Phase 49.4: availabilityEnabled toggle moved to /admin/system Features card.
+      // availabilityEnabled lives on Regeln › Dienstplan › Einstellungen (Issue #854).
       gSaved = true;
       globalSnapshot = snap(
         gCarryOverDay,
@@ -381,11 +340,6 @@
         vacationReminderStartMonth,
         carryoverWarningEnabled,
         carryoverWarningThresholdsText,
-        reminderShiftStartEnabled,
-        reminderShiftEndEnabled,
-        reminderDayCloseEnabled,
-        reminderOffsetMinutes,
-        reminderDayCloseTime,
       ); // Phase 109 — section is clean again
       setTimeout(() => (gSaved = false), 3000);
     } catch (e: unknown) {
@@ -586,64 +540,6 @@
               </div>
             </div>
           </div>
-        </div>
-      </Section>
-    {:else if currentTab === "erinnerungen"}
-      <!-- ── Tab: Erinnerungen ──────────────────────────────────────────── -->
-      <!-- Issue #609 (D-01/D-15): shift reminders, saved with the page's one section button -->
-      <Section title="Schicht-Erinnerungen" sub="Erinnerungen an die Person mit geplanter Schicht">
-        <div class="settings-section">
-          <label class="form-label toggle-label">
-            <input type="checkbox" bind:checked={reminderShiftStartEnabled} />
-            Bei Schichtbeginn erinnern, wenn noch nicht eingestempelt
-          </label>
-          <label class="form-label toggle-label spaced-top-xs">
-            <input type="checkbox" bind:checked={reminderShiftEndEnabled} />
-            Bei Schichtende erinnern, wenn noch eingestempelt
-          </label>
-          <label class="form-label toggle-label spaced-top-xs">
-            <input type="checkbox" bind:checked={reminderDayCloseEnabled} />
-            Abends erinnern, wenn an einem Schichttag keine Zeit erfasst ist
-          </label>
-          <div class="inline-settings spaced-top-sm">
-            <div class="form-group">
-              <label class="form-label" for="g-reminder-offset">Erinnern nach</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="g-reminder-offset"
-                  type="number"
-                  min="5"
-                  max="120"
-                  step="5"
-                  bind:value={reminderOffsetMinutes}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix">Minuten</span>
-              </div>
-              <p class="form-hint">
-                Gilt für den Schichtbeginn und das Schichtende (5 bis 120 Minuten).
-              </p>
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="g-reminder-day-close"
-                >Uhrzeit der Abend-Erinnerung</label
-              >
-              <input
-                id="g-reminder-day-close"
-                type="time"
-                bind:value={reminderDayCloseTime}
-                class="form-input threshold-input"
-              />
-              <p class="form-hint">
-                Schichten, die nach dieser Uhrzeit enden, bekommen an diesem Tag keine
-                Abend-Erinnerung. Wähle eine Uhrzeit nach eurem spätesten Schichtende.
-              </p>
-            </div>
-          </div>
-          <p class="form-hint spaced-top-sm">
-            Erinnert werden nur Personen mit einer geplanten Schicht. Clokr stempelt nie selbst –
-            die Person bestätigt das Stempeln in der App.
-          </p>
         </div>
       </Section>
     {:else if currentTab === "antraege"}

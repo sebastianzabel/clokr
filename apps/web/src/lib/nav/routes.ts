@@ -365,13 +365,14 @@ export const APP_ROUTES: readonly AppRoute[] = [
     icon: "grid",
     width: "read",
     // Issue #854: the union of the gates of its sections (settings-pages.ts, D-854-05) - the shift
-    // configuration plus the System settings that joined it; the tabs narrow it per person.
+    // configuration plus the System and Urlaub settings that joined it; the tabs narrow it per person.
     requires: [
       [Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")],
       [Z("tenant-settings:read")],
       [Z("tenant-settings:update")],
       [Z("terminal:manage")],
       [Z("api-key:manage")],
+      [Z("leave-config:manage")],
     ],
     file: "/admin/shifts",
     inNav: false,

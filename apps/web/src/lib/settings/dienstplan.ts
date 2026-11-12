@@ -34,7 +34,12 @@ export const DIENSTPLAN_TABS: readonly DienstplanTab[] = [
   {
     value: "einstellungen",
     label: "Einstellungen",
-    sections: ["dienstplan-oeffnungszeiten"],
+    sections: [
+      "dienstplan-oeffnungszeiten",
+      "dienstplan-verfuegbarkeit",
+      "dienstplan-berufsschule",
+      "dienstplan-erinnerungen",
+    ],
   },
 ];
 

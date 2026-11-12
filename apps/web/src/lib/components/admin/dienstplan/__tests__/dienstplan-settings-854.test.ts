@@ -15,6 +15,10 @@ vi.mock("$api/client", () => ({
 vi.mock("$stores/toast", () => ({
   toasts: { success: (m: string) => success(m), error: (m: string) => error(m), info: vi.fn() },
 }));
+const applyLocal = vi.fn();
+vi.mock("$stores/tenant-features", () => ({
+  tenantFeatures: { applyLocal: (v: boolean) => applyLocal(v) },
+}));
 vi.mock("$stores/auth", async () => {
   const { writable } = await import("svelte/store");
   const store = writable<{ user: { permissions: string[] } | null }>({ user: null });
@@ -35,6 +39,7 @@ const testAuth = (
 
 const Z = (key: string) => `${key}:ZUGEWIESEN`;
 const SYSTEM_ADMIN = [Z("tenant-settings:update")];
+const LEAVE_CONFIG = [Z("leave-config:manage")];
 const SHIFT_MANAGER = [Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")];
 
 const keysOf = (id: string) => [...settingsSection(id).keys].sort();
@@ -103,6 +108,175 @@ describe("Schichten und Öffnungszeiten", () => {
   });
 });
 
+describe("Verfügbarkeiten", () => {
+  const box = () => screen.getByLabelText("Verfügbarkeits-System aktivieren") as HTMLInputElement;
+
+  it("defaults to on and saves ONLY availabilityEnabled, then tells the navigation at once", async () => {
+    renderWithTheme(DienstplanSettingsPanel, { config: {} });
+    expect(box().checked).toBe(true);
+    await fireEvent.click(box());
+    await fireEvent.click(await screen.findByRole("button", { name: "Verfügbarkeiten speichern" }));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(sentBody()).toEqual({ availabilityEnabled: false });
+    expect(Object.keys(sentBody()).sort()).toEqual(keysOf("dienstplan-verfuegbarkeit"));
+    expect(applyLocal).toHaveBeenCalledWith(false);
+    await waitFor(() => expect(bar()).toBeNull());
+  });
+
+  it("does not touch the navigation while nothing is saved or when the save is refused", async () => {
+    put.mockRejectedValue(new Error("Kein Zugriff."));
+    renderWithTheme(DienstplanSettingsPanel, { config: { availabilityEnabled: true } });
+    await fireEvent.click(box());
+    expect(applyLocal).not.toHaveBeenCalled();
+    await fireEvent.click(await screen.findByRole("button", { name: "Verfügbarkeiten speichern" }));
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Kein Zugriff."));
+    expect(applyLocal).not.toHaveBeenCalled();
+    expect(box().checked).toBe(false);
+    expect(bar()).not.toBeNull();
+  });
+});
+
+describe("Berufsschule und Schichten (D-854-20)", () => {
+  const box = () =>
+    screen.getByLabelText(
+      "Schichten auf Berufsschultagen automatisch entfernen",
+    ) as HTMLInputElement;
+
+  it("defaults to on and persists the switch-off with ONLY its own key", async () => {
+    renderWithTheme(DienstplanSettingsPanel, { config: {} });
+    expect(box().checked).toBe(true);
+    await fireEvent.click(box());
+    await fireEvent.click(await screen.findByRole("button", { name: "Einstellung speichern" }));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(put.mock.calls[0][0]).toBe("/settings/work");
+    expect(sentBody()).toEqual({ vocationalSchoolAutoCleanupShifts: false });
+    expect(Object.keys(sentBody()).sort()).toEqual(keysOf("dienstplan-berufsschule"));
+    await waitFor(() => expect(bar()).toBeNull());
+  });
+
+  it("a stored false is shown as off and an untouched section sends nothing", () => {
+    renderWithTheme(DienstplanSettingsPanel, {
+      config: { vocationalSchoolAutoCleanupShifts: false },
+    });
+    expect(box().checked).toBe(false);
+    expect(put).not.toHaveBeenCalled();
+  });
+});
+
+describe("Schicht-Erinnerungen (Issue #609)", () => {
+  const offset = () => screen.getByLabelText(/^Erinnern nach/) as HTMLInputElement;
+  const evening = () => screen.getByLabelText("Uhrzeit der Abend-Erinnerung") as HTMLInputElement;
+  const save = () => screen.findByRole("button", { name: "Erinnerungen speichern" });
+
+  it("reads the stored values through the #609 clamps and defaults", () => {
+    renderWithTheme(DienstplanSettingsPanel, {
+      config: { reminderOffsetMinutes: 500, reminderDayCloseTime: "kaputt" },
+    });
+    expect(offset().value).toBe("120");
+    expect(evening().value).toBe("20:00");
+    for (const label of [
+      /^Bei Schichtbeginn erinnern/,
+      /^Bei Schichtende erinnern/,
+      /^Abends erinnern/,
+    ])
+      expect((screen.getByLabelText(label) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("saves exactly the five reminder keys", async () => {
+    renderWithTheme(DienstplanSettingsPanel, { config: {} });
+    await fireEvent.click(screen.getByLabelText(/^Bei Schichtbeginn erinnern/));
+    await fireEvent.click(await save());
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(Object.keys(sentBody()).sort()).toEqual(keysOf("dienstplan-erinnerungen"));
+    expect(sentBody()).toEqual({
+      reminderShiftStartEnabled: true,
+      reminderShiftEndEnabled: false,
+      reminderDayCloseEnabled: false,
+      reminderOffsetMinutes: 15,
+      reminderDayCloseTime: "20:00",
+    });
+  });
+
+  it("clamps an out-of-range offset and falls back for an empty input on the way out, and shows what was stored", async () => {
+    renderWithTheme(DienstplanSettingsPanel, { config: { reminderOffsetMinutes: 30 } });
+    await fireEvent.input(offset(), { target: { value: "300" } });
+    await fireEvent.input(evening(), { target: { value: "" } });
+    await fireEvent.click(await save());
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(sentBody().reminderOffsetMinutes).toBe(120);
+    expect(sentBody().reminderDayCloseTime).toBe("20:00");
+    await waitFor(() => expect(offset().value).toBe("120"));
+    expect(evening().value).toBe("20:00");
+    await waitFor(() => expect(bar()).toBeNull());
+  });
+
+  it("a cleared offset never reaches the wire as null", async () => {
+    renderWithTheme(DienstplanSettingsPanel, { config: { reminderOffsetMinutes: 30 } });
+    await fireEvent.input(offset(), { target: { value: "" } });
+    await fireEvent.click(await save());
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(sentBody().reminderOffsetMinutes).toBe(15);
+  });
+
+  it("a refused save keeps the edit and the SaveBar", async () => {
+    put.mockRejectedValue(new Error("Validierungsfehler"));
+    renderWithTheme(DienstplanSettingsPanel, { config: {} });
+    await fireEvent.click(screen.getByLabelText(/^Abends erinnern/));
+    await fireEvent.click(await save());
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Validierungsfehler"));
+    expect((screen.getByLabelText(/^Abends erinnern/) as HTMLInputElement).checked).toBe(true);
+    expect(bar()).not.toBeNull();
+  });
+
+  it("the D-15 hint stays: only planned shifts, Clokr never stamps", () => {
+    renderWithTheme(DienstplanSettingsPanel, { config: {} });
+    expect(screen.getByText(/Clokr stempelt nie selbst/)).toBeTruthy();
+    expect(screen.getByText(/Schichten, die nach dieser Uhrzeit enden/)).toBeTruthy();
+  });
+});
+
+describe("the sections follow the pages they came from (D-854-05)", () => {
+  const titles = () => ({
+    hours: screen.queryByText("Schichten und Öffnungszeiten") !== null,
+    availability: screen.queryByText("Verfügbarkeiten") !== null,
+    vocational: screen.queryByText("Berufsschule und Schichten") !== null,
+    reminders: screen.queryByText("Schicht-Erinnerungen") !== null,
+  });
+
+  it("tenant-settings:update opens all four sections (it is an alternative of both source pages)", () => {
+    testAuth.set({ user: { permissions: SYSTEM_ADMIN } });
+    renderWithTheme(DienstplanSettingsPanel, { config: {} });
+    expect(titles()).toEqual({
+      hours: true,
+      availability: true,
+      vocational: true,
+      reminders: true,
+    });
+  });
+
+  it("a person with only the Urlaub permission sees only the reminders", () => {
+    testAuth.set({ user: { permissions: LEAVE_CONFIG } });
+    renderWithTheme(DienstplanSettingsPanel, { config: {} });
+    expect(titles()).toEqual({
+      hours: false,
+      availability: false,
+      vocational: false,
+      reminders: true,
+    });
+  });
+
+  it("a person with only terminal permission sees the System sections but not the reminders", () => {
+    testAuth.set({ user: { permissions: [Z("terminal:manage")] } });
+    renderWithTheme(DienstplanSettingsPanel, { config: {} });
+    expect(titles()).toEqual({
+      hours: true,
+      availability: true,
+      vocational: true,
+      reminders: false,
+    });
+  });
+});
+
 describe("the tab strip (T-854-26)", () => {
   it("offers every tab to a person holding the alternatives of all sections", () => {
     const user = { permissions: [...SHIFT_MANAGER, ...SYSTEM_ADMIN] };
@@ -121,6 +295,9 @@ describe("the tab strip (T-854-26)", () => {
 
   it("offers only Einstellungen to a person who holds a setting but not the shift configuration", () => {
     expect(visibleDienstplanTabs({ permissions: SYSTEM_ADMIN }).map((tab) => tab.value)).toEqual([
+      "einstellungen",
+    ]);
+    expect(visibleDienstplanTabs({ permissions: LEAVE_CONFIG }).map((tab) => tab.value)).toEqual([
       "einstellungen",
     ]);
   });
