@@ -1,14 +1,13 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requirePermission } from "../request-permissions";
-
-const querySchema = z.object({
-  page: z.string().regex(/^\d+$/).optional(),
-  limit: z.string().regex(/^\d+$/).optional(),
-  action: z.string().min(1).max(64).optional(),
-  entity: z.string().min(1).max(64).optional(),
-  userId: z.string().uuid().optional(),
-});
+import {
+  attachAffectedEmployees,
+  auditFilterQuerySchema,
+  auditFilterWhere,
+  auditTenantTimezone,
+  periodBounds,
+} from "../audit-log-read";
 
 const idParamSchema = z.object({
   id: z.string().min(1),
@@ -34,14 +33,23 @@ export async function auditLogRoutes(app: FastifyInstance) {
     "/",
     { preHandler: requirePermission("audit-log:read:ZUGEWIESEN") },
     async (req, _reply) => {
-      const { page = "1", limit = "50", action, entity, userId } = querySchema.parse(req.query);
+      const {
+        page = "1",
+        limit = "50",
+        from,
+        to,
+        ...filters
+      } = auditFilterQuerySchema.parse(req.query);
 
       const take = Math.min(parseInt(limit), 200);
       const skip = (parseInt(page) - 1) * take;
 
       const tenantId = req.user.tenantId;
-      // The tenant scope sits in its own AND member, so no optional filter (a `userId` included)
-      // can ever widen the set.
+      // The period is read in the tenant's own time zone, so it is looked up only when it is used.
+      const bounds =
+        from || to ? periodBounds(from, to, await auditTenantTimezone(app.prisma, tenantId)) : {};
+      // The tenant scope sits in its own AND member, so no optional filter (a `userId` or an
+      // `employeeId` included) can ever widen the set.
       const where = {
         AND: [
           {
@@ -50,11 +58,7 @@ export async function auditLogRoutes(app: FastifyInstance) {
               { userId: null, newValue: { path: ["actor", "tenantId"], equals: tenantId } },
             ],
           },
-          {
-            ...(action ? { action } : {}),
-            ...(entity ? { entity } : {}),
-            ...(userId ? { userId } : {}),
-          },
+          auditFilterWhere(filters, bounds),
         ],
       };
 
@@ -71,7 +75,12 @@ export async function auditLogRoutes(app: FastifyInstance) {
         app.prisma.auditLog.count({ where }),
       ]);
 
-      return { logs, total, page: parseInt(page), limit: take };
+      return {
+        logs: await attachAffectedEmployees(app.prisma, tenantId, logs),
+        total,
+        page: parseInt(page),
+        limit: take,
+      };
     },
   );
 
@@ -100,7 +109,8 @@ export async function auditLogRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Audit-Eintrag nicht gefunden" });
       }
 
-      return log;
+      const [withEmployee] = await attachAffectedEmployees(app.prisma, tenantId, [log]);
+      return withEmployee;
     },
   );
 }
