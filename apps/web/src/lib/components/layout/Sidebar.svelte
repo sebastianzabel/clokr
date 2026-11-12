@@ -381,6 +381,14 @@
     padding: 1px 6px;
   }
 
+  /* #851: „Konto“ and the always-on „Dienstplan“ give the Inhaber 19 entries; on a short screen
+     (1024×768) 28 px rows keep every one of them in view without scrolling the rail. */
+  @media (max-height: 800px) {
+    .nav-item {
+      height: 28px;
+    }
+  }
+
   @media (max-width: 960px) {
     .sidebar {
       display: none;

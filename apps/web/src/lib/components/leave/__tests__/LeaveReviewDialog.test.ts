@@ -431,7 +431,7 @@ describe("LeaveReviewDialog - a rejection needs a reason (#853)", () => {
   });
 });
 
-// Issue #853 (S-29) - the result toast names person and decision, never the leave type.
+// Issue #853 (S-29) + #846 (D-03) - ONE result toast: person, decision and period, never the leave type.
 describe("LeaveReviewDialog - result toast (#853)", () => {
   let success: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
@@ -441,29 +441,31 @@ describe("LeaveReviewDialog - result toast (#853)", () => {
     success.mockRestore();
   });
 
-  it("approve: Antrag von <Name> genehmigt.", async () => {
+  it("approve: Antrag von <Name> genehmigt · <Zeitraum>", async () => {
     const { onReviewed } = renderDialog({ typeCode: "VACATION" });
     await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
     await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
     expect(success).toHaveBeenCalledTimes(1);
-    expect(success).toHaveBeenCalledWith("Antrag von Alex Muster genehmigt.");
+    expect(success).toHaveBeenCalledWith("Antrag von Alex Muster genehmigt · 01.09.–05.09.2026");
   });
 
-  it("reject: Antrag von <Name> abgelehnt.", async () => {
+  it("reject: Antrag von <Name> abgelehnt · <Zeitraum>", async () => {
     const { onReviewed } = renderDialog({ typeCode: "VACATION" });
     await fireEvent.input(screen.getByTestId("leave-approval-modal-reason"), {
       target: { value: "Grund" },
     });
     await fireEvent.click(screen.getByTestId("leave-approval-modal-reject"));
     await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
-    expect(success).toHaveBeenCalledWith("Antrag von Alex Muster abgelehnt.");
+    expect(success).toHaveBeenCalledWith("Antrag von Alex Muster abgelehnt · 01.09.–05.09.2026");
   });
 
   it("a cancellation decision says Stornierung", async () => {
     const { onReviewed } = renderDialog({ status: "CANCELLATION_REQUESTED" });
     await fireEvent.click(screen.getByTestId("leave-cancel-approval-modal-approve"));
     await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
-    expect(success).toHaveBeenCalledWith("Stornierung von Alex Muster genehmigt.");
+    expect(success).toHaveBeenCalledWith(
+      "Stornierung von Alex Muster genehmigt · 01.09.–05.09.2026",
+    );
   });
 
   it("a sick-leave decision never names the type", async () => {
@@ -471,7 +473,7 @@ describe("LeaveReviewDialog - result toast (#853)", () => {
     await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
     await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
     const text = String(success.mock.calls[0][0]);
-    expect(text).toBe("Antrag von Alex Muster genehmigt.");
+    expect(text).toBe("Antrag von Alex Muster genehmigt · 01.09.–05.09.2026");
     expect(text).not.toMatch(/krank|sick/i);
   });
 

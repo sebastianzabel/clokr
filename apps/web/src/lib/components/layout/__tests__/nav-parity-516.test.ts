@@ -75,12 +75,13 @@ describe("visibleNavSections — the one definition (#516, since #844 three area
     expect(tab?.parent).toBe("/team/dienstplan");
   });
 
-  it("follows the permissions per persona and drops the availability entries with the feature", () => {
+  it("follows the permissions per persona and drops the team availability with the feature", () => {
     expect(hrefsOf(visibleNavSections({ permissions: p.EMPLOYEE }, on))).toEqual([
       "/ich/tag",
       "/ich/zeiten",
       "/ich/abwesenheiten",
       "/ich/dienstplan",
+      "/ich/konto", // #594 (Phase 851)
     ]);
     const salon = hrefsOf(visibleNavSections({ permissions: p.SALON_MANAGER }, on));
     expect(salon).toContain("/team/dienstplan");
@@ -89,7 +90,7 @@ describe("visibleNavSections — the one definition (#516, since #844 three area
     const off = hrefsOf(
       visibleNavSections({ permissions: p.SALON_MANAGER }, { availabilityEnabled: false }),
     );
-    expect(off).not.toContain("/ich/dienstplan");
+    expect(off).toContain("/ich/dienstplan"); // #597 (Phase 851): the own shifts need no feature
     expect(off).not.toContain("/team/verfuegbarkeit");
     // the roster itself does not depend on the feature
     expect(off).toContain("/team/dienstplan");

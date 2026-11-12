@@ -83,7 +83,8 @@ const violations = [];
 // onMount(() => goto(...)) call with no template markup) are exempt.
 const REDIRECT_STUB_RE = /onMount\(\s*\(\s*\)\s*=>\s*goto\(/;
 // HubPage (#844) renders <PageHead> internally, like the admin templates.
-const HEAD_PROVIDER_RE = /<(?:PageHead|ListDetail|SectionStack|ToolPage|HubPage)\b/;
+// #851: the Seitenkopf block itself (ui/PageHeader) counts like its PageHead delegate.
+const HEAD_PROVIDER_RE = /<(?:PageHead|PageHeader|ListDetail|SectionStack|ToolPage|HubPage)\b/;
 // A page that renders another route's page component, whose <PageHead> names it (#844: Heute im Salon is the
 // dashboard file read at /team/heute until #846). The target must itself pass this rule.
 const RENDERS_ROUTE_PAGE = {
@@ -117,6 +118,10 @@ for (const file of listFiles(ALL_SVELTE)) {
   // #843 (D-843-14): the Seitenkopf block owns the <h1>; PageHead delegates to it.
   if (file.endsWith("lib/components/ui/PageHeader.svelte")) continue;
   if (file.includes("/routes/(auth)/")) continue;
+  // #855 (D-855-01/06): the signed-out frame and the error page stand outside the shell's Seitenkopf
+  // (sign-in pages, unknown URLs) and own their single <h1>, like the (auth)/ pages they render.
+  if (file.endsWith("lib/components/auth/AuthFrame.svelte")) continue;
+  if (file.endsWith("lib/components/feedback/ErrorPage.svelte")) continue;
   const content = readFileSync(file, "utf8");
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {

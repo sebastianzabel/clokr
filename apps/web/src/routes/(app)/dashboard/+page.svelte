@@ -31,22 +31,18 @@
   );
   const pageKey = $derived(view === "team" ? "/team/heute" : "/dashboard");
   import { onMount, onDestroy, tick, untrack } from "svelte";
-  import { goto, afterNavigate, replaceState } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person; #609: reminder arrival
+  import { afterNavigate, replaceState } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person; #609: reminder arrival
   import { page } from "$app/stores"; // Issue #609: the ?clock=1 reminder parameter
-  import { api, ApiError } from "$api/client";
+  import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import Pagination from "$components/ui/Pagination.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import ClockSalonSelect from "$lib/components/dashboard/ClockSalonSelect.svelte"; // Issue #87
   import ClockOtherSalon from "$lib/components/dashboard/ClockOtherSalon.svelte"; // Issue #70
   import TodayEntriesList from "$lib/components/dashboard/TodayEntriesList.svelte"; // Issue #70
-  import TeamSaldoCard from "$lib/components/dashboard/TeamSaldoCard.svelte"; // Issue #588
-  import Icon from "$lib/components/Icon.svelte";
   import {
     summarizeKarenzOverrun,
     karenzNudgeHref,
@@ -74,12 +70,8 @@
     attendanceStatusText,
     teamMissingTitle,
   } from "$lib/dashboard/day-status-label"; // Issue #587 (P-06)
-  import { teamDayHref, teamCellAriaLabel, teamPersonHref } from "$lib/dashboard/team-day-links"; // Issue #587 (D-587-4), #588
+  import { teamDayHref, teamCellAriaLabel } from "$lib/dashboard/team-day-links"; // Issue #587 (D-587-4), #588
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
-  import { mayReadTeamSaldo } from "$lib/page-rights"; // Issue #588 (P-10)
-  import { reportRights } from "$lib/page-rights"; // Issue #591 (P-591-05)
-  import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613, #588
-  import type { TeamSaldoRow } from "$lib/reports/team-saldo"; // Issue #588
   import {
     clockInBlocked,
     clockInBody,
@@ -105,6 +97,7 @@
   import List from "$components/ui/List.svelte";
   import ListRow from "$components/ui/ListRow.svelte";
   import Chip from "$components/ui/Chip.svelte";
+  import Note from "$components/ui/Note.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import {
     saldoFigure,
@@ -121,6 +114,21 @@
     type NextShift,
   } from "$lib/dashboard/mein-tag"; // Issue #845
   import { isTravelRow } from "$lib/time-entries/travel-entry-form";
+  import {
+    attendanceBand,
+    attendanceFilterOf,
+    filterAttendance,
+    ATTENDANCE_FILTERS,
+    TEAM_WEEK_PAGE_SIZE,
+    openTeamLeaveTasks,
+    leaveTypeLabel,
+    type TeamTaskLeave,
+  } from "$lib/dashboard/heute-im-salon"; // Issue #846
+  import { formatDayCount, leaveDaysLabel } from "$lib/leave/leave-days-label"; // #853-19: formatDayCount = day figures with a decimal comma
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19
+  import type { TodayEmployee } from "$lib/reports/today-attendance";
+  import type { TodayAttendanceData } from "$lib/reports/today-attendance";
+  import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // #846 D-03: the dialog of Aufgaben
   import { fmtBalance } from "$lib/utils/format-minutes";
   import { de } from "date-fns/locale";
   import { salonContext } from "$stores/salon-context"; // Issue #84 (D-01)
@@ -135,54 +143,13 @@
     TEAM_SALON_UNAVAILABLE_TEXT,
     isTeamSalonRejected,
     teamSalonFilter,
-    teamTrendView,
     teamViewLabel,
-    teamWeekHasElsewhere,
     upcomingFromResponse,
     withSalonId,
+    type TeamTrendMonth,
     type TeamTrendResponse,
-    type TeamTrendView,
     type TeamUpcomingLeaveResponse,
   } from "$lib/dashboard/team-view"; // Issue #84 (D-07, D-11, D-12), #85 (D-04, D-06)
-  import {
-    TEAM_CHART_REPORT_TAB,
-    TEAM_SALDO_TREND_CHART,
-    TEAM_SICK_DAYS_CHART,
-    reportMonthHref,
-    reportPeriodHref,
-    teamHoursChartConfig,
-    teamHoursChartDescriptor,
-    teamSaldoTrendChartConfig,
-    teamSickDaysChartConfig,
-  } from "$lib/dashboard/team-charts"; // Issue #591
-  import type { PeriodTab } from "$lib/reports/period-state"; // Issue #591 (D-591-3)
-  import { chartAriaLabel, getChartTheme } from "$lib/utils/chart-theme"; // Issue #591
-  import { formatDayCount } from "$lib/leave/leave-days-label"; // Issue #853-19: day figures with a decimal comma
-  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19
-  import {
-    Chart,
-    BarController,
-    LineController,
-    BarElement,
-    LineElement,
-    PointElement,
-    CategoryScale,
-    LinearScale,
-    Tooltip,
-    Legend,
-  } from "chart.js";
-
-  Chart.register(
-    BarController,
-    LineController,
-    BarElement,
-    LineElement,
-    PointElement,
-    CategoryScale,
-    LinearScale,
-    Tooltip,
-    Legend,
-  );
 
   // ── Types ──────────────────────────────────────────────────────────────────
   interface DashboardStats {
@@ -331,13 +298,6 @@
   // branch, so with `loading` starting false the FIRST frame claimed a failed fetch before any
   // request had been made. `error={!loading}` itself is correct in that branch and is left alone.
   let loading = $state(true);
-  let chartsLoading = $state(true);
-  // Phase 76b (Issue #76), D-15: whether the caller holds overtime:read (the trend endpoint's own
-  // gate, added by Phase 76b). No client-side permission list exists ($stores/auth carries only
-  // `role`), so a 403 from the endpoint itself is how we learn this — tolerated silently, never
-  // logged, never toasted (a missing overtime:read is expected for e.g. a Mitarbeiter or a
-  // Salonmanager template). Starts false so the card stays hidden until a successful load flips it.
-  let overtimeTrendAvailable = $state(false);
   let clockLoading = $state(false);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- written by the clock handlers, kept for their sync
   let breakMinutes = $state(0);
@@ -352,11 +312,11 @@
   let stats: DashboardStats | null = $state(null);
   let teamWeek = $state<TeamWeek | null>(null);
   let teamPage = $state(1);
-  let teamPageSize = $state(10);
+  // Issue #846 (D-02): the week is always the current one; pages only from 25 persons on.
+  let teamPageSize = $state(TEAM_WEEK_PAGE_SIZE);
   let pagedTeam = $derived(
     teamWeek ? teamWeek.team.slice((teamPage - 1) * teamPageSize, teamPage * teamPageSize) : [],
   );
-  let weekOffset = $state(0);
   // Phase 267 (#267, D-04): shaped after `GET /shifts/my-week`'s `ownShifts[]`, which is already
   // narrowed to the caller server-side. The former `template: { name, color }` is gone — /my-week
   // returns `templateName`/`templateColor` flat, and the markup below renders only label,
@@ -435,14 +395,6 @@
   }
   let activityItems = $state<ActivityItem[]>([]);
 
-  // Charts
-  let weeklyChartEl: HTMLCanvasElement;
-  let overtimeChartEl: HTMLCanvasElement;
-  let sickChartEl: HTMLCanvasElement;
-  let weeklyChart: Chart | null = null;
-  let overtimeChart: Chart | null = null;
-  let sickChart: Chart | null = null;
-
   interface UpcomingLeave {
     id: string;
     employeeName: string;
@@ -461,23 +413,9 @@
   const teamContextReady = $derived($salonContext.loaded);
   let teamGeneration = 0;
   let lastTeamFilterKey: string | null | undefined = undefined;
-  let trendView = $state<TeamTrendView | null>(null);
   const teamLabel = $derived(teamViewLabel($salonContext));
   // D-16: the server rejected the selected salon (404); calm empty state, no further polling.
   let teamUnavailable = $state(false);
-
-  // Issue #588 (P-10): the card "Salden" reads GET /dashboard/overtime-overview with the same salon
-  // filter as the rest of the Team block. `teamSaldoFiltered` is the filter of the LOADED request,
-  // not the live selection, so the note always matches the rows shown. A 403 hides the card.
-  let teamSaldoRows = $state<TeamSaldoRow[]>([]);
-  let teamSaldoLoading = $state(false);
-  let teamSaldoFiltered = $state(false);
-  let teamSaldoHidden = $state(false);
-
-  interface OvertimeTrendResponse {
-    snapshots: { month: string; teamCarryOverMinutes: number }[];
-    currentTeamBalanceMinutes: number;
-  }
 
   let timer: ReturnType<typeof setInterval>;
   // Issue #576: calm refresh — every 30 s, paused while the tab is hidden ($lib/dashboard/visible-poll).
@@ -494,42 +432,6 @@
   const canSeeTeamBereich = $derived(
     view === "team" && hasPermission($authStore.user, "team-overview:read:ZUGEWIESEN"),
   );
-  // Issue #588 (P-10): the saldo card needs the two permissions of its endpoint.
-  const canSeeTeamSaldo = $derived(mayReadTeamSaldo($authStore.user));
-  // Issue #591 (P-591-05): a chart month opens a report tab only for a caller who may read it, so
-  // there is never a dead link. The target URL comes from `periodSearch` (team-charts.ts) only.
-  const reportTabs = $derived(reportRights($authStore.user).periodTabs);
-
-  /** The click handler of a month chart for this report tab, or null when the tab is not offered. */
-  function monthOpener(tab: PeriodTab, view: TeamTrendView): ((index: number) => void) | null {
-    if (!reportTabs.includes(tab)) return null;
-    return (index) => {
-      const key = view.months[index]?.month;
-      const href = key ? reportMonthHref(key, tab) : null;
-      if (href !== null) void goto(href);
-    };
-  }
-
-  /**
-   * The keyboard path of a month chart (P-591-06): a header link to the report of the chart's months
-   * under the same rule as the click, and only while the chart itself is drawn (no skeleton, no
-   * note in its place).
-   */
-  function reportLinkFor(tab: PeriodTab, shown: boolean): string | null {
-    if (!shown || !reportTabs.includes(tab) || trendView === null) return null;
-    return reportPeriodHref(
-      trendView.months.map((m) => m.month),
-      tab,
-    );
-  }
-  const hoursReportHref = $derived(reportLinkFor(TEAM_CHART_REPORT_TAB.hours, !chartsLoading));
-  const trendReportHref = $derived(
-    reportLinkFor(
-      TEAM_CHART_REPORT_TAB.saldoTrend,
-      !chartsLoading && !trendView?.trendNote && overtimeTrendAvailable,
-    ),
-  );
-  const sickReportHref = $derived(reportLinkFor(TEAM_CHART_REPORT_TAB.sickDays, !chartsLoading));
 
   // Phase 76.7 (D-15, UI-V19-04) — § 18 ArbZG-exempt: when the current
   // employee's `isTimeTrackingExempt` flag is true, fully HIDE the Timer-Card
@@ -551,9 +453,6 @@
   onDestroy(() => {
     clearInterval(timer);
     stopPoll?.();
-    weeklyChart?.destroy();
-    overtimeChart?.destroy();
-    sickChart?.destroy();
   });
 
   async function loadData() {
@@ -754,7 +653,7 @@
     // only Team-Bereich holders need team-week data, once the salon context is known; a salon
     // the server rejected is not polled again until the selection changes
     if (canSeeTeamBereich && teamContextReady && !teamUnavailable) {
-      await loadTeamWeek();
+      await Promise.allSettled([loadTeamWeek(), loadTodayAttendance()]);
     }
     // Also refresh clock-in status
     try {
@@ -773,26 +672,20 @@
     teamWeek = null;
     teamPage = 1;
     upcomingLeaves = [];
-    teamSaldoRows = [];
-    teamSaldoFiltered = false;
-    teamSaldoHidden = false;
-    teamSaldoLoading = canSeeTeamSaldo;
-    const generation = teamGeneration;
-    await Promise.allSettled([loadTeamWeek(), loadTeamCharts(), loadUpcomingLeaves()]);
-    // Issue #588 (orchestrator amendment 2): the saldo overview computes a live saldo per person on
-    // the server, so it starts only after the figures the team block is made of have resolved and is
-    // not awaited here - the card shows its skeleton, the team week never waits for it.
-    if (generation !== teamGeneration) return;
-    if (teamUnavailable) {
-      teamSaldoLoading = false;
-      return;
-    }
-    void loadTeamSaldo();
+    attendance = null;
+    teamMonth = null;
+    await Promise.allSettled([
+      loadTeamWeek(),
+      loadTodayAttendance(),
+      loadTeamMonth(),
+      loadUpcomingLeaves(),
+      loadTeamTasks(),
+    ]);
   }
 
   // The first team load waits until the salon context is known (no unfiltered-then-filtered double
   // load); afterwards it runs only when the guarded filter value actually changes. `untrack`
-  // because the loaders read `weekOffset` and other state synchronously.
+  // because the loaders read other state synchronously.
   $effect(() => {
     if (!canSeeTeamBereich || !teamContextReady) return;
     const key = teamFilter;
@@ -807,9 +700,8 @@
     const filter = teamFilter;
     const generation = teamGeneration;
     try {
-      const refDate = new Date();
-      refDate.setDate(refDate.getDate() + weekOffset * 7);
-      const dateParam = refDate.toISOString().split("T")[0];
+      // D-02: always the current week (today marked)
+      const dateParam = format(new Date(), "yyyy-MM-dd");
       const week = await api.get<TeamWeek>(
         withSalonId(`/dashboard/team-week?date=${dateParam}`, filter),
       );
@@ -826,189 +718,191 @@
     }
   }
 
-  // Issue #588 (P-10, D-588-3): one read of the overview for the card, in the caller's saldo reach and
-  // the team block's salon selection. Follows the loader idiom of loadTeamWeek (generation, calm 404);
-  // a 403 hides the card silently. The 30 s poll never calls it.
-  async function loadTeamSaldo() {
+  // ── Issue #846: Team › Heute im Salon ─────────────────────────────────────────────────────────
+  // Every figure is a server answer under the same salon filter and reach rules (#82/#84/#85);
+  // `$lib/dashboard/heute-im-salon` only counts statuses the server decided and words them.
+  let attendance = $state<TodayAttendanceData | null>(null);
+  let teamMonth = $state<TeamTrendMonth | null>(null);
+  let teamMonthBasis = $state<TeamTrendResponse["workedBasis"] | null>(null);
+  let pendingLeave = $state<TeamTaskLeave[]>([]);
+  let pendingRetroCount = $state(0);
+  let reviewOpen = $state(false);
+  let reviewRequest = $state<TeamTaskLeave | null>(null);
+  const canDecideLeave = $derived(
+    hasPermission($authStore.user, "leave-request:approve:ZUGEWIESEN"),
+  );
+  const canDecideRetro = $derived(
+    hasPermission($authStore.user, "retro-request:approve:ZUGEWIESEN"),
+  );
+
+  async function loadTodayAttendance() {
     const filter = teamFilter;
     const generation = teamGeneration;
-    if (!canSeeTeamSaldo) {
-      teamSaldoLoading = false;
-      return;
-    }
-    teamSaldoLoading = true;
     try {
-      const answer = await api.get<{ employees: TeamSaldoRow[] }>(
-        withSalonId("/dashboard/overtime-overview", filter),
+      const answer = await api.get<TodayAttendanceData>(
+        withSalonId("/dashboard/today-attendance", filter),
       );
       if (generation !== teamGeneration) return;
-      teamSaldoRows = partitionOvertimeOverview(answer.employees ?? []).active;
-      teamSaldoFiltered = filter !== null;
+      attendance = answer;
     } catch (err) {
       if (isTeamSalonRejected(err)) {
-        if (generation === teamGeneration) {
-          teamUnavailable = true;
-        }
+        if (generation === teamGeneration) teamUnavailable = true;
         return;
       }
-      if (err instanceof ApiError && err.status === 403) {
-        if (generation === teamGeneration) teamSaldoHidden = true;
-        return;
-      }
-      console.error("Failed to load team saldo:", err);
-      if (generation === teamGeneration) teamSaldoRows = [];
-    } finally {
-      if (generation === teamGeneration) teamSaldoLoading = false;
+      console.error("Failed to load today's attendance:", err);
     }
   }
 
-  function prevWeek() {
-    weekOffset--;
-    loadTeamWeek();
-  }
-  function nextWeek() {
-    weekOffset++;
-    loadTeamWeek();
-  }
-  function currentWeek() {
-    weekOffset = 0;
-    loadTeamWeek();
-  }
-
-  // Issue #84 (D-07): the three team charts come from ONE server call; the browser sums nothing.
-  async function loadTeamCharts() {
+  // „Monat bis gestern“: the running month of the team trend (closed valid entries through
+  // tenant-local yesterday); the Soll is null where it cannot be attributed (salon filter, reach).
+  async function loadTeamMonth() {
     const filter = teamFilter;
     const generation = teamGeneration;
-    chartsLoading = true;
-    let view: TeamTrendView | null = null;
-    let labels: string[] = [];
-    let overtimeTrend: OvertimeTrendResponse = {
-      snapshots: [],
-      currentTeamBalanceMinutes: 0,
-    };
-
     try {
       const resp = await api.get<TeamTrendResponse>(
-        withSalonId("/dashboard/team-trend?months=6", filter),
+        withSalonId("/dashboard/team-trend?months=1", filter),
       );
       if (generation !== teamGeneration) return;
-      view = teamTrendView(resp);
-      trendView = view;
-      const months = view.months;
-
-      // D-05: the saldo is a contract figure of a person and cannot be attributed to a salon, so
-      // under a filter the trend card shows a note instead and the endpoint is not requested.
-      if (filter !== null) {
-        overtimeTrendAvailable = false;
-        overtimeChart?.destroy();
-        overtimeChart = null;
-      }
-      if (filter === null) {
-        // Load team overtime trend from the dedicated endpoint
-        try {
-          overtimeTrend = await api.get<OvertimeTrendResponse>("/dashboard/overtime-trend");
-          overtimeTrendAvailable = true;
-        } catch (err) {
-          overtimeTrendAvailable = false;
-          // Phase 76b (Issue #76), D-15: the endpoint now requires overtime:read, and a 403 for a
-          // caller without it is expected (Mitarbeiter, Salonmanager template, …) — not an error to
-          // report. Every other failure (network, 500, …) still logs as before.
-          if (!(err instanceof ApiError && err.status === 403)) {
-            console.error("Failed to load overtime trend:", err);
-          }
-        }
-      }
-      if (generation !== teamGeneration) return;
-
-      labels = months.map((m) => m.label);
+      teamMonth = resp.months[resp.months.length - 1] ?? null;
+      teamMonthBasis = resp.workedBasis;
     } catch (err) {
       if (isTeamSalonRejected(err)) {
-        if (generation === teamGeneration) {
-          teamUnavailable = true;
-        }
-      } else {
-        console.error("Failed to load chart data:", err);
+        if (generation === teamGeneration) teamUnavailable = true;
+        return;
       }
-    } finally {
-      // CRITICAL: flip loading flag BEFORE Chart.js instantiation so canvases render into the DOM.
-      // A superseded load leaves the flag to the newer one.
-      if (generation === teamGeneration) chartsLoading = false;
+      console.error("Failed to load the team month:", err);
     }
+  }
+
+  // D-03: the open leave requests decided here go through the SAME dialog as Aufgaben
+  // (LeaveReviewDialog) — this page never writes a decision of its own.
+  async function loadTeamTasks() {
+    const filter = teamFilter;
+    const generation = teamGeneration;
+    const [leaveR, retroR] = await Promise.allSettled([
+      canDecideLeave
+        ? api.get<TeamTaskLeave[]>(withSalonId("/leave/requests?status=PENDING", filter))
+        : Promise.resolve([] as TeamTaskLeave[]),
+      canDecideRetro
+        ? api.get<{ status: string }[]>("/retro-entry-requests")
+        : Promise.resolve([] as { status: string }[]),
+    ]);
     if (generation !== teamGeneration) return;
-    if (view === null) {
-      trendView = null;
-      return;
-    }
-    const drawn: TeamTrendView = view;
+    pendingLeave =
+      leaveR.status === "fulfilled"
+        ? openTeamLeaveTasks(leaveR.value, $authStore.user?.employeeId)
+        : [];
+    pendingRetroCount =
+      retroR.status === "fulfilled" ? retroR.value.filter((r) => r.status === "PENDING").length : 0;
+  }
 
-    // ── Phase 2: wait for Svelte to render the {:else} branch (canvases) ──────
-    // Without this tick(), chartsLoading has been set to false but the DOM has not
-    // yet been updated — bind:this refs (weeklyChartEl etc.) are still undefined.
-    await tick();
-    if (generation !== teamGeneration) return;
+  // D-01: every Kennzahl opens its list — the attendance filter lives in the URL (`?status=`).
+  const attendanceFilter = $derived(attendanceFilterOf($page.url.searchParams.get("status")));
+  function statusHref(key: string): string {
+    const params = new URLSearchParams($page.url.searchParams);
+    if (key === "alle") params.delete("status");
+    else params.set("status", key);
+    const q = params.toString();
+    return `${$page.url.pathname}${q ? `?${q}` : ""}#jetzt`;
+  }
+  const nowRows = $derived(filterAttendance(attendance?.employees ?? [], attendanceFilter));
+  const band = $derived(attendanceBand(attendance));
 
-    // ── Phase 3: instantiate charts ────────────────────────────────────────────
+  function attendanceSubtitle(row: TodayEmployee): string {
+    if (row.status === "missing" && row.expectedStart)
+      return `Schicht seit ${row.expectedStart} · nicht eingestempelt`;
+    if (row.status === "scheduled" && row.expectedStart) return `Schicht ab ${row.expectedStart}`;
+    if (row.workedElsewhere) return "heute auch in einem anderen Salon";
+    return attendanceStatusText(row);
+  }
+  function statusTone(status: TodayEmployee["status"]): "ok" | "warn" | "bad" | "info" | "neutral" {
+    if (status === "clocked_in") return "ok";
+    if (status === "missing") return "bad";
+    if (status === "scheduled" || status === "requested" || status === "holiday") return "info";
+    return "neutral";
+  }
 
-    // One theme read for the three builds: colours come from the tokens only (Issue #591).
-    const theme = getChartTheme();
-
-    // Arbeitsstunden: Soll and Ist as grouped columns, drawn by the one chart builder.
-    if (weeklyChartEl) {
-      weeklyChart?.destroy();
-      weeklyChart = new Chart(
-        weeklyChartEl,
-        teamHoursChartConfig(drawn, theme, monthOpener(TEAM_CHART_REPORT_TAB.hours, drawn)),
-      );
-    }
-
-    // Overtime trend line chart — absolute team saldo from SaldoSnapshots + live OvertimeAccount
-    if (overtimeChartEl) {
-      // Build a lookup of snapshot month → teamCarryOverMinutes
-      const snapshotByMonth = new Map<string, number>();
-      for (const s of overtimeTrend.snapshots) {
-        // API returns "YYYY-MM-DD" (day is always 01); key by "YYYY-MM"
-        snapshotByMonth.set(s.month.slice(0, 7), s.teamCarryOverMinutes);
-      }
-
-      // Align to the same 6-month window as `labels` (months[].month = "YYYY-MM")
-      // For each month:
-      //   - If it's the LAST month (current open month) → use currentTeamBalanceMinutes / 60
-      //   - Else if a snapshot exists for that month → use teamCarryOverMinutes / 60
-      //   - Else → fill-forward from the previous resolved value (or 0 for the leading edge)
-      let lastKnown = 0;
-      const absoluteHours: number[] = [];
-      for (let i = 0; i < drawn.months.length; i++) {
-        const isCurrent = i === drawn.months.length - 1;
-        if (isCurrent) {
-          lastKnown = overtimeTrend.currentTeamBalanceMinutes / 60;
-        } else {
-          const snap = snapshotByMonth.get(drawn.months[i].month);
-          if (snap !== undefined) lastKnown = snap / 60;
-          // else: fill-forward — lastKnown stays unchanged
-        }
-        absoluteHours.push(+lastKnown.toFixed(1));
-      }
-
-      overtimeChart?.destroy();
-      overtimeChart = new Chart(
-        overtimeChartEl,
-        teamSaldoTrendChartConfig(
-          labels,
-          absoluteHours,
-          theme,
-          monthOpener(TEAM_CHART_REPORT_TAB.saldoTrend, drawn),
+  // Mon–Fri always; Saturday and Sunday only when someone has something on that day (prototype v5)
+  const teamWeekDays = $derived(
+    (teamWeek?.weekDays ?? []).filter(
+      (d, i) =>
+        i < 5 ||
+        (teamWeek?.team ?? []).some(
+          (m) => (m.days.find((x) => x.date === d)?.status ?? "none") !== "none",
         ),
-      );
+    ),
+  );
+  const firstMissing = $derived(
+    (attendance?.employees ?? []).find((e) => e.status === "missing") ?? null,
+  );
+  const teamKpis = $derived.by((): KpiItem[] => {
+    const items: KpiItem[] = [
+      {
+        label: "Anwesend",
+        value: String(band.present),
+        unit: `von ${band.expected}`,
+        explanation: band.done > 0 ? `${band.done} heute schon gearbeitet` : "gerade eingestempelt",
+        derivationHref: statusHref("anwesend"),
+        derivationLabel: "Liste →",
+        testId: "kpi-present",
+      },
+      {
+        label: "Erwartet",
+        value: String(band.missing + band.scheduled),
+        // prototype: „Timo · Schicht seit 09:00“ — the first person whose shift began unclocked
+        explanation: firstMissing
+          ? `${firstMissing.name}${firstMissing.expectedStart ? ` · Schicht seit ${firstMissing.expectedStart}` : ""}${band.missing > 1 ? ` · +${band.missing - 1}` : ""}`
+          : band.scheduled > 0
+            ? "kommen noch"
+            : "alle da",
+        deltaTone: band.missing > 0 ? "bad" : "neutral",
+        derivationHref: statusHref("erwartet"),
+        derivationLabel: "Liste →",
+        testId: "kpi-expected",
+      },
+      {
+        label: "Abwesend",
+        value: String(band.absent),
+        explanation: "Urlaub, Krankheit, Berufsschule",
+        derivationHref: statusHref("abwesend"),
+        derivationLabel: "Liste →",
+        testId: "kpi-absent",
+      },
+    ];
+    if (canDecideLeave || canDecideRetro) {
+      items.push({
+        label: "Aufgaben",
+        value: String(pendingLeave.length + pendingRetroCount),
+        explanation: `${pendingLeave.length} ${pendingLeave.length === 1 ? "Antrag" : "Anträge"} · ${pendingRetroCount} ${pendingRetroCount === 1 ? "Nachtrag" : "Nachträge"}`,
+        derivationHref: "/team/aufgaben",
+        derivationLabel: "Aufgaben →",
+        testId: "kpi-tasks",
+      });
     }
+    if (teamMonth) {
+      const worked = fmtHours(teamMonth.workedMinutes / 60);
+      items.push({
+        label: "Monat bis gestern",
+        value: worked,
+        unit:
+          teamMonth.shouldMinutes !== null
+            ? `/ ${fmtHours(teamMonth.shouldMinutes / 60)}`
+            : undefined,
+        explanation:
+          teamMonth.shouldMinutes !== null
+            ? "erfasst / Soll"
+            : teamMonthBasis === "SCOPE_ENTRIES"
+              ? "erfasst in deiner Reichweite"
+              : "erfasst in diesem Salon",
+        testId: "kpi-month",
+      });
+    }
+    return items;
+  });
 
-    // Krankheitstage: columns in calendar days, drawn by the one chart builder (Issue #591).
-    if (sickChartEl) {
-      sickChart?.destroy();
-      sickChart = new Chart(
-        sickChartEl,
-        teamSickDaysChartConfig(drawn, theme, monthOpener(TEAM_CHART_REPORT_TAB.sickDays, drawn)),
-      );
-    }
+  function openReview(request: TeamTaskLeave) {
+    reviewRequest = request;
+    reviewOpen = true;
   }
 
   // Own next leave (personal, for all users) — unrelated to the salon filter.
@@ -1539,6 +1433,16 @@
   let homeSalonName = $derived(
     $salonContext.salons.find((x) => x.id === $salonContext.homeSalonId)?.name ?? null,
   );
+  // Heute im Salon (prototype v5): „Salon · Montag, 9. November · Stand 10:42“
+  let teamSub = $derived(
+    [
+      teamLabel ?? ($salonContext.salons.length === 1 ? $salonContext.salons[0].name : null),
+      format(currentTime, "EEEE, d. MMMM", { locale: de }),
+      `Stand ${format(currentTime, "HH:mm")}`,
+    ]
+      .filter((x): x is string => !!x)
+      .join(" · "),
+  );
   let meinTagSub = $derived(
     [
       format(currentTime, "EEEE, d. MMMM", { locale: de }),
@@ -1742,79 +1646,37 @@
 </svelte:head>
 
 {#snippet teamCellContent(day: TeamDay)}
+  <!-- Issue #846 (D-02): hours as a pill, every other status as a chip WITH text, never a symbol alone. -->
   {#if day.status === "present"}
     {#if day.workedElsewhere && day.workedHours === 0}
-      <span class="cell-badge cell-badge--elsewhere" title="In einem anderen Salon gearbeitet"
-        >anderer Salon</span
-      >
+      <Chip tone="neutral" title="In einem anderen Salon gearbeitet">anderer Salon</Chip>
     {:else}
-      <span
-        class="cell-badge cell-badge--present"
-        title="{fmtHours(day.workedHours)} gearbeitet{day.workedElsewhere
-          ? ', außerdem in einem anderen Salon gearbeitet'
-          : ''}"
-      >
-        {fmtHours(day.workedHours)}
-      </span>
-    {/if}
-    {#if day.shift}
-      <span class="shift-label" style={day.shift.color ? `color: ${day.shift.color}` : ""}>
-        {day.shift.startTime}–{day.shift.endTime}
-      </span>
+      <span class="ts-pill">{fmtHours(day.workedHours)}</span>
     {/if}
   {:else if day.status === "clocked_in"}
-    <span
-      class="cell-badge cell-badge--active"
-      title={day.workedElsewhere ? "Eingestempelt (anderer Salon)" : "Eingestempelt"}
-    >
-      <Icon name="circle-fill" size={14} />
-    </span>
-  {:else if day.status === "absent"}
-    <span
-      class="cell-badge cell-badge--absent"
-      class:cell-badge--bs={day.absenceType === "VOCATIONAL_SCHOOL"}
-      title={day.reason ?? "Abwesend"}
-    >
-      {#if day.leaveTypeCode === "SICK" || day.absenceType === "SICK" || day.leaveTypeCode === "SICK_CHILD" || day.absenceType === "SICK_CHILD"}
-        <Icon name="medical" size={14} title={day.reason ?? "Krank"} />
-      {:else if day.leaveTypeCode === "MATERNITY" || day.absenceType === "MATERNITY"}
-        <Icon name="heart" size={14} title="Mutterschutz" />
-      {:else if day.leaveTypeCode === "PARENTAL" || day.absenceType === "PARENTAL"}
-        <Icon name="users" size={14} title="Elternzeit" />
-      {:else if day.absenceType === "VOCATIONAL_SCHOOL"}
-        <Icon name="graduation-cap" size={14} title="Berufsschule" />
-      {:else}
-        <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
-      {/if}
-    </span>
-  {:else if day.status === "holiday"}
-    <span class="cell-badge cell-badge--holiday" title={day.reason ?? "Feiertag"}>
-      <Icon name="sun" size={14} title={day.reason ?? "Feiertag"} />
-    </span>
+    <Chip tone="ok">{DAY_STATUS_LABEL.clocked_in}</Chip>
   {:else if day.status === "missing"}
-    <span class="cell-badge cell-badge--missing" title={teamMissingTitle(day)}>
-      <Icon name="alert" size={14} title="Fehlt" />
-    </span>
-  {:else if day.status === "scheduled"}
-    <span
-      class="cell-badge cell-badge--scheduled"
-      title={day.shift
-        ? (day.shift.label ?? day.shift.startTime + "–" + day.shift.endTime)
-        : "Arbeitstag"}
-      style={day.shift?.color ? `border-color: ${day.shift.color}` : ""}
+    <Chip tone="bad" title={teamMissingTitle(day)}>{DAY_STATUS_LABEL.missing}</Chip>
+  {:else if day.status === "absent"}
+    <Chip tone="neutral" title={day.reason ?? DAY_STATUS_LABEL.absent}
+      >{day.reason ?? DAY_STATUS_LABEL.absent}</Chip
     >
-      {#if day.shift}
-        <span class="shift-time">{day.shift.startTime}–{day.shift.endTime}</span>
-      {:else}
-        <span class="shift-time">{fmtHours(day.expectedHours ?? 0)}</span>
-      {/if}
-    </span>
+  {:else if day.status === "holiday"}
+    <Chip tone="info" title={day.reason ?? DAY_STATUS_LABEL.holiday}
+      >{DAY_STATUS_LABEL.holiday}</Chip
+    >
   {:else if day.status === "requested"}
-    <span class="cell-badge cell-badge--requested" title={day.reason ?? "Antrag offen"}>
-      <Icon name="clock" size={14} title="beantragt" />
-    </span>
+    <Chip tone="info" title={day.reason ?? DAY_STATUS_LABEL.requested}
+      >{DAY_STATUS_LABEL.requested}</Chip
+    >
+  {:else if day.status === "scheduled"}
+    <span class="ts-faint"
+      >{day.shift
+        ? `${day.shift.startTime}–${day.shift.endTime}`
+        : fmtHours(day.expectedHours ?? 0)}</span
+    >
   {:else}
-    <span class="cell-badge cell-badge--none" title="Frei">–</span>
+    <span class="ts-faint" title="Frei">—</span>
   {/if}
 {/snippet}
 
@@ -1825,7 +1687,7 @@
   <PageHead
     eyebrow={view === "team" ? AREA_LABELS.team : AREA_LABELS.ich}
     title={view === "me" ? `${greeting()}, ${capitalizedName}` : pageLabel(pageKey)}
-    sub={view === "me" ? meinTagSub : `${greeting()}, ${capitalizedName}`}
+    sub={view === "me" ? meinTagSub : teamSub}
   >
     {#snippet actions()}
       {#if view === "me"}
@@ -1833,6 +1695,31 @@
         <a class="btn btn-outline btn-sm" href="/ich/abwesenheiten?antrag=urlaub"
           >Urlaub beantragen</a
         >
+      {/if}
+      {#if view === "team"}
+        <span class="ts-actions">
+          <!-- #846 (prototype v5): the two team actions, each only where the person may open the page -->
+          {#if view === "team" && mayOpenPath($authStore.user, "/team/zeiten")}
+            <a class="btn btn-outline btn-sm" href="/team/zeiten">Zeit eintragen</a>
+          {/if}
+          {#if view === "team" && mayOpenPath($authStore.user, "/team/abwesenheiten")}
+            <a class="btn btn-primary btn-sm" href="/team/abwesenheiten">Abwesenheit anlegen</a>
+          {/if}
+          <!-- #846 D-05: the own clock stays one click away on Heute im Salon, while not clocked in. -->
+          {#if view === "team" && !isExempt && primaryLabel === "Einstempeln"}
+            {#if clockInBlocked(clockSalonViewState, clockSalonId)}
+              <!-- a salon must be chosen first: that choice lives on the clock stage of Mein Tag -->
+              <a class="btn btn-ghost btn-sm" href="/ich/tag">Einstempeln</a>
+            {:else}
+              <button
+                onclick={handleClock}
+                disabled={clockLoading || clockInBlocked(clockSalonViewState, clockSalonId)}
+                class="btn btn-ghost btn-sm"
+                type="button">Einstempeln</button
+              >
+            {/if}
+          {/if}
+        </span>
       {/if}
     {/snippet}
   </PageHead>
@@ -2117,273 +2004,205 @@
     </div>
   {/if}
 
-  <!-- ═══ Team-Bereich (permission-gated, Phase 378 / #378; since #844 only on Heute im Salon) ═══ -->
-  <!-- Single gate on team-overview:read:ZUGEWIESEN: employees, and any holder without it, never
-       see team charts, upcoming leaves, or team-week table. -->
+  <!-- ═══ Team › Heute im Salon (Issue #846; permission-gated, Phase 378 / #378) ═══ -->
+  <!-- Single gate on team-overview:read:ZUGEWIESEN. Order (prototype v5): Kennzahlen-Band →
+       [Jetzt im Salon · Team-Woche | Aufgaben · Demnächst abwesend]. No charts (D-04, Z-03). -->
   {#if canSeeTeamBereich}
-    <div class="team-divider">
-      <span class="team-divider-label">{teamLabel === null ? "Team" : `Team · ${teamLabel}`}</span>
-    </div>
-
     {#if teamUnavailable}
-      <Card animate class="card-body" style="--card-idx: 7;">
-        <p class="callout brand">{TEAM_SALON_UNAVAILABLE_TEXT}</p>
-      </Card>
+      <Note tone="info">{TEAM_SALON_UNAVAILABLE_TEXT}</Note>
     {:else}
-      <!-- Salden (Issue #588): the first block of the team area -->
-      {#if canSeeTeamSaldo && !teamSaldoHidden}
-        <div class="team-saldo-slot">
-          <TeamSaldoCard
-            rows={teamSaldoRows}
-            loading={teamSaldoLoading}
-            salonFiltered={teamSaldoFiltered}
-            personHref={(id) => (canOpenTeamDay ? teamPersonHref(id) : null)}
-            onOpenPerson={(href) => goto(href)}
-            cardIdx={7}
-          />
-        </div>
-      {/if}
-
-      <!-- Charts (Team-Aggregation) -->
-      <div class="charts-grid">
-        {#snippet hoursLink()}
-          <a
-            class="widget-action"
-            href={hoursReportHref}
-            aria-label="Arbeitsstunden im Bericht öffnen">Bericht →</a
-          >
-        {/snippet}
-        {#snippet trendLink()}
-          <a
-            class="widget-action"
-            href={trendReportHref}
-            aria-label="Überstunden-Trend im Bericht öffnen">Bericht →</a
-          >
-        {/snippet}
-        {#snippet sickLink()}
-          <a
-            class="widget-action"
-            href={sickReportHref}
-            aria-label="Krankheitstage im Bericht öffnen">Bericht →</a
-          >
-        {/snippet}
-        <Card animate class="chart-card" style="--card-idx: 8;">
-          <CardHeader
-            title="Arbeitsstunden"
-            sub={trendView?.chartSub ?? "Letzte 6 Monate"}
-            actions={hoursReportHref !== null ? hoursLink : undefined}
-          />
-          <div class="chart-wrap">
-            {#if chartsLoading}
-              <div class="chart-skeleton" aria-hidden="true"></div>
-            {:else}
-              <canvas
-                bind:this={weeklyChartEl}
-                role="img"
-                aria-label={chartAriaLabel(teamHoursChartDescriptor(trendView))}
-              ></canvas>
-            {/if}
-          </div>
-          {#if trendView?.sollNote}
-            <p class="chart-note">{trendView.sollNote}</p>
+      <div class="ts card-animate" style="--card-idx: 1;">
+        <div data-testid="salon-kpis">
+          {#if attendance === null}
+            <Skeleton shape="card" />
+          {:else}
+            <KpiStrip band items={teamKpis} ariaLabel="Heute im Salon in Zahlen" />
           {/if}
-        </Card>
+        </div>
 
-        {#if chartsLoading || overtimeTrendAvailable || trendView?.trendNote}
-          <Card animate class="chart-card" style="--card-idx: 9;">
-            <CardHeader
-              title="Überstunden-Trend"
-              sub="Saldo-Verlauf"
-              actions={trendReportHref !== null ? trendLink : undefined}
-            />
-            <div class="chart-wrap">
-              {#if chartsLoading}
-                <div class="chart-skeleton" aria-hidden="true"></div>
-              {:else if trendView?.trendNote}
-                <p class="callout brand">{trendView.trendNote}</p>
+        <div class="ts-grid">
+          <div class="ts-col">
+            <section class="ts-sec" id="jetzt" aria-labelledby="ts-now">
+              <h2 id="ts-now" class="mt-h2">
+                Jetzt im Salon
+                {#if attendanceFilter !== "alle"}
+                  <span class="ts-filter-on" data-testid="attendance-filter">
+                    <Chip tone="brand">{ATTENDANCE_FILTERS[attendanceFilter].label}</Chip>
+                    <a class="mt-h2-link" href={statusHref("alle")} data-sveltekit-noscroll
+                      >Alle zeigen</a
+                    >
+                  </span>
+                {/if}
+              </h2>
+              {#if attendance === null}
+                <Skeleton shape="row" count={4} />
+              {:else if nowRows.length === 0}
+                <p class="mt-quiet">
+                  {attendanceFilter === "alle"
+                    ? "Heute ist niemand eingeplant."
+                    : "Niemand in dieser Auswahl."}
+                </p>
               {:else}
-                <canvas
-                  bind:this={overtimeChartEl}
-                  role="img"
-                  aria-label={chartAriaLabel(TEAM_SALDO_TREND_CHART)}
-                ></canvas>
-              {/if}
-            </div>
-          </Card>
-        {/if}
-
-        <Card animate class="chart-card" style="--card-idx: 10;">
-          <CardHeader
-            title="Krankheitstage"
-            sub="Letzte 6 Monate"
-            actions={sickReportHref !== null ? sickLink : undefined}
-          />
-          <div class="chart-wrap">
-            {#if chartsLoading}
-              <div class="chart-skeleton" aria-hidden="true"></div>
-            {:else}
-              <canvas
-                bind:this={sickChartEl}
-                role="img"
-                aria-label={chartAriaLabel(TEAM_SICK_DAYS_CHART)}
-              ></canvas>
-            {/if}
-          </div>
-        </Card>
-      </div>
-
-      <!-- Anstehende Urlaube -->
-      {#if upcomingLeaves.length > 0}
-        <Card animate class="upcoming-section card-body" style="--card-idx: 11;">
-          <div class="widget-header">
-            <h3 class="widget-title">Anstehende Urlaube</h3>
-            <a href="/leave" class="widget-action">Urlaube →</a>
-          </div>
-          <div class="upcoming-list">
-            {#each upcomingLeaves as leave (leave.id)}
-              <div class="upcoming-item">
-                <span class="upcoming-name">{leave.employeeName}</span>
-                <span class="upcoming-dates">
-                  {new Date(leave.startDate).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                  })}
-                  – {new Date(leave.endDate).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                  })}
-                </span>
-                <span class="upcoming-days">{formatDayCount(leave.days)}</span>
-                <span class="upcoming-type badge badge-blue">{leave.type}</span>
-              </div>
-            {/each}
-          </div>
-        </Card>
-      {/if}
-
-      <!-- Team Wochenübersicht -->
-      {#if teamWeek}
-        <Card animate class="team-section" style="--card-idx: 12;">
-          <CardHeader
-            title="Team-Wochenübersicht"
-            sub={`KW ${getWeekNumber(teamWeek.weekStart)}: ${formatShortDate(teamWeek.weekStart)} – ${formatShortDate(teamWeek.weekEnd)}`}
-          >
-            {#snippet actions()}
-              <button class="btn btn-sm btn-ghost" onclick={prevWeek} title="Vorherige Woche"
-                >‹</button
-              >
-              <button class="btn btn-sm btn-ghost" onclick={currentWeek} disabled={weekOffset === 0}
-                >Heute</button
-              >
-              <button class="btn btn-sm btn-ghost" onclick={nextWeek} title="Nächste Woche"
-                >›</button
-              >
-            {/snippet}
-          </CardHeader>
-
-          <div class="team-grid-wrap">
-            <table class="team-grid">
-              <thead>
-                <tr>
-                  <th class="team-grid__name">Mitarbeiter</th>
-                  {#each teamWeek.weekDays as day (day)}
-                    <th class="team-grid__day" class:team-grid__day--today={isToday(day)}>
-                      <span class="day-label">{dayLabel(day)}</span>
-                      <span class="day-num">{dayNum(day)}</span>
-                    </th>
+                <List ariaLabel="Jetzt im Salon">
+                  {#each nowRows as row (row.id)}
+                    <ListRow
+                      title={row.name}
+                      subtitle={attendanceSubtitle(row)}
+                      avatarKey={row.id}
+                      href={canOpenTeamDay
+                        ? (teamDayHref(row.id, attendance.date) ?? undefined)
+                        : undefined}
+                    >
+                      {#snippet trailing()}
+                        <Chip tone={statusTone(row.status)}>{DAY_STATUS_LABEL[row.status]}</Chip>
+                      {/snippet}
+                    </ListRow>
                   {/each}
-                </tr>
-              </thead>
-              <tbody>
-                {#each pagedTeam as member (member.id)}
-                  <tr>
-                    <td class="team-grid__name">
-                      <span class="member-name">{member.name}</span>
-                    </td>
-                    {#each member.days as day (day.date)}
-                      {@const href = teamDayHref(member.id, day.date)}
-                      <td class="team-grid__cell" class:team-grid__day--today={isToday(day.date)}>
-                        {#if canOpenTeamDay && href !== null}
-                          <a
-                            class="team-grid__link"
-                            {href}
-                            aria-label={teamCellAriaLabel(
-                              member.name,
-                              day.date,
-                              teamCellStatusText(day),
-                            )}
-                          >
-                            {@render teamCellContent(day)}
-                          </a>
-                        {:else}
-                          {@render teamCellContent(day)}
-                        {/if}
-                      </td>
-                    {/each}
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-            <Pagination
-              total={teamWeek.team.length}
-              bind:page={teamPage}
-              bind:pageSize={teamPageSize}
-            />
-          </div>
-
-          <div class="legend">
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--present">5.0</span>
-              {DAY_STATUS_LABEL.present}
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--active"
-                ><Icon name="circle-fill" size={12} /></span
-              >
-              Eingestempelt
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--absent"><Icon name="umbrella" size={12} /></span>
-              Urlaub
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--absent"><Icon name="medical" size={12} /></span>
-              Krank
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--absent cell-badge--bs"
-                ><Icon name="graduation-cap" size={12} /></span
-              >
-              Berufsschule
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--missing"><Icon name="alert" size={12} /></span>
-              {DAY_STATUS_LABEL.missing}
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--holiday"><Icon name="sun" size={12} /></span>
-              Feiertag
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--scheduled">9–17</span>
-              {DAY_STATUS_LABEL.scheduled}
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--requested"><Icon name="clock" size={12} /></span>
-              {DAY_STATUS_LABEL.requested}
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--none">–</span> Keine Daten
-            </span>
-            {#if teamFilter !== null || teamWeekHasElsewhere(teamWeek?.team ?? [])}
-              <span class="legend-item">
-                <span class="cell-badge cell-badge--elsewhere">anderer Salon</span> In einem anderen Salon
-                gearbeitet
-              </span>
+                </List>
+              {/if}
+            </section>
+            {#if teamWeek}
+              <section class="ts-sec" aria-labelledby="ts-week">
+                <h2 id="ts-week" class="mt-h2">
+                  Team-Woche
+                  <span class="ts-h2-meta"
+                    >KW {getWeekNumber(teamWeek.weekStart)} · {formatShortDate(teamWeek.weekStart)} –
+                    {formatShortDate(teamWeek.weekEnd)}</span
+                  >
+                </h2>
+                <div class="mt-table-wrap">
+                  <table class="mt-table ts-week" data-testid="team-week">
+                    <thead>
+                      <tr>
+                        <th scope="col">Person</th>
+                        {#each teamWeekDays as d (d)}
+                          <th scope="col" class:ts-today={isToday(d)}>
+                            {dayLabel(d)}
+                            {dayNum(d)}
+                          </th>
+                        {/each}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {#each pagedTeam as member (member.id)}
+                        <tr>
+                          <td class="ts-name">{member.name}</td>
+                          {#each member.days as day (day.date)}
+                            {#if teamWeekDays.includes(day.date)}
+                              {@const href = teamDayHref(member.id, day.date)}
+                              <td class="team-grid__cell" class:ts-today={isToday(day.date)}>
+                                {#if canOpenTeamDay && href !== null}
+                                  <a
+                                    class="team-grid__link"
+                                    {href}
+                                    aria-label={teamCellAriaLabel(
+                                      member.name,
+                                      day.date,
+                                      teamCellStatusText(day),
+                                    )}
+                                  >
+                                    {@render teamCellContent(day)}
+                                  </a>
+                                {:else}
+                                  {@render teamCellContent(day)}
+                                {/if}
+                              </td>
+                            {/if}
+                          {/each}
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+                {#if teamWeek.team.length > TEAM_WEEK_PAGE_SIZE}
+                  <Pagination
+                    total={teamWeek.team.length}
+                    bind:page={teamPage}
+                    bind:pageSize={teamPageSize}
+                  />
+                {/if}
+              </section>
             {/if}
           </div>
-        </Card>
-      {/if}
+
+          <div class="ts-col">
+            {#if canDecideLeave || canDecideRetro}
+              <section class="ts-sec" aria-labelledby="ts-tasks">
+                <h2 id="ts-tasks" class="mt-h2">
+                  Aufgaben <a class="mt-h2-link" href="/team/aufgaben">Alle Aufgaben</a>
+                </h2>
+                {#if pendingLeave.length === 0 && pendingRetroCount === 0}
+                  <p class="mt-quiet">Nichts zu entscheiden.</p>
+                {:else}
+                  <List ariaLabel="Aufgaben">
+                    {#each pendingLeave.slice(0, 5) as req (req.id)}
+                      <ListRow
+                        variant="task"
+                        avatar={false}
+                        title={`${leaveTypeLabel(req.typeCode)} · ${req.employee.firstName} ${req.employee.lastName} · ${formatShortDate(req.startDate)}–${formatShortDate(req.endDate)}`}
+                        subtitle={leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}
+                      >
+                        {#snippet actions()}
+                          <button
+                            type="button"
+                            class="btn btn-outline btn-sm"
+                            onclick={() => openReview(req)}>Ablehnen</button
+                          >
+                          <button
+                            type="button"
+                            class="btn btn-primary btn-sm"
+                            onclick={() => openReview(req)}>Genehmigen</button
+                          >
+                        {/snippet}
+                      </ListRow>
+                    {/each}
+                    {#if pendingRetroCount > 0}
+                      <ListRow
+                        avatar={false}
+                        title={pendingRetroCount === 1
+                          ? "1 Zeitnachtrag wartet"
+                          : `${pendingRetroCount} Zeitnachträge warten`}
+                        href="/team/aufgaben"
+                      />
+                    {/if}
+                  </List>
+                {/if}
+              </section>
+            {/if}
+
+            <section class="ts-sec" aria-labelledby="ts-upcoming">
+              <h2 id="ts-upcoming" class="mt-h2">
+                Demnächst abwesend <a class="mt-h2-link" href="/team/abwesenheiten">Kalender</a>
+              </h2>
+              {#if upcomingLeaves.length === 0}
+                <p class="mt-quiet">In den nächsten Wochen ist niemand abwesend.</p>
+              {:else}
+                <List ariaLabel="Demnächst abwesend">
+                  {#each upcomingLeaves as leave (leave.id)}
+                    <ListRow
+                      title={`${leave.employeeName} · ${formatShortDate(leave.startDate)}–${formatShortDate(leave.endDate)}`}
+                      avatar={false}
+                    >
+                      {#snippet leading()}
+                        <Chip tone="neutral">{leave.type}</Chip>
+                      {/snippet}
+                      {#snippet trailing()}
+                        <span class="mt-quiet">{formatDayCount(leave.days)}</span>
+                      {/snippet}
+                    </ListRow>
+                  {/each}
+                </List>
+              {/if}
+            </section>
+          </div>
+        </div>
+      </div>
+      <LeaveReviewDialog
+        bind:open={reviewOpen}
+        request={reviewRequest}
+        currentEmployeeId={$authStore.user?.employeeId ?? null}
+        onReviewed={loadTeamTasks}
+      />
     {/if}
   {/if}
 </div>
@@ -2401,71 +2220,6 @@
   .dashboard :global(.card-animate) {
     animation-delay: calc(var(--card-idx, 0) * 60ms);
   }
-  .weekly-chart {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 10px;
-    align-items: end;
-    height: 80px;
-    padding: 4px 2px 0;
-  }
-  .weekly-bar-col {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    height: 100%;
-    justify-content: flex-end;
-  }
-  .weekly-bar-track {
-    position: relative;
-    width: 70%;
-    background: var(--sunk);
-    border-radius: 4px 4px 0 0;
-    height: 100%;
-    display: flex;
-    align-items: flex-end;
-    overflow: hidden;
-  }
-  .weekly-bar-fill {
-    width: 100%;
-    background: var(--brand);
-    border-radius: 4px 4px 0 0;
-    transition: height 500ms var(--ease-out);
-  }
-  .weekly-bar-fill.weekly-bar-today {
-    background: var(--brand);
-  }
-  .weekly-bar-target {
-    position: absolute;
-    left: 0;
-    right: 0;
-    border-top: 1px dashed var(--line-2);
-  }
-  .weekly-bar-label {
-    font-size: 10.5px;
-    font-weight: 600;
-    color: var(--text-3);
-    letter-spacing: 0.08em;
-  }
-  .weekly-bar-label.weekly-bar-label-today {
-    color: var(--brand);
-  }
-
-  /* ── Skeleton loader ────────────────────────────── */
-  .skeleton-block,
-  .skeleton-text {
-    background: linear-gradient(90deg, var(--sunk) 25%, var(--line) 50%, var(--sunk) 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-    border-radius: 4px;
-  }
-  .skeleton-text {
-    display: inline-block;
-    width: 4rem;
-    height: 0.875em;
-    vertical-align: middle;
-  }
   @keyframes shimmer {
     0% {
       background-position: 200% 0;
@@ -2473,78 +2227,6 @@
     100% {
       background-position: -200% 0;
     }
-  }
-
-  /* ── Widgets Row (side by side) ──────────────────── */
-  .widgets-row {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 1.5rem;
-    margin-bottom: 1.5rem;
-    align-items: start;
-  }
-  @media (max-width: 768px) {
-    .widgets-row {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .widget-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1rem;
-  }
-  .widget-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-    margin-bottom: 0;
-  }
-  .widget-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 1.25rem;
-    height: 1.25rem;
-    padding: 0 0.375rem;
-    border-radius: 999px;
-    background: var(--bad);
-    color: var(--card);
-    font-size: 0.6875rem;
-    font-weight: 700;
-    margin-left: 0.375rem;
-    vertical-align: middle;
-  }
-  .table-wrap {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .cell-badge--holiday {
-    background: var(--brand-soft);
-    color: var(--brand);
-  }
-  .team-divider {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin: 1rem 0 1.5rem;
-  }
-  .team-divider::before,
-  .team-divider::after {
-    content: "";
-    flex: 1;
-    height: 1px;
-    background: var(--line);
-  }
-  .team-divider-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-2);
   }
 
   .btn-spinner {
@@ -2564,87 +2246,6 @@
     }
   }
 
-  /* Pending Approvals Banner */
-  .pending-banner {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    padding: 0.625rem 1rem;
-    background: var(--warn-soft);
-    border: 1px solid var(--warn-soft);
-    border-radius: var(--r-control);
-    margin-bottom: 1rem;
-    text-decoration: none;
-    color: var(--text);
-    transition:
-      background-color 0.15s,
-      box-shadow 0.15s;
-  }
-  .pending-banner:hover {
-    background: var(--warn-soft);
-    box-shadow: var(--shadow);
-  }
-  .pending-banner-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 1.375rem;
-    height: 1.375rem;
-    padding: 0 0.375rem;
-    border-radius: 9999px;
-    background: var(--warn);
-    color: var(--card);
-    font-size: 0.75rem;
-    font-weight: 700;
-    line-height: 1;
-  }
-  .pending-banner-text {
-    flex: 1;
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-  .pending-banner svg {
-    color: var(--text-2);
-    flex-shrink: 0;
-  }
-
-  /* Charts */
-  .team-saldo-slot {
-    margin-bottom: 1.5rem;
-  }
-
-  .charts-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.chart-card:last-child) {
-    grid-column: 1 / -1;
-  }
-
-  .chart-wrap {
-    position: relative;
-    height: 240px;
-    margin-top: 4px;
-  }
-
-  .chart-note {
-    margin: 0.5rem 0 0;
-    font-size: 0.75rem;
-    color: var(--text-2);
-  }
-
-  .chart-skeleton {
-    width: 100%;
-    height: 100%;
-    border-radius: var(--r-control);
-    background: linear-gradient(90deg, var(--sunk) 25%, var(--rail) 50%, var(--sunk) 75%);
-    background-size: 200% 100%;
-    animation: skeleton-shimmer 1.4s ease-in-out infinite;
-  }
-
   @keyframes skeleton-shimmer {
     0% {
       background-position: 200% 0;
@@ -2652,178 +2253,6 @@
     100% {
       background-position: -200% 0;
     }
-  }
-
-  :global(.upcoming-section) {
-    margin-top: 1.75rem;
-    margin-bottom: 1.75rem;
-    border-left: 3px solid var(--brand);
-  }
-
-  .upcoming-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
-  }
-
-  .upcoming-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid var(--line);
-    font-size: 0.875rem;
-    min-width: 0;
-  }
-
-  .upcoming-item:last-child {
-    border-bottom: none;
-  }
-
-  .upcoming-name {
-    font-weight: 500;
-    min-width: 80px;
-    flex-shrink: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .upcoming-dates {
-    color: var(--text-2);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .upcoming-days {
-    color: var(--text-2);
-    font-size: 0.8125rem;
-  }
-
-  .upcoming-type {
-    margin-left: auto;
-  }
-
-  @media (max-width: 900px) {
-    .charts-grid {
-      grid-template-columns: 1fr;
-    }
-    .chart-wrap {
-      height: 180px;
-    }
-  }
-
-  /* ── Team Section (v1.5 .card recipe; no border-left accent, no backdrop-filter) ── */
-  :global(.team-section) {
-    margin-bottom: 1.5rem;
-    box-shadow: var(--shadow);
-  }
-
-  .team-grid-wrap {
-    overflow-x: auto;
-    margin: 0 -0.25rem;
-    /* Negative margin must not create horizontal page overflow on narrow viewports */
-    max-width: calc(100% + 0.5rem);
-  }
-
-  @media (max-width: 768px) {
-    .team-grid-wrap {
-      margin: 0;
-      max-width: 100%;
-    }
-  }
-
-  .team-grid {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8125rem;
-  }
-
-  .team-grid th,
-  .team-grid td {
-    padding: 0.5rem 0.375rem;
-    text-align: center;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .team-grid__name {
-    text-align: left;
-    white-space: nowrap;
-    padding-left: 0.5rem;
-    padding-right: 0.75rem;
-    width: 1%;
-  }
-
-  .team-grid__day {
-    width: 4.5rem;
-  }
-
-  .team-grid__day--today {
-    background: var(--brand-soft);
-  }
-
-  .day-label {
-    display: block;
-    font-weight: 600;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    color: var(--text-2);
-  }
-
-  .day-num {
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
-
-  .member-name {
-    font-weight: 500;
-    color: var(--text);
-  }
-
-  .team-grid__cell {
-    min-width: 3rem;
-    text-align: center;
-    vertical-align: middle;
-  }
-
-  /* Issue #587: the cell link is a transparent block wrapper — same look as the unlinked cell. */
-  .team-grid__link {
-    display: block;
-    color: inherit;
-    text-decoration: none;
-    border-radius: 999px;
-  }
-
-  .team-grid__link:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
-  }
-
-  /* Cell badges */
-  .cell-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 2.25rem;
-    padding: 0.1875rem 0.4375rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    transition: transform 0.15s ease;
-  }
-
-  .cell-badge--present {
-    background: var(--ok-soft);
-    color: var(--ok);
-    border: 1px solid var(--ok-soft);
-  }
-
-  .cell-badge--active {
-    background: var(--info-soft);
-    color: var(--info);
-    border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
-    animation: pulse-badge 2s ease-in-out infinite;
   }
 
   @keyframes pulse-badge {
@@ -2834,96 +2263,6 @@
     50% {
       opacity: 0.5;
     }
-  }
-
-  .cell-badge--absent {
-    background: var(--brand-soft);
-    color: var(--brand);
-    border: 1px solid var(--brand-soft);
-    font-size: 0.875rem;
-  }
-
-  /* Berufsschule day — distinct from generic absence so the 🎓 emoji reads as
-     "operationally planned school day" rather than "leave/sick". Slightly
-     lighter surface + neutral border to differentiate from vacation. */
-  .cell-badge--bs {
-    background: var(--sunk);
-    color: var(--text);
-    border: 1px solid var(--line);
-  }
-
-  .bs-emoji {
-    font-size: 0.875rem;
-    line-height: 1;
-  }
-
-  .cell-badge--missing {
-    background: var(--bad-soft);
-    color: var(--bad);
-    border: 1px solid var(--bad-soft);
-    font-size: 0.875rem;
-  }
-
-  /* Issue #84: worked in another salon only (salon filter) — not an absence, not a missing day. */
-  .cell-badge--elsewhere {
-    background: var(--sunk);
-    color: var(--text-2);
-    border: 1px dashed var(--line);
-    font-size: 0.6875rem;
-    font-weight: 500;
-    white-space: nowrap;
-  }
-
-  .cell-badge--scheduled {
-    background: var(--sunk);
-    color: var(--text-2);
-    border: 1px dashed var(--line);
-    font-size: 0.6875rem;
-  }
-
-  /* Open (pending) leave request — amber/warn tone signals "attention/awaiting decision",
-     distinct from the neutral "none"/Frei state and from approved (brand) leave. */
-  .cell-badge--requested {
-    background: var(--warn-soft);
-    color: var(--warn);
-    border: 1px solid var(--warn-soft);
-    font-size: 0.875rem;
-  }
-
-  .cell-badge--none {
-    color: var(--text-2);
-    opacity: 0.4;
-  }
-
-  .shift-label {
-    display: block;
-    font-size: 0.625rem;
-    line-height: 1;
-    margin-top: 2px;
-    opacity: 0.7;
-  }
-
-  .shift-time {
-    font-size: 0.6875rem;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* Legend */
-  .legend {
-    display: flex;
-    gap: 1.25rem;
-    flex-wrap: wrap;
-    margin-top: 1rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--line);
-    font-size: 0.8125rem;
-    color: var(--text-2);
-  }
-
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
   }
 
   /* ── Issue #845: Ich › Mein Tag — layout only, the blocks carry their own look ── */
@@ -3211,6 +2550,87 @@
   /* after the base rules of the two-column grid: one column on narrow screens */
   @media (max-width: 1099.98px) {
     .mt-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  /* ── Issue #846: Team › Heute im Salon — layout only ── */
+  .ts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+  .ts-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: var(--s-6) var(--s-5);
+  }
+  .ts-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    min-width: 0;
+  }
+  .ts-sec {
+    min-width: 0;
+    scroll-margin-top: 64px;
+  }
+  .ts-h2-meta {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .ts-week th,
+  .ts-week td {
+    text-align: left;
+  }
+  .ts-week .ts-name {
+    font-weight: 500;
+  }
+  .ts-week .ts-today {
+    background: var(--brand-tint);
+  }
+  /* the team actions wrap onto a second line on a phone instead of leaving the page */
+  .ts-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    justify-content: flex-end;
+  }
+  .ts-filter-on {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+  .ts-pill {
+    display: inline-block;
+    padding: 1px var(--s-2);
+    border-radius: var(--r-pill);
+    background: var(--sunk);
+    font-variant-numeric: tabular-nums;
+  }
+  .ts-faint {
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .ts-week .team-grid__link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+    border-radius: var(--r-control);
+  }
+  .ts-week .team-grid__link:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  @media (min-width: 1800px) {
+    .ts-grid {
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 1099.98px) {
+    .ts-grid {
       grid-template-columns: minmax(0, 1fr);
     }
   }

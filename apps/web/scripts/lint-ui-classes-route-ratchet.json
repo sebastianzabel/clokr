@@ -14,8 +14,8 @@
       },
       "apps/web/src/lib/components/leave/LeaveToolbar.svelte": {
         "count": 2,
-        "ticket": "#851",
-        "reason": "Used by /leave only since #853 moved /team/leave off it; migrates with the /leave page (#851)"
+        "ticket": null,
+        "reason": "Used by /leave only: #853 moved /team/leave onto the blocks, #851 (merged) kept the toolbar for /leave. Its tabs, PeriodSwitcher and SegmentedControl are blocks already, only the wrapper classes match; folding it into PeriodPicker is a follow-up named in PR #906."
       },
       "apps/web/src/lib/components/operator/SupportAuditLog.svelte": {
         "count": 1,
@@ -49,18 +49,9 @@
       "apps/web/src/routes/(app)/admin/shutdowns/+page.svelte": {
         "count": 1,
         "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/leave/+page.svelte": {
-        "count": 4,
-        "ticket": "#851"
       }
     },
     "own-period-control": {
-      "apps/web/src/routes/(app)/dashboard/+page.svelte": {
-        "count": 2,
-        "ticket": "#846",
-        "reason": "Team-Wochenübersicht (Heute im Salon)"
-      },
       "apps/web/src/routes/(operator)/betreiber/(konsole)/mandanten/[id]/support/mitarbeitende/[employeeId]/+page.svelte": {
         "count": 1,
         "ticket": null,
@@ -95,10 +86,6 @@
       "apps/web/src/routes/(app)/dashboard/+page.svelte": {
         "count": 1,
         "ticket": "#845"
-      },
-      "apps/web/src/routes/(app)/leave/+page.svelte": {
-        "count": 7,
-        "ticket": "#851"
       },
       "apps/web/src/routes/(app)/reports/+page.svelte": {
         "count": 1,
@@ -202,14 +189,6 @@
       "apps/web/src/routes/(app)/admin/system/+page.svelte": {
         "count": 2,
         "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/leave/+page.svelte": {
-        "count": 1,
-        "ticket": "#851"
-      },
-      "apps/web/src/routes/(app)/time-entries/+page.svelte": {
-        "count": 1,
-        "ticket": "#851"
       }
     },
     "raw-scrim-modal": {}

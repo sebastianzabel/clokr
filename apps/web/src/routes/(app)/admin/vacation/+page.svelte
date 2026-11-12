@@ -30,7 +30,14 @@
     { id: "erinnerungen", label: "Erinnerungen" },
     { id: "sonderurlaub", label: "Sonderurlaub" },
   ];
-  let activeTab = $state<string>("uebersicht");
+  // Issue #847: a link may name the tab as the URL hash (the setup check „Arbeitszeitregeln aktiv“
+  // on Verwalten › Übersicht → #arbzg), the pattern of the employee page's #berechtigungen.
+  function tabFromHash(): string {
+    if (typeof window === "undefined" || !window.location.hash) return "uebersicht";
+    const hash = decodeURIComponent(window.location.hash.slice(1));
+    return TABS.some((t) => t.id === hash) ? hash : "uebersicht";
+  }
+  let activeTab = $state<string>(tabFromHash());
 
   // ── Sonderurlaub (merged from /admin/special-leave) ────────────────────────
   interface SpecialLeaveRule {

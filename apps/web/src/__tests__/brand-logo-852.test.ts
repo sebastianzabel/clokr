@@ -79,13 +79,17 @@ describe("Issue #852 — one brand source", () => {
   it("every former logo place renders BrandLogo", () => {
     for (const rel of [
       "src/lib/components/layout/Sidebar.svelte",
-      "src/routes/(auth)/login/+page.svelte",
-      "src/routes/(auth)/invitation/+page.svelte",
-      "src/routes/(auth)/otp/+page.svelte",
+      // #855: the sign-in pages draw the logo through their one frame (each page renders AuthFrame,
+      // pinned below and in auth-frame-855.test.ts).
+      "src/lib/components/auth/AuthFrame.svelte",
       "src/lib/components/operator/OperatorBar.svelte",
       "src/routes/(operator)/betreiber/anmelden/+page.svelte",
     ]) {
       expect(readFileSync(join(WEB, rel), "utf8"), rel).toContain("<BrandLogo");
+    }
+    for (const page of ["login", "invitation", "otp", "forgot-password", "reset-password"]) {
+      const rel = `src/routes/(auth)/${page}/+page.svelte`;
+      expect(readFileSync(join(WEB, rel), "utf8"), rel).toContain("<AuthFrame");
     }
   });
 });

@@ -55,3 +55,18 @@ describe("action-messages (D-843-19)", () => {
     expect(clockTime(new Date(2026, 10, 9, 18, 1))).toBe("18:01");
   });
 });
+
+describe("leaveDecided (#846 D-03, #853 S-29)", () => {
+  it("names the person, the decision and the period, never the leave type", async () => {
+    const { leaveDecided } = await import("../action-messages");
+    expect(leaveDecided("Alex Muster", "2026-12-14", "2026-12-18", "APPROVED")).toBe(
+      "Antrag von Alex Muster genehmigt · 14.12.–18.12.2026",
+    );
+    expect(leaveDecided("Alex Muster", "2026-12-14", "2026-12-14", "REJECTED")).toBe(
+      "Antrag von Alex Muster abgelehnt · 14.12.2026",
+    );
+    expect(leaveDecided("Alex Muster", "2026-12-14", "2026-12-14", "APPROVED", true)).toBe(
+      "Stornierung von Alex Muster genehmigt · 14.12.2026",
+    );
+  });
+});

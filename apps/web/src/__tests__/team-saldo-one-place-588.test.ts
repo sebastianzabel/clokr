@@ -269,12 +269,14 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     let splitSites = 0;
     let cardSites = 0;
     let cellSites = 0;
+    const splitFiles = new Set<string>();
     const offenders: string[] = [];
     for (const f of FILES) {
       if (!f.rel.endsWith(".svelte")) continue;
       for (const tag of callSites(f.text, "SaldoAnzeige")) {
         if (!/\bconfirmedMinutes\b/.test(tag)) continue; // single-value mode shows no forecast
         splitSites++;
+        splitFiles.add(f.rel);
         if (!passesForecastData(tag)) offenders.push(`${f.rel}: <SaldoAnzeige`);
       }
       for (const tag of callSites(f.text, "KontoSaldoCard")) {
@@ -287,17 +289,22 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
       }
     }
     expect(offenders).toEqual([]);
-    // Non-vacuity: dashboard tile, /leave KPI and the leave form's box (split SaldoAnzeige);
-    // /time-entries (KontoSaldoCard) and, since Issue #853, /team/time-entries (kontoKpiItem), as found
-    // by Plan 588-03.
-    expect(splitSites).toBeGreaterThanOrEqual(3);
+    // Non-vacuity, by name: the leave form's box and the person drill-down (split SaldoAnzeige);
+    // the Stundenkonto cell of /team/time-entries (kontoKpiItem, Issue #853 D-853-18). The dashboard
+    // tile went with Issue #845 (Mein Tag words it through saldoFigure(), pinned in mein-tag-845), the
+    // /leave KPI and the /time-entries card with Issue #851 (the own total is worded on /ich/konto,
+    // pinned in personal-saldo-label-588).
+    expect(splitFiles).toContain("lib/components/leave/LeaveRequestForm.svelte");
+    expect(splitFiles).toContain("lib/components/reports/PersonDrilldown.svelte");
+    expect(splitSites).toBeGreaterThanOrEqual(2);
     // Issue #612 (pin ledger row 8): the person drill-down is a further split call site, and it
     // hands the forecast the data that words it (a drill-down without it fails the loop above).
     expect(fileText("lib/components/reports/PersonDrilldown.svelte")).toMatch(
       /<SaldoAnzeige[^>]*confirmedMinutes=[^>]*unconfirmedMonths=/s,
     );
-    expect(cardSites + cellSites).toBeGreaterThanOrEqual(2);
-    expect(cardSites).toBeGreaterThanOrEqual(1);
+    // Since #851 (/time-entries) and #853 (/team/time-entries) no page renders KontoSaldoCard; a
+    // future caller is still checked by the loop above. The account cell is the pinned call site.
+    expect(cardSites).toBeGreaterThanOrEqual(0);
     expect(cellSites).toBeGreaterThanOrEqual(1);
   });
 

@@ -108,7 +108,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
     file: "/leave",
     inNav: true,
   },
-  // D-05: the own availability is the first part of „Dienstplan“ (the own shifts follow with #597)
+  // #597 (Phase 851): the own shifts of the next 14 days, plus the own availability as a second tab
+  // while the tenant uses the availability system - so the page itself no longer depends on that feature
   {
     href: "/ich/dienstplan",
     area: "ich",
@@ -118,7 +119,16 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: null,
     file: "/availability",
     inNav: true,
-    feature: "availability",
+  },
+  // #594 (Phase 851): the own hours and vacation account with its derivation and the monthly records
+  {
+    href: "/ich/konto",
+    area: "ich",
+    label: "Konto",
+    icon: "chart",
+    width: "full",
+    requires: null,
+    inNav: true,
   },
   // In the avatar menu (and the phone „Mehr“ sheet), not in the rail
   {

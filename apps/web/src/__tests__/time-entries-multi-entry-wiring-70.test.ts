@@ -70,20 +70,7 @@ const PAGES = [
   },
 ];
 
-// The Salon column of the list: a `<th>` on /time-entries, a gated DataTable column on
-// /team/time-entries (Issue #853 D-853-10: the list moved onto the block; same fact, same gate).
-// The column definition is script, not a gated block, so its gate is the `multiEntryUi ? [...]`
-// spread and the label may occur exactly once (inside it).
-const SALON_COLUMN: Record<string, { present: RegExp; ungatedCount: number; literal: string }> = {
-  "/time-entries": { present: /<th>Salon<\/th>/, ungatedCount: 0, literal: "<th>Salon</th>" },
-  "/team/time-entries": {
-    present: /\.\.\.\(multiEntryUi \? \[\{ key: "salon", label: "Salon" \}\] : \[\]\)/,
-    ungatedCount: 1,
-    literal: 'label: "Salon"',
-  },
-};
-
-describe.each(PAGES)("multi-entry wiring (#70) — $name", ({ name, source }) => {
+describe.each(PAGES)("multi-entry wiring (#70) — $name", ({ source }) => {
   it("reads a non-empty page source", () => {
     expect(source.length).toBeGreaterThan(0);
   });
@@ -113,11 +100,15 @@ describe.each(PAGES)("multi-entry wiring (#70) — $name", ({ name, source }) =>
     const ungated = withoutGatedBlocks(source);
     // The words may appear in comments of the script; the markup pins below name the elements.
     expect(source).toContain('for="f-salon"');
-    expect(source).toMatch(SALON_COLUMN[name].present);
+    // #851 (/time-entries) and #853 D-853-10 (/team/time-entries): both lists render through the
+    // DataTable block, whose „Salon“ column is declared only under the gate (`multiEntryUi ? [...]`).
+    const dataTableColumn = '...(multiEntryUi ? [{ key: "salon", label: "Salon" }] : [])';
+    expect(source.includes("<th>Salon</th>") || source.includes(dataTableColumn)).toBe(true);
     expect(source).toContain("Weiteren Eintrag an diesem Tag");
     expect(ungated).not.toContain('for="f-salon"');
-    expect(ungated.split(SALON_COLUMN[name].literal).length - 1).toBe(
-      SALON_COLUMN[name].ungatedCount,
+    expect(ungated).not.toContain("<th>Salon</th>");
+    expect(source.match(/label: "Salon"/g) ?? []).toHaveLength(
+      source.includes(dataTableColumn) ? 1 : 0,
     );
     expect(ungated).not.toContain("Weiteren Eintrag an diesem Tag");
     expect(ungated).not.toContain("slot.salonName");

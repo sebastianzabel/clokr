@@ -161,6 +161,11 @@
       "auth": "tenant-admin"
     },
     {
+      "page": "(app)/ich/konto/+page.svelte",
+      "path": "/ich/konto",
+      "auth": "tenant-admin"
+    },
+    {
       "page": "(app)/dashboard/+page.svelte",
       "path": "/ich/tag",
       "auth": "tenant-admin"
@@ -272,13 +277,13 @@
       "page": "(auth)/invitation/+page.svelte",
       "path": "/invitation?token=x",
       "auth": "none",
-      "anchor": ".login-card"
+      "anchor": ".auth-card"
     },
     {
       "page": "(auth)/login/+page.svelte",
       "path": "/login",
       "auth": "none",
-      "anchor": ".login-heading"
+      "anchor": ".auth-title"
     },
     {
       "page": "(auth)/otp/+page.svelte",

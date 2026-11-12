@@ -85,8 +85,8 @@ export default defineConfig({
       testMatch: /auth\.setup\.ts/,
     },
     {
-      // Phase 70 advisory a11y gate (DEVOPS-V8-05): scans the public /login page only,
-      // requires no auth/storageState.
+      // Phase 70 a11y gate (DEVOPS-V8-05, blocking since #275): scans the public pages - every
+      // signed-out page and state plus the 404 page (#855) - and requires no auth/storageState.
       name: "axe-scan",
       testMatch: /axe-scan\.spec\.ts/,
       use: {
@@ -268,6 +268,18 @@ export default defineConfig({
       //     standing working-time figure during a break, the 390 x 844 first screen and 360 px
       //     without overflow on Ich › Mein Tag); tenant fixture only, no seed
       //
+      // Issue #846 added a further file:
+      //   - heute-im-salon-846.spec.ts (Team › Heute im Salon: every Kennzahl links to its list,
+      //     the four on the first screen at 1440 x 900 and 390 x 844, a Salonmanager sees only the
+      //     own salon, a decision through the dialog of Aufgaben with its toast); tenant fixture plus
+      //     API-created people, a second salon and a sick request
+      //
+      // Issue #847 added a further file:
+      //   - verwalten-uebersicht-847.spec.ts (Verwalten › Übersicht: at least six setup checks with
+      //     link and state, the admin tasks counted and linked, the mail warning on the overview and
+      //     in the mail settings exactly when the server cannot deliver, the Personalabteilung lands
+      //     there); tenant fixture plus an API-created person with the HR template
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -294,6 +306,8 @@ export default defineConfig({
         /bausteine-843\.spec\.ts/,
         /all-routes-overflow-843\.spec\.ts/,
         /mein-tag-845\.spec\.ts/,
+        /heute-im-salon-846\.spec\.ts/,
+        /verwalten-uebersicht-847\.spec\.ts/,
         /shift-notices-850\.spec\.ts/,
         /team-pages-853\.spec\.ts/,
       ],

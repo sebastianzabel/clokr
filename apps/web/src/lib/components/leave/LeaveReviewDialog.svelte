@@ -42,6 +42,7 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { salonContext, showSalonOptions } from "$stores/salon-context"; // Issue #853: salon names, one module (#82)
+  import { leaveDecided } from "$lib/feedback/action-messages"; // #846 D-03: every decision is acknowledged
   import {
     LEAVE_TYPE_OPTIONS,
     NEUTRAL_CHIP_LABEL,
@@ -382,6 +383,8 @@
   ): Promise<boolean> {
     saving = true;
     error = "";
+    // the period is read before the dialog closes (the page may swap `request` on reload)
+    const period = request ? { start: request.startDate, end: request.endDate } : null;
     try {
       await api.patch(`/leave/requests/${ctx.id}/review`, {
         status,
@@ -399,9 +402,13 @@
           attestValidTo: attestPresent && attestTo ? attestTo : null,
         });
       }
-      // Issue #853 (S-29): acknowledge the result once the server answered. The text names person
-      // and decision, never the leave type (sick leave is health data).
-      toasts.success(reviewResultToast(status, personName, isCancellationReview));
+      // #846 D-03 / #853 S-29: ONE acknowledgement once the server answered. It names person,
+      // decision and period, never the leave type (sick leave is health data).
+      toasts.success(
+        period
+          ? leaveDecided(personName, period.start, period.end, status, isCancellationReview)
+          : reviewResultToast(status, personName, isCancellationReview),
+      );
       open = false;
       pendingApprove = null;
       await onReviewed();

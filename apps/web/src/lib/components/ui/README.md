@@ -70,7 +70,7 @@ Source: `$components/ui/Dialog.svelte`. Props: `open` (bindable), `title`, `eyeb
 
 ### `<KpiStrip>`, `<KpiCell>`, `<Stage>`
 
-Sources: `KpiStrip.svelte` (`items`, `band?`, `ariaLabel?`), `KpiCell.svelte` (`label`, `value` string or number — a number counts up —, `format?`, `unit?`, `explanation?`, `derivationHref?`, `delta?` + `deltaTone?`, `progress?`), `Stage.svelte` (`state` `ruhig | arbeitet | pause | fertig` on card / brand-soft / warn-soft / card with a 350 ms transition, `children`, `actions?`, `ariaLabel?`). `KPIStat` keeps its 38 px look and strings and renders a `KpiCell`.
+Sources: `KpiStrip.svelte` (`items`, `band?`, `ariaLabel?`, `extra?` — one more cell for a figure the label/value shape cannot express, e.g. `SaldoAnzeige`, #851), `KpiCell.svelte` (`label`, `value` string or number — a number counts up —, `format?`, `unit?`, `explanation?`, `derivationHref?`, `delta?` + `deltaTone?`, `progress?`), `Stage.svelte` (`state` `ruhig | arbeitet | pause | fertig` on card / brand-soft / warn-soft / card with a 350 ms transition, `children`, `actions?`, `ariaLabel?`). `KPIStat` keeps its 38 px look and strings and renders a `KpiCell`.
 
 ### `<List>`, `<ListRow>`
 
@@ -80,7 +80,7 @@ Additive props (Issue #853, all optional, output unchanged without them): `List.
 
 ### `<DataTable>`, `<TableToolbar>`, `<SortHeader>`
 
-Sources: `DataTable.svelte` (`columns`, `rows`, `rowKey`, `cell?`, `sort` + `onSort` with the exported `nextSortState` cycle none → asc → desc → none, `filtered` + `onResetFilters` for „keine Treffer“, `onRowClick?`, `rowTestId?`, `toolbar?`, `caption`, `loading?`), `TableToolbar.svelte` (`query` bindable, `count`, `total`, `filters?`, `onFilterChange?`, `onReset?`), `SortHeader.svelte` (`aria-sort`, button „Nach <Spalte> sortieren“). Additive prop (#853): `rowTone?: (row) => "warn" | "info" | "highlight" | undefined` puts `data-tone` on the row (table and card layout), tinted by the block with `--warn-soft`, `--info-soft`, `--brand-tint`; a page never styles DataTable internals. One table DOM with a horizontal scroll container; below 760 px container width the rows render as cards. State lives in the URL through `urlState(schema)` of `$lib/table/url-state.ts` (allow-list parsers `text`, `oneOf`, `pattern`, `int`; unknown keys are dropped, other keys of the URL are kept). The search text is normalised in one place, `matchesSearch()` of `$lib/table/search.ts`. Loading shows the Skeleton in place of the table; an empty result says „keine Daten“ or „keine Treffer“ with „Filter zurücksetzen“. First adopter: `/admin/employees`.
+Sources: `DataTable.svelte` (`columns`, `rows`, `rowKey`, `cell?`, `sort` + `onSort` with the exported `nextSortState` cycle none → asc → desc → none, `filtered` + `onResetFilters` for „keine Treffer“, `onRowClick?`, `rowTestId?`, `rowId?` (element id, e.g. a deep-link scroll target), `rowHighlight?` (tinted row), `rowClass?` (page classes, styled through `:global`), `toolbar?`, `caption`, `loading?`; a column may carry `title?` as its head-cell explanation; rows may be any object type — all additive in #851), `TableToolbar.svelte` (`query` bindable, `count`, `total`, `filters?`, `onFilterChange?`, `onReset?`), `SortHeader.svelte` (`aria-sort`, button „Nach <Spalte> sortieren“). One table DOM with a horizontal scroll container; below 760 px container width the rows render as cards. State lives in the URL through `urlState(schema)` of `$lib/table/url-state.ts` (allow-list parsers `text`, `oneOf`, `pattern`, `int`; unknown keys are dropped, other keys of the URL are kept). The search text is normalised in one place, `matchesSearch()` of `$lib/table/search.ts`. Loading shows the Skeleton in place of the table; an empty result says „keine Daten“ or „keine Treffer“ with „Filter zurücksetzen“. First adopter: `/admin/employees`. Additive prop (#853): `rowTone?: (row) => "warn" | "info" | "highlight" | undefined` puts `data-tone` on the row (table and card layout), tinted by the block with `--warn-soft`, `--info-soft`, `--brand-tint`; a page never styles DataTable internals. One table DOM with a horizontal scroll container; below 760 px container width the rows render as cards. State lives in the URL through `urlState(schema)` of `$lib/table/url-state.ts` (allow-list parsers `text`, `oneOf`, `pattern`, `int`; unknown keys are dropped, other keys of the URL are kept). The search text is normalised in one place, `matchesSearch()` of `$lib/table/search.ts`. Loading shows the Skeleton in place of the table; an empty result says „keine Daten“ or „keine Treffer“ with „Filter zurücksetzen“. First adopter: `/admin/employees`.
 
 ### `<Chip>`, `<Note>`
 
@@ -89,6 +89,16 @@ Sources: `Chip.svelte` (`tone` `ok | warn | bad | info | brand | neutral`, `titl
 ### `<Toast>`, `<Skeleton>`, `<EmptyState>`, `<ErrorState>`
 
 Sources: `Toast.svelte` (the container with the two persistent live regions, mounted once; items are `ToastItem`), `Skeleton.svelte` (`shape`, `count?`, `lines?`, `height?`, `inline?`, `width?`), `EmptyState.svelte` (`title?`, `description?`, `actionLabel?` + `onaction?`, `variant?` `noData | noMatches`) plus `action?: Snippet` (#853: rendered in place of the action button, e.g. a person picker), `ErrorState.svelte` (`message?`, `hint?`, `onRetry`, `retrying?`; a bad `Note` with „Erneut versuchen“).
+
+### Signed-out frame and error page (Issue #855)
+
+Outside this directory, built only from the blocks above: `lib/components/auth/AuthFrame.svelte` (`title`, `subtitle?`,
+`children`, `footer?`) is the one frame of every signed-out page — logo, one `<h1>`, a 400 px surface on the page ground,
+the shared `.auth-form` / `.auth-submit` (40 px, the page's one primary action) / `.auth-link` pieces; fields go through
+`FormField`, messages through `Note` (`role="alert"` / `role="status"` wrapper). `lib/components/feedback/ErrorPage.svelte`
+(`status`, `framed?`) is the error page of `routes/+error.svelte` (framed, no shell) and `routes/(app)/+error.svelte` (in the
+shell); its text comes only from `error-copy.ts` and never from the raw error message. Both own their `<h1>` and are the two
+named exemptions of `lint:ui` `no-raw-h1`. `auth-frame-855.test.ts` pins that every `(auth)` page renders the frame.
 
 ### `$lib/motion`
 

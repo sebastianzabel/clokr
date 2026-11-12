@@ -106,7 +106,9 @@ describe("LeaveReviewDialog.decide() - a decision straight from the row", () => 
     expect(apiPatch).toHaveBeenCalledTimes(1);
     expect(apiPatch.mock.calls[0][0]).toBe("/leave/requests/req-1/review");
     expect(apiPatch.mock.calls[0][1]).toEqual({ status: "APPROVED", reviewNote: null });
-    expect(toastSuccess).toHaveBeenCalledWith("Antrag von Alex Muster genehmigt.");
+    expect(toastSuccess).toHaveBeenCalledWith(
+      "Antrag von Alex Muster genehmigt · 01.09.–05.09.2026",
+    );
     expect(onReviewed).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("leave-approval-modal")).toBeNull();
   });
@@ -114,7 +116,9 @@ describe("LeaveReviewDialog.decide() - a decision straight from the row", () => 
   it("approve of a cancellation request words the toast as a Stornierung", async () => {
     const { decide } = mountClosed({ status: "CANCELLATION_REQUESTED" });
     expect(await decide("APPROVED")).toEqual({ ok: true });
-    expect(toastSuccess).toHaveBeenCalledWith("Stornierung von Alex Muster genehmigt.");
+    expect(toastSuccess).toHaveBeenCalledWith(
+      "Stornierung von Alex Muster genehmigt · 01.09.–05.09.2026",
+    );
   });
 
   it("reject: the reason is the review note, trimmed; an empty reason sends nothing", async () => {
@@ -134,7 +138,9 @@ describe("LeaveReviewDialog.decide() - a decision straight from the row", () => 
       status: "REJECTED",
       reviewNote: "Zeitraum nicht besetzbar",
     });
-    expect(toastSuccess).toHaveBeenCalledWith("Antrag von Alex Muster abgelehnt.");
+    expect(toastSuccess).toHaveBeenCalledWith(
+      "Antrag von Alex Muster abgelehnt · 01.09.–05.09.2026",
+    );
   });
 
   it("a stale note of an earlier, abandoned dialog session is never sent", async () => {
