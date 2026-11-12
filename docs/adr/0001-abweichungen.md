@@ -8030,6 +8030,23 @@ betroffenen Tag; außerhalb dieselbe 404 wie für eine unbekannte Anfrage. Keine
 (`OvertimeTransaction`, `Restrict`). Semantikänderung der Systemvorlagen: `month-correction:*` spiegelbildlich zu den
 Zeitnachtrag-Rechten (`20261109180000_month_correction_template_grant`).
 
+**Nachtrag Phase 599 — Systemrollen-Vorlagen (Unterbau-Semantikänderung, Owner-Entscheidung 12.11.2026,
+[Kommentar auf #599](https://github.com/getclokr/clokr/issues/599#issuecomment-6817644873)).** Freigegeben wie vorgeschlagen und so ausgeliefert:
+
+| Vorlage                      | neu                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Admin, Inhaber, Manager      | `month-correction:read:EIGENE`, `read:ZUGEWIESEN`, `create:EIGENE`, `create:ZUGEWIESEN`, `approve:ZUGEWIESEN` |
+| Mitarbeiter                  | `month-correction:read:EIGENE`, `create:EIGENE`                                                               |
+| Salonmanager                 | `month-correction:read:ZUGEWIESEN`, `create:ZUGEWIESEN`, `approve:ZUGEWIESEN`                                 |
+| Personalabteilung, Ausbilder | keine                                                                                                         |
+
+Die Änderung wirkt sofort auf jedes bestehende Konto mit dieser Rolle; Kundenkopien der Vorlagen bleiben unverändert, niemandem
+wird eine Rolle zugewiesen. Die Vier-Augen-Sperre (wer anfragt oder um wen es geht, entscheidet nie) ist keine Permission und gilt
+für jede Rolle. Die reine Datenmigration setzt je Vorlage genau die Vorlage von vorher plus diese Schlüssel (geprüft gegen
+`SYSTEM_ROLE_PERMISSIONS` vor #599: kein Recht entfernt oder geändert), jede Anweisung mit `IS DISTINCT FROM`-Guard und
+`"tenantId" IS NULL`; `month-correction-template-migration-599.test.ts` beweist das am eingecheckten SQL (Form, Wiederholbarkeit,
+Gleichheit mit der Konstante). Konstante, Datenbankzeile, `docs/permissions.md` und die Web-Persona-Fixture ändern sich zusammen.
+
 **Auswirkung auf die Kontexte.** Zeiterfassung: keine (der Zeitnachtrag bleibt für offene Monate, kein `TimeEntry` entsteht).
 Abwesenheiten: keine. Schichtplanung: keine. Arbeitszeitkonto: neues Modell, Routen `/api/v1/month-corrections`, Saldo-Kern-Eingang.
 Kompositionsschicht: keine eigene Regel; Berichte lesen die Wirkung über `computeMonthReportFigures` (Kontobewegung =

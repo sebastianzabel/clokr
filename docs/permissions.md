@@ -544,7 +544,7 @@ eröffnet und übernimmt die Planung seiner Salons. Ausgeliefert durch die reine
 `20261106201828_leave_plan_template_grant`; eine Semantikänderung des Unterbaus (ADR Eintrag AG,
 Nachtrag).
 
-**Seit #599 (Entscheidung auf #599, 09.11.2026).**
+**Seit #599 (Owner-Entscheidung 12.11.2026, Kommentar auf #599).**
 Die Rechte `month-correction:*` (Korrektur eines Tages in einem abgeschlossenen Monat) liegen
 spiegelbildlich zu den Zeitnachtrag-Rechten: Wer `retro-request:create:EIGENE` hält (Admin, Manager,
 Mitarbeiter, Inhaber), bekommt `month-correction:read:EIGENE` und `month-correction:create:EIGENE`;

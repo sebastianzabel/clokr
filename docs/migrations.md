@@ -1911,7 +1911,20 @@ werden); eine Rückabbildung ist nicht möglich, weil `nacht` und `schiefer` auf
   Systemvorlagen Admin, Manager, Mitarbeiter, Inhaber und Salonmanager erhalten die `month-correction:*`-Rechte spiegelbildlich zu
   ihren Zeitnachtrag-Rechten (`docs/permissions.md`, „Seit #599“). Personalabteilung und Ausbilder bleiben unverändert;
   Kundenkopien der Vorlagen bleiben unverändert; niemandem wird eine Rolle zugewiesen. Bewiesen durch
-  `apps/api/src/__tests__/month-correction-template-migration-599.test.ts`.
+  `apps/api/src/__tests__/month-correction-template-migration-599.test.ts`. Owner-Entscheidung 12.11.2026 (Kommentar auf #599,
+  Unterbau-Semantikänderung): die Änderung wirkt sofort auf alle bestehenden Konten der fünf Rollen.
+
+**Prüfung nach dem Deploy (je Stufe, nur lesend).** Die fünf globalen Vorlagen tragen die neuen Schlüssel, Personalabteilung und
+Ausbilder keinen:
+
+```sql
+SELECT "name", array_length("permissions", 1) AS anzahl,
+       ARRAY(SELECT k FROM unnest("permissions") k WHERE k LIKE 'month-correction:%') AS neu
+FROM "AccessRole" WHERE "tenantId" IS NULL ORDER BY "name";
+```
+
+Erwartet: Admin 94 / Inhaber = Katalog (94) / Manager 68 / Mitarbeiter 24 / Salonmanager 29 Rechte, mit den Schlüsseln aus
+ADR Eintrag AJ, Nachtrag Phase 599; Personalabteilung 15 und Ausbilder 5 unverändert.
 
 `prisma migrate deploy` wendet beide auf jeder Stufe an; kein Skript, kein manueller Schritt, keine Bestandsdaten zu korrigieren
 (die Tabelle ist neu und leer).
