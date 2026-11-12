@@ -92,19 +92,20 @@
           caption={`Einträge am ${day.label}`}
         >
           {#snippet cell(row, column)}
+            {@const entry = row.entry}
             {#if column.key === "name"}
-              {row.name}{#if isTravelRow(row.entry)}
+              {row.name}{#if isTravelRow(entry)}
                 <Chip>{TRAVEL_TEXTS.badge}</Chip>
-                <span class="salon-view-route">{travelRouteLabel(row.entry)}</span>{/if}
+                <span class="salon-view-route">{travelRouteLabel(entry)}</span>{/if}
             {:else if column.key === "start"}
-              {time(row.entry.startTime)}
+              {time(entry.startTime)}
             {:else if column.key === "end"}
-              {row.entry.endTime ? time(row.entry.endTime) : "offen"}
+              {entry.endTime ? time(entry.endTime) : "offen"}
             {:else if column.key === "break"}
-              {row.entry.breakMinutes} min
+              {entry.breakMinutes} min
             {:else if column.key === "work"}
-              {hoursMinutes(row.entry.workingMinutes)}
-              {#if row.entry.isInvalid}
+              {hoursMinutes(entry.workingMinutes)}
+              {#if entry.isInvalid}
                 <Chip tone="warn">ungültig</Chip>
               {/if}
             {/if}
