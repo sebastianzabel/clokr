@@ -1,8 +1,9 @@
 <script lang="ts">
   // Issue #853 (D-853-14, D-853-18, D-853-19) - Team › Personen: the read-only team directory for leaders,
   // drawn after the prototype's Personen screen. A page created by #853 (no route file to reroute). The data
-  // is exactly `GET /employees`: the server narrows the list to the caller's reach (#547) and masks the
-  // saldo without `overtime:read`; this page decides nothing about either. Read-only: no write call, no
+  // is exactly `GET /employees`: the server narrows the list to the caller's reach (#547) and names each
+  // person's Stammsalon and stored roles; this page decides nothing about either. No saldo column (owner
+  // review): the saldo stays in the person view of Team › Zeiten and in the reports. Read-only: no write call, no
   // e-mail column, no edit actions (Verwalten › Personen does that). The header salon narrows the list
   // through `salonPageFilter` (#558), never the store's raw selection. Search, filters and sort live in the
   // URL (`urlState`); status, filter, sort and the count sentence come from `personen-model.ts`.
@@ -10,7 +11,7 @@
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { salonContext } from "$stores/salon-context";
+  import { salonContext, showSalonOptions } from "$stores/salon-context";
   import { pageLabel } from "$lib/nav/page-labels";
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
   import PageHead from "$lib/components/layout/PageHead.svelte";
@@ -32,7 +33,7 @@
   import { urlState } from "$lib/table/url-state";
   import { localCalendarDay } from "$lib/employees/employment-state";
   import { scheduleModelLabel } from "$lib/employees/contract-history";
-  import { fmtBalance, fmtMin } from "$lib/utils/format-minutes";
+  import { fmtMin } from "$lib/utils/format-minutes";
   import {
     activeCount,
     activeCountSentence,
@@ -123,7 +124,20 @@
     });
   });
 
+  // The Stammsalon filter is offered only with salon choice (#64 rule), over the salons the caller
+  // reaches (the header's list); the header salon itself narrows the request (#558).
+  const salonFilterOffered = $derived(showSalonOptions($salonContext) && pageSalonId === null);
   const toolbarFilters = $derived<ToolbarFilter[]>([
+    ...(salonFilterOffered
+      ? [
+          {
+            key: "salon",
+            label: "Salon",
+            options: $salonContext.salons.map((salon) => ({ value: salon.id, label: salon.name })),
+            value: $salonContext.salons.some((salon) => salon.id === view.salon) ? view.salon : "",
+          },
+        ]
+      : []),
     {
       key: "status",
       label: "Status",
@@ -143,11 +157,12 @@
   function onFilterChange(key: string, value: string) {
     if (key === "status") listUrl.write({ status: value === "aktiv" ? "aktiv" : "alle" });
     else if (key === "vertrag") listUrl.write({ vertrag: personenUrlSchema.vertrag.parse(value) });
+    else if (key === "salon") listUrl.write({ salon: personenUrlSchema.salon.parse(value) });
   }
   // One URL write back to the default view (Status: Aktiv, no search, no Vertrag).
   function resetFilters() {
     filterSearch = "";
-    listUrl.write({ q: "", status: "aktiv", vertrag: "" });
+    listUrl.write({ q: "", status: "aktiv", vertrag: "", salon: "" });
   }
 
   const tableSort = $derived<DataTableSort>({ key: view.sort, dir: view.dir });
@@ -160,14 +175,23 @@
   // ── Rows ────────────────────────────────────────────────────────────────────
   // Browser-local calendar day: the web has no tenant-local "today" helper.
   const today = localCalendarDay();
-  const allRows = $derived(personenRows(people, today));
+  const salonNames = $derived(new Map($salonContext.salons.map((salon) => [salon.id, salon.name])));
+  const allRows = $derived(personenRows(people, today, salonNames));
+  const salonFilter = $derived(salonFilterOffered ? view.salon : "");
   const shownRows = $derived(
     sortPersonen(
-      filterPersonen(allRows, { q: view.q, status: view.status, vertrag: view.vertrag }),
+      filterPersonen(allRows, {
+        q: view.q,
+        status: view.status,
+        vertrag: view.vertrag,
+        salon: salonFilter,
+      }),
       { key: view.sort, dir: view.dir },
     ),
   );
-  const filtersActive = $derived(view.q !== "" || view.status === "aktiv" || view.vertrag !== "");
+  const filtersActive = $derived(
+    view.q !== "" || view.status === "aktiv" || view.vertrag !== "" || salonFilter !== "",
+  );
   const headSentence = $derived(
     loading || failed || salonRejected
       ? undefined
@@ -181,16 +205,15 @@
     return `/team/zeiten?employeeId=${encodeURIComponent(id)}`;
   }
 
-  // The saldo column exists only when the server sent a value for at least one row (no column of dashes).
-  const showSaldo = $derived(allRows.some((row) => row.balanceMinutes !== null));
-
+  // The prototype's columns: Name, Stammsalon, Vertrag, Std./Woche, Rollen, Status and „Öffnen“.
   const columns = $derived<DataTableColumn[]>([
     { key: "name", label: "Name", primary: true, sortable: true },
+    { key: "salon", label: "Stammsalon", sortable: true },
     { key: "vertrag", label: "Vertrag", sortable: true },
     { key: "stunden", label: "Std./Woche", sortable: true, align: "end" },
-    ...(showSaldo ? [{ key: "saldo", label: "Saldo", sortable: true, align: "end" as const }] : []),
+    { key: "rollen", label: "Rollen" },
     { key: "status", label: "Status", sortable: true },
-    ...(mayOpenZeiten ? [{ key: "open", label: "Zeiten", align: "end" as const }] : []),
+    ...(mayOpenZeiten ? [{ key: "open", label: "", align: "end" as const }] : []),
   ]);
 </script>
 
@@ -227,6 +250,7 @@
         {onFilterChange}
         onReset={resetFilters}
         searchLabel="Name oder Nummer"
+        filterButtons
       />
     {/snippet}
     {#snippet cell(row, column)}
@@ -242,21 +266,23 @@
             <span class="p-number">{row.number}</span>
           </span>
         </span>
+      {:else if column.key === "salon"}
+        {row.salonName}
       {:else if column.key === "vertrag"}
         {row.modelLabel}
       {:else if column.key === "stunden"}
         <span class="p-figure">
           {row.weeklyHours === null ? "–" : fmtMin(Math.round(row.weeklyHours * 60))}
         </span>
-      {:else if column.key === "saldo"}
-        <span class="p-figure">
-          {row.balanceMinutes === null ? "–" : fmtBalance(row.balanceMinutes)}
-        </span>
+      {:else if column.key === "rollen"}
+        <span class="p-roles">{row.roles}</span>
       {:else if column.key === "status"}
         <Chip tone={row.statusTone}>{row.statusLabel}</Chip>
       {:else if column.key === "open"}
-        <a class="p-open" href={zeitenHref(row.id)} aria-label="Zeiten von {row.name} öffnen"
-          >Öffnen</a
+        <a
+          class="p-open row-action"
+          href={zeitenHref(row.id)}
+          aria-label="Zeiten von {row.name} öffnen">Öffnen</a
         >
       {/if}
     {/snippet}
@@ -307,13 +333,17 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* A quiet text action like the prototype's „Öffnen“ (owner review): no underline, no brand weight. */
   .p-open {
-    color: var(--brand);
-    font-weight: 600;
-    text-decoration: none;
+    color: var(--text-2);
+    font-weight: 500;
   }
 
   .p-open:hover {
-    text-decoration: underline;
+    color: var(--text);
+  }
+
+  .p-roles {
+    color: var(--text-2);
   }
 </style>

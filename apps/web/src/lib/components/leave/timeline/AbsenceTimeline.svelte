@@ -332,7 +332,6 @@
       return [{ key, count: value, index, exceeded: tooltip !== undefined, tooltip }];
     });
   });
-  const maxLoad = $derived(Math.max(1, ...loadCells.map((cell) => cell.count)));
 
   function loadLabel(cell: { key: string; count: number; exceeded: boolean; tooltip?: string }) {
     const when = isYear ? `Woche ab ${fmtDate(cell.key)}` : fmtDate(cell.key);
@@ -605,12 +604,11 @@
                     data-exceeded={cell.exceeded ? "true" : "false"}
                     style:left="{cell.index * columnWidth}px"
                     style:width="{columnWidth}px"
-                    style:--tl-load-share="{Math.round((cell.count / maxLoad) * 60) + 15}%"
                     title={loadLabel(cell)}
                     aria-label={loadLabel(cell)}
                     role="img"
                   >
-                    {#if columnWidth >= DAY_TEXT_MIN_WIDTH}{cell.count}{/if}
+                    {cell.count}
                   </div>
                 {/each}
               </div>
@@ -1099,6 +1097,9 @@
   }
 
   /* Load row */
+  /* Issue 853 (owner review): the count of the day as a plain number in every zoom, never a
+     coloured pill; only an exceeded limit is marked. Narrow columns let a two-digit count overlap
+     its neighbour's empty space instead of hiding it. */
   .tl-load-cell {
     position: absolute;
     top: 2px;
@@ -1106,10 +1107,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.75rem;
+    overflow: visible;
+    font-size: 0.6875rem;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
-    color: var(--text);
-    background: color-mix(in srgb, var(--brand) var(--tl-load-share), transparent);
+    color: var(--text-2);
     border-radius: var(--r-control);
   }
 

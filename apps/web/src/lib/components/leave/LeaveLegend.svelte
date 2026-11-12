@@ -73,6 +73,10 @@
   // #840 G-4: the voll and gestrichelt keys show the look of a real type, the first one this legend
   // names (brand when it names none) — never a grey of their own that could be read as a meaning.
   const styleFill = $derived(types[0]?.fill ?? "--brand");
+  // Issue #853 (owner review): a named type IS drawn in the full, approved look, so a separate
+  // „Genehmigt (voll)“ key next to it showed the same swatch twice. It is kept only for a legend
+  // that names no type (an employee's own view, or a view of masked bars only).
+  const shownStyles = $derived(types.length > 0 ? styles.filter((s) => s !== "gesetzt") : styles);
 
   function styleSwatch(style: BarStyle): string | undefined {
     if (style === "abwesend") return `var(${ABSENT.fill})`;
@@ -89,7 +93,7 @@
     >
   {/each}
 
-  {#each styles as style (style)}
+  {#each shownStyles as style (style)}
     <span class="legend-item" data-testid="legend-style-{style}"
       ><span
         class="legend-swatch legend-swatch--{style}"

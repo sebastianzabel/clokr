@@ -25,7 +25,8 @@ function employee(over: Partial<PersonenEmployee> & { id: string }): PersonenEmp
     user: { isActive: true },
     invitationStatus: "ACCEPTED",
     workSchedule: { type: "FIXED_SCHEDULE", weeklyHours: "32.00" },
-    overtimeAccount: { balanceHours: "1.50" },
+    homeSalonId: "s1",
+    roleNames: ["Mitarbeiter"],
     ...over,
   };
 }
@@ -40,7 +41,8 @@ const ROSTER: PersonenEmployee[] = [
     user: { isActive: false },
     invitationStatus: "PENDING",
     workSchedule: { type: "SHIFT_BASED", weeklyHours: "40" },
-    overtimeAccount: { balanceHours: "-2" },
+    homeSalonId: "s2",
+    roleNames: ["Salonmanager", "Mitarbeiter"],
   }),
   employee({
     id: "c",
@@ -48,7 +50,8 @@ const ROSTER: PersonenEmployee[] = [
     lastName: "Konflikt",
     employeeNumber: "UAT-C01",
     workSchedule: { type: "MONTHLY_HOURS", weeklyHours: null },
-    overtimeAccount: { balanceHours: null },
+    homeSalonId: null,
+    roleNames: [],
   }),
   employee({
     id: "d",
@@ -57,12 +60,16 @@ const ROSTER: PersonenEmployee[] = [
     employeeNumber: "P-009",
     exitDate: "2026-06-30",
     workSchedule: null,
-    overtimeAccount: null,
   }),
 ];
 
+const SALONS = new Map([
+  ["s1", "Nord"],
+  ["s2", "Süd"],
+]);
+
 function rows(): PersonenRow[] {
-  return personenRows(ROSTER, TODAY);
+  return personenRows(ROSTER, TODAY, SALONS);
 }
 const ids = (list: PersonenRow[]) => list.map((r) => r.id);
 
@@ -77,7 +84,9 @@ describe("personenRows", () => {
       model: "FIXED_SCHEDULE",
       modelLabel: "Feste Arbeitszeit",
       weeklyHours: 32,
-      balanceMinutes: 90,
+      salonId: "s1",
+      salonName: "Nord",
+      roles: "Mitarbeiter",
       status: "ACTIVE",
       statusLabel: "Aktiv",
       statusTone: "ok",
@@ -85,13 +94,26 @@ describe("personenRows", () => {
     });
   });
 
-  it("keeps a masked saldo and a missing contract as null / dash, never as zero", () => {
-    const [, , c, d] = rows();
-    expect(c.balanceMinutes).toBeNull();
-    expect(c.weeklyHours).toBeNull();
-    expect(d.balanceMinutes).toBeNull();
+  it("keeps a missing Stammsalon, role and contract as a dash, never as a guess", () => {
+    const [, b, c, d] = rows();
+    expect(b.roles).toBe("Salonmanager, Mitarbeiter");
+    expect(c).toMatchObject({ salonId: "", salonName: "–", roles: "–", weeklyHours: null });
     expect(d.model).toBe("");
     expect(d.modelLabel).toBe("–");
+    // a salon the caller's salon list does not name is never invented
+    expect(
+      personenRows([employee({ id: "x", homeSalonId: "gone" })], TODAY, SALONS)[0].salonName,
+    ).toBe("–");
+  });
+
+  // Issue #853 (owner review): the table shows no saldo; the saldo stays in the person view.
+  it("carries no saldo", () => {
+    expect(Object.keys(rows()[0])).not.toContain("balanceMinutes");
+  });
+
+  it("filters by Stammsalon", () => {
+    const list = filterPersonen(rows(), { q: "", status: "alle", vertrag: "", salon: "s1" });
+    expect(ids(list)).toEqual(["a", "d"]);
   });
 
   it("never lists an anonymised person", () => {
@@ -197,9 +219,9 @@ describe("sortPersonen", () => {
     expect(sorted("stunden", "asc")).toEqual(["a", "b", "d", "c"]);
     expect(sorted("stunden", "desc")).toEqual(["b", "a", "d", "c"]);
   });
-  it("saldo: unreadable saldo last in both directions", () => {
-    expect(sorted("saldo", "asc")).toEqual(["b", "a", "d", "c"]);
-    expect(sorted("saldo", "desc")).toEqual(["a", "b", "d", "c"]);
+  it("salon: by salon name, a person without Stammsalon last in both directions", () => {
+    expect(sorted("salon", "asc")).toEqual(["d", "a", "b", "c"]);
+    expect(sorted("salon", "desc")).toEqual(["b", "d", "a", "c"]);
   });
   it("status: working first, then waiting, then gone, both directions", () => {
     expect(sorted("status", "asc")).toEqual(["c", "a", "b", "d"]);
@@ -215,7 +237,7 @@ describe("sortPersonen", () => {
     );
     const copy = [...twins];
     expect(ids(sortPersonen(twins, { key: "name", dir: "asc" }))).toEqual(["z1", "z2"]);
-    expect(ids(sortPersonen(twins, { key: "saldo", dir: "desc" }))).toEqual(["z1", "z2"]);
+    expect(ids(sortPersonen(twins, { key: "salon", dir: "desc" }))).toEqual(["z1", "z2"]);
     expect(twins).toEqual(copy);
   });
 });
@@ -236,22 +258,31 @@ describe("activeCountSentence", () => {
 describe("personenUrlSchema", () => {
   const parse = (query: string) => parseUrlState(personenUrlSchema, new URLSearchParams(query));
   it("defaults when the URL is empty", () => {
-    expect(parse("")).toEqual({ q: "", status: "aktiv", vertrag: "", sort: "name", dir: "asc" });
+    expect(parse("")).toEqual({
+      q: "",
+      status: "aktiv",
+      vertrag: "",
+      salon: "",
+      sort: "name",
+      dir: "asc",
+    });
   });
   it("reads allowed values", () => {
-    expect(parse("q=Anton&status=alle&vertrag=FLEXTIME&sort=saldo&dir=desc")).toEqual({
+    expect(parse("q=Anton&status=alle&vertrag=FLEXTIME&salon=s1&sort=salon&dir=desc")).toEqual({
       q: "Anton",
       status: "alle",
       vertrag: "FLEXTIME",
-      sort: "saldo",
+      salon: "s1",
+      sort: "salon",
       dir: "desc",
     });
   });
   it("falls back to the default for an unknown value", () => {
-    expect(parse("status=x&vertrag=ADMIN&sort=email&dir=up")).toEqual({
+    expect(parse("status=x&vertrag=ADMIN&sort=saldo&dir=up")).toEqual({
       q: "",
       status: "aktiv",
       vertrag: "",
+      salon: "",
       sort: "name",
       dir: "asc",
     });

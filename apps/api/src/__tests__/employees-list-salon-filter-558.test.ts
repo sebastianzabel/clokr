@@ -224,6 +224,43 @@ describe("Issue #558 — GET /employees?salonId narrows the people list", () => 
     );
   });
 
+  // Issue #853 (additive): each row names the person's Stammsalon of today by id; a deployment is not
+  // a Stammsalon (the Springer stays homed in B), and a person without a HOME row has null.
+  it("each row carries the Stammsalon of today as homeSalonId", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/employees",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const home = new Map(
+      (res.json() as { id: string; homeSalonId: string | null }[]).map((e) => [
+        e.id,
+        e.homeSalonId,
+      ]),
+    );
+    expect(home.get(people.pA.id)).toBe(salonA.id);
+    expect(home.get(people.pB.id)).toBe(salonB.id);
+    expect(home.get(people.springer.id)).toBe(salonB.id);
+    expect(home.get(data.employee.id)).toBeNull();
+  });
+
+  // Issue #853 (additive): the Rollen column reads the names of the stored roles, names only.
+  it("each row carries the names of the person's stored roles", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/employees",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const rows = res.json() as { id: string; roleNames: string[] }[];
+    const manager = rows.find((e) => e.id === people.manager.id);
+    expect(manager?.roleNames.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(Array.isArray(row.roleNames)).toBe(true);
+      for (const name of row.roleNames) expect(typeof name).toBe("string");
+    }
+  });
+
   it("a foreign tenant's salon, an unknown id and an inactive salon answer the same 404 body (T-100-09)", async () => {
     const foreignRes = await get(data.adminToken, `?salonId=${salonF.id}`);
     const unknownRes = await get(data.adminToken, `?salonId=${randomUUID()}`);

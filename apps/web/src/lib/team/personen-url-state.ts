@@ -11,12 +11,16 @@ export const PERSONEN_VERTRAG_CODES = [
   "SHIFT_BASED",
 ] as const;
 
-export const PERSONEN_SORT_KEYS = ["name", "vertrag", "stunden", "saldo", "status"] as const;
+// Issue #853 (owner review): Stammsalon replaces the saldo column (the saldo stays in the person view
+// and the reports), so it replaces its sort key too.
+export const PERSONEN_SORT_KEYS = ["name", "salon", "vertrag", "stunden", "status"] as const;
 
 export const personenUrlSchema = {
   q: text({ max: 80 }),
   status: oneOf(["aktiv", "alle"] as const, "aktiv"),
   vertrag: oneOf([...PERSONEN_VERTRAG_CODES, ""] as const, ""),
+  // The Stammsalon filter of the table (a salon id, "" = all); the header's `salonId` stays its own.
+  salon: text({ max: 64 }),
   sort: oneOf(PERSONEN_SORT_KEYS, "name"),
   dir: oneOf(["asc", "desc"] as const, "asc"),
 };

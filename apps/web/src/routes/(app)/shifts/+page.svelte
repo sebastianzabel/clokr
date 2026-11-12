@@ -1769,19 +1769,22 @@
           {#each week.weekDays as d (d)}
             {@const iso = d.slice(0, 10)}
             {@const c = coverageByDate.get(iso)}
+            {@const closed = isClosedDay(iso)}
+            <!-- Issue #853 (owner review): only the figure x / y. Red only for a real shortfall on an
+                 open day; a closed day is never understaffed. The status word stays for screen
+                 readers and in the tooltip, never as a coloured cell. -->
             <div
               class="sp-coverage-cell"
-              class:sp-coverage-cell--ok={c?.coverageStatus === "ok"}
-              class:sp-coverage-cell--under={c?.coverageStatus === "under"}
-              class:sp-coverage-cell--supervision={c?.coverageStatus === "supervision-missing"}
+              class:sp-coverage-cell--under={!closed && c?.coverageStatus === "under"}
+              class:sp-coverage-cell--closed={closed}
               title={staffingTooltip(c)}
             >
               {#if c}
                 <div class="sp-coverage-num" data-testid="staffing-figure">{staffingFigure(c)}</div>
-                {#if c.coverageStatus === "ok"}
-                  <span class="sp-coverage-ok">{staffingStatusText(c.coverageStatus)}</span>
-                {:else}
-                  <span class="sp-coverage-warn">⚠ {staffingStatusText(c.coverageStatus)}</span>
+                {#if !closed && c.coverageStatus === "supervision-missing"}
+                  <span class="sp-coverage-note">{staffingStatusText(c.coverageStatus)}</span>
+                {:else if !closed}
+                  <span class="sr-only">{staffingStatusText(c.coverageStatus)}</span>
                 {/if}
               {:else}
                 <span class="sp-coverage-num">—</span>
@@ -2296,9 +2299,7 @@
     font-size: 12.5px;
     color: var(--text-2);
     padding: 12px 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    border-top: 2px solid var(--line);
+    border-top: 1px solid var(--line);
   }
   .sp-coverage-cell {
     display: flex;
@@ -2307,32 +2308,30 @@
     justify-content: center;
     gap: 4px;
     padding: 10px 6px;
-    border-radius: var(--r-control);
-    border-top: 2px solid var(--line);
+    border-top: 1px solid var(--line);
     text-align: center;
     font-size: 12px;
+    color: var(--text-2);
   }
-  .sp-coverage-cell--ok {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-  .sp-coverage-cell--under,
-  .sp-coverage-cell--supervision {
-    background: var(--bad-soft);
+  .sp-coverage-cell--under {
     color: var(--bad);
+  }
+  .sp-coverage-cell--closed {
+    color: var(--text-3);
   }
   .sp-coverage-num {
     font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  /* A shortfall is told by the colour and by weight; the word is in the tooltip and for screen
+     readers (owner review of #853: only the figure is shown). */
+  .sp-coverage-cell--under .sp-coverage-num {
     font-weight: 700;
   }
-  .sp-coverage-warn {
+  .sp-coverage-note {
     font-size: 11px;
-    font-weight: 600;
-  }
-  .sp-coverage-ok {
-    font-size: 11px;
-    font-weight: 600;
+    color: var(--text-2);
   }
 
   /* Issue #850 — the (i) behind which the Besetzung explanation sits (replaces the footnote). */
@@ -2478,10 +2477,8 @@
   }
   .sp-soll-sublabel {
     margin-top: 4px;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
     color: var(--text-2);
   }
   .sp-soll-cell {

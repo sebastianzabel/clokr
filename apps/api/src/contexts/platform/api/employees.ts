@@ -64,7 +64,11 @@ import {
   exitVacationOverUseWarning, // Issue #447 (D-08) — the one over-use warning string
 } from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435; issue #436; issue #447 (E-4 resolved)
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
-import { fillHomeGapBeforeHireDate, readTenantTimezone } from "../facade/salon-assignments";
+import {
+  fillHomeGapBeforeHireDate,
+  homeSalonsForDays,
+  readTenantTimezone,
+} from "../facade/salon-assignments";
 import { salonExistsInForeignTenant } from "../facade/salons";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
 import { dayToDate, tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
@@ -738,9 +742,39 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
         employees.map((e) => e.userId),
       );
 
+      // Issue #853 (additive): each person's Stammsalon on the tenant-local today, one batched read
+      // through the Unterbau's own resolution (homeSalonsForDays). Only the salon id is served; the
+      // rows are already the caller's reach (#547), so it names nothing the caller may not see.
+      const today = tenantLocalDay(new Date(), await readTenantTimezone(app.prisma, tenantId));
+      const homeByEmployee = await homeSalonsForDays(
+        app.prisma,
+        tenantId,
+        employees.map((e) => e.id),
+        today,
+        today,
+      );
+
+      // Issue #853 (additive): the distinct names of each person's stored roles, for the Rollen column
+      // of Team › Personen. Names only (no scope, no permission), of the rows the caller already reads.
+      const roleRows = await app.prisma.roleAssignment.findMany({
+        where: { tenantId, userId: { in: employees.map((e) => e.userId) } },
+        select: { userId: true, accessRole: { select: { name: true, tenantId: true } } },
+      });
+      const roleNamesByUser = new Map<string, Set<string>>();
+      for (const row of roleRows) {
+        if (row.accessRole.tenantId !== null && row.accessRole.tenantId !== tenantId) continue;
+        const names = roleNamesByUser.get(row.userId) ?? new Set<string>();
+        names.add(row.accessRole.name);
+        roleNamesByUser.set(row.userId, names);
+      }
+
       return employees.map((e) => {
         return {
           ...e,
+          homeSalonId: homeByEmployee.get(e.id)?.get(today) ?? null,
+          roleNames: [...(roleNamesByUser.get(e.userId) ?? [])].sort((a, b) =>
+            a.localeCompare(b, "de"),
+          ),
           user: userWithFormRole(e.user, formRoles.get(e.userId) ?? null),
           overtimeAccount: maskOvertimeAccount(balanceVisibleFor, e.id, e.overtimeAccount),
           workSchedule: e.workSchedules[0] ?? null,

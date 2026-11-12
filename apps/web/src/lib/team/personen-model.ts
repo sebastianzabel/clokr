@@ -1,7 +1,8 @@
 // Issue #853 (D-853-14, D-853-18) - the pure model of Team › Personen: the rows of the read-only table,
 // the one status decision, the filter, the sort and the count sentence. No request, no store: the page
 // feeds it the answer of `GET /employees` (already narrowed to the caller's reach by the server, #547)
-// and renders what comes out. The saldo is whatever the server sent - a masked saldo arrives as null.
+// and renders what comes out. Since the owner review the table shows no saldo (it stays in the person
+// view and the reports); Stammsalon and the names of the stored roles come from the server.
 import { employmentState } from "$lib/employees/employment-state";
 import { scheduleModelLabel } from "$lib/employees/contract-history";
 import { matchesSearch } from "$lib/table/search";
@@ -19,8 +20,10 @@ export interface PersonenEmployee {
   user: { isActive: boolean };
   invitationStatus?: InvitationStatus;
   workSchedule?: { type: string; weeklyHours?: number | string | null } | null;
-  /** `balanceHours` is null while the caller may not read the person's saldo (server-side mask). */
-  overtimeAccount?: { balanceHours: number | string | null } | null;
+  /** The Stammsalon of today (#853, additive on `GET /employees`); null without one. */
+  homeSalonId?: string | null;
+  /** The names of the person's stored roles (#853, additive on `GET /employees`). */
+  roleNames?: string[];
 }
 
 export type PersonStatusKind =
@@ -44,7 +47,11 @@ export type PersonenRow = {
   modelLabel: string;
   /** Contractual hours per week; null when the contract carries none (e.g. monthly hours). */
   weeklyHours: number | null;
-  balanceMinutes: number | null;
+  /** The Stammsalon's id ("" without one) and its shown name ("–" when unknown). */
+  salonId: string;
+  salonName: string;
+  /** The stored roles' names, „, “-joined; "–" without any. */
+  roles: string;
   status: PersonStatusKind;
   statusLabel: string;
   statusTone: ChipTone;
@@ -56,9 +63,11 @@ export interface PersonenFilter {
   q: string;
   status: "aktiv" | "alle";
   vertrag: string;
+  /** A Stammsalon id; "" = every salon. */
+  salon?: string;
 }
 
-export type PersonenSortKey = "name" | "vertrag" | "stunden" | "saldo" | "status";
+export type PersonenSortKey = "name" | "salon" | "vertrag" | "stunden" | "status";
 
 export interface PersonenSort {
   key: PersonenSortKey;
@@ -112,12 +121,18 @@ function finiteNumber(value: number | string | null | undefined): number | null 
 }
 
 /** Rows of the table; an anonymised person never appears. */
-export function personenRows(employees: readonly PersonenEmployee[], today: string): PersonenRow[] {
+export function personenRows(
+  employees: readonly PersonenEmployee[],
+  today: string,
+  /** Display names of the salons the caller reaches, by id (the header's salon list). */
+  salonNames: ReadonlyMap<string, string> = new Map(),
+): PersonenRow[] {
   return employees
     .filter((person) => !isAnonymizedPerson(person))
     .map((person) => {
       const status = personStatus(person, today);
-      const hours = finiteNumber(person.overtimeAccount?.balanceHours);
+      const salonId = person.homeSalonId ?? "";
+      const roles = person.roleNames ?? [];
       const model = person.workSchedule?.type ?? "";
       const sortName = `${person.lastName}, ${person.firstName}`;
       return {
@@ -128,8 +143,9 @@ export function personenRows(employees: readonly PersonenEmployee[], today: stri
         model,
         modelLabel: scheduleModelLabel(model),
         weeklyHours: finiteNumber(person.workSchedule?.weeklyHours),
-        // The stored saldo is in hours; the shared formatter takes minutes.
-        balanceMinutes: hours === null ? null : Math.round(hours * 60),
+        salonId,
+        salonName: salonId === "" ? "–" : (salonNames.get(salonId) ?? "–"),
+        roles: roles.length > 0 ? roles.join(", ") : "–",
         status: status.kind,
         statusLabel: status.label,
         statusTone: status.tone,
@@ -147,7 +163,8 @@ export function filterPersonen(
     (row) =>
       matchesSearch(row.searchText, filter.q) &&
       (filter.status === "alle" || ACTIVE_KINDS.includes(row.status)) &&
-      (filter.vertrag === "" || row.model === filter.vertrag),
+      (filter.vertrag === "" || row.model === filter.vertrag) &&
+      (!filter.salon || row.salonId === filter.salon),
   );
 }
 
@@ -158,7 +175,7 @@ function byName(a: PersonenRow, b: PersonenRow): number {
 }
 
 /**
- * A new, sorted array. A missing value (no hours, no readable saldo, no contract) sorts last in both
+ * A new, sorted array. A missing value (no hours, no Stammsalon, no contract) sorts last in both
  * directions; ties fall back to the name and then the id, so the order is total and stable.
  */
 export function sortPersonen(rows: readonly PersonenRow[], sort: PersonenSort): PersonenRow[] {
@@ -179,10 +196,14 @@ export function sortPersonen(rows: readonly PersonenRow[], sort: PersonenSort): 
         if (b.model === "") return -1;
         return sign * collator.compare(a.modelLabel, b.modelLabel);
       }
+      case "salon": {
+        if (a.salonId === "" && b.salonId === "") return 0;
+        if (a.salonId === "") return 1;
+        if (b.salonId === "") return -1;
+        return sign * collator.compare(a.salonName, b.salonName);
+      }
       case "stunden":
         return numeric(a.weeklyHours, b.weeklyHours);
-      case "saldo":
-        return numeric(a.balanceMinutes, b.balanceMinutes);
       case "status":
         return sign * (STATUS_RANK[a.status] - STATUS_RANK[b.status]);
     }
