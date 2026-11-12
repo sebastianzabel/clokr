@@ -7,7 +7,8 @@
 //   - a key the API schema of its endpoint does not declare  (Zod strips it: the save returns 200 and nothing
 //                                                             persists — `vocationalSchoolAutoCleanupShifts`,
 //                                                             D-854-20)
-//   - a save that sends a field its section does not own, a spread, or an unregistered save   (#878)
+//   - a save that sends a field its section does not own, a spread, or an unregistered save   (#878; this
+//     file carries the rule since plan 854-30, the former settings-own-fields-878 test is gone)
 //   - a section whose rendering file is not its page, or a stale rendering file
 //   - a section gate that differs from the pre-#844 page it came from, a page gate that is not the union of its
 //     sections                                                                             (D-854-05)
@@ -403,6 +404,35 @@ describe("settings registry against the sources (#854, D-854-03)", () => {
     for (const section of SETTINGS_SECTIONS)
       expect(section.page, section.id).not.toBe("/verwalten/regeln/urlaub");
     expect(sectionsOfPage("/verwalten/regeln/abwesenheiten").length).toBeGreaterThanOrEqual(7);
+  });
+
+  // Plan 854-30: no transitional page id is left. A section sits on one of the ten final Verwalten pages.
+  const FINAL_PAGES = [
+    "/verwalten/regeln/arbeitszeit",
+    "/verwalten/regeln/abwesenheiten",
+    "/verwalten/regeln/dienstplan",
+    "/verwalten/regeln/monatsabschluss",
+    "/verwalten/regeln/benachrichtigungen",
+    "/verwalten/system/allgemein",
+    "/verwalten/system/integrationen",
+    "/verwalten/system/phorest",
+    "/verwalten/daten/export",
+    "/verwalten/daten/protokoll",
+  ];
+
+  it("every section sits on one of the final Verwalten pages and every final page has a section", () => {
+    for (const section of SETTINGS_SECTIONS)
+      expect(FINAL_PAGES, `${section.id} -> ${section.page}`).toContain(section.page);
+    for (const page of FINAL_PAGES) expect(sectionsOfPage(page).length, page).toBeGreaterThan(0);
+  });
+
+  // The #878 own-fields rule is carried by (3) of registryProblems. What it cannot see is a page that keeps a
+  // load-time copy of the settings and spreads it into a save; no scanned file may name that variable again.
+  it("no scanned file keeps a load-time copy of the settings (#878)", () => {
+    expect(scannedFiles.length).toBeGreaterThan(50);
+    expect(scannedFiles.filter((f) => f.text.includes("_gOtherFields")).map((f) => f.rel)).toEqual(
+      [],
+    );
   });
 
   it("is not vacuous: at least 20 sections, 90 keys and 5 files with a settings save", () => {

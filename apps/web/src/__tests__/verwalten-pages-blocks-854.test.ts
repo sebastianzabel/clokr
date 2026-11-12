@@ -1,10 +1,10 @@
-// Issue #854, AC-1 (D-854-28) - the guard of the Verwalten pages: a file listed in MIGRATED_854 is
-// built from the #843 blocks, not from page-own chrome. It is modelled on the Team guard of #853
+// Issue #854, AC-1 (D-854-28) - the guard of the Verwalten pages: every Verwalten route file and area
+// component is built from the #843 blocks, not from page-own chrome. It is modelled on the Team guard of #853
 // (the detectors are re-stated here on purpose: the two phases ship independently and neither may
 // import the other's test).
 //
-// Enforcement is keyed on the explicit list `MIGRATED_854` (verwalten-854-files.ts). A page plan
-// appends the files it rebuilt; a stale entry (a file that is not walked) fails. A walk that matches
+// Enforcement covers EVERY walked file (verwalten-854-files.ts); since plan 854-30 there is no migration
+// list, so a new Verwalten page or component is guarded from its first commit. A walk that matches
 // nothing reports OK forever, so the walked sets carry non-empty floors and every detector has a
 // positive control and a clean control (the same discipline as no-loading-text-843).
 
@@ -18,7 +18,6 @@ import { pageLabel } from "$lib/nav/page-labels";
 
 import { SRC_ROOT } from "./design-source-files";
 import {
-  MIGRATED_854,
   isRedirectStub,
   verwaltenComponentFiles,
   verwaltenRouteFiles,
@@ -195,17 +194,6 @@ function findingsOf(file: VerwaltenFile, isRoute: boolean): ChromeRule[] {
   });
 }
 
-const migratedRoutes = routeFiles.filter((f) => MIGRATED_854.includes(f.rel));
-const migratedComponents = componentFiles.filter((f) => MIGRATED_854.includes(f.rel));
-const pending = [...routeFiles, ...componentFiles]
-  .filter((f) => !MIGRATED_854.includes(f.rel))
-  .map((f) =>
-    f.rel
-      .replace(/^routes\/\(app\)\//, "")
-      .replace(/\/\+page\.svelte$/, "")
-      .replace(/^lib\/components\//, "c:"),
-  );
-
 // ── The walk ─────────────────────────────────────────────────────────────────
 
 describe("Verwalten pages guard - the walked set is not empty", () => {
@@ -255,7 +243,7 @@ describe("Verwalten pages guard - the walked set is not empty", () => {
 });
 
 describe("Verwalten pages guard - the head names the page by its table label", () => {
-  for (const file of routeFiles.filter((f) => f.tableEntry && MIGRATED_854.includes(f.rel))) {
+  for (const file of routeFiles.filter((f) => f.tableEntry)) {
     it(`${file.rel}: pageLabel("${file.key}") is the table label`, () => {
       const route = APP_ROUTES.find((r) => (r.file ?? r.href) === file.key)!;
       expect(route, `route-table entry for ${file.key}`).toBeDefined();
@@ -264,24 +252,38 @@ describe("Verwalten pages guard - the head names the page by its table label", (
   }
 });
 
-describe("Verwalten pages guard - enforcement follows MIGRATED_854", () => {
-  it(`enforced: ${migratedRoutes.length} route and ${migratedComponents.length} component file(s); not yet enforced (${pending.length}): ${pending.join(", ") || "none"}`, () => {
-    // The title carries the state; the assertions keep the list honest.
-    for (const rel of MIGRATED_854) {
-      expect(walkedRels.has(rel), `${rel} is in MIGRATED_854 but not walked (stale entry)`).toBe(
-        true,
-      );
-    }
-    expect(new Set(MIGRATED_854).size).toBe(MIGRATED_854.length);
+describe("Verwalten pages guard - every walked file is enforced", () => {
+  it(`enforces ${routeFiles.length} route and ${componentFiles.length} component file(s); none is exempt`, () => {
+    // No list can leave a file out: the walked sets are the enforced sets, and the walk has floors above.
+    expect(routeFiles.length + componentFiles.length).toBeGreaterThan(0);
+    expect(new Set([...routeFiles, ...componentFiles].map((f) => f.rel)).size).toBe(
+      routeFiles.length + componentFiles.length,
+    );
   });
 
-  for (const file of migratedRoutes) {
+  it("the ratchet register holds no entry with the ticket #854 (the area is fully migrated)", () => {
+    const register = JSON.parse(
+      readFileSync(join(SRC_ROOT, "..", "scripts", "lint-ui-classes-route-ratchet.json"), "utf8"),
+    ) as { rules: Record<string, Record<string, { ticket: string | null }>> };
+    const entries = Object.values(register.rules).flatMap((rule) => Object.values(rule));
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.filter((entry) => entry.ticket === "#854")).toEqual([]);
+  });
+
+  it("no Verwalten file imports a legacy shell", () => {
+    for (const file of [...routeFiles, ...componentFiles])
+      expect(findingsOf(file, file.rel.startsWith("routes/")), file.rel).not.toContain(
+        "legacy-import",
+      );
+  });
+
+  for (const file of routeFiles) {
     it(`route ${file.rel} has no page-own chrome`, () => {
       expect(findingsOf(file, true)).toEqual([]);
     });
   }
 
-  for (const file of migratedComponents) {
+  for (const file of componentFiles) {
     it(`component ${file.rel} has no page-own chrome`, () => {
       expect(findingsOf(file, false)).toEqual([]);
     });
@@ -414,7 +416,7 @@ describe("Verwalten pages guard - detector controls", () => {
     expect(CHROME_RULES.length).toBeGreaterThanOrEqual(13);
   });
 
-  it("control: an entry that is not walked is detected as stale", () => {
+  it("control: a file that does not exist is not walked", () => {
     expect(walkedRels.has("routes/(app)/verwalten/gibt-es-nicht/+page.svelte")).toBe(false);
   });
 });

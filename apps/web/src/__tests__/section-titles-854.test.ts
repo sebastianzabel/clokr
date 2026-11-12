@@ -1,14 +1,13 @@
 // Issue #854, D-854-15 - a section title is set in sentence case: no capitals transform and no
 // letter-spacing. The guard parses the real CSS (postcss, as design-guards-842 does) of the shared
 // Section recipe, the CardHeader title rule and the `.settings-group*` recipe of app.css, plus the
-// <style> blocks of every file listed in MIGRATED_854. Plan 854-30 widens it to every walked
-// Verwalten file.
+// <style> blocks of every walked Verwalten route file and area component (plan 854-30: no list).
 
 import { describe, expect, it } from "vitest";
 import postcss from "postcss";
 
 import { SRC_ROOT, svelteStyleBlocks, walkFiles } from "./design-source-files";
-import { MIGRATED_854 } from "./verwalten-854-files";
+import { verwaltenComponentFiles, verwaltenRouteFiles } from "./verwalten-854-files";
 
 interface Source {
   name: string;
@@ -65,12 +64,15 @@ const SOURCES: Source[] = [
     name: "app.css (.card-title, .card-hd)",
     css: [rulesMatching(appCss, (s) => /^\.card-(title|hd)\b/.test(s.trim()))],
   },
-  ...MIGRATED_854.map((rel) => ({ name: rel, css: svelteStyleBlocks(byRel(rel).text) })),
+  ...[...verwaltenRouteFiles(), ...verwaltenComponentFiles()].map((file) => ({
+    name: file.rel,
+    css: svelteStyleBlocks(file.text),
+  })),
 ];
 
 describe("section titles are sentence case (D-854-15)", () => {
-  it("parses at least 3 sources", () => {
-    expect(SOURCES.length).toBeGreaterThanOrEqual(3);
+  it("parses the four shared sources and every walked Verwalten file (at least 45)", () => {
+    expect(SOURCES.length).toBeGreaterThanOrEqual(4 + 45);
   });
 
   it("reads real rules: the Section title rule and three settings-group rules", () => {
