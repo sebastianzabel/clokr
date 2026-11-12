@@ -65,6 +65,8 @@ export const MIGRATED_854: readonly string[] = [
   "lib/components/admin/abwesenheiten/SonderurlaubPanel.svelte",
   // Plan 854-12 (Regeln › Abwesenheiten, part II): the Betriebsurlaub tab.
   "lib/components/admin/abwesenheiten/BetriebsurlaubPanel.svelte",
+  // Plan 854-13 (Regeln › Abwesenheiten, part III): the Urlaubsgrenzen & Sperren tab.
+  "lib/components/admin/abwesenheiten/UrlaubsgrenzenPanel.svelte",
   "routes/(app)/admin/shutdowns/[id]/+page.svelte",
 ];
 
