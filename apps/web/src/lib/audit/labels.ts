@@ -33,6 +33,9 @@ export function actionLabel(code: string): string {
   return lookup(data.actions, code) ?? data.fallback;
 }
 
+/** Every entity code the vocabulary knows (the offer of the Protokoll's „Objekt“ filter and its URL allow-list). */
+export const AUDIT_ENTITY_CODES: readonly string[] = Object.keys(data.entities);
+
 export function entityLabel(code: string): string {
   return lookup(data.entities, code) ?? data.fallback;
 }
