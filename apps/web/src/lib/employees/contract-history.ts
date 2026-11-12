@@ -24,6 +24,10 @@ export interface ContractHistoryDisplayRow {
   model: string;
   /** „38,5 Std./Woche“, „60 Std./Monat“ or „5 Tage/Woche“; „–“ when the row carries no figure. */
   extent: string;
+  /** First day of the version, ISO (`YYYY-MM-DD`, UTC calendar day of `validFrom`). */
+  startDay: string;
+  /** Last day of the version, ISO; null for the newest version (and for a same-day duplicate). */
+  endDay: string | null;
 }
 
 const MODEL_LABELS: Record<string, string> = {
@@ -47,6 +51,15 @@ function formatDay(d: Date): string {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   return `${dd}.${mm}.${d.getUTCFullYear()}`;
+}
+
+function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function germanDay(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  return `${d}.${m}.${y}`;
 }
 
 function extentOf(row: ContractHistoryInput): string {
@@ -84,11 +97,44 @@ export function contractHistoryRows(
           ? `${formatDay(start)} – ${formatDay(end)}`
           : formatDay(start);
     }
+    const closedEnd =
+      i > 0 && Date.parse(sorted[i - 1].validFrom) - 24 * 60 * 60 * 1000 >= start.getTime()
+        ? new Date(Date.parse(sorted[i - 1].validFrom) - 24 * 60 * 60 * 1000)
+        : null;
     return {
       id: row.id,
       period,
       model: MODEL_LABELS[row.type] ?? row.type,
       extent: extentOf(row),
+      startDay: isoDay(start),
+      endDay: closedEnd ? isoDay(closedEnd) : null,
     };
   });
+}
+
+/** Where a version stands on a calendar day (`today`, ISO): already over, running or not started. */
+export type ContractStatus = "ENDED" | "CURRENT" | "PLANNED";
+
+export function contractStatus(
+  row: Pick<ContractHistoryDisplayRow, "startDay" | "endDay">,
+  today: string,
+): ContractStatus {
+  if (row.startDay > today) return "PLANNED";
+  if (row.endDay !== null && row.endDay < today) return "ENDED";
+  return "CURRENT";
+}
+
+/**
+ * The validity of a version for the timeline (Issue #854, D-854-07): „ab 01.12.2026 · bis 31.05.2027“
+ * for a version followed by a newer one, „ab 01.06.2027 · aktuell“ for the newest running one and
+ * „ab 01.12.2026 · geplant“ for a newest version that has not started yet. Without `today` the newest
+ * version reads „aktuell“.
+ */
+export function validityLabel(
+  row: Pick<ContractHistoryDisplayRow, "startDay" | "endDay">,
+  today?: string,
+): string {
+  const from = `ab ${germanDay(row.startDay)}`;
+  if (row.endDay !== null) return `${from} · bis ${germanDay(row.endDay)}`;
+  return today !== undefined && row.startDay > today ? `${from} · geplant` : `${from} · aktuell`;
 }
