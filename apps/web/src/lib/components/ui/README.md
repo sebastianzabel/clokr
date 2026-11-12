@@ -68,7 +68,7 @@ Sources: `KpiStrip.svelte` (`items`, `band?`, `ariaLabel?`), `KpiCell.svelte` (`
 
 ### `<List>`, `<ListRow>`
 
-Sources: `List.svelte` (`ariaLabel`, `children`), `ListRow.svelte` (`title`, `subtitle?`, `avatar?` + `avatarKey?`, `variant` `default | task`, `href?`, `trailing?`, `actions?`). 44 px rows with a stable avatar colour; the `task` variant puts the buttons under the text.
+Sources: `List.svelte` (`ariaLabel`, `children`), `ListRow.svelte` (`title`, `subtitle?`, `avatar?` + `avatarKey?`, `variant` `default | task`, `wrap?` (subtitle wraps instead of ending in an ellipsis), `href?`, `trailing?`, `actions?`). 44 px rows with a stable avatar colour; the `task` variant puts the buttons under the text.
 
 ### `<DataTable>`, `<TableToolbar>`, `<SortHeader>`
 
