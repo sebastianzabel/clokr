@@ -26,5 +26,7 @@
     border: 1px solid var(--line);
     border-radius: var(--r-card);
     overflow: hidden;
+    /* #853-19: the task rows trail their buttons from the wide container breakpoint on. */
+    container-type: inline-size;
   }
 </style>

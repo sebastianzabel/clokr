@@ -21,7 +21,8 @@
 
 <script lang="ts">
   // Issue #843 (D-843-01 block 5) - one list row: avatar - title / subtitle - trailing snippet.
-  // The task variant puts `actions` under the text instead of trailing. Text only, never raw markup;
+  // The task variant puts `actions` under the text instead of trailing, and from the 760px container
+  // breakpoint of its List on beside it (#853-19). Text only, never raw markup;
   // `href` is passed by page code.
   //
   // Issue #853 (D-853-06) - additive props for the Team pages: `meta` (chips under the subtitle),
@@ -254,5 +255,21 @@
   }
   .list-row--bare .list-actions {
     grid-column: 1;
+  }
+  /* #853-19: in a List of at least the narrow breakpoint the task buttons trail the text, as in
+     the prototype; below it (phones, narrow cards) they stay under the text. */
+  @container (min-width: 760px) {
+    .list-row--task {
+      grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+    .list-row--bare.list-row--task {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .list-row--task .list-actions {
+      grid-column: auto;
+      align-self: center;
+      justify-content: flex-end;
+      margin-top: 0;
+    }
   }
 </style>
