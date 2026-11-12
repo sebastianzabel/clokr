@@ -138,8 +138,12 @@ export function affectedEmployeeIdOf(row: AffectedSource): string | null {
   return employeeIdIn(row.newValue) ?? employeeIdIn(row.oldValue);
 }
 
+/**
+ * What a row shows about its person. Deliberately NO id: the list already carries the id wherever
+ * the person is the row's entity, and a second copy would add an identifier to every response
+ * (the permission neutrality matrix compares the ids of a body as a multiset).
+ */
 export type AffectedEmployee = {
-  id: string;
   firstName: string;
   lastName: string;
   employeeNumber: string;
@@ -165,7 +169,7 @@ export async function attachAffectedEmployees<T extends AffectedSource>(
       where: { tenantId, id: { in: [...ids] } },
       select: { id: true, firstName: true, lastName: true, employeeNumber: true },
     });
-    for (const employee of employees) byId.set(employee.id, employee);
+    for (const { id, ...shown } of employees) byId.set(id, shown);
   }
   return rows.map((row) => {
     const id = affectedEmployeeIdOf(row);

@@ -33,7 +33,6 @@ type LogRow = {
   entity: string;
   entityId: string | null;
   affectedEmployee: {
-    id: string;
     firstName: string;
     lastName: string;
     employeeNumber: string;
@@ -174,7 +173,9 @@ describe("GET /api/v1/audit-logs - person filter", () => {
     expect(ids(logs)).not.toContain(ofOther);
     expect(ids(logs)).not.toContain(unrelated);
     expect(total).toBe(logs.length);
-    for (const log of logs) expect(log.affectedEmployee?.id).toBe(person);
+    for (const log of logs) {
+      expect(log.affectedEmployee?.employeeNumber).toBe(tenantA.employee.employeeNumber);
+    }
   });
 
   it("returns no foreign row for another tenant's employee id, and not tenant A's other rows", async () => {
@@ -252,12 +253,13 @@ describe("GET /api/v1/audit-logs - affectedEmployee and the response shape", () 
     const { logs } = await list(tenantA.adminToken);
     const by = (entityId: string) => logs.find((l) => l.entityId === entityId);
     expect(by(self)?.affectedEmployee).toEqual({
-      id: tenantA.employee.id,
       firstName: tenantA.employee.firstName,
       lastName: tenantA.employee.lastName,
       employeeNumber: tenantA.employee.employeeNumber,
     });
-    expect(by(viaValue)?.affectedEmployee?.id).toBe(tenantA.adminEmployee.id);
+    expect(by(viaValue)?.affectedEmployee?.employeeNumber).toBe(
+      tenantA.adminEmployee.employeeNumber,
+    );
     expect(by(none)?.affectedEmployee).toBeNull();
   });
 
@@ -271,7 +273,11 @@ describe("GET /api/v1/audit-logs - affectedEmployee and the response shape", () 
     );
     const detail = await get(`/api/v1/audit-logs/${found?.id}`, tenantA.adminToken);
     expect(detail.statusCode, detail.body).toBe(200);
-    expect(JSON.parse(detail.body).affectedEmployee.id).toBe(tenantA.employee.id);
+    expect(JSON.parse(detail.body).affectedEmployee).toEqual({
+      firstName: tenantA.employee.firstName,
+      lastName: tenantA.employee.lastName,
+      employeeNumber: tenantA.employee.employeeNumber,
+    });
   });
 
   it("does not let a tenant's list show another tenant's rows whatever the filter", async () => {
