@@ -12,6 +12,8 @@ import {
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
 } from "../overtime-balance"; // Phase 101B — same-context sibling now that the pair moved here
+import { freeDaysEquivalent } from "../free-days-equivalent"; // Issue #605
+import { getLeaveTypeByCode } from "../../absence"; // Issue #605 — is Überstundenausgleich set up for the tenant
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -329,6 +331,39 @@ export async function overtimeRoutes(app: FastifyInstance) {
         employee?.tenant?.config?.maxNegativeBalanceMinutes,
       );
 
+      // Issue #605 (owner decision 13.11.2026): the free days are converted from the CONFIRMED
+      // balance (closed months) - the SAME `getConfirmedCarryOver` source the OVERTIME_COMP booking
+      // gate reads - so the days shown can always be requested. The live total plays no part. The
+      // leave type is looked up by code, never by name. `null` = nothing to offer: confirmed
+      // balance <= 0, track-only contract, no daily Soll, or no such leave type. The web renders
+      // this and computes nothing of its own.
+      let freeDays: ReturnType<typeof freeDaysEquivalent> = null;
+      try {
+        const gateConfirmed = await getConfirmedCarryOver(
+          app.prisma,
+          employeeId,
+          employee.tenantId,
+        );
+        if (gateConfirmed.minutes > 0) {
+          const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+          freeDays = freeDaysEquivalent({
+            balanceMinutes: gateConfirmed.minutes,
+            schedule,
+            tz,
+            todayDay: dateStrInTz(new Date(), tz),
+            defaultWorkDays: employee.tenant?.config?.defaultWorkDays,
+          });
+          if (
+            freeDays &&
+            !(await getLeaveTypeByCode(app.prisma, employee.tenantId, "OVERTIME_COMP"))
+          ) {
+            freeDays = null;
+          }
+        }
+      } catch (err) {
+        app.log.warn({ err, employeeId }, "GET /overtime: free-days conversion failed, omitted");
+      }
+
       return {
         ...account,
         // Override the stored balanceHours with the live lifetime value (2-decimal so minutes survive).
@@ -346,6 +381,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Issue #588 (P-14): additive; the web words the forecast from it
         // ("Laufender Monat" only for exactly one unclosed month).
         unconfirmedMonths,
+        // Issue #605 (additive): null whenever no conversion applies.
+        freeDaysEquivalent: freeDays?.freeDays ?? null,
+        freeDaysDailySollMinutes: freeDays?.dailySollMinutes ?? null,
         ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
       };
     },

@@ -32,6 +32,7 @@
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
   // modal, its balance/preview/overlap fetches, and its collision-confirm flow.
   import LeaveRequestForm from "$lib/components/leave/LeaveRequestForm.svelte";
+  import { antragTypeCode } from "$lib/me/free-days";
   import {
     summarizeKarenzOverrun,
     karenzOverrunDays,
@@ -168,7 +169,7 @@
   // Enter-Space). Reset to "" by the plain "+ Neue Abwesenheit" button.
   let pendingInitialStart = $state("");
   // Phase 851: „Krank melden“ opens the dialog on SICK, „Urlaub beantragen“ on VACATION.
-  let pendingInitialType = $state<"VACATION" | "SICK">("VACATION");
+  let pendingInitialType = $state<"VACATION" | "SICK" | "OVERTIME_COMP">("VACATION");
 
   function openNewRequest(type: "VACATION" | "SICK") {
     editingRequest = null;
@@ -569,9 +570,10 @@
   let firstLoadDone = false;
 
   onMount(() => {
-    const antrag = $page.url.searchParams.get("antrag");
-    if (antrag === "urlaub" || antrag === "krank") {
-      pendingInitialType = antrag === "krank" ? "SICK" : "VACATION";
+    // ?antrag=urlaub|krank|ausgleich (#845, #605): the value maps to a leave type CODE, never a label.
+    const presetType = antragTypeCode($page.url.searchParams.get("antrag"));
+    if (presetType) {
+      pendingInitialType = presetType;
       editingRequest = null;
       showForm = true;
       const url = new URL($page.url);

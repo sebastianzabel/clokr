@@ -455,6 +455,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/timezone.ts": "arbeitszeitkonto", // calcLeaveAbsenceMinutesTz() — CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split"
   "src/contexts/working-time-account/month-contract.ts": "arbeitszeitkonto", // Issue #780 — the one rule for a month without a contract (no Soll)
   "src/contexts/working-time-account/track-only-schedule.ts": "arbeitszeitkonto", // Issue #494 — the one track-only rule (isTrackOnlySchedule), read by the close core and the live saldo
+  "src/contexts/working-time-account/free-days-equivalent.ts": "arbeitszeitkonto", // Issue #605 — the saldo in free days (display conversion of the confirmed balance)
   "src/contexts/working-time-account/vocational-school-saldo.ts": "arbeitszeitkonto", // Berufsschule minute contribution to workedMinutes/expectedMinutes — feeds overtime.ts and auto-close-month.ts's saldo math
 };
 

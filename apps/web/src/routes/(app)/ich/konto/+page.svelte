@@ -33,6 +33,7 @@
     type KontoSnapshot,
     type OpenMonthSaldo,
   } from "$lib/me/konto";
+  import { freeDaysLabel, showFreeDays, OVERTIME_COMP_REQUEST_HREF } from "$lib/me/free-days";
   import { downloadStundennachweis } from "$lib/me/stundennachweis";
   import { MONTH_STATUS_LABEL } from "$lib/saldo/month-status"; // Issue #598: one status wording
 
@@ -42,6 +43,8 @@
     openMonthMinutes?: number | null;
     hasClosedMonth?: boolean;
     unconfirmedMonths?: number | null;
+    // Issue #605: the saldo in free days from Arbeitszeitkonto; null = no conversion applies.
+    freeDaysEquivalent?: number | null;
   }
 
   interface MonthSaldoAnswer {
@@ -329,11 +332,19 @@
       {#if hireDate}
         <p class="konto-hint">Eintritt am {hireDate.toLocaleDateString("de-DE")}.</p>
       {/if}
-      {#if totalMinutes !== null && totalMinutes > 0}
-        <Note tone="info"
-          >Plusstunden kannst du als freie Tage nehmen: beantrage dafür einen Überstundenausgleich
-          unter <a class="konto-link" href="/ich/abwesenheiten">Abwesenheiten</a>.</Note
-        >
+      {#if overtime && showFreeDays(overtime)}
+        <Note tone="info">
+          <span data-testid="konto-free-days"
+            >Aus deinem bestätigten Guthaben sind das {freeDaysLabel(
+              overtime.freeDaysEquivalent ?? 0,
+            )}.</span
+          >
+          <a
+            class="btn btn-outline btn-sm"
+            data-testid="konto-comp-request"
+            href={OVERTIME_COMP_REQUEST_HREF}>Freizeitausgleich beantragen</a
+          >
+        </Note>
       {/if}
       <p class="konto-hint">
         Tippe auf einen Monat, um seine Tage mit Soll, Ist und Differenz zu sehen. Das Stundenkonto
