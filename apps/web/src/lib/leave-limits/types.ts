@@ -5,8 +5,10 @@ import type { EmployeeClassification } from "$lib/employee-classification";
 
 export type LeaveLimitGroupKind = "ALL" | "CLASSIFICATION" | "ACCESS_ROLE";
 
+// A type alias, not an interface: a DataTable row must be assignable to `Record<string, unknown>`, which an
+// interface (no implicit index signature) is not.
 /** One stored rule as `GET /leave/limits` serves it. */
-export interface LeaveLimitRuleDto {
+export type LeaveLimitRuleDto = {
   id: string;
   /** Null = the rule applies to every salon of the tenant. */
   salonId: string | null;
@@ -25,7 +27,7 @@ export interface LeaveLimitRuleDto {
   updatedAt: string;
   /** Whether the caller may change or remove this rule; the API stays the authority. */
   canManage: boolean;
-}
+};
 
 export interface LeaveLimitRoleChoice {
   id: string;

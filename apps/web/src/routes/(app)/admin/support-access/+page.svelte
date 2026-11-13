@@ -1,9 +1,9 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { api } from "$api/client";
-  import SectionStack from "$lib/components/admin/SectionStack.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
   import SupportAccessList from "$lib/components/admin/SupportAccessList.svelte";
   import type { SupportAccessItem, SupportAccessListResponse } from "$lib/support-access/labels";
 
@@ -42,13 +42,15 @@
   <title>{pageLabel("/admin/support-access")} – Clokr</title>
 </svelte:head>
 
-<SectionStack
-  eyebrow="Compliance"
-  title={pageLabel("/admin/support-access")}
-  sub="Zugriffe des Betreibers auf die Daten deines Unternehmens"
-  animate
->
-  <Section title="Zugriffe" sub="Neueste zuerst">
+<div data-testid="admin-support-access-page" style="display: contents;">
+  <PageHead
+    title={pageLabel("/admin/support-access")}
+    sub="Zugriffe des Betreibers auf die Daten deines Unternehmens"
+  />
+
+  <section class="settings-group" aria-labelledby="support-access-title">
+    <h2 class="settings-group-title" id="support-access-title">Zugriffe</h2>
+    <p class="settings-group-desc">Neueste zuerst</p>
     <SupportAccessList
       {items}
       {total}
@@ -57,8 +59,9 @@
       {loadError}
       bind:page
       bind:pageSize
+      onOpen={(item) => void goto(`/admin/support-access/${item.id}`)}
       onPageChange={() => void load()}
       onRetry={() => void load()}
     />
-  </Section>
-</SectionStack>
+  </section>
+</div>

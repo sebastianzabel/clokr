@@ -98,11 +98,17 @@ describe("clock salon wiring (Issue #87)", () => {
     expect(reopen).not.toMatch(/salonId/);
   });
 
-  it("the clock card footer sets a light text colour, because the salon label and the booked-day note inherit it", () => {
-    // Found in the visual check: .card-foot sets a muted grey that is unreadable on the dark card.
-    const rule = PAGE.match(/:global\(\.timer-card-wrap \.timer-foot\)\s*\{[^}]*\}/);
-    expect(rule, "the .timer-foot rule must exist").not.toBeNull();
-    expect(rule![0]).toMatch(/\bcolor:\s*rgba\(255,\s*255,\s*255,/);
+  it("the salon label and the booked-day note inherit the stage text colour (#845: no own colour)", () => {
+    // Found in the visual check (#87): a fixed muted grey was unreadable on the former dark card.
+    // Since #845 the select sits inside the Stage body, whose text roles are proven 4.5:1 on every
+    // state surface (recipe-contrast-843); the page sets no colour of its own for it.
+    const stageStart = PAGE.indexOf("<Stage ");
+    const stageEnd = PAGE.indexOf("</Stage>", stageStart);
+    expect(stageStart, "the clock Stage must exist").toBeGreaterThan(-1);
+    const select = PAGE.indexOf("<ClockSalonSelect", stageStart);
+    expect(select).toBeGreaterThan(stageStart);
+    expect(select).toBeLessThan(stageEnd);
+    expect(PAGE).not.toMatch(/timer-foot/);
     // Positive control: the component really inherits instead of fixing its own colour.
     expect(COMPONENT).toMatch(/color:\s*inherit/);
   });

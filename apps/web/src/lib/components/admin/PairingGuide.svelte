@@ -15,6 +15,7 @@
     pairingUrlMessage,
   } from "$lib/presence/pairing-url";
   import { qrPathFor } from "$lib/presence/qr-svg";
+  import FormField from "$components/ui/FormField.svelte";
 
   let address = $state("");
   let port = $state(DEFAULT_PAIRING_PORT);
@@ -32,41 +33,37 @@
 
 <div class="pairing-guide">
   <div class="pairing-fields">
-    <div class="form-group pairing-address">
-      <label class="form-label" for="pairing-address">Adresse des Adapters im Salon-WLAN</label>
-      <input
-        id="pairing-address"
-        class="form-input"
-        type="text"
-        inputmode="decimal"
-        autocomplete="off"
-        placeholder="z. B. 192.168.178.20"
-        bind:value={address}
-        aria-invalid={addressMessage ? "true" : undefined}
-        aria-describedby={addressMessage ? "pairing-address-error" : undefined}
-      />
-      {#if addressMessage}
-        <div class="form-error" id="pairing-address-error" role="alert">{addressMessage}</div>
-      {/if}
-    </div>
-    <div class="form-group pairing-port">
-      <label class="form-label" for="pairing-port">Port</label>
-      <input
-        id="pairing-port"
-        class="form-input"
-        type="text"
-        inputmode="numeric"
-        autocomplete="off"
-        bind:value={port}
-        aria-invalid={portMessage ? "true" : undefined}
-        aria-describedby={portMessage ? "pairing-port-error" : undefined}
-      />
-      {#if portMessage}
-        <div class="form-error" id="pairing-port-error" role="alert">{portMessage}</div>
-      {/if}
-    </div>
+    <FormField label="Adresse des Adapters im Salon-WLAN" error={addressMessage || undefined}>
+      {#snippet field({ id, describedBy, invalid })}
+        <input
+          {id}
+          class="form-input"
+          type="text"
+          inputmode="decimal"
+          autocomplete="off"
+          placeholder="z. B. 192.168.178.20"
+          bind:value={address}
+          aria-invalid={invalid ? "true" : undefined}
+          aria-describedby={describedBy}
+        />
+      {/snippet}
+    </FormField>
+    <FormField label="Port" error={portMessage || undefined}>
+      {#snippet field({ id, describedBy, invalid })}
+        <input
+          {id}
+          class="form-input"
+          type="text"
+          inputmode="numeric"
+          autocomplete="off"
+          bind:value={port}
+          aria-invalid={invalid ? "true" : undefined}
+          aria-describedby={describedBy}
+        />
+      {/snippet}
+    </FormField>
   </div>
-  <p class="form-hint">
+  <p class="pairing-hint">
     Die Adresse wird nicht gespeichert und nirgendwohin gesendet. Der Code entsteht nur in diesem
     Browser.
   </p>
@@ -145,14 +142,20 @@
     }
   }
 
+  .pairing-hint {
+    margin: 0;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+
   .pairing-sheet {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: var(--s-2);
     padding: var(--s-4);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     /* A QR code must be dark on light in every theme, so the sheet does not follow the tokens. */
     background: #ffffff;
     color: #000000;
@@ -167,7 +170,7 @@
 
   .pairing-url {
     margin: 0;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-code);
     font-size: 0.875rem;
     word-break: break-all;
     text-align: center;

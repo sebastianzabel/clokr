@@ -13,7 +13,7 @@ test.describe("Authentication", () => {
 
   test("login + logout flow", async ({ page }) => {
     await loginAsAdmin(page);
-    await expect(page).toHaveURL(/dashboard/);
+    await expect(page).toHaveURL(/\/(ich|team|verwalten)(\/|$)/); // #844: the start page
     await logout(page);
     await expect(page).toHaveURL(/login/);
   });

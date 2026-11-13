@@ -82,7 +82,14 @@ const violations = [];
 // +layout.svelte is exempt. Redirect stubs (script body is only an
 // onMount(() => goto(...)) call with no template markup) are exempt.
 const REDIRECT_STUB_RE = /onMount\(\s*\(\s*\)\s*=>\s*goto\(/;
-const HEAD_PROVIDER_RE = /<(?:PageHead|ListDetail|SectionStack|ToolPage)\b/;
+// HubPage (#844) renders <PageHead> internally, like the admin templates.
+// #851: the Seitenkopf block itself (ui/PageHeader) counts like its PageHead delegate.
+const HEAD_PROVIDER_RE = /<(?:PageHead|PageHeader|ListDetail|SectionStack|ToolPage|HubPage)\b/;
+// A page that renders another route's page component, whose <PageHead> names it (#844: Heute im Salon is the
+// dashboard file read at /team/heute until #846). The target must itself pass this rule.
+const RENDERS_ROUTE_PAGE = {
+  "apps/web/src/routes/(app)/team/heute/+page.svelte": "apps/web/src/routes/(app)/dashboard/+page.svelte",
+};
 function isRedirectStub(content) {
   const tplPart = content.replace(/<script[\s\S]*?<\/script>/g, "").trim();
   return tplPart === "" && REDIRECT_STUB_RE.test(content);
@@ -91,6 +98,8 @@ for (const file of listFiles(APP_ROUTES)) {
   if (!file.endsWith("+page.svelte")) continue;
   const content = readFileSync(file, "utf8");
   if (isRedirectStub(content)) continue;
+  const target = RENDERS_ROUTE_PAGE[relative(repoRoot, file)];
+  if (target !== undefined && HEAD_PROVIDER_RE.test(readFileSync(resolve(repoRoot, target), "utf8"))) continue;
   if (!HEAD_PROVIDER_RE.test(content)) {
     violations.push({
       rule: "page-head-required",
@@ -101,12 +110,18 @@ for (const file of listFiles(APP_ROUTES)) {
 }
 
 // ── CHECK 2: no-raw-h1 ─────────────────────────────────────────────────────
-// PageHead.svelte is the ONLY place raw <h1> is allowed inside the (app) shell.
+// ui/PageHeader.svelte is the ONLY place raw <h1> is allowed inside the (app) shell (#843;
+// layout/PageHead.svelte delegates to it).
 // (auth)/ pages are standalone (no app shell, no PageHead) and may use their
 // own <h1> — exempt from this rule.
 for (const file of listFiles(ALL_SVELTE)) {
-  if (file.endsWith("lib/components/layout/PageHead.svelte")) continue;
+  // #843 (D-843-14): the Seitenkopf block owns the <h1>; PageHead delegates to it.
+  if (file.endsWith("lib/components/ui/PageHeader.svelte")) continue;
   if (file.includes("/routes/(auth)/")) continue;
+  // #855 (D-855-01/06): the signed-out frame and the error page stand outside the shell's Seitenkopf
+  // (sign-in pages, unknown URLs) and own their single <h1>, like the (auth)/ pages they render.
+  if (file.endsWith("lib/components/auth/AuthFrame.svelte")) continue;
+  if (file.endsWith("lib/components/feedback/ErrorPage.svelte")) continue;
   const content = readFileSync(file, "utf8");
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -116,7 +131,7 @@ for (const file of listFiles(ALL_SVELTE)) {
         rule: "no-raw-h1",
         file,
         line: i + 1,
-        msg: "Raw <h1> outside PageHead.svelte",
+        msg: "Raw <h1> outside ui/PageHeader.svelte",
       });
     }
   }

@@ -6,8 +6,14 @@
   import { salonContext, roleNamesLabel } from "$stores/salon-context";
   import { toasts } from "$stores/toast";
   import { avatarVersion, bumpAvatarVersion } from "$stores/avatar";
-  import PageHead from "$components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
+  import AppearanceSettings from "$components/settings/AppearanceSettings.svelte";
+  import MyWorkSettings from "$components/settings/MyWorkSettings.svelte";
+  import EmailNotificationSettings from "$components/settings/EmailNotificationSettings.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
   import PasswordStrength from "$components/ui/PasswordStrength.svelte";
   import PushSettings from "$components/settings/PushSettings.svelte";
   import ReminderSettings from "$components/settings/ReminderSettings.svelte";
@@ -18,6 +24,7 @@
   let newPassword = $state("");
   let confirmPassword = $state("");
   let saving = $state(false);
+  let passwordOpen = $state(false);
 
   let pwPolicy = $state({
     passwordMinLength: 12,
@@ -26,6 +33,12 @@
     passwordRequireDigit: true,
     passwordRequireSpecial: true,
   });
+
+  // Issue #851 (D-851-02): who is signed in, as the page subtitle (formerly a row under the sections).
+  const profileSubtitle = $derived(
+    [$authStore.user?.email, roleNamesLabel($salonContext)].filter(Boolean).join(" · "),
+  );
+  const displayName = $derived($authStore.user?.firstName ?? $authStore.user?.email ?? "");
 
   let passwordMismatch = $derived(confirmPassword.length > 0 && newPassword !== confirmPassword);
 
@@ -78,7 +91,7 @@
 
   async function changePassword() {
     if (newPassword !== confirmPassword) {
-      toasts.error("Passwörter stimmen nicht überein");
+      toasts.error("Die Passwörter stimmen nicht überein.");
       return;
     }
     saving = true;
@@ -86,8 +99,13 @@
       await api.post("/auth/change-password", { currentPassword, newPassword });
       toasts.success("Passwort geändert");
       currentPassword = newPassword = confirmPassword = "";
+      passwordOpen = false;
     } catch (e: unknown) {
-      toasts.error(e instanceof Error ? e.message : "Fehler");
+      toasts.error(
+        e instanceof Error
+          ? e.message
+          : "Das Passwort ließ sich nicht ändern. Bitte versuche es noch einmal.",
+      );
     } finally {
       saving = false;
     }
@@ -109,9 +127,13 @@
       // the upload retried instead of surfacing as "Upload fehlgeschlagen (401)".
       await api.upload(`/avatars/${employeeId}`, formData);
       bumpAvatarVersion();
-      toasts.success("Avatar aktualisiert");
+      toasts.success("Profilbild aktualisiert");
     } catch (e: unknown) {
-      toasts.error(e instanceof Error ? e.message : "Upload fehlgeschlagen");
+      toasts.error(
+        e instanceof Error
+          ? e.message
+          : "Das Bild ließ sich nicht hochladen. Bitte versuche es noch einmal.",
+      );
     } finally {
       avatarUploading = false;
       // Reset the input so picking the same file again still triggers onchange
@@ -122,251 +144,231 @@
 
 <svelte:head><title>{pageLabel("/settings")} – Clokr</title></svelte:head>
 
-<div class="settings-page">
-  <PageHead
-    eyebrow="Mein Bereich"
-    title={pageLabel("/settings")}
-    accent="Profil"
-    sub="Profilbild und Passwort verwalten"
-  />
+<!-- Phase 851 (prototype „Ich › Profil“, #602): who you are on top, your work and your notifications on
+     the left, appearance, phone clocking and security on the right. -->
+<PageHeader title={pageLabel("/settings")} subtitle={profileSubtitle}>
+  {#snippet actions()}
+    <button
+      type="button"
+      class="btn btn-secondary btn-sm"
+      onclick={openAvatarPicker}
+      disabled={avatarUploading}
+    >
+      {#if avatarUploading}<Spinner size={14} label="Bild wird hochgeladen" />{/if}
+      Foto ändern
+    </button>
+  {/snippet}
+</PageHeader>
 
-  <div class="settings-grid">
-    <!-- Avatar -->
-    <Card class="settings-card">
-      <h3 class="section-title">Profilbild</h3>
-      <div class="avatar-section">
-        <button
-          type="button"
-          class="avatar-wrapper"
-          onclick={openAvatarPicker}
-          disabled={avatarUploading}
-          aria-label="Profilbild ändern"
-          title="Profilbild ändern"
-        >
-          {#if avatarSrc}
-            <img src={avatarSrc} alt="Avatar" class="avatar-preview" width="120" height="120" />
-          {:else}
-            <div class="avatar-initials">
-              {($authStore.user?.firstName ?? $authStore.user?.email?.[0] ?? "?")
-                .charAt(0)
-                .toUpperCase()}
-            </div>
-          {/if}
-          <span class="avatar-overlay" aria-hidden="true">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              ><path
-                d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
-              /><circle cx="12" cy="13" r="4" /></svg
-            >
-          </span>
-        </button>
-        <input
-          bind:this={avatarFileInput}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          onchange={uploadAvatar}
-          class="avatar-file-input"
-        />
-        <p class="avatar-hint text-muted">
-          {avatarUploading ? "Hochladen…" : "Klicken zum Ändern"}
-        </p>
-      </div>
-    </Card>
-
-    <!-- Password -->
-    <Card class="settings-card">
-      <h3 class="section-title">Passwort ändern</h3>
-      <form
-        onsubmit={(e) => {
-          e.preventDefault();
-          changePassword();
-        }}
-        class="pw-form"
-      >
-        <div class="form-group">
-          <label class="form-label" for="cur-pw">Aktuelles Passwort</label>
-          <input
-            id="cur-pw"
-            type="password"
-            bind:value={currentPassword}
-            required
-            class="form-input"
-            autocomplete="current-password"
-          />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="new-pw">Neues Passwort</label>
-          <input
-            id="new-pw"
-            type="password"
-            bind:value={newPassword}
-            required
-            minlength={pwPolicy.passwordMinLength}
-            class="form-input"
-            autocomplete="new-password"
-          />
-          <PasswordStrength password={newPassword} policy={pwPolicy} />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="confirm-pw">Passwort bestätigen</label>
-          <input
-            id="confirm-pw"
-            type="password"
-            bind:value={confirmPassword}
-            required
-            class="form-input"
-            autocomplete="new-password"
-          />
-          {#if passwordMismatch}
-            <p class="field-error">Passwörter stimmen nicht überein</p>
-          {/if}
-        </div>
-        <button
-          type="submit"
-          class="btn btn-primary"
-          disabled={saving || !currentPassword || !newPassword || passwordMismatch}
-        >
-          {saving ? "Speichern…" : "Passwort ändern"}
-        </button>
-      </form>
-    </Card>
+<div class="profile-person">
+  <button
+    type="button"
+    class="avatar-wrapper"
+    onclick={openAvatarPicker}
+    disabled={avatarUploading}
+    aria-label="Profilbild ändern"
+    title="Profilbild ändern"
+  >
+    {#if avatarSrc}
+      <img src={avatarSrc} alt="" class="avatar-preview" width="56" height="56" />
+    {:else}
+      <span class="avatar-initials" aria-hidden="true">
+        {(displayName || "?").charAt(0).toUpperCase()}
+      </span>
+    {/if}
+  </button>
+  <div class="profile-person-text">
+    <b>{displayName}</b>
+    <span>JPG, PNG oder WebP. Tippe auf das Bild, um es zu ändern.</span>
   </div>
+  <input
+    bind:this={avatarFileInput}
+    type="file"
+    accept="image/jpeg,image/png,image/webp"
+    onchange={uploadAvatar}
+    class="avatar-file-input"
+    aria-label="Profilbild hochladen"
+  />
+</div>
 
-  <!-- WiFi presence: Meine Geräte (consent, coupled phones) -->
-  <WifiPresenceSettings />
+<div class="profile-wrap">
+  <div class="profile-grid">
+    <div class="profile-col">
+      <MyWorkSettings />
+      <EmailNotificationSettings />
+      <!-- Notifications: push per device and the shift reminders (Issue #608/#609) -->
+      <PushSettings />
+      <ReminderSettings />
+    </div>
 
-  <!-- Push notifications: per device, only offered when the instance has VAPID keys -->
-  <PushSettings />
-
-  <!-- Shift reminders (Issue #609): one switch per occasion the tenant enabled -->
-  <ReminderSettings />
-
-  <div class="settings-info">
-    <p class="text-muted"><strong>E-Mail:</strong> {$authStore.user?.email}</p>
-    <p class="text-muted">
-      <strong>Rolle:</strong>
-      {roleNamesLabel($salonContext) || "–"}
-    </p>
+    <div class="profile-col">
+      <AppearanceSettings />
+      <!-- Stempeln mit dem Handy: WLAN presence and coupled phones (Issue #388/#610) -->
+      <WifiPresenceSettings />
+      <Section title="Sicherheit" sub="Dein Passwort für die Anmeldung.">
+        <div>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            onclick={() => (passwordOpen = true)}>Passwort ändern</button
+          >
+        </div>
+      </Section>
+    </div>
   </div>
 </div>
 
+<Dialog bind:open={passwordOpen} title="Passwort ändern">
+  <form
+    id="pw-form"
+    onsubmit={(e) => {
+      e.preventDefault();
+      changePassword();
+    }}
+    class="pw-form"
+  >
+    <FormField label="Aktuelles Passwort">
+      {#snippet field({ id, describedBy, invalid })}
+        <input
+          {id}
+          type="password"
+          bind:value={currentPassword}
+          required
+          class="form-input"
+          autocomplete="current-password"
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+        />
+      {/snippet}
+    </FormField>
+    <FormField label="Neues Passwort">
+      {#snippet field({ id, describedBy, invalid })}
+        <input
+          {id}
+          type="password"
+          bind:value={newPassword}
+          required
+          minlength={pwPolicy.passwordMinLength}
+          class="form-input"
+          autocomplete="new-password"
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+        />
+        <PasswordStrength password={newPassword} policy={pwPolicy} />
+      {/snippet}
+    </FormField>
+    <FormField
+      label="Passwort bestätigen"
+      error={passwordMismatch ? "Die Passwörter stimmen nicht überein." : undefined}
+    >
+      {#snippet field({ id, describedBy, invalid })}
+        <input
+          {id}
+          type="password"
+          bind:value={confirmPassword}
+          required
+          class="form-input"
+          autocomplete="new-password"
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+        />
+      {/snippet}
+    </FormField>
+  </form>
+  {#snippet footer()}
+    <button type="button" class="btn btn-secondary" onclick={() => (passwordOpen = false)}
+      >Abbrechen</button
+    >
+    <button
+      type="submit"
+      form="pw-form"
+      class="btn btn-primary"
+      disabled={saving || !currentPassword || !newPassword || passwordMismatch}
+    >
+      {#if saving}<Spinner size={14} label="Passwort wird gespeichert" />{/if}
+      Passwort speichern
+    </button>
+  {/snippet}
+</Dialog>
+
 <style>
-  .settings-page {
-    max-width: 800px;
+  .profile-person {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    margin-bottom: var(--s-6);
   }
-  .settings-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-  :global(.settings-card) {
-    padding: 1.5rem;
-  }
-  .section-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-  }
-  .avatar-section {
+  .profile-person-text {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 0.75rem;
+    gap: 2px;
+  }
+  .profile-person-text span {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+  .profile-wrap {
+    container-type: inline-size;
+  }
+  .profile-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--s-6);
+  }
+  @container (min-width: 760px) {
+    .profile-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .profile-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    min-width: 0;
   }
   .avatar-wrapper {
-    position: relative;
-    width: 120px;
-    height: 120px;
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
     cursor: pointer;
     padding: 0;
     background: transparent;
     border: 0;
     overflow: hidden;
-    display: block;
+    flex-shrink: 0;
   }
   .avatar-wrapper:disabled {
     cursor: wait;
     opacity: 0.7;
   }
   .avatar-wrapper:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
-  .avatar-preview {
-    width: 120px;
-    height: 120px;
+  .avatar-preview,
+  .avatar-initials {
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
+    display: flex;
+  }
+  .avatar-preview {
     object-fit: cover;
-    border: 3px solid var(--border);
-    box-sizing: border-box;
-    display: block;
   }
   .avatar-initials {
-    width: 120px;
-    height: 120px;
-    border-radius: 50%;
     background: var(--brand-soft);
     color: var(--brand);
-    font-size: 2.5rem;
-    font-weight: 700;
-    display: flex;
+    font-size: 20px;
+    font-weight: 600;
     align-items: center;
     justify-content: center;
-    border: 3px solid var(--border);
-    box-sizing: border-box;
-  }
-  .avatar-overlay {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0;
-    transition: opacity 0.2s;
-    color: white;
-    pointer-events: none;
-  }
-  .avatar-wrapper:hover .avatar-overlay,
-  .avatar-wrapper:focus-visible .avatar-overlay {
-    opacity: 1;
   }
   .avatar-file-input {
     display: none;
   }
-  .avatar-hint {
-    font-size: 0.8125rem;
-  }
   .pw-form {
     display: flex;
     flex-direction: column;
-    gap: 0.875rem;
-  }
-  .field-error {
-    color: var(--bad);
-    font-size: 0.8125rem;
-    margin-top: 0.25rem;
-  }
-  .settings-info {
-    display: flex;
-    gap: 2rem;
-    font-size: 0.875rem;
-  }
-
-  @media (max-width: 640px) {
-    .settings-grid {
-      grid-template-columns: 1fr;
-    }
+    gap: var(--s-4);
   }
 </style>

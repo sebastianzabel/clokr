@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import PageHead from "$components/layout/PageHead.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import OperatorOverview from "$lib/components/operator/OperatorOverview.svelte";
   import TenantCreateDialog from "$lib/components/operator/TenantCreateDialog.svelte";
@@ -93,11 +94,8 @@
 
   <Section animate>
     {#if loadState === "loading"}
-      <div aria-busy="true" data-testid="op-tenants-loading">
-        <span class="sr-only" role="status">Wird geladen …</span>
-        {#each [0, 1, 2, 3, 4] as row (row)}
-          <div class="skeleton row"></div>
-        {/each}
+      <div data-testid="op-tenants-loading">
+        <Skeleton shape="block" count={5} height="48px" />
       </div>
     {:else if loadState === "error"}
       <div class="alert alert-error" role="alert" data-testid="op-tenants-error">
@@ -135,11 +133,6 @@
 />
 
 <style>
-  .row {
-    height: 48px;
-    margin-bottom: 8px;
-  }
-
   .error-body {
     min-width: 0;
   }

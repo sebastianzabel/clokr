@@ -1,4 +1,8 @@
 <script lang="ts">
+  import AuthFrame from "$lib/components/auth/AuthFrame.svelte";
+  import FormField from "$lib/components/ui/FormField.svelte";
+  import Note from "$lib/components/ui/Note.svelte";
+  import Spinner from "$lib/components/ui/Spinner.svelte";
   import { preventDefault } from "svelte/legacy";
   import { onMount } from "svelte";
   import { page } from "$app/stores";
@@ -53,46 +57,30 @@
 </script>
 
 <svelte:head>
-  <title>Passwort zurücksetzen – Clokr</title>
+  <title>Neues Passwort festlegen – Clokr</title>
 </svelte:head>
 
-<div class="login-page">
-  <div class="login-card">
-    <div class="login-logo">
-      <span class="login-logo-icon">⏱️</span>
-      <h1 class="login-title">Passwort zurücksetzen</h1>
-      <p class="login-subtitle">Leg ein neues Passwort für dein Konto fest.</p>
+<AuthFrame title="Neues Passwort festlegen" subtitle="Leg ein neues Passwort für dein Konto fest.">
+  {#if success}
+    <div role="status">
+      <Note tone="ok">Dein Passwort ist geändert. Du kannst dich jetzt anmelden.</Note>
     </div>
+    <a href="/login" class="btn btn-primary auth-submit">Zur Anmeldung</a>
+  {:else if !token}
+    <div role="alert">
+      <Note tone="bad">Dieser Link ist ungültig. Fordere bitte einen neuen Link an.</Note>
+    </div>
+    <a href="/forgot-password" class="btn btn-primary auth-submit">Neuen Link anfordern</a>
+  {:else}
+    <form onsubmit={preventDefault(handleSubmit)} class="auth-form">
+      {#if error}
+        <div role="alert"><Note tone="bad">{error}</Note></div>
+      {/if}
 
-    {#if success}
-      <div class="alert alert-success" role="alert">
-        <span>✓</span>
-        <span>Dein Passwort ist zurückgesetzt.</span>
-      </div>
-      <div class="back-footer">
-        <a href="/login" class="btn btn-primary login-submit">Zur Anmeldung</a>
-      </div>
-    {:else if !token}
-      <div class="alert alert-error" role="alert">
-        <span>⚠</span>
-        <span>Ungültiger Link. Bitte fordere einen neuen Link an.</span>
-      </div>
-      <div class="back-footer">
-        <a href="/forgot-password" class="back-link">Neuen Link anfordern</a>
-      </div>
-    {:else}
-      <form onsubmit={preventDefault(handleSubmit)} class="login-form">
-        {#if error}
-          <div class="alert alert-error" role="alert">
-            <span>⚠</span>
-            <span>{error}</span>
-          </div>
-        {/if}
-
-        <div class="form-group">
-          <label class="form-label" for="password">Neues Passwort</label>
+      <FormField label="Neues Passwort">
+        {#snippet field({ id, describedBy, invalid })}
           <input
-            id="password"
+            {id}
             type="password"
             bind:value={password}
             required
@@ -100,14 +88,20 @@
             class="form-input"
             placeholder="Mindestens {pwPolicy.passwordMinLength} Zeichen"
             autocomplete="new-password"
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
           />
           <PasswordStrength {password} policy={pwPolicy} />
-        </div>
+        {/snippet}
+      </FormField>
 
-        <div class="form-group">
-          <label class="form-label" for="confirm-password">Passwort bestätigen</label>
+      <FormField
+        label="Passwort bestätigen"
+        error={passwordMismatch ? "Die Passwörter stimmen nicht überein." : undefined}
+      >
+        {#snippet field({ id, describedBy, invalid })}
           <input
-            id="confirm-password"
+            {id}
             type="password"
             bind:value={confirmPassword}
             required
@@ -115,136 +109,20 @@
             class="form-input"
             placeholder="Passwort wiederholen"
             autocomplete="new-password"
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
           />
-          {#if passwordMismatch}
-            <p class="field-error">Die Passwörter stimmen nicht überein.</p>
-          {/if}
-        </div>
+        {/snippet}
+      </FormField>
 
-        <button type="submit" disabled={!canSubmit} class="btn btn-primary login-submit">
-          {#if loading}
-            <span class="login-spinner"></span>
-            Speichern…
-          {:else}
-            Passwort speichern
-          {/if}
-        </button>
-      </form>
+      <button type="submit" disabled={!canSubmit} class="btn btn-primary auth-submit">
+        {#if loading}<Spinner size={16} label="Passwort wird gespeichert" />{/if}
+        Passwort speichern
+      </button>
+    </form>
+  {/if}
 
-      <div class="back-footer">
-        <a href="/login" class="back-link">Zurück zur Anmeldung</a>
-      </div>
-    {/if}
-  </div>
-</div>
-
-<style>
-  .login-page {
-    min-height: 100dvh;
-    background-color: var(--bg-subtle);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
-  }
-
-  .login-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-lg);
-    padding: 2.5rem;
-    width: 100%;
-    max-width: 420px;
-  }
-
-  .login-logo {
-    text-align: center;
-    margin-bottom: 2rem;
-  }
-  .login-logo-icon {
-    display: inline-block;
-    font-size: 2.5rem;
-    margin-bottom: 0.75rem;
-    line-height: 1;
-  }
-  .login-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--brand);
-    margin-bottom: 0.375rem;
-  }
-  .login-subtitle {
-    font-size: 0.9375rem;
-    color: var(--text-muted);
-  }
-
-  .login-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1.125rem;
-  }
-
-  .login-submit {
-    width: 100%;
-    padding: 0.7rem 1.25rem;
-    font-size: 1rem;
-    margin-top: 0.25rem;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-  }
-
-  .login-spinner {
-    display: inline-block;
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-top-color: #fff;
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .field-error {
-    font-size: 0.8125rem;
-    color: #dc2626;
-    margin-top: 0.25rem;
-  }
-
-  .back-footer {
-    text-align: center;
-    margin-top: 1.5rem;
-  }
-
-  .back-link {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    text-decoration: underline;
-  }
-
-  .alert {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-radius: var(--r-md);
-    font-size: 0.875rem;
-  }
-
-  .alert-error {
-    background: #fef2f2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
-  }
-  .alert-success {
-    background: #f0fdf4;
-    color: #166534;
-    border: 1px solid #bbf7d0;
-  }
-</style>
+  {#snippet footer()}
+    <a href="/login" class="auth-link">Zurück zur Anmeldung</a>
+  {/snippet}
+</AuthFrame>

@@ -12,15 +12,10 @@ import { screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import KontoSaldoCard from "../KontoSaldoCard.svelte";
 
-// Phase 100 Plan 06 (Q1) — the dark-mode contrast fallback below is pinned by reading the
-// component's own source rather than via `getComputedStyle()`. Confirmed empirically (not
-// assumed) that this test environment does not inject component-scoped <style> tags into
-// jsdom's `document.head` at all — `getComputedStyle()` on the badge returns the browser
-// default `canvastext` regardless of `data-mode`, and `document.head.querySelectorAll("style")`
-// is empty. This matches this codebase's own documented precedent in SaldoAnzeige.svelte:
-// "Tests assert class + text content only; no visual regression is expected from missing
-// global rules." A source-text pin is the one thing this suite CAN actually verify against
-// silent regression (e.g. someone reverting the fallback or widening it to `--warn` itself).
+// The warning badges are pinned by reading the component's own source rather than via
+// `getComputedStyle()`: this test environment injects no component-scoped <style> tags into jsdom,
+// so a computed colour would be the browser default regardless of `data-mode`. A source-text pin is
+// what this suite CAN verify against a returning workaround.
 const COMPONENT_SOURCE = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../KontoSaldoCard.svelte"),
   "utf-8",
@@ -300,35 +295,31 @@ describe("KontoSaldoCard — Toleranzgrenze badge (Phase 100 / OTC-03)", () => {
   });
 });
 
-// Phase 100 Plan 06 (Q1, owner checkpoint 2026-08-21) — dark-mode contrast fallback.
-// Measured live: --warn text on the composited dark-mode --warn-soft background is 2.73:1,
-// failing WCAG AA (4.5:1 normal / 3:1 large). Owner-approved fix: color: var(--text) on the
-// same --warn-soft background (11.64:1), scoped to this one badge, dark mode only — see
-// SOURCE comment above the CSS rule in KontoSaldoCard.svelte for the full measurement trail.
-describe("KontoSaldoCard — Toleranzgrenze badge dark-mode contrast fallback (Phase 100 Plan 06, Q1)", () => {
-  it('scopes color: var(--text) to the badge under [data-mode="dark"] via the .ksc-tolerance-warn ancestor', () => {
-    const rule =
-      /:global\(\[data-mode="dark"\]\)\s*\.ksc-tolerance-warn\s+\.badge-yellow\s*\{[^}]*color:\s*var\(--text\)[^}]*\}/;
-    expect(COMPONENT_SOURCE).toMatch(rule);
+// Issue #842 (IN-03) - the dark-mode contrast fallbacks of Phase 100 / Issue #291 are gone. They
+// existed because the v1.5 --warn stayed orange-brown in dark mode (2.73:1 on --warn-soft). In v2
+// every theme overrides --warn for dark mode, and token-contrast-842.test.ts pins --warn on
+// --warn-soft at 4.5:1 in all six combinations, so the badge needs no local colour.
+describe("KontoSaldoCard - warning badges use the global warn roles only (#842)", () => {
+  it("carries no dark-mode colour override for a badge", () => {
+    expect(COMPONENT_SOURCE).not.toMatch(/\[data-mode=/);
   });
 
-  it("does not override the --warn token itself (owner rejected the app-wide blast radius)", () => {
-    // The fix must live as a scoped descendant-selector override (above), never as a local
-    // redeclaration of the --warn custom property, which would repaint every --warn consumer
-    // in the app (dashboard's cell-badge--requested, SaldoAnzeige's roster dot, etc.).
+  it("does not redeclare the --warn token (it would repaint every --warn consumer)", () => {
     expect(COMPONENT_SOURCE).not.toMatch(/--warn\s*:/);
   });
 
-  it("leaves the global light-mode .badge-yellow color untouched (app.css)", () => {
-    // Q1's fallback must not require any change to the shared global class — light mode
-    // keeps reading color: var(--warn) from app.css exactly as every other .badge-yellow
-    // consumer does. This guards the "light mode visually unchanged" acceptance criterion
-    // against a future edit to the wrong file.
+  it("still renders both warning badges as the global .badge-yellow pill", () => {
+    expect(COMPONENT_SOURCE).toMatch(/badge badge-yellow/);
+  });
+
+  it("leaves the global .badge-yellow on the warn roles (app.css)", () => {
     const appCssPath = path.join(
       path.dirname(fileURLToPath(import.meta.url)),
       "../../../../app.css",
     );
     const appCss = readFileSync(appCssPath, "utf-8");
-    expect(appCss).toMatch(/\.badge-yellow\s*\{[^}]*color:\s*var\(--warn\)[^}]*\}/);
+    expect(appCss).toMatch(
+      /\.badge-yellow\s*\{[^}]*background-color:\s*var\(--warn-soft\)[^}]*color:\s*var\(--warn\)[^}]*\}/,
+    );
   });
 });

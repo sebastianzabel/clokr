@@ -60,7 +60,8 @@ beforeEach(() => {
 async function mounted() {
   const view = renderWithTheme(WifiPresenceSettings, {});
   await waitFor(() => expect(api.getMyWifi).toHaveBeenCalled());
-  await waitFor(() => expect(screen.queryByText("Laden…")).toBeNull());
+  // #843 D-843-07: the list loads through Skeleton (role=status "Wird geladen"), gone once resolved.
+  await waitFor(() => expect(screen.queryByRole("status", { name: "Wird geladen" })).toBeNull());
   return view;
 }
 

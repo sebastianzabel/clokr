@@ -23,8 +23,9 @@
 //   R6  the average-saldo label of the former KPI appears in any walked file
 //   R7  SaldoAnzeige.svelte declares a string default for its forecastLabel prop, or
 //       KontoSaldoCard.svelte carries a caption literal instead of the forecastCaption() call
-//   R8  a <SaldoAnzeige call site in split mode (it passes confirmedMinutes) or a <KontoSaldoCard
-//       call site passes neither unconfirmedMonths= (or its {shorthand}) nor forecastLabel=, i.e.
+//   R8  a <SaldoAnzeige call site in split mode (it passes confirmedMinutes), a <KontoSaldoCard
+//       call site or a kontoKpiItem( call (Issue #853: the Stundenkonto cell of Team › Zeiten) passes
+//       neither unconfirmedMonths= / unconfirmedMonths: (or its {shorthand}) nor forecastLabel=, i.e.
 //       would show a forecast without the data that words it
 // The walked set is asserted non-empty and to contain both anchor files (anti-vacuity).
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -127,6 +128,23 @@ function callSites(source: string, component: string): string[] {
 /** R8: true when a call site hands the forecast its data (or names the wording explicitly). */
 function passesForecastData(tag: string): boolean {
   return /\bunconfirmedMonths\b/.test(tag) || /\bforecastLabel=/.test(tag);
+}
+
+/** R8 (Issue #853): the argument text of every `kontoKpiItem(` call in a source, up to its `})`. */
+function kontoKpiItemCalls(source: string): string[] {
+  const out: string[] = [];
+  let from = 0;
+  for (;;) {
+    const at = source.indexOf("kontoKpiItem(", from);
+    if (at === -1) return out;
+    const lineStart = source.lastIndexOf("\n", at) + 1;
+    const before = source.slice(lineStart, at);
+    const end = source.indexOf("})", at);
+    if (end === -1) return out;
+    // An import line, a comment or a declaration is not a call.
+    if (!/\/\/|\*|`|<!--|import|function|export/.test(before)) out.push(source.slice(at, end));
+    from = at + "kontoKpiItem(".length;
+  }
 }
 
 /** R7: a string default for the forecastLabel prop of SaldoAnzeige. */
@@ -235,6 +253,13 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
     );
     expect(passesForecastData('<SaldoAnzeige confirmedMinutes={1} forecastLabel="x" ')).toBe(true);
     expect(passesForecastData("<KontoSaldoCard unconfirmedMonths={n} ")).toBe(true);
+    // Issue #853: the object-literal form of a kontoKpiItem( call.
+    const calls = kontoKpiItemCalls(
+      'import { kontoKpiItem } from "x";\nitems.push(\n  kontoKpiItem({ totalHours: 1, unconfirmedMonths: n }),\n  kontoKpiItem({ totalHours: 2 }),\n);',
+    );
+    expect(calls).toHaveLength(2);
+    expect(passesForecastData(calls[0])).toBe(true);
+    expect(passesForecastData(calls[1])).toBe(false);
     expect(
       callSites("  // wraps `<SaldoAnzeige variant=x>` once\n  <SaldoAnzeige a />", "SaldoAnzeige"),
     ).toHaveLength(1);
@@ -243,29 +268,44 @@ describe("team saldo figures live in one module (Issue #588, D-588-1)", () => {
   it("R8: every forecast-showing call site passes the data that words it", () => {
     let splitSites = 0;
     let cardSites = 0;
+    let cellSites = 0;
+    const splitFiles = new Set<string>();
     const offenders: string[] = [];
     for (const f of FILES) {
       if (!f.rel.endsWith(".svelte")) continue;
       for (const tag of callSites(f.text, "SaldoAnzeige")) {
         if (!/\bconfirmedMinutes\b/.test(tag)) continue; // single-value mode shows no forecast
         splitSites++;
+        splitFiles.add(f.rel);
         if (!passesForecastData(tag)) offenders.push(`${f.rel}: <SaldoAnzeige`);
       }
       for (const tag of callSites(f.text, "KontoSaldoCard")) {
         cardSites++;
         if (!passesForecastData(tag)) offenders.push(`${f.rel}: <KontoSaldoCard`);
       }
+      for (const call of kontoKpiItemCalls(f.text)) {
+        cellSites++;
+        if (!passesForecastData(call)) offenders.push(`${f.rel}: kontoKpiItem(`);
+      }
     }
     expect(offenders).toEqual([]);
-    // Non-vacuity: dashboard tile, /leave KPI and the leave form's box (split SaldoAnzeige);
-    // /time-entries and /team/time-entries (KontoSaldoCard), as found by Plan 588-03.
-    expect(splitSites).toBeGreaterThanOrEqual(3);
+    // Non-vacuity, by name: the leave form's box and the person drill-down (split SaldoAnzeige). The
+    // Stundenkonto cell of /team/time-entries went with the owner review of Issue #853 (the page shows
+    // the month only, pinned in personal-saldo-label-588). The dashboard
+    // tile went with Issue #845 (Mein Tag words it through saldoFigure(), pinned in mein-tag-845), the
+    // /leave KPI and the /time-entries card with Issue #851 (the own total is worded on /ich/konto,
+    // pinned in personal-saldo-label-588).
+    expect(splitFiles).toContain("lib/components/leave/LeaveRequestForm.svelte");
+    expect(splitFiles).toContain("lib/components/reports/PersonDrilldown.svelte");
+    expect(splitSites).toBeGreaterThanOrEqual(2);
     // Issue #612 (pin ledger row 8): the person drill-down is a further split call site, and it
     // hands the forecast the data that words it (a drill-down without it fails the loop above).
     expect(fileText("lib/components/reports/PersonDrilldown.svelte")).toMatch(
       /<SaldoAnzeige[^>]*confirmedMinutes=[^>]*unconfirmedMonths=/s,
     );
-    expect(cardSites).toBeGreaterThanOrEqual(2);
+    // Since #851 (/time-entries) and #853 (/team/time-entries) no page renders KontoSaldoCard or the
+    // account cell; a future caller of either is still checked by the loop above.
+    expect(cardSites + cellSites).toBeGreaterThanOrEqual(0);
   });
 
   it("R5: the reports team table renders no SaldoAnzeige, and the page's overview card is gone", () => {

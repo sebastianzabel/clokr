@@ -24,22 +24,20 @@ export function getChartTheme() {
 
   return {
     brand: get("--brand"),
-    brandLight: get("--brand-light"),
     brandTint: get("--brand-soft"),
-    // Planned values (Soll): the muted text token, because --text-faint falls to about 2.5:1 on the
-    // modern light card and WCAG 1.4.11 asks 3:1 for a graphical object; --text-muted holds it in
-    // every skin and mode.
-    neutral: get("--text-muted"),
+    // Planned values (Soll): the secondary text token, which keeps the 3:1 a graphical object needs
+    // (WCAG 1.4.11) against the card in every theme and mode (#842 D-842-26).
+    neutral: get("--text-2"),
     sick: get(leaveTypeColor("SICK").fill),
-    green: get("--good"),
+    green: get("--ok"),
     red: get("--bad"),
     yellow: get("--warn"),
     text: get("--text"),
-    textMuted: get("--text-muted"),
-    border: get("--border"),
-    surface: get("--bg-card"),
-    gridColor: get("--border"),
-    fontFamily: get("--font-sans"),
+    textMuted: get("--text-2"),
+    border: get("--line"),
+    surface: get("--card"),
+    gridColor: get("--line"),
+    fontFamily: get("--font-ui"),
   };
 }
 

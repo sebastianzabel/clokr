@@ -21,6 +21,8 @@
 // there is now exactly one place that can omit the field, and it is covered by a
 // plain-function test below.
 
+import { formatDayCount } from "./leave-days-label";
+
 export interface Section9Movement {
   creditId: string;
   days: number;
@@ -140,7 +142,8 @@ export function resolveAdjustmentBadge(
 ): AdjustmentBadge | null {
   if (!adjustment) return null;
   const isUp = adjustment.direction === "up";
-  const delta = Math.abs(adjustment.newDays - adjustment.oldDays);
+  // Rounded to the two decimals a day figure carries: 5.5 - 5.4 is 0.10000000000000053 in floats.
+  const delta = Math.round(Math.abs(adjustment.newDays - adjustment.oldDays) * 100) / 100;
   return {
     direction: adjustment.direction,
     badgeClass: isUp ? "badge badge-yellow" : "badge badge-gray",
@@ -148,7 +151,7 @@ export function resolveAdjustmentBadge(
     bold: isUp,
     delta,
     tooltip:
-      `Alt: ${adjustment.oldDays} Tage → Neu: ${adjustment.newDays} Tage · ` +
+      `Alt: ${formatDayCount(adjustment.oldDays)} → Neu: ${formatDayCount(adjustment.newDays)} · ` +
       `Auslöser: Roster-Planung · ${formatGermanDate(adjustment.at)}`,
   };
 }

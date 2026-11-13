@@ -1,25 +1,51 @@
 <script lang="ts">
+  import { homeHref } from "$lib/nav/routes";
   import { pageLabel } from "$lib/nav/page-labels";
   import { onMount, tick } from "svelte";
   import { goto, replaceState } from "$app/navigation";
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { hasAnyPermission } from "$lib/permissions"; // Phase 378 (#378)
+  import { hasAnyPermission, hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
-  import KPIStat from "$components/ui/KPIStat.svelte";
-  import ApprovalRow from "$components/ui/ApprovalRow.svelte";
-  import Modal from "$components/ui/Modal.svelte";
+  import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
+  import List from "$components/ui/List.svelte";
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import Dialog from "$components/ui/Dialog.svelte"; // Issue #853 (D-853-18)
+  import FormField from "$components/ui/FormField.svelte";
+  import Note from "$components/ui/Note.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // § 9 reject reason (moved from /team/leave, #840)
   import EmptyState from "$components/ui/EmptyState.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
   import { LEAVE_TYPE_OPTIONS, type CalendarTypeCode } from "$lib/leave/team-calendar-visibility"; // Phase 262, Phase 255
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
-  import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"; // Issue #840 (G-3)
-  import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
+  import TaskRow from "$lib/components/team/aufgaben/TaskRow.svelte"; // Issue #853 (D-853-06)
+  import RetroReviewBody from "$lib/components/team/aufgaben/RetroReviewBody.svelte"; // Issue #853 (D-853-18)
+  import {
+    taskRowsFrom,
+    taskCounts,
+    taskKindLabel,
+    rowsForView,
+    filterByKind,
+    availableTaskKinds,
+    TASK_KIND_VALUES,
+    type NoticeTaskSource,
+    type OpenTasksAnswer,
+    type TaskKind,
+    type TaskRowModel,
+  } from "$lib/team/task-model"; // Issue #853 (D-853-06)
+  import { urlState, oneOf } from "$lib/table/url-state"; // Issue #853 (D-853-06)
+  import LeaveReviewDialog, {
+    SELF_APPROVAL_TEXT,
+  } from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
   import { parseInboxDeepLink, type InboxDeepLink } from "$lib/leave/inbox-deep-link"; // Issue #840 (D-840-05)
+  import { reviewResultToast } from "$lib/leave/review-facts"; // Issue #853-19: the toast after a decision
+  import TaskRowActions from "$lib/components/team/aufgaben/TaskRowActions.svelte"; // Issue #853-19
+  import type { VacationEntitlementRow } from "$lib/leave/vacation-balance";
+  import type { LeaveOverlapEntry } from "$lib/leave/leave-review";
+  import { createLeaveContextLoader } from "$lib/team/task-row-facts"; // Issue #853-19: the row's context line
 
   // ── Types ────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -46,8 +72,6 @@
     attestValidTo: string | null;
   }
 
-  type TabKey = "open" | "approved" | "rejected" | "all";
-
   // ── RetroEntryRequest types ──────────────────────────────────────────────
   type RetroStatus = "PENDING" | "APPROVED" | "REJECTED" | "USED";
 
@@ -67,14 +91,12 @@
     createdAt: string;
   }
 
-  type RetroTabKey = "open" | "approved" | "rejected" | "all";
-
   // LEAVE_TYPE_OPTIONS has no HOLIDAY entry (it is the nine-element set of types a
   // LeaveRequest can actually carry — team-calendar-visibility.ts:106-108). typeName("HOLIDAY")
   // would fall back to the raw code, but LeaveRequest.typeCode can never be HOLIDAY — that value
   // exists only in CalendarTypeCode, for calendar holiday colouring (CONTEXT <deferred>,
   // RESEARCH § Vocabulary Duplication). Measured gap, not a bug.
-  function typeName(code: TypeCode): string {
+  function typeName(code: string): string {
     return LEAVE_TYPE_OPTIONS.find((t) => t.code === code)?.label ?? code;
   }
 
@@ -86,18 +108,34 @@
   let pendingRequests: LeaveRequest[] = $state([]);
   let loading = $state(true);
   let error = $state("");
-  let tab: TabKey = $state("open");
+
+  // Issue #853 (D-853-06, D-853-19): the type filter and the „Offen · Entschieden“ view live in the
+  // URL. `urlState` keeps every other key (`request`, `year`, `section9`, `salonId`) as it is; the
+  // deep-link keys are still read only by `parseInboxDeepLink`.
+  const taskUrl = urlState({
+    typ: oneOf(["alle", ...TASK_KIND_VALUES] as const, "alle"),
+    ansicht: oneOf(["offen", "entschieden"] as const, "offen"),
+  });
+  const taskView = $derived(taskUrl.read());
 
   // Detail modal — Phase 255: markup and mutation now live in the shared LeaveReviewDialog
   // component; the page only keeps the two pieces of state that select which request is
   // under review.
   let detailRequest: LeaveRequest | null = $state(null);
   let detailOpen = $state(false);
+  // Issue #853-19: the dialog also decides a row straight from the list (`decide()`), so the page
+  // keeps a handle on it; `busyKey` is the row whose decision is under way.
+  let reviewDialog = $state<ReturnType<typeof LeaveReviewDialog> | null>(null);
+  let busyKey = $state<string | null>(null);
+  // The row whose „Ablehnen“ asks for the reason (the reason is required, D-853-09).
+  type RowRejectTarget =
+    { kind: "urlaub"; request: LeaveRequest } | { kind: "nachtrag"; retro: RetroEntryRequest };
+  let rowRejectTarget = $state<RowRejectTarget | null>(null);
+  let rowRejectOpen = $state(false);
 
   // ── RetroEntryRequest state ──────────────────────────────────────────────
   let retroRequests: RetroEntryRequest[] = $state([]);
   let retroLoading = $state(true);
-  let retroTab: RetroTabKey = $state("open");
 
   // Retro detail/review modal
   let retroDetail: RetroEntryRequest | null = $state(null);
@@ -116,7 +154,48 @@
   let retroEditEndTime = $state("");
   let retroEditBreakMinutes = $state(0);
 
-  // Hint only (T-840-28): shows the § 9 section to holders of either § 9 key.
+  // ── § 9 BUrlG — "AU liegt vor" (Phase 104-10, R6/D-27/D-11/D-26; moved here from /team/leave, #840) ──
+  interface Section9Case {
+    id: string;
+    employeeId: string;
+    employeeName: string;
+    // #468: GET /leave/section9 can also return SUPERSEDED — a CONFIRMED credit a correction
+    // (PATCH /correct) made obsolete, never an open case (the filter below still only lists
+    // AU_PENDING and REJECTED).
+    status: "AU_PENDING" | "CONFIRMED" | "REJECTED" | "SUPERSEDED";
+    overlapStart: string;
+    overlapEnd: string;
+    creditedStart: string | null;
+    creditedEnd: string | null;
+    creditedDays: number | null;
+    attestSource: string | null;
+    attestValidFrom: string | null;
+    attestValidTo: string | null;
+    reason: string | null;
+    sickRequest: { id: string; startDate: string; endDate: string; status: string };
+    vacationRequest: {
+      id: string;
+      startDate: string;
+      endDate: string;
+      halfDay: boolean;
+      days: number;
+      typeName: string;
+    };
+  }
+
+  let section9Cases: Section9Case[] = $state([]);
+  let section9Loading = $state(true);
+  let highlightSection9Id: string | null = $state(null);
+
+  // Issue #853 (D-853-07, D-853-22): the Pausenbefunde are the caller's own #85 break notices, the
+  // missing clock-outs come from the reach-scoped open-tasks read. Both are calm sources: a refusal
+  // or a failure is an empty source, never an error alert.
+  let notices: NoticeTaskSource[] = $state([]);
+  let noticesLoading = $state(true);
+  let openTasks = $state<OpenTasksAnswer | null>(null);
+  let openTasksLoading = $state(true);
+
+  // Hint only (T-840-28): shows the § 9 rows to holders of either § 9 key.
   const canSection9 = $derived(
     hasAnyPermission($authStore.user, ["section9:read:ZUGEWIESEN", "section9:decide:ZUGEWIESEN"]),
   );
@@ -128,6 +207,17 @@
   const canListLeave = $derived(
     hasAnyPermission($authStore.user, ["leave-request:approve:ZUGEWIESEN"]),
   );
+
+  // Same hint for the Zeitnachträge: the list is read only by an approver, because `GET
+  // /retro-entry-requests` also answers a caller with the EIGENE reach, and her own requests would
+  // otherwise show up as items to decide. A UX hint; the API decides.
+  const canRetro = $derived(
+    hasAnyPermission($authStore.user, ["retro-request:approve:ZUGEWIESEN"]),
+  );
+
+  // The missing clock-outs are offered to a caller who holds the time-entry reach the read needs
+  // (a UX hint; the API scopes every row by the per-entry reach).
+  const canOpenTasks = $derived(hasPermission($authStore.user, "time-entry:read:ZUGEWIESEN"));
 
   /** Reloads what a § 9 decision can change: the § 9 cases, and the leave list for an approver only. */
   async function reloadAfterSection9() {
@@ -146,7 +236,7 @@
       "section9:decide:ZUGEWIESEN",
     ]);
     if (!canDecide) {
-      void goto("/dashboard");
+      void goto(homeHref($authStore.user));
       return;
     }
     // The deep link is read ONCE, here, and applied after the first completed loads (the rows do not
@@ -154,7 +244,9 @@
     const link = parseInboxDeepLink($page.url.searchParams, currentYear);
     const hadLinkParams = DEEP_LINK_PARAMS.some((name) => $page.url.searchParams.has(name));
     void (async () => {
-      const loads: Promise<unknown>[] = [loadRetroRequests()];
+      const loads: Promise<unknown>[] = [];
+      if (canRetro) loads.push(loadRetroRequests());
+      else retroLoading = false;
       // The leave list is skipped for a role that only decides § 9 cases: it would answer 403 and
       // show an error alert for a list that role never sees.
       if (canListLeave) {
@@ -162,10 +254,13 @@
       } else {
         loading = false;
       }
-      // The § 9 section is only a UX hint: the API answers 403 without `section9:read` and decides
+      // The § 9 rows are only a UX hint: the API answers 403 without `section9:read` and decides
       // every action by `section9:decide`.
       if (canSection9) loads.push(loadSection9Cases());
       else section9Loading = false;
+      loads.push(loadNotices());
+      if (canOpenTasks) loads.push(loadOpenTasks());
+      else openTasksLoading = false;
       await Promise.all(loads);
       await applyDeepLink(link);
       if (hadLinkParams) stripDeepLinkParams();
@@ -194,6 +289,9 @@
     } finally {
       loading = false;
     }
+    // Every decision reloads through here, and a decision changes the figures of the other rows'
+    // context lines (Resturlaub, who is away): read them again.
+    resetRowContext();
   }
 
   // ── Deep links (Issue #840, D-840-05) ─────────────────────────────────────
@@ -266,6 +364,31 @@
     }
   }
 
+  /** The caller's newest notifications; only the break notices become rows (D-853-07). */
+  async function loadNotices() {
+    noticesLoading = true;
+    try {
+      const answer = await api.get<{ notifications: NoticeTaskSource[] }>("/notifications");
+      notices = answer.notifications ?? [];
+    } catch {
+      notices = [];
+    } finally {
+      noticesLoading = false;
+    }
+  }
+
+  /** The open-task read (missing clock-outs, D-853-21/22); `types` decides which kinds exist (D-853-23). */
+  async function loadOpenTasks() {
+    openTasksLoading = true;
+    try {
+      openTasks = await api.get<OpenTasksAnswer>("/tasks/open");
+    } catch {
+      openTasks = null;
+    } finally {
+      openTasksLoading = false;
+    }
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────────
   function fmtDate(iso: string): string {
     if (!iso) return "";
@@ -273,27 +396,246 @@
     return `${d}.${m}.${y}`;
   }
 
-  function initials(first: string, last: string): string {
-    return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
-  }
-
-  // ── Derived: filtered lists + KPIs ───────────────────────────────────────
+  // ── Derived: the leave requests and Zeitnachträge as task rows + the KPI band ──
+  // Open = every open request in the approve reach (all years, #840 E-02); decided = the current
+  // year's list, as the removed „Genehmigt“ / „Abgelehnt“ tabs showed it.
   let openRequests = $derived(
     pendingRequests.filter((r) => r.status === "PENDING" || r.status === "CANCELLATION_REQUESTED"),
   );
   let approvedRequests = $derived(requests.filter((r) => r.status === "APPROVED"));
   let rejectedRequests = $derived(requests.filter((r) => r.status === "REJECTED"));
 
-  let visibleRequests = $derived.by(() => {
-    if (tab === "open") return openRequests;
-    if (tab === "approved") return approvedRequests;
-    if (tab === "rejected") return rejectedRequests;
-    return requests;
+  // The one task list (D-853-06). The day figure is always the shared helper.
+  const allTaskRows = $derived(
+    taskRowsFrom(
+      {
+        leave: [...openRequests, ...approvedRequests, ...rejectedRequests],
+        retro: retroRequests,
+        section9: section9Cases,
+        notices,
+        openTasks,
+      },
+      { leaveDays: (r) => leaveDaysLabel(Number(r.days), r.halfDay, r.typeCode as TypeCode) },
+    ),
+  );
+  const openTaskRows = $derived(rowsForView(allTaskRows, "offen"));
+  const decidedTaskRows = $derived(rowsForView(allTaskRows, "entschieden"));
+  const taskOpenCounts = $derived(taskCounts(openTaskRows));
+
+  // A kind is offered only to a caller who can decide it (same hints as the loaders; the API decides).
+  // Pausenbefund appears only when the caller has such rows; Zeitkorrektur only when the open-task
+  // answer lists the type (D-853-23).
+  const availableKinds = $derived<TaskKind[]>(
+    availableTaskKinds({
+      leave: canListLeave,
+      retro: canRetro,
+      section9: canSection9,
+      breakNoticeCount: taskOpenCounts.pausenbefund,
+      openTaskTypes: openTasks?.types ?? [],
+    }),
+  );
+  const kpiItems = $derived<KpiItem[]>(
+    availableKinds.map((kind) => ({
+      label: `Offen · ${taskKindLabel(kind)}`,
+      value: taskOpenCounts[kind],
+      testId: `inbox-kpi-${kind}`,
+      ...(kind === "pausenbefund" ? { explanation: "Aus deinen neuesten Benachrichtigungen" } : {}),
+    })),
+  );
+
+  // The URL decides view and type; a type the caller cannot decide reads as „Alle“.
+  const activeTyp = $derived<TaskKind | "alle">(
+    taskView.typ !== "alle" && availableKinds.includes(taskView.typ) ? taskView.typ : "alle",
+  );
+  const viewRows = $derived(taskView.ansicht === "offen" ? openTaskRows : decidedTaskRows);
+  const viewCounts = $derived(taskCounts(viewRows));
+  const visibleTaskRows = $derived(filterByKind(viewRows, activeTyp));
+
+  const typOptions = $derived([
+    { value: "alle", label: `Alle (${viewRows.length})` },
+    ...availableKinds.map((kind) => ({
+      value: kind,
+      label: `${taskKindLabel(kind)} (${viewCounts[kind]})`,
+    })),
+  ]);
+  const ansichtOptions = $derived([
+    { value: "offen", label: `Offen (${openTaskRows.length})` },
+    { value: "entschieden", label: "Entschieden" },
+  ]);
+
+  const tasksLoading = $derived(
+    (canListLeave && loading) ||
+      (canRetro && retroLoading) ||
+      (canSection9 && section9Loading) ||
+      noticesLoading ||
+      (canOpenTasks && openTasksLoading),
+  );
+
+  function onTypSelected(value: string) {
+    taskUrl.write({ typ: value as TaskKind | "alle" });
+  }
+  function onAnsichtSelected(value: string) {
+    taskUrl.write({ ansicht: value === "entschieden" ? "entschieden" : "offen" });
+  }
+
+  /** The request a task row stands for (the open list first, as the deep link does). */
+  function leaveOf(row: TaskRowModel): LeaveRequest | null {
+    if (row.kind !== "urlaub") return null;
+    return (
+      pendingRequests.find((r) => r.id === row.sourceId) ??
+      requests.find((r) => r.id === row.sourceId) ??
+      null
+    );
+  }
+
+  /** The Zeitnachtrag a task row stands for. */
+  function retroOf(row: TaskRowModel): RetroEntryRequest | null {
+    if (row.kind !== "nachtrag") return null;
+    return retroRequests.find((r) => r.id === row.sourceId) ?? null;
+  }
+
+  /** The § 9 case a task row stands for. */
+  function section9Of(row: TaskRowModel): Section9Case | null {
+    if (row.kind !== "paragraf9") return null;
+    return section9Cases.find((c) => c.id === row.sourceId) ?? null;
+  }
+
+  // ── The context line of a leave row (Issue #853-19, prototype „Aufgaben“) ──────────────────────
+  // „Resturlaub danach 11 · niemand sonst ...“ (the sentence lives in task-row-facts.ts), read per open leave row of the current list from
+  // the two reads the decision dialog makes, within the caller's permissions (a fact the caller may
+  // not read is left out, `lib/team/task-row-facts.ts`). Only the rows in view are read, at most
+  // `CONTEXT_ROWS` of them, with cached reads (one per person and year / per period) and four reads
+  // in flight at most. A decision changes the figures of the other rows, so it starts a new epoch.
+  const CONTEXT_ROWS = 40;
+  const canReadEntitlementFact = $derived(
+    hasPermission($authStore.user, "leave-entitlement:read:ZUGEWIESEN"),
+  );
+  let contextEpoch = $state(0);
+  let rowContext = $state<Record<string, string>>({});
+  const contextReads = $derived.by(() => {
+    void contextEpoch;
+    return {
+      loader: createLeaveContextLoader(
+        {
+          entitlements: (employeeId, year) =>
+            api.get<VacationEntitlementRow[]>(`/leave/entitlements/${employeeId}?year=${year}`),
+          overlap: (startDate, endDate) =>
+            api.get<LeaveOverlapEntry[]>(
+              `/leave/overlap?startDate=${startDate}&endDate=${endDate}`,
+            ),
+        },
+        { canReadEntitlement: canReadEntitlementFact },
+      ),
+      requested: new Set<string>(),
+    };
   });
 
-  let kpiPending = $derived(openRequests.length);
-  let kpiApproved = $derived(approvedRequests.length);
-  let kpiRejected = $derived(rejectedRequests.length);
+  $effect(() => {
+    const reads = contextReads;
+    if (taskView.ansicht !== "offen") return;
+    const rows = visibleTaskRows.filter((r) => r.kind === "urlaub" && !r.decided);
+    for (const row of rows.slice(0, CONTEXT_ROWS)) {
+      const req = leaveOf(row);
+      if (!req || reads.requested.has(req.id)) continue;
+      reads.requested.add(req.id);
+      void reads.loader.load(req).then((line) => {
+        // An answer of an older epoch is dropped.
+        if (line && reads === contextReads) rowContext = { ...rowContext, [req.id]: line };
+      });
+    }
+  });
+
+  /** After a decision the figures of the other rows are stale: forget them and read again. */
+  function resetRowContext() {
+    rowContext = {};
+    contextEpoch += 1;
+  }
+
+  // ── Deciding straight from the row (Issue #853-19) ───────────────────────────────────────────
+  // „Genehmigen“ acts at once through the existing approve call. A dialog appears only where one is
+  // needed: „Ablehnen“ asks for the required reason (`ReasonDialog`), and an approval that needs an
+  // explicit step (an appointment to confirm, a limit exception) continues in the dialog's own
+  // follow-up dialogs. Every refusal of the server is shown as it is worded.
+  function errorText(e: unknown): string {
+    const apiErr = e as { data?: { error?: string }; message?: string };
+    return apiErr?.data?.error ?? apiErr?.message ?? "Fehler";
+  }
+
+  /** Points the shared dialog at the row's request (it works on its `request` prop). */
+  async function aimDialog(req: LeaveRequest) {
+    detailRequest = req;
+    detailOpen = false;
+    await tick();
+  }
+
+  async function approveRow(row: TaskRowModel) {
+    if (busyKey) return;
+    const request = leaveOf(row);
+    const retro = retroOf(row);
+    busyKey = row.key;
+    try {
+      if (request) {
+        await aimDialog(request);
+        // A failure is toasted by the dialog, a hand-over continues in its follow-up dialog, and a
+        // success reloads through `onReviewed`.
+        await reviewDialog?.decide("APPROVED");
+      } else if (retro) {
+        await decideRetroRow(retro, "APPROVED");
+      }
+    } catch (e: unknown) {
+      toasts.error(errorText(e));
+    } finally {
+      busyKey = null;
+    }
+  }
+
+  function askRejectReason(row: TaskRowModel) {
+    if (busyKey) return;
+    const request = leaveOf(row);
+    const retro = retroOf(row);
+    if (request) rowRejectTarget = { kind: "urlaub", request };
+    else if (retro) rowRejectTarget = { kind: "nachtrag", retro };
+    else return;
+    rowRejectOpen = true;
+  }
+
+  /** The ReasonDialog's confirm: it throws to stay open and show the refusal inline. */
+  async function confirmRowReject(reason: string) {
+    const target = rowRejectTarget;
+    if (!target) return;
+    if (target.kind === "urlaub") {
+      await aimDialog(target.request);
+      const result = await reviewDialog?.decide("REJECTED", reason, { toastErrors: false });
+      if (!result) throw new Error("Fehler");
+      if (!result.ok && !result.handedOver) throw new Error(result.message);
+    } else {
+      await decideRetroRow(target.retro, "REJECTED", reason);
+    }
+    rowRejectTarget = null;
+  }
+
+  /** The Zeitnachtrag decision of a row: the dialog's own PATCH, without a manager correction. */
+  async function decideRetroRow(
+    retro: RetroEntryRequest,
+    status: "APPROVED" | "REJECTED",
+    reason?: string,
+  ) {
+    await api.patch(`/retro-entry-requests/${retro.id}/review`, {
+      status,
+      reviewNote: reason?.trim() ? reason : null,
+    });
+    toasts.success(
+      reviewResultToast(status, `${retro.employee.firstName} ${retro.employee.lastName}`),
+    );
+    await loadRetroRequests();
+  }
+
+  /** The caller's own request: nobody decides it for themselves (four eyes, as in the dialog). */
+  function isOwnRow(row: TaskRowModel): boolean {
+    const own = $authStore.user?.employeeId;
+    if (!own) return false;
+    return (leaveOf(row) ?? retroOf(row))?.employeeId === own;
+  }
 
   // ── Detail modal ─────────────────────────────────────────────────────────
   function openDetail(req: LeaveRequest) {
@@ -304,22 +646,6 @@
   function isRetroSelfApproval(req: RetroEntryRequest): boolean {
     return req.employeeId === $authStore.user?.employeeId;
   }
-
-  // ── Retro derived: filtered lists + KPI ──────────────────────────────────
-  let retroOpenRequests = $derived(retroRequests.filter((r) => r.status === "PENDING"));
-  let retroApprovedRequests = $derived(
-    retroRequests.filter((r) => r.status === "APPROVED" || r.status === "USED"),
-  );
-  let retroRejectedRequests = $derived(retroRequests.filter((r) => r.status === "REJECTED"));
-
-  let retroVisible = $derived.by(() => {
-    if (retroTab === "open") return retroOpenRequests;
-    if (retroTab === "approved") return retroApprovedRequests;
-    if (retroTab === "rejected") return retroRejectedRequests;
-    return retroRequests;
-  });
-
-  let kpiRetroPending = $derived(retroOpenRequests.length);
 
   // ── Retro detail modal ────────────────────────────────────────────────────
   function openRetroDetail(req: RetroEntryRequest) {
@@ -406,39 +732,6 @@
       retroReviewSaving = false;
     }
   }
-
-  // ── § 9 BUrlG — "AU liegt vor" (Phase 104-10, R6/D-27/D-11/D-26; moved here from /team/leave, #840) ──
-  interface Section9Case {
-    id: string;
-    employeeId: string;
-    employeeName: string;
-    // #468: GET /leave/section9 can also return SUPERSEDED — a CONFIRMED credit a correction
-    // (PATCH /correct) made obsolete, never an open case (the filter below still only lists
-    // AU_PENDING and REJECTED).
-    status: "AU_PENDING" | "CONFIRMED" | "REJECTED" | "SUPERSEDED";
-    overlapStart: string;
-    overlapEnd: string;
-    creditedStart: string | null;
-    creditedEnd: string | null;
-    creditedDays: number | null;
-    attestSource: string | null;
-    attestValidFrom: string | null;
-    attestValidTo: string | null;
-    reason: string | null;
-    sickRequest: { id: string; startDate: string; endDate: string; status: string };
-    vacationRequest: {
-      id: string;
-      startDate: string;
-      endDate: string;
-      halfDay: boolean;
-      days: number;
-      typeName: string;
-    };
-  }
-
-  let section9Cases: Section9Case[] = $state([]);
-  let section9Loading = $state(true);
-  let highlightSection9Id: string | null = $state(null);
 
   // The inbox is a work queue and stays unfiltered (#558): a due § 9 decision must never be hidden
   // by the header selection, so this read sends no salon parameter and the API scopes it by reach.
@@ -571,640 +864,292 @@
   <title>{pageLabel("/inbox")} – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow="Team" title={pageLabel("/inbox")} />
+<PageHead title={pageLabel("/inbox")} sub="Entscheidungen, die auf dich warten" />
 
 {#if error}
-  <div class="callout error" role="alert" style="margin-bottom: 16px;">
-    <span class="ico">⚠</span>
-    <p>{error}</p>
+  <ErrorState message={error} hint="" onRetry={() => void loadRequests()} retrying={loading} />
+{/if}
+
+<!-- ── One band: how many decisions wait, per kind the caller can take ─────────── -->
+{#if kpiItems.length > 0}
+  <div class="aufgaben-band">
+    <KpiStrip band ariaLabel="Offene Aufgaben" items={kpiItems} />
   </div>
 {/if}
 
-<!-- ── KPI row (4 stats: leave pending/approved/rejected + retro pending) ── -->
-<div class="kpi-row">
-  <Card animate>
-    <KPIStat
-      label="Offen"
-      value={String(kpiPending)}
-      unit={kpiPending === 1 ? "Antrag" : "Anträge"}
-    />
-  </Card>
-  <Card animate>
-    <KPIStat
-      label="Genehmigt"
-      value={String(kpiApproved)}
-      unit={kpiApproved === 1 ? "Antrag" : "Anträge"}
-    />
-  </Card>
-  <Card animate>
-    <KPIStat
-      label="Abgelehnt"
-      value={String(kpiRejected)}
-      unit={kpiRejected === 1 ? "Antrag" : "Anträge"}
-    />
-  </Card>
-  <Card animate>
-    <KPIStat
-      label="Retro-Anträge"
-      value={String(kpiRetroPending)}
-      unit={kpiRetroPending === 1 ? "offen" : "offen"}
-    />
-  </Card>
-</div>
-
-<!-- ── Global view-tabs above the list card ──────────────────────────────── -->
-<div class="view-tabs" role="tablist">
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={tab === "open"}
-    role="tab"
-    aria-selected={tab === "open"}
-    onclick={() => (tab = "open")}
-  >
-    Offen
-    {#if openRequests.length > 0}
-      <span class="tab-badge">{openRequests.length}</span>
+<!-- ── The task list: every decision in one place, oldest first ─────────────────── -->
+{#if availableKinds.length > 0}
+  <div class="aufgaben-controls">
+    {#if availableKinds.length > 1}
+      <div class="aufgaben-typ">
+        <SegmentedControl
+          options={typOptions}
+          value={activeTyp}
+          name="aufgaben-typ"
+          ariaLabel="Art der Aufgabe"
+          size="sm"
+          onchange={onTypSelected}
+        />
+      </div>
     {/if}
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={tab === "approved"}
-    role="tab"
-    aria-selected={tab === "approved"}
-    onclick={() => (tab = "approved")}
-  >
-    Genehmigt
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={tab === "rejected"}
-    role="tab"
-    aria-selected={tab === "rejected"}
-    onclick={() => (tab = "rejected")}
-  >
-    Abgelehnt
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={tab === "all"}
-    role="tab"
-    aria-selected={tab === "all"}
-    onclick={() => (tab = "all")}
-  >
-    Alle
-  </button>
-</div>
-
-<!-- ── List card with ApprovalRow entries ───────────────────────────────── -->
-<Card animate class="list-card" style="padding: 0;">
-  <div class="list-card-header">
-    <CardHeader
-      title="Anträge"
-      sub={tab === "open"
-        ? "Offen — auf Entscheidung wartend"
-        : tab === "approved"
-          ? `Genehmigt in ${currentYear}`
-          : tab === "rejected"
-            ? `Abgelehnt in ${currentYear}`
-            : `Alle Anträge in ${currentYear}`}
+    <SegmentedControl
+      options={ansichtOptions}
+      value={taskView.ansicht}
+      name="aufgaben-ansicht"
+      ariaLabel="Ansicht"
+      size="sm"
+      onchange={onAnsichtSelected}
     />
   </div>
 
-  {#if loading}
-    <div class="list-empty">Lädt…</div>
-  {:else if visibleRequests.length === 0}
-    {#if tab === "open"}
-      <EmptyState
-        icon="inbox"
-        title="Keine offenen Anträge"
-        description="Alle Anträge in diesem Tab sind bearbeitet."
-      />
-    {:else if tab === "approved"}
-      <EmptyState
-        icon="inbox"
-        title="Keine genehmigten Anträge"
-        description={`Im Jahr ${currentYear} wurden keine Anträge genehmigt.`}
-      />
-    {:else if tab === "rejected"}
-      <EmptyState
-        icon="inbox"
-        title="Keine abgelehnten Anträge"
-        description={`Im Jahr ${currentYear} wurden keine Anträge abgelehnt.`}
-      />
-    {:else}
-      <EmptyState
-        icon="inbox"
-        title="Keine Anträge"
-        description={`Im Jahr ${currentYear} liegen keine Anträge vor.`}
-      />
-    {/if}
-  {:else}
-    {#each visibleRequests as req (req.id)}
-      <ApprovalRow
-        avatar={initials(req.employee.firstName, req.employee.lastName)}
-        name={`${req.employee.firstName} ${req.employee.lastName}`}
-        dates={`${fmtDate(req.startDate)} – ${fmtDate(req.endDate)} · ${leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}`}
-        onPrimary={() => openDetail(req)}
-      >
-        {#snippet metaContent()}
-          <LeaveTypeChip
-            code={req.typeCode}
-            label={typeName(req.typeCode)}
-            requested={req.status === "PENDING"}
-          />
-          {#if req.status === "CANCELLATION_REQUESTED"}
-            <span class="chip chip-warn">Stornierung beantragt</span>
-          {:else if req.status === "PENDING"}
-            <span class="chip chip-warn">Ausstehend</span>
-          {:else if req.status === "APPROVED"}
-            <span class="chip chip-good">Genehmigt</span>
-          {:else if req.status === "REJECTED"}
-            <span class="chip chip-bad">Abgelehnt</span>
-          {/if}
-        {/snippet}
-        {#snippet actions()}
-          {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-            <!--
-              Previously this branch rendered two buttons labeled "Ablehnen"
-              and "Genehmigen" that both only opened the detail modal — a UX
-              correctness bug (REVIEW WR-02). A manager clicking "Ablehnen"
-              in a hurry would expect an immediate reject, not a modal open.
-              The actual approve/reject controls live inside the modal and
-              require an explicit confirmation step (and a reviewNote), so
-              the row now exposes a single neutral "Prüfen" button whose
-              label matches what the click actually does: open the detail
-              modal for review.
-            -->
-            <button
-              class="btn btn-primary sm"
-              onclick={(e) => {
-                e.stopPropagation();
-                openDetail(req);
-              }}
-            >
-              Prüfen
-            </button>
-          {:else}
-            <button
-              class="btn btn-ghost sm"
-              onclick={(e) => {
-                e.stopPropagation();
-                openDetail(req);
-              }}>Details</button
-            >
-          {/if}
-        {/snippet}
-      </ApprovalRow>
-    {/each}
-  {/if}
-</Card>
-
-<!-- ── Detail modal ──────────────────────────────────────────────────────── -->
-<!-- ── Retro-Anträge view-tabs ─────────────────────────────────────────── -->
-<div class="view-tabs retro-tabs" role="tablist">
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={retroTab === "open"}
-    role="tab"
-    aria-selected={retroTab === "open"}
-    onclick={() => (retroTab = "open")}
-  >
-    Offen
-    {#if retroOpenRequests.length > 0}
-      <span class="tab-badge">{retroOpenRequests.length}</span>
-    {/if}
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={retroTab === "approved"}
-    role="tab"
-    aria-selected={retroTab === "approved"}
-    onclick={() => (retroTab = "approved")}
-  >
-    Genehmigt
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={retroTab === "rejected"}
-    role="tab"
-    aria-selected={retroTab === "rejected"}
-    onclick={() => (retroTab = "rejected")}
-  >
-    Abgelehnt
-  </button>
-  <button
-    type="button"
-    class="view-tab"
-    class:view-tab--active={retroTab === "all"}
-    role="tab"
-    aria-selected={retroTab === "all"}
-    onclick={() => (retroTab = "all")}
-  >
-    Alle
-  </button>
-</div>
-
-<!-- ── Retro-Anträge list card ────────────────────────────────────────── -->
-<Card animate class="list-card retro-list-card" style="padding: 0;">
-  <div class="list-card-header">
-    <CardHeader
-      title="Nachträgliche Zeiterfassungs-Anträge"
-      sub="Anträge auf rückwirkende Einträge außerhalb des Selbstbearbeitungsfensters"
-    />
-  </div>
-
-  {#if retroLoading}
-    <div class="list-empty">Lädt…</div>
-  {:else if retroVisible.length === 0}
-    {#if retroTab === "open"}
-      <EmptyState
-        icon="inbox"
-        title="Keine Retro-Anträge"
-        description="Alle Anträge auf rückwirkende Einträge wurden bearbeitet."
-      />
-    {:else if retroTab === "approved"}
-      <EmptyState
-        icon="inbox"
-        title="Keine Retro-Anträge"
-        description="In diesem Zeitraum wurden keine Retro-Anträge genehmigt."
-      />
-    {:else if retroTab === "rejected"}
-      <EmptyState
-        icon="inbox"
-        title="Keine Retro-Anträge"
-        description="In diesem Zeitraum wurden keine Retro-Anträge abgelehnt."
-      />
-    {:else}
-      <EmptyState
-        icon="inbox"
-        title="Keine Retro-Anträge"
-        description="Keine Anträge auf rückwirkende Einträge vorhanden."
-      />
-    {/if}
-  {:else}
-    {#each retroVisible as req (req.id)}
-      <ApprovalRow
-        avatar={initials(req.employee.firstName, req.employee.lastName)}
-        name={`${req.employee.firstName} ${req.employee.lastName}`}
-        dates={`Eintrag vom ${fmtDate(req.targetDate)}${req.startTime && req.endTime ? ` · ${req.startTime}–${req.endTime}` : ""} · Alter: ${req.entryAgeInDays ?? "?"} Tage`}
-        onPrimary={() => openRetroDetail(req)}
-      >
-        {#snippet metaContent()}
-          <span class="chip chip-warn">Rückwirkend</span>
-          <span class="chip">{fmtDate(req.targetDate)}</span>
-          {#if req.status === "PENDING"}
-            <span class="badge badge-yellow">Ausstehend</span>
-          {:else if req.status === "APPROVED"}
-            <span class="badge badge-green">Genehmigt</span>
-          {:else if req.status === "REJECTED"}
-            <span class="badge badge-red">Abgelehnt</span>
-          {:else if req.status === "USED"}
-            <span class="badge badge-gray">Verwendet</span>
-          {/if}
-        {/snippet}
-        {#snippet actions()}
-          {#if req.status === "PENDING"}
-            <button
-              class="btn btn-primary btn-sm"
-              onclick={(e) => {
-                e.stopPropagation();
-                openRetroDetail(req);
-              }}
-            >
-              Prüfen
-            </button>
-          {:else}
-            <button
-              class="btn btn-ghost btn-sm"
-              onclick={(e) => {
-                e.stopPropagation();
-                openRetroDetail(req);
-              }}>Details</button
-            >
-          {/if}
-        {/snippet}
-      </ApprovalRow>
-    {/each}
-  {/if}
-</Card>
-
-<!-- ── § 9 BUrlG — Fälle (Phase 104-10, R6/D-27/D-11; moved here from /team/leave, #840 D-840-05) ── -->
-{#if canSection9}
-  <Card animate class="list-card section9-list-card" style="padding: 0;">
-    <div class="list-card-header">
-      <CardHeader
-        title="§ 9-Fälle"
-        sub="§ 9 BUrlG — Urlaub und Krankheit überschneiden sich, die AU wartet auf deine Entscheidung"
-      />
-    </div>
-    <div class="section9-cases" data-testid="section9-cases-list">
-      {#if section9Loading}
-        <div class="list-empty">Lädt…</div>
-      {:else if openSection9Cases.length === 0}
+  <div class="aufgaben-list">
+    {#if tasksLoading}
+      <Skeleton shape="row" count={3} />
+    {:else if visibleTaskRows.length === 0}
+      {#if activeTyp !== "alle"}
+        <EmptyState
+          variant="noMatches"
+          description="In dieser Art gibt es hier nichts."
+          actionLabel="Alle anzeigen"
+          onaction={() => taskUrl.write({ typ: "alle" })}
+        />
+      {:else if taskView.ansicht === "entschieden"}
         <EmptyState
           icon="inbox"
-          title="Keine offenen § 9-Fälle"
-          description="Es wartet keine Entscheidung zu einer Arbeitsunfähigkeit im Urlaub."
+          title="Noch nichts entschieden"
+          description={`Im Jahr ${currentYear} liegt keine entschiedene Aufgabe vor.`}
         />
       {:else}
-        {#each openSection9Cases as c (c.id)}
-          <div
-            class="section9-case-row"
-            id="section9-{c.id}"
-            class:highlight-row={highlightSection9Id === c.id}
+        <EmptyState
+          icon="inbox"
+          title="Keine offenen Aufgaben"
+          description="Es wartet keine Entscheidung auf dich."
+        />
+      {/if}
+    {:else}
+      <List ariaLabel="Aufgaben" testId="inbox-task-list">
+        {#each visibleTaskRows as row (row.key)}
+          {@const request = leaveOf(row)}
+          {@const retro = retroOf(row)}
+          {@const c = section9Of(row)}
+          <TaskRow
+            {row}
+            typeLabel={row.typeCode ? typeName(row.typeCode) : undefined}
+            context={request ? (rowContext[request.id] ?? null) : null}
+            rowId={c ? `section9-${c.id}` : undefined}
+            highlight={c !== null && highlightSection9Id === c.id}
+            onOpen={request
+              ? () => openDetail(request)
+              : retro
+                ? () => openRetroDetail(retro)
+                : undefined}
           >
-            <div class="pending-info">
-              <span class="pending-name">{c.employeeName}</span>
-              <span class="pending-type">
-                Urlaub {fmtDate(c.vacationRequest.startDate)}–{fmtDate(c.vacationRequest.endDate)} · Krank
-                {fmtDate(c.sickRequest.startDate)}–{fmtDate(c.sickRequest.endDate)}
-              </span>
-              {#if c.status === "REJECTED"}
-                <span class="badge badge-red" data-testid="section9-case-status">AU abgelehnt</span>
-                {#if c.reason}
-                  <span class="text-muted" title={c.reason}>„{c.reason}"</span>
+            {#snippet actions()}
+              <!--
+                An open leave or Zeitnachtrag row decides in the row (Issue #853-19): „Ablehnen“ (ghost)
+                asks for the required reason, „Genehmigen“ (primary) acts through the existing approve
+                call; the title still opens the full dialog. A decided row has no button. The caller's
+                own request shows the four-eyes note instead of the buttons.
+              -->
+              {#if c}
+                <!-- § 9 (Phase 104-10, R6/D-11): the three existing actions, unchanged handlers -->
+                {#if c.status === "AU_PENDING"}
+                  <button
+                    class="btn btn-sm btn-primary"
+                    data-testid={`section9-case-${c.id}-confirm`}
+                    onclick={() => openSection9Confirm(c)}
+                  >
+                    AU liegt vor
+                  </button>
+                  <button
+                    class="btn btn-sm btn-ghost text-red"
+                    data-testid={`section9-case-${c.id}-reject`}
+                    onclick={() => openSection9Reject(c)}
+                  >
+                    Ablehnen
+                  </button>
+                {:else if c.status === "REJECTED"}
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    data-testid={`section9-case-${c.id}-reopen`}
+                    onclick={() => reopenSection9Case(c)}
+                  >
+                    Wieder eröffnen
+                  </button>
                 {/if}
-              {:else}
-                <span class="badge badge-yellow" data-testid="section9-case-status"
-                  >AU ausstehend</span
-                >
+              {:else if row.kind === "pausenbefund" || row.kind === "ausstempeln" || row.kind === "zeitkorrektur"}
+                <!--
+                  No decision path of its own: the acknowledgement / correction happens on Zeiten with
+                  the existing dialogs. A row whose stored link is not a same-origin app path has no link.
+                -->
+                {#if row.href}
+                  <a class="btn btn-secondary btn-sm" href={row.href}>
+                    {row.kind === "pausenbefund"
+                      ? "Klären"
+                      : row.kind === "ausstempeln"
+                        ? "Korrigieren"
+                        : "Prüfen"}
+                  </a>
+                {/if}
+              {:else if !row.decided && (request || retro)}
+                <TaskRowActions
+                  kind={row.kind}
+                  sourceId={row.sourceId}
+                  personName={row.personName}
+                  cancellation={row.status === "CANCELLATION_REQUESTED"}
+                  own={isOwnRow(row)}
+                  ownNote={SELF_APPROVAL_TEXT}
+                  busy={busyKey !== null}
+                  deciding={busyKey === row.key}
+                  onApprove={() => approveRow(row)}
+                  onReject={() => askRejectReason(row)}
+                />
               {/if}
-            </div>
-            <div class="section9-case-actions">
-              {#if c.status === "AU_PENDING"}
-                <button
-                  class="btn btn-sm btn-primary"
-                  data-testid={`section9-case-${c.id}-confirm`}
-                  onclick={() => openSection9Confirm(c)}
-                >
-                  AU liegt vor
-                </button>
-                <button
-                  class="btn btn-sm btn-ghost text-red"
-                  data-testid={`section9-case-${c.id}-reject`}
-                  onclick={() => openSection9Reject(c)}
-                >
-                  Ablehnen
-                </button>
-              {:else if c.status === "REJECTED"}
-                <button
-                  class="btn btn-sm btn-ghost"
-                  data-testid={`section9-case-${c.id}-reopen`}
-                  onclick={() => reopenSection9Case(c)}
-                >
-                  Wieder eröffnen
-                </button>
-                <p class="section9-case-hint text-muted">
-                  Trifft die AU später ein, kann der Vorgang wieder eröffnet werden.
-                </p>
-              {/if}
-            </div>
-          </div>
+            {/snippet}
+          </TaskRow>
         {/each}
-      {/if}
-    </div>
-  </Card>
+      </List>
+    {/if}
+  </div>
 {/if}
 
-<!-- ── Retro detail/review modal ──────────────────────────────────────── -->
+<!-- ── Zeitnachtrag decision: a Dialog with a fact list (Issue #853, D-853-18) ───────── -->
 {#if retroDetail}
-  <Modal
+  <RetroReviewBody
     bind:open={retroDetailOpen}
-    eyebrow="Retro-Antrag prüfen"
-    title={`${retroDetail.employee.firstName} ${retroDetail.employee.lastName}`}
-  >
-    <!-- Mini-stat grid: Mitarbeiter / Zieldatum / Alter -->
-    <div class="mini-stat-grid">
-      <div class="mini-stat">
-        <span class="label">Mitarbeiter</span>
-        <span class="value">{retroDetail.employee.firstName} {retroDetail.employee.lastName}</span>
-      </div>
-      <div class="mini-stat">
-        <span class="label">Zieldatum</span>
-        <span class="value">{fmtDate(retroDetail.targetDate)}</span>
-      </div>
-      <div class="mini-stat">
-        <span class="label">Alter (Tage)</span>
-        <span
-          class="value"
-          style="font-family: var(--font-mono); font-variant-numeric: tabular-nums;"
-        >
-          {retroDetail.entryAgeInDays ?? "?"}
-        </span>
-      </div>
-    </div>
-
-    <!-- Vorgeschlagene Zeiten (RETRO-16/D-10: editable on approve — manager can
-         correct the employee's proposal before it is written to the entry). -->
-    {#if retroDetail.startTime && retroDetail.endTime}
-      <div class="note-block">
-        <div class="note-label">Vorgeschlagene Zeiten</div>
-        <div class="retro-times-row">
-          <div class="review-note-field">
-            <label class="review-note-label" for="retro-edit-start">Von</label>
-            <input
-              id="retro-edit-start"
-              type="time"
-              class="review-note-input"
-              bind:value={retroEditStartTime}
-              disabled={retroReviewSaving}
-            />
-          </div>
-          <div class="review-note-field">
-            <label class="review-note-label" for="retro-edit-end">Bis</label>
-            <input
-              id="retro-edit-end"
-              type="time"
-              class="review-note-input"
-              bind:value={retroEditEndTime}
-              disabled={retroReviewSaving}
-            />
-          </div>
-          <div class="review-note-field">
-            <label class="review-note-label" for="retro-edit-break">Pause (Min.)</label>
-            <input
-              id="retro-edit-break"
-              type="number"
-              min="0"
-              step="1"
-              class="review-note-input"
-              bind:value={retroEditBreakMinutes}
-              disabled={retroReviewSaving}
-            />
-          </div>
-        </div>
-      </div>
-    {/if}
-
-    <!-- Begründung Mitarbeiter -->
-    <div class="note-block">
-      <div class="note-label">Begründung Mitarbeiter</div>
-      <div class="note-text">„{retroDetail.reason}"</div>
-    </div>
-
-    <!-- Age warning callout (if age > window) -->
-    {#if retroDetail.entryAgeInDays != null && retroDetail.windowDays != null && retroDetail.entryAgeInDays > retroDetail.windowDays}
-      <div class="callout warning" role="alert">
-        <span class="ico" aria-hidden="true">⚠</span>
-        <p>
-          Eintrag vom {fmtDate(retroDetail.targetDate)} liegt {retroDetail.entryAgeInDays} Tage in der
-          Vergangenheit (Fenster: {retroDetail.windowDays} Tage).
-        </p>
-      </div>
-    {/if}
-
-    <!-- ArbZG legal callout (always shown) -->
-    <div class="callout" role="note">
-      <span class="ico" aria-hidden="true">⚖</span>
-      <p>Rückwirkende Korrekturen müssen revisionssicher begründet sein (ArbZG § 16 Abs. 2).</p>
-    </div>
-
-    <!-- Review note — optional on approve, mandatory on reject (Revisionssicherheit) -->
-    <div class="review-note-field">
-      <label class="review-note-label" for="retro-review-note"
-        >Kommentar <span class="text-muted">(optional bei Genehmigung, Pflicht bei Ablehnung)</span
-        ></label
-      >
-      <input
-        id="retro-review-note"
-        type="text"
-        class="review-note-input"
-        bind:value={retroReviewNote}
-        placeholder="Begründung für Genehmigung oder Ablehnung"
-        disabled={retroReviewSaving}
-      />
-    </div>
-
-    {#if retroReviewError}
-      <div class="callout error" role="alert">
-        <span class="ico">⚠</span>
-        <p>{retroReviewError}</p>
-      </div>
-    {/if}
-
-    {#snippet footer()}
-      <button class="btn btn-ghost" onclick={closeRetroDetail} disabled={retroReviewSaving}>
-        Abbrechen
-      </button>
-      <span class="spacer"></span>
-      {#if retroDetail && isRetroSelfApproval(retroDetail)}
-        <span class="footer-note">Eigene Anträge können nicht selbst genehmigt werden.</span>
-      {:else if retroDetail?.status === "PENDING"}
-        <button
-          class="btn btn-danger"
-          onclick={() => submitRetroReview("REJECTED")}
-          disabled={retroReviewSaving || !retroReviewNote.trim()}
-        >
-          {retroReviewSaving ? "…" : "Ablehnen"}
-        </button>
-        <button
-          class="btn btn-primary"
-          onclick={() => submitRetroReview("APPROVED")}
-          disabled={retroReviewSaving}
-        >
-          {retroReviewSaving ? "…" : "Genehmigen"}
-        </button>
-      {:else}
-        <span class="footer-note">Antrag bereits entschieden.</span>
-      {/if}
-    {/snippet}
-  </Modal>
+    personName={`${retroDetail.employee.firstName} ${retroDetail.employee.lastName}`}
+    dayLabel={fmtDate(retroDetail.targetDate)}
+    proposedLabel={retroDetail.startTime && retroDetail.endTime
+      ? `${retroDetail.startTime}–${retroDetail.endTime}${
+          retroDetail.breakMinutes ? ` · Pause ${retroDetail.breakMinutes} Min.` : ""
+        }`
+      : null}
+    entryAgeInDays={retroDetail.entryAgeInDays ?? null}
+    employeeReason={retroDetail.reason}
+    ageWarning={retroDetail.entryAgeInDays != null &&
+    retroDetail.windowDays != null &&
+    retroDetail.entryAgeInDays > retroDetail.windowDays
+      ? `Eintrag vom ${fmtDate(retroDetail.targetDate)} liegt ${retroDetail.entryAgeInDays} Tage in der Vergangenheit (Fenster: ${retroDetail.windowDays} Tage).`
+      : null}
+    editableTimes={Boolean(retroDetail.startTime && retroDetail.endTime)}
+    bind:startTime={retroEditStartTime}
+    bind:endTime={retroEditEndTime}
+    bind:breakMinutes={retroEditBreakMinutes}
+    bind:reviewNote={retroReviewNote}
+    saving={retroReviewSaving}
+    error={retroReviewError}
+    pending={retroDetail.status === "PENDING"}
+    selfApproval={isRetroSelfApproval(retroDetail)}
+    onApprove={() => submitRetroReview("APPROVED")}
+    onReject={() => submitRetroReview("REJECTED")}
+    onCancel={closeRetroDetail}
+  />
 {/if}
 
-<!-- ── Phase 104-10 (R6/D-27/D-26): "AU liegt vor" — Confirm-Dialog ─────────── -->
+<!-- ── Phase 104-10 (R6/D-27/D-26): "AU liegt vor" — Confirm-Dialog (Issue #853: facts + fields) ── -->
 {#if section9ConfirmCase}
-  <Modal bind:open={section9ConfirmOpen} eyebrow="§ 9 BUrlG" title="AU liegt vor">
+  <Dialog bind:open={section9ConfirmOpen} eyebrow="§ 9 BUrlG" title="AU liegt vor">
     <div data-testid="section9-confirm-modal" style="display: contents">
-      <div class="review-grid">
-        <div class="review-field">
-          <span class="review-label">Mitarbeiter</span>
-          <span class="review-value">{section9ConfirmCase.employeeName}</span>
+      <dl class="facts">
+        <div class="fact">
+          <dt>Person</dt>
+          <dd>{section9ConfirmCase.employeeName}</dd>
         </div>
-        <div class="review-field">
-          <span class="review-label">Überschneidung</span>
-          <span class="review-value font-mono"
-            >{fmtDate(section9ConfirmCase.overlapStart)} – {fmtDate(
-              section9ConfirmCase.overlapEnd,
-            )}</span
-          >
+        <div class="fact">
+          <dt>Überschneidung</dt>
+          <dd>
+            {fmtDate(section9ConfirmCase.overlapStart)} – {fmtDate(section9ConfirmCase.overlapEnd)}
+          </dd>
         </div>
+      </dl>
+
+      <div class="review-section">
+        <fieldset class="attest-fieldset">
+          <legend class="attest-legend">Gültigkeit der AU</legend>
+          <div class="attest-dates">
+            <FormField label="Gültig von">
+              {#snippet field({ id, describedBy, invalid })}
+                <input
+                  {id}
+                  type="date"
+                  bind:value={section9AttestFrom}
+                  class="form-input attest-date-input"
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid ? "true" : undefined}
+                />
+              {/snippet}
+            </FormField>
+            <FormField label="Gültig bis">
+              {#snippet field({ id, describedBy, invalid })}
+                <input
+                  {id}
+                  type="date"
+                  bind:value={section9AttestTo}
+                  class="form-input attest-date-input"
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid ? "true" : undefined}
+                />
+              {/snippet}
+            </FormField>
+          </div>
+        </fieldset>
       </div>
 
-      <div class="form-group review-section">
-        <span class="form-label">Gültigkeit der AU</span>
-        <div class="attest-dates">
-          <div class="form-group">
-            <label class="form-label" for="s9-from">Gültig von</label>
-            <input
-              id="s9-from"
-              type="date"
-              bind:value={section9AttestFrom}
-              class="form-input attest-date-input"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="s9-to">Gültig bis</label>
-            <input
-              id="s9-to"
-              type="date"
-              bind:value={section9AttestTo}
-              class="form-input attest-date-input"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div class="form-group review-section">
-        <span class="form-label">Herkunft</span>
-        <label class="toggle-label">
-          <input type="radio" name="s9-source" value="EAU" bind:group={section9AttestSource} />
-          <span>eAU abgerufen</span>
-        </label>
-        <label class="toggle-label">
-          <input type="radio" name="s9-source" value="PAPIER" bind:group={section9AttestSource} />
-          <span>Papier</span>
-        </label>
+      <div class="review-section">
+        <fieldset class="attest-fieldset">
+          <legend class="attest-legend">Herkunft</legend>
+          <label class="toggle-label">
+            <input type="radio" name="s9-source" value="EAU" bind:group={section9AttestSource} />
+            <span>eAU abgerufen</span>
+          </label>
+          <label class="toggle-label">
+            <input type="radio" name="s9-source" value="PAPIER" bind:group={section9AttestSource} />
+            <span>Papier</span>
+          </label>
+        </fieldset>
       </div>
 
       {#if section9AttestSource === "PAPIER"}
-        <div class="form-group review-section">
-          <label class="form-label" for="s9-file">Papier-AU (optional)</label>
-          <input
-            id="s9-file"
-            type="file"
-            accept="application/pdf,image/jpeg,image/png"
-            class="form-input"
-            onchange={(e) => (section9File = (e.target as HTMLInputElement).files?.[0] ?? null)}
-          />
-          <p class="text-muted section9-hint">PDF, JPG oder PNG, max. 10 MB.</p>
+        <div class="review-section">
+          <FormField label="Papier-AU (optional)" help="PDF, JPG oder PNG, max. 10 MB.">
+            {#snippet field({ id, describedBy, invalid })}
+              <input
+                {id}
+                type="file"
+                accept="application/pdf,image/jpeg,image/png"
+                class="form-input"
+                aria-describedby={describedBy}
+                aria-invalid={invalid ? "true" : undefined}
+                onchange={(e) => (section9File = (e.target as HTMLInputElement).files?.[0] ?? null)}
+              />
+            {/snippet}
+          </FormField>
         </div>
       {/if}
 
-      <div class="form-group review-section">
-        <label class="form-label" for="s9-reason">Begründung</label>
-        <textarea
-          id="s9-reason"
-          class="form-input"
-          rows="2"
-          bind:value={section9Reason}
-          placeholder="Verwaltungsvermerk zur Nachvollziehbarkeit"
-        ></textarea>
-        <p class="text-muted section9-hint">
-          Verwaltungsvermerk zur Nachvollziehbarkeit — bitte keine Diagnose oder Arztangaben
-          eintragen.
-        </p>
+      <div class="review-section">
+        <FormField
+          label="Begründung"
+          required
+          help="Verwaltungsvermerk zur Nachvollziehbarkeit — bitte keine Diagnose oder Arztangaben eintragen."
+        >
+          {#snippet field({ id, describedBy, invalid })}
+            <textarea
+              {id}
+              class="form-input"
+              rows="2"
+              bind:value={section9Reason}
+              placeholder="Verwaltungsvermerk zur Nachvollziehbarkeit"
+              aria-describedby={describedBy}
+              aria-invalid={invalid ? "true" : undefined}
+            ></textarea>
+          {/snippet}
+        </FormField>
       </div>
 
       {#if section9Error}
-        <div class="alert alert-error review-error" role="alert">
-          <span>⚠</span><span>{section9Error}</span>
+        <div class="review-section" role="alert">
+          <Note tone="bad">{section9Error}</Note>
         </div>
       {/if}
     </div>
@@ -1222,7 +1167,7 @@
         {section9Saving ? "…" : "Bestätigen"}
       </button>
     {/snippet}
-  </Modal>
+  </Dialog>
 {/if}
 
 <!-- ── Phase 104-10 (D-11): "AU liegt vor" — Ablehnen-Begründung ─────────────── -->
@@ -1238,225 +1183,105 @@
   />
 {/if}
 
+<!-- ── Issue #853-19: „Ablehnen“ in a row asks for the required reason ─────────────────── -->
+{#if rowRejectTarget}
+  <ReasonDialog
+    bind:open={rowRejectOpen}
+    title={rowRejectTarget.kind === "nachtrag"
+      ? "Zeitnachtrag ablehnen"
+      : rowRejectTarget.request.status === "CANCELLATION_REQUESTED"
+        ? "Stornierung ablehnen"
+        : "Antrag ablehnen"}
+    description="Die Begründung wird zur Nachvollziehbarkeit mit der Ablehnung gespeichert."
+    confirmLabel="Ablehnen"
+    danger
+    onConfirm={confirmRowReject}
+    onCancel={() => (rowRejectTarget = null)}
+  />
+{/if}
+
 <!-- ── Leave detail modal (Phase 255: the shared LeaveReviewDialog component) ──────── -->
 <LeaveReviewDialog
+  bind:this={reviewDialog}
   bind:open={detailOpen}
   request={detailRequest}
   currentEmployeeId={$authStore.user?.employeeId ?? null}
+  canReadEntitlement={hasPermission($authStore.user, "leave-entitlement:read:ZUGEWIESEN")}
+  canReadShifts={hasPermission($authStore.user, "shift:read:ZUGEWIESEN")}
+  canReadEmployee={hasPermission($authStore.user, "employee:read:ZUGEWIESEN")}
   onReviewed={loadRequests}
 />
 
 <style>
-  /* ── KPI row ──────────────────────────────────────────────────────────── */
-  .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    margin-bottom: 16px;
+  /* ── Page top (Issue #853): the band and the one list stack with the page rhythm ── */
+  .aufgaben-band,
+  .aufgaben-list {
+    margin-bottom: var(--s-4);
   }
 
-  @media (max-width: 900px) {
-    .kpi-row {
-      grid-template-columns: repeat(2, 1fr);
-    }
+  /* The type segment can hold up to six kinds: on a narrow screen it scrolls inside its own box
+     instead of widening the page. */
+  .aufgaben-typ {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
   }
 
-  @media (max-width: 560px) {
-    .kpi-row {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* ── Retro section spacing ────────────────────────────────────────────── */
-  .retro-tabs {
-    margin-top: 28px;
-  }
-
-  /* ── List card (overrides .card padding for full-bleed rows) ─────────── */
-  :global(.list-card) {
-    overflow: hidden;
-  }
-
-  /* Header wrapper that adds the bottom border separation when the CardHeader
-     sits at the top of a padding:0 list card. */
-  .list-card-header {
-    padding: 18px 18px 14px;
-    border-bottom: 1px solid var(--border);
-  }
-  .list-card-header :global(.card-hd) {
-    margin-bottom: 0;
-  }
-
-  .list-empty {
-    padding: 32px 24px;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 13.5px;
-  }
-
-  /* ── Modal body helpers ───────────────────────────────────────────────── */
-  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
-  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
-  .mini-stat-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px;
-    padding: 14px 16px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-md);
-    border: 1px solid var(--border);
-  }
-
-  @media (max-width: 560px) {
-    .mini-stat-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
-  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
-  .note-block {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    padding: 12px 14px;
-  }
-  .note-label {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-    margin-bottom: 6px;
-  }
-  .note-text {
-    font-size: 13.5px;
-    color: var(--text);
-    font-style: italic;
-  }
-
-  /* ── Retro editable proposed-times row (RETRO-16/D-10) ──────────────────
-     Layout-only wrapper around 3 existing .review-note-field/-input pairs —
-     no new color/radius/spacing tokens, reuses the review-note-input look. */
-  .retro-times-row {
+  /* The type and view segments share one row; they wrap on a phone. */
+  .aufgaben-controls {
     display: flex;
-    gap: 10px;
     flex-wrap: wrap;
-    margin-top: 8px;
-  }
-  .retro-times-row .review-note-field {
-    flex: 1;
-    min-width: 100px;
-  }
-
-  /* ── Review note input ────────────────────────────────────────────────── */
-  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
-  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
-  .review-note-field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .review-note-label {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-  }
-  .review-note-input {
-    width: 100%;
-    padding: 9px 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--bg-card);
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 13.5px;
-    transition: border-color 160ms var(--ease);
-  }
-  .review-note-input:focus-visible {
-    outline: 2px solid var(--brand-light);
-    outline-offset: 2px;
-    border-color: var(--brand);
-  }
-
-  /* Shared with the retro-entry review dialog (out of scope, Issue #255) — the absence */
-  /* review dialog moved to LeaveReviewDialog.svelte, these did NOT become dead CSS. */
-  .footer-note {
-    font-size: 12.5px;
-    color: var(--text-muted);
-  }
-  .spacer {
-    flex: 1;
-  }
-
-  /* ── § 9 cases (moved from /team/leave, #840) ─────────────────────────── */
-  .section9-cases {
-    display: flex;
-    flex-direction: column;
-    padding: 0 18px;
-  }
-  .section9-case-row {
-    display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-    padding: 0.75rem 0;
-    border-top: 1px solid var(--border);
+    gap: var(--s-2) var(--s-4);
+    margin-bottom: var(--s-3);
   }
-  .section9-case-row:first-child {
-    border-top: none;
-  }
-  .section9-case-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .section9-case-hint {
-    font-size: 0.8125rem;
+
+  /* ── § 9 confirm dialog (Issue #853): facts as a definition list, fields as FormField ── */
+  .facts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s-3) var(--s-6);
     margin: 0;
   }
-  .section9-hint {
-    font-size: 0.8125rem;
-    margin: 0.25rem 0 0;
-  }
-  .pending-info {
+  .fact {
     display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-    flex: 1;
+    flex-direction: column;
+    gap: 2px;
     min-width: 0;
   }
-  .pending-name {
+  .fact dt {
+    font-size: var(--fs-sm);
     font-weight: 600;
-    white-space: nowrap;
+    color: var(--text-2);
   }
-  .pending-type {
-    color: var(--brand);
+  .fact dd {
+    margin: 0;
+    font-size: var(--fs-base);
     font-weight: 500;
+    overflow-wrap: anywhere;
   }
-  @keyframes highlight-fade {
-    0% {
-      background-color: var(--brand-soft);
-    }
-    100% {
-      background-color: transparent;
-    }
+  .review-section {
+    margin-top: var(--s-5);
   }
-  .highlight-row {
-    animation: highlight-fade 3s var(--ease-out) both;
+  .attest-fieldset {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
   }
-
-  /* Modal body of the "AU liegt vor" dialog. */
+  .attest-legend {
+    padding: 0;
+    margin-bottom: var(--s-2);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text-2);
+  }
   .attest-dates {
     display: flex;
-    gap: 1rem;
+    gap: var(--s-4);
     flex-wrap: wrap;
-    margin-top: 0.75rem;
   }
   .attest-date-input {
     max-width: 160px;
@@ -1464,39 +1289,14 @@
   .toggle-label {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--s-2);
     cursor: pointer;
     font-weight: 500;
   }
-  .review-error {
-    margin-top: 0.75rem;
-  }
-  .review-section {
-    margin-top: 1.25rem;
-  }
-  .review-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem 1.5rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 1rem 1.25rem;
-  }
-  .review-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
-  .review-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-  }
-  .review-value {
-    font-size: 0.9375rem;
-    font-weight: 500;
+
+  @media (max-width: 560px) {
+    .facts {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

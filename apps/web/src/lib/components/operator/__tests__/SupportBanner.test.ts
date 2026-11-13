@@ -29,7 +29,7 @@ function mount(overrides: { expiresAt?: string; reason?: string } = {}) {
       reason: overrides.reason ?? "Ticket zur Saldo-Abweichung prüfen",
       onExpired,
     },
-    "nacht",
+    "salz",
   );
   return { onExpired, unmount: () => view.unmount() };
 }

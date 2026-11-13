@@ -56,7 +56,7 @@
     max-width: 100%;
   }
   .clock-salon-label {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13px;
     color: inherit;
     opacity: 0.85;
@@ -76,8 +76,8 @@
     top: 50%;
     width: 6px;
     height: 6px;
-    border-right: 1.5px solid var(--text-muted);
-    border-bottom: 1.5px solid var(--text-muted);
+    border-right: 1.5px solid var(--text-2);
+    border-bottom: 1.5px solid var(--text-2);
     transform: translateY(-70%) rotate(45deg);
     pointer-events: none;
   }
@@ -91,7 +91,7 @@
   }
   .clock-salon-note {
     margin: 0;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13px;
     color: inherit;
     opacity: 0.85;

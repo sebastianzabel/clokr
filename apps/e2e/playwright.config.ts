@@ -85,8 +85,8 @@ export default defineConfig({
       testMatch: /auth\.setup\.ts/,
     },
     {
-      // Phase 70 advisory a11y gate (DEVOPS-V8-05): scans the public /login page only,
-      // requires no auth/storageState.
+      // Phase 70 a11y gate (DEVOPS-V8-05, blocking since #275): scans the public pages - every
+      // signed-out page and state plus the 404 page (#855) - and requires no auth/storageState.
       name: "axe-scan",
       testMatch: /axe-scan\.spec\.ts/,
       use: {
@@ -244,6 +244,48 @@ export default defineConfig({
       //     built app and the axe scans); tenant fixture plus API-created people, requests, plans,
       //     a holiday and opening hours, every date computed from the clock
       //
+      // Issue #843 (D-843-11) added a fifteenth file:
+      //   - narrow-648-843.spec.ts (#648: the /shifts week header and the /admin/employees table fit
+      //     360/390 px; employee list search and sort in the URL); tenant fixture only, no seed
+      //
+      // Issue #843 (D-843-10, D-843-12) added a sixteenth file:
+      //   - startpage-feedback-843.spec.ts (AC-3: every write of the start pages acknowledges its
+      //     result in the toast status region); tenant fixture only, no seed
+      // and a seventeenth file:
+      //   - bausteine-843.spec.ts (AC-4/AC-7: keyboard proofs of Dialog, Combobox, Tabs, DatePicker
+      //     and the toolbar popover on /admin/bausteine, axe with colour contrast in the six
+      //     theme x mode frames, and the #636 stacking of an open ConfirmDialog over the topbar);
+      //     tenant fixture only, no seed
+      //
+      // Issue #844 added a further file:
+      //   - Navigation v2: the start page per role (Mitarbeiterin, Salonmanager, Inhaber,
+      //     Personalabteilung), old URLs and a notification deep link redirect (308 on the server),
+      //     the rail without scrolling at 1440 x 900 and 1024 x 768; tenant fixture plus API-created
+      //     people with their system role templates
+      //
+      // Issue #845 added a further file:
+      //   - mein-tag-845.spec.ts (the four clock stage states with their texts and toasts, the
+      //     standing working-time figure during a break, the 390 x 844 first screen and 360 px
+      //     without overflow on Ich › Mein Tag); tenant fixture only, no seed
+      // Issue #854 (D-854-17, AC-4) added a further file:
+      //   - verwalten-854.spec.ts (every migrated Verwalten page of fixtures/verwalten-854-pages.json:
+      //     H1 text, axe WCAG 2 A/AA with colour contrast on the page and on each of its tabs, tab
+      //     keyboard navigation, no horizontal overflow at 390 and 1440 px); tenant fixture only, no
+      //     seed. Its sibling screenshots-854.spec.ts runs in the separate, non-gating `screenshots`
+      //     project below, never here.
+      //
+      // Issue #846 added a further file:
+      //   - heute-im-salon-846.spec.ts (Team › Heute im Salon: every Kennzahl links to its list,
+      //     the four on the first screen at 1440 x 900 and 390 x 844, a Salonmanager sees only the
+      //     own salon, a decision through the dialog of Aufgaben with its toast); tenant fixture plus
+      //     API-created people, a second salon and a sick request
+      //
+      // Issue #847 added a further file:
+      //   - verwalten-uebersicht-847.spec.ts (Verwalten › Übersicht: at least six setup checks with
+      //     link and state, the admin tasks counted and linked, the mail warning on the overview and
+      //     in the mail settings exactly when the server cannot deliver, the Personalabteilung lands
+      //     there); tenant fixture plus an API-created person with the HR template
+      //
       // This is the ONLY place the CI selection is listed — do not add files here
       // without also updating that registry, and do not let the CI job pass a file
       // list of its own (D-04: one visible place, cannot grow silently).
@@ -264,6 +306,17 @@ export default defineConfig({
         /role-editor-visibility-710\.spec\.ts/,
         /push-pwa\.spec\.ts/,
         /leave-area-840\.spec\.ts/,
+        /navigation-v2\.spec\.ts/,
+        /narrow-648-843\.spec\.ts/,
+        /startpage-feedback-843\.spec\.ts/,
+        /bausteine-843\.spec\.ts/,
+        /all-routes-overflow-843\.spec\.ts/,
+        /mein-tag-845\.spec\.ts/,
+        /heute-im-salon-846\.spec\.ts/,
+        /verwalten-uebersicht-847\.spec\.ts/,
+        /shift-notices-850\.spec\.ts/,
+        /verwalten-854\.spec\.ts/,
+        /team-pages-853\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],
@@ -271,6 +324,17 @@ export default defineConfig({
       // No `dependencies: ["setup"]` (D-04) — these specs authenticate via the tenant
       // fixture's own bootstrap-tenant call (apps/e2e/fixtures/tenant.ts), not via
       // storageState, so they don't need the seeded admin user auth.setup.ts logs in.
+    },
+    {
+      // Issue #854 (D-854-17, AC-9) - the acceptance screenshots of the migrated Verwalten pages.
+      // Run by the non-gating CI job `screenshots-854` (CAPTURE_854=1, uploads the PNGs as the
+      // artifact screenshots-854); no pixel assertion exists. No other project picks the file up,
+      // and without CAPTURE_854 the spec skips itself. Same `use` as e2e-ci.
+      name: "screenshots",
+      testMatch: [/screenshots-854\.spec\.ts/],
+      use: {
+        ...devices["Desktop Chrome"],
+      },
     },
   ],
 });

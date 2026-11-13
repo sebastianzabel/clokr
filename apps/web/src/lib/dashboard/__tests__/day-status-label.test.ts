@@ -126,7 +126,7 @@ describe("page sources use the one vocabulary", () => {
   it("[vacuity gate] both page sources are loaded and contain their anchors", () => {
     expect(REPORTS.length).toBeGreaterThan(0);
     expect(DASHBOARD.length).toBeGreaterThan(0);
-    expect(REPORTS).toContain("attendance-table");
+    expect(REPORTS).toContain("attendanceCell");
     expect(REPORTS_PAGE.length).toBeGreaterThan(1_000);
     expect(DASHBOARD).toContain("team-grid__cell");
   });

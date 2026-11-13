@@ -22,8 +22,8 @@ Gestartet werden: PostgreSQL, Redis, MinIO, API, Web.
 | `DATABASE_URL`                                  | ✓       | PostgreSQL Connection String                                                                                                                                                                           |
 | `CORS_ORIGIN`                                   | ✓       | URL des Web-Frontends (kein Wildcard)                                                                                                                                                                  |
 | `APP_URL`                                       | ✓       | Öffentliche URL (für E-Mail-Links)                                                                                                                                                                     |
-| `CLOKR_API_IMAGE`                               | ✓       | Vollständige Image-Referenz der API, z. B. `ghcr.io/sebastianzabel/clokr-api:1.12.0` (Tag ohne führendes `v`)                                                                                          |
-| `CLOKR_WEB_IMAGE`                               | ✓       | Vollständige Image-Referenz des Web-Frontends, z. B. `ghcr.io/sebastianzabel/clokr-web:1.12.0` (Tag ohne führendes `v`)                                                                                |
+| `CLOKR_API_IMAGE`                               | ✓       | Vollständige Image-Referenz der API, z. B. `ghcr.io/getclokr/clokr-api:1.12.0` (Tag ohne führendes `v`)                                                                                                |
+| `CLOKR_WEB_IMAGE`                               | ✓       | Vollständige Image-Referenz des Web-Frontends, z. B. `ghcr.io/getclokr/clokr-web:1.12.0` (Tag ohne führendes `v`)                                                                                      |
 | `SMTP_HOST`                                     | –       | SMTP-Server für E-Mail-Versand                                                                                                                                                                         |
 | `SMTP_PORT`                                     | –       | SMTP-Port (z.B. 587)                                                                                                                                                                                   |
 | `SMTP_USER`                                     | –       | SMTP-Benutzername                                                                                                                                                                                      |
@@ -89,8 +89,8 @@ Datenbankmigrationen laufen automatisch beim Start.
 
 ```bash
 # .env
-CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.12.0
-CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:1.12.0
+CLOKR_API_IMAGE=ghcr.io/getclokr/clokr-api:1.12.0
+CLOKR_WEB_IMAGE=ghcr.io/getclokr/clokr-web:1.12.0
 ```
 
 Tags werden ohne führendes `v` geschrieben; beide Variablen sind Pflicht, `docker compose`

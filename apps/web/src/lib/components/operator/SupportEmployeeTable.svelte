@@ -105,7 +105,7 @@
   .empty {
     margin: 0;
     font-size: 16px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .name {
@@ -129,7 +129,7 @@
   }
 
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 13px;
     overflow-wrap: anywhere;
   }
@@ -178,7 +178,7 @@
     .support-table tr {
       display: block;
       padding: 16px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px solid var(--line);
     }
 
     .support-table tbody tr:last-child {
@@ -210,7 +210,7 @@
     .support-table td:not(.cell-name):not(.cell-actions)::before {
       content: attr(data-label) ": ";
       font-weight: 600;
-      color: var(--text-muted);
+      color: var(--text-2);
     }
   }
 </style>

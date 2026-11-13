@@ -1,0 +1,63 @@
+{
+  "registerSource": "Issue #843, D-843-05: every page-own filter bar, period control, KPI card and data table that existed when the routes mode started, with the follow-up ticket that migrates it (D-843-18: area components included). Counts may only fall.",
+  "rules": {
+    "own-filter-bar": {
+      "apps/web/src/lib/components/dashboard/ClockSalonSelect.svelte": {
+        "count": 1,
+        "ticket": "#845",
+        "reason": "Salon choice select styled with the filter recipe; folds into the Stage block"
+      },
+      "apps/web/src/lib/components/leave/LeaveToolbar.svelte": {
+        "count": 2,
+        "ticket": null,
+        "reason": "Used by /leave only: #853 moved /team/leave onto the blocks, #851 (merged) kept the toolbar for /leave. Its tabs, PeriodSwitcher and SegmentedControl are blocks already, only the wrapper classes match; folding it into PeriodPicker is a follow-up named in PR #906."
+      },
+      "apps/web/src/lib/components/operator/SupportAuditLog.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      }
+    },
+    "own-period-control": {
+      "apps/web/src/routes/(operator)/betreiber/(konsole)/mandanten/[id]/support/mitarbeitende/[employeeId]/+page.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      }
+    },
+    "own-kpi-card": {
+      "apps/web/src/routes/(app)/dashboard/+page.svelte": {
+        "count": 1,
+        "ticket": "#845"
+      }
+    },
+    "own-data-table": {
+      "apps/web/src/lib/components/operator/SalonTable.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/operator/SupportEmployeeTable.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/operator/SupportMonthView.svelte": {
+        "count": 4,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/operator/SupportSection.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      },
+      "apps/web/src/lib/components/operator/TenantTable.svelte": {
+        "count": 1,
+        "ticket": null,
+        "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
+      }
+    },
+    "raw-scrim-modal": {}
+  }
+}

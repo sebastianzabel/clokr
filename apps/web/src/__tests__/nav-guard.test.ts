@@ -49,16 +49,16 @@ describe("N-08/AK-07 — every logout path clears the unsaved registry before it
     expect(iClear).toBeLessThan(iNav);
   });
 
-  it("client.ts clears before BOTH window.location.href logouts", () => {
+  it("client.ts clears before ALL THREE window.location.href logouts (request, upload, requestBlob)", () => {
     const clears = CLIENT.split("clearUnsaved()").length - 1;
     const redirects =
       CLIENT.split("window.location.href = loginPathWithNext(window.location)").length - 1;
-    expect(redirects).toBe(2);
-    expect(clears).toBe(2);
+    expect(redirects).toBe(3);
+    expect(clears).toBe(3);
     // positional: each clear precedes its own redirect
     for (const chunk of CLIENT.split(
       "window.location.href = loginPathWithNext(window.location)",
-    ).slice(0, 2)) {
+    ).slice(0, 3)) {
       expect(chunk.lastIndexOf("clearUnsaved()")).toBeGreaterThan(-1);
     }
   });

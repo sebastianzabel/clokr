@@ -226,7 +226,7 @@
   .facts dt {
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .facts dd {
@@ -236,7 +236,7 @@
   }
 
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 13px;
   }
 
@@ -258,7 +258,7 @@
   }
 
   .danger {
-    color: var(--bad-text);
+    color: var(--bad);
   }
 
   @media (max-width: 559px) {

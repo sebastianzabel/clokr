@@ -1,5 +1,14 @@
 import fp from "fastify-plugin";
-import { resolveEmailPolicy } from "../notification-email-policy";
+import { PERSONAL_EMAIL_OPT_OUT_FIELDS, resolveEmailPolicy } from "../notification-email-policy";
+
+/** Issue #602: the e-mail groups a person switched off, read defensively from `uiPreferences`. */
+function personalEmailOptOut(stored: unknown): Set<string> {
+  if (!stored || typeof stored !== "object") return new Set();
+  const raw = (stored as Record<string, unknown>).emailOptOut;
+  if (!Array.isArray(raw)) return new Set();
+  const known = new Set<string>(PERSONAL_EMAIL_OPT_OUT_FIELDS);
+  return new Set(raw.filter((v): v is string => typeof v === "string" && known.has(v)));
+}
 import { dispatchNotificationPush } from "../push-dispatch";
 
 interface NotifyParams {
@@ -164,6 +173,13 @@ export const notifyPlugin = fp(async (app) => {
     // Check user opt-in
     const user = await app.prisma.user.findUnique({ where: { id: userId } });
     if (!user || !user.emailNotifications) return;
+
+    // Issue #602 (Phase 851): the person switched this e-mail group off. Only "toggle" policies have
+    // a group; "always" types (security, legal information) are never switched off by a person.
+    if (policy.email === "toggle" && personalEmailOptOut(user.uiPreferences).has(policy.field)) {
+      app.log.debug({ tenantId, type }, "Notification email skipped: the person switched it off");
+      return;
+    }
 
     // Check SMTP configured
     const smtpConfig = await app.mailer.getSmtpConfig(tenantId);

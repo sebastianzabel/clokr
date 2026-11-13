@@ -283,6 +283,9 @@ const tenantConfigSchema = z
       .min(1200, "Berufsschul-Block pro Woche muss mindestens 1200 Min (20h) sein")
       .max(3000, "Berufsschul-Block pro Woche darf höchstens 3000 Min (50h) sein")
       .optional(),
+    // Issue #854 (D-854-20): the admin toggle existed but the key was stripped, so nothing
+    // persisted. The column defaults to true; shift-cleanup.ts reads it.
+    vocationalSchoolAutoCleanupShifts: z.boolean().optional(),
     // Phase 76.31 D-06 — 4-layer bsSlot* override hierarchy (TenantConfig layer).
     // Nullable: an explicit null CLEARS the tenant override so resolution delegates
     // down to the daily-Soll fallback. Daily bounds 240..600 (4h..10h);
@@ -1927,6 +1930,10 @@ export async function settingsRoutes(app: FastifyInstance) {
         smtpFromEmail: cfg?.smtpFromEmail ?? null,
         smtpFromName: cfg?.smtpFromName ?? null,
         smtpSecure: cfg?.smtpSecure ?? false,
+        // Issue #847: whether mail can actually be delivered — the tenant's own SMTP OR the server's
+        // fallback, decided by the mailer's one rule (`getSmtpConfig`). A boolean only: no fallback
+        // value ever leaves the server.
+        deliveryReady: (await app.mailer.getSmtpConfig(tenantId)) !== null,
       };
     },
   });

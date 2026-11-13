@@ -15,20 +15,20 @@ import {
   type ChartDescriptor,
 } from "../chart-theme";
 
+// #842 D-842-26: the chart theme reads the new token names; the retired light brand variant and
+// the faint text variable are not read any more, so they are not stubbed.
 const VARIABLES: Record<string, string> = {
   "--brand": "rgb(1, 1, 1)",
-  "--brand-light": "rgb(2, 2, 2)",
   "--brand-soft": "rgb(3, 3, 3)",
-  "--text-faint": "rgb(4, 4, 4)",
   "--leave-type-sick": "rgb(5, 5, 5)",
-  "--good": "rgb(6, 6, 6)",
+  "--ok": "rgb(6, 6, 6)",
   "--bad": "rgb(7, 7, 7)",
   "--warn": "rgb(8, 8, 8)",
   "--text": "rgb(9, 9, 9)",
-  "--text-muted": "rgb(10, 10, 10)",
-  "--border": "rgb(11, 11, 11)",
-  "--bg-card": "rgb(12, 12, 12)",
-  "--font-sans": "Jost",
+  "--text-2": "rgb(10, 10, 10)",
+  "--line": "rgb(11, 11, 11)",
+  "--card": "rgb(12, 12, 12)",
+  "--font-ui": "Figtree",
 };
 
 beforeEach(() => {
@@ -45,8 +45,9 @@ describe("getChartTheme (P-591-03)", () => {
   it("reads every colour from the token variables", () => {
     const theme = getChartTheme();
     expect(theme.brand).toBe("rgb(1, 1, 1)");
-    expect(theme.brandLight).toBe("rgb(2, 2, 2)");
-    // Soll reads --text-muted, not --text-faint (3:1 in every skin, verification of #591).
+    // #842 D-842-26: brandLight is gone from the theme (no consumer outside fixtures).
+    expect(Object.keys(theme)).not.toContain("brandLight");
+    // Soll reads the secondary text token (3:1 in every theme and mode).
     expect(theme.neutral).toBe("rgb(10, 10, 10)");
     expect(theme.sick).toBe("rgb(5, 5, 5)");
     expect(theme.green).toBe("rgb(6, 6, 6)");
@@ -54,7 +55,7 @@ describe("getChartTheme (P-591-03)", () => {
     expect(theme.text).toBe("rgb(9, 9, 9)");
     expect(theme.textMuted).toBe("rgb(10, 10, 10)");
     expect(theme.gridColor).toBe("rgb(11, 11, 11)");
-    expect(theme.fontFamily).toBe("Jost");
+    expect(theme.fontFamily).toBe("Figtree");
   });
 
   it("has no hard-coded blue any more", () => {

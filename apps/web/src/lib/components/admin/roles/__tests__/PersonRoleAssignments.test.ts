@@ -122,6 +122,15 @@ describe("PersonRoleAssignments (Issue #580)", () => {
     expect(screen.getByText(scopeLabel(salonScope, ctx))).toBeInTheDocument();
   });
 
+  it("renders the assignments as a labelled list whose scope text wraps (Issue #854)", () => {
+    const personScope: AssignmentScope = { type: "PERSONS", employeeIds: ["e1"] };
+    const { container } = mount({ items: [item("a1", ROLE, personScope)] });
+    const list = screen.getByRole("list", { name: "Rollen von Probe Eins" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    // A long scope must stay readable in full, so the subtitle wraps instead of ending in an ellipsis.
+    expect(container.querySelector(".list-text--wrap")).not.toBeNull();
+  });
+
   it("changes an assignment through the prefilled dialog", async () => {
     apiPatch.mockResolvedValue(item("a1"));
     mount({ items: [item("a1")] });

@@ -70,15 +70,15 @@
 
 <style>
   .attest-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 0.875rem 1rem;
   }
   .attest-title {
     font-size: 0.8125rem;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-bottom: 0.625rem;

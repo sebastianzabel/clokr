@@ -182,14 +182,8 @@ const ALLOWED: AllowedEntry[] = [
       'convention as tags: ["Mitarbeiter"] elsewhere in the codebase) — never read back by any ' +
       "code path, not a runtime comparison.",
   },
-  // MyWeekView.svelte: icon/label keyed off the stable absenceType code, not the literal.
-  {
-    file: "apps/web/src/lib/components/dashboard/MyWeekView.svelte",
-    pattern: /day\.absenceType === "(SICK_CHILD|MATERNITY)"/,
-    reason:
-      "Icon/label selection keyed off the stable absenceType field, not the literal itself — the " +
-      "literal is only the ternary's display-text branch.",
-  },
+  // (MyWeekView.svelte's entry was removed with the file, Issue #845: the week strip of Mein Tag
+  // names a day only by server display text and compares no type literal.)
 ];
 
 function isAllowed(hit: LiteralHit): boolean {

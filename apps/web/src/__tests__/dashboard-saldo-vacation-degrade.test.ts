@@ -31,9 +31,10 @@ const DASHBOARD = readRouteFile(
   "src/routes/(app)/dashboard/+page.svelte",
 );
 
-const VACATION_CARD_MARKER = 'label="Urlaubstage"';
-const OVERTIME_NULL_GUARD = "{#if stats.overtime === null}";
-const VACATION_GUARD = "{#if stats.vacation}";
+// Issue #845: the cards are cells of the Mein-Tag KpiStrip, built in the `kpiItems` derivation.
+const VACATION_CARD_MARKER = 'label: "Resturlaub"';
+const OVERTIME_NULL_GUARD = "if (stats && stats.overtime === null) {";
+const VACATION_GUARD = "if (stats?.vacation) {";
 
 describe("Phase 76b (Issue #76), CR-01/WR-01 — the dashboard hides saldo/vacation cards silently without EIGENE permission", () => {
   // Test 0 — anti-vacuity (CLAUDE.md § Anti-vacuity gate). Every string-containment assertion
@@ -49,40 +50,42 @@ describe("Phase 76b (Issue #76), CR-01/WR-01 — the dashboard hides saldo/vacat
     expect(DASHBOARD).toMatch(/}\s*\|\s*null;\s*\n\s*vacation:.*\|\s*null;/s);
   });
 
-  it("the Urlaubstage KPIStat is wrapped in an {#if stats.vacation} guard", () => {
+  it("the Resturlaub cell is pushed only inside an `if (stats?.vacation)` guard", () => {
     const guardIdx = DASHBOARD.indexOf(VACATION_GUARD);
     expect(guardIdx, "no {#if stats.vacation} guard found").toBeGreaterThan(-1);
     const cardIdx = DASHBOARD.indexOf(VACATION_CARD_MARKER, guardIdx);
     expect(cardIdx, "Urlaubstage card not found after the guard").toBeGreaterThan(guardIdx);
-    // The guard's own {/if} must close before the next sibling card starts, i.e. the card sits
-    // directly inside the guard, not merely somewhere later in the file.
-    const closeIdx = DASHBOARD.indexOf("{/if}", cardIdx);
-    expect(closeIdx, "no {/if} closing the vacation guard").toBeGreaterThan(cardIdx);
+    // The cell sits directly inside the guard: no other block opens between guard and cell, and
+    // no Resturlaub cell exists anywhere outside it.
+    const between = DASHBOARD.slice(guardIdx + VACATION_GUARD.length, cardIdx);
+    expect(between).not.toContain("}");
+    expect(DASHBOARD.indexOf(VACATION_CARD_MARKER)).toBe(cardIdx);
   });
 
   it("the Überstundenkonto tile renders nothing when stats.overtime is null, before the isExempt/split branches", () => {
     const nullGuardIdx = DASHBOARD.indexOf(OVERTIME_NULL_GUARD);
     expect(nullGuardIdx, "no {#if stats.overtime === null} guard found").toBeGreaterThan(-1);
 
-    const exemptBranchIdx = DASHBOARD.indexOf("{:else if isExempt}", nullGuardIdx);
+    const exemptBranchIdx = DASHBOARD.indexOf("} else if (isExempt) {", nullGuardIdx);
     expect(
       exemptBranchIdx,
       "isExempt branch not found after the null guard — the null check must come first",
     ).toBeGreaterThan(nullGuardIdx);
 
-    const splitBranchIdx = DASHBOARD.indexOf(
-      "{:else if stats.overtime.confirmedMinutes !== undefined}",
-      exemptBranchIdx,
-    );
+    const splitBranchIdx = DASHBOARD.indexOf("} else if (ownOvertime) {", exemptBranchIdx);
     expect(splitBranchIdx, "confirmedMinutes branch not found").toBeGreaterThan(exemptBranchIdx);
 
-    // Nothing rendered between the null-guard and the next branch — the null case is the
-    // "intentionally empty" comment only, never a KPIStat/SaldoAnzeige.
+    // Nothing pushed between the null-guard and the next branch — the null case is the
+    // "intentionally empty" comment only, never a cell.
     const nullBranchBody = DASHBOARD.slice(
       nullGuardIdx + OVERTIME_NULL_GUARD.length,
       exemptBranchIdx,
     );
-    expect(nullBranchBody).not.toContain("<KPIStat");
-    expect(nullBranchBody).not.toContain("<SaldoAnzeige");
+    expect(nullBranchBody).not.toContain("items.push");
+    expect(nullBranchBody).toContain("intentionally empty");
+    // And no saldo work for that caller: GET /overtime/:id is only requested when overtime is readable.
+    expect(DASHBOARD).toMatch(
+      /stats !== null && \(stats as DashboardStats\)\.overtime !== null\s*\?\s*api\.get<OvertimeAnswer>/,
+    );
   });
 });

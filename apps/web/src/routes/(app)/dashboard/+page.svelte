@@ -18,31 +18,34 @@
 
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
+  import { startVisiblePoll } from "$lib/dashboard/visible-poll";
+  import { AREA_LABELS, mayOpenPath } from "$lib/nav/routes";
+  import { matchesRoute } from "$lib/nav/active-route";
+
+  // Issue #844 (D-844-06/07): "me" = Ich › Mein Tag (the personal blocks), "team" = Team › Heute im Salon
+  // (`routes/(app)/team/heute` renders this file, the team block only). Until #845 / #846 build the two start
+  // pages, both render from this one file, each showing and loading only its own part; the URL decides (a
+  // route component takes no props of its own).
+  const view = $derived<"me" | "team">(
+    matchesRoute("/team/heute", $page.url.pathname) ? "team" : "me",
+  );
+  const pageKey = $derived(view === "team" ? "/team/heute" : "/dashboard");
   import { onMount, onDestroy, tick, untrack } from "svelte";
-  import { goto, afterNavigate, replaceState } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person; #609: reminder arrival
+  import { afterNavigate, replaceState } from "$app/navigation"; // Issue #588 (P-11): a bar of the saldo card opens a person; #609: reminder arrival
   import { page } from "$app/stores"; // Issue #609: the ?clock=1 reminder parameter
-  import { api, ApiError } from "$api/client";
+  import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import Pagination from "$components/ui/Pagination.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
-  import KPIStat from "$components/ui/KPIStat.svelte";
-  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-04
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import MyShiftsWeek from "$lib/components/dashboard/MyShiftsWeek.svelte";
-  import MyWeekView from "$lib/components/dashboard/MyWeekView.svelte";
   import ClockSalonSelect from "$lib/components/dashboard/ClockSalonSelect.svelte"; // Issue #87
   import ClockOtherSalon from "$lib/components/dashboard/ClockOtherSalon.svelte"; // Issue #70
   import TodayEntriesList from "$lib/components/dashboard/TodayEntriesList.svelte"; // Issue #70
-  import TeamSaldoCard from "$lib/components/dashboard/TeamSaldoCard.svelte"; // Issue #588
-  import Icon from "$lib/components/Icon.svelte";
   import {
     summarizeKarenzOverrun,
     karenzNudgeHref,
-    hasNoOpenItems,
     KARENZ_NUDGE_EMPTY,
     KARENZ_NUDGE_TOOLTIP,
     type KarenzOverrunResponse,
@@ -62,18 +65,13 @@
   } from "$lib/dashboard/day-state";
   import { interpretClockOut, type ClockOutResponse } from "$lib/dashboard/clock-out-result"; // Phase 307 Plan 02 (D-04)
   import { breakFindingSaveNotice } from "$lib/breaks/day-break-violation"; // Issue #80 (D-09a), #511 (D-10)
-  import { weekProgressDelta } from "$lib/dashboard/week-progress"; // Issue #451 (D-06)
   import {
     DAY_STATUS_LABEL,
     attendanceStatusText,
     teamMissingTitle,
   } from "$lib/dashboard/day-status-label"; // Issue #587 (P-06)
-  import { teamDayHref, teamCellAriaLabel, teamPersonHref } from "$lib/dashboard/team-day-links"; // Issue #587 (D-587-4), #588
+  import { teamDayHref, teamCellAriaLabel } from "$lib/dashboard/team-day-links"; // Issue #587 (D-587-4), #588
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
-  import { mayReadTeamSaldo } from "$lib/page-rights"; // Issue #588 (P-10)
-  import { reportRights } from "$lib/page-rights"; // Issue #591 (P-591-05)
-  import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613, #588
-  import type { TeamSaldoRow } from "$lib/reports/team-saldo"; // Issue #588
   import {
     clockInBlocked,
     clockInBody,
@@ -93,63 +91,70 @@
     stripClockParam,
     type ClockReminderAction,
   } from "$lib/dashboard/clock-reminder"; // Issue #609 (D-09, D-14)
-  import { format } from "date-fns";
+  import { format, addDays } from "date-fns";
+  import Stage from "$components/ui/Stage.svelte"; // Issue #845: the clock stage
+  import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
+  import List from "$components/ui/List.svelte";
+  import ListRow from "$components/ui/ListRow.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import {
+    saldoFigure,
+    nextOwnShift,
+    historySentences,
+    saldoMonthsLine,
+    nextPlannedDay,
+    plannedDaysCount,
+    weekStripText,
+    recentDays,
+    type MyWeekStripDay,
+    type OvertimeAnswer,
+    type MyShiftWeek,
+    type NextShift,
+  } from "$lib/dashboard/mein-tag"; // Issue #845
+  import { isTravelRow } from "$lib/time-entries/travel-entry-form";
+  import {
+    attendanceBand,
+    attendanceFilterOf,
+    filterAttendance,
+    ATTENDANCE_FILTERS,
+    TEAM_WEEK_PAGE_SIZE,
+    openTeamLeaveTasks,
+    leaveTypeLabel,
+    type TeamTaskLeave,
+  } from "$lib/dashboard/heute-im-salon"; // Issue #846
+  import { formatDayCount, leaveDaysLabel } from "$lib/leave/leave-days-label"; // #853-19: formatDayCount = day figures with a decimal comma
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19
+  import type { TodayEmployee } from "$lib/reports/today-attendance";
+  import type { TodayAttendanceData } from "$lib/reports/today-attendance";
+  import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // #846 D-03: the dialog of Aufgaben
+  import { fmtBalance } from "$lib/utils/format-minutes";
   import { de } from "date-fns/locale";
   import { salonContext } from "$stores/salon-context"; // Issue #84 (D-01)
+  import {
+    breakEnded,
+    breakStarted,
+    clockedIn as clockedInMessage,
+    clockedOut as clockedOutMessage,
+    clockTime,
+  } from "$lib/feedback/action-messages"; // #843 (D-843-08, D-843-19): the acknowledgement texts
   import {
     TEAM_SALON_UNAVAILABLE_TEXT,
     isTeamSalonRejected,
     teamSalonFilter,
-    teamTrendView,
     teamViewLabel,
-    teamWeekHasElsewhere,
     upcomingFromResponse,
     withSalonId,
+    type TeamTrendMonth,
     type TeamTrendResponse,
-    type TeamTrendView,
     type TeamUpcomingLeaveResponse,
   } from "$lib/dashboard/team-view"; // Issue #84 (D-07, D-11, D-12), #85 (D-04, D-06)
-  import {
-    TEAM_CHART_REPORT_TAB,
-    TEAM_SALDO_TREND_CHART,
-    TEAM_SICK_DAYS_CHART,
-    reportMonthHref,
-    reportPeriodHref,
-    teamHoursChartConfig,
-    teamHoursChartDescriptor,
-    teamSaldoTrendChartConfig,
-    teamSickDaysChartConfig,
-  } from "$lib/dashboard/team-charts"; // Issue #591
-  import type { PeriodTab } from "$lib/reports/period-state"; // Issue #591 (D-591-3)
-  import { chartAriaLabel, getChartTheme } from "$lib/utils/chart-theme"; // Issue #591
-  import {
-    Chart,
-    BarController,
-    LineController,
-    BarElement,
-    LineElement,
-    PointElement,
-    CategoryScale,
-    LinearScale,
-    Tooltip,
-    Legend,
-  } from "chart.js";
-
-  Chart.register(
-    BarController,
-    LineController,
-    BarElement,
-    LineElement,
-    PointElement,
-    CategoryScale,
-    LinearScale,
-    Tooltip,
-    Legend,
-  );
 
   // ── Types ──────────────────────────────────────────────────────────────────
   interface DashboardStats {
-    today: { workedHours: number; entries: number };
+    // Issue #596 (#845): sollMinutes = today's Soll from the account core (the day goal)
+    today: { workedHours: number; entries: number; sollMinutes?: number | null };
     // Issue #451 (D-06) — additive, through-yesterday pair (issue #438: today never counts);
     // absent on an older cached response, in which case the tile degrades to the previous
     // whole-week delta (see weekProgressDelta()'s own docblock).
@@ -180,7 +185,7 @@
       unconfirmedMonths?: number | null;
       rosterIncomplete?: boolean;
     } | null;
-    vacation: { remaining: number; total: number; used: number } | null;
+    vacation: { remaining: number; total: number; used: number; pending?: number } | null; // #845: pending = undecided days
   }
 
   interface TeamDay {
@@ -268,7 +273,7 @@
     day.kind === "running" && day.entry ? new Date(day.entry.startTime) : null,
   );
 
-  // Issue #87: re-fetched only when the day state changes, never by the 5 s poll (a pick survives it).
+  // Issue #87: re-fetched only when the day state changes, never by the 30 s poll (a pick survives it).
   let clockSalon = $state<ClockSalonChoice | null>(null);
   let clockSalonId = $state<string | null>(null);
   let dayKind = $derived(day.kind);
@@ -293,53 +298,38 @@
   // branch, so with `loading` starting false the FIRST frame claimed a failed fetch before any
   // request had been made. `error={!loading}` itself is correct in that branch and is left alone.
   let loading = $state(true);
-  let chartsLoading = $state(true);
-  // Phase 76b (Issue #76), D-15: whether the caller holds overtime:read (the trend endpoint's own
-  // gate, added by Phase 76b). No client-side permission list exists ($stores/auth carries only
-  // `role`), so a 403 from the endpoint itself is how we learn this — tolerated silently, never
-  // logged, never toasted (a missing overtime:read is expected for e.g. a Mitarbeiter or a
-  // Salonmanager template). Starts false so the card stays hidden until a successful load flips it.
-  let overtimeTrendAvailable = $state(false);
   let clockLoading = $state(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- written by the clock handlers, kept for their sync
   let breakMinutes = $state(0);
   let currentTime = $state(new Date());
 
-  // ── Open break (dashboard pause toggle) ──────────────────────────────────
-  // Open breaks are not persisted on the server (Break records are always
-  // closed segments — see CLAUDE.md "Break model"). We track the active
-  // break-start time in localStorage keyed by the active TimeEntry id so it
-  // survives page reloads. On "Pause beenden" we POST a complete Break
-  // segment (start + end) to /api/v1/time-entries/:id/breaks.
-  let breakStartedAt: Date | null = $state(null);
+  // ── Running break (Issue #596, #845) ─────────────────────────────────────
+  // The running break is a server state of the open entry (`breakStartedAt`, set and cleared by
+  // the clock resolver through POST /time-entries/:id/break), so it is the same on every device.
+  // A finished break is a Break row as before. Nothing is kept in the browser.
   let breakLoading = $state(false);
-  const OPEN_BREAK_STORAGE_KEY = "clokr.dashboard.openBreak";
 
   let stats: DashboardStats | null = $state(null);
   let teamWeek = $state<TeamWeek | null>(null);
   let teamPage = $state(1);
-  let teamPageSize = $state(10);
+  // Issue #846 (D-02): the week is always the current one; pages only from 25 persons on.
+  let teamPageSize = $state(TEAM_WEEK_PAGE_SIZE);
   let pagedTeam = $derived(
     teamWeek ? teamWeek.team.slice((teamPage - 1) * teamPageSize, teamPage * teamPageSize) : [],
   );
-  let weekOffset = $state(0);
   // Phase 267 (#267, D-04): shaped after `GET /shifts/my-week`'s `ownShifts[]`, which is already
   // narrowed to the caller server-side. The former `template: { name, color }` is gone — /my-week
   // returns `templateName`/`templateColor` flat, and the markup below renders only label,
   // startTime and endTime anyway.
-  let todayShift: {
+  let todayShift = $state<{
     startTime: string;
     endTime: string;
     label: string | null;
-  } | null = $state(null);
+  } | null>(null);
 
   // Next personal absence
   let myNextLeave: { startDate: string; endDate: string; days: number; type: string } | null =
     $state(null);
-
-  // Phase 49.4: MyWeekView (non-SHIFT_BASED) and MyShiftsWeek (SHIFT_BASED) each
-  // fetch their own data. shiftFallback flips to true when MyShiftsWeek reports 410,
-  // so a SHIFT_BASED-flagged employee with no actual shifts still gets the hours view.
-  let shiftFallback = $state(false);
 
   // Open items widget
   let openItems = $state<{
@@ -369,9 +359,6 @@
   // D-08 fail-safe: when the open-items fetch fails, `openItems` stays null, this derives to
   // BREAK_NUDGE_EMPTY and the whole card is skipped by the `{#if openItems}` below. The card
   // must render NOTHING rather than a "0" — a "0" is a factual claim the client cannot support.
-  let breakNudge = $derived(summarizeUnconfirmedBreakDays(openItems?.unconfirmedBreakDays));
-  // Kept as a separate name because hasNoOpenItems() and the {#if} below read it.
-  let unconfirmedBreakDays = $derived(breakNudge.count);
 
   // ── Karenztage-Hinweis (Phase 104, D-21) ────────────────────────────────────
   // § 5 EFZG: Krankheitstage über die tenant-konfigurierte Karenzzeit hinaus ohne Attest.
@@ -383,14 +370,15 @@
   // openItems.total (server-computed) has no knowledge of either client-side nudge rendered
   // below it in the same list (this Karenz nudge, and the Phase-92 break-confirmation nudge).
   // See hasNoOpenItems() in $lib/leave/karenz-nudge.ts for the rationale and its unit tests.
-  let showEmptyOpenItems = $derived(
-    hasNoOpenItems(openItems?.total ?? 0, karenzNudge.count, unconfirmedBreakDays),
-  );
 
   // ── Heutiger Eintrag (row 2 col-7) ────────────────────────────────────────
   // The "Heutiger Eintrag" card reads the SAME entry the hero card describes
   // (Phase 115, issue #118 — the two used to be derived independently and disagreed).
   let todayEntry = $derived(day.entry);
+  let breakStartedAt = $derived.by((): Date | null => {
+    const raw = day.kind === "running" ? day.entry?.breakStartedAt : null;
+    return raw ? new Date(raw) : null;
+  });
   // Issue #70 (D-07, D-12): the entry count and the compact list exist only for a multi-salon tenant
   // (the clock-salon answer names a salon only there) with two or more entries today.
   let showEntryList = $derived(clockSalon?.fixedSalon != null && todayEntries.length >= 2);
@@ -407,14 +395,6 @@
   }
   let activityItems = $state<ActivityItem[]>([]);
 
-  // Charts
-  let weeklyChartEl: HTMLCanvasElement;
-  let overtimeChartEl: HTMLCanvasElement;
-  let sickChartEl: HTMLCanvasElement;
-  let weeklyChart: Chart | null = null;
-  let overtimeChart: Chart | null = null;
-  let sickChart: Chart | null = null;
-
   interface UpcomingLeave {
     id: string;
     employeeName: string;
@@ -428,31 +408,18 @@
   // Issue #84 (D-01, D-11): the Team block follows the salon context of #82 through ONE guarded
   // decision. `teamFilter` is a primitive (a salon id or null), so a navigation reload that sets an
   // equal context state re-runs nothing. `teamGeneration` lets every loader drop a result that
-  // belongs to an older selection (also the 5 s poll).
+  // belongs to an older selection (also the 30 s poll).
   const teamFilter = $derived(teamSalonFilter($salonContext));
   const teamContextReady = $derived($salonContext.loaded);
   let teamGeneration = 0;
   let lastTeamFilterKey: string | null | undefined = undefined;
-  let trendView = $state<TeamTrendView | null>(null);
   const teamLabel = $derived(teamViewLabel($salonContext));
   // D-16: the server rejected the selected salon (404); calm empty state, no further polling.
   let teamUnavailable = $state(false);
 
-  // Issue #588 (P-10): the card "Salden" reads GET /dashboard/overtime-overview with the same salon
-  // filter as the rest of the Team block. `teamSaldoFiltered` is the filter of the LOADED request,
-  // not the live selection, so the note always matches the rows shown. A 403 hides the card.
-  let teamSaldoRows = $state<TeamSaldoRow[]>([]);
-  let teamSaldoLoading = $state(false);
-  let teamSaldoFiltered = $state(false);
-  let teamSaldoHidden = $state(false);
-
-  interface OvertimeTrendResponse {
-    snapshots: { month: string; teamCarryOverMinutes: number }[];
-    currentTeamBalanceMinutes: number;
-  }
-
   let timer: ReturnType<typeof setInterval>;
-  let pollInterval: ReturnType<typeof setInterval>;
+  // Issue #576: calm refresh — every 30 s, paused while the tab is hidden ($lib/dashboard/visible-poll).
+  let stopPoll: (() => void) | undefined;
 
   // Phase 378 (#378): permission-based, not role-based — a Salonmanager (Salon-Scope role
   // assignment, #76) holds `team-overview:read:ZUGEWIESEN` but resolves to compat role EMPLOYEE
@@ -461,45 +428,10 @@
   // `overtime:read` gracefully (see `loadTeamCharts()`'s `overtimeTrendAvailable` below, Phase 76b
   // D-15) — opening this gate to `team-overview:read` therefore satisfies AK-378-1's "keine
   // Saldo-Karten" via that EXISTING fail-safe, not a new one.
+  // #844: the team block lives on Team › Heute im Salon only (view "team").
   const canSeeTeamBereich = $derived(
-    hasPermission($authStore.user, "team-overview:read:ZUGEWIESEN"),
+    view === "team" && hasPermission($authStore.user, "team-overview:read:ZUGEWIESEN"),
   );
-  // Issue #588 (P-10): the saldo card needs the two permissions of its endpoint.
-  const canSeeTeamSaldo = $derived(mayReadTeamSaldo($authStore.user));
-  // Issue #591 (P-591-05): a chart month opens a report tab only for a caller who may read it, so
-  // there is never a dead link. The target URL comes from `periodSearch` (team-charts.ts) only.
-  const reportTabs = $derived(reportRights($authStore.user).periodTabs);
-
-  /** The click handler of a month chart for this report tab, or null when the tab is not offered. */
-  function monthOpener(tab: PeriodTab, view: TeamTrendView): ((index: number) => void) | null {
-    if (!reportTabs.includes(tab)) return null;
-    return (index) => {
-      const key = view.months[index]?.month;
-      const href = key ? reportMonthHref(key, tab) : null;
-      if (href !== null) void goto(href);
-    };
-  }
-
-  /**
-   * The keyboard path of a month chart (P-591-06): a header link to the report of the chart's months
-   * under the same rule as the click, and only while the chart itself is drawn (no skeleton, no
-   * note in its place).
-   */
-  function reportLinkFor(tab: PeriodTab, shown: boolean): string | null {
-    if (!shown || !reportTabs.includes(tab) || trendView === null) return null;
-    return reportPeriodHref(
-      trendView.months.map((m) => m.month),
-      tab,
-    );
-  }
-  const hoursReportHref = $derived(reportLinkFor(TEAM_CHART_REPORT_TAB.hours, !chartsLoading));
-  const trendReportHref = $derived(
-    reportLinkFor(
-      TEAM_CHART_REPORT_TAB.saldoTrend,
-      !chartsLoading && !trendView?.trendNote && overtimeTrendAvailable,
-    ),
-  );
-  const sickReportHref = $derived(reportLinkFor(TEAM_CHART_REPORT_TAB.sickDays, !chartsLoading));
 
   // Phase 76.7 (D-15, UI-V19-04) — § 18 ArbZG-exempt: when the current
   // employee's `isTimeTrackingExempt` flag is true, fully HIDE the Timer-Card
@@ -515,15 +447,12 @@
     timer = setInterval(() => {
       currentTime = new Date();
     }, 1000);
-    pollInterval = setInterval(pollDashboard, 5000); // refresh team-week + clock status every 5s
+    stopPoll = startVisiblePoll(pollDashboard);
   });
 
   onDestroy(() => {
     clearInterval(timer);
-    if (pollInterval) clearInterval(pollInterval);
-    weeklyChart?.destroy();
-    overtimeChart?.destroy();
-    sickChart?.destroy();
+    stopPoll?.();
   });
 
   async function loadData() {
@@ -564,7 +493,7 @@
           // `GET /shifts/my-week` has answered exactly this question since Phase 49; `ownShifts`
           // is narrowed to the caller server-side, so there is nothing left to filter here.
           // `days[].date` is a plain ISO day, hence `===` and not `startsWith`.
-          // Note: MyShiftsWeek.svelte fetches the same endpoint for the week strip below, so the
+          // Note: the Mein-Tag loader reads the same endpoint for the week strip, so the
           // page requests it twice. Left as-is deliberately — merging the two is a restructuring
           // of the dashboard's data loading, not part of this fix.
           const myWeek = await api.get<{
@@ -588,7 +517,9 @@
         todayShift = null;
       }
 
-      // Phase 49.4: MyWeekView / MyShiftsWeek each fetch their own data — no prefetch here.
+      // Issue #845: the figures of Ich › Mein Tag (not needed on Heute im Salon).
+      if (view === "me") await loadMeinTag(today);
+
       try {
         openItems = await api.get<typeof openItems>("/dashboard/open-items");
       } catch {
@@ -637,11 +568,92 @@
     }
   }
 
+  // ── Issue #845: Ich › Mein Tag ─────────────────────────────────────────────────────────────
+  // Every figure comes from an existing endpoint; `$lib/dashboard/mein-tag` only selects and words it.
+  let ownOvertime = $state<OvertimeAnswer | null>(null);
+  let myWeekDays = $state<MyWeekStripDay[]>([]);
+  let nextWeekDays = $state<MyWeekStripDay[]>([]);
+  let ownShiftByDate = $state<Map<string, string>>(new Map());
+  let cumulativeByDate = $state<Map<string, number>>(new Map());
+  let myWeekScheduleType = $state<string | null>(null);
+  let nextShift = $state<NextShift | null>(null);
+  let recentEntries = $state<ClockDayEntry[]>([]);
+  let meinTagLoaded = $state(false);
+
+  async function loadMeinTag(today: string) {
+    const employeeId = $authStore.user?.employeeId;
+    const base = new Date(today + "T12:00:00");
+    const weekAhead = format(addDays(base, 7), "yyyy-MM-dd");
+    const twoWeeksBack = format(addDays(base, -14), "yyyy-MM-dd");
+    const yesterday = format(addDays(base, -1), "yyyy-MM-dd");
+    // „Letzte Tage“ reach back two weeks: the day series of this and the previous month
+    const months = [base, addDays(base, -14)].map((d) => ({
+      y: d.getFullYear(),
+      m: d.getMonth() + 1,
+    }));
+    const monthKeys = [...new Map(months.map((x) => [`${x.y}-${x.m}`, x])).values()];
+    const canOvertime = employeeId && stats !== null && (stats as DashboardStats).overtime !== null;
+    const [overtimeR, myWeekR, myWeekNextR, shiftsNowR, shiftsNextR, recentR, ...saldoR] =
+      await Promise.allSettled([
+        // D-845-03: the endpoint the Zeiten page shows — one figure, one source
+        employeeId && stats !== null && (stats as DashboardStats).overtime !== null
+          ? api.get<OvertimeAnswer>(`/overtime/${employeeId}`)
+          : Promise.resolve(null),
+        api.get<{ scheduleType: string | null; days: MyWeekStripDay[] }>(
+          `/dashboard/my-week?date=${today}`,
+        ),
+        api.get<{ scheduleType: string | null; days: MyWeekStripDay[] }>(
+          `/dashboard/my-week?date=${weekAhead}`,
+        ),
+        api.get<MyShiftWeek>(`/shifts/my-week?date=${today}`),
+        api.get<MyShiftWeek>(`/shifts/my-week?date=${weekAhead}`),
+        api.get<ClockDayEntry[]>(`/time-entries?from=${twoWeeksBack}&to=${yesterday}`),
+        ...monthKeys.map((k) =>
+          canOvertime
+            ? api.get<{ days: { date: string; cumulativeSaldoMinutes: number }[] }>(
+                `/overtime/month-saldo/${employeeId}?year=${k.y}&month=${k.m}`,
+              )
+            : Promise.resolve({ days: [] }),
+        ),
+      ]);
+    ownOvertime = overtimeR.status === "fulfilled" ? overtimeR.value : null;
+    if (myWeekR.status === "fulfilled") {
+      myWeekDays = myWeekR.value.days ?? [];
+      myWeekScheduleType = myWeekR.value.scheduleType;
+    }
+    nextWeekDays = myWeekNextR.status === "fulfilled" ? (myWeekNextR.value.days ?? []) : [];
+    const weeks = [shiftsNowR, shiftsNextR]
+      .filter((r): r is PromiseFulfilledResult<MyShiftWeek> => r.status === "fulfilled")
+      .map((r) => r.value);
+    nextShift = nextOwnShift(weeks, today, format(new Date(), "HH:mm"));
+    ownShiftByDate = new Map(
+      weeks.flatMap((w) =>
+        w.days
+          .filter((d) => d.ownShifts.length > 0)
+          .map((d) => [d.date, `${d.ownShifts[0].startTime}–${d.ownShifts[0].endTime}`] as const),
+      ),
+    );
+    recentEntries =
+      recentR.status === "fulfilled"
+        ? recentR.value.filter((e) => e.endTime !== null && !isTravelRow(e))
+        : [];
+    cumulativeByDate = new Map(
+      saldoR.flatMap((r) =>
+        r.status === "fulfilled"
+          ? (r.value as { days: { date: string; cumulativeSaldoMinutes: number }[] }).days.map(
+              (d) => [d.date, d.cumulativeSaldoMinutes] as const,
+            )
+          : [],
+      ),
+    );
+    meinTagLoaded = true;
+  }
+
   async function pollDashboard() {
     // only Team-Bereich holders need team-week data, once the salon context is known; a salon
     // the server rejected is not polled again until the selection changes
     if (canSeeTeamBereich && teamContextReady && !teamUnavailable) {
-      await loadTeamWeek();
+      await Promise.allSettled([loadTeamWeek(), loadTodayAttendance()]);
     }
     // Also refresh clock-in status
     try {
@@ -653,33 +665,27 @@
   }
 
   // Issue #84 (D-01): reloads the whole Team block for the current salon selection. Bumping the
-  // generation makes every loader still in flight drop its result (also the 5 s poll).
+  // generation makes every loader still in flight drop its result (also the 30 s poll).
   async function reloadTeam() {
     teamGeneration++;
     teamUnavailable = false;
     teamWeek = null;
     teamPage = 1;
     upcomingLeaves = [];
-    teamSaldoRows = [];
-    teamSaldoFiltered = false;
-    teamSaldoHidden = false;
-    teamSaldoLoading = canSeeTeamSaldo;
-    const generation = teamGeneration;
-    await Promise.allSettled([loadTeamWeek(), loadTeamCharts(), loadUpcomingLeaves()]);
-    // Issue #588 (orchestrator amendment 2): the saldo overview computes a live saldo per person on
-    // the server, so it starts only after the figures the team block is made of have resolved and is
-    // not awaited here - the card shows its skeleton, the team week never waits for it.
-    if (generation !== teamGeneration) return;
-    if (teamUnavailable) {
-      teamSaldoLoading = false;
-      return;
-    }
-    void loadTeamSaldo();
+    attendance = null;
+    teamMonth = null;
+    await Promise.allSettled([
+      loadTeamWeek(),
+      loadTodayAttendance(),
+      loadTeamMonth(),
+      loadUpcomingLeaves(),
+      loadTeamTasks(),
+    ]);
   }
 
   // The first team load waits until the salon context is known (no unfiltered-then-filtered double
   // load); afterwards it runs only when the guarded filter value actually changes. `untrack`
-  // because the loaders read `weekOffset` and other state synchronously.
+  // because the loaders read other state synchronously.
   $effect(() => {
     if (!canSeeTeamBereich || !teamContextReady) return;
     const key = teamFilter;
@@ -694,9 +700,8 @@
     const filter = teamFilter;
     const generation = teamGeneration;
     try {
-      const refDate = new Date();
-      refDate.setDate(refDate.getDate() + weekOffset * 7);
-      const dateParam = refDate.toISOString().split("T")[0];
+      // D-02: always the current week (today marked)
+      const dateParam = format(new Date(), "yyyy-MM-dd");
       const week = await api.get<TeamWeek>(
         withSalonId(`/dashboard/team-week?date=${dateParam}`, filter),
       );
@@ -713,189 +718,191 @@
     }
   }
 
-  // Issue #588 (P-10, D-588-3): one read of the overview for the card, in the caller's saldo reach and
-  // the team block's salon selection. Follows the loader idiom of loadTeamWeek (generation, calm 404);
-  // a 403 hides the card silently. The 5 s poll never calls it.
-  async function loadTeamSaldo() {
+  // ── Issue #846: Team › Heute im Salon ─────────────────────────────────────────────────────────
+  // Every figure is a server answer under the same salon filter and reach rules (#82/#84/#85);
+  // `$lib/dashboard/heute-im-salon` only counts statuses the server decided and words them.
+  let attendance = $state<TodayAttendanceData | null>(null);
+  let teamMonth = $state<TeamTrendMonth | null>(null);
+  let teamMonthBasis = $state<TeamTrendResponse["workedBasis"] | null>(null);
+  let pendingLeave = $state<TeamTaskLeave[]>([]);
+  let pendingRetroCount = $state(0);
+  let reviewOpen = $state(false);
+  let reviewRequest = $state<TeamTaskLeave | null>(null);
+  const canDecideLeave = $derived(
+    hasPermission($authStore.user, "leave-request:approve:ZUGEWIESEN"),
+  );
+  const canDecideRetro = $derived(
+    hasPermission($authStore.user, "retro-request:approve:ZUGEWIESEN"),
+  );
+
+  async function loadTodayAttendance() {
     const filter = teamFilter;
     const generation = teamGeneration;
-    if (!canSeeTeamSaldo) {
-      teamSaldoLoading = false;
-      return;
-    }
-    teamSaldoLoading = true;
     try {
-      const answer = await api.get<{ employees: TeamSaldoRow[] }>(
-        withSalonId("/dashboard/overtime-overview", filter),
+      const answer = await api.get<TodayAttendanceData>(
+        withSalonId("/dashboard/today-attendance", filter),
       );
       if (generation !== teamGeneration) return;
-      teamSaldoRows = partitionOvertimeOverview(answer.employees ?? []).active;
-      teamSaldoFiltered = filter !== null;
+      attendance = answer;
     } catch (err) {
       if (isTeamSalonRejected(err)) {
-        if (generation === teamGeneration) {
-          teamUnavailable = true;
-        }
+        if (generation === teamGeneration) teamUnavailable = true;
         return;
       }
-      if (err instanceof ApiError && err.status === 403) {
-        if (generation === teamGeneration) teamSaldoHidden = true;
-        return;
-      }
-      console.error("Failed to load team saldo:", err);
-      if (generation === teamGeneration) teamSaldoRows = [];
-    } finally {
-      if (generation === teamGeneration) teamSaldoLoading = false;
+      console.error("Failed to load today's attendance:", err);
     }
   }
 
-  function prevWeek() {
-    weekOffset--;
-    loadTeamWeek();
-  }
-  function nextWeek() {
-    weekOffset++;
-    loadTeamWeek();
-  }
-  function currentWeek() {
-    weekOffset = 0;
-    loadTeamWeek();
-  }
-
-  // Issue #84 (D-07): the three team charts come from ONE server call; the browser sums nothing.
-  async function loadTeamCharts() {
+  // „Monat bis gestern“: the running month of the team trend (closed valid entries through
+  // tenant-local yesterday); the Soll is null where it cannot be attributed (salon filter, reach).
+  async function loadTeamMonth() {
     const filter = teamFilter;
     const generation = teamGeneration;
-    chartsLoading = true;
-    let view: TeamTrendView | null = null;
-    let labels: string[] = [];
-    let overtimeTrend: OvertimeTrendResponse = {
-      snapshots: [],
-      currentTeamBalanceMinutes: 0,
-    };
-
     try {
       const resp = await api.get<TeamTrendResponse>(
-        withSalonId("/dashboard/team-trend?months=6", filter),
+        withSalonId("/dashboard/team-trend?months=1", filter),
       );
       if (generation !== teamGeneration) return;
-      view = teamTrendView(resp);
-      trendView = view;
-      const months = view.months;
-
-      // D-05: the saldo is a contract figure of a person and cannot be attributed to a salon, so
-      // under a filter the trend card shows a note instead and the endpoint is not requested.
-      if (filter !== null) {
-        overtimeTrendAvailable = false;
-        overtimeChart?.destroy();
-        overtimeChart = null;
-      }
-      if (filter === null) {
-        // Load team overtime trend from the dedicated endpoint
-        try {
-          overtimeTrend = await api.get<OvertimeTrendResponse>("/dashboard/overtime-trend");
-          overtimeTrendAvailable = true;
-        } catch (err) {
-          overtimeTrendAvailable = false;
-          // Phase 76b (Issue #76), D-15: the endpoint now requires overtime:read, and a 403 for a
-          // caller without it is expected (Mitarbeiter, Salonmanager template, …) — not an error to
-          // report. Every other failure (network, 500, …) still logs as before.
-          if (!(err instanceof ApiError && err.status === 403)) {
-            console.error("Failed to load overtime trend:", err);
-          }
-        }
-      }
-      if (generation !== teamGeneration) return;
-
-      labels = months.map((m) => m.label);
+      teamMonth = resp.months[resp.months.length - 1] ?? null;
+      teamMonthBasis = resp.workedBasis;
     } catch (err) {
       if (isTeamSalonRejected(err)) {
-        if (generation === teamGeneration) {
-          teamUnavailable = true;
-        }
-      } else {
-        console.error("Failed to load chart data:", err);
+        if (generation === teamGeneration) teamUnavailable = true;
+        return;
       }
-    } finally {
-      // CRITICAL: flip loading flag BEFORE Chart.js instantiation so canvases render into the DOM.
-      // A superseded load leaves the flag to the newer one.
-      if (generation === teamGeneration) chartsLoading = false;
+      console.error("Failed to load the team month:", err);
     }
+  }
+
+  // D-03: the open leave requests decided here go through the SAME dialog as Aufgaben
+  // (LeaveReviewDialog) — this page never writes a decision of its own.
+  async function loadTeamTasks() {
+    const filter = teamFilter;
+    const generation = teamGeneration;
+    const [leaveR, retroR] = await Promise.allSettled([
+      canDecideLeave
+        ? api.get<TeamTaskLeave[]>(withSalonId("/leave/requests?status=PENDING", filter))
+        : Promise.resolve([] as TeamTaskLeave[]),
+      canDecideRetro
+        ? api.get<{ status: string }[]>("/retro-entry-requests")
+        : Promise.resolve([] as { status: string }[]),
+    ]);
     if (generation !== teamGeneration) return;
-    if (view === null) {
-      trendView = null;
-      return;
-    }
-    const drawn: TeamTrendView = view;
+    pendingLeave =
+      leaveR.status === "fulfilled"
+        ? openTeamLeaveTasks(leaveR.value, $authStore.user?.employeeId)
+        : [];
+    pendingRetroCount =
+      retroR.status === "fulfilled" ? retroR.value.filter((r) => r.status === "PENDING").length : 0;
+  }
 
-    // ── Phase 2: wait for Svelte to render the {:else} branch (canvases) ──────
-    // Without this tick(), chartsLoading has been set to false but the DOM has not
-    // yet been updated — bind:this refs (weeklyChartEl etc.) are still undefined.
-    await tick();
-    if (generation !== teamGeneration) return;
+  // D-01: every Kennzahl opens its list — the attendance filter lives in the URL (`?status=`).
+  const attendanceFilter = $derived(attendanceFilterOf($page.url.searchParams.get("status")));
+  function statusHref(key: string): string {
+    const params = new URLSearchParams($page.url.searchParams);
+    if (key === "alle") params.delete("status");
+    else params.set("status", key);
+    const q = params.toString();
+    return `${$page.url.pathname}${q ? `?${q}` : ""}#jetzt`;
+  }
+  const nowRows = $derived(filterAttendance(attendance?.employees ?? [], attendanceFilter));
+  const band = $derived(attendanceBand(attendance));
 
-    // ── Phase 3: instantiate charts ────────────────────────────────────────────
+  function attendanceSubtitle(row: TodayEmployee): string {
+    if (row.status === "missing" && row.expectedStart)
+      return `Schicht seit ${row.expectedStart} · nicht eingestempelt`;
+    if (row.status === "scheduled" && row.expectedStart) return `Schicht ab ${row.expectedStart}`;
+    if (row.workedElsewhere) return "heute auch in einem anderen Salon";
+    return attendanceStatusText(row);
+  }
+  function statusTone(status: TodayEmployee["status"]): "ok" | "warn" | "bad" | "info" | "neutral" {
+    if (status === "clocked_in") return "ok";
+    if (status === "missing") return "bad";
+    if (status === "scheduled" || status === "requested" || status === "holiday") return "info";
+    return "neutral";
+  }
 
-    // One theme read for the three builds: colours come from the tokens only (Issue #591).
-    const theme = getChartTheme();
-
-    // Arbeitsstunden: Soll and Ist as grouped columns, drawn by the one chart builder.
-    if (weeklyChartEl) {
-      weeklyChart?.destroy();
-      weeklyChart = new Chart(
-        weeklyChartEl,
-        teamHoursChartConfig(drawn, theme, monthOpener(TEAM_CHART_REPORT_TAB.hours, drawn)),
-      );
-    }
-
-    // Overtime trend line chart — absolute team saldo from SaldoSnapshots + live OvertimeAccount
-    if (overtimeChartEl) {
-      // Build a lookup of snapshot month → teamCarryOverMinutes
-      const snapshotByMonth = new Map<string, number>();
-      for (const s of overtimeTrend.snapshots) {
-        // API returns "YYYY-MM-DD" (day is always 01); key by "YYYY-MM"
-        snapshotByMonth.set(s.month.slice(0, 7), s.teamCarryOverMinutes);
-      }
-
-      // Align to the same 6-month window as `labels` (months[].month = "YYYY-MM")
-      // For each month:
-      //   - If it's the LAST month (current open month) → use currentTeamBalanceMinutes / 60
-      //   - Else if a snapshot exists for that month → use teamCarryOverMinutes / 60
-      //   - Else → fill-forward from the previous resolved value (or 0 for the leading edge)
-      let lastKnown = 0;
-      const absoluteHours: number[] = [];
-      for (let i = 0; i < drawn.months.length; i++) {
-        const isCurrent = i === drawn.months.length - 1;
-        if (isCurrent) {
-          lastKnown = overtimeTrend.currentTeamBalanceMinutes / 60;
-        } else {
-          const snap = snapshotByMonth.get(drawn.months[i].month);
-          if (snap !== undefined) lastKnown = snap / 60;
-          // else: fill-forward — lastKnown stays unchanged
-        }
-        absoluteHours.push(+lastKnown.toFixed(1));
-      }
-
-      overtimeChart?.destroy();
-      overtimeChart = new Chart(
-        overtimeChartEl,
-        teamSaldoTrendChartConfig(
-          labels,
-          absoluteHours,
-          theme,
-          monthOpener(TEAM_CHART_REPORT_TAB.saldoTrend, drawn),
+  // Mon–Fri always; Saturday and Sunday only when someone has something on that day (prototype v5)
+  const teamWeekDays = $derived(
+    (teamWeek?.weekDays ?? []).filter(
+      (d, i) =>
+        i < 5 ||
+        (teamWeek?.team ?? []).some(
+          (m) => (m.days.find((x) => x.date === d)?.status ?? "none") !== "none",
         ),
-      );
+    ),
+  );
+  const firstMissing = $derived(
+    (attendance?.employees ?? []).find((e) => e.status === "missing") ?? null,
+  );
+  const teamKpis = $derived.by((): KpiItem[] => {
+    const items: KpiItem[] = [
+      {
+        label: "Anwesend",
+        value: String(band.present),
+        unit: `von ${band.expected}`,
+        explanation: band.done > 0 ? `${band.done} heute schon gearbeitet` : "gerade eingestempelt",
+        derivationHref: statusHref("anwesend"),
+        derivationLabel: "Liste →",
+        testId: "kpi-present",
+      },
+      {
+        label: "Erwartet",
+        value: String(band.missing + band.scheduled),
+        // prototype: „Timo · Schicht seit 09:00“ — the first person whose shift began unclocked
+        explanation: firstMissing
+          ? `${firstMissing.name}${firstMissing.expectedStart ? ` · Schicht seit ${firstMissing.expectedStart}` : ""}${band.missing > 1 ? ` · +${band.missing - 1}` : ""}`
+          : band.scheduled > 0
+            ? "kommen noch"
+            : "alle da",
+        deltaTone: band.missing > 0 ? "bad" : "neutral",
+        derivationHref: statusHref("erwartet"),
+        derivationLabel: "Liste →",
+        testId: "kpi-expected",
+      },
+      {
+        label: "Abwesend",
+        value: String(band.absent),
+        explanation: "Urlaub, Krankheit, Berufsschule",
+        derivationHref: statusHref("abwesend"),
+        derivationLabel: "Liste →",
+        testId: "kpi-absent",
+      },
+    ];
+    if (canDecideLeave || canDecideRetro) {
+      items.push({
+        label: "Aufgaben",
+        value: String(pendingLeave.length + pendingRetroCount),
+        explanation: `${pendingLeave.length} ${pendingLeave.length === 1 ? "Antrag" : "Anträge"} · ${pendingRetroCount} ${pendingRetroCount === 1 ? "Nachtrag" : "Nachträge"}`,
+        derivationHref: "/team/aufgaben",
+        derivationLabel: "Aufgaben →",
+        testId: "kpi-tasks",
+      });
     }
+    if (teamMonth) {
+      const worked = fmtHours(teamMonth.workedMinutes / 60);
+      items.push({
+        label: "Monat bis gestern",
+        value: worked,
+        unit:
+          teamMonth.shouldMinutes !== null
+            ? `/ ${fmtHours(teamMonth.shouldMinutes / 60)}`
+            : undefined,
+        explanation:
+          teamMonth.shouldMinutes !== null
+            ? "erfasst / Soll"
+            : teamMonthBasis === "SCOPE_ENTRIES"
+              ? "erfasst in deiner Reichweite"
+              : "erfasst in diesem Salon",
+        testId: "kpi-month",
+      });
+    }
+    return items;
+  });
 
-    // Krankheitstage: columns in calendar days, drawn by the one chart builder (Issue #591).
-    if (sickChartEl) {
-      sickChart?.destroy();
-      sickChart = new Chart(
-        sickChartEl,
-        teamSickDaysChartConfig(drawn, theme, monthOpener(TEAM_CHART_REPORT_TAB.sickDays, drawn)),
-      );
-    }
+  function openReview(request: TeamTaskLeave) {
+    reviewRequest = request;
+    reviewOpen = true;
   }
 
   // Own next leave (personal, for all users) — unrelated to the salon filter.
@@ -971,6 +978,19 @@
     // A new second-salon entry is adopted with the display name of the salon it was started in; the
     // reload that follows replaces it with the list row (which carries `salonName` itself).
     const startedIn = body.salonId ? otherSalonName(clockSalonViewState, body.salonId) : undefined;
+    // #843 (D-843-19): the salon name is read BEFORE the entry is adopted - adopting it changes the
+    // day state, and with it the clock-salon view this reads from. Order: the response's own name,
+    // the second salon this request started in, the salon picked on the idle select view, the salon
+    // a re-open continues (the fixed one); none known = no salon part in the text.
+    const pickedSalon =
+      clockSalonViewState.kind === "select" && body.salonId
+        ? clockSalonViewState.salons.find((s) => s.id === body.salonId)?.name
+        : undefined;
+    const bookedSalon =
+      clockSalonViewState.kind === "fixed" && !body.salonId
+        ? clockSalonViewState.salon.name
+        : undefined;
+    const salonName = entry.salonName ?? startedIn ?? pickedSalon ?? bookedSalon;
     todayEntries = upsertDayEntry(
       todayEntries,
       startedIn ? { ...entry, salonName: startedIn } : entry,
@@ -979,6 +999,8 @@
     // (resolver.ts:130-136). Adopting it keeps the local *display* in sync with the
     // value the server recomputed — the client never sends it back (Phase 129).
     breakMinutes = entry.breakMinutes ?? 0;
+    // #843 (D-843-08, D-843-19): the server answered, say so.
+    toasts.success(clockedInMessage(clockTime(entry.startTime), salonName));
   }
 
   async function handleClock() {
@@ -994,17 +1016,7 @@
       if (!clockedIn) {
         await performClockIn();
       } else if (activeEntryId) {
-        // If a break is open, close it first so the time gets recorded before
-        // we ask the server to clock out (otherwise the time would silently
-        // be lost when activeEntryId is cleared).
-        if (breakStartedAt) {
-          try {
-            await endOpenBreak();
-          } catch (err) {
-            toasts.error(err instanceof Error ? err.message : "Pause konnte nicht beendet werden");
-            return; // abort clock-out — user can retry
-          }
-        }
+        // Issue #596: a running break is closed by the server with the clock-out (resolver STOP).
         // Phase 76.2 D-03 — explicit generic; CONFLICT branches (and, since Phase 307 Plan 02,
         // DEBOUNCE_NOOP too) surface as thrown ApiError (HTTP 409), caught below.
         // Phase 129: no breakMinutes in the body — the server derives it from Break rows only.
@@ -1020,18 +1032,16 @@
         if (clockOutResult.kind === "not-closed") {
           toasts.error(clockOutResult.message);
         } else {
+          // #843 (D-843-19): acknowledged only after the server closed the entry.
+          toasts.success(clockedOutMessage(clockTime(clockOutResult.entry.endTime)));
           // Issue #80 (D-09a): a clock-out that completes a cross-salon day without enough break
           // is saved either way; the API's warning is shown as a notice.
           const breakFindingNotice = breakFindingSaveNotice(clockOutResponse.warnings);
           if (breakFindingNotice) toasts.warning(breakFindingNotice);
           // Phase 115 (issue #118): clockedIn / activeEntryId / clockStart are $derived now.
-          // They resolve to the closed state on their own once loadData() returns the closed
-          // row, and the open-break $effect then clears breakStartedAt.
+          // They resolve to the closed state on their own once loadData() returns the closed row.
           breakMinutes = 0;
         }
-        // Independent of the outcome above: this mirrors the break `endOpenBreak()` already
-        // closed server-side a few lines up, not whether the clock-out itself succeeded.
-        clearStoredOpenBreak();
       }
       await loadData();
     } catch (err) {
@@ -1140,7 +1150,7 @@
 
   async function confirmReopen(): Promise<void> {
     if (clockLoading) return;
-    // The 5 s poll can change the day underneath an open dialog. Re-check before sending.
+    // The 30 s poll can change the day underneath an open dialog. Re-check before sending.
     if (!canReopenFinishedDay(day)) {
       reopenDialogOpen = false;
       return;
@@ -1184,130 +1194,45 @@
     }
   }
 
-  // ── Break toggle (Pause starten / Pause beenden) ─────────────────────────
-  // Toggle semantics: starting just records a local timestamp; ending POSTs
-  // the closed segment to the server. Disabled while not clocked in.
+  // ── Break toggle (Pause / Weiterarbeiten) — Issue #596 ───────────────────
+  // Start and end go to the server (POST /time-entries/:id/break); the state then comes back with
+  // the entry, so another device sees the same break. Acknowledged only after the server answered.
   async function handleBreakToggle() {
     if (!clockedIn || !activeEntryId || clockLoading) return;
     breakLoading = true;
+    const action = breakStartedAt ? "end" : "start";
     try {
-      if (breakStartedAt) {
-        await endOpenBreak();
-      } else {
-        startOpenBreak();
-      }
+      const res = await api.post<{ breakStartedAt: string | null; breakMinutes: number }>(
+        `/time-entries/${activeEntryId}/break`,
+        { action },
+      );
+      breakMinutes = res.breakMinutes;
+      const now = new Date();
+      toasts.success(
+        action === "start"
+          ? breakStarted(clockTime(res.breakStartedAt ?? now))
+          : breakEnded(clockTime(now)),
+      );
+      todayEntries = await api.get<ClockDayEntry[]>(
+        `/time-entries?from=${format(now, "yyyy-MM-dd")}&to=${format(now, "yyyy-MM-dd")}`,
+      );
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Pause fehlgeschlagen");
+      // another device may have changed the state: re-read it
+      try {
+        const now = new Date();
+        todayEntries = await api.get<ClockDayEntry[]>(
+          `/time-entries?from=${format(now, "yyyy-MM-dd")}&to=${format(now, "yyyy-MM-dd")}`,
+        );
+      } catch {
+        /* keep the shown state */
+      }
     } finally {
       breakLoading = false;
     }
   }
 
-  function startOpenBreak() {
-    breakStartedAt = new Date();
-    persistOpenBreak();
-  }
-
-  async function endOpenBreak() {
-    if (!breakStartedAt || !activeEntryId) return;
-    const startedAt = breakStartedAt;
-    const endedAt = new Date();
-    // Guard against zero-length breaks (double-click): ensure the Break record
-    // is at least 60s long by anchoring on endedAt and shifting the START into
-    // the PAST when needed. We must never shift the END into the future — the
-    // server rejects future-end timestamps ("Pausenende darf nicht in der
-    // Zukunft liegen") and the local "now" is already at or after the server's
-    // "now" once the request round-trips.
-    //
-    // The shifted start is also clamped to clockStart so the break never lies
-    // before the entry's startTime (server validates that too).
-    let effectiveStart = startedAt;
-    if (endedAt.getTime() - startedAt.getTime() < 60_000) {
-      effectiveStart = new Date(endedAt.getTime() - 60_000);
-      if (clockStart && effectiveStart < clockStart) {
-        effectiveStart = clockStart;
-      }
-    }
-    const res = await api.post<{ breakMinutes: number }>(`/time-entries/${activeEntryId}/breaks`, {
-      startTime: effectiveStart.toISOString(),
-      endTime: endedAt.toISOString(),
-    });
-    breakMinutes = res.breakMinutes;
-    breakStartedAt = null;
-    clearStoredOpenBreak();
-  }
-
-  function persistOpenBreak() {
-    if (typeof window === "undefined") return;
-    if (!activeEntryId || !breakStartedAt) return;
-    try {
-      localStorage.setItem(
-        OPEN_BREAK_STORAGE_KEY,
-        JSON.stringify({ entryId: activeEntryId, startedAt: breakStartedAt.toISOString() }),
-      );
-    } catch {
-      /* localStorage may be unavailable; ignore */
-    }
-  }
-
-  function clearStoredOpenBreak() {
-    if (typeof window === "undefined") return;
-    try {
-      localStorage.removeItem(OPEN_BREAK_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function restoreOpenBreak() {
-    if (typeof window === "undefined") return;
-    if (!activeEntryId) return;
-    try {
-      const raw = localStorage.getItem(OPEN_BREAK_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { entryId: string; startedAt: string };
-      if (parsed.entryId !== activeEntryId) {
-        // Stale entry from a previous clock-in cycle.
-        clearStoredOpenBreak();
-        return;
-      }
-      const startedAt = new Date(parsed.startedAt);
-      if (Number.isNaN(startedAt.getTime())) {
-        clearStoredOpenBreak();
-        return;
-      }
-      breakStartedAt = startedAt;
-    } catch {
-      clearStoredOpenBreak();
-    }
-  }
-
-  // Phase 115 (issue #118): activeEntryId is derived now, so the open-break restore that
-  // used to sit inside loadData()/pollDashboard() reacts to the id instead. `lastSeenEntryId`
-  // is a PLAIN let on purpose — making it $state would make this effect re-trigger itself.
-  let lastSeenEntryId: string | null = null;
-  $effect(() => {
-    const id = activeEntryId;
-    if (id === lastSeenEntryId) return;
-    lastSeenEntryId = id;
-    if (id) {
-      restoreOpenBreak();
-    } else {
-      breakStartedAt = null;
-      clearStoredOpenBreak();
-    }
-  });
-
   // ── Helpers ────────────────────────────────────────────────────────────────
-  function formatElapsed(start: Date | null, now: Date): string {
-    if (!start) return "–";
-    const diff = Math.floor((now.getTime() - start.getTime()) / 1000);
-    const h = Math.floor(diff / 3600);
-    const m = Math.floor((diff % 3600) / 60);
-    const s = diff % 60;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-
   function fmtHours(hours: number): string {
     const totalMin = Math.round(Math.abs(hours) * 60);
     const h = Math.floor(totalMin / 60);
@@ -1347,26 +1272,6 @@
   let userName = $derived($authStore.user?.firstName ?? $authStore.user?.email.split("@")[0] ?? "");
   let capitalizedName = $derived(userName.charAt(0).toUpperCase() + userName.slice(1));
 
-  let overtimeBalance = $derived((stats as DashboardStats | null)?.overtime?.balanceHours ?? 0);
-  let overtimeClass = $derived(
-    Math.abs(overtimeBalance) >= 60
-      ? "text-red"
-      : Math.abs(overtimeBalance) >= 40
-        ? "text-yellow"
-        : "text-green",
-  );
-
-  // Timer card derived state (Phase 29, EMP-01)
-  const TIMER_TARGET_MS = 8 * 60 * 60 * 1000;
-  let elapsedMs = $derived.by((): number => {
-    const start = clockStart as Date | null;
-    if (!clockedIn || !start) return 0;
-    return currentTime.getTime() - start.getTime();
-  });
-  let pctTarget = $derived(Math.min(100, (elapsedMs / TIMER_TARGET_MS) * 100));
-  let remainingTargetHours = $derived(Math.max(0, (TIMER_TARGET_MS - elapsedMs) / 3_600_000));
-  let workedHoursLive = $derived(elapsedMs / 3_600_000);
-
   // ── Heutiger Eintrag derived ──────────────────────────────────────────────
   // Compute Start/End/Pause/Net from todayEntry.
   // - If clocked in (no endTime): "Ende" shows "—", break minutes are 0 (breaks only counted after clock-out)
@@ -1398,14 +1303,6 @@
   });
   let entryBreakMin = $derived(multiRowDay ? totals.breakMinutes : (todayEntry?.breakMinutes ?? 0));
 
-  function fmtHm(min: number): string {
-    const h = Math.floor(min / 60);
-    const m = Math.round(min % 60);
-    return `${h}:${String(m).padStart(2, "0")} h`;
-  }
-  let entryBreakLabel = $derived(todayEntry ? fmtHm(entryBreakMin) : "—");
-  let entryNetLabel = $derived(todayEntry ? fmtHm(entryWorkedMin) : "—");
-
   // Phase 115 (issue #118) — the hero card's three-state view model.
   let primaryLabel = $derived(primaryClockLabel(day)); // null on a finished day
   let reopenGapLabel = $derived(reopenGapStartLabel(day)); // "17:46" on a finished day
@@ -1417,175 +1314,369 @@
     `Der Zeitraum ${reopenGapLabel ?? ""}–jetzt wird als Pause erfasst. ` +
       `Der heutige Eintrag wird dadurch wieder geöffnet, seine Netto-Arbeitszeit sinkt und der Pausenwert wird neu berechnet.`,
   );
-  // The big HH:MM:SS readout for a finished day: the entry's own net time, not a live counter.
-  let finishedNetClock = $derived.by(() => {
-    const total = Math.max(0, Math.round(entryWorkedMin * 60));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  });
 
-  // Timeline progress: % of 12h window from 07:00 start anchor
-  let entryProgressPct = $derived.by(() => {
-    if (!todayEntry) return 0;
-    const startIso = multiRowDay && totals.startTime ? totals.startTime : todayEntry.startTime;
-    const endIso = multiRowDay ? totals.endTime : todayEntry.endTime;
-    const start = new Date(startIso).getTime();
-    const end = endIso ? new Date(endIso).getTime() : currentTime.getTime();
-    const dur = Math.max(0, end - start);
-    return Math.min(100, (dur / (12 * 3_600_000)) * 100);
+  // ── Issue #845: the stage view model (D-02, D-03, D-845-01/02/08) ─────────────────────────────
+  let todayIso = $derived(format(currentTime, "yyyy-MM-dd"));
+  // Issue #596 (#845): the day goal is today's Soll of the working-time account (its core, served by
+  // GET /dashboard), never a fixed 8 h; 0 or no answer = no goal today.
+  let goalMin = $derived.by((): number | null => {
+    const soll = (stats as DashboardStats | null)?.today.sollMinutes;
+    return typeof soll === "number" && soll > 0 ? soll : null;
   });
+  let pauseRunningMin = $derived(
+    clockedIn && breakStartedAt
+      ? Math.max(0, (currentTime.getTime() - (breakStartedAt as Date).getTime()) / 60_000)
+      : 0,
+  );
+  // While a break runs the working time stands still: the running break is taken off the live value.
+  let stageWorkedMin = $derived(Math.max(0, entryWorkedMin - pauseRunningMin));
+  let stageState = $derived<"ruhig" | "arbeitet" | "pause" | "fertig">(
+    day.kind === "running"
+      ? breakStartedAt
+        ? "pause"
+        : "arbeitet"
+      : day.kind === "finished"
+        ? "fertig"
+        : "ruhig",
+  );
 
-  // ArbZG § 4 callout message
-  let arbzgCallout = $derived.by((): { title: string; body: string } => {
-    if (!todayEntry) {
-      return {
-        title: "Noch nicht eingestempelt heute.",
-        body: "Sobald du startest, wird die Pausenpflicht hier angezeigt.",
-      };
-    }
-    // Issue #70: with several entries the § 4 verdict belongs to the whole day (breaks between
-    // entries in the same salon count, gaps between salons do not) and is decided by the server —
-    // a verdict computed here from the day sums would be wrong in both directions.
-    if (multiRowDay) {
-      return {
-        title: "Mehrere Einträge heute.",
-        body: "Die Pausenprüfung nach § 4 ArbZG bewertet den ganzen Tag; Hinweise erscheinen beim Ausstempeln.",
-      };
-    }
-    const workedHours = entryWorkedMin / 60;
-    if (workedHours < 6) {
-      const need = Math.max(0, 30 - entryBreakMin);
-      return {
-        title: "§ 4 ArbZG: noch ausreichend Pausenzeit.",
-        body:
-          need > 0
-            ? `${Math.round(need)} Min. Pause erforderlich ab 6:00 Std. Arbeit.`
-            : "30 Min. Pause bereits genommen.",
-      };
-    }
-    if (entryBreakMin < 30) {
-      return {
-        title: "§ 4 ArbZG verletzt.",
-        body: "Bei mehr als 6 Std. Arbeit sind mind. 30 Min. Pause Pflicht — bitte Pause nachtragen.",
-      };
-    }
-    if (workedHours > 9 && entryBreakMin < 45) {
-      return {
-        title: "§ 4 ArbZG verletzt.",
-        body: "Bei mehr als 9 Std. Arbeit sind mind. 45 Min. Pause Pflicht.",
-      };
-    }
-    return {
-      title: "§ 4 ArbZG erfüllt.",
-      body: `${Math.round(entryBreakMin)} Min. Pause genommen, keine weitere Pause erforderlich.`,
-    };
-  });
-
-  function relativeTime(iso: string): string {
-    const then = new Date(iso).getTime();
-    const now = currentTime.getTime();
-    const diffSec = Math.floor((now - then) / 1000);
-    if (diffSec < 60) return "gerade eben";
-    const diffMin = Math.floor(diffSec / 60);
-    if (diffMin < 60) return `vor ${diffMin} Min.`;
-    const sameDay = new Date(iso).toDateString() === new Date(now).toDateString();
-    if (sameDay) {
-      const d = new Date(iso);
-      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    }
-    const diffDays = Math.floor(diffSec / 86400);
-    if (diffDays === 1) return "gestern";
-    if (diffDays < 7) {
-      const d = new Date(iso);
-      return format(d, "EEE", { locale: de });
-    }
-    return new Date(iso).toLocaleDateString("de-DE", {
-      day: "2-digit",
-      month: "2-digit",
-    });
+  function fmtClock(min: number): string {
+    const total = Math.max(0, Math.floor(min));
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
   }
+
+  let stageTitle = $derived(
+    stageState === "arbeitet"
+      ? "Du arbeitest"
+      : stageState === "pause"
+        ? "Pause"
+        : stageState === "fertig"
+          ? `Ausgestempelt um ${entryEndHHMM}`
+          : "Noch nicht eingestempelt",
+  );
+  // The place of the running / finished day belongs to the status line (owner acceptance, item 2).
+  let stageSalonName = $derived(
+    clockSalonViewState.kind === "fixed" && day.kind !== "idle"
+      ? clockSalonViewState.salon.name
+      : null,
+  );
+  // Today's own shift: SHIFT_BASED reads it from the roster read above, others from the week read.
+  let todayShiftText = $derived(
+    todayShift !== null
+      ? `${todayShift.startTime}–${todayShift.endTime}`
+      : (ownShiftByDate.get(todayIso) ?? null),
+  );
+
+  let stageMeta = $derived.by((): { label: string; value: string }[] => {
+    if (stageState === "arbeitet") {
+      const out = [{ label: "seit", value: clockStart ? format(clockStart, "HH:mm") : "—" }];
+      // D-845-02: the break taken so far, never a § 4 budget computed here
+      out.push({ label: "Pause", value: fmtClock(entryBreakMin) });
+      if (goalMin !== null)
+        out.push({
+          label: "bis Soll noch",
+          value: fmtClock(Math.max(0, goalMin - stageWorkedMin)),
+        });
+      return out;
+    }
+    if (stageState === "pause") {
+      return [
+        { label: "seit", value: breakStartedAt ? format(breakStartedAt, "HH:mm") : "—" },
+        { label: "läuft", value: `${Math.floor(pauseRunningMin)} min` },
+        { label: "Arbeitszeit", value: "steht" },
+      ];
+    }
+    if (stageState === "fertig") {
+      return [
+        { label: "Zeiten", value: `${entryStartHHMM}–${entryEndHHMM}` },
+        { label: "Pause", value: fmtClock(entryBreakMin) },
+        { label: "Netto", value: `${fmtClock(entryWorkedMin)} h` },
+      ];
+    }
+    const out: { label: string; value: string }[] = [];
+    if (todayShiftText) out.push({ label: "Schicht", value: todayShiftText });
+    if (goalMin !== null) out.push({ label: "Soll", value: fmtClock(goalMin) });
+    if (out.length === 0) out.push({ label: "Heute", value: "kein Arbeitstag" });
+    return out;
+  });
+
+  // The day bar 08:00–20:00 (prototype): the planned shift as a faint band, every entry of today
+  // as a segment, the running break on top.
+  const TL_START_MIN = 8 * 60;
+  const TL_SPAN_MIN = 12 * 60;
+  function tlPos(minutesOfDay: number): number {
+    return Math.min(100, Math.max(0, ((minutesOfDay - TL_START_MIN) / TL_SPAN_MIN) * 100));
+  }
+  let plannedBand = $derived.by(() => {
+    const m = /^(\d{2}):(\d{2})–(\d{2}):(\d{2})$/.exec(todayShiftText ?? "");
+    if (!m) return null;
+    const l = tlPos(Number(m[1]) * 60 + Number(m[2]));
+    const r = tlPos(Number(m[3]) * 60 + Number(m[4]));
+    return r > l ? { left: l, width: r - l } : null;
+  });
+  let timelineSegments = $derived.by(() => {
+    const pos = (d: Date) => tlPos(d.getHours() * 60 + d.getMinutes());
+    const segs: { kind: "work" | "break"; left: number; width: number }[] = [];
+    for (const e of todayEntries) {
+      const l = pos(new Date(e.startTime));
+      const r = pos(e.endTime ? new Date(e.endTime) : currentTime);
+      segs.push({ kind: "work", left: l, width: Math.max(0.6, r - l) });
+    }
+    if (clockedIn && breakStartedAt) {
+      const l = pos(breakStartedAt as Date);
+      segs.push({ kind: "break", left: l, width: Math.max(0.6, pos(currentTime) - l) });
+    }
+    return segs;
+  });
+
+  // „Montag, 9. November · Clokr Demo Nord · Soll heute 8:00 h“ (owner acceptance, item 1)
+  let homeSalonName = $derived(
+    $salonContext.salons.find((x) => x.id === $salonContext.homeSalonId)?.name ?? null,
+  );
+  // Heute im Salon (prototype v5): „Salon · Montag, 9. November · Stand 10:42“
+  let teamSub = $derived(
+    [
+      teamLabel ?? ($salonContext.salons.length === 1 ? $salonContext.salons[0].name : null),
+      format(currentTime, "EEEE, d. MMMM", { locale: de }),
+      `Stand ${format(currentTime, "HH:mm")}`,
+    ]
+      .filter((x): x is string => !!x)
+      .join(" · "),
+  );
+  let meinTagSub = $derived(
+    [
+      format(currentTime, "EEEE, d. MMMM", { locale: de }),
+      homeSalonName,
+      goalMin !== null ? `Soll heute ${fmtClock(goalMin)} h` : null,
+    ]
+      .filter((x): x is string => !!x)
+      .join(" · "),
+  );
+
+  // ── Issue #845: the Kennzahlenleiste (D-01, D-04, D-845-03/07) ───────────────────────────────
+  /** „3 beantragt · 21.12.–23.12.“ — undecided days (server figure) and the next approved leave. */
+  function vacationLine(v: { total: number; pending?: number }): string {
+    const pending = v.pending ?? 0;
+    const next = myNextLeave
+      ? `${format(new Date(myNextLeave.startDate), "d.M.")}–${format(new Date(myNextLeave.endDate), "d.M.")}`
+      : null;
+    return (
+      [pending > 0 ? `${formatDays(pending)} beantragt` : null, next].filter(Boolean).join(" · ") ||
+      `von ${formatDays(v.total)}`
+    );
+  }
+
+  const kontoHref = $derived(
+    mayOpenPath($authStore.user, "/ich/konto") ? "/ich/konto" : "/ich/zeiten",
+  );
+
+  let kpiItems = $derived.by((): KpiItem[] => {
+    const items: KpiItem[] = [];
+    // Phase 76b (Issue #76), CR-01: `stats.overtime === null` = no overtime:read:EIGENE — no cell at all.
+    if (stats && stats.overtime === null) {
+      // intentionally empty: no saldo cell for this caller
+    } else if (isExempt) {
+      items.push({
+        label: "Stundenkonto",
+        value: "—",
+        explanation: "§ 18 ArbZG",
+        testId: "kpi-saldo",
+      });
+    } else if (ownOvertime) {
+      const f = saldoFigure(ownOvertime);
+      items.push({
+        label: "Stundenkonto",
+        badge: f.forecast ? "Prognose" : undefined,
+        value: f.value,
+        unit: "h",
+        explanation: saldoMonthsLine(ownOvertime, todayIso) ?? undefined,
+        // The derivation lives on Ich › Konto (#851); until that page exists, the Zeiten page.
+        derivationHref: kontoHref,
+        testId: "kpi-saldo",
+      });
+    } else {
+      items.push({
+        label: "Stundenkonto",
+        value: "—",
+        explanation: "nicht verfügbar",
+        testId: "kpi-saldo",
+      });
+    }
+    if (stats?.vacation) {
+      items.push({
+        label: "Resturlaub",
+        value: formatDays(stats.vacation.remaining),
+        unit: formatDays(stats.vacation.remaining) === "1" ? "Tag" : "Tage",
+        explanation: vacationLine(stats.vacation),
+        testId: "kpi-vacation",
+      });
+    }
+    const planned = nextPlannedDay(
+      [...myWeekDays, ...nextWeekDays],
+      nextShift,
+      myWeekScheduleType ?? (stats as DashboardStats | null)?.scheduleType,
+      todayIso,
+    );
+    items.push({
+      label: nextShift ? "Nächste Schicht" : "Nächster Arbeitstag",
+      value: planned
+        ? format(new Date(planned.date + "T12:00:00"), "EEEEEE d.M.", { locale: de })
+        : "—",
+      explanation: planned ? planned.text : "Kein Arbeitstag geplant",
+      testId: "kpi-next-shift",
+    });
+    if (stats?.week && stats.week.targetHours > 0) {
+      const n = plannedDaysCount(
+        myWeekDays,
+        myWeekScheduleType ?? (stats as DashboardStats | null)?.scheduleType,
+        new Set(ownShiftByDate.keys()),
+      );
+      items.push({
+        label: "Diese Woche",
+        value: fmtClock(stats.week.workedHours * 60),
+        unit: `/ ${fmtClock(stats.week.targetHours * 60)}`,
+        explanation: n === 1 ? "1 Tag geplant" : `${n} Tage geplant`,
+        testId: "kpi-week",
+      });
+    }
+    return items;
+  });
+
+  // ── Issue #845: „Für dich“ (D-06, D-845-06) ───────────────────────────────────────────────────
+  interface ForYouItem {
+    key: string;
+    title: string;
+    subtitle?: string;
+    chip: string;
+    tone: "ok" | "warn" | "bad" | "info" | "brand" | "neutral";
+    href: string;
+    action: string;
+    testId?: string;
+    hint?: string;
+  }
+  function dayShort(iso: string): string {
+    return format(new Date(iso + "T12:00:00"), "EEEEEE d.M.", { locale: de });
+  }
+  let forYou = $derived.by((): ForYouItem[] => {
+    const out: ForYouItem[] = [];
+    // one row per break finding of the server's day check, each with its own day link
+    for (const d of [...breakDaySet].sort()) {
+      out.push({
+        key: `break-${d}`,
+        title: `${dayShort(d)} ohne Pause`,
+        subtitle: "Pause nachtragen oder Tag bestätigen.",
+        chip: "Prüfen",
+        tone: "warn",
+        href: breakNudgeHref(summarizeUnconfirmedBreakDays([d])),
+        action: "Öffnen",
+        testId: out.length === 0 ? "dashboard-break-nudge" : undefined,
+      });
+    }
+    for (const missDate of openItems?.missingDays ?? []) {
+      out.push({
+        key: `miss-${missDate}`,
+        title: `${dayShort(missDate)} ohne Zeiteintrag`,
+        subtitle: "An diesem Arbeitstag fehlt deine Zeit.",
+        chip: "Fehlt",
+        tone: "bad",
+        href: `/ich/zeiten?view=list&date=${missDate}`,
+        action: "Nachtragen",
+      });
+    }
+    if ((openItems?.invalidEntries ?? 0) > 0) {
+      const n = openItems!.invalidEntries;
+      out.push({
+        key: "invalid",
+        title: n === 1 ? "1 Eintrag zu korrigieren" : `${n} Einträge zu korrigieren`,
+        subtitle: "Bitte prüfen und korrigieren.",
+        chip: "Prüfen",
+        tone: "warn",
+        href: "/ich/zeiten",
+        action: "Öffnen",
+      });
+    }
+    if (karenzNudge.count > 0) {
+      out.push({
+        key: "karenz",
+        title: karenzNudge.label,
+        subtitle: KARENZ_NUDGE_TOOLTIP,
+        chip: "Info",
+        tone: "info",
+        href: karenzNudgeHref(karenzNudge),
+        action: "Öffnen",
+        testId: "dashboard-karenz-nudge",
+      });
+    }
+    if ((openItems?.pendingRequests ?? 0) > 0) {
+      const n = openItems!.pendingRequests;
+      out.push({
+        key: "pending",
+        title: n === 1 ? "Dein Antrag wartet" : `${n} Anträge warten`,
+        subtitle: "Du bekommst Bescheid, sobald entschieden ist.",
+        chip: "Offen",
+        tone: "neutral",
+        href: "/ich/abwesenheiten?view=requests",
+        action: "Ansehen",
+      });
+    }
+    return out;
+  });
+
+  // Owner acceptance (item 5): only the person's own events in everyday language — no system lines
+  // (the month close, audit entries); the sentences come from the one API text source.
+  let history = $derived(
+    historySentences(activityItems.filter((i) => i.category === "time" || i.category === "leave")),
+  );
+  function historyWhen(iso: string): string {
+    const d = new Date(iso);
+    return format(d, "yyyy-MM-dd") === todayIso
+      ? format(d, "HH:mm")
+      : format(d, "EEEEEE", { locale: de });
+  }
+  let breakDaySet = $derived(new Set(openItems?.unconfirmedBreakDays ?? []));
+  let recentDayRows = $derived(
+    recentDays(recentEntries, cumulativeByDate, breakDaySet, (rows) =>
+      dayTotals(rows as ClockDayEntry[], currentTime),
+    ),
+  );
 </script>
 
 <svelte:head>
-  <title>{pageLabel("/dashboard")} – Clokr</title>
+  <title>{pageLabel(pageKey)} – Clokr</title>
 </svelte:head>
 
 {#snippet teamCellContent(day: TeamDay)}
+  <!-- Issue #846 (D-02): hours as a pill, every other status as a chip WITH text, never a symbol alone. -->
   {#if day.status === "present"}
     {#if day.workedElsewhere && day.workedHours === 0}
-      <span class="cell-badge cell-badge--elsewhere" title="In einem anderen Salon gearbeitet"
-        >anderer Salon</span
-      >
+      <Chip tone="neutral" title="In einem anderen Salon gearbeitet">anderer Salon</Chip>
     {:else}
-      <span
-        class="cell-badge cell-badge--present"
-        title="{fmtHours(day.workedHours)} gearbeitet{day.workedElsewhere
-          ? ', außerdem in einem anderen Salon gearbeitet'
-          : ''}"
-      >
-        {fmtHours(day.workedHours)}
-      </span>
-    {/if}
-    {#if day.shift}
-      <span class="shift-label" style={day.shift.color ? `color: ${day.shift.color}` : ""}>
-        {day.shift.startTime}–{day.shift.endTime}
-      </span>
+      <span class="ts-pill">{fmtHours(day.workedHours)}</span>
     {/if}
   {:else if day.status === "clocked_in"}
-    <span
-      class="cell-badge cell-badge--active"
-      title={day.workedElsewhere ? "Eingestempelt (anderer Salon)" : "Eingestempelt"}
-    >
-      <Icon name="circle-fill" size={14} />
-    </span>
-  {:else if day.status === "absent"}
-    <span
-      class="cell-badge cell-badge--absent"
-      class:cell-badge--bs={day.absenceType === "VOCATIONAL_SCHOOL"}
-      title={day.reason ?? "Abwesend"}
-    >
-      {#if day.leaveTypeCode === "SICK" || day.absenceType === "SICK" || day.leaveTypeCode === "SICK_CHILD" || day.absenceType === "SICK_CHILD"}
-        <Icon name="medical" size={14} title={day.reason ?? "Krank"} />
-      {:else if day.leaveTypeCode === "MATERNITY" || day.absenceType === "MATERNITY"}
-        <Icon name="heart" size={14} title="Mutterschutz" />
-      {:else if day.leaveTypeCode === "PARENTAL" || day.absenceType === "PARENTAL"}
-        <Icon name="users" size={14} title="Elternzeit" />
-      {:else if day.absenceType === "VOCATIONAL_SCHOOL"}
-        <Icon name="graduation-cap" size={14} title="Berufsschule" />
-      {:else}
-        <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
-      {/if}
-    </span>
-  {:else if day.status === "holiday"}
-    <span class="cell-badge cell-badge--holiday" title={day.reason ?? "Feiertag"}>
-      <Icon name="sun" size={14} title={day.reason ?? "Feiertag"} />
-    </span>
+    <Chip tone="ok">{DAY_STATUS_LABEL.clocked_in}</Chip>
   {:else if day.status === "missing"}
-    <span class="cell-badge cell-badge--missing" title={teamMissingTitle(day)}>
-      <Icon name="alert" size={14} title="Fehlt" />
-    </span>
-  {:else if day.status === "scheduled"}
-    <span
-      class="cell-badge cell-badge--scheduled"
-      title={day.shift
-        ? (day.shift.label ?? day.shift.startTime + "–" + day.shift.endTime)
-        : "Arbeitstag"}
-      style={day.shift?.color ? `border-color: ${day.shift.color}` : ""}
+    <Chip tone="bad" title={teamMissingTitle(day)}>{DAY_STATUS_LABEL.missing}</Chip>
+  {:else if day.status === "absent"}
+    <Chip tone="neutral" title={day.reason ?? DAY_STATUS_LABEL.absent}
+      >{day.reason ?? DAY_STATUS_LABEL.absent}</Chip
     >
-      {#if day.shift}
-        <span class="shift-time">{day.shift.startTime}–{day.shift.endTime}</span>
-      {:else}
-        <span class="shift-time">{fmtHours(day.expectedHours ?? 0)}</span>
-      {/if}
-    </span>
+  {:else if day.status === "holiday"}
+    <Chip tone="info" title={day.reason ?? DAY_STATUS_LABEL.holiday}
+      >{DAY_STATUS_LABEL.holiday}</Chip
+    >
   {:else if day.status === "requested"}
-    <span class="cell-badge cell-badge--requested" title={day.reason ?? "Antrag offen"}>
-      <Icon name="clock" size={14} title="beantragt" />
-    </span>
+    <Chip tone="info" title={day.reason ?? DAY_STATUS_LABEL.requested}
+      >{DAY_STATUS_LABEL.requested}</Chip
+    >
+  {:else if day.status === "scheduled"}
+    <span class="ts-faint"
+      >{day.shift
+        ? `${day.shift.startTime}–${day.shift.endTime}`
+        : fmtHours(day.expectedHours ?? 0)}</span
+    >
   {:else}
-    <span class="cell-badge cell-badge--none" title="Frei">–</span>
+    <span class="ts-faint" title="Frei">—</span>
   {/if}
 {/snippet}
 
@@ -1594,181 +1685,164 @@
 <div class="dashboard" data-testid="dashboard-page">
   <!-- Page Header -->
   <PageHead
-    eyebrow="Mein Bereich"
-    title={pageLabel("/dashboard")}
-    sub={`${greeting()}, ${capitalizedName}`}
-  />
-
-  <!-- Phase 49.4 (rearrange): two-column stack — LEFT (Timer → Heutiger Eintrag → Aktivität),
-       RIGHT (KPI-pair → MyShifts/MyWeekView → Offene Vorgänge). Eliminates row-bound gaps
-       where Timer-Card and Aktivität were short while MyShiftsWeek on the right was tall. -->
-  <div class="dashboard-stacks">
-    <!-- LEFT column (col-7) -->
-    <div class="dashboard-stack dashboard-stack--left">
-      <!-- Timer Card Hero (EMP-01) -->
-      <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt users (Inhaber/
-           Geschäftsführer/leitende Angestellte) MUST NOT see the Stempeluhr
-           CTA. Full HIDE the entire Timer-Card hero — not a disabled button.
-           Rationale: don't teach exempt users to interact with disabled
-           controls. -->
-      {#if !isExempt}
-        <Card animate class="timer-card col-7 timer-card-wrap" style="--card-idx: 0;">
-          <div class="timer-hd" data-day-state={day.kind}>
-            <div>
-              <div class="timer-hd-title">
-                {#if day.kind === "running"}
-                  Du arbeitest gerade
-                {:else if day.kind === "finished"}
-                  Tag abgeschlossen
-                {:else}
-                  Noch nicht eingestempelt
-                {/if}
-              </div>
-              <div class="timer-status">
-                {#if day.kind === "running" && clockStart}
-                  <span class="live-dot" aria-hidden="true"></span>
-                  <span>gestartet um {format(clockStart, "HH:mm")}</span>
-                {:else if day.kind === "finished"}
-                  <span class="timer-status-idle">
-                    {entryStartHHMM} – {entryEndHHMM} · {entryNetLabel} erfasst
-                  </span>
-                {:else}
-                  <span class="timer-status-idle">Bereit zum Einstempeln</span>
-                {/if}
-              </div>
-            </div>
-            <div class="timer-hd-right">
-              <div class="timer-hd-title timer-hd-date">
-                {format(currentTime, "EEEE, d. MMMM", { locale: de })}
-              </div>
-              <div class="timer-now">
-                {format(currentTime, "HH:mm")}
-              </div>
-            </div>
-          </div>
-
-          <div class="clock timer-display">
-            {#if day.kind === "running" && clockStart}
-              {formatElapsed(clockStart, currentTime)}
-            {:else if day.kind === "finished"}
-              {finishedNetClock}
-            {:else}
-              00:00:00
-            {/if}
-          </div>
-          {#if day.kind === "finished"}
-            <!-- No Tagesziel bar on a finished day: pctTarget derives from elapsedMs, which is 0
-                 when not clocked in, so a FIXED_SCHEDULE employee would see a 0 % bar on a
-                 completed 8:21 h day — the same lie this phase removes, one size smaller. -->
-            <div class="timer-sub">Erfasste Arbeitszeit heute</div>
-          {:else if stats?.scheduleType === "FIXED_SCHEDULE"}
-            <div class="timer-sub">
-              {clockedIn
-                ? `Noch ${fmtHours(remainingTargetHours)} bis zum Tagesziel`
-                : "Bereit für deinen Tag"}
-            </div>
-
-            <div class="timer-progress">
-              <div class="timer-progress-track">
-                <div class="timer-progress-fill" style="width: {pctTarget}%;"></div>
-              </div>
-              <div class="timer-progress-labels">
-                <span>{fmtHours(workedHoursLive)} gearbeitet</span>
-                <span>Tagesziel 8:00</span>
-              </div>
-            </div>
-          {:else}
-            <div class="timer-sub">
-              {clockedIn ? "Zeiterfassung läuft" : "Bereit für deinen Tag"}
-            </div>
+    eyebrow={view === "team" ? AREA_LABELS.team : AREA_LABELS.ich}
+    title={view === "me" ? `${greeting()}, ${capitalizedName}` : pageLabel(pageKey)}
+    sub={view === "me" ? meinTagSub : teamSub}
+  >
+    {#snippet actions()}
+      {#if view === "me"}
+        <a class="btn btn-ghost btn-sm" href="/ich/abwesenheiten?antrag=krank">Krank melden</a>
+        <a class="btn btn-outline btn-sm" href="/ich/abwesenheiten?antrag=urlaub"
+          >Urlaub beantragen</a
+        >
+      {/if}
+      {#if view === "team"}
+        <span class="ts-actions">
+          <!-- #846 (prototype v5): the two team actions, each only where the person may open the page -->
+          {#if view === "team" && mayOpenPath($authStore.user, "/team/zeiten")}
+            <a class="btn btn-outline btn-sm" href="/team/zeiten">Zeit eintragen</a>
           {/if}
+          {#if view === "team" && mayOpenPath($authStore.user, "/team/abwesenheiten")}
+            <a class="btn btn-primary btn-sm" href="/team/abwesenheiten">Abwesenheit anlegen</a>
+          {/if}
+          <!-- Owner 13.11.2026: no own clock action on Heute im Salon (was #846 D-05); the own clock
+               lives on Mein Tag, the team page stays a team page. -->
+        </span>
+      {/if}
+    {/snippet}
+  </PageHead>
 
-          <div class="card-foot timer-foot">
-            <ClockSalonSelect
-              view={clockSalonViewState}
-              value={clockSalonId}
-              disabled={clockLoading}
-              onselect={(id) => (clockSalonId = id)}
-              noteLabel={fixedSalonNoteLabel(day.kind, todayEntries.length)}
-            />
-            {#if primaryLabel}
-              <button
-                onclick={handleClock}
-                disabled={clockLoading || clockInBlocked(clockSalonViewState, clockSalonId)}
-                class="btn timer-cta-primary"
-                type="button"
-              >
-                {#if clockLoading}<span class="btn-spinner"></span>{/if}
-                {primaryLabel}
-              </button>
-            {/if}
-            {#if clockedIn}
-              <button
-                type="button"
-                class="btn btn-ghost timer-cta-ghost"
-                class:timer-cta-ghost--active={breakStartedAt}
-                disabled={clockLoading || breakLoading}
-                onclick={handleBreakToggle}
-                title={breakStartedAt
-                  ? "Aktive Pause beenden — die Zeit wird als Pause vom Eintrag abgezogen"
-                  : "Pause starten — die Zeit wird als Pause vom Eintrag abgezogen"}
-              >
-                {#if breakLoading}<span class="btn-spinner"></span>{/if}
-                {breakStartedAt ? "Pause beenden" : "Pause starten"}
-              </button>
-            {/if}
-            {#if day.kind === "finished"}
-              {#if canReopenFinishedDay(day) && reopenGapLabel}
+  {#if view === "me"}
+    <!-- Issue #845 (prototype v5, owner acceptance 09.11.2026): Bühne → Kennzahlen →
+       [Deine Woche · Letzte Tage | Für dich · Verlauf]. The page lays out the #843 blocks. -->
+    <div class="mein-tag">
+      <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt users (Inhaber/Geschäftsführer/leitende
+         Angestellte) see no clock at all — not a disabled button. -->
+      {#if !isExempt}
+        <section class="mt-stage card-animate" style="--card-idx: 0;" data-testid="mein-tag-stage">
+          <Stage state={stageState} ariaLabel="Zeiterfassung">
+            <div class="clock-stage" data-day-state={day.kind}>
+              <div class="clock-big" data-testid="clock-big">
+                {fmtClock(stageWorkedMin)}<small>h</small>
+              </div>
+              <div class="clock-main">
+                <div class="clock-state">
+                  <span class="clock-pulse" aria-hidden="true"></span>
+                  <span data-testid="clock-state">{stageTitle}</span>
+                  {#if stageSalonName}<span class="clock-salon-name">· {stageSalonName}</span>{/if}
+                </div>
+                <div class="clock-meta">
+                  {#each stageMeta as m (m.label)}
+                    <span>{m.label} <b>{m.value}</b></span>
+                  {/each}
+                </div>
+                <div class="clock-tl" aria-hidden="true">
+                  {#if plannedBand}
+                    <i
+                      class="clock-tl-plan"
+                      style="left: {plannedBand.left}%; width: {plannedBand.width}%;"
+                    ></i>
+                  {/if}
+                  {#each timelineSegments as seg, i (i)}
+                    <i
+                      class:clock-tl-break={seg.kind === "break"}
+                      style="left: {seg.left}%; width: {seg.width}%;"
+                    ></i>
+                  {/each}
+                </div>
+                <div class="clock-tl-labels" aria-hidden="true">
+                  <span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span>
+                </div>
+                {#if clockSalonViewState.kind === "select"}
+                  <ClockSalonSelect
+                    view={clockSalonViewState}
+                    value={clockSalonId}
+                    disabled={clockLoading}
+                    onselect={(id) => (clockSalonId = id)}
+                    noteLabel={fixedSalonNoteLabel(day.kind, todayEntries.length)}
+                  />
+                {/if}
+              </div>
+            </div>
+            {#snippet actions()}
+              {#if clockedIn}
+                <!-- During a break „Weiterarbeiten“ is the one primary action (Ausstempeln waits). -->
                 <button
                   type="button"
-                  class="btn btn-ghost timer-cta-ghost"
-                  disabled={clockLoading}
-                  onclick={openReopenDialog}
-                  title="Wieder einstempeln — der Zeitraum seit dem Ausstempeln wird als Pause erfasst"
+                  class="btn"
+                  class:btn-primary={breakStartedAt}
+                  class:btn-outline={!breakStartedAt}
+                  disabled={clockLoading || breakLoading}
+                  onclick={handleBreakToggle}
+                  title={breakStartedAt
+                    ? "Aktive Pause beenden — die Zeit wird als Pause vom Eintrag abgezogen"
+                    : "Pause starten — die Zeit wird als Pause vom Eintrag abgezogen"}
+                >
+                  {#if breakLoading}<span class="btn-spinner"></span>{/if}
+                  {breakStartedAt ? "Weiterarbeiten" : "Pause"}
+                </button>
+              {/if}
+              {#if primaryLabel && !(clockedIn && breakStartedAt)}
+                <button
+                  onclick={handleClock}
+                  disabled={clockLoading || clockInBlocked(clockSalonViewState, clockSalonId)}
+                  class="btn btn-primary"
+                  type="button"
                 >
                   {#if clockLoading}<span class="btn-spinner"></span>{/if}
-                  Erneut einstempeln
+                  {primaryLabel}
                 </button>
-                <!-- Issue #70 (D-02/D-11): the finished-day action „In anderem Salon einstempeln“ starts a
-                     NEW entry in another salon; the component renders it only when the server offers one. -->
-                <ClockOtherSalon
-                  salons={otherSalonOptions(clockSalonViewState)}
-                  value={clockSalonId}
-                  disabled={clockLoading}
-                  loading={clockLoading}
-                  blocked={otherSalonBlocked(clockSalonViewState, clockSalonId)}
-                  onselect={(id) => (clockSalonId = id)}
-                  onstart={handleOtherSalonClockIn}
-                />
-              {:else}
-                <span class="timer-status-idle">
-                  Monat abgeschlossen — der Eintrag kann nicht mehr geändert werden.
-                </span>
               {/if}
+              {#if day.kind === "finished"}
+                {#if canReopenFinishedDay(day) && reopenGapLabel}
+                  <button
+                    type="button"
+                    class="btn btn-outline"
+                    disabled={clockLoading}
+                    onclick={openReopenDialog}
+                    title="Wieder einstempeln — der Zeitraum seit dem Ausstempeln wird als Pause erfasst"
+                  >
+                    {#if clockLoading}<span class="btn-spinner"></span>{/if}
+                    Wieder einstempeln
+                  </button>
+                  <!-- Issue #70 (D-02/D-11): „In anderem Salon einstempeln“ starts a NEW entry in another
+                     salon; the component renders it only when the server offers one. -->
+                  <ClockOtherSalon
+                    salons={otherSalonOptions(clockSalonViewState)}
+                    value={clockSalonId}
+                    disabled={clockLoading}
+                    loading={clockLoading}
+                    blocked={otherSalonBlocked(clockSalonViewState, clockSalonId)}
+                    onselect={(id) => (clockSalonId = id)}
+                    onstart={handleOtherSalonClockIn}
+                  />
+                {:else}
+                  <span class="clock-note">
+                    Monat abgeschlossen — der Eintrag kann nicht mehr geändert werden.
+                  </span>
+                {/if}
+              {/if}
+            {/snippet}
+          </Stage>
+          {#if showEntryList}
+            {#if entryCount}
+              <p class="mt-quiet mt-entry-count">{entryCount.replaceAll(" ", "\u00A0")}</p>
             {/if}
-          </div>
-
-          {#if todayShift}
-            <div class="timer-shift">
-              <span class="timer-shift-label">
-                {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
-              </span>
-            </div>
+            <TodayEntriesList entries={todayEntries} />
           {/if}
-        </Card>
-        <!-- Phase 115 (issue #118): the ONLY route from the hero card back into a REOPEN.
-             Inside {#if !isExempt} on purpose — a § 18 ArbZG-exempt user has no clock card
-             and must not gain one through this dialog either (Phase 76.7, D-15). -->
+        </section>
+        <!-- Phase 115 (issue #118): the ONLY route from the stage back into a REOPEN. Inside
+           {#if !isExempt} on purpose — an exempt user must not gain a clock through this dialog. -->
         <ConfirmDialog
           bind:open={reopenDialogOpen}
-          title="Erneut einstempeln?"
+          title="Wieder einstempeln?"
           description={reopenDialogText}
-          confirmLabel="Erneut einstempeln"
+          confirmLabel="Wieder einstempeln"
           cancelLabel="Abbrechen"
           onConfirm={confirmReopen}
         />
-        <!-- Issue #609 (AC-4): the confirmation behind a shift reminder tap. Inside {#if !isExempt} for
-             the same reason as the reopen dialog; it stamps only through the unchanged handleClock(). -->
+        <!-- Issue #609 (AC-4): the confirmation behind a shift reminder tap; it stamps only through the
+           unchanged handleClock(). -->
         <ConfirmDialog
           bind:open={clockReminderOpen}
           title={clockReminderTexts?.title ?? ""}
@@ -1778,584 +1852,347 @@
           onConfirm={confirmClockReminder}
         />
       {/if}
-      <!-- /timer-card (Phase 76.7: wrapped in {#if !isExempt}) -->
 
-      <!-- Heutiger Eintrag (moved into left stack — Phase 49.4 rearrange) -->
-      <Card animate class="today-entry-card" style="--card-idx: 3;">
-        <CardHeader
-          title="Heutiger Eintrag"
-          sub={entryCount
-            ? `${format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })} · ${entryCount.replaceAll(" ", "\u00A0")}`
-            : format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })}
-        >
-          {#snippet actions()}
-            <a
-              href="/time-entries?view=list&date={format(currentTime, 'yyyy-MM-dd')}"
-              class="btn btn-ghost btn-sm today-entry-edit"
-              aria-label="Heutigen Eintrag bearbeiten"
-            >
-              ✎ Bearbeiten
-            </a>
-          {/snippet}
-        </CardHeader>
-
-        <div class="today-stats">
-          <div class="today-stat">
-            <div class="today-stat-label">Start</div>
-            <div class="today-stat-value">{entryStartHHMM}</div>
-          </div>
-          <div class="today-stat">
-            <div class="today-stat-label">Ende</div>
-            <div class="today-stat-value">{entryEndHHMM}</div>
-          </div>
-          <div class="today-stat">
-            <div class="today-stat-label">Pausen</div>
-            <div class="today-stat-value">{entryBreakLabel}</div>
-          </div>
-          <div class="today-stat">
-            <div class="today-stat-label">Netto</div>
-            <div class="today-stat-value today-stat-accent">{entryNetLabel}</div>
-          </div>
-        </div>
-
-        {#if showEntryList}
-          <TodayEntriesList entries={todayEntries} />
-        {/if}
-
-        <div class="today-timeline">
-          <div class="today-timeline-track"></div>
-          <div class="today-timeline-fill" style="width: {entryProgressPct}%;"></div>
-          <div class="today-timeline-marks">
-            {#each ["07:00", "09:00", "11:00", "13:00", "15:00", "17:00", "19:00"] as h (h)}
-              <span class="today-timeline-mark">{h}</span>
-            {/each}
-          </div>
-        </div>
-
-        <div class="callout brand today-arbzg">
-          <span class="ico" aria-hidden="true">ℹ️</span>
-          <div>
-            <b>{arbzgCallout.title}</b>
-            <span> {arbzgCallout.body}</span>
-          </div>
-        </div>
-      </Card>
-      <!-- /today-entry-card -->
-
-      <!-- Aktivität (moved into left stack — Phase 49.4 rearrange) -->
-      <Card animate class="activity-card" style="--card-idx: 4;">
-        <CardHeader title="Aktivität" sub="Letzte Ereignisse" />
-
-        <div class="activity-list">
-          {#if activityItems.length === 0}
-            <div class="activity-empty">Keine Ereignisse in der letzten Zeit.</div>
-          {:else}
-            {#each activityItems as item, i (item.id)}
-              <div class="activity-row" class:activity-row--last={i === activityItems.length - 1}>
-                <div class="activity-icon" aria-hidden="true">
-                  {#if item.icon === "check"}
-                    ✓
-                  {:else if item.icon === "x"}
-                    ✕
-                  {:else if item.icon === "clock"}
-                    ⏱
-                  {:else if item.icon === "inbox"}
-                    ✉
-                  {:else if item.icon === "edit"}
-                    ✎
-                  {:else if item.icon === "lock"}
-                    🔒
-                  {:else}
-                    •
-                  {/if}
-                </div>
-                <div class="activity-text">
-                  <b class="activity-who">{item.who}</b>
-                  <span class="activity-what"> {item.what}</span>
-                </div>
-                <div class="activity-when">{relativeTime(item.when)}</div>
-              </div>
-            {/each}
-          {/if}
-        </div>
-      </Card>
-      <!-- /activity-card -->
-    </div>
-    <!-- /dashboard-stack--left -->
-
-    <!-- RIGHT column (col-5) -->
-    <div class="dashboard-stack dashboard-stack--right">
-      <!-- KPI pair -->
-      <Card animate class="kpi-pair" style="--card-idx: 1;">
-        {#if stats}
-          {#if stats.vacation}
-            <KPIStat
-              label="Urlaubstage"
-              value={String(stats.vacation.remaining)}
-              unit={`/ ${stats.vacation.total}`}
-              delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
-            />
-          {/if}
-          <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt employees see
-               an em-dash "—" instead of a numeric saldo + no delta cue. Unchanged by
-               Phase 97-04 — an exempt employee has no confirmed/forecast split to show. -->
-          <!-- Phase 76b (Issue #76), CR-01 (code review): `stats.overtime === null` means the
-               caller holds no overtime:read:EIGENE permission (e.g. a bare Salonmanager/Ausbilder
-               template holder without the Mitarbeiter role) — hide the card, no error/toast. -->
-          {#if stats.overtime === null}
-            <!-- intentionally empty: no saldo card for this caller -->
-          {:else if isExempt}
-            <KPIStat label="Überstundenkonto" value="—" delta="§ 18 ArbZG" deltaTone="neutral" />
-          {:else if stats.overtime.confirmedMinutes !== undefined}
-            <!-- Phase 97-04 (SALDO-DISP-02) — the split primitive replaces the inline KPIStat
-                 markup outright (not wrapped): KPIStat's pure-props string contract cannot
-                 express a two-figure tile. Leads with "Bestätigt", subordinates the forecast,
-                 worded from the data by forecastLabel() (Issue #588) — the deliberate hierarchy
-                 flip this phase exists to ship. -->
-            <SaldoAnzeige
-              variant="expanded"
-              label="Überstundenkonto"
-              confirmedMinutes={stats.overtime.confirmedMinutes}
-              openMonthMinutes={stats.overtime.openMonthMinutes ?? null}
-              hasClosedMonth={stats.overtime.hasClosedMonth ?? false}
-              unconfirmedMonths={stats.overtime.unconfirmedMonths ?? null}
-              rosterIncomplete={stats.overtime.rosterIncomplete}
-            />
-          {:else}
-            <!-- Fallback: an older cached /dashboard response without the split fields —
-                 degrade to the primitive's single-value rendering instead of blanking. This
-                 also drops the page-local fmtBalanceHours "±0:00" zero convention in favour of
-                 the primitive's own formatter (SALDO-DISP-05 — one presentation, not three). -->
-            <SaldoAnzeige
-              variant="expanded"
-              label="Überstundenkonto"
-              saldoMinutes={Math.round(stats.overtime.balanceHours * 60)}
-            />
-          {/if}
-          {#if stats.scheduleType === "FLEXTIME"}
-            {@const weekDiff = weekProgressDelta(stats.week)}
-            <KPIStat
-              label="Diese Woche Soll"
-              value={fmtHours(stats.week.workedHours)}
-              unit={`/ ${fmtHours(stats.week.targetHours)}`}
-              delta={weekDiff === 0
-                ? "ausgeglichen"
-                : weekDiff > 0
-                  ? `↗ +${fmtHours(weekDiff)}`
-                  : `↘ ${fmtHours(weekDiff)}`}
-              deltaTone={weekDiff === 0 ? "neutral" : weekDiff > 0 ? "good" : "warn"}
-            />
-          {/if}
+      <!-- Kennzahlen (D-01, D-04): Stundenkonto, Resturlaub, Nächste Schicht, Diese Woche -->
+      <div class="mt-kpis card-animate" style="--card-idx: 1;" data-testid="mein-tag-kpis">
+        {#if stats === null && loading}
+          <Skeleton shape="card" />
         {:else}
-          <KPIStat label="Urlaubstage" value="–" />
-          <!-- IN-01 (code review) — SaldoAnzeige's loading/error props were built, tested, and
-               never actually reached by any consuming page. This IS a real loading/error
-               boundary: `loading` (declared above) brackets the exact same /dashboard fetch that
-               populates `stats`, so while it's true the request is still in flight, and once it
-               flips false with `stats` still null the request failed (see loadData()'s
-               Promise.allSettled — a rejected statsResult never reassigns `stats`). -->
-          <SaldoAnzeige variant="expanded" label="Überstundenkonto" {loading} error={!loading} />
+          <KpiStrip items={kpiItems} ariaLabel="Deine Kennzahlen" />
         {/if}
-      </Card>
+      </div>
 
-      <!-- Phase 49.4 — Weekly view: MyShiftsWeek for SHIFT_BASED, MyWeekView for everyone else -->
-      {#if stats?.scheduleType === "SHIFT_BASED" && !shiftFallback}
-        <MyShiftsWeek
-          onFallback={() => {
-            shiftFallback = true;
-          }}
-        />
-      {:else}
-        <MyWeekView />
-      {/if}
+      <div class="mt-grid">
+        <div class="mt-col">
+          <section class="mt-sec card-animate" style="--card-idx: 2;" aria-labelledby="mt-week">
+            <h2 id="mt-week" class="mt-h2">
+              Deine Woche <span class="mt-h2-meta">KW {getWeekNumber(todayIso)}</span>
+            </h2>
+            <ol class="mt-week" data-testid="mein-tag-week">
+              {#each myWeekDays as d (d.date)}
+                {@const text = weekStripText(
+                  d,
+                  myWeekScheduleType,
+                  ownShiftByDate.get(d.date) ?? null,
+                )}
+                <li
+                  class="mt-day"
+                  class:mt-day--today={d.date === todayIso}
+                  class:mt-day--off={text === "Frei"}
+                  aria-current={d.date === todayIso ? "date" : undefined}
+                >
+                  <span class="mt-day-h"
+                    ><span>{format(new Date(d.date + "T12:00:00"), "EEEEEE", { locale: de })}</span
+                    ><b>{format(new Date(d.date + "T12:00:00"), "d")}</b></span
+                  >
+                  <span class="mt-day-s">{text}</span>
+                </li>
+              {/each}
+            </ol>
+          </section>
 
-      <!-- Offene Vorgänge (moved into right stack — Phase 49.4 rearrange) -->
-      {#if openItems}
-        <Card animate class="open-items" style="--card-idx: 6;">
-          <CardHeader title="Offene Vorgänge" sub="Letzte Übersicht">
-            {#snippet actions()}
-              <a href="/inbox" class="btn btn-ghost btn-sm">Alle anzeigen →</a>
-            {/snippet}
-          </CardHeader>
-          <div class="open-items-list">
-            {#if showEmptyOpenItems}
-              <p class="oi-empty">Keine offenen Vorgänge</p>
+          <section class="mt-sec card-animate" style="--card-idx: 4;" aria-labelledby="mt-recent">
+            <h2 id="mt-recent" class="mt-h2">
+              Letzte Tage <a class="mt-h2-link" href="/ich/zeiten">Alle Zeiten</a>
+            </h2>
+            {#if !meinTagLoaded}
+              <Skeleton shape="row" count={3} />
+            {:else if recentDayRows.length === 0}
+              <p class="mt-quiet">In den letzten zwei Wochen ist nichts erfasst.</p>
             {:else}
-              {#if openItems.missingDays.length > 0}
-                <div class="oi-group">
-                  <div class="oi-group-header">
-                    <span class="oi-dot oi-dot--warn"></span>
-                    <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
-                  </div>
-                  {#each openItems.missingDays as missDate (missDate)}
-                    {@const d = new Date(missDate + "T12:00:00")}
-                    {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
-                    <a href="/time-entries?view=list&date={missDate}" class="oi-item">
-                      <span
-                        >{dayName}. {d.toLocaleDateString("de-DE", {
-                          day: "2-digit",
-                          month: "2-digit",
-                        })}</span
-                      >
-                      <span class="oi-link">Nachtragen →</span>
-                    </a>
-                  {/each}
-                </div>
-              {/if}
-              {#if openItems.pendingRequests > 0}
-                <a href="/leave?view=requests" class="oi-row">
-                  <span class="oi-dot oi-dot--pending"></span>
-                  <span
-                    >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
-                      ? "r Antrag"
-                      : " Anträge"}</span
-                  >
-                  <span class="oi-link">→</span>
-                </a>
-              {/if}
-              {#if openItems.invalidEntries > 0}
-                <a href="/time-entries" class="oi-row">
-                  <span class="oi-dot oi-dot--fix"></span>
-                  <span>{openItems.invalidEntries} zu korrigieren</span>
-                  <span class="oi-link">→</span>
-                </a>
-              {/if}
-              {#if unconfirmedBreakDays > 0}
-                <a
-                  href={breakNudgeHref(breakNudge)}
-                  class="oi-row"
-                  data-testid="dashboard-break-nudge"
-                >
-                  <span class="oi-dot oi-dot--warn"></span>
-                  <span>{breakNudge.label}</span>
-                  <span class="oi-link">→</span>
-                </a>
-              {/if}
-              {#if karenzNudge.count > 0}
-                <a
-                  href={karenzNudgeHref(karenzNudge)}
-                  class="oi-row"
-                  data-testid="dashboard-karenz-nudge"
-                  title={KARENZ_NUDGE_TOOLTIP}
-                >
-                  <span class="oi-dot oi-dot--warn"></span>
-                  <span>{karenzNudge.label}</span>
-                  <span class="oi-link">→</span>
-                </a>
-              {/if}
-              {#if openItems.pendingApprovals > 0}
-                <!-- Phase 378 (#378): was "/leave?view=approvals" — /leave (the personal page)
-                     has no approvals view at all and never did; the working "Genehmigungen" tab
-                     lives on /team/leave. -->
-                <a href="/team/leave?view=approvals" class="oi-row">
-                  <span class="oi-dot oi-dot--approval"></span>
-                  <span
-                    >{openItems.pendingApprovals} zu genehmigende{openItems.pendingApprovals === 1
-                      ? "r Antrag"
-                      : " Anträge"}</span
-                  >
-                  <span class="oi-link">→</span>
-                </a>
-              {/if}
+              <div class="mt-table-wrap">
+                <table class="mt-table" data-testid="mein-tag-recent">
+                  <thead>
+                    <tr>
+                      <th scope="col">Tag</th>
+                      <th scope="col">Zeiten</th>
+                      <th scope="col" class="r">Pause</th>
+                      <th scope="col" class="r">Netto</th>
+                      <th scope="col" class="r"><span class="sr-only">Saldo</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each recentDayRows as r (r.date)}
+                      <tr>
+                        <td
+                          >{format(new Date(r.date + "T12:00:00"), "EEEEEE d.M.", {
+                            locale: de,
+                          })}</td
+                        >
+                        <td>{r.start}–{r.end}</td>
+                        <td class="r">{r.breakMinutes > 0 ? fmtClock(r.breakMinutes) : "—"}</td>
+                        <td class="r">{fmtClock(r.workingMinutes)}</td>
+                        <td class="r">
+                          {#if r.breakMissing}
+                            <Chip tone="warn">Pause fehlt</Chip>
+                          {:else if r.saldoMinutes !== null}
+                            <Chip
+                              tone={r.saldoMinutes > 0
+                                ? "ok"
+                                : r.saldoMinutes < 0
+                                  ? "bad"
+                                  : "neutral"}
+                              >{r.saldoMinutes === 0 ? "±0" : fmtBalance(r.saldoMinutes)}</Chip
+                            >
+                          {/if}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
             {/if}
-          </div>
-        </Card>
-      {/if}
-    </div>
-    <!-- /dashboard-stack--right -->
-  </div>
-  <!-- /dashboard-stacks -->
+          </section>
+        </div>
 
-  <!-- Phase 49.4 — Nächster Urlaub (Schicht-Pille entfernt: Info ist bereits in Timer-Card sichtbar) -->
-  {#if myNextLeave}
-    <div class="info-bar card-animate" style="--card-idx: 5;">
-      <div class="info-bar-item">
-        <span class="info-bar-icon"><Icon name="umbrella" size={16} /></span>
-        <span
-          >Nächster {myNextLeave.type}:
-          <strong
-            >{new Date(myNextLeave.startDate).toLocaleDateString("de-DE", {
-              day: "2-digit",
-              month: "2-digit",
-            })}–{new Date(myNextLeave.endDate).toLocaleDateString("de-DE", {
-              day: "2-digit",
-              month: "2-digit",
-            })}</strong
-          >
-          ({myNextLeave.days}
-          {myNextLeave.days === 1 ? "Tag" : "Tage"})</span
-        >
+        <div class="mt-col">
+          <section class="mt-sec card-animate" style="--card-idx: 3;" aria-labelledby="mt-for-you">
+            <h2 id="mt-for-you" class="mt-h2">Für dich</h2>
+            {#if openItems === null && !meinTagLoaded}
+              <Skeleton shape="row" count={2} />
+            {:else if forYou.length === 0}
+              <p class="mt-quiet">Nichts offen. Alles erledigt.</p>
+            {:else}
+              <List ariaLabel="Für dich">
+                {#each forYou as item (item.key)}
+                  <ListRow title={item.title} subtitle={item.subtitle} avatar={false}>
+                    {#snippet leading()}
+                      <Chip tone={item.tone}>{item.chip}</Chip>
+                    {/snippet}
+                    {#snippet trailing()}
+                      {#if item.href}
+                        <a
+                          class="btn btn-outline btn-sm"
+                          href={item.href}
+                          data-testid={item.testId}
+                          title={item.hint}>{item.action}</a
+                        >
+                      {/if}
+                    {/snippet}
+                  </ListRow>
+                {/each}
+              </List>
+            {/if}
+          </section>
+
+          <section class="mt-sec card-animate" style="--card-idx: 5;" aria-labelledby="mt-history">
+            <h2 id="mt-history" class="mt-h2">Verlauf</h2>
+            {#if history.length === 0}
+              <p class="mt-quiet">Noch keine Ereignisse.</p>
+            {:else}
+              <ul class="mt-history" data-testid="mein-tag-history">
+                {#each history as h (h.id)}
+                  <li><span class="mt-when">{historyWhen(h.when)}</span><span>{h.text}</span></li>
+                {/each}
+              </ul>
+            {/if}
+          </section>
+        </div>
       </div>
     </div>
   {/if}
 
-  <!-- ═══ Team-Bereich (permission-gated, Phase 378 / #378) ═══ -->
-  <!-- Single gate on team-overview:read:ZUGEWIESEN: employees, and any holder without it, never
-       see team charts, upcoming leaves, or team-week table. -->
+  <!-- ═══ Team › Heute im Salon (Issue #846; permission-gated, Phase 378 / #378) ═══ -->
+  <!-- Single gate on team-overview:read:ZUGEWIESEN. Order (prototype v5): Kennzahlen-Band →
+       [Jetzt im Salon · Team-Woche | Aufgaben · Demnächst abwesend]. No charts (D-04, Z-03). -->
   {#if canSeeTeamBereich}
-    <div class="team-divider">
-      <span class="team-divider-label">{teamLabel === null ? "Team" : `Team · ${teamLabel}`}</span>
-    </div>
-
     {#if teamUnavailable}
-      <Card animate class="card-body" style="--card-idx: 7;">
-        <p class="callout brand">{TEAM_SALON_UNAVAILABLE_TEXT}</p>
-      </Card>
+      <Note tone="info">{TEAM_SALON_UNAVAILABLE_TEXT}</Note>
     {:else}
-      <!-- Salden (Issue #588): the first block of the team area -->
-      {#if canSeeTeamSaldo && !teamSaldoHidden}
-        <div class="team-saldo-slot">
-          <TeamSaldoCard
-            rows={teamSaldoRows}
-            loading={teamSaldoLoading}
-            salonFiltered={teamSaldoFiltered}
-            personHref={(id) => (canOpenTeamDay ? teamPersonHref(id) : null)}
-            onOpenPerson={(href) => goto(href)}
-            cardIdx={7}
-          />
-        </div>
-      {/if}
-
-      <!-- Charts (Team-Aggregation) -->
-      <div class="charts-grid">
-        {#snippet hoursLink()}
-          <a
-            class="widget-action"
-            href={hoursReportHref}
-            aria-label="Arbeitsstunden im Bericht öffnen">Bericht →</a
-          >
-        {/snippet}
-        {#snippet trendLink()}
-          <a
-            class="widget-action"
-            href={trendReportHref}
-            aria-label="Überstunden-Trend im Bericht öffnen">Bericht →</a
-          >
-        {/snippet}
-        {#snippet sickLink()}
-          <a
-            class="widget-action"
-            href={sickReportHref}
-            aria-label="Krankheitstage im Bericht öffnen">Bericht →</a
-          >
-        {/snippet}
-        <Card animate class="chart-card" style="--card-idx: 8;">
-          <CardHeader
-            title="Arbeitsstunden"
-            sub={trendView?.chartSub ?? "Letzte 6 Monate"}
-            actions={hoursReportHref !== null ? hoursLink : undefined}
-          />
-          <div class="chart-wrap">
-            {#if chartsLoading}
-              <div class="chart-skeleton" aria-hidden="true"></div>
-            {:else}
-              <canvas
-                bind:this={weeklyChartEl}
-                role="img"
-                aria-label={chartAriaLabel(teamHoursChartDescriptor(trendView))}
-              ></canvas>
-            {/if}
-          </div>
-          {#if trendView?.sollNote}
-            <p class="chart-note">{trendView.sollNote}</p>
+      <div class="ts card-animate" style="--card-idx: 1;">
+        <div data-testid="salon-kpis">
+          {#if attendance === null}
+            <Skeleton shape="card" />
+          {:else}
+            <KpiStrip band items={teamKpis} ariaLabel="Heute im Salon in Zahlen" />
           {/if}
-        </Card>
+        </div>
 
-        {#if chartsLoading || overtimeTrendAvailable || trendView?.trendNote}
-          <Card animate class="chart-card" style="--card-idx: 9;">
-            <CardHeader
-              title="Überstunden-Trend"
-              sub="Saldo-Verlauf"
-              actions={trendReportHref !== null ? trendLink : undefined}
-            />
-            <div class="chart-wrap">
-              {#if chartsLoading}
-                <div class="chart-skeleton" aria-hidden="true"></div>
-              {:else if trendView?.trendNote}
-                <p class="callout brand">{trendView.trendNote}</p>
+        <div class="ts-grid">
+          <div class="ts-col">
+            <section class="ts-sec" id="jetzt" aria-labelledby="ts-now">
+              <h2 id="ts-now" class="mt-h2">
+                Jetzt im Salon
+                {#if attendanceFilter !== "alle"}
+                  <span class="ts-filter-on" data-testid="attendance-filter">
+                    <Chip tone="brand">{ATTENDANCE_FILTERS[attendanceFilter].label}</Chip>
+                    <a class="mt-h2-link" href={statusHref("alle")} data-sveltekit-noscroll
+                      >Alle zeigen</a
+                    >
+                  </span>
+                {/if}
+              </h2>
+              {#if attendance === null}
+                <Skeleton shape="row" count={4} />
+              {:else if nowRows.length === 0}
+                <p class="mt-quiet">
+                  {attendanceFilter === "alle"
+                    ? "Heute ist niemand eingeplant."
+                    : "Niemand in dieser Auswahl."}
+                </p>
               {:else}
-                <canvas
-                  bind:this={overtimeChartEl}
-                  role="img"
-                  aria-label={chartAriaLabel(TEAM_SALDO_TREND_CHART)}
-                ></canvas>
-              {/if}
-            </div>
-          </Card>
-        {/if}
-
-        <Card animate class="chart-card" style="--card-idx: 10;">
-          <CardHeader
-            title="Krankheitstage"
-            sub="Letzte 6 Monate"
-            actions={sickReportHref !== null ? sickLink : undefined}
-          />
-          <div class="chart-wrap">
-            {#if chartsLoading}
-              <div class="chart-skeleton" aria-hidden="true"></div>
-            {:else}
-              <canvas
-                bind:this={sickChartEl}
-                role="img"
-                aria-label={chartAriaLabel(TEAM_SICK_DAYS_CHART)}
-              ></canvas>
-            {/if}
-          </div>
-        </Card>
-      </div>
-
-      <!-- Anstehende Urlaube -->
-      {#if upcomingLeaves.length > 0}
-        <Card animate class="upcoming-section card-body" style="--card-idx: 11;">
-          <div class="widget-header">
-            <h3 class="widget-title">Anstehende Urlaube</h3>
-            <a href="/leave" class="widget-action">Urlaube →</a>
-          </div>
-          <div class="upcoming-list">
-            {#each upcomingLeaves as leave (leave.id)}
-              <div class="upcoming-item">
-                <span class="upcoming-name">{leave.employeeName}</span>
-                <span class="upcoming-dates">
-                  {new Date(leave.startDate).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                  })}
-                  – {new Date(leave.endDate).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                  })}
-                </span>
-                <span class="upcoming-days">{leave.days} {leave.days === 1 ? "Tag" : "Tage"}</span>
-                <span class="upcoming-type badge badge-blue">{leave.type}</span>
-              </div>
-            {/each}
-          </div>
-        </Card>
-      {/if}
-
-      <!-- Team Wochenübersicht -->
-      {#if teamWeek}
-        <Card animate class="team-section" style="--card-idx: 12;">
-          <CardHeader
-            title="Team-Wochenübersicht"
-            sub={`KW ${getWeekNumber(teamWeek.weekStart)}: ${formatShortDate(teamWeek.weekStart)} – ${formatShortDate(teamWeek.weekEnd)}`}
-          >
-            {#snippet actions()}
-              <button class="btn btn-sm btn-ghost" onclick={prevWeek} title="Vorherige Woche"
-                >‹</button
-              >
-              <button class="btn btn-sm btn-ghost" onclick={currentWeek} disabled={weekOffset === 0}
-                >Heute</button
-              >
-              <button class="btn btn-sm btn-ghost" onclick={nextWeek} title="Nächste Woche"
-                >›</button
-              >
-            {/snippet}
-          </CardHeader>
-
-          <div class="team-grid-wrap">
-            <table class="team-grid">
-              <thead>
-                <tr>
-                  <th class="team-grid__name">Mitarbeiter</th>
-                  {#each teamWeek.weekDays as day (day)}
-                    <th class="team-grid__day" class:team-grid__day--today={isToday(day)}>
-                      <span class="day-label">{dayLabel(day)}</span>
-                      <span class="day-num">{dayNum(day)}</span>
-                    </th>
+                <List ariaLabel="Jetzt im Salon">
+                  {#each nowRows as row (row.id)}
+                    <ListRow
+                      title={row.name}
+                      subtitle={attendanceSubtitle(row)}
+                      avatarKey={row.id}
+                      href={canOpenTeamDay
+                        ? (teamDayHref(row.id, attendance.date) ?? undefined)
+                        : undefined}
+                    >
+                      {#snippet trailing()}
+                        <Chip tone={statusTone(row.status)}>{DAY_STATUS_LABEL[row.status]}</Chip>
+                      {/snippet}
+                    </ListRow>
                   {/each}
-                </tr>
-              </thead>
-              <tbody>
-                {#each pagedTeam as member (member.id)}
-                  <tr>
-                    <td class="team-grid__name">
-                      <span class="member-name">{member.name}</span>
-                    </td>
-                    {#each member.days as day (day.date)}
-                      {@const href = teamDayHref(member.id, day.date)}
-                      <td class="team-grid__cell" class:team-grid__day--today={isToday(day.date)}>
-                        {#if canOpenTeamDay && href !== null}
-                          <a
-                            class="team-grid__link"
-                            {href}
-                            aria-label={teamCellAriaLabel(
-                              member.name,
-                              day.date,
-                              teamCellStatusText(day),
-                            )}
+                </List>
+              {/if}
+            </section>
+          </div>
+
+          <div class="ts-col">
+            {#if canDecideLeave || canDecideRetro}
+              <section class="ts-sec" aria-labelledby="ts-tasks">
+                <h2 id="ts-tasks" class="mt-h2">
+                  Aufgaben <a class="mt-h2-link" href="/team/aufgaben">Alle Aufgaben</a>
+                </h2>
+                {#if pendingLeave.length === 0 && pendingRetroCount === 0}
+                  <p class="mt-quiet">Nichts zu entscheiden.</p>
+                {:else}
+                  <List ariaLabel="Aufgaben">
+                    {#each pendingLeave.slice(0, 5) as req (req.id)}
+                      <ListRow
+                        variant="task"
+                        avatar={false}
+                        title={`${leaveTypeLabel(req.typeCode)} · ${req.employee.firstName} ${req.employee.lastName} · ${formatShortDate(req.startDate)}–${formatShortDate(req.endDate)}`}
+                        subtitle={leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}
+                      >
+                        {#snippet actions()}
+                          <button
+                            type="button"
+                            class="btn btn-outline btn-sm"
+                            onclick={() => openReview(req)}>Ablehnen</button
                           >
-                            {@render teamCellContent(day)}
-                          </a>
-                        {:else}
-                          {@render teamCellContent(day)}
-                        {/if}
-                      </td>
+                          <button
+                            type="button"
+                            class="btn btn-primary btn-sm"
+                            onclick={() => openReview(req)}>Genehmigen</button
+                          >
+                        {/snippet}
+                      </ListRow>
+                    {/each}
+                    {#if pendingRetroCount > 0}
+                      <ListRow
+                        avatar={false}
+                        title={pendingRetroCount === 1
+                          ? "1 Zeitnachtrag wartet"
+                          : `${pendingRetroCount} Zeitnachträge warten`}
+                        href="/team/aufgaben"
+                      />
+                    {/if}
+                  </List>
+                {/if}
+              </section>
+            {/if}
+
+            <section class="ts-sec" aria-labelledby="ts-upcoming">
+              <h2 id="ts-upcoming" class="mt-h2">
+                Demnächst abwesend <a class="mt-h2-link" href="/team/abwesenheiten">Kalender</a>
+              </h2>
+              {#if upcomingLeaves.length === 0}
+                <p class="mt-quiet">In den nächsten Wochen ist niemand abwesend.</p>
+              {:else}
+                <List ariaLabel="Demnächst abwesend">
+                  {#each upcomingLeaves as leave (leave.id)}
+                    <ListRow
+                      title={`${leave.employeeName} · ${formatShortDate(leave.startDate)}–${formatShortDate(leave.endDate)}`}
+                      avatar={false}
+                    >
+                      {#snippet leading()}
+                        <Chip tone="neutral">{leave.type}</Chip>
+                      {/snippet}
+                      {#snippet trailing()}
+                        <span class="mt-quiet">{formatDayCount(leave.days)}</span>
+                      {/snippet}
+                    </ListRow>
+                  {/each}
+                </List>
+              {/if}
+            </section>
+          </div>
+        </div>
+        <!-- Owner 13.11.2026: the Team-Woche spans the full width below both columns; in the left
+             column seven days with status chips did not fit and the table scrolled sideways. -->
+        {#if teamWeek}
+          <section class="ts-sec ts-week-sec" aria-labelledby="ts-week">
+            <h2 id="ts-week" class="mt-h2">
+              Team-Woche
+              <span class="ts-h2-meta"
+                >KW {getWeekNumber(teamWeek.weekStart)} · {formatShortDate(teamWeek.weekStart)} –
+                {formatShortDate(teamWeek.weekEnd)}</span
+              >
+            </h2>
+            <div class="mt-table-wrap">
+              <table class="mt-table ts-week" data-testid="team-week">
+                <thead>
+                  <tr>
+                    <th scope="col">Person</th>
+                    {#each teamWeekDays as d (d)}
+                      <th scope="col" class:ts-today={isToday(d)}>
+                        {dayLabel(d)}
+                        {dayNum(d)}
+                      </th>
                     {/each}
                   </tr>
-                {/each}
-              </tbody>
-            </table>
-            <Pagination
-              total={teamWeek.team.length}
-              bind:page={teamPage}
-              bind:pageSize={teamPageSize}
-            />
-          </div>
-
-          <div class="legend">
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--present">5.0</span>
-              {DAY_STATUS_LABEL.present}
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--active"
-                ><Icon name="circle-fill" size={12} /></span
-              >
-              Eingestempelt
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--absent"><Icon name="umbrella" size={12} /></span>
-              Urlaub
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--absent"><Icon name="medical" size={12} /></span>
-              Krank
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--absent cell-badge--bs"
-                ><Icon name="graduation-cap" size={12} /></span
-              >
-              Berufsschule
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--missing"><Icon name="alert" size={12} /></span>
-              {DAY_STATUS_LABEL.missing}
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--holiday"><Icon name="sun" size={12} /></span>
-              Feiertag
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--scheduled">9–17</span>
-              {DAY_STATUS_LABEL.scheduled}
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--requested"><Icon name="clock" size={12} /></span>
-              {DAY_STATUS_LABEL.requested}
-            </span>
-            <span class="legend-item">
-              <span class="cell-badge cell-badge--none">–</span> Keine Daten
-            </span>
-            {#if teamFilter !== null || teamWeekHasElsewhere(teamWeek?.team ?? [])}
-              <span class="legend-item">
-                <span class="cell-badge cell-badge--elsewhere">anderer Salon</span> In einem anderen Salon
-                gearbeitet
-              </span>
+                </thead>
+                <tbody>
+                  {#each pagedTeam as member (member.id)}
+                    <tr>
+                      <td class="ts-name">{member.name}</td>
+                      {#each member.days as day (day.date)}
+                        {#if teamWeekDays.includes(day.date)}
+                          {@const href = teamDayHref(member.id, day.date)}
+                          <td class="team-grid__cell" class:ts-today={isToday(day.date)}>
+                            {#if canOpenTeamDay && href !== null}
+                              <a
+                                class="team-grid__link"
+                                {href}
+                                aria-label={teamCellAriaLabel(
+                                  member.name,
+                                  day.date,
+                                  teamCellStatusText(day),
+                                )}
+                              >
+                                {@render teamCellContent(day)}
+                              </a>
+                            {:else}
+                              {@render teamCellContent(day)}
+                            {/if}
+                          </td>
+                        {/if}
+                      {/each}
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            {#if teamWeek.team.length > TEAM_WEEK_PAGE_SIZE}
+              <Pagination
+                total={teamWeek.team.length}
+                bind:page={teamPage}
+                bind:pageSize={teamPageSize}
+              />
             {/if}
-          </div>
-        </Card>
-      {/if}
+          </section>
+        {/if}
+      </div>
+      <LeaveReviewDialog
+        bind:open={reviewOpen}
+        request={reviewRequest}
+        currentEmployeeId={$authStore.user?.employeeId ?? null}
+        onReviewed={loadTeamTasks}
+      />
     {/if}
   {/if}
 </div>
@@ -2373,440 +2210,6 @@
   .dashboard :global(.card-animate) {
     animation-delay: calc(var(--card-idx, 0) * 60ms);
   }
-
-  /* Phase 29: legacy .clock-card rules removed — see .timer-card in app.css */
-
-  /* ── Phase 49.4 rearrange — two-column stack layout ───────────────────────
-     LEFT column flows independently (Timer → Heutiger Eintrag → Aktivität),
-     RIGHT column flows independently (KPI-pair → MyShifts/MyWeekView → Offene
-     Vorgänge). Each column packs widgets top-down with no row-bound gaps. */
-  .dashboard-stacks {
-    margin-top: 32px;
-    margin-bottom: 1.5rem;
-    display: grid;
-    grid-template-columns: 7fr 5fr;
-    gap: 1.5rem;
-    align-items: start;
-  }
-  .dashboard-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    min-width: 0;
-  }
-  @media (max-width: 900px) {
-    .dashboard-stacks {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  :global(.today-entry-card),
-  :global(.activity-card) {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .today-entry-edit {
-    font-size: 12px;
-    padding: 4px 10px;
-  }
-
-  .today-stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-    padding: 6px 0 12px;
-  }
-
-  .today-stat {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .today-stat-label {
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-  }
-
-  .today-stat-value {
-    font-family: var(--font-serif);
-    font-variant-numeric: tabular-nums;
-    font-size: 28px;
-    font-weight: 400;
-    color: var(--text);
-    line-height: 1;
-    margin-top: 4px;
-  }
-
-  .today-stat-accent {
-    color: var(--brand);
-  }
-
-  .today-timeline {
-    position: relative;
-    margin-top: 12px;
-    padding: 12px 0 4px;
-  }
-
-  .today-timeline-track {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    height: 2px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-pill, 99px);
-    transform: translateY(-50%);
-  }
-
-  .today-timeline-fill {
-    position: absolute;
-    left: 0;
-    top: 50%;
-    height: 2px;
-    background: var(--brand);
-    border-radius: var(--r-pill, 99px);
-    transform: translateY(-50%);
-    transition: width 600ms var(--ease-out);
-  }
-
-  .today-timeline-marks {
-    position: relative;
-    display: flex;
-    justify-content: space-between;
-    padding: 0 4px;
-    font-size: 11px;
-    color: var(--text-faint);
-  }
-
-  .today-timeline-mark {
-    background: var(--bg-card);
-    padding: 4px 6px;
-    border-radius: var(--r-sm, 4px);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .today-arbzg {
-    margin-top: 14px;
-  }
-
-  /* ── Aktivität feed ── */
-  .activity-list {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .activity-empty {
-    padding: 24px 8px;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 13px;
-  }
-
-  .activity-row {
-    display: flex;
-    gap: 11px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-    align-items: center;
-  }
-
-  .activity-row--last {
-    border-bottom: 0;
-  }
-
-  .activity-icon {
-    width: 30px;
-    height: 30px;
-    border-radius: var(--r-md, 8px);
-    background: var(--brand-soft);
-    color: var(--brand);
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    font-size: 14px;
-    line-height: 1;
-  }
-
-  .activity-text {
-    flex: 1;
-    min-width: 0;
-    font-size: 13px;
-    line-height: 1.4;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .activity-who {
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .activity-what {
-    color: var(--text-muted);
-  }
-
-  .activity-when {
-    font-size: 11px;
-    color: var(--text-faint);
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  @media (max-width: 768px) {
-    .today-stats {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .today-stat-value {
-      font-size: 22px;
-    }
-  }
-
-  /* Phase 49.4: .dashboard-side-stack replaced by .dashboard-stack--right */
-
-  :global(.kpi-pair) {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
-  }
-  .weekly-total-wrap {
-    text-align: right;
-  }
-  .weekly-total {
-    font-size: 26px;
-    line-height: 1;
-    font-family: var(--font-serif);
-    font-weight: 400;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
-  }
-  .weekly-total-target {
-    font-size: 11px;
-    color: var(--text-faint);
-  }
-  .weekly-chart {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 10px;
-    align-items: end;
-    height: 80px;
-    padding: 4px 2px 0;
-  }
-  .weekly-bar-col {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    height: 100%;
-    justify-content: flex-end;
-  }
-  .weekly-bar-track {
-    position: relative;
-    width: 70%;
-    background: var(--bg-subtle);
-    border-radius: 4px 4px 0 0;
-    height: 100%;
-    display: flex;
-    align-items: flex-end;
-    overflow: hidden;
-  }
-  .weekly-bar-fill {
-    width: 100%;
-    background: var(--brand-light);
-    border-radius: 4px 4px 0 0;
-    transition: height 500ms var(--ease-out);
-  }
-  .weekly-bar-fill.weekly-bar-today {
-    background: var(--brand);
-  }
-  .weekly-bar-target {
-    position: absolute;
-    left: 0;
-    right: 0;
-    border-top: 1px dashed var(--border-strong);
-  }
-  .weekly-bar-label {
-    font-size: 10.5px;
-    font-weight: 600;
-    color: var(--text-faint);
-    letter-spacing: 0.08em;
-  }
-  .weekly-bar-label.weekly-bar-label-today {
-    color: var(--brand);
-  }
-  @media (max-width: 960px) {
-    :global(.kpi-pair) {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* Timer card local layout overrides (v1.5 recipe lives in app.css .timer-card) */
-  :global(.timer-card.timer-card-wrap) {
-    display: flex;
-    flex-direction: column;
-  }
-  :global(.timer-card-wrap .timer-hd) {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 14px;
-    margin-bottom: 14px;
-  }
-  :global(.timer-card-wrap .timer-hd-title) {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.7);
-  }
-  :global(.timer-card-wrap .timer-status-idle) {
-    opacity: 0.7;
-  }
-  :global(.timer-card-wrap .timer-hd-right) {
-    text-align: right;
-  }
-  :global(.timer-card-wrap .timer-hd-date) {
-    color: rgba(255, 255, 255, 0.6);
-  }
-  :global(.timer-card-wrap .timer-status) {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    margin-top: 8px;
-    font-size: 13px;
-    opacity: 0.88;
-  }
-  :global(.timer-card-wrap .timer-now) {
-    font-family: var(--font-serif);
-    font-style: italic;
-    font-size: 14px;
-    margin-top: 4px;
-    opacity: 0.85;
-  }
-  :global(.timer-card-wrap .timer-display) {
-    position: relative;
-    z-index: 1;
-  }
-  :global(.timer-card-wrap .timer-sub) {
-    position: relative;
-    z-index: 1;
-  }
-  :global(.timer-card-wrap .timer-progress) {
-    margin-top: 18px;
-    position: relative;
-    z-index: 1;
-  }
-  :global(.timer-card-wrap .timer-progress-track) {
-    height: 6px;
-    background: rgba(255, 255, 255, 0.18);
-    border-radius: 99px;
-    overflow: hidden;
-  }
-  :global(.timer-card-wrap .timer-progress-fill) {
-    height: 100%;
-    background: rgba(255, 255, 255, 0.92);
-    border-radius: 99px;
-    transition: width 400ms var(--ease-out);
-  }
-  :global(.timer-card-wrap .timer-progress-labels) {
-    display: flex;
-    justify-content: space-between;
-    margin-top: 6px;
-    font-size: 11.5px;
-    opacity: 0.75;
-  }
-  :global(.timer-card-wrap .timer-foot) {
-    display: flex;
-    gap: 10px;
-    position: relative;
-    z-index: 1;
-    margin-top: 18px;
-    padding-top: 18px;
-    /* .card-foot sets a muted grey for light cards; the salon label and the booked-day note
-       inherit this colour and must stay readable on the dark clock card (Issue #87). */
-    color: rgba(255, 255, 255, 0.9);
-  }
-  /* The card's primary button is an inverted variant: fill = the card's foreground token, text and
-     spinner arc = its dark gradient stop. It deliberately does not compose the global primary
-     variant, whose hover and modern-skin rules out-specify the card and turned the label white on
-     white (Issue #546). The page-wide white spinner would vanish on this fill too, and the focus
-     ring carries a dark band so it stays visible on the gradient. */
-  :global(.timer-card-wrap .timer-cta-primary) {
-    background: var(--text-on-brand);
-    color: var(--brand-dark);
-    box-shadow: var(--shadow-md);
-    border-color: transparent;
-  }
-  :global(.timer-card-wrap .timer-cta-primary:hover:not(:disabled)) {
-    background: color-mix(in srgb, var(--text-on-brand) 92%, var(--brand-dark));
-    color: var(--brand-dark);
-    transform: translateY(-1px);
-  }
-  :global(.timer-card-wrap .timer-cta-primary .btn-spinner) {
-    border-color: color-mix(in srgb, var(--brand-dark) 25%, var(--text-on-brand));
-    border-top-color: var(--brand-dark);
-  }
-  :global(.timer-card-wrap .timer-cta-ghost) {
-    color: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: transparent;
-  }
-  :global(.timer-card-wrap .timer-cta-ghost:hover:not(:disabled)) {
-    background: rgba(255, 255, 255, 0.08);
-    color: white;
-  }
-  :global(.timer-card-wrap .timer-cta-primary:focus-visible),
-  :global(.timer-card-wrap .timer-cta-ghost:focus-visible) {
-    outline: 2px solid var(--text-on-brand);
-    outline-offset: 2px;
-    box-shadow: 0 0 0 4px var(--brand-dark);
-  }
-  /* Open-break state: emphasises that clicking now ENDS the break. */
-  :global(.timer-card-wrap .timer-cta-ghost--active) {
-    background: rgba(255, 255, 255, 0.16);
-    border-color: rgba(255, 255, 255, 0.4);
-    color: white;
-  }
-  :global(.timer-card-wrap .timer-shift) {
-    position: relative;
-    z-index: 1;
-    margin-top: 14px;
-    font-size: 12.5px;
-    opacity: 0.85;
-  }
-  :global(.timer-card-wrap .timer-shift-label) {
-    padding: 4px 10px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-  }
-
-  /* ── Skeleton loader ────────────────────────────── */
-  .skeleton-block,
-  .skeleton-text {
-    background: linear-gradient(
-      90deg,
-      var(--bg-subtle) 25%,
-      var(--border) 50%,
-      var(--bg-subtle) 75%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-    border-radius: 4px;
-  }
-  .skeleton-text {
-    display: inline-block;
-    width: 4rem;
-    height: 0.875em;
-    vertical-align: middle;
-  }
   @keyframes shimmer {
     0% {
       background-position: 200% 0;
@@ -2816,192 +2219,14 @@
     }
   }
 
-  /* ── Widgets Row (side by side) ──────────────────── */
-  .widgets-row {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: 1.5rem;
-    margin-bottom: 1.5rem;
-    align-items: start;
-  }
-  @media (max-width: 768px) {
-    .widgets-row {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .widget-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1rem;
-  }
-  .widget-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    margin-bottom: 0;
-  }
-  .widget-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 1.25rem;
-    height: 1.25rem;
-    padding: 0 0.375rem;
-    border-radius: 999px;
-    background: var(--bad);
-    color: #fff;
-    font-size: 0.6875rem;
-    font-weight: 700;
-    margin-left: 0.375rem;
-    vertical-align: middle;
-  }
-  .table-wrap {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .cell-badge--holiday {
-    background: var(--brand-soft);
-    color: var(--brand);
-  }
-
-  /* ── Open Items Widget (v1.5: relies on .card recipe; no border-left accent) ─── */
-  :global(.open-items) {
-    margin-bottom: 0;
-  }
-  .open-items-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    max-height: 220px;
-    overflow-y: auto;
-  }
-  .oi-group {
-    display: flex;
-    flex-direction: column;
-  }
-  .oi-group-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 0.125rem;
-  }
-  .oi-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .oi-dot--warn {
-    background: var(--bad);
-  }
-  .oi-dot--pending {
-    background: var(--warn);
-  }
-  .oi-dot--fix {
-    background: #2563eb;
-  }
-  .oi-dot--approval {
-    background: var(--brand);
-  }
-  .oi-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.25rem 0 0.25rem 1.25rem;
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    text-decoration: none;
-    border-left: 2px solid var(--border);
-    transition:
-      color 0.12s ease,
-      border-left-color 0.12s ease;
-  }
-  .oi-item:hover {
-    color: var(--brand);
-    border-left-color: var(--brand);
-  }
-  .oi-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.25rem 0;
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text);
-    text-decoration: none;
-    transition: color 0.12s;
-  }
-  .oi-row:hover {
-    color: var(--brand);
-  }
-  .oi-link {
-    margin-left: auto;
-    color: var(--brand);
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-  .oi-empty {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    margin: 0;
-    padding: 0.25rem 0;
-  }
-  .team-divider {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin: 1rem 0 1.5rem;
-  }
-  .team-divider::before,
-  .team-divider::after {
-    content: "";
-    flex: 1;
-    height: 1px;
-    background: var(--border);
-  }
-  .team-divider-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-  }
-
-  .info-bar {
-    display: flex;
-    gap: 1.5rem;
-    flex-wrap: wrap;
-    padding: 0.625rem 1rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--brand);
-    border-radius: var(--r-sm);
-    margin-bottom: 1.5rem;
-    font-size: 0.875rem;
-    color: var(--text);
-  }
-  .info-bar-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .info-bar-icon {
-    font-size: 1rem;
-  }
-
   .btn-spinner {
     display: inline-block;
     width: 1rem;
     height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-top-color: #fff;
+    /* #845: the arc follows the label of whatever button holds it (primary or secondary stage
+       button), so it has the label's proven contrast (clock-card-cta-546). */
+    border: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+    border-top-color: currentColor;
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
@@ -3011,92 +2236,6 @@
     }
   }
 
-  /* Pending Approvals Banner */
-  .pending-banner {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    padding: 0.625rem 1rem;
-    background: var(--warn-soft);
-    border: 1px solid var(--warn-soft);
-    border-radius: var(--r-sm);
-    margin-bottom: 1rem;
-    text-decoration: none;
-    color: var(--text);
-    transition:
-      background-color 0.15s,
-      box-shadow 0.15s;
-  }
-  .pending-banner:hover {
-    background: var(--warn-soft);
-    box-shadow: var(--shadow-xs);
-  }
-  .pending-banner-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 1.375rem;
-    height: 1.375rem;
-    padding: 0 0.375rem;
-    border-radius: 9999px;
-    background: var(--warn);
-    color: #fff;
-    font-size: 0.75rem;
-    font-weight: 700;
-    line-height: 1;
-  }
-  .pending-banner-text {
-    flex: 1;
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-  .pending-banner svg {
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-
-  /* Charts */
-  .team-saldo-slot {
-    margin-bottom: 1.5rem;
-  }
-
-  .charts-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  :global(.chart-card:last-child) {
-    grid-column: 1 / -1;
-  }
-
-  .chart-wrap {
-    position: relative;
-    height: 240px;
-    margin-top: 4px;
-  }
-
-  .chart-note {
-    margin: 0.5rem 0 0;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-
-  .chart-skeleton {
-    width: 100%;
-    height: 100%;
-    border-radius: var(--r-sm);
-    background: linear-gradient(
-      90deg,
-      var(--bg-subtle) 25%,
-      var(--bg-alt) 50%,
-      var(--bg-subtle) 75%
-    );
-    background-size: 200% 100%;
-    animation: skeleton-shimmer 1.4s ease-in-out infinite;
-  }
-
   @keyframes skeleton-shimmer {
     0% {
       background-position: 200% 0;
@@ -3104,178 +2243,6 @@
     100% {
       background-position: -200% 0;
     }
-  }
-
-  :global(.upcoming-section) {
-    margin-top: 1.75rem;
-    margin-bottom: 1.75rem;
-    border-left: 3px solid var(--brand);
-  }
-
-  .upcoming-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 0.75rem;
-  }
-
-  .upcoming-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.875rem;
-    min-width: 0;
-  }
-
-  .upcoming-item:last-child {
-    border-bottom: none;
-  }
-
-  .upcoming-name {
-    font-weight: 500;
-    min-width: 80px;
-    flex-shrink: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .upcoming-dates {
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .upcoming-days {
-    color: var(--text-muted);
-    font-size: 0.8125rem;
-  }
-
-  .upcoming-type {
-    margin-left: auto;
-  }
-
-  @media (max-width: 900px) {
-    .charts-grid {
-      grid-template-columns: 1fr;
-    }
-    .chart-wrap {
-      height: 180px;
-    }
-  }
-
-  /* ── Team Section (v1.5 .card recipe; no border-left accent, no backdrop-filter) ── */
-  :global(.team-section) {
-    margin-bottom: 1.5rem;
-    box-shadow: var(--shadow-sm);
-  }
-
-  .team-grid-wrap {
-    overflow-x: auto;
-    margin: 0 -0.25rem;
-    /* Negative margin must not create horizontal page overflow on narrow viewports */
-    max-width: calc(100% + 0.5rem);
-  }
-
-  @media (max-width: 768px) {
-    .team-grid-wrap {
-      margin: 0;
-      max-width: 100%;
-    }
-  }
-
-  .team-grid {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8125rem;
-  }
-
-  .team-grid th,
-  .team-grid td {
-    padding: 0.5rem 0.375rem;
-    text-align: center;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .team-grid__name {
-    text-align: left;
-    white-space: nowrap;
-    padding-left: 0.5rem;
-    padding-right: 0.75rem;
-    width: 1%;
-  }
-
-  .team-grid__day {
-    width: 4.5rem;
-  }
-
-  .team-grid__day--today {
-    background: var(--brand-soft);
-  }
-
-  .day-label {
-    display: block;
-    font-weight: 600;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    color: var(--text-muted);
-  }
-
-  .day-num {
-    font-size: 0.875rem;
-    font-weight: 600;
-  }
-
-  .member-name {
-    font-weight: 500;
-    color: var(--text);
-  }
-
-  .team-grid__cell {
-    min-width: 3rem;
-    text-align: center;
-    vertical-align: middle;
-  }
-
-  /* Issue #587: the cell link is a transparent block wrapper — same look as the unlinked cell. */
-  .team-grid__link {
-    display: block;
-    color: inherit;
-    text-decoration: none;
-    border-radius: 999px;
-  }
-
-  .team-grid__link:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
-  }
-
-  /* Cell badges */
-  .cell-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 2.25rem;
-    padding: 0.1875rem 0.4375rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    transition: transform 0.15s ease;
-  }
-
-  .cell-badge--present {
-    background: var(--good-soft);
-    color: var(--good);
-    border: 1px solid var(--good-soft);
-  }
-
-  .cell-badge--active {
-    background: rgba(37, 99, 235, 0.1);
-    color: #2563eb;
-    border: 1px solid rgba(37, 99, 235, 0.2);
-    animation: pulse-badge 2s ease-in-out infinite;
   }
 
   @keyframes pulse-badge {
@@ -3288,113 +2255,376 @@
     }
   }
 
-  .cell-badge--absent {
-    background: var(--brand-soft);
-    color: var(--brand);
-    border: 1px solid var(--brand-soft);
-    font-size: 0.875rem;
-  }
-
-  /* Berufsschule day — distinct from generic absence so the 🎓 emoji reads as
-     "operationally planned school day" rather than "leave/sick". Slightly
-     lighter surface + neutral border to differentiate from vacation. */
-  .cell-badge--bs {
-    background: var(--bg-subtle);
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
-
-  .bs-emoji {
-    font-size: 0.875rem;
-    line-height: 1;
-  }
-
-  .cell-badge--missing {
-    background: var(--bad-soft);
-    color: var(--bad);
-    border: 1px solid var(--bad-soft);
-    font-size: 0.875rem;
-  }
-
-  /* Issue #84: worked in another salon only (salon filter) — not an absence, not a missing day. */
-  .cell-badge--elsewhere {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    border: 1px dashed var(--border);
-    font-size: 0.6875rem;
-    font-weight: 500;
-    white-space: nowrap;
-  }
-
-  .cell-badge--scheduled {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    border: 1px dashed var(--border);
-    font-size: 0.6875rem;
-  }
-
-  /* Open (pending) leave request — amber/warn tone signals "attention/awaiting decision",
-     distinct from the neutral "none"/Frei state and from approved (brand) leave. */
-  .cell-badge--requested {
-    background: var(--warn-soft);
-    color: var(--warn);
-    border: 1px solid var(--warn-soft);
-    font-size: 0.875rem;
-  }
-
-  .cell-badge--none {
-    color: var(--text-muted);
-    opacity: 0.4;
-  }
-
-  .shift-label {
-    display: block;
-    font-size: 0.625rem;
-    line-height: 1;
-    margin-top: 2px;
-    opacity: 0.7;
-  }
-
-  .shift-time {
-    font-size: 0.6875rem;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* Legend */
-  .legend {
+  /* ── Issue #845: Ich › Mein Tag — layout only, the blocks carry their own look ── */
+  .mein-tag {
     display: flex;
-    gap: 1.25rem;
-    flex-wrap: wrap;
-    margin-top: 1rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--border);
-    font-size: 0.8125rem;
-    color: var(--text-muted);
+    flex-direction: column;
+    gap: var(--s-4);
+    min-width: 0;
   }
-
-  .legend-item {
+  .clock-stage {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: var(--s-5);
+    min-width: 0;
+  }
+  .clock-big {
+    font-size: var(--fs-hero);
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    min-width: 5ch;
+  }
+  .clock-big small {
+    font-size: var(--fs-base);
+    font-weight: 500;
+    margin-left: var(--s-1);
+    color: var(--text-2);
+  }
+  :global(.stage[data-state="pause"]) .clock-big small {
+    color: inherit;
+  }
+  .clock-main {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .clock-state {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-weight: 600;
+  }
+  .clock-pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-3);
+    flex: none;
+  }
+  :global(.stage[data-state="arbeitet"]) .clock-pulse {
+    background: var(--ok);
+  }
+  :global(.stage[data-state="pause"]) .clock-pulse {
+    background: var(--warn);
+  }
+  .clock-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1) var(--s-3);
+    margin-top: 2px;
+    font-size: var(--fs-sm);
+  }
+  .clock-meta b {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .clock-tl {
+    position: relative;
+    height: 6px;
+    margin-top: var(--s-2);
+    border-radius: var(--r-pill);
+    background: var(--line);
+    overflow: hidden;
+  }
+  .clock-tl i {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: var(--r-pill);
+    background: var(--brand);
+  }
+  .clock-tl i.clock-tl-break {
+    background: var(--accent);
+  }
+  .clock-tl-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 2px;
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .clock-note {
+    font-size: var(--fs-sm);
+  }
+  .mt-entry-count {
+    margin: var(--s-2) 0 var(--s-1);
+  }
+  .mt-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--s-6) var(--s-5);
+    margin-top: var(--s-2);
+  }
+  .mt-sec {
+    min-width: 0;
+  }
+  .mt-h2 {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-2);
+    margin: 0 0 var(--s-2);
+    font-size: var(--fs-h2);
+    font-weight: 600;
+  }
+  .mt-h2-link {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--brand);
+  }
+  .mt-quiet {
+    margin: 0;
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+  }
+  .mt-row-end {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+  .mt-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    background: var(--card);
+  }
+  .mt-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+  }
+  .mt-table th {
+    height: 34px;
+    padding: 0 var(--s-3);
+    text-align: left;
+    font-size: var(--fs-th);
+    font-weight: 600;
+    color: var(--text-2);
+    border-bottom: 1px solid var(--line);
+  }
+  .mt-table td {
+    height: 44px;
+    padding: 0 var(--s-3);
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .mt-table tr:last-child td {
+    border-bottom: 0;
+  }
+  .mt-table .r {
+    text-align: right;
+  }
+  .mt-history {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .mt-history li {
+    display: flex;
+    gap: var(--s-3);
+    padding: var(--s-2) 0;
+    border-bottom: 1px solid var(--line);
+    font-size: var(--fs-sm);
+  }
+  .mt-history li:last-child {
+    border-bottom: 0;
+  }
+  .mt-when {
+    flex: none;
+    min-width: 6ch;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .mt-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    min-width: 0;
+  }
+  .mt-grid {
+    grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
+  }
+  .mt-h2-meta {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .clock-salon-name {
+    font-weight: 500;
+    color: var(--text-2);
+  }
+  :global(.stage[data-state="pause"]) .clock-salon-name {
+    color: inherit;
+  }
+  .clock-tl i.clock-tl-plan {
+    background: color-mix(in srgb, var(--brand) 22%, transparent);
+  }
+  /* „Deine Woche“: one row of seven days (prototype v5), today marked */
+  .mt-week {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    overflow: hidden;
+  }
+  .mt-day {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    min-width: 0;
+    padding: var(--s-2) var(--s-3);
+    background: var(--card);
+    font-size: var(--fs-sm);
+  }
+  .mt-day--off {
+    background: var(--sunk);
+  }
+  .mt-day--today {
+    box-shadow: inset 0 2px 0 var(--brand);
+  }
+  .mt-day-h {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-3);
+    font-size: var(--fs-th);
+    font-weight: 600;
+  }
+  .mt-day-h b {
+    color: var(--text);
+    font-size: var(--fs-base);
+    font-variant-numeric: tabular-nums;
+  }
+  .mt-day-s {
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Phone: the stage stays compact so the Kennzahlen reach the first screen (D-01, AC 390×844). */
+  @media (max-width: 759.98px) {
+    .mt-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    /* prototype phone: number, status, meta and time bar stacked; the action spans the stage */
+    .clock-stage {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--s-3);
+      width: 100%;
+    }
+    .mt-stage :global(.stage-actions) {
+      width: 100%;
+    }
+    .mt-stage :global(.stage-actions > *) {
+      flex: 1 1 0;
+    }
+    .mt-day-s {
+      display: none;
+    }
+    .mt-day-h {
+      justify-content: center;
+      gap: var(--s-1);
+    }
+  }
+  /* after the base rules of the two-column grid: one column on narrow screens */
+  @media (max-width: 1099.98px) {
+    .mt-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
-  @media (max-width: 600px) {
-    :global(.timer-card-wrap .timer-hd) {
-      flex-direction: column;
-      gap: 8px;
+  /* ── Issue #846: Team › Heute im Salon — layout only ── */
+  .ts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5);
+  }
+  .ts-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: var(--s-6) var(--s-5);
+  }
+  .ts-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+    min-width: 0;
+  }
+  .ts-sec {
+    min-width: 0;
+    scroll-margin-top: 64px;
+  }
+  .ts-h2-meta {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .ts-week-sec {
+    margin-top: var(--s-6);
+  }
+  .ts-week th,
+  .ts-week td {
+    text-align: left;
+  }
+  .ts-week .ts-name {
+    font-weight: 500;
+  }
+  .ts-week .ts-today {
+    background: var(--brand-tint);
+  }
+  /* the team actions wrap onto a second line on a phone instead of leaving the page */
+  .ts-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    justify-content: flex-end;
+  }
+  .ts-filter-on {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+  .ts-pill {
+    display: inline-block;
+    padding: 1px var(--s-2);
+    border-radius: var(--r-pill);
+    background: var(--sunk);
+    font-variant-numeric: tabular-nums;
+  }
+  .ts-faint {
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .ts-week .team-grid__link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+    border-radius: var(--r-control);
+  }
+  .ts-week .team-grid__link:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  @media (min-width: 1800px) {
+    .ts-grid {
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
     }
-    :global(.timer-card-wrap .timer-hd-right) {
-      text-align: left;
-    }
-    :global(.timer-card-wrap .timer-display) {
-      font-size: 48px;
-    }
-    :global(.timer-card-wrap .timer-foot) {
-      flex-direction: column;
-    }
-    :global(.timer-card-wrap .timer-cta-primary),
-    :global(.timer-card-wrap .timer-cta-ghost) {
-      width: 100%;
+  }
+  @media (max-width: 1099.98px) {
+    .ts-grid {
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 </style>

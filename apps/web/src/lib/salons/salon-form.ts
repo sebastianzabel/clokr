@@ -102,7 +102,7 @@ export function salonToForm(salon: SalonDto): SalonFormValues {
 }
 
 /** An empty or blank address part is stored as null. */
-function nullIfBlank(value: string): string | null {
+export function nullIfBlank(value: string): string | null {
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
 }

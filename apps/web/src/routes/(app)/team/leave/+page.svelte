@@ -8,6 +8,23 @@
   import { salonContext } from "$stores/salon-context";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import Pagination from "$components/ui/Pagination.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte"; // Issue #853 (D-853-18)
+  import PeriodSwitcher from "$components/ui/PeriodSwitcher.svelte"; // Issue #853 (D-853-11)
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
+  import DataTable, {
+    type DataTableColumn,
+    type DataTableRowTone,
+  } from "$components/ui/DataTable.svelte"; // Issue #853 (D-853-18)
+  import Chip, { type ChipTone } from "$components/ui/Chip.svelte";
+  import PersonPicker from "$lib/components/team/zeiten/PersonPicker.svelte"; // Issue #853 (D-853-12)
+  import { personOptions } from "$lib/team/person-options";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import { matchesSearch } from "$lib/table/search";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-ef6
   import { toasts } from "$stores/toast";
@@ -26,9 +43,9 @@
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262, #269, Issue #446 (D-04)
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19
   import { parseLeaveCreateDeepLink, type LeaveCreateDeepLink } from "$lib/leave/create-deep-link"; // Issue #587
   import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
-  import LeaveToolbar from "$lib/components/leave/LeaveToolbar.svelte"; // Issue #840 (D-840-13, E-01)
   import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"; // Issue #840 (G-3)
   import LeavePlanningPanel from "$lib/components/leave/LeavePlanningPanel.svelte"; // Issue #840 (D-840-17)
   import LeavePlanControls from "$lib/components/leave/LeavePlanControls.svelte"; // Issue #840 (G-6)
@@ -61,6 +78,7 @@
   } from "$lib/leave/area-tabs"; // Issue #840 (D-840-01/02)
   import {
     emptyRequestsText,
+    inLeaderReach,
     locateDeepLinkedRequest,
     matchesStatusFilter,
     openRequestsSummary,
@@ -131,6 +149,7 @@
     id: string;
     firstName: string;
     lastName: string;
+    employeeNumber?: string | null;
   }
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -270,7 +289,7 @@
   const listYear = $derived(Number(urlState.datum.slice(0, 4)));
 
   function navigate(
-    patch: Partial<Pick<TeamLeaveState, "tab" | "zoom" | "datum" | "status">> & {
+    patch: Partial<Pick<TeamLeaveState, "tab" | "zoom" | "datum" | "status" | "allSalons">> & {
       requestId?: string | null;
     },
     replaceState = false,
@@ -380,6 +399,7 @@
     const id = bar.requestId;
     if (!id) return;
     filterLeaveType = "";
+    requestQuery = "";
     await navigate({ tab: "antraege", status: null, requestId: id });
     await tick();
     focusRequest(id);
@@ -745,18 +765,6 @@
     return `${d}.${m}.${y}`;
   }
 
-  function statusClass(s: Status) {
-    return s === "APPROVED"
-      ? "badge-green"
-      : s === "PENDING"
-        ? "badge-yellow"
-        : s === "REJECTED"
-          ? "badge-red"
-          : s === "CANCELLATION_REQUESTED"
-            ? "badge-orange"
-            : "badge-gray";
-  }
-
   function statusLabel(s: Status) {
     return s === "APPROVED"
       ? "Genehmigt"
@@ -769,52 +777,48 @@
             : "Zurückgezogen";
   }
 
-  // ── Mitarbeiter-Filter (global für alle Tabs) ────────────────────────────
-  let filterEmployeeId = $state<string>("");
-  let empSearch = $state("");
-  let empDropdownOpen = $state(false);
-
-  // Employee list sorted by lastName for dropdown
-  let employeeOptions = $derived(
-    employees
-      .map((e) => ({ id: e.id, name: `${e.lastName}, ${e.firstName}` }))
-      .sort((a, b) => a.name.localeCompare(b.name, "de")),
-  );
-
-  let filteredEmpOptions = $derived(
-    employeeOptions.filter((e) => {
-      if (!empSearch.trim()) return true;
-      const q = empSearch.toLowerCase();
-      return e.name.toLowerCase().includes(q);
-    }),
-  );
-
-  function selectEmployee(emp: { id: string; name: string } | null) {
-    filterEmployeeId = emp?.id ?? "";
-    empSearch = "";
-    empDropdownOpen = false;
-  }
+  // ── Personen-Suche der Übersicht (Issue #853, D-853-18) ───────────────────────────────────
+  // The search narrows the Übersicht rows by name; it is page-local (not in the URL) and never
+  // touches the request lists.
+  let personQuery = $state("");
 
   // Issue #840 G-1: the open count follows the header salon only, never the person filter (that
   // filter is not even shown on Planung).
   const openSummary = $derived(openRequestsSummary(pendingRequests));
 
-  /** A click on the count: the Anträge list at „Offen“, with no person or type filter hiding a counted row. */
+  /** A click on the count: the Anträge list at „Offen“, with no type filter hiding a counted row. */
   function openOpenRequests() {
-    filterEmployeeId = "";
     filterLeaveType = "";
+    requestQuery = "";
     void navigate({ tab: "antraege", status: "PENDING" });
   }
 
-  // ── Übersicht: rows, load and legend (Issue #840, E-06, D-840-10/27) ─────────────────────
+  // ── Übersicht: rows, load and legend (Issue #840, E-06, D-840-10/27; #853 D-853-12) ─────────
   // Rows: the persons of the calendar answer plus every person of the page's own (salon-filtered)
-  // list, each a row even without a bar; the person filter narrows them.
-  const overviewPeople = $derived(
-    overviewPersons(overviewRows, employees, {
-      employeeId: filterEmployeeId || undefined,
-      ownEmployeeId: $authStore.user?.employeeId ?? null,
-    }),
+  // list, each a row even without a bar. The default circle is the leader's reach: the caller, the
+  // roster and every person the server did not mask; „Alle Salons“ (`kreis=alle`) adds the masked
+  // rest. The search then narrows the circle by name.
+  const rosterIds = $derived(new Set(employees.map((emp) => emp.id)));
+  const circlePeople = $derived(
+    inLeaderReach(
+      overviewPersons(overviewRows, employees, {
+        ownEmployeeId: $authStore.user?.employeeId ?? null,
+      }),
+      rosterIds,
+      urlState.allSalons,
+    ),
   );
+  const overviewPeople = $derived(
+    circlePeople.filter((row) => matchesSearch(row.name, personQuery)),
+  );
+  const circleFilters: ToolbarFilter[] = $derived([
+    {
+      key: "kreis",
+      label: "Personenkreis",
+      options: [{ value: "alle", label: "Alle Salons" }],
+      value: urlState.allSalons ? "alle" : "",
+    },
+  ]);
   // Closed days only for ONE salon in view (D-840-14); with several the legend says why none are drawn.
   const closedDays = $derived(closedDaysFor(overviewSalons, $salonContext));
   // The Werktage basis is decided once (D-840-08): null = Mon-Sat when no single salon with hours is in view.
@@ -865,20 +869,31 @@
     };
   });
 
-  // The tabs of the one toolbar; the open requests of the salon selection badge the Anträge tab
+  // The tabs of the page head; the open requests of the salon selection badge the Anträge tab
   // with a neutral, explained count (Issue #840 G-1).
-  const toolbarTabs = $derived([
-    { id: "uebersicht", label: "Übersicht" },
+  const leaveTabs = $derived([
+    { value: "uebersicht", label: "Übersicht" },
     {
-      id: "antraege",
+      value: "antraege",
       label: "Anträge",
       badge: openSummary?.count,
       badgeLabel: openSummary?.label,
       onBadgeSelect: openOpenRequests,
       testId: "list",
     },
-    { id: "planung", label: "Planung" },
+    { value: "planung", label: "Planung" },
   ]);
+
+  const ZOOM_OPTIONS = [
+    { value: "jahr", label: "Jahr" },
+    { value: "quartal", label: "Quartal" },
+    { value: "monat", label: "Monat" },
+  ];
+
+  function onZoomSelected(value: string) {
+    const zoom = TIMELINE_ZOOMS.find((z) => z === value);
+    if (zoom !== undefined) void navigate({ zoom }, true);
+  }
 
   // ── Planung tab (D-840-15/17) ─────────────────────────────────────────────────────────────
   // The salon is the header selection exactly as on the old planner page; `canManage` is what the
@@ -909,6 +924,8 @@
   // carry it; the type filter stays page-local.
   const filterLeaveStatus = $derived<LeaveStatusFilter | "">(urlState.status ?? "");
   let filterLeaveType = $state<TypeCode | "">("");
+  // Issue #853: the Anträge search by person name (page-local, like the type filter).
+  let requestQuery = $state("");
   let teamReqPage = $state(1);
   let teamReqPageSize = $state(10);
 
@@ -920,9 +937,11 @@
 
   let filteredTeamRequests = $derived(
     requestSource.filter((req) => {
-      if (filterEmployeeId && req.employeeId !== filterEmployeeId) return false;
       if (!matchesStatusFilter(req.status, urlState.status)) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
+      if (!matchesSearch(`${req.employee.firstName} ${req.employee.lastName}`, requestQuery)) {
+        return false;
+      }
       return true;
     }),
   );
@@ -936,7 +955,73 @@
     teamReqPage = 1;
   });
 
+  // The Anträge table (Issue #853, D-853-18): one row per request of the page, the toolbar's
+  // Status filter is the `status` URL key, the Art filter and the search are page-local.
+  type RequestRow = { id: string; req: LeaveRequest };
+  const REQUEST_COLUMNS: DataTableColumn[] = [
+    { key: "person", label: "Person", primary: true },
+    { key: "type", label: "Art" },
+    { key: "period", label: "Zeitraum" },
+    { key: "days", label: "Umfang" },
+    { key: "status", label: "Status" },
+    { key: "note", label: "Anmerkung" },
+    { key: "actions", label: "Aktionen" },
+  ];
+  const requestRows: RequestRow[] = $derived(pagedTeamRequests.map((req) => ({ id: req.id, req })));
+  const requestRowKey = (row: RequestRow) => row.id;
+  const requestRowTestId = (row: RequestRow) => `leave-team-row-${row.id}`;
+  const requestRowTone = (row: RequestRow): DataTableRowTone | undefined =>
+    highlightRequestId === row.id ? "highlight" : undefined;
+
+  const STATUS_FILTER_OPTIONS: Array<{ value: LeaveStatusFilter; label: string }> = [
+    { value: "PENDING", label: "Offen" },
+    { value: "APPROVED", label: "Genehmigt" },
+    { value: "CANCELLATION_REQUESTED", label: "Stornierung beantragt" },
+    { value: "REJECTED", label: "Abgelehnt" },
+    { value: "CANCELLED", label: "Storniert" },
+  ];
+  const requestFilters: ToolbarFilter[] = $derived([
+    { key: "status", label: "Status", options: STATUS_FILTER_OPTIONS, value: filterLeaveStatus },
+    {
+      key: "type",
+      label: "Art",
+      options: LEAVE_TYPE_OPTIONS.map((t) => ({ value: t.code, label: t.label })),
+      value: filterLeaveType,
+    },
+  ]);
+  const requestFiltersActive = $derived(
+    requestQuery !== "" || filterLeaveStatus !== "" || filterLeaveType !== "",
+  );
+
+  function onRequestFilterChange(key: string, picked: string) {
+    if (key === "status") {
+      void navigate({ status: (picked || null) as LeaveStatusFilter | null }, true);
+    } else if (key === "type") {
+      filterLeaveType = (LEAVE_TYPE_OPTIONS.find((t) => t.code === picked)?.code ?? "") as
+        TypeCode | "";
+    }
+  }
+
+  /** Search, Status and Art back to „Alle“ in one URL write. */
+  function resetRequestFilters() {
+    requestQuery = "";
+    filterLeaveType = "";
+    void navigate({ status: null }, true);
+  }
+
+  function statusTone(s: Status): ChipTone {
+    return s === "APPROVED"
+      ? "ok"
+      : s === "PENDING" || s === "CANCELLATION_REQUESTED"
+        ? "warn"
+        : s === "REJECTED"
+          ? "bad"
+          : "neutral";
+  }
+
   // ── iCal-Download ────────────────────────────────────────────────────────
+  // „Kalender abonnieren“ opens a Dialog (Issue #853, D-853-18) in place of the old page section.
+  let icalOpen = $state(false);
   let icalDownloading = $state(false);
 
   async function downloadIcal() {
@@ -956,6 +1041,7 @@
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      icalOpen = false;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Download";
     } finally {
@@ -963,8 +1049,17 @@
     }
   }
 
+  // Issue #853 (D-853-12, S-15): a caller who may file for others is asked whom the request is for first; every
+  // other caller files their own request. Presentation only: the server's create permission and
+  // reach decide (`createLeaveRequestCore`), and the picker lists the page's reach-narrowed roster.
+  const canCreateForOthers = $derived(
+    hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN"),
+  );
+  const canCreateOwn = $derived(hasPermission($authStore.user, "leave-request:create:EIGENE"));
+  const createPersonItems = $derived(personOptions(employees));
+
   function openCreate() {
-    createEmployeeId = "";
+    createEmployeeId = canCreateForOthers ? "" : ($authStore.user?.employeeId ?? "");
     createInitialDate = new Date().toISOString().slice(0, 10);
     createModalOpen = true;
   }
@@ -976,23 +1071,38 @@
 
 <!-- Modal primitive owns Escape handling. -->
 
-<!-- ── Header ─────────────────────────────────────────────────────────────── -->
-<PageHead eyebrow="Team" title={pageLabel("/team/leave")}>
+<!-- ── Header (Issue #853, D-853-18/19: no eyebrow, no accent) ─────────────────── -->
+<PageHead
+  title={pageLabel("/team/leave")}
+  sub="Sieh, wer wann fehlt, prüfe Anträge und plane den Urlaub deines Teams."
+>
   {#snippet actions()}
-    {#if activeTab === "planung"}
-      {#if canManagePlan}
-        <button
-          type="button"
-          class="btn btn-primary btn-sm"
-          data-testid="leave-plan-manage"
-          onclick={() => (manageOpen = true)}
-        >
-          Planung verwalten
-        </button>
+    <!-- The two head actions are wider than a 320 px phone together: this page-local group lets the
+         second one wrap below the first (the Seitenkopf block itself stays unchanged). -->
+    <div class="lv-head-actions">
+      {#if activeTab === "planung"}
+        {#if canManagePlan}
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            data-testid="leave-plan-manage"
+            onclick={() => (manageOpen = true)}
+          >
+            Planung verwalten
+          </button>
+        {/if}
+      {:else if canCreateForOthers || canCreateOwn}
+        <button class="btn btn-primary btn-sm" onclick={openCreate}>Abwesenheit eintragen</button>
       {/if}
-    {:else if hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN")}
-      <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
-    {/if}
+      <button
+        type="button"
+        class="btn btn-secondary btn-sm"
+        data-testid="leave-team-ical"
+        onclick={() => (icalOpen = true)}
+      >
+        Kalender abonnieren
+      </button>
+    </div>
   {/snippet}
 </PageHead>
 
@@ -1003,270 +1113,184 @@
 <!-- Issue #836 (AC-5): non-blocking hint after a request exceeded a leave limit. -->
 <LeaveLimitNotice sentences={limitSentences} onDismiss={() => (limitSentences = [])} />
 
-<!-- ── Person filter (Übersicht and Anträge) ─────────────────────────────────── -->
-{#snippet personFilter()}
-  <div class="employee-selector">
-    <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="emp-input-wrap" onclick={() => (empDropdownOpen = !empDropdownOpen)}>
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <input
-          class="emp-search-input"
-          type="text"
-          placeholder={filterEmployeeId
-            ? (employeeOptions.find((e) => e.id === filterEmployeeId)?.name ?? "Alle Mitarbeiter")
-            : "Alle Mitarbeiter"}
-          bind:value={empSearch}
-          onclick={(e) => {
-            e.stopPropagation();
-            empDropdownOpen = true;
-          }}
-          onfocus={() => (empDropdownOpen = true)}
-          oninput={() => (empDropdownOpen = true)}
-          aria-label="Mitarbeiter suchen"
-          autocomplete="off"
-        />
-        <svg
-          class="emp-chevron"
-          class:emp-chevron--up={empDropdownOpen}
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"
-          aria-hidden="true"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </div>
-      {#if empDropdownOpen}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="emp-backdrop" onclick={() => (empDropdownOpen = false)}></div>
-        <ul class="emp-dropdown" role="listbox" aria-label="Mitarbeiterliste">
-          <li
-            class="emp-dropdown-item"
-            class:emp-dropdown-item--active={filterEmployeeId === ""}
-            role="option"
-            aria-selected={filterEmployeeId === ""}
-            tabindex="0"
-            onclick={() => selectEmployee(null)}
-            onkeydown={(e) => {
-              if (e.key === "Enter" || e.key === " ") selectEmployee(null);
-            }}
-          >
-            Alle Mitarbeiter
-          </li>
-          {#if filteredEmpOptions.length === 0}
-            <li class="emp-dropdown-empty">Keine Treffer</li>
-          {:else}
-            {#each filteredEmpOptions as emp (emp.id)}
-              <li
-                class="emp-dropdown-item"
-                class:emp-dropdown-item--active={emp.id === filterEmployeeId}
-                role="option"
-                aria-selected={emp.id === filterEmployeeId}
-                tabindex="0"
-                onclick={() => selectEmployee(emp)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") selectEmployee(emp);
-                }}
-              >
-                {emp.name}
-              </li>
-            {/each}
-          {/if}
-        </ul>
-      {/if}
-    </div>
-  </div>
-{/snippet}
-
-<!-- Issue 840 G-6: on Planung the filter area holds the planner's status, deadline and add action. -->
+<!-- Issue 840 G-6: on Planung the toolbar row holds the planner's status, deadline and add action. -->
 {#snippet plannerControls()}
   {#if planControls}<LeavePlanControls controls={planControls} />{/if}
 {/snippet}
 
-<!-- ── The one toolbar: tabs, period, zoom, filters (Issue #840, E-01) ──────────── -->
-<LeaveToolbar
-  ariaLabel="Abwesenheiten"
-  tabs={toolbarTabs}
-  {activeTab}
-  onTabChange={selectTab}
-  period={toolbarPeriod}
-  zooms={activeTab === "antraege" ? [] : TIMELINE_ZOOMS}
-  zoom={overviewPeriod.zoom}
-  onZoomChange={(zoom) => void navigate({ zoom }, true)}
-  onShift={(step) =>
-    void navigate({ datum: shiftPeriod(toolbarPeriod.zoom, urlState.datum, step) }, true)}
-  onToday={() => void navigate({ datum: today }, true)}
-  filters={activeTab === "planung" ? plannerControls : personFilter}
-  testIdPrefix="leave-team-view"
-/>
-
-{#if salonRejected && activeTab !== "planung"}
-  <div class="callout brand" role="status" data-testid="leave-team-salon-unavailable">
-    <p>Für diesen Salon liegen hier keine Daten vor. Wähle oben einen anderen Salon.</p>
+<!-- The period control of the toolbar row: ‹ label › Heute, plus the zoom on the timeline tabs. -->
+{#snippet periodControls(withZoom: boolean)}
+  <div class="lv-period">
+    <PeriodSwitcher
+      period={toolbarPeriod}
+      onShift={(step) =>
+        void navigate({ datum: shiftPeriod(toolbarPeriod.zoom, urlState.datum, step) }, true)}
+      onToday={() => void navigate({ datum: today }, true)}
+    />
   </div>
-{/if}
+  {#if withZoom}
+    <SegmentedControl
+      options={ZOOM_OPTIONS}
+      value={overviewPeriod.zoom}
+      name="leave-zoom"
+      ariaLabel="Zeitraum"
+      size="sm"
+      onchange={onZoomSelected}
+    />
+  {/if}
+{/snippet}
 
-<!-- ── Übersicht (Issue #840): one row per person, one bar per absence ──────────── -->
-{#if activeTab === "uebersicht"}
-  <div role="tabpanel" id="leave-panel-uebersicht" aria-labelledby="leave-tab-uebersicht">
-    <div class="card card-animate overview-card" data-testid="leave-overview">
-      <!-- One legend under the toolbar: only what this view can contain (Phase 257, D-05). -->
-      <LeaveLegend
-        typeCodes={overviewLegend.typeCodes}
-        styles={overviewLegend.styles}
-        markings={overviewLegend.markings}
-        closedHint={overviewLegend.closedHint}
-      />
-      {#if overviewPeople.length === 0 && overviewLoading}
-        <p class="overview-empty">Lade Abwesenheiten …</p>
-      {:else if overviewPeople.length === 0}
-        <p class="overview-empty" data-testid="leave-overview-empty">
-          Keine Abwesenheiten in diesem Zeitraum.
-        </p>
-      {:else if isMobile}
-        <AbsenceList
-          rows={overviewPeople}
-          period={overviewPeriod}
-          holidays={overviewHolidays}
-          onBarSelect={selectBar}
-        />
-      {:else}
-        <AbsenceTimeline
-          rows={overviewPeople}
-          period={overviewPeriod}
-          holidays={overviewHolidays}
-          closedWeekdays={werktage}
-          {today}
-          load={overviewLoad}
-          onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
-          onBarSelect={selectBar}
-        />
-      {/if}
-    </div>
+<!-- ── The three panels (Issue #853, D-853-11): only the active one holds content ──────── -->
+{#snippet leavePanel(value: string)}
+  {#if value === activeTab}
+    {#if salonRejected && value !== "planung"}
+      <div data-testid="leave-team-salon-unavailable">
+        <Note tone="brand"
+          >Für diesen Salon liegen hier keine Daten vor. Wähle oben einen anderen Salon.</Note
+        >
+      </div>
+    {/if}
 
-    <!-- iCal-Download -->
-    <div class="ical-section card-animate">
-      <div class="ical-header">
-        <span class="ical-icon">📥</span>
-        <div>
-          <p class="ical-title">Kalender exportieren</p>
-          <p class="ical-desc">
-            Team-Abwesenheiten als .ics-Datei herunterladen (Outlook, Google Calendar, Apple
-            Kalender)
-          </p>
+    {#if value === "uebersicht"}
+      <!-- ── Übersicht (Issue #840): one row per person, one bar per absence ────────── -->
+      <div class="lv-controls">
+        {@render periodControls(true)}
+        <div class="lv-people">
+          <TableToolbar
+            bind:query={personQuery}
+            count={overviewPeople.length}
+            total={circlePeople.length}
+            filters={circleFilters}
+            onFilterChange={(_key, picked) => void navigate({ allSalons: picked === "alle" }, true)}
+            onReset={() => {
+              personQuery = "";
+              if (urlState.allSalons) void navigate({ allSalons: false }, true);
+            }}
+            searchLabel="Person suchen"
+          />
         </div>
       </div>
-      <div class="ical-actions">
-        <button class="btn btn-ghost btn-sm" onclick={downloadIcal} disabled={icalDownloading}>
-          {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
-        </button>
+
+      <div data-testid="leave-overview">
+        {#if overviewPeople.length === 0 && overviewLoading}
+          <Skeleton shape="block" height="240px" />
+        {:else if overviewPeople.length === 0}
+          <div data-testid="leave-overview-empty">
+            <EmptyState
+              variant={personQuery ? "noMatches" : "noData"}
+              title={personQuery
+                ? "Keine Person gefunden."
+                : "Keine Abwesenheiten in diesem Zeitraum."}
+              description={personQuery ? "Passe die Suche an." : undefined}
+            />
+          </div>
+        {:else if isMobile}
+          <AbsenceList
+            rows={overviewPeople}
+            period={overviewPeriod}
+            holidays={overviewHolidays}
+            onBarSelect={selectBar}
+          />
+        {:else}
+          <AbsenceTimeline
+            rows={overviewPeople}
+            period={overviewPeriod}
+            holidays={overviewHolidays}
+            closedWeekdays={werktage}
+            {today}
+            load={overviewLoad}
+            onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
+            onBarSelect={selectBar}
+          />
+        {/if}
+        <!-- One legend under the timeline: only what this view can contain (Phase 257, D-05). -->
+        <LeaveLegend
+          typeCodes={overviewLegend.typeCodes}
+          styles={overviewLegend.styles}
+          markings={overviewLegend.markings}
+          closedHint={overviewLegend.closedHint}
+        />
       </div>
-    </div>
-  </div>
-{/if}
-
-<!-- ── Anträge (E-02): the list with a status filter; open requests are decided in the inbox ─ -->
-{#if activeTab === "antraege"}
-  <div role="tabpanel" id="leave-panel-antraege" aria-labelledby="leave-tab-antraege">
-    <div class="section-header card-animate">
-      <h2>Alle Anträge</h2>
-    </div>
-
-    {#if loading}
-      <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
-    {:else}
-      <div class="filter-bar card-animate">
-        <select
-          class="form-input filter-select"
-          value={filterLeaveStatus}
-          onchange={(e) => {
-            const picked = e.currentTarget.value;
-            void navigate({ status: (picked || null) as LeaveStatusFilter | null }, true);
-          }}
-          aria-label="Nach Status filtern"
-          data-testid="leave-team-filter-status"
-        >
-          <option value="">Alle Status</option>
-          <option value="PENDING">Offen</option>
-          <option value="APPROVED">Genehmigt</option>
-          <option value="CANCELLATION_REQUESTED">Storno angefragt</option>
-          <option value="REJECTED">Abgelehnt</option>
-          <option value="CANCELLED">Storniert</option>
-        </select>
-        <select
-          class="form-input filter-select"
-          bind:value={filterLeaveType}
-          aria-label="Nach Art filtern"
-        >
-          <option value="">Alle Arten</option>
-          {#each LEAVE_TYPE_OPTIONS as t (t.code)}
-            <option value={t.code}>{t.label}</option>
-          {/each}
-        </select>
-        <span class="filter-count">{filteredTeamRequests.length} Anträge</span>
+    {:else if value === "antraege"}
+      <!-- ── Anträge (E-02): a table with toolbar; open requests are decided in the inbox ─── -->
+      <div class="lv-controls">
+        {@render periodControls(false)}
       </div>
 
-      {#if filteredTeamRequests.length === 0}
-        {@const empty = emptyRequestsText(urlState.status, listYear, requestSource.length)}
-        <div class="empty-state card card-body card-animate" data-testid="leave-team-empty">
-          <span class="empty-icon">🏖️</span>
-          <h3>{empty.title}</h3>
-          <p class="text-muted">{empty.hint}</p>
-        </div>
+      {#snippet requestsToolbar()}
+        <TableToolbar
+          bind:query={requestQuery}
+          count={filteredTeamRequests.length}
+          total={requestSource.length}
+          filters={requestFilters}
+          onFilterChange={onRequestFilterChange}
+          onReset={resetRequestFilters}
+          searchLabel="Person suchen"
+        />
+      {/snippet}
+
+      {#if loading}
+        <DataTable
+          caption="Anträge"
+          columns={REQUEST_COLUMNS}
+          rows={[]}
+          rowKey={requestRowKey}
+          toolbar={requestsToolbar}
+          loading
+        />
       {:else}
-        <div class="table-wrapper card card-animate">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Mitarbeiter</th>
-                <th>Art</th>
-                <th>Von</th>
-                <th>Bis</th>
-                <th class="text-center">Umfang</th>
-                <th>Status</th>
-                <th>Anmerkung</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedTeamRequests as req (req.id)}
-                <tr
-                  id="request-{req.id}"
-                  data-testid={`leave-team-row-${req.id}`}
-                  data-status={req.status}
-                  class:highlight-row={highlightRequestId === req.id}
-                >
-                  <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
-                  <td>
-                    <LeaveTypeChip
-                      code={req.typeCode}
-                      label={typeName(req.typeCode)}
-                      requested={req.status === "PENDING"}
-                      data-row-status={req.status}
-                      data-testid={`leave-team-row-${req.id}-type-chip`}
-                    />
-                  </td>
-                  <td class="font-mono">{fmtDate(req.startDate)}</td>
-                  <td class="font-mono">{fmtDate(req.endDate)}</td>
-                  <td class="text-center"
-                    >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</td
+        <div data-testid="leave-team-requests">
+          {#if filteredTeamRequests.length === 0}
+            {@const empty = emptyRequestsText(urlState.status, listYear, requestSource.length)}
+            <div class="dt-toolbar-row">{@render requestsToolbar()}</div>
+            <div data-testid="leave-team-empty">
+              <EmptyState
+                variant={requestFiltersActive ? "noMatches" : "noData"}
+                icon="calendar"
+                title={empty.title}
+                description={empty.hint}
+                onaction={requestFiltersActive ? resetRequestFilters : undefined}
+              />
+            </div>
+          {:else}
+            <DataTable
+              caption="Anträge"
+              columns={REQUEST_COLUMNS}
+              rows={requestRows}
+              rowKey={requestRowKey}
+              toolbar={requestsToolbar}
+              rowTestId={requestRowTestId}
+              rowTone={requestRowTone}
+            >
+              {#snippet cell(row, column)}
+                {@const req = row.req}
+                {#if column.key === "person"}
+                  <!-- The anchor of the notification/bar deep link (focusRequest scrolls to it). -->
+                  <span id="request-{req.id}">{req.employee.firstName} {req.employee.lastName}</span
                   >
-                  <td>
-                    <span
-                      class="badge {statusClass(req.status)}"
-                      data-testid={`leave-team-row-${req.id}-status-badge`}
-                      >{statusLabel(req.status)}</span
-                    >
+                {:else if column.key === "type"}
+                  <LeaveTypeChip
+                    code={req.typeCode}
+                    label={typeName(req.typeCode)}
+                    requested={req.status === "PENDING"}
+                    data-row-status={req.status}
+                    data-testid={`leave-team-row-${req.id}-type-chip`}
+                  />
+                {:else if column.key === "period"}
+                  {fmtDate(req.startDate)} – {fmtDate(req.endDate)}
+                {:else if column.key === "days"}
+                  {leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}
+                {:else if column.key === "status"}
+                  <span class="req-status">
+                    <span data-testid={`leave-team-row-${req.id}-status-badge`}>
+                      <Chip tone={statusTone(req.status)}>{statusLabel(req.status)}</Chip>
+                    </span>
                     {#if req.lastDaysAdjustment}
                       {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
                       <!-- Phase 107-07 (D-19/D-21): mirrors leave/+page.svelte's own request
-                         row exactly, so the approving manager sees the same signal on the
-                         request they approved. Persistent — not tied to notification
-                         read/dismissed state. -->
+                   row exactly, so the approving manager sees the same signal on the
+                   request they approved. Persistent — not tied to notification
+                   read/dismissed state. -->
                       <span
                         class={adjBadge.badgeClass}
                         data-testid={`leave-team-row-${req.id}-adjustment-badge`}
@@ -1274,133 +1298,162 @@
                       >
                         {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
                           ? "+"
-                          : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
-                          >{:else}{adjBadge.delta}{/if} Tag(e)
+                          : "−"}{#if adjBadge.bold}<strong>{formatDays(adjBadge.delta)}</strong
+                          >{:else}{formatDays(adjBadge.delta)}{/if} Tag(e)
                       </span>
                     {/if}
                     {#if req.daysProvisional}
-                      <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
-                         provisional request is fully valid and payable today. -->
-                      <span
-                        class="badge badge-yellow"
-                        data-testid={`leave-team-row-${req.id}-provisional-badge`}
-                        title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
-                      >
-                        Vorläufig
+                      <!-- Phase 107-07 (D-12): warn tone, NOT bad/row-invalid — a provisional
+                   request is fully valid and payable today. -->
+                      <span data-testid={`leave-team-row-${req.id}-provisional-badge`}>
+                        <Chip
+                          tone="warn"
+                          title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
+                          >Vorläufig</Chip
+                        >
                       </span>
                     {/if}
                     {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                      <span
-                        class="badge badge-attest {req.attestPresent
-                          ? 'badge-green'
-                          : 'badge-gray'}"
+                      <Chip tone={req.attestPresent ? "ok" : "neutral"}
+                        >{req.attestPresent ? "Attest" : "Kein Attest"}</Chip
                       >
-                        {req.attestPresent ? "Attest" : "Kein Attest"}
-                      </span>
                     {/if}
-                  </td>
-                  <td class="note-cell text-muted">
-                    {#if req.status === "REJECTED" && req.reviewNote}
-                      <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
-                    {:else}
-                      {req.note ?? "—"}
-                    {/if}
-                  </td>
-                  <td class="action-cell">
-                    <div class="action-cell__group">
-                      {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-                        <!-- #840 (E-02): decisions are made in the inbox only; the action is offered
-                           to approvers (Pitfall 7: a reader sees the badge without it). -->
-                        {#if canApproveHint}
-                          <a
-                            data-testid={req.status === "CANCELLATION_REQUESTED"
-                              ? `leave-team-row-${req.id}-review-cancel`
-                              : `leave-team-row-${req.id}-review`}
-                            class="btn btn-sm btn-ghost"
-                            href={`/inbox?request=${req.id}&year=${req.startDate.slice(0, 4)}`}
-                          >
-                            Im Posteingang prüfen
-                          </a>
-                        {/if}
-                      {:else if req.status === "APPROVED"}
-                        <button
-                          data-testid={`leave-team-row-${req.id}-correct`}
+                  </span>
+                {:else if column.key === "note"}
+                  {#if req.status === "REJECTED" && req.reviewNote}
+                    <span class="req-note req-note--bad" title={req.reviewNote}
+                      >⚠ {req.reviewNote}</span
+                    >
+                  {:else}
+                    <span class="req-note" title={req.note ?? undefined}>{req.note ?? "—"}</span>
+                  {/if}
+                {:else if column.key === "actions"}
+                  <div class="action-cell__group">
+                    {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
+                      <!-- #840 (E-02): decisions are made in the inbox only; the action is offered
+                   to approvers (Pitfall 7: a reader sees the badge without it). -->
+                      {#if canApproveHint}
+                        <a
+                          data-testid={req.status === "CANCELLATION_REQUESTED"
+                            ? `leave-team-row-${req.id}-review-cancel`
+                            : `leave-team-row-${req.id}-review`}
                           class="btn btn-sm btn-ghost"
-                          onclick={() => openCorrect(req)}
+                          href={`/inbox?request=${req.id}&year=${req.startDate.slice(0, 4)}`}
                         >
-                          Korrigieren
-                        </button>
-                        {#if SICK_CODES.includes(req.typeCode)}
-                          <button
-                            data-testid={`leave-team-row-${req.id}-attest`}
-                            class="btn btn-sm btn-ghost"
-                            onclick={() => openAttest(req)}
-                          >
-                            {req.attestPresent ? "Attest ändern" : "Attest erfassen"}
-                          </button>
-                        {/if}
-                        {#if showsParentalReductionAction(req, $authStore.user)}
-                          <button
-                            data-testid={`leave-team-row-${req.id}-parental-reduction`}
-                            class="btn btn-sm btn-ghost"
-                            onclick={() => openParentalReduction(req)}
-                          >
-                            Elternzeit-Kürzung erklären
-                          </button>
-                        {/if}
+                          Im Posteingang prüfen
+                        </a>
                       {/if}
-                      {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
-                        {@const kind = resolveStornoAction(
-                          req.status,
-                          req.employeeId === $authStore.user?.employeeId,
-                        )!}
+                    {:else if req.status === "APPROVED"}
+                      <button
+                        data-testid={`leave-team-row-${req.id}-correct`}
+                        class="btn btn-sm btn-ghost"
+                        onclick={() => openCorrect(req)}
+                      >
+                        Korrigieren
+                      </button>
+                      {#if SICK_CODES.includes(req.typeCode)}
                         <button
-                          data-testid={`leave-team-row-${req.id}-storno`}
-                          data-storno-kind={kind}
-                          class="btn btn-sm btn-ghost text-red"
-                          onclick={() => openStorno(req)}
+                          data-testid={`leave-team-row-${req.id}-attest`}
+                          class="btn btn-sm btn-ghost"
+                          onclick={() => openAttest(req)}
                         >
-                          {stornoDialogCopy(kind).buttonLabel}
+                          {req.attestPresent ? "Attest ändern" : "Attest erfassen"}
                         </button>
                       {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-          <Pagination
-            total={filteredTeamRequests.length}
-            bind:page={teamReqPage}
-            bind:pageSize={teamReqPageSize}
-          />
+                      {#if showsParentalReductionAction(req, $authStore.user)}
+                        <button
+                          data-testid={`leave-team-row-${req.id}-parental-reduction`}
+                          class="btn btn-sm btn-ghost"
+                          onclick={() => openParentalReduction(req)}
+                        >
+                          Elternzeit-Kürzung erklären
+                        </button>
+                      {/if}
+                    {/if}
+                    {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
+                      {@const kind = resolveStornoAction(
+                        req.status,
+                        req.employeeId === $authStore.user?.employeeId,
+                      )!}
+                      <button
+                        data-testid={`leave-team-row-${req.id}-storno`}
+                        data-storno-kind={kind}
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => openStorno(req)}
+                      >
+                        {stornoDialogCopy(kind).buttonLabel}
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
+              {/snippet}
+            </DataTable>
+            <Pagination
+              total={filteredTeamRequests.length}
+              bind:page={teamReqPage}
+              bind:pageSize={teamReqPageSize}
+            />
+          {/if}
         </div>
       {/if}
+    {:else if value === "planung"}
+      <!-- ── Planung (D-840-15/17): the #835 planner on the one timeline, team mode ─────────
+           The panel sits in no card, so a fixed dialog is not trapped (#570); its admin controls
+           live in the „Planung verwalten“ dialog, opened from this page's primary action. -->
+      <div class="lv-controls">
+        {@render periodControls(true)}
+        <div class="lv-planner">{@render plannerControls()}</div>
+      </div>
+      {#if !contextLoaded}
+        <Skeleton shape="card" lines={3} />
+      {:else}
+        <LeavePlanningPanel
+          mode="team"
+          salonId={planSalonId}
+          period={overviewPeriod}
+          {today}
+          bind:manageOpen
+          onViewer={(viewer) => (canManagePlan = viewer.canManage)}
+          onControls={(controls) => (planControls = controls)}
+          onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
+        />
+      {/if}
     {/if}
-  </div>
-{/if}
+  {/if}
+{/snippet}
 
-<!-- ── Planung (D-840-15/17): the #835 planner on the one timeline, team mode ─────────
-     The panel is mounted OUTSIDE every animated block (#570); its admin controls live in the
-     „Planung verwalten“ dialog, opened from this page's primary action. -->
-{#if activeTab === "planung"}
-  <div role="tabpanel" id="leave-panel-planung" aria-labelledby="leave-tab-planung">
-    {#if !contextLoaded}
-      <p class="overview-empty" role="status">Urlaubsplanung wird geladen …</p>
-    {:else}
-      <LeavePlanningPanel
-        mode="team"
-        salonId={planSalonId}
-        period={overviewPeriod}
-        {today}
-        bind:manageOpen
-        onViewer={(viewer) => (canManagePlan = viewer.canManage)}
-        onControls={(controls) => (planControls = controls)}
-        onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
-      />
-    {/if}
-  </div>
-{/if}
+<PageTabs
+  tabs={leaveTabs}
+  tab={activeTab}
+  onTabChange={selectTab}
+  panel={leavePanel}
+  tabsLabel="Abwesenheiten"
+  testIdPrefix="leave-team-view"
+/>
+
+<!-- ── Kalender abonnieren: the team absences as a .ics file ─────────────────────── -->
+<Dialog bind:open={icalOpen} title="Kalender abonnieren">
+  <p>
+    Die Team-Abwesenheiten als .ics-Datei herunterladen und in Outlook, Google Kalender oder Apple
+    Kalender öffnen.
+  </p>
+  {#snippet footer()}
+    <button type="button" class="btn btn-ghost" onclick={() => (icalOpen = false)}>
+      Schließen
+    </button>
+    <button
+      type="button"
+      class="btn btn-primary"
+      data-testid="leave-team-ical-download"
+      onclick={downloadIcal}
+      disabled={icalDownloading}
+      aria-busy={icalDownloading}
+    >
+      {#if icalDownloading}<Spinner />{/if}
+      Team-Abwesenheiten herunterladen
+    </button>
+  {/snippet}
+</Dialog>
 
 <!-- ── Elternzeit-Kürzung-Modal (Issue #468, D-12/A-2) ───────────────────── -->
 <ParentalReductionDialog
@@ -1581,24 +1634,19 @@
   initialStartDate={createInitialDate}
   initialEndDate={createInitialDate}
   entitlementYear={listYear}
+  personPicker={canCreateForOthers ? personPicker : undefined}
+  deferUntilPerson={canCreateForOthers}
   onSaved={async (result) => {
     // Issue #836: limit warnings of the create — shown, never blocking.
     limitSentences = warningSentences(result?.leaveLimitWarnings ?? []);
     await reloadAll();
   }}
->
-  {#snippet personPicker()}
-    <div class="form-group">
-      <label class="form-label" for="create-emp">Mitarbeiter</label>
-      <select id="create-emp" class="form-input" bind:value={createEmployeeId} required>
-        <option value="" disabled>— Mitarbeiter wählen —</option>
-        {#each employees as emp (emp.id)}
-          <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
-        {/each}
-      </select>
-    </div>
-  {/snippet}
-</LeaveRequestForm>
+/>
+
+<!-- The person question (Issue #853, S-15): the first field of the create dialog; nothing is preselected. -->
+{#snippet personPicker()}
+  <PersonPicker items={createPersonItems} bind:value={createEmployeeId} label="Für wen?" />
+{/snippet}
 
 <!-- ── Quick 260824-ef6: Storno-Begründung (Zurückziehen / Stornierung) ────── -->
 {#if stornoCopy}
@@ -1627,147 +1675,36 @@
 {/if}
 
 <style>
-  .overview-card {
-    padding: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .overview-empty {
-    margin: 0;
-    padding: 1.5rem 1rem;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-  }
-
-  /* ── Employee selector / combobox ──────────────────────────────────── */
-  .employee-selector {
-    position: relative;
-    z-index: 200; /* must beat the sibling .card-animate stacking contexts below the toolbar */
-  }
-
-  .emp-combobox {
-    position: relative;
-    max-width: 360px;
-    z-index: 100;
-  }
-
-  .emp-input-wrap {
+  /* ── Toolbar row under the tabs (Issue #853, D-853-18): period, zoom, search/planner ──── */
+  .lv-controls {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.875rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-md);
-    cursor: pointer;
-    min-height: 2.5rem;
+    gap: var(--s-2) var(--s-4);
+    margin-bottom: var(--s-3);
   }
 
-  .emp-combobox--open .emp-input-wrap {
-    border-color: var(--brand);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 20%, transparent);
+  /* The period keeps its label and arrows (block); only its page-sized padding goes, so the row
+     starts at the page edge like the prototype's .period. */
+  .lv-controls :global(.month-bar) {
+    padding: 0;
   }
 
-  .emp-search-input {
-    flex: 1;
-    border: none;
-    outline: none;
-    background: transparent;
-    font-size: 0.9375rem;
-    color: var(--text);
+  .lv-period {
+    flex: 0 1 auto;
     min-width: 0;
   }
 
-  .emp-search-input::placeholder {
-    color: var(--text-muted);
+  .lv-people,
+  .lv-planner {
+    flex: 1 1 18rem;
+    min-width: 0;
   }
 
-  .emp-chevron {
-    flex-shrink: 0;
-    color: var(--text-muted);
-    transition: transform 0.15s;
-  }
-
-  .emp-chevron--up {
-    transform: rotate(180deg);
-  }
-
-  .emp-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-  }
-
-  .emp-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-lg);
-    list-style: none;
-    margin: 0;
-    padding: 0.25rem 0;
-    max-height: 280px;
-    overflow-y: auto;
-    z-index: 50;
-  }
-
-  .emp-dropdown-item {
-    padding: 0.5rem 0.875rem;
-    font-size: 0.9375rem;
-    color: var(--text);
-    cursor: pointer;
-    transition: background 0.1s;
-  }
-
-  .emp-dropdown-item:hover,
-  .emp-dropdown-item:focus {
-    background: var(--bg-subtle);
-    outline: none;
-  }
-
-  .emp-dropdown-item--active {
-    color: var(--brand);
-    font-weight: 600;
-  }
-
-  .emp-dropdown-empty {
-    padding: 0.75rem 0.875rem;
-    font-size: 0.875rem;
-    color: var(--text-muted);
-  }
-
-  /* ── Highlight from notification deep-link ────────────────────────── */
-  @keyframes highlight-fade {
-    0% {
-      background-color: var(--brand-soft);
+  @media (max-width: 640px) {
+    .lv-period {
+      flex: 1 1 100%;
     }
-    100% {
-      background-color: transparent;
-    }
-  }
-  .highlight-row {
-    animation: highlight-fade 3s var(--ease-out) both;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    margin-bottom: 0.875rem;
-  }
-  .section-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 0;
   }
 
   /* ── Attest ───────────────────────────────────────────────────────── */
@@ -1788,24 +1725,12 @@
   /* ── Pending Cards ────────────────────────────────────────────────── */
 
   /* ── Table ────────────────────────────────────────────────────────── */
-  .text-center {
-    text-align: center;
-  }
   .btn-sm {
     padding: 0.25rem 0.625rem;
     font-size: 0.8125rem;
   }
   .text-red {
     color: var(--bad);
-  }
-  .note-cell {
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .action-cell {
-    white-space: nowrap;
   }
   /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
      keeps display: table-cell and lines up with the rest of the row even when empty. */
@@ -1816,20 +1741,30 @@
     flex-wrap: wrap;
   }
 
-  /* ── Empty ────────────────────────────────────────────────────────── */
-  .empty-state {
-    text-align: center;
-    padding: 3rem 2rem;
-    display: flex;
-    flex-direction: column;
+  /* Status cell: the chip, then the persistent request flags beside it. */
+  .req-status {
+    display: inline-flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.625rem;
+    gap: var(--s-1) var(--s-2);
   }
-  .empty-icon {
-    font-size: 2.5rem;
+
+  /* The note stays one line; the full text is in the title. */
+  .req-note {
+    display: inline-block;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    color: var(--text-2);
   }
-  .empty-state h3 {
-    font-size: 1rem;
+  .req-note--bad {
+    color: var(--bad);
+  }
+
+  /* The toolbar above the empty state of the table (the table itself carries it otherwise). */
+  .dt-toolbar-row {
+    margin-bottom: var(--s-3);
   }
 
   /* ── Modal body helpers (Modal primitive owns chrome) ────────────── */
@@ -1859,13 +1794,13 @@
     padding: 0.5rem 0.75rem;
     background: var(--bad-soft);
     border: 1px solid var(--bad);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     color: var(--bad);
     font-size: 0.8125rem;
   }
   .form-hint {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0;
   }
   .attest-date-input {
@@ -1890,9 +1825,9 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem 1.5rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 1rem 1.25rem;
   }
   .review-field {
@@ -1905,7 +1840,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .review-value {
     font-size: 0.9375rem;
@@ -1923,63 +1858,21 @@
      dashed; the „Offen“ badge in the status cell says it in words. */
 
   /* #840 D-840-10: the legend is LeaveLegend.svelte. */
-  .badge-attest {
-    margin-left: 0.25rem;
-    font-size: 0.75rem;
-  }
   /* Shared with the correction modal and the standalone Attest modal (the § 9 modal moved to the inbox, #840) —
      NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-section {
     margin-top: 1.25rem;
   }
-  /* ── iCal ────────────────────────────────────────────────────────── */
-  .ical-section {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    padding: 0.875rem 1.25rem;
-    margin-bottom: 1.25rem;
-    flex-wrap: wrap;
-  }
-  .ical-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex: 1;
-    min-width: 0;
-  }
-  .ical-icon {
-    font-size: 1.25rem;
-    flex-shrink: 0;
-  }
-  .ical-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    margin: 0;
-    color: var(--text);
-  }
-  .ical-desc {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    margin: 0;
-  }
-  /* Wraps and may shrink to its widest button: at 320 px the two buttons side by side were
-     wider than the page (Issue #564). */
-  .ical-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    min-width: 0;
-  }
-
   /* ── Responsive ───────────────────────────────────────────────────── */
   @media (max-width: 700px) {
     .review-grid {
       grid-template-columns: 1fr;
     }
+  }
+  .lv-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    min-width: 0;
   }
 </style>

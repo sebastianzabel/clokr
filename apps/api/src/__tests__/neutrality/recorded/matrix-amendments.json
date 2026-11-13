@@ -13193,6 +13193,357 @@
           ]
         }
       }
+    },
+    {
+      "date": "2026-11-09",
+      "from": {
+        "status": 200,
+        "ids": [],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "09:00",
+              "endTime": "17:00",
+              "durationMin": 480,
+              "durationMinNetto": 450
+            }
+          ]
+        }
+      },
+      "issue": 597,
+      "key": "ADMIN | GET /api/v1/shifts/range | foreign",
+      "reason": "Issue #597 (Phase 851): GET /shifts/range nennt je Schicht additiv die salonId der Schicht selbst für Mein Dienstplan. Status, Personenauswahl und Reichweite sind unverändert; nur die Body-Projektion bekommt das Feld.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "tenant.salon.default"
+        ],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "09:00",
+              "endTime": "17:00",
+              "durationMin": 480,
+              "durationMinNetto": 450,
+              "salonId": "tenant.salon.default"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "from": {
+        "status": 200,
+        "ids": [],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450
+            }
+          ]
+        }
+      },
+      "issue": 597,
+      "key": "ADMIN | GET /api/v1/shifts/range | own",
+      "reason": "Issue #597 (Phase 851): GET /shifts/range nennt je Schicht additiv die salonId der Schicht selbst für Mein Dienstplan. Status, Personenauswahl und Reichweite sind unverändert; nur die Body-Projektion bekommt das Feld.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "tenant.salon.default"
+        ],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450,
+              "salonId": "tenant.salon.default"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "from": {
+        "status": 200,
+        "ids": [],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "09:00",
+              "endTime": "17:00",
+              "durationMin": 480,
+              "durationMinNetto": 450
+            }
+          ]
+        }
+      },
+      "issue": 597,
+      "key": "APIKEY_ADMIN | GET /api/v1/shifts/range | foreign",
+      "reason": "Issue #597 (Phase 851): GET /shifts/range nennt je Schicht additiv die salonId der Schicht selbst für Mein Dienstplan. Status, Personenauswahl und Reichweite sind unverändert; nur die Body-Projektion bekommt das Feld.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "tenant.salon.default"
+        ],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "09:00",
+              "endTime": "17:00",
+              "durationMin": 480,
+              "durationMinNetto": 450,
+              "salonId": "tenant.salon.default"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "from": {
+        "status": 200,
+        "ids": [],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "09:00",
+              "endTime": "17:00",
+              "durationMin": 480,
+              "durationMinNetto": 450
+            }
+          ]
+        }
+      },
+      "issue": 597,
+      "key": "APIKEY_PLAIN | GET /api/v1/shifts/range | foreign",
+      "reason": "Issue #597 (Phase 851): GET /shifts/range nennt je Schicht additiv die salonId der Schicht selbst für Mein Dienstplan. Status, Personenauswahl und Reichweite sind unverändert; nur die Body-Projektion bekommt das Feld.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "tenant.salon.default"
+        ],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "09:00",
+              "endTime": "17:00",
+              "durationMin": 480,
+              "durationMinNetto": 450,
+              "salonId": "tenant.salon.default"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "from": {
+        "status": 200,
+        "ids": [],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450
+            }
+          ]
+        }
+      },
+      "issue": 597,
+      "key": "EMPLOYEE | GET /api/v1/shifts/range | foreign",
+      "reason": "Issue #597 (Phase 851): GET /shifts/range nennt je Schicht additiv die salonId der Schicht selbst für Mein Dienstplan. Status, Personenauswahl und Reichweite sind unverändert; nur die Body-Projektion bekommt das Feld.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "tenant.salon.default"
+        ],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450,
+              "salonId": "tenant.salon.default"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "from": {
+        "status": 200,
+        "ids": [],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450
+            }
+          ]
+        }
+      },
+      "issue": 597,
+      "key": "EMPLOYEE | GET /api/v1/shifts/range | none",
+      "reason": "Issue #597 (Phase 851): GET /shifts/range nennt je Schicht additiv die salonId der Schicht selbst für Mein Dienstplan. Status, Personenauswahl und Reichweite sind unverändert; nur die Body-Projektion bekommt das Feld.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "tenant.salon.default"
+        ],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450,
+              "salonId": "tenant.salon.default"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "from": {
+        "status": 200,
+        "ids": [],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450
+            }
+          ]
+        }
+      },
+      "issue": 597,
+      "key": "EMPLOYEE | GET /api/v1/shifts/range | own",
+      "reason": "Issue #597 (Phase 851): GET /shifts/range nennt je Schicht additiv die salonId der Schicht selbst für Mein Dienstplan. Status, Personenauswahl und Reichweite sind unverändert; nur die Body-Projektion bekommt das Feld.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "tenant.salon.default"
+        ],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450,
+              "salonId": "tenant.salon.default"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "from": {
+        "status": 200,
+        "ids": [],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "09:00",
+              "endTime": "17:00",
+              "durationMin": 480,
+              "durationMinNetto": 450
+            }
+          ]
+        }
+      },
+      "issue": 597,
+      "key": "MANAGER | GET /api/v1/shifts/range | foreign",
+      "reason": "Issue #597 (Phase 851): GET /shifts/range nennt je Schicht additiv die salonId der Schicht selbst für Mein Dienstplan. Status, Personenauswahl und Reichweite sind unverändert; nur die Body-Projektion bekommt das Feld.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "tenant.salon.default"
+        ],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "09:00",
+              "endTime": "17:00",
+              "durationMin": 480,
+              "durationMinNetto": 450,
+              "salonId": "tenant.salon.default"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "date": "2026-11-09",
+      "from": {
+        "status": 200,
+        "ids": [],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450
+            }
+          ]
+        }
+      },
+      "issue": 597,
+      "key": "MANAGER | GET /api/v1/shifts/range | own",
+      "reason": "Issue #597 (Phase 851): GET /shifts/range nennt je Schicht additiv die salonId der Schicht selbst für Mein Dienstplan. Status, Personenauswahl und Reichweite sind unverändert; nur die Body-Projektion bekommt das Feld.",
+      "to": {
+        "status": 200,
+        "ids": [
+          "tenant.salon.default"
+        ],
+        "projections": {
+          "body": [
+            {
+              "date": "2026-06-18",
+              "startTime": "08:00",
+              "endTime": "16:00",
+              "durationMin": 480,
+              "durationMinNetto": 450,
+              "salonId": "tenant.salon.default"
+            }
+          ]
+        }
+      }
     }
   ]
 }

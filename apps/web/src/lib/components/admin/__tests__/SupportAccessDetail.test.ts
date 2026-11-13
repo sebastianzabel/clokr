@@ -1,4 +1,4 @@
-// Issue #93 (Phase 93b-10) — the tenant's detail of one support access, mounted: the facts of the
+// Issue #93 (Phase 93b-10), rebuilt on the blocks in #854 (plan 854-25) — the tenant's detail of one support access, mounted: the facts of the
 // grant, every read with its category and person, the anonymised person, and the end action that is
 // shown only to a holder of `tenant-settings:update` (the API's 403 stays the authority).
 import { describe, expect, it, vi } from "vitest";
@@ -81,6 +81,11 @@ function ended(): SupportAccessDetailResponse {
   };
 }
 
+/** The body rows of the reads table (the head row is dropped). */
+function readRows(): HTMLElement[] {
+  return screen.getAllByRole("row").slice(1);
+}
+
 describe("SupportAccessDetail — the access", () => {
   it("shows operator, full reason, start, expiry, status and read count in the tenant zone", () => {
     const { container } = renderWithTheme(SupportAccessDetail, props());
@@ -117,6 +122,12 @@ describe("SupportAccessDetail — the access", () => {
     expect(screen.getByText("<b>fett</b>")).toBeTruthy();
   });
 
+  it("shows the operator by display name only, never an e-mail or an IP (T-854-64)", () => {
+    const { container } = renderWithTheme(SupportAccessDetail, props());
+    expect(container.textContent).toContain("Support-Team");
+    expect(container.textContent).not.toMatch(/@|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
+  });
+
   it("contains no link into the operator console (AC-93-9)", () => {
     const { container } = renderWithTheme(SupportAccessDetail, props());
     expect(container.innerHTML).not.toContain("/betreiber");
@@ -126,7 +137,7 @@ describe("SupportAccessDetail — the access", () => {
 describe("SupportAccessDetail — the reads", () => {
   it("lists every read with time, category, person and month or window", () => {
     renderWithTheme(SupportAccessDetail, props());
-    const rows = screen.getAllByRole("listitem");
+    const rows = readRows();
     expect(rows).toHaveLength(4);
     expect(rows[0].textContent).toContain("02.07.2026, 00:40");
     expect(rows[0].textContent).toContain("Mitarbeitende");
@@ -140,7 +151,7 @@ describe("SupportAccessDetail — the reads", () => {
 
   it("names an anonymised person „Gelöschte Person“ and never leaks a name", () => {
     renderWithTheme(SupportAccessDetail, props());
-    const rows = screen.getAllByRole("listitem");
+    const rows = readRows();
     expect(rows[2].textContent).toContain("Gelöschte Person");
     expect(rows[3].textContent).not.toContain("Gelöschte Person");
     expect(rows[3].textContent).toContain("Person nicht mehr vorhanden");
@@ -149,7 +160,7 @@ describe("SupportAccessDetail — the reads", () => {
   it("shows an empty note when nothing was read yet", () => {
     renderWithTheme(SupportAccessDetail, props({ detail: detail({ reads: [] }) }));
     expect(screen.getByText("Noch keine Abrufe.")).toBeTruthy();
-    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(screen.queryByRole("table")).toBeNull();
   });
 
   it("shows an unknown category raw instead of hiding the read", () => {

@@ -10,13 +10,18 @@
  *   (b) the server delivered a live saldo (`openMonthMinutes` is not null). A row without one is
  *       exempt (§ 18 ArbZG) or its computation failed and shows a stored fallback number, which is
  *       not the person's live saldo (P-03);
- *   (c) the contract in force is not track-only (`trackOnly` is not true, #494): the saldo of such a
+ *   (c) the person has a contract valid today (`noContract` is not true, Issue #911, as #576 does
+ *       for the team week): with no WorkSchedule row the saldo core falls back to the tenant
+ *       default and old closed months may carry a negative carry-over from it (never rewritten),
+ *       so the figure would drag the team median;
+ *   (d) the contract in force is not track-only (`trackOnly` is not true, #494): the saldo of such a
  *       contract is 0 by rule, so it says nothing about the team;
- *   (d) the person has recorded working time since hire (`hasRecordedTime` is not false): a person
+ *   (e) the person has recorded working time since hire (`hasRecordedTime` is not false): a person
  *       who never clocked in carries an unbroken negative Soll that would drag the team figure.
  * A fact the server did not send (an older cached answer) never excludes anyone.
  * A person who does not count is LISTED with exactly one reason, never silently dropped. The
- * precedence is the order above: SALDO_UNAVAILABLE, TIME_TRACKING_ONLY, NO_RECORDED_TIME (the display
+ * precedence is the order above: SALDO_UNAVAILABLE, NO_CONTRACT, TIME_TRACKING_ONLY, NO_RECORDED_TIME
+ * (a person without a contract is not "track-only" and is named by the stronger fact; the display
  * wording lives in `TEAM_SALDO_EXCLUSION_LABEL`).
  *
  * ── The figure (P-01, P-07) ────────────────────────────────────────────────────────────────────
@@ -56,17 +61,20 @@ export interface TeamSaldoRow {
   hasRecordedTime?: boolean;
   /** Issue #588: the #494 rule for today's contract; null when no live saldo exists. */
   trackOnly?: boolean | null;
+  /** Issue #911: no WorkSchedule row valid today; null when no live saldo exists. */
+  noContract?: boolean | null;
   /** Issue #588: unclosed calendar months in the live window; null when no live saldo exists. */
   unconfirmedMonths?: number | null;
 }
 
 /** Why a person is listed instead of counted. */
 export type TeamSaldoExclusionReason =
-  "SALDO_UNAVAILABLE" | "TIME_TRACKING_ONLY" | "NO_RECORDED_TIME";
+  "SALDO_UNAVAILABLE" | "NO_CONTRACT" | "TIME_TRACKING_ONLY" | "NO_RECORDED_TIME";
 
 /** The display wording of an exclusion reason (the code is the control value, this is display only). */
 export const TEAM_SALDO_EXCLUSION_LABEL: Record<TeamSaldoExclusionReason, string> = {
   SALDO_UNAVAILABLE: "Saldo nicht verfügbar",
+  NO_CONTRACT: "ohne Vertrag",
   TIME_TRACKING_ONLY: "nur Zeiterfassung",
   NO_RECORDED_TIME: "ohne Erfassung",
 };
@@ -98,6 +106,7 @@ export function totalMinutesOf(row: TeamSaldoRow): number {
 /** The reason a person does not count for the team figures, or null when they count. */
 export function teamSaldoExclusion(row: TeamSaldoRow): TeamSaldoExclusionReason | null {
   if (row.openMonthMinutes === null) return "SALDO_UNAVAILABLE";
+  if (row.noContract === true) return "NO_CONTRACT";
   if (row.trackOnly === true) return "TIME_TRACKING_ONLY";
   if (row.hasRecordedTime === false) return "NO_RECORDED_TIME";
   return null;

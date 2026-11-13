@@ -7,13 +7,18 @@
 // asserts the detector returns a violation for three distinct broken shapes and `[]` for
 // four legitimate ones, plus one integration case reading the real `admin/system` source.
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, it, expect } from "vitest";
 
-import { findSavePatternViolations } from "../../scripts/lint-save-pattern.mjs";
+import {
+  SCOPES,
+  findEmptyScopes,
+  findSavePatternViolations,
+} from "../../scripts/lint-save-pattern.mjs";
 
 // fileURLToPath decodes the %28/%29 that the "(app)" route group produces in import.meta.url.
 function readRouteFile(relativeFromHere: string, relativeFromCwd: string): string {
@@ -159,5 +164,33 @@ describe("findSavePatternViolations — WR-04 false-negative classes", () => {
       `<input type="number" aria-label="ArbZG (>6h)" bind:value={a} />\n` +
       `<input class="form-input" bind:value={b} onblur={saveB} />`;
     expect(findSavePatternViolations(src, "fixture.svelte")).toHaveLength(1);
+  });
+});
+
+// Issue #854 (D-854-28) — the scope list follows the Verwalten rebuild, and a scope that yields no
+// file is a failure of its own: with several scopes one populated directory would otherwise hide an
+// emptied or moved one (the vacuity class of #235/#240).
+describe("lint-save-pattern scopes (Issue #854)", () => {
+  it("scans the Verwalten routes and the person components", () => {
+    expect(SCOPES).toContain("apps/web/src/routes/(app)/verwalten");
+    expect(SCOPES).toContain("apps/web/src/lib/components/employees");
+  });
+
+  it("every real scope yields at least one .svelte file", () => {
+    expect(findEmptyScopes(SCOPES)).toEqual([]);
+  });
+
+  it("names a scope without any .svelte file, even when another scope is populated", () => {
+    const root = mkdtempSync(join(tmpdir(), "save-pattern-854-"));
+    try {
+      mkdirSync(join(root, "full"), { recursive: true });
+      mkdirSync(join(root, "empty"), { recursive: true });
+      writeFileSync(join(root, "full", "A.svelte"), "<p>x</p>");
+      writeFileSync(join(root, "empty", "notes.txt"), "no component here");
+      expect(findEmptyScopes(["full", "empty", "missing"], root)).toEqual(["empty", "missing"]);
+      expect(findEmptyScopes(["full"], root)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

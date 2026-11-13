@@ -12,8 +12,9 @@
 //   M2 `toasts.error(...)` added to the 404 branch -> "[calm 404] a rejected salon ... no toast, no
 //      console.error" red.
 //   (Plan 85b-12, refused saldo state, 2026-10-13)
-//   M3 `KontoSaldoCard` rendered unconditionally (the `{#if !overtimeDenied}` wrapper removed)
-//      -> "[refused saldo] the Konto card is rendered only when the overtime read was not
+//   M3 the account cell added unconditionally (the `if (!overtimeDenied) {` guard removed; before
+//      Issue #853 D-853-18: `KontoSaldoCard` rendered without its `{#if !overtimeDenied}` wrapper)
+//      -> "[refused saldo] the account cell is added only when the overtime read was not
 //      denied" red.
 //   M4 `saldoFetchFailed = true` also assigned on a denial (`if (isDenied(rawMonthSaldo))
 //      saldoFetchFailed = true;`) -> "[refused saldo] only a failure routes into the error
@@ -52,9 +53,52 @@ describe("Issue #85 — the Salonansicht of /team/time-entries", () => {
   // true against an empty string, and the person view must still be there.
   it("[vacuity gate] the page source is loaded and still carries the person view", () => {
     expect(PAGE.length).toBeGreaterThan(50_000);
-    expect(PAGE).toContain('aria-label="Mitarbeiter suchen"');
+    // Issue #853: the hand-rolled search field (aria-label "Mitarbeiter suchen") is the
+    // PersonPicker block now; the pin still proves the person view's selector is on the page.
+    expect(PAGE).toContain("<PersonPicker");
     expect(PAGE).toContain("Personenansicht");
     expect(PAGE).toContain("Salonansicht");
+  });
+
+  // Issue #853 (D-853-10): the two views are the PageTabs of the Seitenkopf; the tab value is the
+  // page's teamMode and a tab change goes through setTeamMode (so a switch back to the person view
+  // still catches up on the month loads).
+  it("[tabs] Personenansicht and Salonansicht are PageTabs on teamMode, switching via setTeamMode", () => {
+    expect(PAGE).toMatch(/<PageTabs[^>]*tab=\{teamMode\}/);
+    expect(PAGE).toContain('{ value: "person", label: "Personenansicht" }');
+    expect(PAGE).toContain('{ value: "salon", label: "Salonansicht" }');
+    expect(PAGE).toMatch(
+      /onTabChange=\{\(value\) =>\s*setTeamMode\(value === "salon" \? "salon" : "person"\)/,
+    );
+    // The hand-rolled strips are gone.
+    expect(PAGE).not.toContain("view-tab");
+  });
+
+  // Issue #853 (D-853-10, a11y): the tabs run in panel mode, so each trigger's aria-controls must lead
+  // to a rendered panel with the view in it. The page body (toolbar, figures, calendar, lists, the
+  // empty state) is ONE snippet, rendered by the panel of the ACTIVE tab only - never twice, never
+  // an empty tabpanel for the active view.
+  it("[panel] the view body is rendered inside the panel of the active tab only", () => {
+    expect(PAGE).toMatch(
+      /\{#snippet panel\(value\)\}\s*\{#if value === teamMode\}\s*\{@render viewBody\(\)\}/,
+    );
+    expect(PAGE.split("{@render viewBody()}").length - 1).toBe(1);
+    const body = PAGE.indexOf("{#snippet viewBody()}");
+    expect(body).toBeGreaterThan(-1);
+    // The person view, the salon view and the empty state are all inside the body snippet.
+    const bodyEnd = PAGE.indexOf("{/snippet}", PAGE.indexOf("<EmptyState", body));
+    for (const marker of ['{#if teamMode === "person"}', "<SalonTimeEntries", "<KpiStrip"]) {
+      const at = PAGE.indexOf(marker, body);
+      expect(at, marker).toBeGreaterThan(body);
+      expect(at, marker).toBeLessThan(bodyEnd);
+    }
+  });
+
+  it("[segment] Kalender and Liste are one SegmentedControl on teView", () => {
+    expect(PAGE.split("<SegmentedControl").length - 1).toBe(1);
+    expect(PAGE).toContain("value={teView}");
+    expect(PAGE).toContain('{ value: "calendar", label: "Kalender" }');
+    expect(PAGE).toContain('{ value: "list", label: "Liste" }');
   });
 
   it("[D-09] the salon comes only from teamSalonViewSalon($salonContext), never the raw selection getter", () => {
@@ -137,14 +181,14 @@ describe("Issue #85 — the Salonansicht of /team/time-entries", () => {
     expect(PAGE).not.toMatch(/\bsettled\(/);
   });
 
-  it("[refused saldo] the Konto card is rendered only when the overtime read was not denied", () => {
-    const card = PAGE.indexOf("<KontoSaldoCard");
-    expect(card, "KontoSaldoCard not found").toBeGreaterThan(-1);
-    const guard = PAGE.lastIndexOf("{#if !overtimeDenied}", card);
-    expect(guard, "no denied guard in front of the card").toBeGreaterThan(-1);
-    // Nothing but whitespace between the guard and the card: the card sits directly inside it.
-    expect(PAGE.slice(guard + "{#if !overtimeDenied}".length, card).trim()).toBe("");
+  // Issue #853 (owner review): the person view shows the four figures of the prototype (Gearbeitet,
+  // Monatssaldo, Pausen, Status) and no account figure at all, so no refused account can leak into it.
+  // The overtime read is still classified, because a denial of it withholds Soll and saldo.
+  it("[refused saldo] the person view shows no account figure, and a denied overtime read is classified", () => {
+    expect(PAGE).not.toContain("kontoKpiItem(");
+    expect(PAGE).not.toContain("<KontoSaldoCard");
     expect(PAGE).toContain("overtimeDenied = isDenied(rawOvertime);");
+    expect(PAGE).toContain("saldoDenied = isDenied(rawSchedule, rawOvertime);");
   });
 
   it("[refused saldo] the Ist-only monthMetrics branch precedes the !schedule branch", () => {
@@ -160,12 +204,11 @@ describe("Issue #85 — the Salonansicht of /team/time-entries", () => {
     expect(PAGE).toContain("if (isDenied(rawMonthSaldo)) saldoDenied = true;");
   });
 
-  it("[refused saldo] the German note is present, shown only for a denial", () => {
-    const text =
-      "Soll und Saldo dieser Person sehen Inhaber, Personalabteilung und die Person selbst.";
-    expect(PAGE).toContain(text);
-    const at = PAGE.indexOf(text);
-    expect(PAGE.lastIndexOf("{#if saldoDenied", at)).toBeGreaterThan(PAGE.lastIndexOf("{/if}", at));
+  // Issue #853 (owner review): the denial is said in the Monatssaldo figure itself (zeitenKpis'
+  // `saldoWithheld`, worded once in lib/me/zeiten-kpis.ts and pinned there), only for a denial.
+  it("[refused saldo] the withheld saldo is said in the figures, only for a denial", () => {
+    expect(PAGE).toContain("saldoWithheld: saldoDenied,");
+    expect(PAGE).not.toContain("Soll und Saldo dieser Person sehen");
   });
 
   it("[refused saldo] only a failure routes into the error branch; a denial never does", () => {

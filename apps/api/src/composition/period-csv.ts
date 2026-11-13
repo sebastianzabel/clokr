@@ -1,5 +1,6 @@
 import type { LeaveTypeCode } from "@clokr/db";
 import { fmtDecimalDe } from "./pdf-format";
+import { CSV_BOM, csvCell as cell } from "../utils/csv-cell";
 
 /**
  * Issue #612 (P-11) - pure serialisation of the period report's "Zeiten & Konten" rows as a CSV.
@@ -10,11 +11,10 @@ import { fmtDecimalDe } from "./pdf-format";
  * Pitfall 8), with a decimal comma, because the target is a German spreadsheet. A figure the caller
  * may not see arrives as `null` and becomes an empty cell - never a zero.
  *
- * Spreadsheet formula injection (T-612-13): Excel and LibreOffice evaluate a cell that starts with
- * `=`, `+`, `-`, `@`, TAB or CR as a formula, and names come from user input. Every TEXT cell that
- * starts with one of them gets a leading apostrophe, which a spreadsheet application does not
- * display. Numeric cells are exempt on purpose: a negative saldo ("-0,75") must stay a number, and
- * a number produced by `fmtDecimalDe` can never carry a formula.
+ * Spreadsheet formula injection (T-612-13): every TEXT cell goes through the shared `csvCell` guard
+ * (`utils/csv-cell.ts`, the one place the rule lives). Numeric cells are exempt on purpose: a
+ * negative saldo ("-0,75") must stay a number, and a number produced by `fmtDecimalDe` can never
+ * carry a formula.
  *
  * Format: UTF-8 with BOM (Excel opens it as UTF-8), `;` as separator, CRLF line ends, RFC 4180
  * quoting (a cell with `;`, `"`, CR or LF is quoted, a quote is doubled).
@@ -53,23 +53,9 @@ export type PeriodCsvRow = {
   sollUnavailableReason?: "NO_PERMISSION";
 };
 
-const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
-const FORMULA_STARTS = new Set(["=", "+", "-", "@", "\t", "\r"]);
-
 /** `Zeiten-und-Konten_<from>_<to>.csv` for `YYYY-MM` bounds. */
 export function periodCsvFilename(from: string, to: string): string {
   return `Zeiten-und-Konten_${from}_${to}.csv`;
-}
-
-/** RFC 4180 quoting of an already guarded cell. */
-function quoted(text: string): string {
-  return /[;"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
-/** A text cell: formula-injection guard first, then quoting. */
-function cell(text: string): string {
-  const guarded = text.length > 0 && FORMULA_STARTS.has(text[0]) ? `'${text}` : text;
-  return quoted(guarded);
 }
 
 /** A numeric cell from minutes: hours with a decimal comma; withheld (`null`) is empty. */
@@ -107,7 +93,7 @@ export function periodTableCsv(rows: readonly PeriodCsvRow[]): Buffer {
       ].join(";"),
     );
   }
-  return Buffer.concat([BOM, Buffer.from(`${lines.join("\r\n")}\r\n`, "utf8")]);
+  return Buffer.concat([CSV_BOM, Buffer.from(`${lines.join("\r\n")}\r\n`, "utf8")]);
 }
 
 // ── Abwesenheiten je Person (Issue #713) ─────────────────────────────────────────────────────────
@@ -164,5 +150,5 @@ export function periodAbsencesCsv(rows: readonly PeriodAbsencesCsvRow[]): Buffer
       ].join(";"),
     );
   }
-  return Buffer.concat([BOM, Buffer.from(`${lines.join("\r\n")}\r\n`, "utf8")]);
+  return Buffer.concat([CSV_BOM, Buffer.from(`${lines.join("\r\n")}\r\n`, "utf8")]);
 }

@@ -97,14 +97,21 @@ describe("styles", () => {
     expect(text("abwesend")).toBe("Abwesend");
   });
 
-  it("draws voll and gestrichelt in the colour of the first type the legend names", () => {
+  it("draws gestrichelt in the colour of the first type the legend names", () => {
     render({ typeCodes: ["SICK", "VACATION"], styles: ["gesetzt", "beantragt"] });
     const expected = `var(${leaveTypeColor("SICK").fill})`;
-    for (const style of ["gesetzt", "beantragt"]) {
-      expect(
-        swatchOf(screen.getByTestId(`legend-style-${style}`)).style.getPropertyValue("--swatch"),
-      ).toBe(expected);
-    }
+    expect(
+      swatchOf(screen.getByTestId("legend-style-beantragt")).style.getPropertyValue("--swatch"),
+    ).toBe(expected);
+  });
+
+  // Issue #853 (owner review): „Urlaub“ and „Genehmigt (voll)“ were one green twice.
+  it("names the full look once: a named type replaces the separate voll key", () => {
+    render({ typeCodes: ["VACATION"], styles: ["gesetzt", "beantragt", "abwesend"] });
+    expect(screen.queryByTestId("legend-style-gesetzt")).toBeNull();
+    expect(screen.getByTestId("legend-type-VACATION").textContent).toContain("Urlaub");
+    expect(screen.getByTestId("legend-style-beantragt")).toBeTruthy();
+    expect(screen.getByTestId("legend-style-abwesend")).toBeTruthy();
   });
 
   it("draws voll and gestrichelt in the brand colour when the legend names no type", () => {

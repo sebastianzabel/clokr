@@ -27,7 +27,7 @@ describe("PairingGuide", () => {
     expect(address.value).toBe("");
     expect((screen.getByLabelText("Port") as HTMLInputElement).value).toBe("8766");
     expect(container.querySelector("svg[role='img']")).toBeNull();
-    expect(container.querySelector(".form-error")).toBeNull();
+    expect(container.querySelector(".ff-error")).toBeNull();
   });
 
   it("shows one QR path, the URL as text and prints on demand for a private address", async () => {

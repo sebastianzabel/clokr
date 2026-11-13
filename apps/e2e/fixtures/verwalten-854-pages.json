@@ -1,0 +1,236 @@
+{
+  "description": "Issue #854 (D-854-17): the one list of migrated Verwalten pages. apps/e2e/tests/verwalten-854.spec.ts (gating, e2e-ci) proves for every entry the H1 text, axe WCAG 2 A/AA with colour contrast on the page and on each of its tabs, tab keyboard navigation and no horizontal overflow at 390 and 1440 px; apps/e2e/tests/screenshots-854.spec.ts (project screenshots, non-gating) captures every entry at 1440 and 390 px. Every page plan of #854 appends its migrated page here in the same commit. `path` is the route table's URL (never an old URL that only redirects); a placeholder such as :salonId is filled from `fill` (a fixture-tenant entity created through the API with synthetic names: salon, employee). `heading` is the exact H1 text; the values :salonName and :employeeName stand for the name of the entity created for `fill`. `tabs` lists the tab triggers of the page in strip order (empty for a page without tabs).",
+  "fills": {
+    "salon": {
+      "placeholder": ":salonId",
+      "nameToken": ":salonName"
+    },
+    "employee": {
+      "placeholder": ":employeeId",
+      "nameToken": ":employeeName"
+    }
+  },
+  "pages": [
+    {
+      "slug": "salons",
+      "path": "/verwalten/salons",
+      "heading": "Salons",
+      "tabs": []
+    },
+    {
+      "slug": "salon-detail",
+      "path": "/verwalten/salons/:salonId",
+      "heading": ":salonName",
+      "fill": "salon",
+      "tabs": [
+        {
+          "label": "Stammdaten"
+        },
+        {
+          "label": "Öffnungszeiten"
+        },
+        {
+          "label": "Feiertage"
+        }
+      ]
+    },
+    {
+      "slug": "regeln-arbeitszeit",
+      "path": "/verwalten/regeln/arbeitszeit",
+      "heading": "Arbeitszeit & Verträge",
+      "tabs": []
+    },
+    {
+      "slug": "regeln-monatsabschluss",
+      "path": "/verwalten/regeln/monatsabschluss",
+      "heading": "Monatsabschluss",
+      "tabs": []
+    },
+    {
+      "slug": "regeln-benachrichtigungen",
+      "path": "/verwalten/regeln/benachrichtigungen",
+      "heading": "Benachrichtigungen & E-Mail",
+      "tabs": []
+    },
+    {
+      "slug": "regeln-dienstplan",
+      "path": "/verwalten/regeln/dienstplan",
+      "heading": "Dienstplan",
+      "tabs": [
+        {
+          "label": "Schichtvorlagen"
+        },
+        {
+          "label": "Bedarfsregeln"
+        },
+        {
+          "label": "Wochenmuster"
+        },
+        {
+          "label": "Einstellungen"
+        }
+      ]
+    },
+    {
+      "slug": "regeln-abwesenheiten",
+      "path": "/verwalten/regeln/abwesenheiten",
+      "heading": "Abwesenheiten",
+      "tabs": [
+        {
+          "label": "Urlaub"
+        },
+        {
+          "label": "Sonderurlaub"
+        },
+        {
+          "label": "Übertrag"
+        },
+        {
+          "label": "Betriebsurlaub"
+        },
+        {
+          "label": "Urlaubsgrenzen & Sperren"
+        }
+      ]
+    },
+    {
+      "slug": "system-integrationen",
+      "path": "/verwalten/system/integrationen",
+      "heading": "Integrationen",
+      "tabs": [
+        {
+          "label": "WLAN-Anwesenheit"
+        },
+        {
+          "label": "NFC-Terminals"
+        },
+        {
+          "label": "API-Schlüssel"
+        }
+      ]
+    },
+    {
+      "slug": "system-allgemein",
+      "path": "/verwalten/system/allgemein",
+      "heading": "Allgemein",
+      "tabs": []
+    },
+    {
+      "slug": "system-phorest",
+      "path": "/verwalten/system/phorest",
+      "heading": "Phorest",
+      "tabs": [
+        {
+          "label": "Verbindung"
+        },
+        {
+          "label": "Abgleich"
+        }
+      ]
+    },
+    {
+      "slug": "system-branding",
+      "path": "/verwalten/system/branding",
+      "heading": "Branding & Themes",
+      "tabs": []
+    },
+    {
+      "slug": "system-rollen",
+      "path": "/verwalten/system/rollen",
+      "heading": "Rollen & Rechte",
+      "tabs": [
+        {
+          "label": "Rollen"
+        },
+        {
+          "label": "Zuweisungen"
+        }
+      ]
+    },
+    {
+      "slug": "personen",
+      "path": "/verwalten/personen",
+      "heading": "Personen",
+      "tabs": []
+    },
+    {
+      "slug": "personen-detail",
+      "path": "/verwalten/personen/:employeeId",
+      "heading": ":employeeName",
+      "fill": "employee",
+      "tabs": [
+        {
+          "label": "Person"
+        },
+        {
+          "label": "Vertrag"
+        },
+        {
+          "label": "Urlaub"
+        },
+        {
+          "label": "Salons"
+        },
+        {
+          "label": "Zugang"
+        }
+      ]
+    },
+    {
+      "slug": "daten-protokoll",
+      "path": "/verwalten/daten/protokoll",
+      "heading": "Protokoll",
+      "tabs": [
+        {
+          "label": "Protokoll"
+        },
+        {
+          "label": "Aufbewahrung"
+        }
+      ]
+    },
+    {
+      "slug": "daten-export",
+      "path": "/verwalten/daten/export",
+      "heading": "Export",
+      "tabs": []
+    },
+    {
+      "slug": "daten-import",
+      "path": "/verwalten/daten/import",
+      "heading": "CSV-Import",
+      "tabs": []
+    },
+    {
+      "slug": "daten-support-zugriffe",
+      "path": "/verwalten/daten/support-zugriffe",
+      "heading": "Support-Zugriffe",
+      "tabs": []
+    },
+    {
+      "slug": "monatsabschluss",
+      "path": "/verwalten/monatsabschluss",
+      "heading": "Monatsabschluss",
+      "tabs": []
+    },
+    {
+      "slug": "berichte",
+      "path": "/verwalten/berichte",
+      "heading": "Berichte",
+      "tabs": [
+        {
+          "label": "Zeiten & Konten"
+        },
+        {
+          "label": "Urlaub & Abwesenheit"
+        },
+        {
+          "label": "Heute"
+        },
+        {
+          "label": "Verläufe"
+        }
+      ]
+    }
+  ]
+}

@@ -144,10 +144,10 @@ export async function lockTenantForPackages(
 }
 
 export const SALON_QUOTA_REACHED_MESSAGE =
-  "Das Salon-Kontingent ist erreicht. Weitere aktive Salons sind mit dem Ketten-Paket und einem passenden Salon-Kontingent möglich. Ihr Anbieter schaltet das frei.";
+  "Das Salon-Kontingent ist erreicht. Weitere aktive Salons sind mit dem Ketten-Paket und einem passenden Salon-Kontingent möglich. Dein Anbieter schaltet das frei.";
 
 export function moduleNotBookedMessage(module: TenantModule): string {
-  return `Dafür wird das Zusatzmodul „${TENANT_MODULE_LABEL_DE[module]}“ benötigt. Ihr Anbieter schaltet es frei.`;
+  return `Dafür wird das Zusatzmodul „${TENANT_MODULE_LABEL_DE[module]}“ benötigt. Dein Anbieter schaltet es frei.`;
 }
 
 /**

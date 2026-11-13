@@ -6,47 +6,48 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("pinOperatorLook (UI-SPEC skin decision)", () => {
-  it("pins theme nacht and density comfortable and removes the skin", () => {
+// #842 D-842-21: the console pins only the graphite theme (salz); the colour mode follows the
+// device and the retired skin and density attributes no longer exist.
+describe("pinOperatorLook (D-842-21)", () => {
+  it("pins data-theme salz and leaves data-mode untouched", () => {
     const html = document.createElement("html");
     html.setAttribute("data-theme", "pflaume");
-    html.setAttribute("data-density", "compact");
-    html.setAttribute("data-skin", "modern");
     html.setAttribute("data-mode", "dark");
 
     pinOperatorLook(html);
 
-    expect(html.getAttribute("data-theme")).toBe("nacht");
-    expect(html.getAttribute("data-density")).toBe("comfortable");
-    expect(html.hasAttribute("data-skin")).toBe(false);
+    expect(html.getAttribute("data-theme")).toBe("salz");
     // The mode follows the device and is never touched.
     expect(html.getAttribute("data-mode")).toBe("dark");
   });
 
-  it("restores exactly the previous values", () => {
+  it("pins nothing but the theme attribute", () => {
     const html = document.createElement("html");
-    html.setAttribute("data-theme", "wald");
-    html.setAttribute("data-density", "compact");
-    html.setAttribute("data-skin", "modern");
+
+    pinOperatorLook(html);
+
+    expect(html.getAttributeNames()).toEqual(["data-theme"]);
+  });
+
+  it("restores the previous theme exactly", () => {
+    const html = document.createElement("html");
+    html.setAttribute("data-theme", "petrol");
 
     const restore = pinOperatorLook(html);
+    expect(html.getAttribute("data-theme")).toBe("salz");
     restore();
 
-    expect(html.getAttribute("data-theme")).toBe("wald");
-    expect(html.getAttribute("data-density")).toBe("compact");
-    expect(html.getAttribute("data-skin")).toBe("modern");
+    expect(html.getAttribute("data-theme")).toBe("petrol");
   });
 
   it("restores an absent attribute as absent", () => {
     const html = document.createElement("html");
 
     const restore = pinOperatorLook(html);
-    expect(html.getAttribute("data-theme")).toBe("nacht");
+    expect(html.getAttribute("data-theme")).toBe("salz");
     restore();
 
     expect(html.hasAttribute("data-theme")).toBe(false);
-    expect(html.hasAttribute("data-density")).toBe(false);
-    expect(html.hasAttribute("data-skin")).toBe(false);
   });
 
   it("never touches localStorage", () => {

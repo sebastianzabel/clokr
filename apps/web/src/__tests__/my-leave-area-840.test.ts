@@ -58,7 +58,9 @@ function between(from: string, to: string): string {
 describe("Issue #840 E-01 - one page, one toolbar", () => {
   it("[vacuity gate] the page source is loaded and is the personal host page", () => {
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain('<PageHead eyebrow="Mein Bereich" title={pageLabel("/leave")}>');
+    // #851 (prototype): the Seitenkopf block with the page's two filing actions.
+    expect(PAGE).toContain('<PageHeader\n    title={pageLabel("/leave")}');
+    expect(PAGE).toContain('data-testid="leave-report-sick"');
     expect(PAGE).toContain('<title>{pageLabel("/leave")} – Clokr</title>'); // Issue #574
     // The old title is gone from the page.
     expect(PAGE).not.toContain("Urlaub & Abwesenheit");
@@ -72,9 +74,10 @@ describe("Issue #840 E-01 - one page, one toolbar", () => {
     expect(PAGE).toContain("period={activePeriod}");
   });
 
-  it("[tabs] Kalender / Meine Anträge / Team / Planung, with the test ids the e2e specs know", () => {
+  it("[tabs] Kalender / Anträge / Team / Planung, with the test ids the e2e specs know", () => {
     expect(PAGE).toContain('{ id: "kalender", label: "Kalender", testId: "calendar" }');
-    expect(PAGE).toContain('{ id: "antraege", label: "Meine Anträge", testId: "list" }');
+    // #851 (prototype): „Meine Anträge“ is „Anträge“ in the personal area.
+    expect(PAGE).toMatch(/id: "antraege",\s+label: "Anträge",\s+testId: "list",/);
     expect(PAGE).toContain('{ id: "team", label: "Team" }');
     expect(PAGE).toContain('{ id: "planung", label: "Planung" }');
     // The toolbar draws the tablist; the page has no hand-rolled one any more.
@@ -195,12 +198,9 @@ describe("Issue #840 E-03 / D-840-24 / AC-3 - the Kalender is own data only", ()
   });
 
   it("[Meine Anträge] the year's own requests stay: filters, table and row actions keep their test ids", () => {
-    for (const id of [
-      "leave-filter-status",
-      "leave-filter-type",
-      "leave-mine-table",
-      "leave-empty-state",
-    ]) {
+    // #851 (D-851-04): the two status/type selects became the filters of the TableToolbar block,
+    // addressed by the toolbar's own test id; the filter values still drive the same table.
+    for (const id of ["leave-filters", "leave-mine-table", "leave-empty-state"]) {
       expect(PAGE, id).toContain(`data-testid="${id}"`);
     }
     expect(PAGE).toContain("/leave/requests?year=${calYear}");
@@ -322,7 +322,8 @@ describe("Issue #840 E-03 / D-840-16 / D-840-23 - Planung shows the own wishes",
 
   it("[waits for the context] before the salon context is loaded the tab shows a status, not an empty planner", () => {
     expect(PLANUNG_PANEL).toContain("{#if !contextLoaded}");
-    expect(PLANUNG_PANEL).toContain('role="status"');
+    // #843 D-843-07: the status role now comes from the Skeleton (role=status, hidden „Wird geladen“).
+    expect(PLANUNG_PANEL).toContain("<Skeleton");
   });
 
   it("[deep link] the notification link's salon is preselected once, then dropped from the URL", () => {

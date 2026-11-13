@@ -2,7 +2,7 @@
 // lib/components/admin, so this test is the component's gate: seven German rows, the closed
 // checkbox disables that row's times, the bound `days` follows every edit, `disabled` locks
 // everything, errors sit next to their row and are tied to the inputs, every control has a name.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/svelte";
 import { tick } from "svelte";
 
@@ -37,8 +37,13 @@ describe("OpeningHoursEditor", () => {
       expect(screen.getByLabelText(`Öffnung ${label}`)).toBeInTheDocument();
       expect(screen.getByLabelText(`Schließung ${label}`)).toBeInTheDocument();
     }
+    // Since #854 the time inputs carry the weekday in their aria-label (the visible FormField label
+    // says „Öffnung“ / „Schließung“); the checkbox keeps it in its label text.
     for (const input of document.querySelectorAll<HTMLInputElement>("input")) {
-      const names = Array.from(input.labels ?? []).map((l) => l.textContent ?? "");
+      const names = [
+        input.getAttribute("aria-label") ?? "",
+        ...Array.from(input.labels ?? []).map((l) => l.textContent ?? ""),
+      ];
       expect(
         names.some((name) => WEEKDAY_LABELS.some((day) => name.includes(day))),
         input.id,
@@ -98,5 +103,64 @@ describe("OpeningHoursEditor", () => {
     }
     // A row without an error carries no reference.
     expect(screen.getByLabelText("Öffnung Montag").getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("is the settings group „Öffnungszeiten“: a sentence-case h2 and no uppercase column head", () => {
+    renderWithTheme(OpeningHoursEditorHarness, { initial: WEEK });
+    expect(screen.getByRole("heading", { level: 2, name: "Öffnungszeiten" })).toBeInTheDocument();
+    expect(document.querySelector(".ohe-row--head")).toBeNull();
+  });
+
+  it("has no SaveBar without onSave, and with it only while there are changes", async () => {
+    const onSave = vi.fn();
+    const onDiscard = vi.fn();
+    const first = renderWithTheme(OpeningHoursEditorHarness, { initial: WEEK });
+    expect(screen.queryByRole("region", { name: "Speicherleiste" })).toBeNull();
+    first.unmount();
+
+    const idle = renderWithTheme(OpeningHoursEditorHarness, {
+      initial: WEEK,
+      changes: 0,
+      onSave,
+      onDiscard,
+    });
+    expect(screen.queryByRole("region", { name: "Speicherleiste" })).toBeNull();
+    idle.unmount();
+
+    renderWithTheme(OpeningHoursEditorHarness, { initial: WEEK, changes: 2, onSave, onDiscard });
+    const bar = screen.getByRole("region", { name: "Speicherleiste" });
+    expect(bar.textContent).toContain("2 Änderungen");
+    await fireEvent.click(screen.getByRole("button", { name: "Öffnungszeiten speichern" }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole("button", { name: "Verwerfen" }));
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks the save while a row has an error and shows the count", () => {
+    renderWithTheme(OpeningHoursEditorHarness, {
+      initial: WEEK,
+      changes: 1,
+      errors: { 3: "Die Öffnung muss vor der Schließung liegen." },
+      onSave: vi.fn(),
+      onDiscard: vi.fn(),
+    });
+    expect(screen.getByRole("region", { name: "Speicherleiste" }).textContent).toContain(
+      "1 Fehler",
+    );
+    expect(
+      (screen.getByRole("button", { name: "Öffnungszeiten speichern" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("a read-only editor shows no SaveBar even with a save handler", () => {
+    renderWithTheme(OpeningHoursEditorHarness, {
+      initial: WEEK,
+      disabled: true,
+      changes: 1,
+      onSave: vi.fn(),
+      onDiscard: vi.fn(),
+    });
+    expect(screen.queryByRole("region", { name: "Speicherleiste" })).toBeNull();
   });
 });

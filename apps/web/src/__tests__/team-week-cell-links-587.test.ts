@@ -67,7 +67,8 @@ describe("Issue #587 — every team-week cell is a link to person and day", () =
       );
     }
     expect(snippet).toContain("{:else}");
-    expect(snippet).toContain("cell-badge--none");
+    // #846: the free day is a quiet „—“ with the text „Frei“ (status as text, never a symbol alone)
+    expect(snippet).toContain('title="Frei"');
   });
 
   it("no status branch is repeated outside the snippet (one snippet used twice, not a copy)", () => {

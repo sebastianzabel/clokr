@@ -59,11 +59,11 @@ export const ENDED_BY_LABELS = {
   TENANT: "durch deine Verwaltung",
 } as const;
 
-/** The badge recipe (app.css) of a status; an unknown status gets the neutral one. */
-const STATUS_BADGE = {
-  ACTIVE: "badge badge-yellow",
-  EXPIRED: "badge badge-gray",
-  ENDED: "badge badge-purple",
+/** The `Chip` tone of a status; an unknown status gets the neutral one. */
+const STATUS_TONE = {
+  ACTIVE: "warn",
+  EXPIRED: "neutral",
+  ENDED: "info",
 } as const;
 
 function labelFor(map: Readonly<Record<string, string>>, value: string): string {
@@ -83,10 +83,10 @@ export function endedByLabel(endedBy: string | null): string {
   return endedBy === null ? "" : labelFor(ENDED_BY_LABELS, endedBy);
 }
 
-export function statusBadgeClass(status: string): string {
-  return Object.hasOwn(STATUS_BADGE, status)
-    ? STATUS_BADGE[status as keyof typeof STATUS_BADGE]
-    : "badge badge-gray";
+export function statusChipTone(status: string): "warn" | "neutral" | "info" {
+  return Object.hasOwn(STATUS_TONE, status)
+    ? STATUS_TONE[status as keyof typeof STATUS_TONE]
+    : "neutral";
 }
 
 /**

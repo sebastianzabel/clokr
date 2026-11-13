@@ -72,32 +72,32 @@ beforeAll(() => {
 
 describe("SalonTable", () => {
   it("shows the default badge on the default row only", () => {
-    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS }, "salz");
     expect(byId("op-salon-default-badge-s-default")).toHaveTextContent("Standardsalon");
     expect(byId("op-salon-default-badge-s-coupled")).toBeNull();
     expect(byId("op-salon-default-badge-s-off")).toBeNull();
   });
 
   it("formats the address with missing parts omitted", () => {
-    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS }, "salz");
     expect(byId("op-salon-row-s-default")).toHaveTextContent("Beispielweg 1, 12345 Beispielstadt");
     expect(byId("op-salon-row-s-coupled")).toHaveTextContent("Nebenstadt");
     expect(byId("op-salon-row-s-coupled")).not.toHaveTextContent(", Nebenstadt");
   });
 
   it("shows the muted placeholder when no address part is known", () => {
-    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS }, "salz");
     expect(byId("op-salon-row-s-off")).toHaveTextContent("Keine Adresse hinterlegt");
   });
 
   it("renders the coupling cell in both forms", () => {
-    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS }, "salz");
     expect(byId("op-salon-coupling-s-default")).toHaveTextContent("Keine");
     expect(byId("op-salon-coupling-s-coupled")).toHaveTextContent("Phorest · branch-42");
   });
 
   it("marks the status with a data-state and a text label", () => {
-    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS }, "salz");
     expect(byId("op-salon-status-s-default")).toHaveAttribute("data-state", "active");
     expect(byId("op-salon-status-s-default")).toHaveTextContent("Aktiv");
     expect(byId("op-salon-status-s-off")).toHaveAttribute("data-state", "deactivated");
@@ -105,18 +105,18 @@ describe("SalonTable", () => {
   });
 
   it("renders the Bundesland label, not the enum value", () => {
-    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS }, "salz");
     expect(byId("op-salon-row-s-coupled")).toHaveTextContent("Baden-Württemberg");
   });
 
   it("shows the empty-state text for an empty list", () => {
-    renderWithTheme(SalonTable, { salons: [] }, "nacht");
+    renderWithTheme(SalonTable, { salons: [] }, "salz");
     expect(document.body).toHaveTextContent("Keine Salons gefunden.");
     expect(byId("op-salons-table")).toBeNull();
   });
 
   it("is styled: the table differs from a control element with an invented class", () => {
-    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS }, "salz");
     const table = byId("op-salons-table") as HTMLElement;
     const control = document.createElement("table");
     control.className = "no-such-class-89";
@@ -130,7 +130,7 @@ describe("SalonTable", () => {
   });
 
   it("gives the badge a real style, not just a class", () => {
-    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS }, "salz");
     const badge = byId("op-salon-status-s-default") as HTMLElement;
     const control = document.createElement("span");
     control.className = "no-such-class-89";
@@ -142,13 +142,13 @@ describe("SalonTable", () => {
 
 describe("SalonTable - edit action", () => {
   it("has no action column without onEdit", () => {
-    renderWithTheme(SalonTable, { salons: SALONS }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS }, "salz");
     expect(byId("op-salon-edit-s-default")).toBeNull();
     expect(document.querySelectorAll("th")).toHaveLength(5);
   });
 
   it("renders one edit button per row with the salon name in its accessible name", () => {
-    renderWithTheme(SalonTable, { salons: SALONS, onEdit: vi.fn() }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS, onEdit: vi.fn() }, "salz");
     for (const salonRow of SALONS) {
       const button = byId(`op-salon-edit-${salonRow.id}`);
       expect(button).toHaveTextContent("Bearbeiten");
@@ -159,14 +159,14 @@ describe("SalonTable - edit action", () => {
 
   it("calls onEdit with the salon of the clicked row, deactivated salons included", async () => {
     const onEdit = vi.fn();
-    renderWithTheme(SalonTable, { salons: SALONS, onEdit }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS, onEdit }, "salz");
     await fireEvent.click(byId("op-salon-edit-s-off") as HTMLElement);
     expect(onEdit).toHaveBeenCalledTimes(1);
     expect(onEdit.mock.calls[0]?.[0]).toMatchObject({ id: "s-off", name: "Altsalon" });
   });
 
   it("styles the edit button as a button, not as plain text", () => {
-    renderWithTheme(SalonTable, { salons: SALONS, onEdit: vi.fn() }, "nacht");
+    renderWithTheme(SalonTable, { salons: SALONS, onEdit: vi.fn() }, "salz");
     const button = byId("op-salon-edit-s-default") as HTMLElement;
     const control = document.createElement("button");
     control.className = "no-such-class-89";
@@ -187,7 +187,7 @@ describe("SalonTable - edit action", () => {
     });
 
     it("active rows offer Deaktivieren, the inactive row offers Salon aktivieren, never both", () => {
-      renderWithTheme(SalonTable, actions(), "nacht");
+      renderWithTheme(SalonTable, actions(), "salz");
       for (const id of ["s-default", "s-coupled"]) {
         const deactivate = byId(`op-salon-deactivate-${id}`);
         expect(deactivate).toHaveTextContent("Deaktivieren");
@@ -207,7 +207,7 @@ describe("SalonTable - edit action", () => {
 
     it("calls back with the clicked salon", async () => {
       const props = actions();
-      renderWithTheme(SalonTable, props, "nacht");
+      renderWithTheme(SalonTable, props, "salz");
       await fireEvent.click(byId("op-salon-deactivate-s-coupled") as HTMLElement);
       await fireEvent.click(byId("op-salon-activate-s-off") as HTMLElement);
       expect(props.onDeactivate).toHaveBeenCalledWith(expect.objectContaining({ id: "s-coupled" }));
@@ -215,7 +215,7 @@ describe("SalonTable - edit action", () => {
     });
 
     it("has no delete control, label or menu entry", () => {
-      renderWithTheme(SalonTable, actions(), "nacht");
+      renderWithTheme(SalonTable, actions(), "salz");
       expect(document.body.textContent).not.toMatch(/löschen|entfernen|delete/i);
       expect(
         document.querySelector('[aria-label*="löschen" i], [data-testid*="delete" i]'),
@@ -226,7 +226,7 @@ describe("SalonTable - edit action", () => {
       const props = actions({
         salons: [salon({ id: "only", name: "Einziger" }), salon({ id: "off", isActive: false })],
       });
-      renderWithTheme(SalonTable, props, "nacht");
+      renderWithTheme(SalonTable, props, "salz");
       const control = byId("op-salon-deactivate-only") as HTMLElement;
       expect(control).toHaveAttribute("aria-disabled", "true");
       await fireEvent.click(control);
@@ -240,14 +240,14 @@ describe("SalonTable - edit action", () => {
     });
 
     it("with several active salons there is no note and the control is not aria-disabled", () => {
-      renderWithTheme(SalonTable, actions(), "nacht");
+      renderWithTheme(SalonTable, actions(), "salz");
       expect(byId("op-salons-last-active-note")).toBeNull();
       expect(byId("op-salon-deactivate-s-default")).not.toHaveAttribute("aria-disabled");
     });
 
     it("frozen disables every action and points at the hint", () => {
       const props = actions({ frozen: true, frozenHintId: "hint-id" });
-      renderWithTheme(SalonTable, props, "nacht");
+      renderWithTheme(SalonTable, props, "salz");
       for (const id of [
         "op-salon-edit-s-default",
         "op-salon-deactivate-s-default",

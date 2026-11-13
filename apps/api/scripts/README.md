@@ -53,6 +53,7 @@ classified by lifecycle.
 | lint-t100-09-routes.ts                         | 2026-09-22 | CI/local/pre-commit gate: fails unless every path-parameter route in `apps/api/src/contexts/*/api/**/*.ts` has exactly one entry in `lint-t100-09-routes.json` (category `probe`/`nicht anwendbar`/`bekannt-abweichend` plus a mandatory reason) — see § Lint gates below. The behavioral half — hitting every `probe` route twice and byte-comparing — runs inside the `apps/api` integration suite as `src/__tests__/t100-09-oracle-probe.test.ts`, not as its own CI job. Pure validation/diff/extraction lives in the sibling `lint-t100-09-routes-validate.ts`                                                                                                                                                                                                                       | Lint gate (Phase 259, Issue #259, D-01/D-07) |
 | lint-role-checks.ts                            | 2026-09-25 | CI/local/pre-commit gate: fails on any call of the removed role guard (`requireRole`) and on any comparison of a role value (`.role`, or an identifier bound to one) with `ADMIN`/`MANAGER`/`EMPLOYEE` — equality, `switch` cases, `.includes`/`.indexOf`/`.has`, and role-literal Prisma predicates under `where` — in non-test `apps/api/src`; one named exemption for `SystemRoleName`-typed identifiers in `system-role-assignment.ts` and no exceptions file (since #641) — see § Lint gates below                                                                                                                                                                                                                                                                                   | Lint gate (Phase 75b, Issue #75, D-19)       |
 | lint-unordered-test-reads.ts                   | 2026-10-15 | CI/local/pre-commit gate: fails on an unordered `auditLog`/`notification` `findFirst` in any test file under `apps/api/src`, and on an unordered `findMany` of those delegates that is indexed by position; fix with `auditRowsFor()` from `__tests__/setup.ts`, no exceptions file — see § Lint gates below                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Lint gate (Issue #561)                       |
+| lint-api-terms.ts                              | 2026-11-09 | CI/local/pre-commit gate: fails on a forbidden glossary term (Sie-form, Mandant, enum value, permission key, …) in any German text the API shows — error messages, notifications, e-mail templates, PDF texts; imports the term list of `lint:ui-terms`, no exceptions file — see § Lint gates below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Lint gate (Issue #861)                       |
 | lint-prisma-unknown-keys.ts                    | 2026-11-01 | CI/local gate: fails on a nonexistent key in the object literal handed to a Prisma delegate call (`select`, `include`, `where`, `orderBy`, `data`, nested at any depth) in `scripts/` (`tsconfig.scripts.json`) and `src/` (`-p tsconfig.json`) — a hole `tsc` leaves open (see § Lint gates below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Lint gate (Issue #804)                       |
 
 ## Migration artifacts
@@ -901,6 +902,28 @@ delegate reached through a variable. Production `findFirst` (dedupe lookups) is 
 - **Runs in CI as:** the `Lint unordered audit/notification reads in tests` step in
   `.github/workflows/ci.yml`, unconditional; **in `.husky/pre-commit`** as a full-repo invocation
 - **Anti-vacuity:** an empty walk exits 1 (`input-proof:empty-abort` for `lint-guard-vacuity.ts`)
+
+### `lint-api-terms.ts` (Issue #861)
+
+The API sibling of `lint:ui-terms` (`apps/web/scripts/lint-ui-terms.mjs`, Issue #574). The vocabulary and
+the address form „du“ live in `docs/glossar.md`; the gate imports the web gate's `FORBIDDEN_TERMS`
+instead of copying it, re-scopes „Mandant“ (operator console and DATEV's „Mandantennummer“ only) and
+„Phorest“ (Schichtplanung, the integration, the role editor's permission names) to API paths, and adds
+one term of its own, `permission-key`. It reads every string and template literal under `apps/api/src`
+(tests excluded) that is German: prose with an umlaut, ß, a German function word or ending, or a
+one-word German label. Never read: `description`/`summary` property values (Swagger), `console.*`,
+`*.log.<level>()` and `logger.*` arguments, raw SQL (`$queryRaw`, `$executeRaw*`, `Prisma.sql`), HTML
+tags of the e-mail templates, comments, imports and type positions. English internal error texts are
+out of scope (they never reach a screen). Every hit was converted when the gate landed; there is no
+exceptions file — rephrase the text (a „Sie“ meaning „sie/es“ gets its noun, as the glossary says).
+Structurally invisible: a German text with none of the markers above.
+
+- **Run locally:** `pnpm --filter @clokr/api run lint:api-terms`
+- **Fixture test:** `pnpm --filter @clokr/api exec vitest run scripts/__tests__/lint-api-terms.test.ts`
+  (flagged and tolerated shapes, the term-list identity with the web gate, the live tree)
+- **Runs in CI as:** the `Lint German API texts against the glossary` step in `.github/workflows/ci.yml`,
+  unconditional; **in `.husky/pre-commit`** as a full-repo invocation
+- **Anti-vacuity:** an empty walk exits 1
 
 ### `lint-role-checks.ts` (Issue #75)
 

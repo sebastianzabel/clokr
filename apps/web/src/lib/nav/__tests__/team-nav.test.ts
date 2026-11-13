@@ -66,34 +66,44 @@ const PERSONALABTEILUNG_PERMISSIONS = [
 ];
 
 describe("visibleTeamNavItems", () => {
-  it("AK-378-1: Salonmanager sees Aufgaben, Team-Zeiten, Abwesenheiten, Schichtplanung — not Berichte", () => {
+  // #844: new URLs (Heute im Salon first); Berichte left the Team area for Verwalten (Z-03)
+  it("AK-378-1: Salonmanager sees Heute im Salon, Aufgaben, Zeiten, Abwesenheiten, Dienstplan — not Berichte", () => {
     const items = visibleTeamNavItems({ permissions: SALONMANAGER_PERMISSIONS });
     const hrefs = items.map((i) => i.href);
-    expect(hrefs).toEqual(["/inbox", "/team/time-entries", "/team/leave", "/shifts"]);
-    expect(hrefs).not.toContain("/reports");
+    expect(hrefs).toEqual([
+      "/team/heute",
+      "/team/aufgaben",
+      "/team/zeiten",
+      "/team/abwesenheiten",
+      "/team/dienstplan",
+      "/team/personen", // #853: the read-only team directory (employee:read, no person-management right)
+    ]);
+    expect(hrefs).not.toContain("/verwalten/berichte");
   });
 
   it("AK-378-2: Ausbilder sees only Team-Zeiten, Abwesenheiten — no Aufgaben, no Schichtplanung, no Berichte", () => {
     const items = visibleTeamNavItems({ permissions: AUSBILDER_PERMISSIONS });
     const hrefs = items.map((i) => i.href);
-    expect(hrefs).toEqual(["/team/time-entries", "/team/leave"]);
-    expect(hrefs).not.toContain("/inbox"); // no approve permission
-    expect(hrefs).not.toContain("/shifts"); // shift:read only, not shift:plan
-    expect(hrefs).not.toContain("/reports"); // no report:read:ZUGEWIESEN
+    expect(hrefs).toEqual(["/team/zeiten", "/team/abwesenheiten", "/team/personen"]);
+    expect(hrefs).not.toContain("/team/aufgaben"); // no approve permission
+    expect(hrefs).not.toContain("/team/dienstplan"); // shift:read only, not shift:plan
+    expect(hrefs).not.toContain("/team/heute"); // no team-overview:read
   });
 
   it("AK-378-3: a plain Mitarbeiter (no ZUGEWIESEN permissions at all) sees no Team-Bereich items", () => {
     expect(visibleTeamNavItems({ permissions: ["time-entry:read:EIGENE"] })).toEqual([]);
   });
 
-  it("Issue #86: the Personalabteilung persona sees Berichte (report:read, owner decision 16.10.2026) and no Team-Zeiten", () => {
+  it("Issue #86: the Personalabteilung persona sees Team-Abwesenheiten and no Team-Zeiten (Berichte is Verwalten, #844)", () => {
     const hrefs = visibleTeamNavItems({ permissions: PERSONALABTEILUNG_PERMISSIONS }).map(
       (i) => i.href,
     );
-    expect(hrefs).toEqual(["/team/leave", "/reports"]);
-    expect(hrefs).not.toContain("/team/time-entries"); // no time-entry:read — no daily times
-    expect(hrefs).not.toContain("/shifts");
-    expect(hrefs).not.toContain("/inbox"); // no approve permission
+    expect(hrefs).toEqual(["/team/abwesenheiten"]);
+    expect(hrefs).not.toContain("/team/zeiten"); // no time-entry:read — no daily times
+    expect(hrefs).not.toContain("/team/dienstplan");
+    expect(hrefs).not.toContain("/team/aufgaben"); // no approve permission
+    // #853: she manages persons, so she sees Verwalten › Personen instead of Team › Personen
+    expect(hrefs).not.toContain("/team/personen");
   });
 
   it("a user object with no permissions list at all sees no Team-Bereich items (fail-closed)", () => {
@@ -102,25 +112,25 @@ describe("visibleTeamNavItems", () => {
     expect(visibleTeamNavItems(undefined)).toEqual([]);
   });
 
-  it("every entry with report:read:ZUGEWIESEN unlocks exactly Berichte in addition", () => {
+  it("report:read:ZUGEWIESEN unlocks no Team entry since Berichte moved to Verwalten (#844, Z-03)", () => {
     const items = visibleTeamNavItems({ permissions: ["report:read:ZUGEWIESEN"] });
-    expect(items.map((i) => i.href)).toEqual(["/reports"]);
+    expect(items).toEqual([]);
   });
 
   it("holding only retro-request:approve:ZUGEWIESEN (not leave-request:approve) still unlocks Anträge", () => {
     const items = visibleTeamNavItems({ permissions: ["retro-request:approve:ZUGEWIESEN"] });
-    expect(items.map((i) => i.href)).toEqual(["/inbox"]);
+    expect(items.map((i) => i.href)).toEqual(["/team/aufgaben"]);
   });
 
   it("Issue #840 (D-840-29): holding only section9:decide:ZUGEWIESEN unlocks Anträge and the page", () => {
     const only = { permissions: ["section9:decide:ZUGEWIESEN"] };
-    expect(visibleTeamNavItems(only).map((i) => i.href)).toEqual(["/inbox"]);
+    expect(visibleTeamNavItems(only).map((i) => i.href)).toEqual(["/team/aufgaben"]);
     expect(mayOpenTeamPage("/inbox", only)).toBe(true);
   });
 
   it("Issue #840 (D-840-29): none of the three inbox keys, no inbox (section9:read alone is not enough)", () => {
     const none = { permissions: ["section9:read:ZUGEWIESEN", "leave-request:read:ZUGEWIESEN"] };
-    expect(visibleTeamNavItems(none).map((i) => i.href)).not.toContain("/inbox");
+    expect(visibleTeamNavItems(none).map((i) => i.href)).not.toContain("/team/aufgaben");
     expect(mayOpenTeamPage("/inbox", none)).toBe(false);
   });
 
@@ -129,10 +139,12 @@ describe("visibleTeamNavItems", () => {
       permissions: [...SALONMANAGER_PERMISSIONS].reverse(),
     });
     expect(items.map((i) => i.href)).toEqual([
-      "/inbox",
-      "/team/time-entries",
-      "/team/leave",
-      "/shifts",
+      "/team/heute",
+      "/team/aufgaben",
+      "/team/zeiten",
+      "/team/abwesenheiten",
+      "/team/dienstplan",
+      "/team/personen",
     ]);
   });
 });
@@ -141,8 +153,8 @@ describe("Issue #840 (D-840-06, E-01): one leave entry per area", () => {
   it("labels the leave entry „Abwesenheiten“ and the inbox „Aufgaben“ (Issue #574); the team calendar entry is gone", () => {
     const items = visibleTeamNavItems({ permissions: SALONMANAGER_PERMISSIONS });
     const byHref = Object.fromEntries(items.map((i) => [i.href, i.label]));
-    expect(byHref["/team/leave"]).toBe("Abwesenheiten");
-    expect(byHref["/inbox"]).toBe("Aufgaben");
+    expect(byHref["/team/abwesenheiten"]).toBe("Abwesenheiten");
+    expect(byHref["/team/aufgaben"]).toBe("Aufgaben");
     expect(Object.keys(byHref)).not.toContain("/teamcal");
     expect(mayOpenTeamPage("/teamcal", { permissions: SALONMANAGER_PERMISSIONS })).toBe(false);
   });

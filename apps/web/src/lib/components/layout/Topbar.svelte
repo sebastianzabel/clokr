@@ -11,16 +11,22 @@
   import LanguageToggle from "$lib/components/ui/LanguageToggle.svelte";
   import SalonSwitcher from "./SalonSwitcher.svelte";
   import { removeThisDevicePush } from "$lib/push/logout";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import { crumbTrail } from "$lib/nav/routes";
+  import { detailCrumb } from "$lib/nav/detail-crumb";
+  import { openPalette } from "$lib/nav/palette-event";
 
   interface Props {
     currentPath: string;
     currentPageLabel: string;
+    /** #844: the area of the current page („Ich“, „Team“, „Verwalten“), "" outside the route table. */
+    currentAreaLabel?: string;
   }
 
-  // currentPath is part of the public API for symmetry with Sidebar; the
-  // crumb itself only displays `currentPageLabel` per the design handoff.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  let { currentPath, currentPageLabel }: Props = $props();
+  // The crumb shows the whole path from the route table (#844 D-844-11; #854: every level, each but the
+  // last a link, the record name of a detail page last). Outside the table it falls back to the labels.
+  let { currentPath, currentPageLabel, currentAreaLabel = "" }: Props = $props();
+  const trail = $derived(crumbTrail(currentPath, $authStore.user, $detailCrumb));
 
   // ── Avatar dropdown ────────────────────────────────────────────
   let avatarMenuOpen = $state(false);
@@ -78,7 +84,7 @@
 
   function gotoProfile() {
     avatarMenuOpen = false;
-    goto("/settings");
+    goto("/ich/profil");
   }
 
   // Names of the assigned roles (Issue #538), from GET /me/context; empty until loaded.
@@ -260,6 +266,29 @@
 {/snippet}
 
 <header class="topbar">
+  {#if trail.length > 0}
+    <nav class="topbar-crumb" aria-label="Pfad" data-testid="topbar-crumb">
+      {#each trail as crumb, i (i)}
+        <span class="topbar-crumb-item" class:topbar-crumb-item--current={i === trail.length - 1}
+          >{#if i > 0}<span class="topbar-sep" aria-hidden="true">/</span
+            >{/if}{#if i === trail.length - 1}<b aria-current="page">{crumb.label}</b
+            >{:else if crumb.href}<a class="topbar-crumb-link" href={crumb.href}>{crumb.label}</a
+            >{:else}<span>{crumb.label}</span>{/if}</span
+        >
+      {/each}
+    </nav>
+  {:else if currentPageLabel}
+    <span class="topbar-crumb" data-testid="topbar-crumb">
+      {#if currentAreaLabel}<span>{currentAreaLabel}</span><span
+          class="topbar-sep"
+          aria-hidden="true">/</span
+        >{/if}<b>{currentPageLabel}</b>
+    </span>
+  {/if}
+  <div class="topbar-grow"></div>
+  <button type="button" class="topbar-search" onclick={openPalette} data-testid="topbar-search">
+    <span>Suchen …</span><kbd>⌘K</kbd>
+  </button>
   <div class="topbar-context"><SalonSwitcher /></div>
   <div class="topbar-actions">
     <button
@@ -368,7 +397,7 @@
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                 <circle cx="12" cy="7" r="4" />
               </svg>
-              <span>Mein Profil</span>
+              <span>{pageLabel("/ich/profil")}</span>
             </button>
           </div>
           <div class="avatar-menu-foot">
@@ -402,68 +431,98 @@
 </header>
 
 <style>
+  /* #844 (D-844-11): the 48 px header of design concept § 2 — crumb, search ⌘K, salon pill, bell, avatar */
   .topbar {
     grid-area: topbar;
-    background: var(--bg-card);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    position: relative;
-    z-index: 10;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
     display: flex;
     align-items: center;
-    padding: 0 24px;
-    gap: 18px;
+    padding: 0 16px 0 24px;
+    gap: 8px;
     position: sticky;
     top: 0;
     /* 1000 beats card-animate transform stacking contexts (those sit at default z-index
        within the page flow; 1000 ensures both bell and avatar popovers paint above them) */
     z-index: 1000;
-    height: 60px;
-    min-height: 60px;
+    height: var(--topbar-h);
+    min-height: var(--topbar-h);
+    min-width: 0;
   }
   .topbar-crumb {
-    font-family: var(--font-serif);
-    font-style: italic;
-    font-size: 18px;
-    color: var(--text-muted);
-    font-weight: 400;
+    color: var(--text-3);
+    font-size: var(--fs-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
   }
   .topbar-crumb b {
-    font-family: var(--font-sans);
-    font-style: normal;
-    font-size: 14px;
-    font-weight: 600;
     color: var(--text);
-    margin-left: 10px;
+    font-weight: 600;
+    font-size: var(--fs-base);
+  }
+  /* On a phone the bar names only the current page (the sidebar sheet and the back gesture lead up);
+     the line scrolls instead of cutting a long name off. */
+  @media (max-width: 759.98px) {
+    nav.topbar-crumb {
+      overflow-x: auto;
+      text-overflow: clip;
+      scrollbar-width: none;
+    }
+    nav.topbar-crumb::-webkit-scrollbar {
+      display: none;
+    }
+    .topbar-crumb-item:not(.topbar-crumb-item--current) {
+      display: none;
+    }
+    .topbar-crumb-item--current .topbar-sep {
+      display: none;
+    }
+  }
+  .topbar-crumb-link {
+    color: var(--text-2);
+    text-decoration: none;
+  }
+  .topbar-crumb-link:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+  .topbar-sep {
+    color: var(--line-2);
+    margin: 0 4px;
+  }
+  .topbar-grow {
+    flex: 1;
+    min-width: 0;
   }
   .topbar-search {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 6px 10px;
-    width: 280px;
-    color: var(--text-muted);
-    font-size: 13px;
+    height: 32px;
+    padding: 0 10px 0 12px;
+    width: 220px;
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+    color: var(--text-3);
+    font: inherit;
+    font-size: var(--fs-sm);
+    cursor: pointer;
   }
-  .topbar-search input {
-    background: transparent;
-    border: 0;
-    outline: 0;
+  .topbar-search span {
     flex: 1;
-    min-width: 0;
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 13px;
+    text-align: left;
   }
-  .topbar-search input::placeholder {
-    color: var(--text-muted);
+  .topbar-search kbd {
+    font-family: var(--font-ui);
+    font-size: var(--fs-xs);
+    color: var(--text-3);
   }
-  .topbar-search .kbd {
-    font-size: 11px;
-    letter-spacing: 0.05em;
-    color: var(--text-faint);
+  .topbar-search:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 1px;
   }
   .topbar-context {
     display: flex;
@@ -471,7 +530,6 @@
     min-width: 0;
   }
   .topbar-actions {
-    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -479,24 +537,24 @@
   .icon-btn {
     width: 36px;
     height: 36px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     background: transparent;
     display: grid;
     place-items: center;
     position: relative;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
     transition:
       background 120ms var(--ease),
       color 120ms var(--ease);
   }
   .icon-btn:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
   .icon-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
   /* Mobile touch target — WCAG 2.5.5 minimum 44×44 */
@@ -518,7 +576,7 @@
     height: 8px;
     border-radius: 50%;
     background: var(--brand);
-    border: 2px solid var(--bg-card);
+    border: 2px solid var(--card);
   }
   .bell-wrap {
     position: relative;
@@ -529,10 +587,10 @@
     right: 0;
     width: 340px;
     max-height: 420px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    box-shadow: var(--shadow-pop);
     z-index: 300;
     display: flex;
     flex-direction: column;
@@ -544,7 +602,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 13px;
     color: var(--text);
   }
@@ -556,7 +614,7 @@
     font-weight: 500;
     cursor: pointer;
     padding: 0;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
   }
   .link-btn:hover {
     text-decoration: underline;
@@ -569,7 +627,7 @@
     padding: 20px;
     text-align: center;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .notif-item {
     display: flex;
@@ -580,13 +638,13 @@
     padding: 12px 16px;
     background: transparent;
     border: 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     cursor: pointer;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     transition: background 120ms var(--ease);
   }
   .notif-item:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .notif-item.unread {
     background: var(--brand-soft);
@@ -616,12 +674,12 @@
   }
   .notif-msg {
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: 2px;
   }
   .notif-time {
     font-size: 11.5px;
-    color: var(--text-faint);
+    color: var(--text-3);
     margin-top: 2px;
   }
   .avatar {
@@ -657,10 +715,10 @@
       box-shadow 120ms var(--ease);
   }
   .avatar-btn:hover {
-    border-color: var(--brand-light);
+    border-color: var(--brand);
   }
   .avatar-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
   .avatar-btn[aria-expanded="true"] {
@@ -675,7 +733,7 @@
     gap: 12px;
     align-items: center;
     padding: 16px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .avatar-menu-pic {
     width: 44px;
@@ -688,7 +746,7 @@
     flex: 1;
   }
   .avatar-menu-name {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 16px;
     font-weight: 400;
     color: var(--text);
@@ -699,7 +757,7 @@
   }
   .avatar-menu-email {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: 2px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -710,7 +768,7 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--brand-light);
+    color: var(--brand);
     margin-top: 4px;
   }
   .avatar-menu-items {
@@ -719,7 +777,7 @@
     padding: 6px 0;
   }
   .avatar-menu-foot {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding: 6px 0;
   }
   .avatar-menu-item {
@@ -732,7 +790,7 @@
     border: 0;
     cursor: pointer;
     padding: 9px 16px;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13.5px;
     font-weight: 500;
     color: var(--text);
@@ -741,7 +799,7 @@
       color 120ms var(--ease);
   }
   .avatar-menu-item:hover:not(:disabled) {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--brand);
   }
   .avatar-menu-item:disabled {
@@ -749,7 +807,7 @@
     cursor: not-allowed;
   }
   .avatar-menu-item svg {
-    color: var(--text-muted);
+    color: var(--text-2);
     flex-shrink: 0;
   }
   .avatar-menu-item:hover:not(:disabled) svg {
@@ -770,9 +828,6 @@
   @media (max-width: 960px) {
     .topbar-search {
       display: none;
-    }
-    .topbar-crumb {
-      font-size: 16px;
     }
   }
   @media (max-width: 720px) {

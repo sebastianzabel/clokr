@@ -175,7 +175,7 @@
   title={mode === "create" ? "Salon anlegen" : "Salon bearbeiten"}
   ariaLabel={mode === "create" ? "Salon anlegen" : "Salon bearbeiten"}
 >
-  <div class="dialog-root" data-testid="op-salon-dialog" data-mode={mode}>
+  <div class="dialog-root" data-testid="op-salon-dialog" data-dialog-mode={mode}>
     <form id={FORM_ID} class="form" novalidate bind:this={formEl} onsubmit={submit}>
       {#if fieldCode === "FEDERAL_STATE_IN_USE" && failure}
         <div data-testid="op-salon-reason" data-code={fieldCode}>

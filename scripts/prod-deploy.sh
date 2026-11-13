@@ -67,10 +67,10 @@ if [[ -n "$TARGET_VERSION" ]]; then
   IMAGE_TAG="${TARGET_VERSION#v}"
 
   # Determine the image references for this release.
-  # Owner = github.com/sebastianzabel — release.yml lowercases this to `sebastianzabel`
+  # Owner = github.com/getclokr since 09.11.2026 (images up to v1.18.x live under ghcr.io/sebastianzabel); release.yml lowercases the owner
   # (env.REGISTRY=ghcr.io). Hardcoded here to keep the script self-contained.
-  API_IMAGE="ghcr.io/sebastianzabel/clokr-api:${IMAGE_TAG}"
-  WEB_IMAGE="ghcr.io/sebastianzabel/clokr-web:${IMAGE_TAG}"
+  API_IMAGE="ghcr.io/getclokr/clokr-api:${IMAGE_TAG}"
+  WEB_IMAGE="ghcr.io/getclokr/clokr-web:${IMAGE_TAG}"
 
   echo "→ Setting CLOKR_API_IMAGE=${API_IMAGE} and CLOKR_WEB_IMAGE=${WEB_IMAGE} in ${DMZ_HOST}:${CLOKR_DIR}/.env"
 

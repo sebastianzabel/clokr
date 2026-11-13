@@ -247,9 +247,9 @@ export async function runCarryoverWarningOnce(
         // 2) Employee notification — skip if the user is inactive
         if (ent.employee.user.isActive) {
           const empMessage =
-            `Ihr Resturlaub aus ${ent.year - 1} (${atRiskDays} Tage) verfällt am ` +
-            `${deadlineDe}. Sie haben noch ${daysUntil} Tage Zeit, um diesen Urlaub zu nehmen. ` +
-            `Gemäß § 7 Abs. 3 BUrlG (EuGH C-684/16 "Max-Planck") wurden Sie hiermit ausdrücklich ` +
+            `Dein Resturlaub aus ${ent.year - 1} (${atRiskDays} Tage) verfällt am ` +
+            `${deadlineDe}. Du hast noch ${daysUntil} Tage Zeit, um diesen Urlaub zu nehmen. ` +
+            `Gemäß § 7 Abs. 3 BUrlG (EuGH C-684/16 "Max-Planck") wurdest du hiermit ausdrücklich ` +
             `auf den drohenden Verfall hingewiesen.`;
 
           await app

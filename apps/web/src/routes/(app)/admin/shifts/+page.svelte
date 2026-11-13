@@ -1,977 +1,166 @@
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
+  import { page } from "$app/stores";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
-  import { salonContext, showSalonOptions } from "$stores/salon-context";
   import {
-    COVERAGE_RULE_SALON_INACTIVE_BADGE,
-    coverageRuleSalonCell,
-    coverageRuleSalonChoices,
-    coverageRuleSalonPayload,
-    showCoverageSalonColumn,
-  } from "$lib/shifts/coverage-rule-salon";
-  import SectionStack from "$lib/components/admin/SectionStack.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
-  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
-  import Modal from "$components/ui/Modal.svelte";
+    shiftBasedEmployees,
+    type CoverageRule,
+    type PatternEmployee,
+    type PatternRow,
+    type ShiftTemplate,
+  } from "$lib/shifts/dienstplan-config";
+  import { authStore } from "$stores/auth";
+  import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
+  import { visibleDienstplanTabs, type DienstplanConfig } from "$lib/settings/dienstplan";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import CoverageRulesPanel from "$lib/components/admin/dienstplan/CoverageRulesPanel.svelte";
+  import DienstplanSettingsPanel from "$lib/components/admin/dienstplan/DienstplanSettingsPanel.svelte";
+  import ShiftTemplatesPanel from "$lib/components/admin/dienstplan/ShiftTemplatesPanel.svelte";
+  import WeekPatternsPanel from "$lib/components/admin/dienstplan/WeekPatternsPanel.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
-  // ── Types ───────────────────────────────────────────────────
-  interface ShiftTemplate {
-    id: string;
-    name: string;
-    startTime: string;
-    endTime: string;
-    color: string;
-  }
+  // The tabs a person may open (D-854-05): the page merges sections of three old pages, so the shift tabs
+  // and „Einstellungen“ are each offered under the alternatives of their own sections.
+  const user = $derived($authStore.user);
+  const visibleTabs = $derived(visibleDienstplanTabs(user));
+  const visibleTabIds = $derived(visibleTabs.map((tab) => tab.value));
+  const showShiftData = $derived(visibleTabIds.some((id) => id !== "einstellungen"));
+  const showSettings = $derived(visibleTabIds.includes("einstellungen"));
+  let activeTab = $state<string>("");
 
-  interface CoverageRule {
-    id: string;
-    templateId: string | null;
-    dayOfWeek: number; // -1 = all days, 0..6 = Mo..So
-    minStaff: number | string; // Decimal arrives as string from Prisma
-    requiresNonSupervised: boolean;
-    // Issue #647: display fields served by the list; null = a rule for all salons.
-    salonId: string | null;
-    salonName: string | null;
-    salonActive: boolean | null;
+  function selectTab(next: string) {
+    activeTab = next;
+    writeTabHash(next);
   }
-
-  // Phase 48 — Pattern editor types
-  interface PatternEmployee {
-    id: string;
-    firstName: string;
-    lastName: string;
-    workSchedules?: Array<{
-      type: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
-      weeklyHours: number | string | null;
-    }>;
-  }
-  interface PatternRow {
-    employeeId: string;
-    dayOfWeek: number; // 0..6
-    templateId: string | null;
-  }
-  interface ShiftWeekResponse {
-    employees: PatternEmployee[];
-  }
-
-  const DAY_NAMES = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-  const DAY_NAMES_LONG = [
-    "Montag",
-    "Dienstag",
-    "Mittwoch",
-    "Donnerstag",
-    "Freitag",
-    "Samstag",
-    "Sonntag",
-  ];
 
   // Issue #83 (D-13): access is decided by the admin layout guard (admin-route-permissions.ts);
   // the API answers 403 regardless.
   onMount(() => {
+    activeTab = visibleTabIds.length > 0 ? tabFromHash($page.url.hash, visibleTabIds) : "";
     void loadAll();
   });
-
-  // ── Tabs (Phase 58) ─────────────────────────────────────────
-  const TABS = [
-    { id: "vorlagen", label: "Vorlagen & Bedarf" },
-    { id: "muster", label: "Muster" },
-  ];
-  let activeTab = $state<string>("vorlagen");
 
   // ── State ───────────────────────────────────────────────────
   let templates: ShiftTemplate[] = $state([]);
   let coverageRules: CoverageRule[] = $state([]);
-  // Ladenöffnungszeiten + binding mode moved to /admin/system#allgemein (Phase 58).
+  let shiftEmployees: PatternEmployee[] = $state([]);
+  let patterns: PatternRow[] = $state([]);
+  let settingsConfig = $state<DienstplanConfig | null>(null);
   let loading = $state(true);
-  let saving = $state(false);
   let error = $state("");
 
-  // Template editor
-  let tplModalOpen = $state(false);
-  let tplName = $state("");
-  let tplStart = $state("06:00");
-  let tplEnd = $state("14:00");
-  let tplColor = $state("");
-  let tplError = $state("");
-  let editingTplId: string | null = $state(null);
+  // Number of persons with unsaved pattern edits, reported by the Wochenmuster panel, and the number of
+  // unsaved changes of the Einstellungen sections.
+  let patternChanges = $state(0);
+  let settingsChanges = $state(0);
 
-  // Coverage rule editor
-  let ruleModalOpen = $state(false);
-  let ruleEditingId: string | null = $state(null);
-  let ruleTemplateId = $state(""); // "" = all templates
-  let ruleDayOfWeek = $state<number>(-1);
-  let ruleMinStaff = $state<number>(2);
-  let ruleRequiresNonSupervised = $state(false);
-  let ruleError = $state("");
-  // Issue #647: "" = all salons (tenant-wide). Sent only while the select is shown.
-  let ruleSalonId = $state("");
-  // The #64 rule, in its one place: the salon choice and the list column appear only with salon options.
-  const salonOptionsShown = $derived(showSalonOptions($salonContext));
-  const salonColumnShown = $derived(showCoverageSalonColumn(salonOptionsShown, coverageRules));
-  const ruleSalonChoices = $derived(
-    coverageRuleSalonChoices(
-      $salonContext.salons,
-      coverageRules.find((r) => r.id === ruleEditingId) ?? null,
-    ),
-  );
+  // Gate the registration on "the panels have their baseline" (WR-01): loadAll can fail (its catch
+  // sets `error`) or never run at all, and an unregistered page must not be able to arm the
+  // navigation guard. Template and rule editors are Dialogs with an instant save and their own
+  // Abbrechen: a dialog draft is out of the page registry on purpose.
+  let snapshotsReady = $state(false);
 
-  // Delete confirmations
-  let tplDeleteConfirm = $state<{ open: boolean; id: string | null; name: string }>({
-    open: false,
-    id: null,
-    name: "",
+  $effect(() => {
+    markUnsaved("admin-shifts", snapshotsReady && patternChanges + settingsChanges > 0);
+    return () => markUnsaved("admin-shifts", false);
   });
-  let ruleDeleteConfirm = $state<{ open: boolean; id: string | null }>({
-    open: false,
-    id: null,
-  });
-
-  // Phase 48 — Pattern editor state
-  let shiftEmployees: PatternEmployee[] = $state([]);
-  // matrix[employeeId][0..6] = templateId | null
-  let patternMatrix: Record<string, Array<string | null>> = $state({});
-  // mirror of initial server state for dirty detection
-  let patternMatrixInitial: Record<string, Array<string | null>> = $state({});
-  let patternsSaving = $state(false);
-  let patternsMsg = $state("");
-
-  // Palette for shift template colors (theme-independent)
-  const SHIFT_PALETTE = [
-    { token: "--shift-violet", label: "Violett" },
-    { token: "--shift-blue", label: "Blau" },
-    { token: "--shift-green", label: "Grün" },
-    { token: "--shift-amber", label: "Bernstein" },
-    { token: "--shift-rose", label: "Rose" },
-    { token: "--shift-slate", label: "Schiefer" },
-  ];
-
-  function resolveShiftToken(name: string, fallback = ""): string {
-    if (typeof window === "undefined") return fallback;
-    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return v || fallback;
-  }
-
-  function pickPaletteColor(token: string) {
-    tplColor = resolveShiftToken(token, tplColor);
-  }
 
   // ── Load all config ─────────────────────────────────────────
+  // Only what the person's tabs need: the shift lists answer 403 without the shift permissions, so a
+  // person who holds only a settings permission must not trigger them (and see an error page).
+  async function loadShiftData() {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const [tpls, rules, week, tenantPatterns] = await Promise.all([
+      api.get<ShiftTemplate[]>("/shifts/templates"),
+      api.get<CoverageRule[]>("/shifts/coverage-rules"),
+      api.get<{ employees: PatternEmployee[] }>(`/shifts/week?date=${todayIso}`),
+      api.get<PatternRow[]>("/shift-patterns/tenant"),
+    ]);
+    templates = tpls;
+    coverageRules = rules;
+    shiftEmployees = shiftBasedEmployees(week.employees ?? []);
+    patterns = tenantPatterns;
+  }
+
   async function loadAll() {
     loading = true;
     error = "";
     try {
-      const todayIso = new Date().toISOString().slice(0, 10);
-      const [tpls, rules, week, patterns] = await Promise.all([
-        api.get<ShiftTemplate[]>("/shifts/templates"),
-        api.get<CoverageRule[]>("/shifts/coverage-rules"),
-        api.get<ShiftWeekResponse>(`/shifts/week?date=${todayIso}`),
-        api.get<PatternRow[]>("/shift-patterns/tenant"),
+      await Promise.all([
+        showShiftData ? loadShiftData() : Promise.resolve(),
+        showSettings
+          ? api.get<DienstplanConfig>("/settings/work").then((cfg) => (settingsConfig = cfg))
+          : Promise.resolve(),
       ]);
-      templates = tpls;
-      coverageRules = rules;
-
-      // Phase 48 — Build pattern matrix from SHIFT_BASED employees + tenant patterns
-      shiftEmployees = (week.employees ?? [])
-        .filter((e) => e.workSchedules?.[0]?.type === "SHIFT_BASED")
-        .sort((a, b) =>
-          `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`, "de"),
-        );
-      const matrix: Record<string, Array<string | null>> = {};
-      for (const emp of shiftEmployees) matrix[emp.id] = Array(7).fill(null);
-      for (const p of patterns) {
-        if (matrix[p.employeeId] && p.dayOfWeek >= 0 && p.dayOfWeek <= 6) {
-          matrix[p.employeeId][p.dayOfWeek] = p.templateId;
-        }
-      }
-      patternMatrix = matrix;
-      patternMatrixInitial = JSON.parse(JSON.stringify(matrix));
       snapshotsReady = true;
     } catch (e) {
       console.error(e);
-      error = "Fehler beim Laden der Konfiguration.";
+      error = "Die Konfiguration konnte nicht geladen werden.";
     } finally {
       loading = false;
     }
   }
 
-  // Phase 48 — Pattern editor helpers
-  function employeeFullName(e: PatternEmployee): string {
-    return `${e.lastName}, ${e.firstName}`;
-  }
-  function isCellDirty(empId: string, dow: number): boolean {
-    return (patternMatrix[empId]?.[dow] ?? null) !== (patternMatrixInitial[empId]?.[dow] ?? null);
-  }
-  function isRowDirty(empId: string): boolean {
-    return [0, 1, 2, 3, 4, 5, 6].some((d) => isCellDirty(empId, d));
-  }
-  const dirtyEmployeeCount = $derived(shiftEmployees.filter((e) => isRowDirty(e.id)).length);
-
-  // Phase 109 (D-11/D-12) — this page already had the baseline this phase's idiom prescribes
-  // (patternMatrixInitial, taken in loadAll and re-taken only on a fully successful save), so no
-  // second snapshot mechanism is introduced here. dirtyEmployeeCount IS the derivation.
-  const patternsDirty = $derived(dirtyEmployeeCount > 0);
-
-  // Gate the registration on "the baseline has been taken" (WR-01): loadAll can fail (its catch
-  // sets `error`) or never run at all (a non-ADMIN is redirected out of onMount before loadAll),
-  // and an unregistered page must not be able to arm the navigation guard.
-  let snapshotsReady = $state(false);
-
-  $effect(() => {
-    markUnsaved("admin-shifts", snapshotsReady && patternsDirty);
-    return () => markUnsaved("admin-shifts", false);
-  });
-  // Soll-Hint per Wochentag column: average weekly hours / 5 for Mo–Fr only.
-  // Returns null for Sa/So (most stores closed) and when no clean signal is available.
-  function sollHintForDow(dow: number): string | null {
-    if (dow > 4) return null;
-    if (shiftEmployees.length === 0) return null;
-    const hrs = shiftEmployees
-      .map((e) => Number(e.workSchedules?.[0]?.weeklyHours ?? NaN))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    if (hrs.length === 0) return null;
-    const avg = hrs.reduce((s, n) => s + n, 0) / hrs.length;
-    const perDay = avg / 5;
-    return `Ø ${perDay.toFixed(1)}h`;
-  }
-
-  async function saveBulkPatterns() {
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const dirtyEmps = shiftEmployees.filter((e) => isRowDirty(e.id));
-    if (dirtyEmps.length === 0) return;
-    patternsSaving = true;
-    patternsMsg = "";
-    const results = await Promise.allSettled(
-      dirtyEmps.map((emp) => {
-        const patterns = [0, 1, 2, 3, 4, 5, 6].map((dow) => ({
-          dayOfWeek: dow,
-          templateId: patternMatrix[emp.id]?.[dow] ?? null,
-          validFrom: todayIso,
-        }));
-        return api.put(`/employees/${emp.id}/shift-patterns`, { patterns });
-      }),
-    );
-    const ok = results.filter((r) => r.status === "fulfilled").length;
-    const fail = results.length - ok;
-    if (fail === 0) {
-      toasts.success(`Schicht-Muster gespeichert (${ok} Personen).`);
-      patternMatrixInitial = JSON.parse(JSON.stringify(patternMatrix));
-    } else if (ok === 0) {
-      toasts.error(`Speichern fehlgeschlagen für alle ${fail} Personen.`);
-    } else {
-      toasts.error(`Teilweise gespeichert: ${ok} OK, ${fail} Fehler. Bitte erneut versuchen.`);
-    }
-    patternsSaving = false;
-    patternsMsg = fail === 0 ? "Gespeichert." : `${fail} Fehler.`;
-    setTimeout(() => (patternsMsg = ""), 3000);
-  }
-
-  // ── Templates ───────────────────────────────────────────────
-  function openCreateTemplate() {
-    editingTplId = null;
-    tplName = "";
-    tplStart = "06:00";
-    tplEnd = "14:00";
-    tplColor = resolveShiftToken("--shift-violet");
-    tplError = "";
-    tplModalOpen = true;
-  }
-
-  function openEditTemplate(tpl: ShiftTemplate) {
-    editingTplId = tpl.id;
-    tplName = tpl.name;
-    tplStart = tpl.startTime;
-    tplEnd = tpl.endTime;
-    tplColor = tpl.color;
-    tplError = "";
-    tplModalOpen = true;
-  }
-
-  async function saveTemplate() {
-    if (!tplName.trim() || !tplStart || !tplEnd) {
-      tplError = "Name, Start- und Endzeit sind Pflichtfelder.";
-      return;
-    }
-    saving = true;
-    tplError = "";
+  // Reloads the two lists a template or rule write can change; the pattern matrix and its unsaved
+  // edits are left alone.
+  async function reloadLists() {
     try {
-      const payload = {
-        name: tplName.trim(),
-        startTime: tplStart,
-        endTime: tplEnd,
-        color: tplColor,
-      };
-      if (editingTplId) {
-        await api.put(`/shifts/templates/${editingTplId}`, payload);
-        toasts.success("Vorlage aktualisiert.");
-      } else {
-        await api.post("/shifts/templates", payload);
-        toasts.success("Vorlage erstellt.");
-      }
-      tplModalOpen = false;
-      editingTplId = null;
-      await loadAll();
+      [templates, coverageRules] = await Promise.all([
+        api.get<ShiftTemplate[]>("/shifts/templates"),
+        api.get<CoverageRule[]>("/shifts/coverage-rules"),
+      ]);
     } catch (e) {
-      tplError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      saving = false;
+      console.error(e);
+      toasts.error("Die Listen konnten nicht neu geladen werden.");
     }
   }
-
-  function askDeleteTemplate(id: string, name: string) {
-    tplDeleteConfirm = { open: true, id, name };
-  }
-
-  async function confirmDeleteTemplate() {
-    if (!tplDeleteConfirm.id) return;
-    try {
-      await api.delete(`/shifts/templates/${tplDeleteConfirm.id}`);
-      await loadAll();
-      toasts.success("Vorlage gelöscht.");
-    } catch (e) {
-      toasts.error(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
-    }
-  }
-
-  // ── Coverage Rules ──────────────────────────────────────────
-  function openCreateRule() {
-    ruleEditingId = null;
-    ruleTemplateId = "";
-    ruleDayOfWeek = -1;
-    ruleMinStaff = 2;
-    ruleRequiresNonSupervised = false;
-    ruleSalonId = "";
-    ruleError = "";
-    ruleModalOpen = true;
-  }
-
-  function openEditRule(rule: CoverageRule) {
-    ruleEditingId = rule.id;
-    ruleTemplateId = rule.templateId ?? "";
-    ruleDayOfWeek = rule.dayOfWeek;
-    ruleMinStaff = Number(rule.minStaff);
-    ruleRequiresNonSupervised = rule.requiresNonSupervised;
-    ruleSalonId = rule.salonId ?? "";
-    ruleError = "";
-    ruleModalOpen = true;
-  }
-
-  async function saveRule() {
-    if (ruleMinStaff < 0) {
-      ruleError = "Min. Schicht-Gewicht muss >= 0 sein.";
-      return;
-    }
-    saving = true;
-    ruleError = "";
-    try {
-      const payload = {
-        templateId: ruleTemplateId || null,
-        dayOfWeek: ruleDayOfWeek,
-        minStaff: ruleMinStaff,
-        requiresNonSupervised: ruleRequiresNonSupervised,
-        ...coverageRuleSalonPayload(salonOptionsShown, ruleSalonId),
-      };
-      if (ruleEditingId) {
-        await api.put(`/shifts/coverage-rules/${ruleEditingId}`, payload);
-      } else {
-        await api.post("/shifts/coverage-rules", payload);
-      }
-      ruleModalOpen = false;
-      await loadAll();
-      toasts.success(ruleEditingId ? "Bedarfsregel aktualisiert." : "Bedarfsregel erstellt.");
-    } catch (e) {
-      ruleError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
-    } finally {
-      saving = false;
-    }
-  }
-
-  function askDeleteRule(id: string) {
-    ruleDeleteConfirm = { open: true, id };
-  }
-
-  async function confirmDeleteRule() {
-    if (!ruleDeleteConfirm.id) return;
-    try {
-      await api.delete(`/shifts/coverage-rules/${ruleDeleteConfirm.id}`);
-      await loadAll();
-      toasts.success("Bedarfsregel gelöscht.");
-    } catch (e) {
-      toasts.error(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
-    }
-  }
-
-  function ruleTemplateName(rule: CoverageRule): string {
-    if (!rule.templateId) return "Alle Vorlagen";
-    return templates.find((t) => t.id === rule.templateId)?.name ?? "Unbekannte Vorlage";
-  }
-
-  function ruleDayLabel(rule: CoverageRule): string {
-    if (rule.dayOfWeek === -1) return "Alle Tage";
-    return DAY_NAMES_LONG[rule.dayOfWeek] ?? "—";
-  }
-
-  // Ladenöffnungszeiten + saveStoreHours moved to /admin/system#allgemein (Phase 58).
 </script>
 
 <svelte:head>
   <title>{pageLabel("/admin/shifts")} – Clokr</title>
 </svelte:head>
 
-<SectionStack
-  eyebrow="Planung"
+<PageHead
   title={pageLabel("/admin/shifts")}
-  sub="Vorlagen, Bedarfsregeln und Schicht-Muster"
-  tabs={TABS}
-  bind:activeTab
-  animate
->
-  {#snippet tabContent(currentTab)}
-    {#if error}
-      <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
-    {/if}
-
-    {#if loading}
-      <div role="status" class="cfg-loading">Lade Konfiguration…</div>
-    {:else if currentTab === "vorlagen"}
-      <!-- ── Templates section ────────────────────────────────────── -->
-      <Section title="Schichtvorlagen" sub="Wiederkehrende Schichtmuster definieren">
-        {#if templates.length === 0}
-          <p class="cfg-muted">Noch keine Vorlagen vorhanden.</p>
-        {:else}
-          <div class="cfg-table">
-            <div class="cfg-row cfg-row--head">
-              <div>Farbe</div>
-              <div>Name</div>
-              <div>Zeitraum</div>
-              <div class="cfg-row__actions">Aktionen</div>
-            </div>
-            {#each templates as tpl (tpl.id)}
-              <div class="cfg-row">
-                <div>
-                  <span class="cfg-swatch" style:background={tpl.color} aria-hidden="true"></span>
-                </div>
-                <div class="cfg-cell-name">{tpl.name}</div>
-                <div class="cfg-cell-num">{tpl.startTime} – {tpl.endTime}</div>
-                <div class="cfg-row__actions">
-                  <button
-                    type="button"
-                    class="btn btn-ghost sm"
-                    onclick={() => openEditTemplate(tpl)}
-                  >
-                    Bearbeiten
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-ghost sm"
-                    onclick={() => askDeleteTemplate(tpl.id, tpl.name)}
-                  >
-                    Löschen
-                  </button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {/if}
-        {#snippet footer()}
-          <button type="button" class="btn btn-primary sm" onclick={openCreateTemplate}>
-            Neue Vorlage
-          </button>
-        {/snippet}
-      </Section>
-
-      <!-- ── Coverage Rules section ───────────────────────────────── -->
-      <Section
-        title="Bedarfsregeln"
-        sub="Mindest-Schicht-Gewicht je Vorlage und Wochentag. Spezifischste Regel gewinnt; Default = 2.0 wenn keine Regel."
-      >
-        {#if coverageRules.length === 0}
-          <p class="cfg-muted">
-            Noch keine Bedarfsregeln vorhanden. Default = 2.0 Schicht-Gewicht.
-          </p>
-        {:else}
-          <div class="cfg-table">
-            <div
-              class="cfg-row cfg-row--head cfg-row--rules"
-              class:cfg-row--rules-salon={salonColumnShown}
-            >
-              {#if salonColumnShown}
-                <div>Salon</div>
-              {/if}
-              <div>Vorlage</div>
-              <div>Wochentag</div>
-              <div>Min. Schicht-Gewicht</div>
-              <div>Aufsicht erforderlich</div>
-              <div class="cfg-row__actions">Aktionen</div>
-            </div>
-            {#each coverageRules as rule (rule.id)}
-              <div class="cfg-row cfg-row--rules" class:cfg-row--rules-salon={salonColumnShown}>
-                {#if salonColumnShown}
-                  {@const salonCell = coverageRuleSalonCell(rule)}
-                  <div>
-                    {salonCell.label}
-                    {#if salonCell.inactive}
-                      <span class="badge badge-yellow">{COVERAGE_RULE_SALON_INACTIVE_BADGE}</span>
-                    {/if}
-                  </div>
-                {/if}
-                <div class="cfg-cell-name">{ruleTemplateName(rule)}</div>
-                <div>{ruleDayLabel(rule)}</div>
-                <div class="cfg-cell-num">{Number(rule.minStaff).toFixed(2)}</div>
-                <div>{rule.requiresNonSupervised ? "Ja" : "Nein"}</div>
-                <div class="cfg-row__actions">
-                  <button type="button" class="btn btn-ghost sm" onclick={() => openEditRule(rule)}>
-                    Bearbeiten
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-ghost sm"
-                    onclick={() => askDeleteRule(rule.id)}
-                  >
-                    Löschen
-                  </button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        {/if}
-        {#snippet footer()}
-          <button type="button" class="btn btn-primary sm" onclick={openCreateRule}>
-            Neue Bedarfsregel
-          </button>
-        {/snippet}
-      </Section>
-    {:else if currentTab === "muster"}
-      <!-- ── Pattern-Editor section (Phase 48) ─────────────────────── -->
-      <!-- The template and coverage-rule editors above live in <Modal> — a modal draft is
-           dismissible by ESC and backdrop (Modal.svelte:26,33), which beforeNavigate never sees
-           and Section.dirty cannot render for. Modal drafts are deliberately out of the page
-           registry; only this Section carries a dirty prop. -->
-      <Section
-        title="Schicht-Muster (Wochenrhythmus)"
-        sub="Wiederkehrendes Wochenmuster je Person. Nur Mitarbeitende mit Arbeitszeitmodell „Nach Schichtplan“ erscheinen hier. Änderungen werden erst beim Klick auf „Muster speichern“ übernommen."
-        dirty={patternsDirty}
-      >
-        {#if shiftEmployees.length === 0}
-          <div class="callout info">
-            Noch niemand arbeitet nach Schichtplan. Stell das Arbeitszeitmodell unter
-            <a href="/admin/vacation">Personalstruktur</a> auf „Nach Schichtplan“ um, damit Mitarbeitende
-            hier erscheinen.
-          </div>
-        {:else}
-          <div class="pat-table">
-            <div class="pat-row pat-row--head">
-              <div>Mitarbeiter</div>
-              {#each DAY_NAMES as dn, dow (dow)}
-                <div class="pat-col-head">
-                  <span class="pat-dow">{dn}</span>
-                  {#if sollHintForDow(dow)}
-                    <span class="pat-soll">{sollHintForDow(dow)}</span>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-            {#each shiftEmployees as emp (emp.id)}
-              <div class="pat-row" class:pat-row--dirty={isRowDirty(emp.id)}>
-                <div class="cfg-cell-name">{employeeFullName(emp)}</div>
-                {#each [0, 1, 2, 3, 4, 5, 6] as dow (dow)}
-                  <div class="pat-cell" class:pat-cell--dirty={isCellDirty(emp.id, dow)}>
-                    <select
-                      class="form-input pat-select"
-                      value={patternMatrix[emp.id]?.[dow] ?? ""}
-                      onchange={(e) => {
-                        const v = (e.currentTarget as HTMLSelectElement).value;
-                        const row = patternMatrix[emp.id] ?? Array(7).fill(null);
-                        row[dow] = v === "" ? null : v;
-                        patternMatrix = { ...patternMatrix, [emp.id]: row };
-                      }}
-                      aria-label="{employeeFullName(emp)} {DAY_NAMES_LONG[dow]}"
-                    >
-                      <option value="">—</option>
-                      {#each templates as tpl (tpl.id)}
-                        <option value={tpl.id}>{tpl.name}</option>
-                      {/each}
-                    </select>
-                  </div>
-                {/each}
-              </div>
-            {/each}
-          </div>
-        {/if}
-        {#snippet footer()}
-          <button
-            type="button"
-            class="btn btn-primary sm"
-            onclick={saveBulkPatterns}
-            disabled={patternsSaving || dirtyEmployeeCount === 0}
-          >
-            {patternsSaving
-              ? "Speichern …"
-              : `Muster speichern${dirtyEmployeeCount > 0 ? ` (${dirtyEmployeeCount})` : ""}`}
-          </button>
-          {#if patternsMsg}
-            <span class="cfg-muted cfg-msg">{patternsMsg}</span>
-          {/if}
-        {/snippet}
-      </Section>
-    {/if}
-  {/snippet}
-</SectionStack>
-
-<!-- ── Modal: Template ───────────────────────────────────────── -->
-<Modal
-  bind:open={tplModalOpen}
-  eyebrow="Schicht-Konfiguration"
-  title={editingTplId ? "Vorlage bearbeiten" : "Neue Vorlage"}
->
-  {#if tplError}
-    <div class="callout error" role="alert">{tplError}</div>
-  {/if}
-  <div class="form-group">
-    <label class="form-label" for="tpl-name">Name *</label>
-    <input
-      id="tpl-name"
-      class="form-input"
-      type="text"
-      bind:value={tplName}
-      placeholder="z.B. Frühschicht"
-    />
-  </div>
-  <div class="form-row">
-    <div class="form-group">
-      <label class="form-label" for="tpl-start">Startzeit *</label>
-      <input id="tpl-start" class="form-input" type="time" bind:value={tplStart} />
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="tpl-end">Endzeit *</label>
-      <input id="tpl-end" class="form-input" type="time" bind:value={tplEnd} />
-    </div>
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="tpl-color">Farbe</label>
-    <input id="tpl-color" class="form-input form-input--color" type="color" bind:value={tplColor} />
-  </div>
-  <div class="cfg-palette" role="group" aria-label="Schichtfarbe wählen">
-    {#each SHIFT_PALETTE as p (p.token)}
-      <button
-        type="button"
-        class="cfg-swatch-btn"
-        style:background="var({p.token})"
-        title={p.label}
-        aria-label={p.label}
-        onclick={() => pickPaletteColor(p.token)}
-      ></button>
-    {/each}
-  </div>
-  {#snippet footer()}
-    <div class="spacer"></div>
-    <button type="button" class="btn btn-outline sm" onclick={() => (tplModalOpen = false)}
-      >Abbrechen</button
-    >
-    <button type="button" class="btn btn-primary sm" onclick={saveTemplate} disabled={saving}>
-      {saving ? "Speichern …" : "Speichern"}
-    </button>
-  {/snippet}
-</Modal>
-
-<!-- ── Modal: Coverage Rule ──────────────────────────────────── -->
-<Modal
-  bind:open={ruleModalOpen}
-  eyebrow="Schicht-Konfiguration"
-  title={ruleEditingId ? "Bedarfsregel bearbeiten" : "Neue Bedarfsregel"}
->
-  {#if ruleError}
-    <div class="callout error" role="alert">{ruleError}</div>
-  {/if}
-  <p class="cfg-help">
-    Die spezifischste Regel gewinnt: (Vorlage + Wochentag) &gt; (Alle Vorlagen + Wochentag) &gt;
-    (Vorlage + Alle Tage) &gt; (Alle Vorlagen + Alle Tage). Default ist 2.0 Schicht-Gewicht.
-  </p>
-  {#if salonOptionsShown}
-    <div class="form-group">
-      <label class="form-label" for="rule-salon">Salon</label>
-      <select id="rule-salon" class="form-input" bind:value={ruleSalonId}>
-        {#each ruleSalonChoices as choice (choice.value)}
-          <option value={choice.value}>{choice.label}</option>
-        {/each}
-      </select>
-    </div>
-    <p class="cfg-help">
-      Eine Regel für einen Salon geht auf derselben Stufe der Regel für alle Salons vor. Die Regel
-      gilt, wenn die Wochenansicht genau diesen Salon zeigt: bei Wahl in der Kopfleiste, für alle,
-      die nur diesen Salon planen, und in Unternehmen mit nur einem aktiven Salon. Sonst gelten nur
-      die Regeln für alle Salons.
-    </p>
-  {/if}
-  <div class="form-group">
-    <label class="form-label" for="rule-tpl">Vorlage</label>
-    <select id="rule-tpl" class="form-input" bind:value={ruleTemplateId}>
-      <option value="">Alle Vorlagen</option>
-      {#each templates as tpl (tpl.id)}
-        <option value={tpl.id}>{tpl.name}</option>
-      {/each}
-    </select>
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="rule-dow">Wochentag</label>
-    <select id="rule-dow" class="form-input" bind:value={ruleDayOfWeek}>
-      <option value={-1}>Alle Tage</option>
-      {#each DAY_NAMES_LONG as name, i (i)}
-        <option value={i}>{name}</option>
-      {/each}
-    </select>
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="rule-min">Min. Schicht-Gewicht *</label>
-    <input
-      id="rule-min"
-      class="form-input"
-      type="number"
-      step="0.25"
-      min="0"
-      max="99"
-      bind:value={ruleMinStaff}
-    />
-    <span class="cfg-muted cfg-hint">
-      Summe der coverageWeight-Werte (z.B. Azubi 0.5 + Vollzeit 1.0 = 1.5).
-    </span>
-  </div>
-  <div class="form-group">
-    <label class="cfg-checkbox-label">
-      <input type="checkbox" bind:checked={ruleRequiresNonSupervised} />
-      Aufsicht erforderlich (mindestens 1 nicht-aufsichtspflichtiger Mitarbeiter)
-    </label>
-  </div>
-  {#snippet footer()}
-    <div class="spacer"></div>
-    <button type="button" class="btn btn-outline sm" onclick={() => (ruleModalOpen = false)}
-      >Abbrechen</button
-    >
-    <button type="button" class="btn btn-primary sm" onclick={saveRule} disabled={saving}>
-      {saving ? "Speichern …" : "Speichern"}
-    </button>
-  {/snippet}
-</Modal>
-
-<!-- ── Confirmations ─────────────────────────────────────────── -->
-<ConfirmDialog
-  bind:open={tplDeleteConfirm.open}
-  title="Vorlage löschen?"
-  description={`Die Vorlage „${tplDeleteConfirm.name}" wird dauerhaft entfernt.`}
-  confirmLabel="Löschen"
-  danger
-  onConfirm={confirmDeleteTemplate}
+  sub="Schichtvorlagen, Bedarfsregeln, Wochenmuster und Einstellungen für den Dienstplan deines Unternehmens."
 />
 
-<ConfirmDialog
-  bind:open={ruleDeleteConfirm.open}
-  title="Bedarfsregel löschen?"
-  description="Die Bedarfsregel wird dauerhaft entfernt. Falls keine andere passende Regel existiert, gilt der Default (2.0)."
-  confirmLabel="Löschen"
-  danger
-  onConfirm={confirmDeleteRule}
-/>
-
-<style>
-  .cfg-loading {
-    padding: var(--s-6) 0;
-    color: var(--text-muted);
-    font-size: 14px;
-  }
-
-  .cfg-table {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin: 14px 0;
-  }
-  .cfg-row {
-    display: grid;
-    grid-template-columns: 60px 1fr 1fr 200px;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 4px;
-    border-bottom: 1px solid var(--border);
-    font-size: 14px;
-  }
-  .cfg-row--rules {
-    grid-template-columns: 1.5fr 1.2fr 1.2fr 1.5fr 180px;
-  }
-  /* Issue #647: the same row with the salon column in front. */
-  .cfg-row--rules-salon {
-    grid-template-columns: 1.2fr 1.5fr 1.2fr 1.2fr 1.5fr 180px;
-  }
-  /* .cfg-row--hours / .cfg-hours-table moved to /admin/system#allgemein (Phase 58). */
-  .cfg-row--head {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    border-bottom: 1px solid var(--border);
-  }
-  .cfg-row:last-child {
-    border-bottom: none;
-  }
-  .cfg-row__actions {
-    display: flex;
-    gap: 6px;
-    justify-content: flex-end;
-  }
-  .cfg-cell-name {
-    font-weight: 600;
-    color: var(--text);
-  }
-  .cfg-cell-num {
-    font-variant-numeric: tabular-nums;
-    font-family: var(--font-mono);
-  }
-  .cfg-swatch {
-    display: inline-block;
-    width: 24px;
-    height: 24px;
-    border-radius: var(--r-sm);
-    border: 1px solid var(--border);
-  }
-  .cfg-muted {
-    color: var(--text-muted);
-    font-size: 13.5px;
-  }
-  .cfg-msg {
-    font-style: italic;
-  }
-  .cfg-help {
-    background: var(--bg-subtle);
-    border-radius: var(--r-md);
-    padding: 10px 12px;
-    font-size: 13px;
-    color: var(--text-muted);
-    margin: 0 0 12px;
-  }
-  .cfg-hint {
-    display: block;
-    margin-top: 4px;
-    font-size: 12.5px;
-  }
-  .cfg-checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    color: var(--text);
-    cursor: pointer;
-  }
-  .cfg-palette {
-    display: flex;
-    gap: 8px;
-    margin: 8px 0 12px;
-    flex-wrap: wrap;
-  }
-  .cfg-swatch-btn {
-    width: 24px;
-    height: 24px;
-    border-radius: var(--r-sm);
-    border: 1px solid var(--border);
-    cursor: pointer;
-    padding: 0;
-  }
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-bottom: 10px;
-  }
-  .form-row {
-    display: flex;
-    gap: 12px;
-  }
-  .form-row .form-group {
-    flex: 1;
-  }
-  .form-input--color {
-    width: 48px;
-    height: 36px;
-    padding: 2px;
-    cursor: pointer;
-  }
-
-  @media (max-width: 720px) {
-    .cfg-row,
-    .cfg-row--rules,
-    .cfg-row--rules-salon {
-      grid-template-columns: 1fr;
-      gap: 4px;
-    }
-    .cfg-row__actions {
-      justify-content: flex-start;
-    }
-  }
-  /* Phase 47.5 mode radio block moved to /admin/system#allgemein (Phase 58). */
-
-  /* Phase 48 — Pattern-Editor table */
-  .pat-table {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin: 14px 0;
-  }
-  .pat-row {
-    display: grid;
-    grid-template-columns: minmax(160px, 1.4fr) repeat(7, minmax(110px, 1fr));
-    gap: 8px;
-    align-items: center;
-    padding: 6px 4px;
-    border-bottom: 1px solid var(--border);
-    font-size: 14px;
-  }
-  .pat-row:last-child {
-    border-bottom: none;
-  }
-  .pat-row--head {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .pat-row--dirty {
-    background: var(--brand-soft);
-    border-radius: var(--r-sm);
-  }
-  .pat-col-head {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .pat-dow {
-    color: var(--text-muted);
-  }
-  .pat-soll {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    text-transform: none;
-    letter-spacing: 0;
-  }
-  .pat-cell {
-    min-width: 0;
-  }
-  .pat-cell--dirty .pat-select {
-    border-color: var(--brand);
-    box-shadow: 0 0 0 1px var(--brand);
-  }
-  .pat-select {
-    width: 100%;
-    font-size: 13px;
-    padding: 4px 6px;
-  }
-  @media (max-width: 900px) {
-    .pat-row {
-      grid-template-columns: 1fr;
-      gap: 4px;
-    }
-  }
-</style>
+{#if visibleTabs.length === 0}
+  <div role="alert">
+    <Note tone="bad">Du hast keine Berechtigung für die Einstellungen des Dienstplans.</Note>
+  </div>
+{:else if error}
+  <ErrorState message={error} onRetry={loadAll} retrying={loading} />
+{:else if loading}
+  <Skeleton shape="card" count={2} lines={3} />
+{:else}
+  <PageTabs
+    tabs={visibleTabs.map(({ value, label }) => ({ value, label }))}
+    tab={activeTab}
+    onTabChange={selectTab}
+    tabsLabel="Bereiche des Dienstplans"
+  >
+    {#snippet panel(value)}
+      {#if value === "vorlagen"}
+        <ShiftTemplatesPanel {templates} onChanged={reloadLists} />
+      {:else if value === "bedarf"}
+        <CoverageRulesPanel rules={coverageRules} {templates} onChanged={reloadLists} />
+      {:else if value === "muster"}
+        <WeekPatternsPanel
+          employees={shiftEmployees}
+          {patterns}
+          {templates}
+          bind:changes={patternChanges}
+        />
+      {:else if value === "einstellungen" && settingsConfig !== null}
+        <DienstplanSettingsPanel config={settingsConfig} bind:changes={settingsChanges} />
+      {/if}
+    {/snippet}
+  </PageTabs>
+{/if}

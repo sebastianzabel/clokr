@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { pageLabel } from "$lib/nav/page-labels";
+  import { showDetailCrumb } from "$lib/nav/detail-crumb";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -9,33 +9,31 @@
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
   import { salonAdminRights, salonHolidayRights } from "$lib/page-rights";
-  import ListDetail from "$lib/components/admin/ListDetail.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
-  import DangerZone from "$lib/components/admin/DangerZone.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import OpeningHoursEditor from "$lib/components/admin/OpeningHoursEditor.svelte";
   import SalonHolidays from "$lib/components/admin/SalonHolidays.svelte";
-  import { FEDERAL_STATE_OPTIONS } from "$lib/salons/federal-states";
-  import { validateOpeningHours } from "$lib/salons/opening-hours";
+  import SalonMasterDataForm from "$lib/components/admin/salons/SalonMasterDataForm.svelte";
+  import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
   import {
-    createSalonBody,
-    emptySalonForm,
-    salonPatch,
-    salonToForm,
-    validateSalonForm,
-    type SalonDto,
-    type SalonFormErrors,
-    type SalonPatchKey,
-  } from "$lib/salons/salon-form";
+    DEFAULT_OPENING_HOURS,
+    prefillOpeningHours,
+    validateOpeningHours,
+    type OpeningHoursDay,
+  } from "$lib/salons/opening-hours";
+  import { salonPatch, salonToForm, type SalonDto } from "$lib/salons/salon-form";
 
-  /** The master-data keys the „Stammdaten“ section may send; the hours section sends its own. */
-  const MASTER_KEYS: readonly SalonPatchKey[] = [
-    "name",
-    "street",
-    "postalCode",
-    "city",
-    "federalState",
-  ];
+  /** The panels of an existing salon, in the order of the tab strip; the URL hash names one. */
+  const TABS = [
+    { value: "stammdaten", label: "Stammdaten" },
+    { value: "oeffnungszeiten", label: "Öffnungszeiten" },
+    { value: "feiertage", label: "Feiertage" },
+  ] as const;
+  const TAB_IDS = TABS.map((tab) => tab.value);
 
   const salonId = $derived($page.params.id);
   // Presentation only: the API refuses a write without salon:manage on its own.
@@ -45,20 +43,24 @@
   let salon = $state<SalonDto | null>(null);
   // Create mode: the route `/admin/salons/neu`, until the created salon has been adopted.
   const isCreate = $derived(salonId === "neu" && salon === null);
+  // The salon's name closes the top bar's path (#854: pages carry no breadcrumb of their own).
+  $effect(() => showDetailCrumb(salon ? salon.name : isCreate ? "Neuer Salon" : null));
 
   let loading = $state(true);
   let loadError = $state("");
   let forbidden = $state(false);
 
-  let form = $state(emptySalonForm());
-  let errors: SalonFormErrors = $state({});
-  let hoursErrors: Record<number, string> = $state({});
-  let savingMaster = $state(false);
+  let activeTab = $state<string>(TAB_IDS[0]);
+  // The holiday calendar is read from the API on first mount, so it is mounted only once its tab
+  // has been opened; the other panels stay mounted (their unsaved edits survive a tab switch).
+  let holidaysOpened = $state(false);
+
+  // The opening hours are this page's own section: the week being edited. The stored week is the
+  // baseline (`salon`), the SaveBar counts a difference through the same comparison the PATCH uses.
+  let hours = $state<OpeningHoursDay[]>(DEFAULT_OPENING_HOURS.map((day) => ({ ...day })));
   let savingHours = $state(false);
-  let creating = $state(false);
-  // Set after the server refused a Bundesland change (409 FEDERAL_STATE_IN_USE): the field stays
-  // locked for the rest of this visit, the other master data remain editable.
-  let federalStateLocked = $state(false);
+  // Unsaved changes the Stammdaten section reports (it owns its own snapshot).
+  let masterChanges = $state(0);
 
   // ── Lifecycle (D-06: a salon is deactivated, never deleted) ───────────────────────────────
   let deactivateOpen = $state(false);
@@ -68,48 +70,34 @@
   let activeSalonCount: number | null = $state(null);
   const isLastActiveSalon = $derived(Boolean(salon?.isActive) && activeSalonCount === 1);
 
+  /** The stored salon with the week being edited: the shape `salonPatch()` compares. */
+  function formWithHours(stored: SalonDto) {
+    return { ...salonToForm(stored), openingHours: hours };
+  }
+
   // ── Unsaved-section tracking (Phase 109, D-11/D-12) ───────────────────────────────────────
-  function snap(...values: unknown[]): string {
-    return JSON.stringify(values);
-  }
-
-  function masterSnapshotOf(values: typeof form): string {
-    return snap(values.name, values.street, values.postalCode, values.city, values.federalState);
-  }
-
-  // In create mode the baseline is the empty form.
-  let masterSnapshot = $state(masterSnapshotOf(emptySalonForm()));
-  let hoursSnapshot = $state(snap(emptySalonForm().openingHours));
-  let masterDirty = $derived(masterSnapshotOf(form) !== masterSnapshot);
-  let hoursDirty = $derived(snap(form.openingHours) !== hoursSnapshot);
+  const hoursPatch = $derived(
+    salon ? salonPatch(salon, formWithHours(salon), ["openingHours"]) : null,
+  );
+  const hoursChanges = $derived(hoursPatch ? 1 : 0);
+  // An invalid week can only exist after an edit, so its messages show once the section has one.
+  const hoursErrors = $derived(hoursChanges > 0 ? validateOpeningHours(hours) : {});
+  const totalChanges = $derived(masterChanges + hoursChanges);
 
   // The registration is gated on "the baseline has been taken": a failed or not-found load must
-  // not arm the navigation guard on a page that shows nothing but an error.
+  // not arm the navigation guard on a page that shows nothing but an error. ONE registration for
+  // all sections - a second one under the same id would let one section's cleanup disarm the others.
   let snapshotsReady = $state(false);
 
   $effect(() => {
-    markUnsaved("admin-salon-detail", snapshotsReady && (masterDirty || hoursDirty));
+    markUnsaved("admin-salon-detail", snapshotsReady && totalChanges > 0);
     return () => markUnsaved("admin-salon-detail", false);
   });
 
-  /** Takes a server row as the new baseline of the chosen parts of the form. */
-  function adopt(loaded: SalonDto, parts: { master?: boolean; hours?: boolean }) {
+  /** Takes a server row as the stored salon; `hours` follows only when the week is taken over too. */
+  function adopt(loaded: SalonDto, parts: { hours?: boolean }) {
     salon = loaded;
-    const fresh = salonToForm(loaded);
-    if (parts.master) {
-      form.name = fresh.name;
-      form.street = fresh.street;
-      form.postalCode = fresh.postalCode;
-      form.city = fresh.city;
-      form.federalState = fresh.federalState;
-      errors = {};
-      masterSnapshot = masterSnapshotOf(form);
-    }
-    if (parts.hours) {
-      form.openingHours = fresh.openingHours;
-      hoursErrors = {};
-      hoursSnapshot = snap(form.openingHours);
-    }
+    if (parts.hours) hours = prefillOpeningHours(loaded.openingHours);
   }
 
   /** Reloads the header salon context after every successful salon write (Issue #82, D-10). */
@@ -127,14 +115,22 @@
     }
   }
 
+  function selectTab(next: string) {
+    activeTab = next;
+    if (next === "feiertage") holidaysOpened = true;
+    writeTabHash(next);
+  }
+
   onMount(async () => {
+    activeTab = tabFromHash($page.url.hash, TAB_IDS);
+    if (activeTab === "feiertage") holidaysOpened = true;
     if (salonId === "neu") {
       snapshotsReady = true;
       loading = false;
       return;
     }
     try {
-      adopt(await api.get<SalonDto>(`/salons/${salonId}`), { master: true, hours: true });
+      adopt(await api.get<SalonDto>(`/salons/${salonId}`), { hours: true });
       snapshotsReady = true;
       await loadActiveSalonCount();
     } catch (err) {
@@ -150,83 +146,23 @@
     }
   });
 
-  function hasMessages(messages: Record<string, string | undefined>): boolean {
-    return Object.values(messages).some(Boolean);
-  }
-
-  async function createSalon() {
-    errors = validateSalonForm(form, "create");
-    hoursErrors = validateOpeningHours(form.openingHours);
-    if (hasMessages(errors) || hasMessages(hoursErrors)) {
-      toasts.error("Bitte prüf die markierten Felder.");
-      return;
-    }
-    creating = true;
-    try {
-      const created: SalonDto = await api.post("/salons", createSalonBody(form));
-      await refreshSalonContext();
-      toasts.success("Salon angelegt.");
-      // The same component instance shows the new salon after the navigation, so the created row
-      // becomes the baseline first and the unsaved registration is cleared before the move.
-      adopt(created, { master: true, hours: true });
-      markUnsaved("admin-salon-detail", false);
-      await goto(`/admin/salons/${created.id}`, { replaceState: true });
-    } catch (err) {
-      toasts.error(err instanceof Error ? err.message : "Anlegen fehlgeschlagen.");
-    } finally {
-      creating = false;
-    }
-  }
-
-  async function saveMasterData() {
-    if (!salon) return;
-    const all = validateSalonForm(form, "edit");
-    errors = {
-      name: all.name,
-      street: all.street,
-      postalCode: all.postalCode,
-      city: all.city,
-      federalState: all.federalState,
-    };
-    if (hasMessages(errors)) {
-      toasts.error("Bitte prüf die markierten Felder.");
-      return;
-    }
-    const patch = salonPatch(salon, form, MASTER_KEYS);
-    if (!patch) {
-      toasts.info("Keine Änderungen.");
-      return;
-    }
-    savingMaster = true;
-    try {
-      const updated: SalonDto = await api.patch(`/salons/${salon.id}`, patch);
-      adopt(updated, { master: true });
-      toasts.success("Stammdaten gespeichert.");
-      await refreshSalonContext();
-    } catch (err) {
-      // Decided by status and code only, never by the message text.
-      const data =
-        err instanceof ApiError ? (err.data as { code?: string } | undefined) : undefined;
-      if (err instanceof ApiError && err.status === 409 && data?.code === "FEDERAL_STATE_IN_USE") {
-        errors = { ...errors, federalState: err.message };
-        form.federalState = salon.federalState;
-        federalStateLocked = true;
-      } else {
-        toasts.error(err instanceof Error ? err.message : "Speichern fehlgeschlagen.");
-      }
-    } finally {
-      savingMaster = false;
-    }
+  async function afterCreate(created: SalonDto) {
+    // The same component instance shows the new salon after the navigation, so the created row
+    // becomes the baseline first and the unsaved registration is cleared before the move.
+    adopt(created, { hours: true });
+    masterChanges = 0;
+    markUnsaved("admin-salon-detail", false);
+    await goto(`/admin/salons/${created.id}`, { replaceState: true });
   }
 
   async function saveHours() {
     if (!salon) return;
-    hoursErrors = validateOpeningHours(form.openingHours);
-    if (hasMessages(hoursErrors)) {
+    const messages = validateOpeningHours(hours);
+    if (Object.values(messages).some(Boolean)) {
       toasts.error("Bitte prüf die markierten Tage.");
       return;
     }
-    const patch = salonPatch(salon, form, ["openingHours"]);
+    const patch = salonPatch(salon, formWithHours(salon), ["openingHours"]);
     if (!patch) {
       toasts.info("Keine Änderungen.");
       return;
@@ -242,6 +178,10 @@
     } finally {
       savingHours = false;
     }
+  }
+
+  function discardHours() {
+    if (salon) hours = prefillOpeningHours(salon.openingHours);
   }
 
   /**
@@ -287,278 +227,129 @@
 </script>
 
 {#if loading}
-  <div class="page-loading" role="status">Laden…</div>
+  <Skeleton shape="card" lines={3} />
 {:else if isCreate && !rights.canManage}
-  <div class="page-loading">Für das Anlegen von Salons fehlt dir die Berechtigung.</div>
+  <div role="alert">
+    <Note tone="info">Für das Anlegen von Salons fehlt dir die Berechtigung.</Note>
+  </div>
 {:else if forbidden}
-  <div class="page-loading">Für die Salonübersicht fehlt dir die Berechtigung.</div>
+  <div role="alert">
+    <Note tone="info">Für die Salonübersicht fehlt dir die Berechtigung.</Note>
+  </div>
 {:else if !isCreate && (loadError || !salon)}
-  <div class="page-error">{loadError || "Salon nicht gefunden."}</div>
-{:else}
-  <ListDetail
-    eyebrow="Administration"
-    title={salon ? salon.name : "Neuer Salon"}
-    sub={isCreate
-      ? "Stammdaten und Öffnungszeiten des neuen Salons"
-      : "Stammdaten, Öffnungszeiten und Feiertage dieses Salons"}
-    view="detail"
-    crumbs={[
-      { label: pageLabel("/admin/salons"), href: "/admin/salons" },
-      { label: salon ? salon.name : "Neuer Salon" },
-    ]}
+  <div role="alert"><Note tone="bad">{loadError || "Salon nicht gefunden."}</Note></div>
+{:else if isCreate}
+  <PageHead title="Neuer Salon" sub="Name, Adresse und Bundesland des neuen Salons" />
+  <SalonMasterDataForm
+    salon={null}
+    canEdit={rights.canManage}
+    bind:changes={masterChanges}
+    onCreated={afterCreate}
+  />
+{:else if salon}
+  {@const stored = salon}
+  <!-- Issue #854 (owner review): the same head as Personen › Detail - title and sub line on the
+         left, the three areas as the segment control on the right (PageHeader, tabsLook="segments"). -->
+  <PageHeader
+    title={salon.name}
+    subtitle="Stammdaten, Öffnungszeiten und Feiertage dieses Salons"
+    tabs={[...TABS]}
+    tab={activeTab}
+    onTabChange={selectTab}
+    tabsLook="segments"
+    tabsLabel="Bereiche des Salons"
   >
-    {#snippet tabContent(_tab)}
-      {#snippet masterFooter()}
-        <button
-          type="button"
-          class="btn btn-primary btn-sm"
-          onclick={saveMasterData}
-          disabled={savingMaster}
-        >
-          {savingMaster ? "Speichern …" : "Stammdaten speichern"}
-        </button>
-      {/snippet}
-      {#snippet hoursFooter()}
-        {#if isCreate}
-          <button
-            type="button"
-            class="btn btn-primary btn-sm"
-            onclick={createSalon}
-            disabled={creating}
-          >
-            {creating ? "Anlegen …" : "Salon anlegen"}
-          </button>
-        {:else}
-          <button
-            type="button"
-            class="btn btn-primary btn-sm"
-            onclick={saveHours}
-            disabled={savingHours}
-          >
-            {savingHours ? "Speichern …" : "Öffnungszeiten speichern"}
-          </button>
-        {/if}
-      {/snippet}
+    {#snippet actions()}
+      <Chip tone={stored.isActive ? "ok" : "neutral"}>{stored.isActive ? "Aktiv" : "Inaktiv"}</Chip>
+    {/snippet}
+    {#snippet panel(value)}
+      {#if value === "stammdaten"}
+        <div class="salon-panel">
+          <SalonMasterDataForm
+            salon={stored}
+            canEdit={rights.canManage}
+            bind:changes={masterChanges}
+            onSaved={(next) => adopt(next, {})}
+          />
 
-      <Section
-        title="Stammdaten"
-        sub="Name, Adresse und Bundesland. Das Bundesland bestimmt die gesetzlichen Feiertage des Salons."
-        dirty={masterDirty}
-        footer={rights.canManage && !isCreate ? masterFooter : undefined}
-      >
-        {#snippet actions()}
-          {#if salon}
-            <span
-              class="badge"
-              class:badge-green={salon.isActive}
-              class:badge-gray={!salon.isActive}
-            >
-              {salon.isActive ? "Aktiv" : "Inaktiv"}
-            </span>
-          {/if}
-        {/snippet}
-
-        <div class="salon-fields">
-          <div class="form-group">
-            <label class="form-label" for="salon-name">Name *</label>
-            <input
-              id="salon-name"
-              class="form-input"
-              type="text"
-              bind:value={form.name}
-              disabled={!rights.canManage}
-              aria-invalid={errors.name ? "true" : undefined}
-              aria-describedby={errors.name ? "salon-name-error" : undefined}
-            />
-            {#if errors.name}
-              <p class="form-error" id="salon-name-error">{errors.name}</p>
-            {/if}
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="salon-street">Straße</label>
-            <input
-              id="salon-street"
-              class="form-input"
-              type="text"
-              bind:value={form.street}
-              disabled={!rights.canManage}
-              aria-invalid={errors.street ? "true" : undefined}
-              aria-describedby={errors.street ? "salon-street-error" : undefined}
-            />
-            {#if errors.street}
-              <p class="form-error" id="salon-street-error">{errors.street}</p>
-            {/if}
-          </div>
-
-          <div class="salon-row">
-            <div class="form-group">
-              <label class="form-label" for="salon-postal-code">PLZ</label>
-              <input
-                id="salon-postal-code"
-                class="form-input"
-                type="text"
-                bind:value={form.postalCode}
-                disabled={!rights.canManage}
-                aria-invalid={errors.postalCode ? "true" : undefined}
-                aria-describedby={errors.postalCode ? "salon-postal-code-error" : undefined}
-              />
-              {#if errors.postalCode}
-                <p class="form-error" id="salon-postal-code-error">{errors.postalCode}</p>
-              {/if}
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="salon-city">Ort</label>
-              <input
-                id="salon-city"
-                class="form-input"
-                type="text"
-                bind:value={form.city}
-                disabled={!rights.canManage}
-                aria-invalid={errors.city ? "true" : undefined}
-                aria-describedby={errors.city ? "salon-city-error" : undefined}
-              />
-              {#if errors.city}
-                <p class="form-error" id="salon-city-error">{errors.city}</p>
-              {/if}
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="salon-federal-state">Bundesland *</label>
-            <select
-              id="salon-federal-state"
-              class="form-input"
-              bind:value={form.federalState}
-              disabled={!rights.canManage || federalStateLocked}
-              aria-invalid={errors.federalState ? "true" : undefined}
-              aria-describedby={errors.federalState
-                ? "salon-federal-state-error"
-                : "salon-federal-state-hint"}
-            >
-              {#if isCreate}
-                <option value="">Bitte wählen</option>
-              {/if}
-              {#each FEDERAL_STATE_OPTIONS as option (option.value)}
-                <option value={option.value}>{option.label}</option>
-              {/each}
-            </select>
-            {#if errors.federalState}
-              <p class="form-error" id="salon-federal-state-error">{errors.federalState}</p>
-            {:else}
-              <p class="form-hint" id="salon-federal-state-hint">
-                Das Bundesland lässt sich später nur ändern, solange keine Zeiteinträge oder
-                Zuordnungen auf diesen Salon verweisen.
+          {#if rights.canManage && !isCreate && stored.isActive}
+            <section class="settings-group" aria-labelledby="salon-deactivate-title">
+              <h2 class="settings-group-title" id="salon-deactivate-title">Salon deaktivieren</h2>
+              <p class="settings-group-desc">
+                Ein deaktivierter Salon bekommt keine neuen Zeiteinträge, Schichten oder
+                Zuordnungen. Verlauf und Auswertungen bleiben erhalten. Der Salon wird nie gelöscht
+                und kann jederzeit wieder aktiviert werden.
               </p>
-            {/if}
-          </div>
-        </div>
-      </Section>
+              <div>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-danger"
+                  onclick={() => (deactivateOpen = true)}
+                  disabled={isLastActiveSalon}
+                >
+                  Salon deaktivieren
+                </button>
+                {#if isLastActiveSalon}
+                  <p class="form-hint" id="salon-deactivate-hint">
+                    Der letzte aktive Salon kann nicht deaktiviert werden.
+                  </p>
+                {/if}
+              </div>
+              <ConfirmDialog
+                bind:open={deactivateOpen}
+                title="Salon deaktivieren?"
+                description={`„${stored.name}“ wird deaktiviert und bekommt keine neuen Zeiteinträge, Schichten oder Zuordnungen mehr. Verlauf und Auswertungen bleiben erhalten.`}
+                confirmLabel="Deaktivieren"
+                danger
+                onConfirm={deactivateSalon}
+              />
+            </section>
+          {/if}
 
-      <Section
-        title="Öffnungszeiten"
-        sub="Wochentägliche Öffnungs- und Schließzeiten dieses Salons. Die Schichtplanung prüft Schichten gegen diese Zeiten."
-        dirty={hoursDirty}
-        footer={rights.canManage ? hoursFooter : undefined}
-      >
+          {#if rights.canManage && !isCreate && !stored.isActive}
+            <section class="settings-group" aria-labelledby="salon-activate-title">
+              <h2 class="settings-group-title" id="salon-activate-title">Salon aktivieren</h2>
+              <p class="settings-group-desc">
+                Der Salon steht danach wieder für Zeiteinträge, Schichten und Zuordnungen zur
+                Verfügung. Es gilt die Salonanzahl des gebuchten Pakets.
+              </p>
+              <div>
+                <button type="button" class="btn btn-primary" onclick={() => (activateOpen = true)}>
+                  Salon aktivieren
+                </button>
+              </div>
+              <ConfirmDialog
+                bind:open={activateOpen}
+                title="Salon wieder aktivieren?"
+                description={`„${stored.name}“ wird wieder aktiv und ist für Zeiteinträge, Schichten und Zuordnungen auswählbar.`}
+                confirmLabel="Aktivieren"
+                onConfirm={activateSalon}
+              />
+            </section>
+          {/if}
+        </div>
+      {:else if value === "oeffnungszeiten"}
         <OpeningHoursEditor
-          bind:days={form.openingHours}
+          bind:days={hours}
           errors={hoursErrors}
           idPrefix="salon-hours"
           disabled={!rights.canManage}
+          changes={hoursChanges}
+          saving={savingHours}
+          onSave={saveHours}
+          onDiscard={discardHours}
         />
-      </Section>
-
-      {#if !isCreate && salon}
-        <SalonHolidays salonId={salon.id} canManage={holidayRights.canManage} />
-      {/if}
-
-      {#if rights.canManage && !isCreate && salon?.isActive}
-        <DangerZone
-          title="Salon deaktivieren"
-          description="Ein deaktivierter Salon bekommt keine neuen Zeiteinträge, Schichten oder Zuordnungen. Verlauf und Auswertungen bleiben erhalten. Der Salon wird nie gelöscht und kann jederzeit wieder aktiviert werden."
-        >
-          {#snippet actions()}
-            <div>
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm btn-danger"
-                onclick={() => (deactivateOpen = true)}
-                disabled={isLastActiveSalon}
-              >
-                Salon deaktivieren
-              </button>
-              {#if isLastActiveSalon}
-                <p class="form-hint" id="salon-deactivate-hint">
-                  Der letzte aktive Salon kann nicht deaktiviert werden.
-                </p>
-              {/if}
-            </div>
-            <ConfirmDialog
-              bind:open={deactivateOpen}
-              title="Salon deaktivieren?"
-              description={`„${salon?.name ?? ""}“ wird deaktiviert und bekommt keine neuen Zeiteinträge, Schichten oder Zuordnungen mehr. Verlauf und Auswertungen bleiben erhalten.`}
-              confirmLabel="Deaktivieren"
-              danger
-              onConfirm={deactivateSalon}
-            />
-          {/snippet}
-        </DangerZone>
-      {/if}
-
-      {#if rights.canManage && !isCreate && salon && !salon.isActive}
-        <Section
-          title="Salon aktivieren"
-          sub="Der Salon steht danach wieder für Zeiteinträge, Schichten und Zuordnungen zur Verfügung. Es gilt die Salonanzahl des gebuchten Pakets."
-        >
-          <button
-            type="button"
-            class="btn btn-primary btn-sm"
-            onclick={() => (activateOpen = true)}
-          >
-            Salon aktivieren
-          </button>
-          <ConfirmDialog
-            bind:open={activateOpen}
-            title="Salon wieder aktivieren?"
-            description={`„${salon.name}“ wird wieder aktiv und ist für Zeiteinträge, Schichten und Zuordnungen auswählbar.`}
-            confirmLabel="Aktivieren"
-            onConfirm={activateSalon}
-          />
-        </Section>
+      {:else if value === "feiertage" && holidaysOpened}
+        <SalonHolidays salonId={stored.id} canManage={holidayRights.canManage} />
       {/if}
     {/snippet}
-  </ListDetail>
+  </PageHeader>
 {/if}
 
 <style>
-  .page-loading,
-  .page-error {
-    padding: var(--s-6);
-    color: var(--text-muted);
-    font-size: 14px;
-  }
-
-  .page-error {
-    color: var(--bad);
-  }
-
-  .salon-fields {
+  .salon-panel {
     display: flex;
     flex-direction: column;
-    gap: var(--s-4);
-    max-width: 36rem;
-  }
-
-  .salon-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-    gap: var(--s-4);
-  }
-
-  @media (max-width: 480px) {
-    .salon-row {
-      grid-template-columns: minmax(0, 1fr);
-    }
+    gap: var(--s-8);
   }
 </style>

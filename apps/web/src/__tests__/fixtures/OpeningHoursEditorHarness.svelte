@@ -10,14 +10,25 @@
     disabled?: boolean;
     errors?: Record<number, string>;
     initial?: OpeningHoursDay[];
+    changes?: number;
+    onSave?: () => void;
+    onDiscard?: () => void;
   }
 
-  let { disabled = false, errors = {}, initial }: Props = $props();
+  let { disabled = false, errors = {}, initial, changes = 0, onSave, onDiscard }: Props = $props();
 
   // The initial week is read once on purpose: afterwards the editor owns the bound value.
   // svelte-ignore state_referenced_locally
   let days = $state<OpeningHoursDay[]>(initial ?? prefillOpeningHours(null));
 </script>
 
-<OpeningHoursEditor bind:days {disabled} {errors} idPrefix="harness" />
+<OpeningHoursEditor
+  bind:days
+  {disabled}
+  {errors}
+  idPrefix="harness"
+  {changes}
+  {onSave}
+  {onDiscard}
+/>
 <pre data-testid="bound-days">{JSON.stringify(days)}</pre>

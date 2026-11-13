@@ -467,7 +467,7 @@ describe("Roles API (Phase 73b, Issue #73)", () => {
   it("(o) AK-73-4: PATCH the system fixture with { name } and with { permissions } -> 409 with the exact message each time; row unchanged; zero audit rows", async () => {
     const before = await app.prisma.accessRole.findUniqueOrThrow({ where: { id: systemRoleId } });
     const SYSTEM_UPDATE_MESSAGE =
-      "Systemrollen können nicht geändert werden. Kopieren Sie die Rolle, um sie anzupassen.";
+      "Systemrollen können nicht geändert werden. Kopier die Rolle, um sie anzupassen.";
 
     const nameRes = await app.inject({
       method: "PATCH",

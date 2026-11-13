@@ -7,11 +7,11 @@
  *      employee list, an employee's detail page (every visible tab), the reports, the month close
  *      and the salon admin WITHOUT one API answer >= 400 and WITHOUT one request to a time-data
  *      endpoint (time entries, day breaks, retro requests, month saldo) — DSGVO Art. 5 lit. c;
- *   b. the tab strip shows Stammdaten, Arbeitszeit, Urlaub, Salons and never Berechtigungen or
- *      Gefahrenzone; HR changes a contract from the next month-first, adds and ends an Einsatzsalon,
- *      sets an exit date and finds the ended person with the filter „Ausgeschieden“;
+ *   b. the tab strip shows Person, Vertrag, Urlaub, Salons and never Zugang (the former Berechtigungen
+ *      and Gefahrenzone); HR changes a contract from the next month-first, adds and ends an
+ *      Einsatzsalon, sets an exit date and finds the ended person with the filter „Ausgeschieden“;
  *   c. HR creates an employee with a chosen Stammsalon in a tenant with two active salons;
- *   d. the list, the detail page (Salons and Arbeitszeit tabs) and the month close fit 390 and
+ *   d. the list, the detail page (Salons and Vertrag tabs) and the month close fit 390 and
  *      360 px in light and dark mode. The visual matrix runs on route interception: the interesting
  *      shapes (a long name, an ended person, an inactive salon, withheld day details) are
  *      fulfilled from fixtures instead of being produced by the real stack, so the cells do not
@@ -26,7 +26,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { APIRequestContext, Page, Route } from "@playwright/test";
+import type { APIRequestContext, Locator, Page, Route } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import type { TestTenant } from "../fixtures";
 import { measurePageOverflow } from "../helpers/viewport-geometry";
@@ -86,6 +86,16 @@ function addDays(day: string, n: number): string {
 }
 
 /** `YYYY-MM-DD` to the German `DD.MM.YYYY` the pages print. */
+/**
+ * Types an ISO day into a DatePicker field (segments Tag, Monat, Jahr in the German order): focus the
+ * first segment and type the digits as a person would; the field advances by itself.
+ */
+async function typeDay(field: Locator, isoDay: string): Promise<void> {
+  const [year, month, day] = isoDay.split("-");
+  await field.getByRole("spinbutton").first().click();
+  await field.page().keyboard.type(`${day}${month}${year}`);
+}
+
 function deDate(day: string): string {
   const [y, m, d] = day.split("-");
   return `${d}.${m}.${y}`;
@@ -301,20 +311,20 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(xRow).toBeVisible();
     await expect(xRow).toContainText(x.lastName);
 
-    await xRow.getByRole("link", { name: new RegExp(x.lastName) }).click();
-    await expect(page).toHaveURL(new RegExp(`/admin/employees/${x.id}`));
+    // #843 D-843-11: the list is a DataTable; the name cell is the row's keyboard control (a button).
+    await xRow.getByRole("button", { name: new RegExp(x.lastName) }).click();
+    await expect(page).toHaveURL(new RegExp(`/verwalten/personen/${x.id}`));
     await expect(
       page.getByRole("tabpanel").getByText("Persönliche Daten", { exact: true }),
     ).toBeVisible();
 
-    // The tab strip is exactly what HR may use; Berechtigungen and Gefahrenzone are absent.
+    // The tab strip is exactly what HR may use; Zugang (roles, account, anonymise) is absent (#854).
     const tabs = page.getByRole("tab");
-    await expect(tabs).toHaveText(["Stammdaten", "Arbeitszeit", "Urlaub", "Salons"]);
-    await expect(page.getByRole("tab", { name: "Berechtigungen" })).toHaveCount(0);
-    await expect(page.getByRole("tab", { name: "Gefahrenzone" })).toHaveCount(0);
+    await expect(tabs).toHaveText(["Person", "Vertrag", "Urlaub", "Salons"]);
+    await expect(page.getByRole("tab", { name: "Zugang" })).toHaveCount(0);
 
     // Walk every visible tab and wait for something that tab renders.
-    await page.getByRole("tab", { name: "Arbeitszeit" }).click();
+    await page.getByRole("tab", { name: "Vertrag" }).click();
     await expect(page.getByText("Arbeitszeitmodell", { exact: true }).first()).toBeVisible();
     await expect(page.getByTestId("contract-history")).toBeVisible();
 
@@ -325,7 +335,7 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(page.getByTestId("salon-assignments-table")).toBeVisible();
     await expect(page.getByTestId("salon-assignments-table")).toContainText("Stammsalon");
 
-    await page.getByRole("tab", { name: "Stammdaten" }).click();
+    await page.getByRole("tab", { name: "Person" }).click();
     await expect(
       page.getByRole("tabpanel").getByText("Persönliche Daten", { exact: true }),
     ).toBeVisible();
@@ -368,19 +378,27 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await page.goto(`${tenant.baseUrl}/admin/employees`);
     await expect(page.getByTestId(`admin-employees-row-${x.id}`)).toBeVisible();
     await page.getByTestId("admin-employees-add").click();
-    await page.locator("#c-firstname").fill("Yvonne");
-    await page.locator("#c-lastname").fill("Neuanlage");
-    await page.locator("#c-email").fill(`neu.${tenant.tenantId.toLowerCase()}@example.invalid`);
-    await page.locator("#c-empno").fill(`E86-neu-${tenant.tenantId.slice(-4)}`);
-    await page.getByLabel("Passwort direkt setzen (statt Einladungsmail)").check();
-    await page.locator("#c-password").fill(HR_PASSWORD);
-    const submit = page.getByRole("button", { name: "Mitarbeiter anlegen", exact: true });
-    // The Stammsalon is required with two active salons: nothing chosen, nothing to submit.
-    await expect(page.locator("#c-home-salon")).toBeVisible();
-    await expect(submit).toBeDisabled();
-    await page.locator("#c-home-salon").selectOption({ label: SECOND_SALON_NAME });
-    await expect(submit).toBeEnabled();
-    await submit.click();
+    // #854: the guided dialog - Person, Salon & Rolle, Vertrag, Einladung.
+    const dialog = page.getByRole("dialog", { name: "Person anlegen" });
+    const next = dialog.getByRole("button", { name: "Weiter", exact: true });
+    await dialog.getByLabel("Vorname").fill("Yvonne");
+    await dialog.getByLabel("Nachname").fill("Neuanlage");
+    await dialog
+      .getByLabel("E-Mail-Adresse")
+      .fill(`neu.${tenant.tenantId.toLowerCase()}@example.invalid`);
+    await dialog.getByLabel("Personalnummer").fill(`E86-neu-${tenant.tenantId.slice(-4)}`);
+    await next.click();
+    // The Stammsalon is required with two active salons: nothing chosen, the step is not left.
+    await expect(dialog.locator("#c-home-salon")).toBeVisible();
+    await next.click();
+    await expect(dialog.getByText("Wähle den Stammsalon.")).toBeVisible();
+    await expect(dialog.locator("#c-home-salon")).toBeVisible();
+    await dialog.locator("#c-home-salon").selectOption({ label: SECOND_SALON_NAME });
+    await next.click();
+    await next.click();
+    await dialog.getByRole("radio", { name: "Passwort setzen" }).click();
+    await dialog.locator('input[type="password"]').fill(HR_PASSWORD);
+    await dialog.getByRole("button", { name: "Person anlegen", exact: true }).click();
     await expect(page.getByRole("row", { name: /Neuanlage/ })).toBeVisible();
     // The chosen salon is what the server stored as the Stammsalon.
     const listRes = await request.get(`${API_BASE}/api/v1/employees`, {
@@ -400,24 +418,27 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     ]);
 
     // ── 2. AC-86-2: change the contract from the next month-first ─────────────────────────────
-    await page.getByTestId(`admin-employees-row-${x.id}`).getByRole("link").first().click();
-    await expect(page).toHaveURL(new RegExp(`/admin/employees/${x.id}`));
-    await page.getByRole("tab", { name: "Arbeitszeit" }).click();
+    // #843 D-843-11: the name cell of the DataTable row is a button, not a link.
+    await page.getByTestId(`admin-employees-row-${x.id}`).getByRole("button").first().click();
+    await expect(page).toHaveURL(new RegExp(`/verwalten/personen/${x.id}`));
+    await page.getByRole("tab", { name: "Vertrag" }).click();
     const contractHistory = page.getByTestId("contract-history");
-    await expect(contractHistory.locator("tbody tr")).toHaveCount(1);
-    const mondayHours = page.locator("#emp-day-mo");
+    await expect(contractHistory.getByRole("listitem")).toHaveCount(1);
+    const contractPanel = page.getByRole("tabpanel");
+    const mondayHours = contractPanel.getByLabel("Montag", { exact: true });
     await expect(mondayHours).toBeVisible();
     const before = Number(await mondayHours.inputValue());
     await mondayHours.fill(String(before - 2));
-    await page.locator("#e-valid-from").fill(nextFirst);
-    const modelSection = page.locator("section").filter({
-      has: page.locator(".section-title", { hasText: /^Arbeitszeitmodell$/ }),
-    });
-    await modelSection.getByRole("button", { name: "Speichern" }).click();
-    await expect(modelSection.getByText("Gespeichert")).toBeVisible();
-    await expect(contractHistory.locator("tbody tr")).toHaveCount(2);
-    await expect(contractHistory.locator("tbody tr").first()).toContainText(
-      `seit ${deDate(nextFirst)}`,
+    // #854 (owner review): „Gültig ab“ is a choice of months (month-firsts only); choosing the next
+    // month-first keeps the default (which already is that day), so the change succeeds on the first try.
+    await contractPanel.getByRole("combobox", { name: "Gültig ab" }).selectOption(nextFirst);
+    await contractPanel.getByRole("button", { name: "Vertrag speichern" }).click();
+    await expect(
+      page.getByText(`Vertrag gespeichert · gilt ab ${deDate(nextFirst)}`),
+    ).toBeVisible();
+    await expect(contractHistory.getByRole("listitem")).toHaveCount(2);
+    await expect(contractHistory.getByRole("listitem").first()).toContainText(
+      `ab ${deDate(nextFirst)}`,
     );
 
     // ── 3. AC-86-5: add an Einsatzsalon, end it; both rows stay listed ───────────────────────
@@ -426,15 +447,22 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(assignments.locator("tbody tr")).toHaveCount(1);
     await expect(assignments).toContainText("Stammsalon");
     await page.getByTestId("salon-assignment-add").click();
-    await page.locator("#sa-salon").selectOption({ label: SECOND_SALON_NAME });
-    await page.locator("#sa-from").fill(hireDay);
+    // #854: the form is a dialog; the days are DatePickers (segments Tag, Monat, Jahr).
+    const assignmentDialog = page.getByRole("dialog");
+    await assignmentDialog.getByRole("combobox", { name: "Salon", exact: true }).selectOption({
+      label: SECOND_SALON_NAME,
+    });
+    await typeDay(assignmentDialog.locator('[aria-label="Gültig ab"]'), hireDay);
     await page.getByTestId("salon-assignment-submit").click();
     const deployment = assignments.locator("tbody tr").filter({ hasText: SECOND_SALON_NAME });
     await expect(deployment).toHaveCount(1);
     await expect(deployment).toContainText("Einsatzsalon");
     await expect(deployment).not.toContainText("beendet");
     await deployment.getByRole("button", { name: "Beenden" }).click();
-    await page.locator("#sa-end").fill(addDays(hireDay, 9));
+    await typeDay(
+      page.getByRole("dialog").locator('[aria-label="Beendet zum"]'),
+      addDays(hireDay, 9),
+    );
     await page.getByTestId("salon-assignment-submit").click();
     await expect(deployment).toContainText("beendet");
     await expect(deployment.getByRole("button", { name: "Beenden" })).toHaveCount(0);
@@ -442,21 +470,21 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(assignments.locator("tbody tr")).toHaveCount(2);
 
     // ── 3b. the month close shows counts, never dates, for another person's gaps ──────────────
-    await page.goto(`${tenant.baseUrl}/admin/month-close`);
-    const yearSelect = page.getByTestId("month-close-year");
-    await expect(yearSelect).toBeVisible();
-    await yearSelect.selectOption(hireDay.slice(0, 4));
+    // #854: the year is part of the URL (the PeriodPicker steps it), the persons of a month are a table.
+    await page.goto(`${tenant.baseUrl}/admin/month-close?year=${hireDay.slice(0, 4)}`);
+    await expect(page.getByTestId("month-close-year-label")).toHaveText(hireDay.slice(0, 4));
     const monthRow = page.getByTestId(`month-close-row-${Number(hireDay.slice(5, 7))}`);
     await expect(monthRow).toBeVisible();
-    await monthRow.click();
-    const xDetail = page.locator(".detail-table tr").filter({ hasText: x.lastName });
+    await monthRow.locator("button.dt-primary").click();
+    const monthPersons = page.getByTestId("month-close-detail");
+    const xDetail = monthPersons.locator("tr").filter({ hasText: x.lastName });
     await expect(xDetail).toBeVisible();
     await expect(xDetail).toContainText(/\d+ Tage? ohne Eintrag/);
     await expect(xDetail).not.toContainText(/\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\./);
     await expect(page.getByTestId("month-close-withheld-hint")).toBeVisible();
     // The redaction follows the person: HR's own row (time-entry:read EIGENE over herself) keeps
     // its dates, which also proves the assertion above is not satisfied by an empty page.
-    await expect(page.locator(".detail-table tr").filter({ hasText: hr.lastName })).toContainText(
+    await expect(monthPersons.locator("tr").filter({ hasText: hr.lastName })).toContainText(
       /\d{2}\.\d{2}\./,
     );
 
@@ -464,34 +492,42 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await page.goto(`${tenant.baseUrl}/admin/employees/${x.id}`);
 
     // ── 4. AC-86-6: set the exit date (last, so no assignment rule about it interferes) ───────
-    await page.getByRole("tab", { name: "Stammdaten" }).click();
-    await page.locator("#e-exitdate").fill(exitDay);
-    const personal = page.locator("section").filter({
-      has: page.locator(".section-title", { hasText: /^Persönliche Daten$/ }),
-    });
+    await page.getByRole("tab", { name: "Person" }).click();
+    // #854: the exit date is a DatePicker (segments Tag, Monat, Jahr) in the group „Austritt und
+    // Urlaubsbasis“ with its own SaveBar; the answer is a toast.
+    const employment = page.getByRole("region", { name: "Austritt und Urlaubsbasis" });
+    await typeDay(employment.locator('[aria-label="Austrittsdatum"]'), exitDay);
     const exitSaved = page.waitForResponse(
       (r) => r.request().method() === "PATCH" && r.url().endsWith(`/api/v1/employees/${x.id}`),
     );
-    await personal.getByRole("button", { name: "Speichern" }).click();
+    await employment.getByRole("button", { name: "Austritt und Urlaubsbasis speichern" }).click();
     expect((await exitSaved).status(), "the exit date is saved").toBe(200);
-    await expect(personal.getByText("Gespeichert")).toBeVisible();
+    await expect(page.getByText("Austritt und Urlaubsbasis gespeichert.")).toBeVisible();
 
-    // ── 5. the ended employee is found with the filter „Ausgeschieden“ ───────────────────────
+    // ── 5. the ended employee stays in the list and is marked „Ausgeschieden“ ────────────────
+    // #854 (owner review): the shared PersonenTable lists everyone by default in Verwalten (AC-86-6);
+    // the employment state is the status chip, and „+ Status“ › „Aktiv“ narrows to the employed.
     await page.goto(`${tenant.baseUrl}/admin/employees`);
     await expect(page.getByTestId(`admin-employees-row-${hr.id}`)).toBeVisible();
-    await page.getByLabel("Nach Beschäftigung filtern").selectOption({ label: "Ausgeschieden" });
     await expect(page.getByTestId(`admin-employees-row-${x.id}`)).toBeVisible();
-    await expect(page.getByTestId(`admin-employees-row-${x.id}-employment`)).toHaveText(
-      `Ausgeschieden am ${deDate(exitDay)}`,
+    await expect(page.getByTestId(`admin-employees-row-${x.id}-status`)).toHaveText(
+      "Ausgeschieden",
     );
-    await expect(page.getByTestId(`admin-employees-row-${hr.id}`)).toHaveCount(0);
+    await page.getByRole("button", { name: "+ Status" }).click();
+    await page
+      .getByRole("radiogroup", { name: "Status" })
+      .getByRole("radio", { name: "Aktiv" })
+      .click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId(`admin-employees-row-${x.id}`)).toHaveCount(0);
+    await expect(page.getByTestId(`admin-employees-row-${hr.id}`)).toBeVisible();
 
     // ── 6. AC-86-3: „Berichte“ is in the navigation and the reports open without exports ─────
     await page
-      .getByRole("navigation", { name: "Team" })
+      .getByRole("navigation", { name: "Verwalten" }) // #844 (Z-03): Berichte live under Verwalten
       .getByRole("link", { name: "Berichte" })
       .click();
-    await expect(page).toHaveURL(/\/reports/);
+    await expect(page).toHaveURL(/\/verwalten\/berichte/);
     // Issue #612: the page is the period report - the HR principal gets the two period tabs and
     // the vacation overview on the second one, and still no export control of any kind.
     await expect(page.getByRole("tab", { name: "Zeiten & Konten" })).toHaveAttribute(
@@ -500,7 +536,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     );
     await page.getByRole("tab", { name: "Urlaub & Abwesenheit" }).click();
     await expect(page.getByText("Urlaubsübersicht", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("Lade Urlaubsübersicht…")).toHaveCount(0);
+    // #843 D-843-07: the tab loads through Skeleton; waiting for its status to vanish keeps this a real wait.
+    await expect(page.getByRole("status", { name: "Wird geladen" })).toHaveCount(0);
     await expect(page.getByText("DATEV-Export", { exact: true })).toHaveCount(0);
     // Issue #617: the Monatsexport card replaces the removed vacation-PDF card as the export control
     // the Personalabteilung (report:read, no report:export) must not see.
@@ -513,7 +550,8 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
 
     // ── 8. the salon admin opens ──────────────────────────────────────────────────────────────
     await page.goto(`${tenant.baseUrl}/admin/salons`);
-    await expect(page.getByRole("link", { name: SECOND_SALON_NAME })).toBeVisible();
+    // #854: the salon list is a DataTable; a row opens through its primary-cell button.
+    await expect(page.getByRole("button", { name: SECOND_SALON_NAME })).toBeVisible();
 
     // eslint-disable-next-line no-console
     console.log(`[hr-view-86 walk traffic]\n${traffic.lines().join("\n")}`);
@@ -830,7 +868,12 @@ async function checkCell(
     [...document.body.querySelectorAll("*")]
       .filter((e) => {
         const ox = getComputedStyle(e).overflowX;
-        return (ox === "hidden" || ox === "clip") && e.scrollWidth > e.clientWidth + 1;
+        if (ox !== "hidden" && ox !== "clip") return false;
+        // A visually hidden box (the 1 x 1 px sr-only recipe: a table caption, the head row of a
+        // stacked table) hides its content on purpose and for assistive technology only; it cuts
+        // nothing off that anyone sees. Any larger box is still measured.
+        if (e.clientWidth <= 1 && e.clientHeight <= 1) return false;
+        return e.scrollWidth > e.clientWidth + 1;
       })
       .slice(0, 8)
       .map(
@@ -885,12 +928,13 @@ test.describe("Issue #86 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         for (const p of people) {
           await expect(page.getByTestId(`admin-employees-row-${String(p.id)}`)).toBeVisible();
         }
+        // #854: the shared PersonenTable names the employment state in the status chip.
         await expect(
-          page.getByTestId(`admin-employees-row-${String(people[1].id)}-employment`),
-        ).toContainText("Ausgeschieden am");
+          page.getByTestId(`admin-employees-row-${String(people[1].id)}-status`),
+        ).toHaveText("Ausgeschieden");
         await expect(
-          page.getByTestId(`admin-employees-row-${String(people[2].id)}-employment`),
-        ).toContainText("Austritt am");
+          page.getByTestId(`admin-employees-row-${String(people[2].id)}-status`),
+        ).toHaveText("Austritt geplant");
         results.push(await checkCell(page, "employee-list", viewport.width, mode));
 
         // 2. the detail page, Salons tab: three rows incl. an inactive salon
@@ -906,8 +950,8 @@ test.describe("Issue #86 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         results.push(await checkCell(page, "employee-salons", viewport.width, mode));
 
         // 3. the detail page, Arbeitszeit tab: three contract rows
-        await page.getByRole("tab", { name: "Arbeitszeit" }).click();
-        await expect(page.getByTestId("contract-history").locator("tbody tr")).toHaveCount(3);
+        await page.getByRole("tab", { name: "Vertrag" }).click();
+        await expect(page.getByTestId("contract-history").getByRole("listitem")).toHaveCount(3);
         await expect(page.getByText(/Danger/)).toHaveCount(0);
         results.push(await checkCell(page, "employee-arbeitszeit", viewport.width, mode));
 
@@ -915,9 +959,9 @@ test.describe("Issue #86 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         await page.goto(`${tenant.baseUrl}/admin/month-close`);
         await expect(page.getByTestId("month-close-withheld-hint")).toBeVisible();
         await expect(page.getByTestId("month-close-deferred")).toContainText("4 Tage ohne Eintrag");
-        await page.getByTestId("month-close-row-3").click();
+        await page.getByTestId("month-close-row-3").locator("button.dt-primary").click();
         await expect(
-          page.locator(".detail-table tr").filter({ hasText: "Probe, Anna" }),
+          page.getByTestId("month-close-detail").locator("tr").filter({ hasText: "Probe, Anna" }),
         ).toContainText("4 Tage ohne Eintrag");
         results.push(await checkCell(page, "month-close", viewport.width, mode));
 

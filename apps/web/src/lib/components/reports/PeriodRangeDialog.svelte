@@ -1,9 +1,13 @@
 <script lang="ts">
-  // Issue #612 (D-612-1, UI-SPEC "„Zeitraum wählen“ dialog") — choose a period of up to twelve
-  // whole months. The dialog validates with `validateRange` (the same rule the URL parser clamps
-  // with), applies through `onApply` and owns no URL and no navigation.
+  // Issue #612 (D-612-1) rebuilt on the blocks for Issue #854: choose a period of up to twelve whole
+  // months - the five presets, or „Von“ and „Bis“ as month and year. The dialog validates with
+  // `validateRange` (the same rule the URL parser clamps with), applies through `onApply` and owns
+  // no URL and no navigation. It is the one place presets live since the period bar is a
+  // PeriodPicker (arrows and zoom only).
   import { untrack } from "svelte";
-  import Modal from "$components/ui/Modal.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import Note from "$components/ui/Note.svelte";
   import type { YearMonth } from "$lib/reports/period-report";
   import {
     activePreset,
@@ -31,8 +35,6 @@
   let fromYear = $state(2000);
   let toMonth = $state(1);
   let toYear = $state(2000);
-  // Decided once per opening: the narrow layout lists the presets and focuses one of them.
-  let narrow = $state(false);
 
   const presets = $derived(presetPeriods(today));
   // Issue #781: exactly one preset is pressed; the clicked one wins while it still matches.
@@ -52,10 +54,6 @@
       fromYear = from.year;
       toMonth = to.month;
       toYear = to.year;
-      narrow =
-        typeof window !== "undefined" &&
-        typeof window.matchMedia === "function" &&
-        window.matchMedia("(max-width: 960px)").matches;
     });
   });
 
@@ -73,17 +71,17 @@
   }
 </script>
 
-<Modal bind:open eyebrow="Berichte" title="Zeitraum wählen">
+<Dialog bind:open eyebrow="Berichte" title="Zeitraum wählen">
   <section class="range-presets" aria-labelledby="range-presets-title">
     <h4 id="range-presets-title" class="range-section-title">Schnellauswahl</h4>
     <div class="range-preset-list">
       {#each presets as preset (preset.key)}
         <button
           type="button"
-          class="btn btn-outline"
+          class="btn btn-secondary"
           class:is-active={pressed === preset.key}
           aria-pressed={pressed === preset.key}
-          data-autofocus={narrow && preset.key === autofocusPreset ? "" : undefined}
+          data-autofocus={preset.key === autofocusPreset ? "" : undefined}
           onclick={() => applyPreset(preset.key, preset.from, preset.to)}>{preset.label}</button
         >
       {/each}
@@ -94,55 +92,56 @@
     <fieldset class="range-fieldset">
       <legend class="range-section-title">Von</legend>
       <div class="range-selects">
-        <div>
-          <label class="form-label" for="range-from-month">Monat</label>
-          <select
-            id="range-from-month"
-            class="form-input"
-            bind:value={fromMonth}
-            data-autofocus={narrow ? undefined : ""}
-          >
-            {#each MONTH_NAMES_DE as name, i (name)}
-              <option value={i + 1}>{name}</option>
-            {/each}
-          </select>
-        </div>
-        <div>
-          <label class="form-label" for="range-from-year">Jahr</label>
-          <select id="range-from-year" class="form-input" bind:value={fromYear}>
-            {#each years as year (year)}
-              <option value={year}>{year}</option>
-            {/each}
-          </select>
-        </div>
+        <FormField label="Monat">
+          {#snippet field({ id })}
+            <select {id} bind:value={fromMonth}>
+              {#each MONTH_NAMES_DE as name, i (name)}
+                <option value={i + 1}>{name}</option>
+              {/each}
+            </select>
+          {/snippet}
+        </FormField>
+        <FormField label="Jahr">
+          {#snippet field({ id })}
+            <select {id} bind:value={fromYear}>
+              {#each years as year (year)}
+                <option value={year}>{year}</option>
+              {/each}
+            </select>
+          {/snippet}
+        </FormField>
       </div>
     </fieldset>
 
     <fieldset class="range-fieldset">
       <legend class="range-section-title">Bis</legend>
       <div class="range-selects">
-        <div>
-          <label class="form-label" for="range-to-month">Monat</label>
-          <select id="range-to-month" class="form-input" bind:value={toMonth}>
-            {#each MONTH_NAMES_DE as name, i (name)}
-              <option value={i + 1}>{name}</option>
-            {/each}
-          </select>
-        </div>
-        <div>
-          <label class="form-label" for="range-to-year">Jahr</label>
-          <select id="range-to-year" class="form-input" bind:value={toYear}>
-            {#each years as year (year)}
-              <option value={year}>{year}</option>
-            {/each}
-          </select>
-        </div>
+        <FormField label="Monat">
+          {#snippet field({ id })}
+            <select {id} bind:value={toMonth}>
+              {#each MONTH_NAMES_DE as name, i (name)}
+                <option value={i + 1}>{name}</option>
+              {/each}
+            </select>
+          {/snippet}
+        </FormField>
+        <FormField label="Jahr">
+          {#snippet field({ id })}
+            <select {id} bind:value={toYear}>
+              {#each years as year (year)}
+                <option value={year}>{year}</option>
+              {/each}
+            </select>
+          {/snippet}
+        </FormField>
       </div>
     </fieldset>
   </div>
 
   {#if error}
-    <p class="form-error range-error" role="alert">{RANGE_ERROR_TEXT[error]}</p>
+    <div class="range-error" role="alert">
+      <Note tone="bad">{RANGE_ERROR_TEXT[error]}</Note>
+    </div>
   {/if}
 
   {#snippet footer()}
@@ -151,37 +150,31 @@
       >Zeitraum übernehmen</button
     >
   {/snippet}
-</Modal>
+</Dialog>
 
 <style>
   .range-section-title {
     margin: 0 0 var(--s-2);
     padding: 0;
-    font-size: 15px;
+    font-size: var(--fs-base);
     font-weight: 600;
     line-height: 1.3;
     color: var(--text);
   }
 
-  /* The presets are the narrow-viewport entry; wide screens have them in the bar. */
   .range-presets {
-    display: none;
     margin-bottom: var(--s-4);
   }
 
   .range-preset-list {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: var(--s-2);
-  }
-
-  .range-preset-list .btn {
-    width: 100%;
   }
 
   .range-preset-list .btn.is-active {
     background: var(--brand-soft);
-    border-color: var(--brand-light);
+    border-color: var(--brand);
     color: var(--text);
     font-weight: 600;
   }
@@ -207,14 +200,6 @@
 
   .range-error {
     margin: var(--s-3) 0 0;
-    font-size: 12px;
-    line-height: 1.4;
-  }
-
-  @media (max-width: 960px) {
-    .range-presets {
-      display: block;
-    }
   }
 
   @media (max-width: 480px) {

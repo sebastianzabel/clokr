@@ -1,7 +1,7 @@
 // Issue #595 (D-04), Plan 595-04 - one label helper for the stored day count of a leave request.
 import { describe, it, expect } from "vitest";
 
-import { calendarDaysUnit, leaveDaysLabel } from "../leave-days-label";
+import { calendarDaysUnit, formatDayCount, leaveDaysLabel } from "../leave-days-label";
 
 describe("leaveDaysLabel", () => {
   it("names the stored day count of a sick request Arbeitstage (it is a workday price)", () => {
@@ -33,5 +33,28 @@ describe("calendarDaysUnit", () => {
     expect(calendarDaysUnit(0)).toBe("Kalendertage");
     expect(calendarDaysUnit(4)).toBe("Kalendertage");
     expect(calendarDaysUnit(0.5)).toBe("Kalendertage");
+  });
+});
+
+// Issue #853-19: a day figure that is the result of a float subtraction is shown rounded, with the
+// German decimal comma, and the singular is decided on what is shown.
+describe("formatDayCount", () => {
+  it("rounds a float result to at most two decimals", () => {
+    expect(30 - 10.01).not.toBe(19.99); // 19.990000000000002
+    expect(formatDayCount(30 - 10.01)).toBe("19,99 Tage");
+    expect(formatDayCount(15.420000000000002)).toBe("15,42 Tage");
+    expect(formatDayCount(0.1 + 0.2)).toBe("0,3 Tage");
+  });
+
+  it("keeps whole numbers and the singular", () => {
+    expect(formatDayCount(30)).toBe("30 Tage");
+    expect(formatDayCount(1)).toBe("1 Tag");
+    expect(formatDayCount(1.0000000000000002)).toBe("1 Tag");
+    expect(formatDayCount(0)).toBe("0 Tage");
+  });
+
+  it("leaveDaysLabel uses it for a stored count with decimals, sick types included", () => {
+    expect(leaveDaysLabel(2.5, false, "VACATION")).toBe("2,5 Tage");
+    expect(leaveDaysLabel(2.5, false, "SICK")).toBe("2,5 Arbeitstage");
   });
 });

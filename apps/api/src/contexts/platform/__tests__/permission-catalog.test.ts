@@ -161,6 +161,13 @@ const ISSUE_72_TABLE: readonly IssueTableRow[] = [
     relation: "Person",
     actions: ["read", "close", "unlock", "close-year"],
   },
+  // Issue #599: the ticket that justifies the resource (correction request for a closed month).
+  {
+    resource: "month-correction",
+    context: "Arbeitszeitkonto",
+    relation: "Person",
+    actions: ["read", "create", "approve"],
+  },
   { resource: "shift", context: "Schichtplanung", relation: "Person", actions: ["read", "plan"] },
   { resource: "shift-config", context: "Schichtplanung", relation: "Mandant", actions: ["manage"] },
   {

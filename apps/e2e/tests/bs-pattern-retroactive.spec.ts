@@ -11,9 +11,9 @@
  *   - `apps/e2e/helpers/bs-pattern.ts`'s `createAzubiEmployee()` / `seedBSPattern()` — pure
  *     `fetch()`-based API setup against current, verified-live endpoints.
  *   - The wizard's own `bs-retro-*` testid contract (103-04-SUMMARY.md), which does exist.
- *   - Plain-text/role locators for the BS-pattern editor's weekday chips and Speichern
- *     button — that editor carries NO `data-testid`s at all (verified by a live grep before
- *     writing this spec), so text/role locators are the only stable option there.
+ *   - Role/label locators for the BS-pattern editor's weekday checkboxes and its SaveBar
+ *     button („Berufsschultage speichern“, Issue #854) — the editor carries no `data-testid`s,
+ *     so role/label locators are the stable option there.
  *
  * Every date is computed relative to the run date — never a hardcoded absolute calendar date
  * (this project has a documented history of date-hardcoded e2e tests expiring into false
@@ -105,8 +105,23 @@ function authHeaders(t: { adminToken: string }): Record<string, string> {
 }
 
 // Schema convention (103-BEFUND.md, `dowMondayBased` in vocational-school-generator.ts):
-// 0 = Montag .. 6 = Sonntag. Matches BS_WEEKDAY_LABELS in the admin employee page verbatim.
-const WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as const;
+// 0 = Montag .. 6 = Sonntag. Matches the pattern indices of the Berufsschultage group (labels: the weekday checkboxes).
+const WEEKDAY_FULL = [
+  "Montag",
+  "Dienstag",
+  "Mittwoch",
+  "Donnerstag",
+  "Freitag",
+  "Samstag",
+  "Sonntag",
+] as const;
+
+/** The „Berufsschultage“ group of the Vertrag tab (Issue #854): its weekday checkboxes and its SaveBar. */
+function berufsschultageGroup(page: Page) {
+  return page.locator("section.settings-group").filter({
+    has: page.getByRole("heading", { name: "Berufsschultage", exact: true }),
+  });
+}
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -244,25 +259,15 @@ test.describe("Retroactive BS-Pattern wizard", () => {
     await loginBrowserAsTenantAdmin(page, tenant.tenantId);
     await page.goto(`/admin/employees/${employeeId}#arbeitszeit`);
 
-    const bsSection = page
-      .locator("section")
-      .filter({ has: page.locator(".section-title", { hasText: "Berufsschultag (Optional)" }) });
+    const bsSection = berufsschultageGroup(page);
 
     // Wait for the pattern to hydrate before touching chips.
-    await expect(
-      bsSection.locator(".bs-chip-row button", {
-        hasText: new RegExp(`^${WEEKDAY_LABELS[dayA]}$`),
-      }),
-    ).toHaveClass(/chip-brand/);
+    await expect(bsSection.getByLabel(WEEKDAY_FULL[dayA])).toBeChecked();
     await expect(page.getByTestId("bs-retro-step-2")).not.toBeAttached();
 
-    await bsSection
-      .locator(".bs-chip-row button", { hasText: new RegExp(`^${WEEKDAY_LABELS[dayA]}$`) })
-      .click();
-    await bsSection
-      .locator(".bs-chip-row button", { hasText: new RegExp(`^${WEEKDAY_LABELS[dayB]}$`) })
-      .click();
-    await bsSection.getByRole("button", { name: /^Speichern/ }).click();
+    await bsSection.getByLabel(WEEKDAY_FULL[dayA]).click();
+    await bsSection.getByLabel(WEEKDAY_FULL[dayB]).click();
+    await bsSection.getByRole("button", { name: "Berufsschultage speichern" }).click();
 
     // Toast success is transient (2s auto-dismiss) and can race the async retroactive-
     // preview fetch that follows it; the wizard's own correct appearance below is a
@@ -326,22 +331,12 @@ test.describe("Retroactive BS-Pattern wizard", () => {
 
     await loginBrowserAsTenantAdmin(page, tenant.tenantId);
     await page.goto(`/admin/employees/${employeeId}#arbeitszeit`);
-    const bsSection = page
-      .locator("section")
-      .filter({ has: page.locator(".section-title", { hasText: "Berufsschultag (Optional)" }) });
-    await expect(
-      bsSection.locator(".bs-chip-row button", {
-        hasText: new RegExp(`^${WEEKDAY_LABELS[dayA]}$`),
-      }),
-    ).toHaveClass(/chip-brand/);
+    const bsSection = berufsschultageGroup(page);
+    await expect(bsSection.getByLabel(WEEKDAY_FULL[dayA])).toBeChecked();
 
-    await bsSection
-      .locator(".bs-chip-row button", { hasText: new RegExp(`^${WEEKDAY_LABELS[dayA]}$`) })
-      .click();
-    await bsSection
-      .locator(".bs-chip-row button", { hasText: new RegExp(`^${WEEKDAY_LABELS[dayB]}$`) })
-      .click();
-    await bsSection.getByRole("button", { name: /^Speichern/ }).click();
+    await bsSection.getByLabel(WEEKDAY_FULL[dayA]).click();
+    await bsSection.getByLabel(WEEKDAY_FULL[dayB]).click();
+    await bsSection.getByRole("button", { name: "Berufsschultage speichern" }).click();
     // Toast success is transient (2s auto-dismiss) and can race the async retroactive-
     // preview fetch that follows it; the wizard's own correct appearance below is a
     // strictly stronger proof the save succeeded, so the toast is not asserted here.
@@ -408,22 +403,12 @@ test.describe("Retroactive BS-Pattern wizard", () => {
 
     await loginBrowserAsTenantAdmin(page, tenant.tenantId);
     await page.goto(`/admin/employees/${employeeId}#arbeitszeit`);
-    const bsSection = page
-      .locator("section")
-      .filter({ has: page.locator(".section-title", { hasText: "Berufsschultag (Optional)" }) });
-    await expect(
-      bsSection.locator(".bs-chip-row button", {
-        hasText: new RegExp(`^${WEEKDAY_LABELS[dayA]}$`),
-      }),
-    ).toHaveClass(/chip-brand/);
+    const bsSection = berufsschultageGroup(page);
+    await expect(bsSection.getByLabel(WEEKDAY_FULL[dayA])).toBeChecked();
 
-    await bsSection
-      .locator(".bs-chip-row button", { hasText: new RegExp(`^${WEEKDAY_LABELS[dayA]}$`) })
-      .click();
-    await bsSection
-      .locator(".bs-chip-row button", { hasText: new RegExp(`^${WEEKDAY_LABELS[dayB]}$`) })
-      .click();
-    await bsSection.getByRole("button", { name: /^Speichern/ }).click();
+    await bsSection.getByLabel(WEEKDAY_FULL[dayA]).click();
+    await bsSection.getByLabel(WEEKDAY_FULL[dayB]).click();
+    await bsSection.getByRole("button", { name: "Berufsschultage speichern" }).click();
     // Toast success is transient (2s auto-dismiss) and can race the async retroactive-
     // preview fetch that follows it; the wizard's own correct appearance below is a
     // strictly stronger proof the save succeeded, so the toast is not asserted here.
@@ -476,19 +461,16 @@ test.describe("Retroactive BS-Pattern wizard", () => {
 
     await loginBrowserAsTenantAdmin(page, tenant.tenantId);
     await page.goto(`/admin/employees/${employeeId}#arbeitszeit`);
-    const bsSection = page
-      .locator("section")
-      .filter({ has: page.locator(".section-title", { hasText: "Berufsschultag (Optional)" }) });
-    await expect(
-      bsSection.locator(".bs-chip-row button", {
-        hasText: new RegExp(`^${WEEKDAY_LABELS[dayA]}$`),
-      }),
-    ).toHaveClass(/chip-brand/);
+    const bsSection = berufsschultageGroup(page);
+    await expect(bsSection.getByLabel(WEEKDAY_FULL[dayA])).toBeChecked();
 
-    // No field changes — a plain re-save of an already-future pattern must stay silent.
+    // The SaveBar exists only with an unsaved change (Issue #854), so the re-save of the already-future
+    // pattern carries one forward change: one more weekday, still starting in the future. It must stay
+    // silent about the past.
+    await bsSection.getByLabel(WEEKDAY_FULL[(dayA + 2) % 7]).click();
     // Toast.svelte carries no data-testid (confirmed by a live grep — 0 hits repo-wide);
     // `.toast-success` is the component's own real class, per its `class="toast toast-{type}"`.
-    await bsSection.getByRole("button", { name: /^Speichern/ }).click();
+    await bsSection.getByRole("button", { name: "Berufsschultage speichern" }).click();
     await expect(page.locator(".toast-success")).toContainText("Berufsschultage gespeichert");
     await expect(page.getByTestId("bs-retro-dialog")).not.toBeAttached();
   });

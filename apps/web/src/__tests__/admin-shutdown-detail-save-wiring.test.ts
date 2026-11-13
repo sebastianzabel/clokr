@@ -1,18 +1,20 @@
 // Phase 109 (Issue #35), Plan 10, Task 1 — Wave-0 (gap closure) regression net for
-// `admin/shutdowns/[id]/+page.svelte` (528 lines, zero prior test coverage).
+// `admin/shutdowns/[id]/+page.svelte` (528 lines, zero prior test coverage). Issue #854 (plan 854-12) rebuilt the
+// page on the blocks of #843 (SettingsGroup with its own SaveBar, DataTable, Dialog); the assertions below are the
+// same ones, re-pointed at the new markup where the old markup (`Section`, `Modal`, `onclick`) is gone.
 //
 // This is a source-read PIN, not a behaviour test: `apps/web/vitest.config.ts` has no
 // `$app` alias, so a route page cannot be mounted (see `nav-guard.test.ts` for the
 // established `readRouteFile` shape this file follows).
 //
 // What this pins (T-109-41):
-// - D-01: `saveShutdown` (the "Betriebsurlaub" section) writes only via its section button,
+// - D-01: `saveShutdown` (the "Zeitraum und Einstellungen" section) writes only via its SaveBar,
 //   never on a field change — a half-typed date range must never reach the server.
 // - The exact five-field `PATCH` payload, keyed to five named `$state` variables, is the
 //   contract plan 109-13 must snapshot.
 // - `onMount` can return early, twice, BEFORE any of the five fields are hydrated — plan 109-13
 //   must arm its `snapshotsReady` gate only after the last field assignment, never earlier.
-// - The exceptions `<Modal>` is out of navigation-guard scope (modal dismissal, not page nav).
+// - The exceptions `<Dialog>` is out of navigation-guard scope (modal dismissal, not page nav).
 // - AK-02: no text/number input on this page carries an inline write handler.
 
 import { readFileSync } from "node:fs";
@@ -76,12 +78,13 @@ function textOrNumberInputHandlers(source: string): string[] {
 }
 
 describe("D-01 — the Betriebsurlaub form saves only on its section button", () => {
-  it("saveShutdown is wired via onclick=", () => {
-    expect(PAGE).toContain("onclick={saveShutdown}");
+  it("saveShutdown is wired as the SaveBar's onSave", () => {
+    expect(PAGE).toContain("onSave={saveShutdown}");
   });
 
-  it("saveShutdown is never wired via onchange=", () => {
+  it("saveShutdown is never wired via onchange= or oninput=", () => {
     expect(PAGE).not.toContain("onchange={saveShutdown}");
+    expect(PAGE).not.toContain("oninput={saveShutdown}");
   });
 });
 
@@ -128,17 +131,18 @@ describe("onMount can return before the fields are hydrated", () => {
 });
 
 describe("the exception modal is out of scope", () => {
-  it("the page has a <Modal> for adding exceptions", () => {
-    expect(PAGE).toContain("<Modal");
+  it("the page has a <Dialog> for adding exceptions", () => {
+    expect(PAGE).toContain("<Dialog");
+    expect(PAGE).not.toContain("<Modal");
   });
 
-  it("addException is wired via onclick=", () => {
-    expect(PAGE).toContain("onclick={addException}");
+  it("addException runs from the dialog's form submit, never from a field", () => {
+    expect(PAGE).toContain("void addException();");
+    expect(PAGE).not.toContain("onchange={addException}");
   });
 
-  // A <Modal> draft is dismissible by ESC and backdrop (Modal.svelte:26,33), which is a
-  // modal-dismissal concern, not a navigation one — Section.dirty cannot render for it and
-  // beforeNavigate never fires for it.
+  // A <Dialog> draft is dismissible by ESC and backdrop, which is a dialog-dismissal concern, not a
+  // navigation one - the SaveBar cannot render for it and beforeNavigate never fires for it.
 });
 
 describe("AK-02", () => {
@@ -201,15 +205,41 @@ describe("D-11/D-12 — unsaved marker and guard registration on admin/shutdowns
     }
   });
 
-  it("exactly one dirty={ prop, on the Betriebsurlaub section", () => {
-    const matches = PAGE.match(/dirty=\{/g) ?? [];
-    expect(matches).toHaveLength(1);
-    const sectionStart = PAGE.indexOf('<Section title="Betriebsurlaub"');
-    expect(sectionStart).toBeGreaterThan(-1);
-    const sectionEnd = PAGE.indexOf("</Section>", sectionStart);
-    const dirtyIdx = PAGE.indexOf("dirty={");
-    expect(dirtyIdx).toBeGreaterThan(sectionStart);
-    expect(dirtyIdx).toBeLessThan(sectionEnd);
+  it("exactly one SettingsGroup, fed by the period section's own change count", () => {
+    expect(PAGE.match(/<SettingsGroup\b/g) ?? []).toHaveLength(1);
+    const groupStart = PAGE.indexOf("<SettingsGroup");
+    const groupEnd = PAGE.indexOf("</SettingsGroup>", groupStart);
+    expect(groupEnd).toBeGreaterThan(groupStart);
+    const opening = PAGE.slice(groupStart, PAGE.indexOf(">", groupStart));
+    expect(opening).toContain("changes={shutdownChanges}");
+    expect(opening).toContain("onDiscard={discardShutdown}");
+    // The legacy page shells are gone (migrated pages must not import them, #854).
+    expect(PAGE).not.toMatch(/admin\/(Section|ListDetail|DangerZone)\.svelte/);
+    expect(PAGE).not.toContain("dirty={");
+  });
+
+  it("the change count compares the same five values as the snapshot", () => {
+    const start = PAGE.indexOf("const shutdownChanges = $derived.by(");
+    expect(start).toBeGreaterThan(-1);
+    const slice = PAGE.slice(start, PAGE.indexOf("\n  });", start));
+    for (const v of ["formName", "formStart", "formEnd", "formDeducts", "formNotes"]) {
+      expect(slice).toContain(v);
+    }
+  });
+
+  it("an emptied note reaches the server (the PATCH sends the note as typed, not undefined)", () => {
+    const body = PAGE.slice(
+      PAGE.indexOf("async function saveShutdown"),
+      PAGE.indexOf("function discardShutdown"),
+    );
+    expect(body).toContain("notes: formNotes,");
+    expect(body).not.toContain("formNotes ||");
+  });
+
+  it("removing an exception waits for a confirmation", () => {
+    expect(PAGE).toContain("onConfirm={confirmRemoveException}");
+    expect(PAGE).toContain("onclick={() => askRemoveException(row)}");
+    expect(PAGE).not.toContain("onclick={() => removeException");
   });
 
   it("the effect de-registers on unmount", () => {

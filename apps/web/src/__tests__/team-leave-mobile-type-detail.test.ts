@@ -120,8 +120,9 @@ describe("#265 — the measuring harness (anti-vacuity)", () => {
 
   it("controls: the injected sheet is in effect, and an invented class is not styled by it", () => {
     const probe = probeAt(PHONE_WIDTH);
-    // POSITIVE control — `.emp-input-wrap { display: flex }` is declared in the page's base block.
-    expect(probe.styles("emp-input-wrap", "div").display).toBe("flex");
+    // POSITIVE control — `.lv-controls { display: flex }` is declared in the page's base block
+    // (#853: the toolbar row replaced the person-filter combobox this control used to read).
+    expect(probe.styles("lv-controls", "div").display).toBe("flex");
     // INVENTED control — the sheet never mentions this class, so it must compute exactly like a
     // class-less element of the same tag. Any non-baseline value asserted below is therefore
     // coming from the page's CSS and not from jsdom. (jsdom reports "" for properties no rule
@@ -272,7 +273,8 @@ describe("#265 — CalendarDayDetail spells the type out", () => {
   it("a keyboard can dismiss it: Escape closes the sheet", async () => {
     open(true);
     expect(screen.queryByRole("dialog")).toBeTruthy();
-    await fireEvent.keyDown(window, { key: "Escape" });
+    // #843 D-843-16: the dialog is portaled to body and bits-ui listens for Escape on document
+    await fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 

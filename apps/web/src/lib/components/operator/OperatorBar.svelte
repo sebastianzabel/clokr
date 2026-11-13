@@ -10,6 +10,7 @@
   visually hidden polite status region instead, once at 2:00 and once at 0:30.
 -->
 <script lang="ts">
+  import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
   import { announcementFor, formatRemaining, sessionState } from "$lib/operator/countdown";
 
   interface Props {
@@ -41,8 +42,7 @@
 
 <header class="op-bar" data-testid="op-bar">
   <div class="op-brand">
-    <img src="/clokr-icon.png" alt="" width="28" height="28" class="op-mark" />
-    <span class="op-word">Clokr</span>
+    <BrandLogo size={24} />
     <span class="badge badge-purple" data-testid="op-badge">Betreiber</span>
   </div>
 
@@ -83,9 +83,9 @@
     gap: 16px;
     min-height: var(--topbar-h);
     padding: 8px 24px;
-    background: var(--bg-card);
+    background: var(--card);
     border-top: 2px solid var(--brand);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .op-brand {
@@ -93,18 +93,6 @@
     align-items: center;
     gap: 10px;
     min-width: 0;
-  }
-
-  .op-mark {
-    width: 28px;
-    height: 28px;
-    flex-shrink: 0;
-  }
-
-  .op-word {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text);
   }
 
   .op-actions {
@@ -121,7 +109,7 @@
 
   .op-name {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
   }
 

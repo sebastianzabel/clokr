@@ -1,4 +1,5 @@
 import { test as base, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 /**
  * Phase 75 — Animation freeze for screenshot determinism.
@@ -20,6 +21,15 @@ const FREEZE_CSS = `
 }
 ` as const;
 
+/** Resolves once every web font the page asked for has loaded (never throws on a navigation race). */
+async function waitForWebFonts(page: Page): Promise<void> {
+  await page
+    .evaluate(() => document.fonts.ready)
+    .catch(() => {
+      /* page may have navigated */
+    });
+}
+
 type VisualFixtures = {
   freezeAnimations: void;
 };
@@ -40,7 +50,16 @@ export const visualTest = base.extend<VisualFixtures>({
         await page.addStyleTag({ content: FREEZE_CSS }).catch(() => {
           /* page may have navigated */
         });
+        await waitForWebFonts(page);
       });
+      // #842 (Q1 step 7, A3): a screenshot must never capture the Figtree fallback, so every
+      // navigation of a visual test resolves only after the self-hosted web fonts have loaded.
+      const goto = page.goto.bind(page);
+      page.goto = async (...args: Parameters<typeof goto>) => {
+        const response = await goto(...args);
+        await waitForWebFonts(page);
+        return response;
+      };
       await use(undefined);
     },
     { auto: true },

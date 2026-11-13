@@ -16,6 +16,9 @@
   import ReasonDialog from "$components/ui/ReasonDialog.svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte"; // Issue #853
   import {
     PARENTAL_REDUCTION_HINT,
     formatDays,
@@ -97,6 +100,20 @@
       : [...selectedYears, year];
   }
 
+  // Issue #853 (D-853-18): the year table is the DataTable block, one row per year of the preview.
+  type YearRow = { id: number; y: ParentalReductionPreview["years"][number] };
+  const YEAR_COLUMNS: DataTableColumn[] = [
+    { key: "year", label: "Jahr", primary: true },
+    { key: "months", label: "Volle Monate" },
+    { key: "regular", label: "Jahresanspruch" },
+    { key: "reduced", label: "Kürzung (Tage)" },
+    { key: "entitlement", label: "Anspruch (alt → neu)" },
+    { key: "status", label: "Status" },
+  ];
+  const yearRows: YearRow[] = $derived((preview?.years ?? []).map((y) => ({ id: y.year, y })));
+  const yearRowKey = (row: YearRow) => row.id;
+  const yearRowTestId = (row: YearRow) => `parental-reduction-row-${row.y.year}`;
+
   let canSubmit = $derived(declaredAt !== "" && selectedYears.length > 0);
   let anyCommittable = $derived(preview?.years.some((y) => y.committable) ?? false);
 
@@ -147,66 +164,57 @@
   >
     <div data-testid="parental-reduction-dialog" style="display: contents">
       {#if loading}
-        <p class="text-muted">Lädt…</p>
+        <Skeleton shape="line" />
       {:else if preview}
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Jahr</th>
-                <th>Volle Monate</th>
-                <th>Jahresanspruch</th>
-                <th>Kürzung (Tage)</th>
-                <th>Anspruch (alt → neu)</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each preview.years as y (y.year)}
-                <tr data-testid={`parental-reduction-row-${y.year}`}>
-                  <td>{y.year}</td>
-                  <td>{y.months === 0 ? "kein voller Monat" : formatDays(y.months)}</td>
-                  <td>{formatDays(y.regularDays)}</td>
-                  <td>{formatDays(y.proposedReducedDays)}</td>
-                  <td>
-                    {#if y.currentTotalDays !== null && y.resultingTotalDays !== null}
-                      {formatDays(y.currentTotalDays)} → {formatDays(y.resultingTotalDays)}
-                    {:else}
-                      —
-                    {/if}
-                  </td>
-                  <td>
-                    {#if y.existing?.status === "ACTIVE"}
-                      <span class="badge badge-green"
-                        >erklärt am {fmtDate(y.existing.declaredAt)}</span
-                      >
-                      <button
-                        class="btn btn-sm btn-ghost text-red"
-                        data-testid={`parental-reduction-revoke-${y.year}`}
-                        onclick={() => openRevoke(y.year)}
-                      >
-                        Widerrufen
-                      </button>
-                    {:else if y.existing?.status === "REVOKED"}
-                      <span class="badge badge-gray"
-                        >widerrufen am {fmtDate(y.existing.revokedAt ?? "")}</span
-                      >
-                    {:else if y.committable}
-                      <input
-                        type="checkbox"
-                        data-testid={`parental-reduction-select-${y.year}`}
-                        checked={selectedYears.includes(y.year)}
-                        onchange={() => toggleYear(y.year)}
-                      />
-                    {:else}
-                      <span class="text-muted">—</span>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          caption="Kürzung je Kalenderjahr"
+          columns={YEAR_COLUMNS}
+          rows={yearRows}
+          rowKey={yearRowKey}
+          rowTestId={yearRowTestId}
+        >
+          {#snippet cell(row, column)}
+            {@const y = row.y}
+            {#if column.key === "year"}
+              {y.year}
+            {:else if column.key === "months"}
+              {y.months === 0 ? "kein voller Monat" : formatDays(y.months)}
+            {:else if column.key === "regular"}
+              {formatDays(y.regularDays)}
+            {:else if column.key === "reduced"}
+              {formatDays(y.proposedReducedDays)}
+            {:else if column.key === "entitlement"}
+              {#if y.currentTotalDays !== null && y.resultingTotalDays !== null}
+                {formatDays(y.currentTotalDays)} → {formatDays(y.resultingTotalDays)}
+              {:else}
+                —
+              {/if}
+            {:else if column.key === "status"}
+              {#if y.existing?.status === "ACTIVE"}
+                <Chip tone="ok">erklärt am {fmtDate(y.existing.declaredAt)}</Chip>
+                <button
+                  class="btn btn-sm btn-ghost text-red"
+                  data-testid={`parental-reduction-revoke-${y.year}`}
+                  onclick={() => openRevoke(y.year)}
+                >
+                  Widerrufen
+                </button>
+              {:else if y.existing?.status === "REVOKED"}
+                <Chip tone="neutral">widerrufen am {fmtDate(y.existing.revokedAt ?? "")}</Chip>
+              {:else if y.committable}
+                <input
+                  type="checkbox"
+                  aria-label={`Kürzung ${y.year} buchen`}
+                  data-testid={`parental-reduction-select-${y.year}`}
+                  checked={selectedYears.includes(y.year)}
+                  onchange={() => toggleYear(y.year)}
+                />
+              {:else}
+                <span class="text-muted">—</span>
+              {/if}
+            {/if}
+          {/snippet}
+        </DataTable>
 
         <div class="form-group parental-declare-field">
           <label class="form-label" for="parental-declared-at"

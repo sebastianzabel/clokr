@@ -46,17 +46,17 @@ export const TRAVEL_NOT_BETWEEN_SALON_ENTRIES_MESSAGE =
   "Fahrzeit kann nur zwischen einem Eintrag im Abfahrtssalon und einem Eintrag im Zielsalon desselben Tages erfasst werden. Der Weg von zu Hause oder nach Hause ist keine Arbeitszeit.";
 export const TRAVEL_NOT_AS_RETRO_REQUEST_CODE = "TRAVEL_NOT_AS_RETRO_REQUEST";
 export const TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE =
-  "Fahrzeit kann nicht als Zeitnachtrag beantragt werden. Bitte wenden Sie sich an Ihre Führungskraft.";
+  "Fahrzeit kann nicht als Zeitnachtrag beantragt werden. Bitte wende dich an deine Führungskraft.";
 
 export const TRAVEL_OVERLAPS_DAY_BREAK_CODE = "TRAVEL_OVERLAPS_DAY_BREAK";
 export const TRAVEL_OVERLAPS_DAY_BREAK_MESSAGE =
   "Die Fahrzeit überschneidet sich mit einer erfassten Pause dieses Tages.";
 export const TRAVEL_KIND_IMMUTABLE_CODE = "TRAVEL_KIND_IMMUTABLE";
 export const TRAVEL_KIND_IMMUTABLE_MESSAGE =
-  "Ein Eintrag kann nachträglich weder in eine Fahrzeit noch aus einer Fahrzeit umgewandelt werden. Bitte löschen Sie den Eintrag und legen Sie ihn neu an.";
+  "Ein Eintrag kann nachträglich weder in eine Fahrzeit noch aus einer Fahrzeit umgewandelt werden. Bitte lösch den Eintrag und leg ihn neu an.";
 export const TRAVEL_NEEDS_NEIGHBOUR_CODE = "TRAVEL_NEEDS_NEIGHBOUR";
 export const TRAVEL_NEEDS_NEIGHBOUR_MESSAGE =
-  "Dieser Eintrag ist Abfahrts- oder Ankunftseintrag einer Fahrzeit. Bitte ändern oder löschen Sie zuerst die Fahrzeit.";
+  "Dieser Eintrag ist Abfahrts- oder Ankunftseintrag einer Fahrzeit. Bitte änder oder lösch zuerst die Fahrzeit.";
 
 /** A refusal with the exact status and body the route answers. */
 export type TravelRefusal = {

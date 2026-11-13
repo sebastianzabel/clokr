@@ -144,7 +144,7 @@
   .empty {
     margin: 0;
     font-size: 16px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .cards {
@@ -163,9 +163,9 @@
     gap: 16px;
     min-width: 0;
     padding: 16px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
   }
 
   .contract-title {
@@ -181,7 +181,7 @@
   .since {
     font-size: 13px;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .text {
@@ -202,7 +202,7 @@
 
   .facts dt {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .facts dd {
@@ -231,25 +231,25 @@
     padding-bottom: 4px;
     text-align: left;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .day-table th,
   .day-table td {
     padding: 4px;
     text-align: center;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     font-size: 13px;
   }
 
   .day-table th {
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .note {
     margin: 0;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 </style>

@@ -74,7 +74,7 @@ const SHIFT = contract({
 const FIXED = contract({ id: "c-fixed" });
 
 function mount(items: SupportContract[]) {
-  renderWithTheme(SupportContracts, { contracts: items }, "nacht");
+  renderWithTheme(SupportContracts, { contracts: items }, "salz");
 }
 
 afterEach(() => {

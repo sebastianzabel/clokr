@@ -300,6 +300,10 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       });
       await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: employeeIds } } });
       await prisma.timeEntry.deleteMany({ where: { employeeId: { in: employeeIds } } });
+      // Issue #599 — the request references its journal row and the employee (both Restrict).
+      await prisma.monthCorrectionRequest.deleteMany({
+        where: { employeeId: { in: employeeIds } },
+      });
       await prisma.overtimeTransaction.deleteMany({
         where: { overtimeAccount: { employeeId: { in: employeeIds } } },
       });
@@ -319,6 +323,7 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       await prisma.employee.deleteMany({ where: { tenantId: id } });
       // PushSubscription.tenant is onDelete: Restrict (Issue #608) - delete the tenant's devices first.
       await prisma.pushSubscription.deleteMany({ where: { tenantId: id } });
+      await prisma.calendarFeedToken.deleteMany({ where: { tenantId: id } }); // Issue #597
       await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });
@@ -387,7 +392,7 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
       const defaultSalon = activeSalons[0];
       if (!defaultSalon) {
         reply.code(409);
-        return { error: "Der Mandant hat keinen aktiven Salon." };
+        return { error: "Das Unternehmen hat keinen aktiven Salon." };
       }
       const timezone = await readTenantTimezone(app.prisma, body.tenantId);
 

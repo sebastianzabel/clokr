@@ -39,10 +39,11 @@ const CONSUMERS: { name: string; fromHere: string; fromCwd: string }[] = [
     fromCwd: "src/lib/components/layout/MobileMoreSheet.svelte",
   },
   {
-    // Issue #574: the (app) layout's page-label lookup moved here (the layout imports it)
-    name: "lib/nav/page-labels.ts",
-    fromHere: "../page-labels.ts",
-    fromCwd: "src/lib/nav/page-labels.ts",
+    // Issue #574: the (app) layout's page-label lookup moved to page-labels.ts; since #844 the matching
+    // itself lives in the route table, which page-labels.ts reads
+    name: "lib/nav/routes.ts",
+    fromHere: "../routes.ts",
+    fromCwd: "src/lib/nav/routes.ts",
   },
 ];
 

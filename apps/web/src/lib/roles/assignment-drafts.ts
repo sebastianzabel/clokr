@@ -64,9 +64,10 @@ export function draftsSavedMessage(count: number): string {
 }
 
 /**
- * The person's tab „Berechtigungen“. The detail page restores its tab from the URL hash (checked
- * against employeeDetailTabs) and reads no query parameter.
+ * The person's tab „Zugang“ (roles, account, deletion; the former „Berechtigungen“, Issue #854).
+ * The detail page restores its tab from the URL hash (checked against employeeDetailTabs, the old
+ * id `#berechtigungen` is an alias) and reads no query parameter.
  */
 export function berechtigungenTabHref(employeeId: string): string {
-  return `/admin/employees/${encodeURIComponent(employeeId)}#berechtigungen`;
+  return `/admin/employees/${encodeURIComponent(employeeId)}#zugang`;
 }

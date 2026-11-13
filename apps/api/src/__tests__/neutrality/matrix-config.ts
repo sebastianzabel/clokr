@@ -320,6 +320,16 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "principal gets 403).",
   },
   {
+    route: "GET /api/v1/audit-logs/export",
+    reason:
+      "New export route added in Issue #854 (#583), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — built permission-gated (`audit-log:read:ZUGEWIESEN`) " +
+      "from its very first commit and never had role-based access behavior to compare. Same " +
+      "vacuous-satisfaction reasoning as the entries around it: RECORD/MERGE mode refuses to run " +
+      "once the role guard is gone. Proven by `audit-logs-export-854.test.ts` (file, audit before " +
+      "the bytes, tenant scope, period cap, 403 for a principal without `audit-log:read`).",
+  },
+  {
     route: "GET /api/v1/leave/sick-days",
     reason:
       "New route added in Issue #595 (D-04), long after the role guard (`requireRole`) was " +
@@ -348,6 +358,15 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "access behavior to compare. Same vacuous-satisfaction reasoning as the Phase 430, 468 and " +
       "481 entries: RECORD/MERGE mode refuses to run once the role guard is gone. Proven by " +
       "`leave-limits-load-836.test.ts`.",
+  },
+  {
+    route: "GET /api/v1/tasks/open",
+    reason:
+      "New route added in Issue #853, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`time-entry:read:ZUGEWIESEN`) from " +
+      "its very first commit and never had role-based access behavior to compare. Same " +
+      "vacuous-satisfaction reasoning as the Phase 430, 468 and 481 entries: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by `tasks-open-853.test.ts`.",
   },
   {
     route: "POST /api/v1/leave/limits",
@@ -423,6 +442,17 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "gone. Proven by `leave-plan-tracer-835.test.ts`.",
   },
   {
+    route: "POST /api/v1/time-entries/:id/break",
+    reason:
+      "New route added in Issue #596 (#845), long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated from its first commit through the one " +
+      "break write guard it shares with POST /:id/breaks (`loadEntryForBreakWrite`: owner or a " +
+      "`time-entry:update:ZUGEWIESEN` reach with its scope), so it never had role-based access " +
+      "behavior to compare. Same vacuous-satisfaction reasoning as the Phase 430, 468, 481 and 835 " +
+      "entries: RECORD/MERGE mode refuses to run once the role guard is gone. Proven by " +
+      "`break-state-596.test.ts`.",
+  },
+  {
     route: "PATCH /api/v1/leave/plans/:id/wishes/:wishId",
     reason:
       "New route added in Issue #835, long after the role guard (`requireRole`) was deleted from " +
@@ -448,6 +478,96 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
       "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
       "gone. Proven by `leave-plan-tracer-835.test.ts`.",
+  },
+  {
+    route: "GET /api/v1/me/calendar-feed",
+    reason:
+      "New route added in Issue #597, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, own token state only) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `calendar-feed-597.test.ts`.",
+  },
+  {
+    route: "POST /api/v1/me/calendar-feed",
+    reason:
+      "New route added in Issue #597, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, `shift:read:EIGENE` or `leave-request:read:EIGENE`, own token only) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `calendar-feed-597.test.ts`.",
+  },
+  {
+    route: "DELETE /api/v1/me/calendar-feed",
+    reason:
+      "New route added in Issue #597, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, own token only) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `calendar-feed-597.test.ts`.",
+  },
+  {
+    route: "GET /api/v1/calendar-feed/dienstplan.ics",
+    reason:
+      "New route added in Issue #597, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (no bearer at all: the token query parameter is the credential, resolved by `resolveCalendarFeedToken` against the own-read permissions) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `calendar-feed-597.test.ts`.",
+  },
+  {
+    route: "POST /api/v1/month-corrections",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, `month-correction:create` reach EIGENE or ZUGEWIESEN) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "GET /api/v1/month-corrections",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, `month-correction:read:EIGENE` for scope=own, `month-correction:read:ZUGEWIESEN` for scope=team) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "GET /api/v1/month-corrections/:id",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, `month-correction:read` EIGENE for the own request or the ZUGEWIESEN reach at the target day) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "POST /api/v1/month-corrections/:id/approve",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, the four-eyes lock, then `month-correction:approve:ZUGEWIESEN` with reach at the target day) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "POST /api/v1/month-corrections/:id/reject",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, the four-eyes lock, then `month-correction:approve:ZUGEWIESEN` with reach at the target day) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
+  },
+  {
+    route: "POST /api/v1/month-corrections/:id/withdraw",
+    reason:
+      "New route added in Issue #599, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`requireAuth`, a `month-correction:create` reach and only the own filed request) from its very first commit " +
+      "and never had role-based access behavior to compare. Same vacuous-satisfaction reasoning as " +
+      "the Phase 430, 468 and 481 entries: RECORD/MERGE mode refuses to run once the role guard is " +
+      "gone. Proven by `month-correction-requests-599.test.ts`.",
   },
   {
     route: "PATCH /api/v1/terminals/:id",

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/clokr-logo.png" alt="Clokr" width="200" />
+  <img src="images/clokr-logo.svg" alt="Clokr" width="200" />
 </p>
 
 <p align="center"><strong>Open-source time tracking & leave management for small businesses.</strong></p>
@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/stack-SvelteKit%20%2B%20Fastify%20%2B%20PostgreSQL-blueviolet" alt="Stack" />
   <img src="https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/compliant-ArbZG%20%7C%20BUrlG%20%7C%20DSGVO-green" alt="Compliance" />
-  <a href="https://github.com/sebastianzabel/clokr/releases"><img src="https://img.shields.io/github/v/release/sebastianzabel/clokr" alt="Latest Release" /></a>
+  <a href="https://github.com/getclokr/clokr/releases"><img src="https://img.shields.io/github/v/release/getclokr/clokr" alt="Latest Release" /></a>
 </p>
 
 ---
@@ -43,8 +43,8 @@ Clokr is a self-hosted web application for tracking working hours, managing leav
 
 ```bash
 # 1. Download compose file and env template
-curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/docker-compose.prod.yml
-curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/getclokr/clokr/main/docker-compose.prod.yml
+curl -fsSLO https://raw.githubusercontent.com/getclokr/clokr/main/.env.example
 cp .env.example .env
 
 # 2. Generate secrets and edit .env
@@ -75,7 +75,7 @@ docker compose -f docker-compose.prod.yml up -d
 ### Pin a version
 
 Set both `CLOKR_API_IMAGE` and `CLOKR_WEB_IMAGE` in `.env` to the same release, e.g.
-`ghcr.io/sebastianzabel/clokr-api:1.12.0` / `ghcr.io/sebastianzabel/clokr-web:1.12.0` (tags have
+`ghcr.io/getclokr/clokr-api:1.12.0` / `ghcr.io/getclokr/clokr-web:1.12.0` (tags have
 no leading `v`; `.env.example` ships `latest`).
 
 ---
@@ -94,7 +94,7 @@ no leading `v`; `.env.example` ships `latest`).
 - **Notifications** — In-app bell with real-time updates on leave approvals and close reminders
 - **iCal Export** — Personal and team absence calendars
 - **2FA** — Optional email OTP
-- **Themes** — 4 built-in color themes (Pflaume, Nacht, Wald, Schiefer)
+- **Themes** — 3 built-in color themes (Pflaume, Salz, Petrol), each in light and dark mode
 - **NFC Terminal** — Desktop client for NFC card-based clock-in/out (Tauri, macOS/Windows)
 
 ---
@@ -128,7 +128,7 @@ no leading `v`; `.env.example` ships `latest`).
 ### 1. Clone
 
 ```bash
-git clone https://github.com/sebastianzabel/clokr.git
+git clone https://github.com/getclokr/clokr.git
 cd clokr
 ```
 
@@ -217,7 +217,7 @@ Swagger UI at `/docs` when the API is running. Key endpoints:
 
 For NFC-based time tracking with a USB smart card reader:
 
-Download the latest client from the [Releases page](https://github.com/sebastianzabel/clokr/releases):
+Download the latest client from the [Releases page](https://github.com/getclokr/clokr/releases):
 
 - **macOS**: `clokr-nfc-*.dmg`
 - **Windows**: `clokr-nfc-*.msi`

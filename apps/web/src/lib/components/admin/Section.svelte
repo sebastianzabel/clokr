@@ -6,7 +6,7 @@
   NOT a replacement for `ui/Card.svelte` (used outside admin).
 
   Props:
-    title    — 11px UPPERCASE section header label
+    title    — section heading in sentence case (h2 token; Phase 851, Issue #854)
     sub      — 13px muted description
     actions  — right-aligned header actions (snippet)
     footer   — per-card save area stripe (snippet)
@@ -16,7 +16,7 @@
     children — section body (required)
 
   Example:
-    <Section title="UNTERNEHMEN" sub="Firmenname & Region">
+    <Section title="Unternehmen" sub="Firmenname & Region">
       <FormFields />
       {#snippet footer()}
         <button class="btn btn-primary btn-sm">Speichern</button>
@@ -82,10 +82,10 @@
 
 <style>
   section {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-md);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    box-shadow: var(--shadow);
     overflow: hidden;
   }
 
@@ -97,7 +97,7 @@
   }
 
   .section-hd {
-    padding: var(--pad-card) var(--pad-card) var(--s-3);
+    padding: var(--s-6) var(--s-6) var(--s-3);
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -109,12 +109,12 @@
     min-width: 0;
   }
 
+  /* Phase 851 (design concept § 3, owner acceptance 09.11.2026): a section title is an H2 of
+     13.5 px / 600 in sentence case - no small-caps label, no letter-spacing. */
   .section-title {
-    font-family: var(--font-sans);
-    font-size: 11px;
+    font-family: var(--font-ui);
+    font-size: var(--fs-h2);
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
     color: var(--text);
   }
 
@@ -123,10 +123,10 @@
   }
 
   .section-sub {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-top: var(--s-1);
     line-height: 1.5;
   }
@@ -139,19 +139,19 @@
   }
 
   .section-body {
-    padding: var(--s-3) var(--pad-card) var(--pad-card);
+    padding: var(--s-3) var(--s-6) var(--s-6);
   }
 
   .section-body--no-header {
-    padding: var(--pad-card);
+    padding: var(--s-6);
   }
 
   .section-footer {
-    border-top: 1px solid var(--border);
-    padding: var(--s-4) var(--pad-card);
+    border-top: 1px solid var(--line);
+    padding: var(--s-4) var(--s-6);
     display: flex;
     align-items: center;
     gap: var(--s-3);
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 </style>

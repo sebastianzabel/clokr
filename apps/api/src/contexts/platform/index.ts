@@ -52,6 +52,7 @@ export {
   employedInPeriodWhere,
   reportPopulationWhere,
   isEmployedInPeriod,
+  hasWorkScheduleInPeriodWhere, // Issue #576 — team week and attendance only
 } from "./employed-in-period";
 // Phase 77b (Issue #77): the central, fail-closed access context and the one EmployeeScope factory.
 export {
@@ -218,6 +219,13 @@ export { snapToMonthFirstUtc } from "./month-first-date";
 // Phase 88 (#88, D-05/D-05a): the ONE spelling of "active tenant" for background jobs, so a
 // deactivated customer is skipped by every writing/notifying cron loop through one import.
 export { ACTIVE_TENANT_WHERE } from "./tenant-status";
+// Issue #597 — the calendar-feed token (Unterbau): resolution for the composition feed, log redaction.
+export {
+  resolveCalendarFeedToken,
+  redactCalendarFeedPath,
+  deleteCalendarFeedTokensOfUser,
+  type ResolvedCalendarFeed,
+} from "./calendar-feed-token";
 // Phase 88 (#88, D-07a): the operator audit retention purge, run by the daily data-retention job
 // of the composition layer (authentication events after 12 months, lifecycle actions after 120).
 export { purgeExpiredOperatorAudit } from "./operator-audit";

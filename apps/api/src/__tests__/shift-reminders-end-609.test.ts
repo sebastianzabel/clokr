@@ -63,7 +63,9 @@ describe("shift end reminder - the tracer rule (AC-2, D-04)", () => {
     expect(first.relatedType).toBe("Shift");
     expect(first.relatedId).toBe(p.shiftId);
     expect(first.title).toBe("Schichtende");
-    expect(first.message).toBe("Deine Schicht endete um 17:00. Feierabend? Jetzt ausstempeln.");
+    expect(first.message).toBe(
+      "Deine Schicht vom 10.11.2026 endete um 17:00. Feierabend? Jetzt ausstempeln.",
+    );
 
     await tick(TEST_DAY, "17:20");
     await app.prisma.notification.update({
@@ -155,7 +157,9 @@ describe("shift end reminder - several shifts of one day (D-07)", () => {
       where: { userId: person.userId, type: END },
     });
     expect(notice.relatedId).toBe(first.id);
-    expect(notice.message).toBe("Deine Schicht endete um 12:00. Feierabend? Jetzt ausstempeln.");
+    expect(notice.message).toBe(
+      "Deine Schicht vom 10.11.2026 endete um 12:00. Feierabend? Jetzt ausstempeln.",
+    );
   });
 });
 
@@ -168,7 +172,9 @@ describe("shift end reminder - overnight and DST (D-03)", () => {
     await tick(nextDay(TEST_DAY), "06:15");
     const notice = await soleNotification(app.prisma, { where: { userId: p.userId, type: END } });
     expect(notice.relatedId).toBe(p.shiftId);
-    expect(notice.message).toBe("Deine Schicht endete um 6:00. Feierabend? Jetzt ausstempeln.");
+    expect(notice.message).toBe(
+      "Deine Schicht vom 10.11.2026 endete um 6:00. Feierabend? Jetzt ausstempeln.",
+    );
   });
 
   it("the fall-back night 2026-10-24 22:00 - 2026-10-25 06:00 ends at 06:15 local, not at 05:15", async () => {
