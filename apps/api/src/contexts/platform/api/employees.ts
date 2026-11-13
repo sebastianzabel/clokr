@@ -432,7 +432,54 @@ function maskOvertimeAccount<A extends { balanceHours: unknown }>(
  * (`includeAnonymized`) is still read as before and zod strips it; a malformed salon id answers
  * 400 through the global error handler.
  */
-const employeeListQuerySchema = z.object({ salonId: z.string().uuid().optional() });
+const employeeListQuerySchema = z.object({
+  salonId: z.string().uuid().optional(),
+  // Issue #853: opt-in fields of the Team › Personen directory. Without it the response is the
+  // frozen one of #85/#547 (whole-tenant callers byte-identical, `whole-tenant-frozen-85`).
+  include: z.enum(["directory"]).optional(),
+});
+
+/**
+ * Issue #853 — the two directory fields of Team › Personen for rows the caller ALREADY reads:
+ * the Stammsalon of the tenant-local today (the Unterbau's own batched resolution, parity with
+ * `homeSalonAt`; an attribution of a person, never a count of leave - registered in
+ * `leave-limits-one-place-836`) and the distinct names of the person's stored roles (names only:
+ * no scope, no permission, no assignment id). Only ids handed in are read.
+ */
+async function directoryFields(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  rows: readonly { id: string; userId: string }[],
+): Promise<{ homeSalonIds: Map<string, string | null>; roleNames: Map<string, string[]> }> {
+  const today = tenantLocalDay(new Date(), await readTenantTimezone(db, tenantId));
+  const homeByEmployee = await homeSalonsForDays(
+    db,
+    tenantId,
+    rows.map((r) => r.id),
+    today,
+    today,
+  );
+  const homeSalonIds = new Map(
+    rows.map((r) => [r.id, homeByEmployee.get(r.id)?.get(today) ?? null] as const),
+  );
+
+  const roleRows = await db.roleAssignment.findMany({
+    where: { tenantId, userId: { in: rows.map((r) => r.userId) } },
+    select: { userId: true, accessRole: { select: { name: true, tenantId: true } } },
+  });
+  const names = new Map<string, Set<string>>();
+  for (const row of roleRows) {
+    // A system role (tenantId null) or a role of this tenant; never another tenant's role name.
+    if (row.accessRole.tenantId !== null && row.accessRole.tenantId !== tenantId) continue;
+    const set = names.get(row.userId) ?? new Set<string>();
+    set.add(row.accessRole.name);
+    names.set(row.userId, set);
+  }
+  const roleNames = new Map(
+    [...names].map(([userId, set]) => [userId, [...set].sort((a, b) => a.localeCompare(b, "de"))]),
+  );
+  return { homeSalonIds, roleNames };
+}
 
 /**
  * Issue #558 D-01 — byte-identical with the dashboard's `TEAM_SALON_NOT_FOUND` and the Salonansicht
@@ -689,7 +736,7 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
       const personIds = await resolvePersonScopedEmployeeIds(app.prisma, tenantId, readReach);
 
       // Issue #558 D-01: validate the chosen salon before any employee row is read.
-      const { salonId } = employeeListQuerySchema.parse(req.query);
+      const { salonId, include } = employeeListQuerySchema.parse(req.query);
       const salon = await resolveSalonInReach(app.prisma, tenantId, readReach, salonId);
       if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
 
@@ -742,39 +789,27 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
         employees.map((e) => e.userId),
       );
 
-      // Issue #853 (additive): each person's Stammsalon on the tenant-local today, one batched read
-      // through the Unterbau's own resolution (homeSalonsForDays). Only the salon id is served; the
-      // rows are already the caller's reach (#547), so it names nothing the caller may not see.
-      const today = tenantLocalDay(new Date(), await readTenantTimezone(app.prisma, tenantId));
-      const homeByEmployee = await homeSalonsForDays(
-        app.prisma,
-        tenantId,
-        employees.map((e) => e.id),
-        today,
-        today,
-      );
-
-      // Issue #853 (additive): the distinct names of each person's stored roles, for the Rollen column
-      // of Team › Personen. Names only (no scope, no permission), of the rows the caller already reads.
-      const roleRows = await app.prisma.roleAssignment.findMany({
-        where: { tenantId, userId: { in: employees.map((e) => e.userId) } },
-        select: { userId: true, accessRole: { select: { name: true, tenantId: true } } },
-      });
-      const roleNamesByUser = new Map<string, Set<string>>();
-      for (const row of roleRows) {
-        if (row.accessRole.tenantId !== null && row.accessRole.tenantId !== tenantId) continue;
-        const names = roleNamesByUser.get(row.userId) ?? new Set<string>();
-        names.add(row.accessRole.name);
-        roleNamesByUser.set(row.userId, names);
-      }
+      // Issue #853 (opt-in `include=directory`, Team › Personen): Stammsalon of today and the names
+      // of the stored roles, ONLY for the rows above - which are already the caller's reach (#547) -
+      // so neither field names a person, salon or role outside it. The default response is unchanged.
+      const directory =
+        include === "directory"
+          ? await directoryFields(
+              app.prisma,
+              tenantId,
+              employees.map((e) => ({ id: e.id, userId: e.userId })),
+            )
+          : null;
 
       return employees.map((e) => {
         return {
           ...e,
-          homeSalonId: homeByEmployee.get(e.id)?.get(today) ?? null,
-          roleNames: [...(roleNamesByUser.get(e.userId) ?? [])].sort((a, b) =>
-            a.localeCompare(b, "de"),
-          ),
+          ...(directory
+            ? {
+                homeSalonId: directory.homeSalonIds.get(e.id) ?? null,
+                roleNames: directory.roleNames.get(e.userId) ?? [],
+              }
+            : {}),
           user: userWithFormRole(e.user, formRoles.get(e.userId) ?? null),
           overtimeAccount: maskOvertimeAccount(balanceVisibleFor, e.id, e.overtimeAccount),
           workSchedule: e.workSchedules[0] ?? null,

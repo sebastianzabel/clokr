@@ -50,12 +50,13 @@ describe("Issue #853 — Team › Personen follows the header salon", () => {
   it("[filter] the page decides through salonPageFilter and sends the salon on its one request", () => {
     expect(PAGE).toContain("salonPageFilter($salonContext)");
     expect(PAGE).toContain("const pageSalonId = $derived(salonPageFilter($salonContext))");
-    expect(loadBody()).toContain('withSalonId("/employees", pageSalonId)');
+    // The directory fields (Stammsalon, Rollen) are opt-in on GET /employees (Issue #853).
+    expect(loadBody()).toContain('withSalonId("/employees?include=directory", pageSalonId)');
   });
 
   it("[one request] exactly one /employees request path, no other API read or salon handling", () => {
     expect(PAGE.match(/api\.get</g) ?? []).toHaveLength(1);
-    expect(PAGE.match(/"\/employees"/g) ?? []).toHaveLength(1);
+    expect(PAGE.match(/"\/employees\?include=directory"/g) ?? []).toHaveLength(1);
     // The list is the server's reach-narrowed answer: no second source, no client-side salon comparison.
     expect(PAGE).not.toContain("selectedSalonId(");
     expect(PAGE).not.toContain(".selection");

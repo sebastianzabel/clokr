@@ -69,7 +69,9 @@
     loading = true;
     failed = false;
     try {
-      const list = await api.get<PersonenEmployee[]>(withSalonId("/employees", pageSalonId));
+      const list = await api.get<PersonenEmployee[]>(
+        withSalonId("/employees?include=directory", pageSalonId),
+      );
       if (current !== generation) return;
       people = list;
       salonRejected = false;
