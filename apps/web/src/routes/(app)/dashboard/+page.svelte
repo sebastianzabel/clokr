@@ -1705,20 +1705,8 @@
           {#if view === "team" && mayOpenPath($authStore.user, "/team/abwesenheiten")}
             <a class="btn btn-primary btn-sm" href="/team/abwesenheiten">Abwesenheit anlegen</a>
           {/if}
-          <!-- #846 D-05: the own clock stays one click away on Heute im Salon, while not clocked in. -->
-          {#if view === "team" && !isExempt && primaryLabel === "Einstempeln"}
-            {#if clockInBlocked(clockSalonViewState, clockSalonId)}
-              <!-- a salon must be chosen first: that choice lives on the clock stage of Mein Tag -->
-              <a class="btn btn-ghost btn-sm" href="/ich/tag">Einstempeln</a>
-            {:else}
-              <button
-                onclick={handleClock}
-                disabled={clockLoading || clockInBlocked(clockSalonViewState, clockSalonId)}
-                class="btn btn-ghost btn-sm"
-                type="button">Einstempeln</button
-              >
-            {/if}
-          {/if}
+          <!-- Owner 13.11.2026: no own clock action on Heute im Salon (was #846 D-05); the own clock
+               lives on Mein Tag, the team page stays a team page. -->
         </span>
       {/if}
     {/snippet}
