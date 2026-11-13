@@ -54,6 +54,10 @@ Every block is a Svelte 5 component built on bits-ui (the only primitive library
 - **Tailwind is a token pipeline only.** Utilities are permitted inside `lib/components/ui`, but the blocks are scoped CSS by default; a route with a utility class fails `no-route-utilities-843.test.ts`. The mapping lives in `src/tailwind-theme.css`.
 - **No `{@html}`.** Block text is rendered as text (guarded by source tests).
 
+### Page widths
+
+The app layout gives every page one of two widths, chosen per route in `$lib/nav/routes` (`width`): `read` (at most `--page-read`, 1120 px; forms, settings, details) and `full` (at most `--page-full`, 2400 px; planners, calendars, tables, reports, start pages), both inside the 32 px side padding of the main area. Owner decision 13.11.2026 (#907, changes the "reading width centred" of #844): both widths are left-aligned, so every page starts at the same left edge at every screen width. No page sets a content max-width of its own.
+
 ### `<PageHeader>` and `<PageTabs>`
 
 Source: `$components/ui/PageHeader.svelte`, `PageTabs.svelte`. Props: `title`, `subtitle?`, `eyebrow?` and `accent?` (both inert since D-843-22: accepted so `PageHead` callers compile, never rendered), `actions?` (one or two buttons, at most one primary), `tabs?` + `tab` (bindable) + `panel?` + `onTabChange?` (bits-ui Tabs, arrow keys loop, every trigger controls a rendered panel), `headingLevel?` (1 or 2). The `<PageHead>` section below documents the legacy props and the look; `layout/PageHead.svelte` has no markup of its own.

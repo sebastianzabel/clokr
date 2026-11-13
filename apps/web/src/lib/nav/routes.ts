@@ -22,8 +22,10 @@ import { activeNavHref, matchesRoute } from "$lib/nav/active-route";
 export type Area = "ich" | "team" | "verwalten";
 export type PermissionAlternatives = readonly (readonly string[])[];
 
-/** The two page widths of the shell (owner 09.11.2026): `read` = at most 1120 px centred (forms, settings,
- *  details), `full` = up to 2400 px with a 32 px margin (planners, calendars, tables, reports, start pages). */
+/** The two page widths of the shell (owner 09.11.2026): `read` = at most 1120 px (forms, settings, details),
+ *  `full` = up to 2400 px (planners, calendars, tables, reports, start pages), both with a 32 px margin.
+ *  Owner decision 13.11.2026 (#907, changes #844's "reading width centred"): both widths are left-aligned,
+ *  so every page starts at the same left edge at every screen width. */
 export type PageWidth = "read" | "full";
 
 export interface AppRoute {

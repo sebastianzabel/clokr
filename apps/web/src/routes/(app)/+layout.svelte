@@ -191,11 +191,13 @@
   }
 
   /* #844 (owner 09.11.2026): two page widths, chosen per route in $lib/nav/routes — reading width (forms,
-     settings, details) centred, full width (planners, calendars, tables, reports, start pages) up to 2400 px;
-     the 32 px side padding of .main is the margin. No page sets its own content max-width. */
+     settings, details) up to 1120 px, full width (planners, calendars, tables, reports, start pages) up to
+     2400 px; the 32 px side padding of .main is the margin. No page sets its own content max-width.
+     Owner decision 13.11.2026 (#907): both widths start at the same left edge - the reading width is
+     left-aligned, no longer centred, so every page begins at the same x on every screen width. */
   .page-frame {
     width: 100%;
-    margin: 0 auto;
+    margin: 0;
   }
   .page-frame[data-width="read"] {
     max-width: var(--page-read);
