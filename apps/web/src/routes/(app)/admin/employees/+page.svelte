@@ -441,7 +441,7 @@
 </svelte:head>
 
 <!-- Phase 73-05 (D-05): data-testid surface for admin-employees flows (stable page-root selector). -->
-<div class="page" data-testid="admin-employees-page">
+<div class="personen-page" data-testid="admin-employees-page">
   <PageHead title={pageLabel("/admin/employees")} sub={headSentence}>
     {#snippet actions()}
       {#if canCreate}
@@ -524,8 +524,15 @@
       {#snippet nameMeta(row)}
         {@const emp = employeeById.get(row.id)}
         {#if emp && emp.classification === "AZUBI" && !emp.birthDate}
-          <span data-testid={`admin-employees-row-${row.id}-birthdate-hint`}>
-            <Chip tone="warn">{MISSING_BIRTH_DATE_HINT}</Chip>
+          <!-- Short in the row (the full hint would widen the name column past the card); the whole
+               sentence is the chip's title and its accessible name. -->
+          <span
+            data-testid={`admin-employees-row-${row.id}-birthdate-hint`}
+            title={MISSING_BIRTH_DATE_HINT}
+            aria-label={MISSING_BIRTH_DATE_HINT}
+            role="note"
+          >
+            <Chip tone="warn">Geburtsdatum fehlt</Chip>
           </span>
         {/if}
       {/snippet}
@@ -595,6 +602,11 @@
 </BulkPreviewDialog>
 
 <style>
+  /* The wrapper only carries the page's test id; its children stack like Team › Personen's. */
+  .personen-page {
+    display: contents;
+  }
+
   .anon-toggle {
     display: inline-flex;
     align-items: center;
