@@ -33,7 +33,7 @@ import type { Locator, Page } from "@playwright/test";
 // Track the seed result across the test lifecycle so afterEach can drop the
 // tenant. Using an outer Map keyed by testInfo.testId avoids leakage between
 // parallel workers (each worker has its own module state).
-const seedByTest = new Map<string, { tenantId: string; apiBaseUrl: string }>();
+const seedByTest = new Map<string, { tenantId: string; apiBaseUrl: string; accessToken: string }>();
 
 test.beforeEach(async ({ page, request }, testInfo) => {
   // Freeze "now" at 2025-06-16T08:00:00Z (Mon) so every component reading
@@ -51,6 +51,7 @@ test.beforeEach(async ({ page, request }, testInfo) => {
   seedByTest.set(testInfo.testId, {
     tenantId: seed.tenantId,
     apiBaseUrl: process.env.E2E_API_BASE ?? "http://localhost:4001",
+    accessToken: seed.auth.accessToken,
   });
 
   await page.addInitScript(({ accessToken, refreshToken, user }) => {
@@ -164,7 +165,23 @@ test.describe("Phase 75 — Visual baselines", () => {
     await expect(page).toHaveScreenshot("06-schichtplan-wochen-grid.png", { fullPage: true });
   });
 
-  test("07 — Admin Mitarbeiter Liste", async ({ page }) => {
+  test("07 — Admin Mitarbeiter Liste", async ({ page, request }, testInfo) => {
+    // #854: the shared person table names each person's Stammsalon. The fixture tenant's salon is
+    // called after the per-run tenant id („Test test-<hex>“), whose letters change the column width
+    // from run to run; this test's own tenant gets a fixed salon name first (through the API, like
+    // the seed), so the snapshot is deterministic.
+    const ctx = seedByTest.get(testInfo.testId);
+    expect(ctx, "the seeded tenant of this test").toBeDefined();
+    const headers = { authorization: `Bearer ${ctx!.accessToken}` };
+    const list = await request.get(`${ctx!.apiBaseUrl}/api/v1/salons`, { headers });
+    expect(list.ok(), `GET /salons (${list.status()})`).toBe(true);
+    const { salons } = (await list.json()) as { salons: { id: string }[] };
+    expect(salons.length, "the fixture tenant has one salon").toBe(1);
+    const renamed = await request.patch(`${ctx!.apiBaseUrl}/api/v1/salons/${salons[0].id}`, {
+      headers,
+      data: { name: "Salon Visual" },
+    });
+    expect(renamed.ok(), `PATCH /salons/:id (${renamed.status()})`).toBe(true);
     await page.goto("/admin/employees");
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
     await page.waitForLoadState("networkidle");
@@ -177,13 +194,7 @@ test.describe("Phase 75 — Visual baselines", () => {
     // before the screenshot fires.
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
     await page.waitForLoadState("networkidle");
-    // #854: the shared person table names each person's Stammsalon. The fixture tenant's salon is called
-    // after the per-run tenant id („Test test-<hex>“), so those cells are masked; the column, its head
-    // and the row layout stay in the comparison.
-    await expect(page).toHaveScreenshot("07-admin-employees-list.png", {
-      fullPage: true,
-      mask: [page.locator('td[data-label="Stammsalon"]')],
-    });
+    await expect(page).toHaveScreenshot("07-admin-employees-list.png", { fullPage: true });
   });
 
   test("08 — Admin System", async ({ page }) => {
