@@ -12,6 +12,8 @@ import {
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
 } from "../overtime-balance"; // Phase 101B — same-context sibling now that the pair moved here
+import { freeDaysEquivalent } from "../free-days-equivalent"; // Issue #605
+import { getLeaveTypeByCode } from "../../absence"; // Issue #605 — is Überstundenausgleich set up for the tenant
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -329,6 +331,28 @@ export async function overtimeRoutes(app: FastifyInstance) {
         employee?.tenant?.config?.maxNegativeBalanceMinutes,
       );
 
+      // Issue #605: the saldo in free days, only while an Überstundenausgleich leave type exists for
+      // the tenant (the type is looked up by code, never by name). `null` = nothing to offer: saldo
+      // ≤ 0, track-only contract, no daily Soll, or no such leave type. The web renders this and
+      // computes nothing of its own.
+      let freeDays: ReturnType<typeof freeDaysEquivalent> = null;
+      if (balanceMinutes > 0) {
+        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+        freeDays = freeDaysEquivalent({
+          balanceMinutes,
+          schedule,
+          tz,
+          todayDay: dateStrInTz(new Date(), tz),
+          defaultWorkDays: employee.tenant?.config?.defaultWorkDays,
+        });
+        if (
+          freeDays &&
+          !(await getLeaveTypeByCode(app.prisma, employee.tenantId, "OVERTIME_COMP"))
+        ) {
+          freeDays = null;
+        }
+      }
+
       return {
         ...account,
         // Override the stored balanceHours with the live lifetime value (2-decimal so minutes survive).
@@ -346,6 +370,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Issue #588 (P-14): additive; the web words the forecast from it
         // ("Laufender Monat" only for exactly one unclosed month).
         unconfirmedMonths,
+        // Issue #605 (additive): null whenever no conversion applies.
+        freeDaysEquivalent: freeDays?.freeDays ?? null,
+        freeDaysDailySollMinutes: freeDays?.dailySollMinutes ?? null,
         ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
       };
     },
