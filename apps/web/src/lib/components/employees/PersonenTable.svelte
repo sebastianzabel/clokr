@@ -45,6 +45,11 @@
     onSort: (next: DataTableSort | null) => void;
     /** `<prefix>-<id>` on every row. */
     rowTestIdPrefix: string;
+    /**
+     * Also `<prefix>-<id>-status` and `<prefix>-<id>-open` on the status chip and the link (the admin list's
+     * test-id convention). Off by default: a page that counts its rows by the prefix must not count them.
+     */
+    cellTestIds?: boolean;
     /** Where a row leads; without it the rows open nothing and there is no „Öffnen“ column. */
     openHref?: (row: PersonenRow) => string;
     /** Accessible name of a row's „Öffnen“ link. */
@@ -73,6 +78,7 @@
     sort,
     onSort,
     rowTestIdPrefix,
+    cellTestIds = false,
     openHref,
     openLabel = (row) => `${row.name} öffnen`,
     onOpen,
@@ -183,7 +189,7 @@
     {:else if column.key === "rollen"}
       <span class="p-roles">{row.roles}</span>
     {:else if column.key === "status"}
-      <span data-testid={`${rowTestIdPrefix}-${row.id}-status`}>
+      <span data-testid={cellTestIds ? `${rowTestIdPrefix}-${row.id}-status` : undefined}>
         <Chip tone={row.statusTone}>{row.statusLabel}</Chip>
       </span>
     {:else if column.key === "open" && openHref}
@@ -191,7 +197,7 @@
         class="p-open row-action"
         href={openHref(row)}
         aria-label={openLabel(row)}
-        data-testid={`${rowTestIdPrefix}-${row.id}-open`}>Öffnen</a
+        data-testid={cellTestIds ? `${rowTestIdPrefix}-${row.id}-open` : undefined}>Öffnen</a
       >
     {/if}
   {/snippet}

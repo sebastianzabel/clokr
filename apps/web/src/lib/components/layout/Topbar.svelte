@@ -269,14 +269,12 @@
   {#if trail.length > 0}
     <nav class="topbar-crumb" aria-label="Pfad" data-testid="topbar-crumb">
       {#each trail as crumb, i (i)}
-        {#if i > 0}<span class="topbar-sep" aria-hidden="true">/</span>{/if}
-        {#if i === trail.length - 1}
-          <b aria-current="page">{crumb.label}</b>
-        {:else if crumb.href}
-          <a class="topbar-crumb-link" href={crumb.href}>{crumb.label}</a>
-        {:else}
-          <span>{crumb.label}</span>
-        {/if}
+        <span class="topbar-crumb-item" class:topbar-crumb-item--current={i === trail.length - 1}
+          >{#if i > 0}<span class="topbar-sep" aria-hidden="true">/</span
+            >{/if}{#if i === trail.length - 1}<b aria-current="page">{crumb.label}</b
+            >{:else if crumb.href}<a class="topbar-crumb-link" href={crumb.href}>{crumb.label}</a
+            >{:else}<span>{crumb.label}</span>{/if}</span
+        >
       {/each}
     </nav>
   {:else if currentPageLabel}
@@ -463,6 +461,24 @@
     color: var(--text);
     font-weight: 600;
     font-size: var(--fs-base);
+  }
+  /* On a phone the bar names only the current page (the sidebar sheet and the back gesture lead up);
+     the line scrolls instead of cutting a long name off. */
+  @media (max-width: 759.98px) {
+    nav.topbar-crumb {
+      overflow-x: auto;
+      text-overflow: clip;
+      scrollbar-width: none;
+    }
+    nav.topbar-crumb::-webkit-scrollbar {
+      display: none;
+    }
+    .topbar-crumb-item:not(.topbar-crumb-item--current) {
+      display: none;
+    }
+    .topbar-crumb-item--current .topbar-sep {
+      display: none;
+    }
   }
   .topbar-crumb-link {
     color: var(--text-2);

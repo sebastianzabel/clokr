@@ -19,7 +19,6 @@
   import ErrorState from "$components/ui/ErrorState.svelte";
   import FormField from "$components/ui/FormField.svelte";
   import KpiStrip from "$components/ui/KpiStrip.svelte";
-  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import Note from "$components/ui/Note.svelte";
   import PeriodPicker from "$components/ui/PeriodPicker.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
@@ -621,7 +620,7 @@
   {/if}
 
   <!-- The year is the PeriodPicker in the shape of Zeiten (#854 owner review): no eyebrow, „Heute“ jumps to
-       the current year, and the status filter sits in the same row as a Segment. -->
+       the current year, and the status filter sits in the same bar. -->
   <div class="mc-controls">
     <PeriodPicker
       label={String(selectedYear)}
@@ -636,16 +635,26 @@
         ? undefined
         : () => changeYear(currentYear - selectedYear)}
     >
-      {#snippet extra()}
-        <div data-testid="month-close-status">
-          <SegmentedControl
-            size="sm"
-            name="month-close-status"
-            ariaLabel="Status"
-            options={filterOptions}
-            value={statusFilter}
-            onchange={setStatusFilter}
-          />
+      {#snippet aside()}
+        <!-- A select, not a Segment: four options do not fit a 360 px phone; the bar wraps it into
+             its own row on a narrow screen. -->
+        <div class="mc-filter">
+          <FormField label="Status">
+            {#snippet field({ id, describedBy })}
+              <select
+                {id}
+                class="form-input"
+                value={statusFilter}
+                aria-describedby={describedBy}
+                data-testid="month-close-status"
+                onchange={(event) => setStatusFilter(event.currentTarget.value)}
+              >
+                {#each filterOptions as opt (opt.value)}
+                  <option value={opt.value}>{opt.label}</option>
+                {/each}
+              </select>
+            {/snippet}
+          </FormField>
         </div>
       {/snippet}
     </PeriodPicker>
@@ -815,6 +824,10 @@
 <style>
   .mc-controls {
     margin: var(--s-4) 0;
+  }
+
+  .mc-filter {
+    min-width: min(100%, 220px);
   }
 
   .mc-stack {

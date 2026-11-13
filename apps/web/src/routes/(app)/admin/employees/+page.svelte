@@ -479,6 +479,7 @@
       sort={tableSort}
       {onSort}
       rowTestIdPrefix="admin-employees-row"
+      cellTestIds
       openHref={personHref}
       openLabel={(row) => `${row.name} öffnen`}
       onOpen={(row) => goto(personHref(row))}
