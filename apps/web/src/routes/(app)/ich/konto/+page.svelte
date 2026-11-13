@@ -74,7 +74,6 @@
   // Issue #594: the days of every fetched open month, and the month whose days are open.
   let monthDays = $state<Record<string, MonthSaldoDay[]>>({});
   let openMonthKey = $state<string | null>(null);
-  const openMonth = $derived(rows.find((r) => r.key === openMonthKey) ?? null);
   const openDayRows = $derived(openMonthKey ? kontoDayRows(monthDays[openMonthKey] ?? []) : []);
 
   function toggleMonth(row: KontoMonthRow) {
@@ -261,6 +260,7 @@
         {rows}
         rowKey={(r) => r.key}
         rowTestId={(r) => `konto-month-${r.key}`}
+        rowDetailOpen={(r) => r.key === openMonthKey}
       >
         {#snippet cell(row, column)}
           {#if column.key === "month"}
@@ -268,7 +268,7 @@
               type="button"
               class="konto-month-btn"
               aria-expanded={openMonthKey === row.key}
-              aria-controls="konto-days"
+              aria-controls={openMonthKey === row.key ? "konto-days" : undefined}
               onclick={() => toggleMonth(row)}
               data-testid="konto-month-toggle-{row.key}">{row.label}</button
             >
@@ -286,46 +286,46 @@
             <Chip tone={statusTone(row.status)}>{MONTH_STATUS_LABEL[row.status]}</Chip>
           {/if}
         {/snippet}
+        {#snippet rowDetail(month)}
+          <div id="konto-days" class="konto-days" data-testid="konto-days">
+            <h3 class="konto-h3">Tage im {month.label}</h3>
+            {#if month.status === "CLOSED"}
+              <p class="konto-hint">
+                Der Monat ist abgeschlossen; gespeichert sind seine Monatswerte. Die einzelnen Tage
+                siehst du unter <a class="konto-link" href={monthHref(month)}>Zeiten</a> und im Stundennachweis.
+              </p>
+            {:else if openDayRows.length === 0}
+              <p class="konto-hint">
+                In diesem Monat gibt es bis gestern keinen Tag mit Soll oder Zeit.
+              </p>
+            {:else}
+              <DataTable
+                caption="Tage im {month.label}"
+                columns={DAY_COLUMNS}
+                rows={openDayRows}
+                rowKey={(d) => d.date}
+                rowTestId={(d) => `konto-day-${d.date}`}
+              >
+                {#snippet cell(day, column)}
+                  {#if column.key === "day"}
+                    <a class="konto-link" href="/ich/zeiten?date={day.date}">{day.label}</a>
+                  {:else if column.key === "soll"}
+                    {fmtMin(day.sollMinutes)}
+                  {:else if column.key === "ist"}
+                    {fmtMin(day.istMinutes)}
+                  {:else if column.key === "diff"}
+                    <span class:pos={day.diffMinutes > 0} class:neg={day.diffMinutes < 0}
+                      >{signed(day.diffMinutes)}</span
+                    >
+                  {:else}
+                    {signed(day.standMinutes)}
+                  {/if}
+                {/snippet}
+              </DataTable>
+            {/if}
+          </div>
+        {/snippet}
       </DataTable>
-      {#if openMonth}
-        <div id="konto-days" class="konto-days" data-testid="konto-days">
-          <h3 class="konto-h3">Tage im {openMonth.label}</h3>
-          {#if openMonth.status === "CLOSED"}
-            <p class="konto-hint">
-              Der Monat ist abgeschlossen; gespeichert sind seine Monatswerte. Die einzelnen Tage
-              siehst du unter <a class="konto-link" href={monthHref(openMonth)}>Zeiten</a> und im Stundennachweis.
-            </p>
-          {:else if openDayRows.length === 0}
-            <p class="konto-hint">
-              In diesem Monat gibt es bis gestern keinen Tag mit Soll oder Zeit.
-            </p>
-          {:else}
-            <DataTable
-              caption="Tage im {openMonth.label}"
-              columns={DAY_COLUMNS}
-              rows={openDayRows}
-              rowKey={(d) => d.date}
-              rowTestId={(d) => `konto-day-${d.date}`}
-            >
-              {#snippet cell(day, column)}
-                {#if column.key === "day"}
-                  <a class="konto-link" href="/ich/zeiten?date={day.date}">{day.label}</a>
-                {:else if column.key === "soll"}
-                  {fmtMin(day.sollMinutes)}
-                {:else if column.key === "ist"}
-                  {fmtMin(day.istMinutes)}
-                {:else if column.key === "diff"}
-                  <span class:pos={day.diffMinutes > 0} class:neg={day.diffMinutes < 0}
-                    >{signed(day.diffMinutes)}</span
-                  >
-                {:else}
-                  {signed(day.standMinutes)}
-                {/if}
-              {/snippet}
-            </DataTable>
-          {/if}
-        </div>
-      {/if}
       {#if hireDate}
         <p class="konto-hint">Eintritt am {hireDate.toLocaleDateString("de-DE")}.</p>
       {/if}

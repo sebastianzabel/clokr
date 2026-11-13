@@ -83,6 +83,13 @@
     rowAttrs?: (row: Row) => Record<`data-${string}`, string | undefined> | undefined;
     /** Issue #851 (additive): extra class names of a row the page styles itself (`:global`). */
     rowClass?: (row: Row) => string | undefined;
+    /**
+     * Additive (owner 13.11.2026): content shown in its own full-width row directly below `row`,
+     * e.g. the days of an expanded month. `rowDetailOpen(row)` decides whether it shows,
+     * `rowDetail(row)` renders it.
+     */
+    rowDetail?: Snippet<[Row]>;
+    rowDetailOpen?: (row: Row) => boolean;
     /** Accessible table caption (visually hidden). */
     caption: string;
     loading?: boolean;
@@ -115,6 +122,8 @@
     rowHighlight,
     rowClass,
     rowAttrs,
+    rowDetail,
+    rowDetailOpen,
     caption,
     loading = false,
     selectable = false,
@@ -310,6 +319,13 @@
                 {/each}
               </tr>
             {/if}
+            {#if rowDetail && (rowDetailOpen?.(row) ?? false)}
+              <tr data-testid={rowTestId?.(row) ? `${rowTestId(row)}-detail` : undefined}>
+                <td class="dt-detail-cell" colspan={columns.length + (selectable ? 1 : 0)}>
+                  {@render rowDetail(row)}
+                </td>
+              </tr>
+            {/if}
           {/each}
         </tbody>
       </table>
@@ -431,6 +447,12 @@
     outline: 2px solid var(--brand);
     outline-offset: 2px;
     border-radius: var(--r-control);
+  }
+
+  /* An expanded row's detail sits in its own full-width row right below it. */
+  .dt-detail-cell {
+    padding: var(--s-4) var(--s-5) var(--s-5);
+    background: var(--sunk);
   }
 
   /* Narrow container: the same cells become cards. The head row stays for assistive technology. */
