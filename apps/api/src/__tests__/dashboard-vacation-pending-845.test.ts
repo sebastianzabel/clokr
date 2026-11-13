@@ -48,19 +48,27 @@ describe("GET /dashboard vacation.pending (#845)", () => {
     expect(before).not.toBeNull();
     expect(before!.pending).toBe(await facade());
 
-    // a weekday about six weeks ahead, inside the current year when possible
-    const day = new Date();
-    day.setUTCDate(day.getUTCDate() + 42);
-    while (day.getUTCDay() === 0 || day.getUTCDay() === 6) day.setUTCDate(day.getUTCDate() + 1);
-    if (day.getUTCFullYear() !== new Date().getUTCFullYear()) return; // year-bound figure
-    const iso = day.toISOString().slice(0, 10);
-    const filed = await app.inject({
-      method: "POST",
-      url: "/api/v1/leave/requests",
-      headers: { authorization: `Bearer ${data.empToken}` },
-      payload: { type: "VACATION", startDate: iso, endDate: iso },
-    });
-    if (filed.statusCode !== 201) return; // entitlement guard of the fixture; the parity above holds
+    // A future weekday inside the current year whose request costs at least one day. A fixed
+    // offset hit a public holiday (13.11. + 42 = 25.12., priced 0 days), so the request is
+    // filed for the first candidate the pricing actually counts.
+    const year = new Date().getUTCFullYear();
+    let filedDays = 0;
+    for (let offset = 7; offset <= 60 && filedDays === 0; offset++) {
+      const day = new Date();
+      day.setUTCDate(day.getUTCDate() + offset);
+      if (day.getUTCFullYear() !== year) return; // year-bound figure
+      if (day.getUTCDay() === 0 || day.getUTCDay() === 6) continue;
+      const iso = day.toISOString().slice(0, 10);
+      const filed = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: { type: "VACATION", startDate: iso, endDate: iso },
+      });
+      if (filed.statusCode !== 201) return; // entitlement guard of the fixture; the parity above holds
+      filedDays = Number((filed.json() as { days?: number | string }).days ?? 0);
+    }
+    expect(filedDays, "no countable day found within 60 days").toBeGreaterThan(0);
     const after = await read();
     expect(after!.pending).toBe(await facade());
     expect(after!.pending).toBeGreaterThan(before!.pending ?? 0);
