@@ -10,6 +10,7 @@ import { renderWithTheme } from "$tests/test-utils";
 import PageHeader from "../PageHeader.svelte";
 import PageHead from "../../layout/PageHead.svelte";
 import headerSource from "../PageHeader.svelte?raw";
+import tabsSource from "../PageTabs.svelte?raw";
 
 afterEach(() => cleanup());
 
@@ -211,5 +212,73 @@ describe("PageHeader - page tabs", () => {
   it("renders no tablist without tabs", () => {
     renderWithTheme(PageHeader, { title: "Titel" });
     expect(screen.queryByRole("tablist")).toBeNull();
+  });
+});
+
+// Issue #854 (owner review of the Personen detail): the tabs as a segmented control on the RIGHT of
+// the head, with an avatar before the title - the same tablist, keyboard and panels as the strip.
+describe("PageHeader - tabsLook segments (the detail head of the prototype)", () => {
+  const tabs = [
+    { value: "person", label: "Person" },
+    { value: "vertrag", label: "Vertrag" },
+    { value: "zugang", label: "Zugang" },
+  ];
+  const leading = createRawSnippet(() => ({ render: () => '<span class="av">MF</span>' }));
+
+  function renderSegments(extra: Record<string, unknown> = {}) {
+    return renderWithTheme(PageHeader, {
+      title: "Mia Friseurin",
+      subtitle: "P-004 · Clokr Demo Nord · seit 19.10.2026",
+      tabs,
+      panel,
+      tabsLook: "segments",
+      tabsLabel: "Bereiche der Person",
+      leading,
+      ...extra,
+    });
+  }
+
+  it("puts the head and the tablist in ONE row, the head first, the avatar before the title", () => {
+    const { container } = renderSegments();
+    const row = container.querySelector(".page-tabs-head");
+    expect(row).toBeTruthy();
+    const head = row!.querySelector("header.page-head");
+    const list = screen.getByRole("tablist", { name: "Bereiche der Person" });
+    expect(head).toBeTruthy();
+    expect(row!.contains(list)).toBe(true);
+    expect(head!.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const avatar = row!.querySelector(".av");
+    expect(avatar?.textContent).toBe("MF");
+    expect(avatar!.compareDocumentPosition(head!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Mia Friseurin" })).toBeTruthy();
+    expect(container.querySelector(".page-tabs--segments")).toBeTruthy();
+  });
+
+  it("keeps the tab semantics: aria-controls, arrows, click and the panel", async () => {
+    const onTabChange = vi.fn();
+    renderSegments({ onTabChange });
+    for (const trigger of screen.getAllByRole("tab")) {
+      const target = document.getElementById(trigger.getAttribute("aria-controls")!);
+      expect(target?.getAttribute("role")).toBe("tabpanel");
+    }
+    const first = screen.getByRole("tab", { name: "Person" });
+    first.focus();
+    await fireEvent.keyDown(first, { key: "ArrowRight" });
+    expect(onTabChange).toHaveBeenLastCalledWith("vertrag");
+    expect(screen.getByRole("tabpanel").textContent).toContain("Inhalt vertrag");
+    await fireEvent.click(screen.getByRole("tab", { name: "Zugang" }));
+    expect(screen.getByRole("tabpanel").textContent).toContain("Inhalt zugang");
+  });
+
+  it("the segments scroll inside their own box and wrap under the head in a narrow row", () => {
+    const style = tabsSource.slice(tabsSource.lastIndexOf("<style>"));
+    expect(style).toMatch(/\.page-tab-strip\s*\{[^}]*overflow-x:\s*auto/);
+    expect(style).toMatch(/\.page-tabs-head\s*\{[^}]*container-type:\s*inline-size/);
+    expect(style).toMatch(/@container \(max-width: 639\.98px\)[^}]*\{[^}]*flex-basis:\s*100%/);
+  });
+
+  it("without the look the header markup is unchanged (the avatar is only drawn with segments)", () => {
+    const { container } = renderWithTheme(PageHeader, { title: "Team-Zeiten", leading });
+    expect(normalise(container.innerHTML)).toBe(NEW_PLAIN);
   });
 });

@@ -40,6 +40,8 @@
 </script>
 
 <script lang="ts">
+  import type { Snippet } from "svelte";
+
   interface Props {
     /** Hours per weekday (bindable). */
     value: DayHours;
@@ -49,9 +51,21 @@
     step?: number;
     disabled?: boolean;
     onchange?: (value: DayHours) => void;
+    /**
+     * Replaces the default „Summe“ line (Issue #854, the Vertrag tab's tinted sum row); receives the
+     * sum of the valid days in hours. Rendered inside the same polite live region.
+     */
+    summary?: Snippet<[number]>;
   }
 
-  let { value = $bindable(), label, step = 0.25, disabled = false, onchange }: Props = $props();
+  let {
+    value = $bindable(),
+    label,
+    step = 0.25,
+    disabled = false,
+    onchange,
+    summary,
+  }: Props = $props();
 
   const uid = $props.id();
   const groupId = `${uid}-group`;
@@ -97,10 +111,14 @@
       </p>
     {/if}
   {/each}
-  <p class="dg-sum" aria-live="polite">
-    <span>Summe</span>
-    <strong class="dg-sum-value">{formatHours(sum)}</strong>
-  </p>
+  {#if summary}
+    <div class="dg-summary" aria-live="polite">{@render summary(sum)}</div>
+  {:else}
+    <p class="dg-sum" aria-live="polite">
+      <span>Summe</span>
+      <strong class="dg-sum-value">{formatHours(sum)}</strong>
+    </p>
+  {/if}
 </div>
 
 <style>
@@ -120,14 +138,15 @@
     color: var(--text-2);
   }
 
-  /* Two rows of four below 760 px container width, one row of seven from there. */
+  /* Two rows of four below 520 px container width, one row of seven from there (seven fields of at
+     least ~66 px: an hour value fits; the prototype's form column is 720 px wide). */
   .dg-days {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: var(--s-2);
   }
 
-  @container (min-width: 760px) {
+  @container (min-width: 520px) {
     .dg-days {
       grid-template-columns: repeat(7, minmax(0, 1fr));
     }
@@ -141,6 +160,7 @@
   }
 
   .dg-day-name {
+    text-align: center;
     font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--text-2);
@@ -152,6 +172,7 @@
     padding-bottom: 0;
     font-size: var(--fs-base);
     font-variant-numeric: tabular-nums;
+    text-align: center;
   }
 
   .dg-input[aria-invalid="true"] {
@@ -173,6 +194,11 @@
     height: 6px;
     border-radius: var(--r-pill);
     background: var(--bad);
+  }
+
+  /* The caller's own sum row (`summary`) owns its look; the wrapper only carries the live region. */
+  .dg-summary {
+    min-width: 0;
   }
 
   .dg-sum {
