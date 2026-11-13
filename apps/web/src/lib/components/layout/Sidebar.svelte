@@ -208,9 +208,9 @@
     background: var(--line-2);
   }
 
-  /* Owner 13.11.2026: more air above each area heading (was 6 px) */
+  /* Owner 13.11.2026: more air above each area heading (12 px, was 6 px) */
   .sidebar-section-label {
-    padding: 20px 18px 6px;
+    padding: 12px 18px 4px;
     font-size: var(--fs-th);
     color: var(--text-3);
     font-weight: 600;
@@ -223,13 +223,13 @@
     gap: 2px;
   }
 
-  /* Owner 13.11.2026: 36 px rows (were 30 px, #844 prototype). The longest menu (admin) now scrolls
-     inside the rail at 1024×768; the rail has its own scroll. */
+  /* Owner 13.11.2026: 34 px rows (were 30 px, #844 prototype). The longest menu fits at 1440×900; at
+     1024×768 it scrolls inside the rail, which has its own scroll. */
   .nav-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    height: 36px;
+    height: 34px;
     padding: 0 8px;
     border-radius: var(--r-control);
     color: var(--text-2);
@@ -256,8 +256,8 @@
     content: "";
     position: absolute;
     left: -10px;
-    top: 9px;
-    bottom: 9px;
+    top: 8px;
+    bottom: 8px;
     width: 2px;
     background: var(--brand);
     border-radius: 1px;
