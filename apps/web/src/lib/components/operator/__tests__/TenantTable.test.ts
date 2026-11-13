@@ -178,7 +178,8 @@ describe("TenantTable", () => {
 
   it("is styled: the table differs from a control element with an invented class", () => {
     renderWithTheme(TenantTable, { tenants: [ACTIVE], page: 1, pageSize: 25 }, "salz");
-    const table = byId("op-tenants-table") as HTMLElement;
+    // The wrapper carries the test id; the table itself is the DataTable block's (Issue #899).
+    const table = (byId("op-tenants-table") as HTMLElement).querySelector("table") as HTMLElement;
     const control = document.createElement("table");
     control.className = "no-such-class-89";
     document.body.appendChild(control);
@@ -246,26 +247,25 @@ describe("TenantTable", () => {
       expect(byId("op-tenant-inactive-t-active")).toBeNull();
     });
 
-    it("gives every metric cell a label element for the stacked view", () => {
+    // Since Issue #899 the card layout belongs to the DataTable block, which prints each column label
+    // in front of its value from the cell's `data-label`; the cell therefore has to carry it.
+    it("lets every metric cell name its column for the card layout", () => {
       const metrics = new Map([metric("t-active")]);
       renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "salz");
-      const labels = ["salons", "employees", "activity"].map((id) => {
-        const label = byId(`op-tenant-${id}-t-active`)?.querySelector(".m-label");
-        expect(label).toHaveAttribute("aria-hidden", "true");
-        return label?.textContent;
-      });
+      const labels = ["salons", "employees", "activity"].map((id) =>
+        byId(`op-tenant-${id}-t-active`)?.closest("td")?.getAttribute("data-label"),
+      );
       expect(labels).toEqual(["Salons", "Mitarbeitende", "Letzte Aktivität"]);
     });
 
-    it("shows the metric label only inside the stacked-list media query (source)", () => {
+    it("keeps no stacked-list layout of its own (source)", () => {
       const source = readFileSync(
         resolve(process.cwd(), "src/lib/components/operator/TenantTable.svelte"),
         "utf8",
       );
-      const mediaAt = source.indexOf("@media (max-width: 767px)");
-      expect(mediaAt).toBeGreaterThan(-1);
-      expect(source.slice(0, mediaAt)).toMatch(/\.m-label \{\s*display: none;/);
-      expect(source.slice(mediaAt)).toMatch(/\.tenant-table \.m-label \{\s*display: inline;/);
+      expect(source).toContain('components/ui/DataTable.svelte"');
+      expect(source).not.toContain("@media");
+      expect(source).not.toContain("<table");
     });
   });
 });

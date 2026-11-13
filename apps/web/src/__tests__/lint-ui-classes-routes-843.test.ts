@@ -279,9 +279,9 @@ describe("the checked-in ratchet register", () => {
   it("is not empty (the ratchet is not vacuous) and `--print` reproduces it", () => {
     const entries = RATCHET_RULES.flatMap((rule) => Object.keys(checkedIn.rules[rule]));
     // #854 empties the register page by page (it only falls); the floor proves it is not vacuous.
-    // What stays are the operator console (no follow-up ticket), the dashboard, the /leave toolbar and
-    // the clock salon select - eight or more entries while those are not migrated.
-    expect(entries.length).toBeGreaterThanOrEqual(8);
+    // What stays are the dashboard, the /leave toolbar and the clock salon select - three or more
+    // entries while those are not migrated (the operator console left the register with #899).
+    expect(entries.length).toBeGreaterThanOrEqual(3);
     expect(registerFromCounts(found, checkedIn)).toEqual(checkedIn);
   });
 
@@ -303,17 +303,12 @@ describe("the checked-in ratchet register", () => {
     }
   });
 
-  it("names the operator console with a null ticket and the D-843-15 reason", () => {
-    const operator = RATCHET_RULES.flatMap((rule) =>
-      Object.entries(
-        checkedIn.rules[rule] as Record<string, { ticket: string | null; reason?: string }>,
-      ),
-    ).filter(([file]) => file.includes("(operator)") || file.includes("components/operator/"));
-    expect(operator.length).toBeGreaterThan(0);
-    for (const [, entry] of operator) {
-      expect(entry.ticket).toBeNull();
-      expect(entry.reason).toBe("Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket");
-    }
+  // Issue #899 moved the operator console onto the blocks: the register shows 0 for it, and it only falls.
+  it("keeps the operator console out of the register (every table, period and filter is a block)", () => {
+    const operator = RATCHET_RULES.flatMap((rule) => Object.keys(checkedIn.rules[rule])).filter(
+      (file) => file.includes("(operator)") || file.includes("components/operator/"),
+    );
+    expect(operator).toEqual([]);
   });
 
   it("has no scrim/modal entries", () => {

@@ -8,6 +8,7 @@
   The page owns the requests and the URL; this component only reports what was chosen.
 -->
 <script lang="ts">
+  import FormField from "$components/ui/FormField.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import { formatOperatorDateTime } from "$lib/operator/labels";
@@ -71,42 +72,48 @@
 </script>
 
 <div class="log" data-testid="op-support-audit">
-  <form class="filters" onsubmit={apply} novalidate>
-    <div class="field">
-      <label class="form-label" for="op-support-audit-from-input">Von</label>
-      <input
-        id="op-support-audit-from-input"
-        class="form-input"
-        type="date"
-        bind:value={fromValue}
-        aria-describedby="op-support-audit-hint"
-        data-testid="op-support-audit-from"
-      />
-    </div>
-    <div class="field">
-      <label class="form-label" for="op-support-audit-to-input">Bis</label>
-      <input
-        id="op-support-audit-to-input"
-        class="form-input"
-        type="date"
-        bind:value={toValue}
-        aria-describedby="op-support-audit-hint"
-        data-testid="op-support-audit-to"
-      />
-    </div>
-    <div class="field person">
-      <label class="form-label" for="op-support-audit-person-input">Person</label>
-      <select
-        id="op-support-audit-person-input"
-        class="form-input"
-        bind:value={personValue}
-        data-testid="op-support-audit-person"
-      >
-        <option value="">Alle Personen</option>
-        {#each employees as employee (employee.id)}
-          <option value={employee.id}>{personLabel(employee)}</option>
-        {/each}
-      </select>
+  <form class="audit-controls" onsubmit={apply} novalidate>
+    <FormField label="Von">
+      {#snippet field({ id, describedBy })}
+        <input
+          {id}
+          class="form-input"
+          type="date"
+          bind:value={fromValue}
+          aria-describedby={[describedBy, "op-support-audit-hint"].filter(Boolean).join(" ")}
+          data-testid="op-support-audit-from"
+        />
+      {/snippet}
+    </FormField>
+    <FormField label="Bis">
+      {#snippet field({ id, describedBy })}
+        <input
+          {id}
+          class="form-input"
+          type="date"
+          bind:value={toValue}
+          aria-describedby={[describedBy, "op-support-audit-hint"].filter(Boolean).join(" ")}
+          data-testid="op-support-audit-to"
+        />
+      {/snippet}
+    </FormField>
+    <div class="audit-person">
+      <FormField label="Person">
+        {#snippet field({ id, describedBy })}
+          <select
+            {id}
+            class="form-input"
+            aria-describedby={describedBy}
+            bind:value={personValue}
+            data-testid="op-support-audit-person"
+          >
+            <option value="">Alle Personen</option>
+            {#each employees as employee (employee.id)}
+              <option value={employee.id}>{personLabel(employee)}</option>
+            {/each}
+          </select>
+        {/snippet}
+      </FormField>
     </div>
     <button type="submit" class="btn btn-primary" data-testid="op-support-audit-apply"
       >Anzeigen</button
@@ -215,25 +222,19 @@
     min-width: 0;
   }
 
-  .filters {
+  .audit-controls {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
     gap: 12px 16px;
   }
 
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+  .audit-person {
+    flex: 1 1 220px;
     min-width: 0;
   }
 
-  .field.person {
-    flex: 1 1 220px;
-  }
-
-  .filters :global(.btn) {
+  .audit-controls :global(.btn) {
     min-height: 44px;
   }
 

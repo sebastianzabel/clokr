@@ -629,10 +629,12 @@ test.describe("operator console - dashboard (#90)", () => {
       }
 
       const row = page.getByTestId(`op-tenant-row-${TENANT_ID}`);
-      await expect(row).toHaveCSS("display", "flex");
-      await expect(row.getByText("Salons", { exact: true })).toBeVisible();
-      await expect(row.getByText("Mitarbeitende", { exact: true })).toBeVisible();
-      await expect(row.getByText("Letzte Aktivität", { exact: true })).toBeVisible();
+      // The card layout of the DataTable block (Issue #899) prints each column label from the
+      // cell's data-label, so the metric cells are checked by their label attribute.
+      await expect(row).toHaveCSS("display", "block");
+      for (const label of ["Salons", "Mitarbeitende", "Letzte Aktivität"]) {
+        await expect(row.locator(`td[data-label="${label}"]`)).toBeVisible();
+      }
     });
   });
 });
@@ -659,8 +661,8 @@ test.describe("operator console - tenant list at 360 px", () => {
     const row = page.getByTestId(`op-tenant-row-${longTenant.id}`);
     await expect(row).toBeVisible();
 
-    // The stacked layout is really applied: a row is a flex box here, a table row on a desktop.
-    await expect(row).toHaveCSS("display", "flex");
+    // The card layout is really applied: a row is a block here, a table row on a desktop.
+    await expect(row).toHaveCSS("display", "block");
 
     const overflow = await page.evaluate(() => {
       const html = document.documentElement;
@@ -671,7 +673,7 @@ test.describe("operator console - tenant list at 360 px", () => {
           .filter((child) => child.getBoundingClientRect().right > limit)
           .map((child) => child.tagName);
       });
-      const wrap = document.querySelector(".table-wrap");
+      const wrap = document.querySelector(".dt-scroll");
       return {
         pageScrolls: html.scrollWidth > html.clientWidth,
         wrapScrolls: wrap ? wrap.scrollWidth > wrap.clientWidth : null,
@@ -1399,7 +1401,9 @@ test.describe("operator console - salon lifecycle", () => {
 
 const VIEWPORTS = [
   { name: "1440 px", width: 1440, height: 900, stacked: false },
-  { name: "768 px", width: 768, height: 1024, stacked: false },
+  // DataTable switches to cards below 760 px of CONTAINER width (Issue #899), which 768 px of
+  // viewport minus the page padding already is.
+  { name: "768 px", width: 768, height: 1024, stacked: true },
   { name: "390 px", width: 390, height: 844, stacked: true },
   { name: "360 px", width: 360, height: 800, stacked: true },
 ] as const;
@@ -1574,7 +1578,7 @@ for (const viewport of VIEWPORTS) {
       expect(await offendersOf(page, '[data-testid="op-bar"]')).toEqual([]);
       expect(await offendersOf(page, '[data-testid="op-tenants-table"]')).toEqual([]);
       expect(await offendersOf(page, '[data-testid="op-tenants-page"]')).toEqual([]);
-      expect(await wrapperClips(page, ".table-wrap")).toBe(false);
+      expect(await wrapperClips(page, ".dt-scroll")).toBe(false);
       // Stacked list below 640 px: the header row is not shown, the rows are not table rows.
       expect(await isVisuallyHidden(page, '[data-testid="op-tenants-table"] thead')).toBe(
         viewport.stacked,
@@ -1605,7 +1609,7 @@ for (const viewport of VIEWPORTS) {
       expect(await offendersOf(page, '[data-testid="op-bar"]')).toEqual([]);
       expect(await offendersOf(page, "main section")).toEqual([]);
       expect(await offendersOf(page, '[data-testid="op-salons-table"]')).toEqual([]);
-      expect(await wrapperClips(page, ".table-wrap")).toBe(false);
+      expect(await wrapperClips(page, ".dt-scroll")).toBe(false);
 
       // Not ellipsised: the text is wrapped, so the element holds all of it.
       await expect(page.getByTestId("op-tenant-name")).toHaveText(LONG_TENANT_NAME);
@@ -2257,7 +2261,7 @@ test.describe("operator console - support access (#93)", () => {
     await expect(banner).toBeVisible();
     await expect(page.getByTestId("op-support-figure-balance")).toHaveText("+0:30");
     const before = await page.getByTestId("op-support-month-input").inputValue();
-    await page.getByTestId("op-support-month-prev").click();
+    await page.getByTestId("op-support-period-prev").click();
     await expect(page).toHaveURL(/monat=\d{4}-\d{2}/);
     const after = await page.getByTestId("op-support-month-input").inputValue();
     expect(after).not.toBe(before);

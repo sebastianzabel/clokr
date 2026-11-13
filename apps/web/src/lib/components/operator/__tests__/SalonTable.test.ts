@@ -117,7 +117,8 @@ describe("SalonTable", () => {
 
   it("is styled: the table differs from a control element with an invented class", () => {
     renderWithTheme(SalonTable, { salons: SALONS }, "salz");
-    const table = byId("op-salons-table") as HTMLElement;
+    // The wrapper carries the test id; the table itself is the DataTable block's (Issue #899).
+    const table = (byId("op-salons-table") as HTMLElement).querySelector("table") as HTMLElement;
     const control = document.createElement("table");
     control.className = "no-such-class-89";
     document.body.appendChild(control);
