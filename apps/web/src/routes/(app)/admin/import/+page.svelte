@@ -217,7 +217,7 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
     <div class="import-actions">
       <button
         type="button"
-        class="btn btn-secondary"
+        class="btn btn-outline"
         onclick={() => fileInput?.click()}
         disabled={loading}
       >
@@ -267,7 +267,7 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
     <div class="import-actions">
       <button
         type="button"
-        class="btn btn-secondary"
+        class="btn btn-outline"
         onclick={handlePreview}
         disabled={!csvText.trim() || loading}
       >

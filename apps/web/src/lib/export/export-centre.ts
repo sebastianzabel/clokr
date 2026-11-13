@@ -73,6 +73,12 @@ function field(newValue: unknown, key: string): unknown {
   return (newValue as Record<string, unknown>)[key];
 }
 
+function wholeNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isInteger(value) ? value : null;
+  if (typeof value === "string" && /^\d{1,4}$/.test(value)) return Number(value);
+  return null;
+}
+
 function dayLabel(day: string): string {
   const [, y, m, d] = DAY_KEY.exec(day) ?? [];
   return `${d}.${m}.${y}`;
@@ -80,15 +86,11 @@ function dayLabel(day: string): string {
 
 /** The period a row names, as words; null when it names none. */
 function periodScope(newValue: unknown): string | null {
-  const year = field(newValue, "year");
-  const month = field(newValue, "month");
-  if (
-    Number.isInteger(year) &&
-    Number.isInteger(month) &&
-    (month as number) >= 1 &&
-    (month as number) <= 12
-  ) {
-    return monthName({ year: year as number, month: month as number });
+  // The writers store year and month as numbers or as digit strings ("2026", "7"); both are read.
+  const year = wholeNumber(field(newValue, "year"));
+  const month = wholeNumber(field(newValue, "month"));
+  if (year !== null && month !== null && month >= 1 && month <= 12) {
+    return monthName({ year, month });
   }
   const from = field(newValue, "from");
   const to = field(newValue, "to");
@@ -109,9 +111,29 @@ function periodScope(newValue: unknown): string | null {
   return null;
 }
 
-/** The history list: one row per `EXPORT` audit row, newest first, in German words only. */
+/**
+ * The exports this page starts, by the control value `newValue.type` of their `EXPORT` audit row (#854 owner
+ * review): DATEV (all persons or one), the two period CSVs and the Monatsexport. Other `EXPORT` rows (the
+ * Protokoll CSV, a person's Stundennachweis, documents retired by #617) belong to other pages and are not listed.
+ */
+export const EXPORT_CENTRE_TYPES: ReadonlySet<string> = new Set([
+  "DATEV",
+  "DATEV_EMPLOYEE",
+  "PERIOD_CSV",
+  "PERIOD_ABSENCES_CSV",
+  "MONTHLY_EXPORT_PDF",
+]);
+
+/** How many rows „Letzte Exporte“ shows. */
+export const EXPORT_HISTORY_SIZE = 20;
+
+/** The history list: one row per `EXPORT` audit row of this page's kinds, newest first, in German words only. */
 export function exportHistoryRows(logs: readonly ExportLogLike[]): ExportHistoryRow[] {
   return [...logs]
+    .filter((log) => {
+      const type = field(log.newValue, "type");
+      return typeof type === "string" && EXPORT_CENTRE_TYPES.has(type);
+    })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .map((log) => {
       const type = field(log.newValue, "type");
@@ -126,7 +148,8 @@ export function exportHistoryRows(logs: readonly ExportLogLike[]): ExportHistory
         kind: exportTypeLabel(typeof type === "string" ? type : ""),
         scope: scope === "" ? "—" : scope,
       };
-    });
+    })
+    .slice(0, EXPORT_HISTORY_SIZE);
 }
 
 export interface ExportPreselection {

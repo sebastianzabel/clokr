@@ -289,7 +289,13 @@
     sub="Hier siehst du, wer wann was geändert hat, und legst fest, wie lange Daten aufbewahrt werden."
   />
 
-  <PageTabs tabs={TABS} tab={activeTab} onTabChange={selectTab} tabsLabel="Bereiche des Protokolls">
+  <PageTabs
+    tabs={TABS}
+    tab={activeTab}
+    onTabChange={selectTab}
+    tabsLabel="Bereiche des Protokolls"
+    look="segments"
+  >
     {#snippet panel(value)}
       {#if value === "protokoll"}
         {#if loadError}

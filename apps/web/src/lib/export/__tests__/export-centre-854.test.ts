@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   csvPeriodProblem,
+  EXPORT_HISTORY_SIZE,
   exportHistoryRows,
   exportHref,
   exportPreselection,
@@ -75,26 +76,47 @@ describe("exportHistoryRows", () => {
     expect(r.scope).toBe("Muster, Anna · September 2026");
   });
 
-  it("writes a month range and a day range of the period exports", () => {
+  it("writes a month range of the period exports", () => {
     const rows = exportHistoryRows([
       row({ id: "m", newValue: { type: "PERIOD_CSV", from: "2026-07", to: "2026-09" } }),
-      row({ id: "o", newValue: { type: "PERIOD_CSV", from: "2026-09", to: "2026-09" } }),
-      row({ id: "d", newValue: { type: "AUDIT_LOG_CSV", from: "2026-09-01", to: "2026-09-30" } }),
+      row({ id: "o", newValue: { type: "PERIOD_ABSENCES_CSV", from: "2026-09", to: "2026-09" } }),
     ]);
-    expect(rows.map((r) => r.scope)).toEqual([
-      "Juli 2026 bis September 2026",
-      "September 2026",
-      "01.09.–30.09.2026",
+    expect(rows.map((r) => r.scope)).toEqual(["Juli 2026 bis September 2026", "September 2026"]);
+    expect(rows.map((r) => r.kind)).toEqual([
+      "Zeitraumbericht (CSV)",
+      "Abwesenheiten des Zeitraums (CSV)",
     ]);
-    expect(rows[2].kind).toBe("Protokoll (CSV)");
   });
 
-  it("never shows a raw code: an unknown type reads the neutral words, no scope reads a dash", () => {
-    const [r] = exportHistoryRows([row({ newValue: { type: "SOME_NEW_EXPORT" } })]);
-    expect(r.kind).toBe("Sonstige Änderung");
-    expect(r.scope).toBe("—");
-    const [none] = exportHistoryRows([row({ newValue: null })]);
-    expect(none.kind).toBe("Sonstige Änderung");
+  it("reads year and month stored as digit strings (the DATEV writer stores them so)", () => {
+    const [r] = exportHistoryRows([row({ newValue: { type: "DATEV", year: "2026", month: "7" } })]);
+    expect(r.scope).toBe("Juli 2026");
+    const [pdf] = exportHistoryRows([
+      row({ newValue: { type: "MONTHLY_EXPORT_PDF", year: "2026", month: "11" } }),
+    ]);
+    expect(pdf).toMatchObject({ kind: "Monatsexport (PDF)", scope: "November 2026" });
+  });
+
+  it("lists only the exports of this page, by the type code (#854 owner review)", () => {
+    const rows = exportHistoryRows([
+      row({ id: "datev" }),
+      row({
+        id: "audit",
+        newValue: { type: "AUDIT_LOG_CSV", from: "2026-09-01", to: "2026-09-30" },
+      }),
+      row({ id: "retired", newValue: { type: "LEAVE_LIST_PDF", year: "2026" } }),
+      row({ id: "unknown", newValue: { type: "SOME_NEW_EXPORT" } }),
+      row({ id: "none", newValue: null }),
+    ]);
+    expect(rows.map((r) => r.id)).toEqual(["datev"]);
+    expect(rows.some((r) => r.kind === "Sonstige Änderung")).toBe(false);
+  });
+
+  it("shows at most EXPORT_HISTORY_SIZE rows", () => {
+    const many = Array.from({ length: EXPORT_HISTORY_SIZE + 5 }, (_, i) =>
+      row({ id: `r${i}`, createdAt: at((i % 28) + 1) }),
+    );
+    expect(exportHistoryRows(many)).toHaveLength(EXPORT_HISTORY_SIZE);
   });
 
   it("shows the operator and the system by their words, not as an empty name", () => {

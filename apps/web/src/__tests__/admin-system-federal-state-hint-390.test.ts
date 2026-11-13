@@ -16,8 +16,11 @@ const flat = source.replace(/\s+/g, " ");
 describe("System › Allgemein Bundesland hint (#390)", () => {
   it("states the field is a default for new salons and holidays follow the salon", () => {
     expect(flat).toContain(
-      "Vorgabe für neu angelegte Salons. Feiertage richten sich nach dem Bundesland des jeweiligen Salons (Admin → Salons).",
+      "Vorgabe für neu angelegte Salons. Feiertage richten sich nach dem Bundesland des jeweiligen Salons (",
     );
+    // #854 (owner review): the pointer names the navigation path and links the page.
+    expect(flat).toContain('<a href="/verwalten/salons">Verwalten › Salons</a>');
+    expect(flat).not.toContain("Admin →");
   });
 
   it("is shown as an info Note, not a one-off paragraph", () => {

@@ -276,7 +276,7 @@
     <div class="trend-sections">
       <section class="settings-group" aria-labelledby="trend-hours-title">
         <div class="trend-head">
-          <div>
+          <div class="trend-title">
             <h2 class="settings-group-title" id="trend-hours-title">Arbeitsstunden</h2>
             <p class="settings-group-desc">{view?.chartSub ?? "Letzte 6 Monate"}</p>
           </div>
@@ -302,7 +302,7 @@
       {#if showTrendSection}
         <section class="settings-group" aria-labelledby="trend-saldo-title">
           <div class="trend-head">
-            <div>
+            <div class="trend-title">
               <h2 class="settings-group-title" id="trend-saldo-title">Überstunden-Trend</h2>
               <p class="settings-group-desc">Saldo-Verlauf</p>
             </div>
@@ -327,7 +327,7 @@
 
       <section class="settings-group" aria-labelledby="trend-sick-title">
         <div class="trend-head">
-          <div>
+          <div class="trend-title">
             <h2 class="settings-group-title" id="trend-sick-title">Krankheitstage</h2>
             <p class="settings-group-desc">Letzte 6 Monate</p>
           </div>
@@ -366,6 +366,15 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: var(--s-4);
+  }
+
+  /* Title and sub line stack with the group's own gap: the shared .settings-group-desc pulls itself up by
+     that gap, so without it the sub line overlapped the title (#854 owner review). */
+  .trend-title {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    min-width: 0;
   }
 
   .trend-link {

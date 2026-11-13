@@ -225,7 +225,9 @@
   async function loadHistory() {
     if (!canReadAudit) return;
     try {
-      const res = await api.get<{ logs: ExportLogLike[] }>("/audit-logs?action=EXPORT&limit=20");
+      // The newest 200 EXPORT rows (the list's maximum page), narrowed to this page's kinds by their
+      // type code; the list shows the first EXPORT_HISTORY_SIZE of them.
+      const res = await api.get<{ logs: ExportLogLike[] }>("/audit-logs?action=EXPORT&limit=200");
       history = { status: "ready", data: exportHistoryRows(res.logs) };
     } catch (e: unknown) {
       history = {
@@ -430,7 +432,7 @@
       <div class="export-actions">
         <button
           type="button"
-          class="btn btn-secondary"
+          class="btn btn-outline"
           onclick={exportDatevPerson}
           disabled={busy !== null || personId === ""}
           data-testid="export-datev-person"
@@ -481,7 +483,7 @@
     <div class="export-actions">
       <button
         type="button"
-        class="btn btn-secondary"
+        class="btn btn-outline"
         onclick={exportTimesCsv}
         disabled={busy !== null || csvProblem !== null}
         data-testid="export-csv-times"
@@ -491,7 +493,7 @@
       </button>
       <button
         type="button"
-        class="btn btn-secondary"
+        class="btn btn-outline"
         onclick={exportAbsencesCsv}
         disabled={busy !== null || csvProblem !== null}
         data-testid="export-csv-absences"
@@ -517,7 +519,7 @@
     <div class="export-actions">
       <button
         type="button"
-        class="btn btn-secondary"
+        class="btn btn-outline"
         onclick={exportMonthlyPdf}
         disabled={busy !== null}
         data-testid="export-monthly-pdf"
@@ -537,7 +539,7 @@
       {#if canReadTeamLeave}
         <button
           type="button"
-          class="btn btn-secondary"
+          class="btn btn-outline"
           onclick={() => exportIcal("team")}
           disabled={busy !== null}
           data-testid="export-ical-team"
@@ -548,7 +550,7 @@
       {/if}
       <button
         type="button"
-        class="btn btn-secondary"
+        class="btn btn-outline"
         onclick={() => exportIcal("personal")}
         disabled={busy !== null}
         data-testid="export-ical-personal"

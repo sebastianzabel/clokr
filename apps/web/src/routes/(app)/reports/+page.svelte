@@ -766,6 +766,7 @@
       tab={activeTab}
       {onTabChange}
       tabsLabel="Berichtsbereich"
+      look="segments"
     >
       {#snippet panel(value)}
         <!-- Every panel is rendered by the tab block; only the selected one holds content. -->
