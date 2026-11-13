@@ -138,15 +138,14 @@
     color: var(--text-2);
   }
 
-  /* Two rows of four below 520 px container width, one row of seven from there (seven fields of at
-     least ~66 px: an hour value fits; the prototype's form column is 720 px wide). */
+  /* Two rows of four below 760 px container width, one row of seven from there. */
   .dg-days {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: var(--s-2);
   }
 
-  @container (min-width: 520px) {
+  @container (min-width: 760px) {
     .dg-days {
       grid-template-columns: repeat(7, minmax(0, 1fr));
     }

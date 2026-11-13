@@ -1092,7 +1092,8 @@ select.form-input {
 }
 
 /* Issue #854 (owner review of the Personen detail): a tab of a detail page is ONE form column
-   (prototype `.form`, 720 px) whose parts sit under a hairline (prototype `.fs`). Every part is its
+   (prototype `.form`; 768 px, so the DayGrid's row of seven - from 760 px, D-843-03 - fits it)
+   whose parts sit under a hairline (prototype `.fs`). Every part is its
    own container, so a field pair inside follows the part's width. The quieter rhythm replaces the
    wide .settings-group + .settings-group gap inside the column. */
 .detail-form {
@@ -1101,7 +1102,7 @@ select.form-input {
   min-width: 0;
 }
 .detail-form > * {
-  max-width: 45rem;
+  max-width: 48rem;
   min-width: 0;
   container-type: inline-size;
 }

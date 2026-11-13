@@ -10,7 +10,7 @@
   // Issue #854 (owner review of the Personen detail): `look="segments"` draws the same tablist as a
   // segmented control and, with `head`, places it on the RIGHT of a head row (the prototype's detail
   // head: avatar, name, sub line, segments). The semantics, the roving focus and the panels are the
-  // same as the strip's; below 640 px of the row's width the segments wrap under the head and scroll
+  // same as the strip's; below 760 px of the row's width the segments wrap under the head and scroll
   // inside their own box, never widening the page.
   import type { Snippet } from "svelte";
   import { Tabs } from "bits-ui";
@@ -205,7 +205,7 @@
   }
 
   /* A phone (or any narrow row): the segments take their own line under the head. */
-  @container (max-width: 639.98px) {
+  @container (max-width: 759.98px) {
     .page-tabs-lead {
       flex-basis: 100%;
     }

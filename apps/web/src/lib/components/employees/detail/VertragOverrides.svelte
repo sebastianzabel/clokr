@@ -196,7 +196,7 @@
       <div>
         <button
           type="button"
-          class="btn btn-secondary"
+          class="btn btn-secondary vo-suggest"
           onclick={applyUnder18Suggestion}
           data-testid="pausendauer-azubi-apply"
         >
@@ -321,6 +321,14 @@
   .vo-wrap {
     container-type: inline-size;
     min-width: 0;
+  }
+
+  /* The long suggestion label wraps on a phone instead of widening the page. */
+  .vo-suggest {
+    max-width: 100%;
+    white-space: normal;
+    text-align: left;
+    height: auto;
   }
 
   /* Two fields side by side (the prototype's form row), one column on a phone. */

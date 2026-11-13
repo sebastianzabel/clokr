@@ -274,7 +274,7 @@ describe("PageHeader - tabsLook segments (the detail head of the prototype)", ()
     const style = tabsSource.slice(tabsSource.lastIndexOf("<style>"));
     expect(style).toMatch(/\.page-tab-strip\s*\{[^}]*overflow-x:\s*auto/);
     expect(style).toMatch(/\.page-tabs-head\s*\{[^}]*container-type:\s*inline-size/);
-    expect(style).toMatch(/@container \(max-width: 639\.98px\)[^}]*\{[^}]*flex-basis:\s*100%/);
+    expect(style).toMatch(/@container \(max-width: 759\.98px\)[^}]*\{[^}]*flex-basis:\s*100%/);
   });
 
   it("without the look the header markup is unchanged (the avatar is only drawn with segments)", () => {

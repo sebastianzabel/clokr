@@ -119,12 +119,11 @@ describe("DayGrid", () => {
     b.unmount();
   });
 
-  // Owner review #854: the row of seven starts at 520 px (the prototype's 720 px form column holds it).
-  it("container layout: one row from 520 px, tokens only, no uppercase or letter-spacing", () => {
+  it("container layout: one row from 760 px, tokens only, no uppercase or letter-spacing", () => {
     const style = gridSource.slice(gridSource.lastIndexOf("<style>"));
     const rules = style.replace(/\/\*[\s\S]*?\*\//g, "");
     expect(rules).toMatch(/\.day-grid\s*\{[^}]*container-type:\s*inline-size/);
-    expect(rules).toMatch(/@container \(min-width: 520px\)[^}]*\{[^}]*repeat\(7,/);
+    expect(rules).toMatch(/@container \(min-width: 760px\)[^}]*\{[^}]*repeat\(7,/);
     expect(rules).toMatch(/var\(--h-control\)/);
     expect(rules).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/);
     expect(rules).not.toMatch(/italic|oblique|uppercase|letter-spacing|@media/);
