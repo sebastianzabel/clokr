@@ -142,8 +142,8 @@ importers:
         specifier: ^5.12.8
         version: 5.12.8
       fastify-plugin:
-        specifier: ^5.1.0
-        version: 5.1.0
+        specifier: ^6.0.1
+        version: 6.0.1
       iconv-lite:
         specifier: ^0.7.3
         version: 0.7.3
@@ -2550,9 +2550,6 @@ packages:
   fastfall@1.5.1:
     resolution: {integrity: sha512-KH6p+Z8AKPXnmA7+Iz2Lh8ARCMr+8WNPVludm1LGkZoD2MjY6LVnRMtTKhkdzI+jr0RzQWXKzKyBJm1zoHEL4Q==}
     engines: {node: '>=0.10.0'}
-
-  fastify-plugin@5.1.0:
-    resolution: {integrity: sha512-FAIDA8eovSt5qcDgcBvDuX/v0Cjz0ohGhENZ/wpc3y+oZCY2afZ9Baqql3g/lC+OHRnciQol4ww7tuthOb9idw==}
 
   fastify-plugin@6.0.1:
     resolution: {integrity: sha512-4wW4RxSmvPXLrh5mgQEiu43qU3bw44N2ss4FTkTkQIbprUhE+/s43QX0j/ttcztdWK7PEkHqVthdc5GdEGDvjA==}
@@ -6131,8 +6128,6 @@ snapshots:
   fastfall@1.5.1:
     dependencies:
       reusify: 1.1.0
-
-  fastify-plugin@5.1.0: {}
 
   fastify-plugin@6.0.1: {}
 
