@@ -64,7 +64,7 @@ async function seedBreakTenant(
     const email = `${empSuffix}-${s}@test.de`;
     const pw = await bcrypt.hash("test1234", 10);
     const user = await prisma.user.create({
-      data: { email, passwordHash: pw, role, isActive: true },
+      data: { email, passwordHash: pw, isActive: true },
     });
     const employee = await prisma.employee.create({
       data: {

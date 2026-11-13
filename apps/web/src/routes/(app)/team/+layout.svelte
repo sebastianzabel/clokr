@@ -1,29 +1,14 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
-  import { authStore } from "$stores/auth";
-  import { hasAnyPermission } from "$lib/permissions"; // Phase 378 (#378)
+  // Phase 378 (#378), since #844: every Team page is guarded by its own route-table permission (RouteGuard) —
+  // Heute im Salon by team-overview:read, Zeiten by time-entry:read, Abwesenheiten by leave-request:read — not by
+  // one combined OR. A UX convenience, not the security boundary; that stays server-side per endpoint.
+  import RouteGuard from "$lib/components/layout/RouteGuard.svelte";
 
   interface Props {
     children?: import("svelte").Snippet;
   }
 
   let { children }: Props = $props();
-
-  // Phase 378 (#378): permission-based, not role-based — shared by /team/time-entries and
-  // /team/leave, whose data sources need different permissions (`time-entry:read:ZUGEWIESEN` /
-  // `leave-request:read:ZUGEWIESEN`). Both real scoped Systemrollen-Templates in scope
-  // (Salonmanager, Ausbilder, #76) hold BOTH, so this combined OR-guard is a UX convenience, not
-  // the security boundary — that stays server-side, unchanged, per subpage's own permission.
-  onMount(() => {
-    const holdsTeamReadPermission = hasAnyPermission($authStore.user, [
-      "time-entry:read:ZUGEWIESEN",
-      "leave-request:read:ZUGEWIESEN",
-    ]);
-    if (!holdsTeamReadPermission) {
-      goto("/dashboard");
-    }
-  });
 </script>
 
-{@render children?.()}
+<RouteGuard>{@render children?.()}</RouteGuard>

@@ -2,6 +2,7 @@ import { authStore } from "$stores/auth";
 import { clearUnsaved } from "$stores/unsaved";
 import { get } from "svelte/store";
 
+import { loginPathWithNext } from "../nav/login-next";
 import { errorMessage } from "./error-message";
 
 const BASE_URL = "/api/v1";
@@ -53,7 +54,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       authStore.logout();
       clearUnsaved(); // N-08 / A1: window.location.href bypasses SvelteKit's router, and it is not
       // settled whether beforeNavigate sees it — clearing here is correct either way
-      window.location.href = "/login";
+      window.location.href = loginPathWithNext(window.location);
     }
     throw new ApiError(401, errorMessage(data, "Unauthorized"), data);
   }
@@ -97,7 +98,7 @@ async function upload<T>(path: string, formData: FormData): Promise<T> {
     authStore.logout();
     clearUnsaved(); // N-08 / A1: window.location.href bypasses SvelteKit's router, and it is not
     // settled whether beforeNavigate sees it — clearing here is correct either way
-    window.location.href = "/login";
+    window.location.href = loginPathWithNext(window.location);
     throw new ApiError(401, errorMessage(data, "Unauthorized"), data);
   }
 
@@ -106,6 +107,39 @@ async function upload<T>(path: string, formData: FormData): Promise<T> {
   }
 
   return data as T;
+}
+
+/**
+ * A file answer (CSV, PDF): the body as a Blob plus the raw `Content-Disposition` header, with the SAME
+ * 401-refresh-and-retry as `request()`. Not routed through `request()` because that reads every non-JSON
+ * body as text, which would drop the BOM of a CSV and mangle binary files. A non-2xx answer throws an
+ * `ApiError` carrying the server's message.
+ */
+async function requestBlob(path: string): Promise<{ blob: Blob; disposition: string }> {
+  const auth = get(authStore);
+  const headers: Record<string, string> = {};
+  if (auth.accessToken) headers["Authorization"] = `Bearer ${auth.accessToken}`;
+
+  const res = await fetch(`${BASE_URL}${path}`, { headers });
+
+  if (res.status === 401) {
+    const refreshed = await tryRefresh();
+    if (refreshed) return requestBlob(path); // Retry with the fresh token
+    authStore.logout();
+    clearUnsaved();
+    window.location.href = loginPathWithNext(window.location);
+    throw new ApiError(401, "Unauthorized");
+  }
+
+  if (!res.ok) {
+    // An error answer is JSON (`{ error, message }`); anything else falls back to the status.
+    const data: unknown = await (
+      res.headers.get("content-type")?.includes("application/json") ? res.json() : res.text()
+    ).catch(() => null);
+    throw new ApiError(res.status, errorMessage(data, "Fehler"), data);
+  }
+
+  return { blob: await res.blob(), disposition: res.headers.get("content-disposition") ?? "" };
 }
 
 async function tryRefresh(): Promise<boolean> {
@@ -168,6 +202,8 @@ export const api = {
    */
   get: <T>(path: string, options?: { signal?: AbortSignal }) =>
     request<T>(path, options?.signal ? { signal: options.signal } : {}),
+  /** A file download (CSV, PDF) with the same token handling; see `requestBlob`. */
+  getBlob: (path: string) => requestBlob(path),
   /** Multipart POST (file upload) with the same 401-refresh-and-retry as every other verb. */
   upload: <T>(path: string, formData: FormData) => upload<T>(path, formData),
   post: <T>(path: string, body: unknown) =>

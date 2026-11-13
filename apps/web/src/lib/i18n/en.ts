@@ -13,8 +13,6 @@ export const en: Record<keyof typeof de, string | readonly string[]> = {
   nav_reports: "Reports",
   nav_my: "My area",
   nav_team: "Team",
-  nav_inbox: "Requests",
-  nav_team_cal: "Team calendar",
   nav_shifts: "Shift planning",
   nav_admin: "Administration",
   nav_employees: "Employees",

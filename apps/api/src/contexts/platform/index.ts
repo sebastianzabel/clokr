@@ -52,6 +52,7 @@ export {
   employedInPeriodWhere,
   reportPopulationWhere,
   isEmployedInPeriod,
+  hasWorkScheduleInPeriodWhere, // Issue #576 — team week and attendance only
 } from "./employed-in-period";
 // Phase 77b (Issue #77): the central, fail-closed access context and the one EmployeeScope factory.
 export {
@@ -114,10 +115,12 @@ export type {
 // per-context impact section).
 // Phase 87b (Issue #87, D-10) — additive Unterbau-Erweiterung: the salons of an employee's current
 // and future assignments.
+// Issue #835 (D-835-05) — additive Unterbau-Erweiterung: the persons homed in a salon during a window.
 export {
   salonForDay,
   listSalonAssignments,
   homeSalonsForDays,
+  employeeIdsHomedInSalonDuring,
   currentAndFutureAssignmentSalonIds,
 } from "./facade/salon-assignments";
 export type { SalonForDay } from "./facade/salon-assignments";
@@ -131,6 +134,14 @@ export { userMayApply } from "./facade/role-assignments";
 // Phase 75b (#75), D-16/D-17: the holders of a ZUGEWIESEN permission in a tenant — the Unterbau
 // answer every notification-recipient site asks instead of a role-based Prisma predicate.
 export { userIdsHoldingPermission } from "./facade/role-assignments";
+// Issue #836: additive Unterbau read (Erweiterung) for leave-limit group membership - the stored
+// role assignment ids per user, any scope (D-836-05). Not a change of any existing export.
+// Issue #836: additive Unterbau reads for the leave-limit rules (role groups and the role choice).
+export {
+  accessRoleIdsByUserId,
+  accessRoleChoices,
+  accessRoleOfTenant,
+} from "./facade/role-assignments";
 // Phase 91b (Issue #91), D-03/D-04: how far a caller's access context reaches for one specific
 // permission — the reach every downstream context-owned scope filter narrows against.
 export { resolveAccessReach } from "./facade/role-assignments";
@@ -192,7 +203,7 @@ export {
   FOUR_EYES_CONFIRMATION_REQUIRED,
 } from "./four-eyes";
 // Phase 75b (#75): the request-scoped permission resolver and the guards/checks every call site
-// uses instead of a legacy role (D-08..D-12, D-30), plus the ONE compat-role derivation (D-14).
+// uses instead of a legacy role (D-08..D-12, D-30), plus the ONE system-role assignment module (D-14).
 export {
   effectiveGrants,
   hasPermission,
@@ -201,15 +212,20 @@ export {
   requireAnyPermission,
 } from "./request-permissions";
 export type { EffectiveGrants } from "./request-permissions";
-// Issue #539 (D-16): `systemRoleIdForLegacyRole`, `deriveCompatRole` and `compatRoleForUser` are no
-// longer exported - Unterbau export removal announced on the issue; the module's own writers use them.
-export { parseCompatRoleFilter, compatRoleUserWhere } from "./compat-role";
-export type { CompatRoleAssignmentRow, CompatRoleFilter } from "./compat-role";
+// Issue #539 (D-16) and #641: no export of `./system-role-assignment` is part of the barrel - the module's own
+// writers and the employee routes import it directly (Unterbau export removal, owner-approved).
 // Issue #450 (D-04) — Erweiterung, additive; consumed by contexts/absence/leave-days.ts
 export { snapToMonthFirstUtc } from "./month-first-date";
 // Phase 88 (#88, D-05/D-05a): the ONE spelling of "active tenant" for background jobs, so a
 // deactivated customer is skipped by every writing/notifying cron loop through one import.
 export { ACTIVE_TENANT_WHERE } from "./tenant-status";
+// Issue #597 — the calendar-feed token (Unterbau): resolution for the composition feed, log redaction.
+export {
+  resolveCalendarFeedToken,
+  redactCalendarFeedPath,
+  deleteCalendarFeedTokensOfUser,
+  type ResolvedCalendarFeed,
+} from "./calendar-feed-token";
 // Phase 88 (#88, D-07a): the operator audit retention purge, run by the daily data-retention job
 // of the composition layer (authentication events after 12 months, lifecycle actions after 120).
 export { purgeExpiredOperatorAudit } from "./operator-audit";

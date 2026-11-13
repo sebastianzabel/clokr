@@ -1,13 +1,44 @@
 <script lang="ts">
+  // Issue #843 (D-843-01 block 10): `variant` is additive. noData / noMatches supply a default title,
+  // sentence and action label; every explicit prop still wins and the output without a variant is unchanged.
+  import type { Snippet } from "svelte";
+
+  // Issue #853 (D-853-10): `action` is additive. When given it is rendered in place of the action
+  // button (the Zeiten empty state shows the person picker there); without it nothing changes.
   interface Props {
     icon?: string;
-    title: string;
+    title?: string;
     description?: string;
     actionLabel?: string;
     onaction?: () => void;
+    variant?: "noData" | "noMatches";
+    action?: Snippet;
   }
 
-  let { icon = "inbox", title, description, actionLabel, onaction }: Props = $props();
+  const VARIANT_DEFAULTS = {
+    noData: { title: "Noch keine Einträge", description: undefined, actionLabel: undefined },
+    noMatches: {
+      title: "Keine Treffer",
+      description: "Passe die Suche oder die Filter an.",
+      actionLabel: "Filter zurücksetzen",
+    },
+  } as const;
+
+  let {
+    icon: iconProp,
+    title: titleProp,
+    description: descriptionProp,
+    actionLabel: actionLabelProp,
+    onaction,
+    variant,
+    action,
+  }: Props = $props();
+
+  const defaults = $derived(variant ? VARIANT_DEFAULTS[variant] : undefined);
+  const icon = $derived(iconProp ?? (variant === "noMatches" ? "search" : "inbox"));
+  const title = $derived(titleProp ?? defaults?.title ?? "");
+  const description = $derived(descriptionProp ?? defaults?.description);
+  const actionLabel = $derived(actionLabelProp ?? defaults?.actionLabel);
 </script>
 
 <!-- Render an empty state with an SVG icon, title, optional description and CTA -->
@@ -76,7 +107,9 @@
   {#if description}
     <p class="empty-state-description">{description}</p>
   {/if}
-  {#if actionLabel && onaction}
+  {#if action}
+    <div class="empty-state-custom-action">{@render action()}</div>
+  {:else if actionLabel && onaction}
     <button class="btn btn-primary btn-sm empty-state-action" onclick={onaction}>
       {actionLabel}
     </button>
@@ -95,7 +128,7 @@
   }
 
   .empty-state-icon {
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.4;
     margin-bottom: 1.25rem;
   }
@@ -109,7 +142,7 @@
 
   .empty-state-description {
     font-size: 0.9375rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     max-width: 320px;
     line-height: 1.5;
     margin-bottom: 1.25rem;
@@ -117,5 +150,10 @@
 
   .empty-state-action {
     margin-top: 0.5rem;
+  }
+
+  .empty-state-custom-action {
+    margin-top: 0.5rem;
+    max-width: 100%;
   }
 </style>

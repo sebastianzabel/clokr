@@ -1,0 +1,51 @@
+{
+  "_comment": "Issue #844: the permission alternatives of every page BEFORE #844 (admin map dumped from admin-route-permissions.ts at 3268b96a8; team entries copied from team-nav.ts TEAM_NAV_ENTRIES, an any-of list = one alternative per key). routes-844.test.ts proves the route table grants exactly these, keyed by the route file.",
+  "admin": {
+    "/admin/employees": [["employee:read:ZUGEWIESEN"]],
+    "/admin/vacation": [["tenant-settings:update:ZUGEWIESEN"], ["leave-config:manage:ZUGEWIESEN"]],
+    "/admin/shutdowns": [["company-shutdown:manage:ZUGEWIESEN"]],
+    "/admin/leave-limits": [
+      ["leave-limit:manage:ZUGEWIESEN"],
+      ["leave-request:approve:ZUGEWIESEN"]
+    ],
+    "/admin/shifts": [
+      ["shift-config:manage:ZUGEWIESEN", "shift:read:ZUGEWIESEN", "shift-pattern:read:ZUGEWIESEN"]
+    ],
+    "/admin/availability": [
+      ["employee:read:ZUGEWIESEN", "availability:read:ZUGEWIESEN"],
+      ["employee:read:ZUGEWIESEN", "availability:update:ZUGEWIESEN"]
+    ],
+    "/admin/salons": [["salon:read:ZUGEWIESEN"]],
+    "/admin/month-close": [["month-close:read:ZUGEWIESEN"]],
+    "/admin/audit": [["audit-log:read:ZUGEWIESEN"]],
+    "/admin/support-access": [["audit-log:read:ZUGEWIESEN"]],
+    "/admin/import": [["employee:import:ZUGEWIESEN"], ["time-entry:import:ZUGEWIESEN"]],
+    "/admin/export": [["report:export:ZUGEWIESEN"]],
+    "/admin/system": [
+      ["tenant-settings:read:ZUGEWIESEN"],
+      ["tenant-settings:update:ZUGEWIESEN"],
+      ["terminal:manage:ZUGEWIESEN"],
+      ["api-key:manage:ZUGEWIESEN"]
+    ],
+    "/admin/themes": [["tenant-settings:read:ZUGEWIESEN"], ["tenant-settings:update:ZUGEWIESEN"]],
+    "/admin/integrations": [["presence-source:manage:ZUGEWIESEN"]],
+    "/admin/phorest": [["integration:manage:ZUGEWIESEN"]],
+    "/admin/roles": [["role:read:ZUGEWIESEN"], ["role-assignment:manage:ZUGEWIESEN"]],
+    "/admin/special-leave": [
+      ["tenant-settings:update:ZUGEWIESEN"],
+      ["leave-config:manage:ZUGEWIESEN"]
+    ],
+    "/admin/wifi-presence": [["presence-source:manage:ZUGEWIESEN"]]
+  },
+  "team": {
+    "/inbox": [
+      ["leave-request:approve:ZUGEWIESEN"],
+      ["retro-request:approve:ZUGEWIESEN"],
+      ["section9:decide:ZUGEWIESEN"]
+    ],
+    "/team/time-entries": [["time-entry:read:ZUGEWIESEN"]],
+    "/team/leave": [["leave-request:read:ZUGEWIESEN"]],
+    "/shifts": [["shift:plan:ZUGEWIESEN"]],
+    "/reports": [["report:read:ZUGEWIESEN"]]
+  }
+}

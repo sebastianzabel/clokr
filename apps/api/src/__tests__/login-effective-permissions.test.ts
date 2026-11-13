@@ -35,7 +35,7 @@ describe("Issue #378 — POST /auth/login exposes effective permissions", () => 
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -118,7 +118,6 @@ describe("Issue #378 — POST /auth/login exposes effective permissions", () => 
       data: {
         email: `${azubiSuffix}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -164,7 +164,6 @@ describe("backfill-month-snapshots main() — DB-backed", () => {
       data: {
         email: `admin-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -188,7 +187,6 @@ describe("backfill-month-snapshots main() — DB-backed", () => {
       data: {
         email: `emp-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -468,7 +466,6 @@ describe("backfill-month-snapshots main() — multi-salon tenant refusal (Phase 
       data: {
         email: `emp-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -20,3 +20,12 @@ export const EFFECTIVE_LEAVE_STATUSES = [
 ] as const satisfies readonly LeaveRequestStatus[];
 
 export type EffectiveLeaveStatus = (typeof EFFECTIVE_LEAVE_STATUSES)[number];
+
+/**
+ * Type guard for "this status is leave that counts" — the one membership check, so no caller
+ * repeats the cast-and-includes copy of the tuple (Issue #478). Takes a plain string because
+ * several callers hold a status that is typed `string`.
+ */
+export function isEffectiveLeaveStatus(status: string): status is EffectiveLeaveStatus {
+  return (EFFECTIVE_LEAVE_STATUSES as readonly string[]).includes(status);
+}

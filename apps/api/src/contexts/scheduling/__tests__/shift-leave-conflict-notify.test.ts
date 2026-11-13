@@ -248,7 +248,6 @@ describe("Schichtplanung — flagShiftIfConflictsWithApprovedLeave / notifyShift
         data: {
           email: `mgr-s4-${Date.now()}@test.de`,
           passwordHash: mgrPasswordHash,
-          role: "MANAGER",
           isActive: true,
         },
       });

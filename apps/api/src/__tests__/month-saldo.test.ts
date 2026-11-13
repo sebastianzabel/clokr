@@ -314,7 +314,6 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
         data: {
           email: `msripartial-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -364,7 +363,6 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
         data: {
           email: `msrifull-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -425,7 +423,6 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
         data: {
           email: `msrinonshift-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -468,7 +465,6 @@ describe("rosterIncomplete (Phase 97-05, SALDO-DISP-07) — computeMonthSaldo", 
         data: {
           email: `msrizero-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -588,7 +584,6 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
       data: {
         email: `admin-${suffix}@test.de`,
         passwordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -623,7 +618,6 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
         data: {
           email: `mswda-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -716,7 +710,6 @@ describe("workedDays (Phase 125, issue #125) — computeMonthSaldo", () => {
         data: {
           email: `mswdb-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

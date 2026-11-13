@@ -45,7 +45,9 @@ export interface ReportRights {
    * Issue #612 - the tabs of the period area, in display order, each present only when the
    * permission of the endpoint behind it is held: "zeiten" and "urlaub" read
    * `GET /reports/period` (report:read), "heute" reads `GET /dashboard/today-attendance`
-   * (team-overview:read). A caller with only report:export gets no tab - the export is a dialog
+   * (team-overview:read), "verlaeufe" (Issue #895) reads the team trend endpoints
+   * (team-overview:read; its saldo card and saldo trend additionally need overtime:read, see
+   * `mayReadTeamSaldo`). A caller with only report:export gets no tab - the export is a dialog
    * of the period bar, not a tab.
    */
   periodTabs: readonly PeriodTab[];
@@ -84,7 +86,7 @@ export function reportRights(user: Caller): ReportRights {
     canTimeEntryRead: hasPermission(user, "time-entry:read:ZUGEWIESEN"),
     periodTabs: [
       ...(canReportRead ? (["zeiten", "urlaub"] as const) : []),
-      ...(canTeamAttendance ? (["heute"] as const) : []),
+      ...(canTeamAttendance ? (["heute", "verlaeufe"] as const) : []),
     ],
   };
 }
@@ -151,4 +153,14 @@ export function salonAdminRights(user: Caller): SalonAdminRights {
     canRead: hasPermission(user, "salon:read:ZUGEWIESEN"),
     canManage: hasPermission(user, "salon:manage:ZUGEWIESEN"),
   };
+}
+
+/** `/admin/salons/:id`, section „Feiertage“: what `POST`/`DELETE /holidays` would accept (Issue #579). */
+export interface SalonHolidayRights {
+  /** `POST /holidays`, `DELETE /holidays/:id` - holiday:manage. Reading the list needs no permission. */
+  canManage: boolean;
+}
+
+export function salonHolidayRights(user: Caller): SalonHolidayRights {
+  return { canManage: hasPermission(user, "holiday:manage:ZUGEWIESEN") };
 }

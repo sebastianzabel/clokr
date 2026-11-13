@@ -28,15 +28,18 @@ model Tenant {
 
   // Issue #93 (Phase 93b) — support access grants of the operator for this tenant. Plural name on
   // purpose: the tenant-scoping model graph skips plural collections.
-  supportAccesses SupportAccess[]
+  supportAccesses    SupportAccess[]
+  // Issue #608 — Prisma-only back-relation, push devices of this tenant's users.
+  pushSubscriptions  PushSubscription[]
+  calendarFeedTokens CalendarFeedToken[] // Issue #597
 
   // Phase 566 (#566) — booked packages per tenant. Unterbau-Erweiterung: additive, no existing reader
   // has to change. Written only by the operator and read only through
   // contexts/platform/tenant-packages.ts, the one decider. `salonQuota` has a database CHECK
   // (>= 1, constraint "Tenant_salonQuota_positive") that lives in the migration because Prisma cannot
   // model it. The empty default and quota 1 are the Grundversion.
-  bookedModules           TenantModule[]   @default([])
-  salonQuota              Int              @default(1)
+  bookedModules TenantModule[] @default([])
+  salonQuota    Int            @default(1)
 
   employees            Employee[]
   leaveTypes           LeaveType[]
@@ -45,11 +48,18 @@ model Tenant {
   companyShutdowns     CompanyShutdown[]
   shiftTemplates       ShiftTemplate[]
   coverageRules        CoverageRule[]
+  // Issue #836: Prisma-only back-relation, no column on Tenant (leave limit rules of the tenant)
+  leaveLimitRules      LeaveLimitRule[]
+  // Issue #835: Prisma-only back-relations, no column on Tenant (leave plans and wishes of the tenant)
+  leavePlans           LeavePlan[]
+  leavePlanWishes      LeavePlanWish[]
   terminalApiKeys      TerminalApiKey[]
   apiKeys              ApiKey[]
   specialLeaveRules    SpecialLeaveRule[]
   presenceSources      PresenceSource[]
   presenceDevices      PresenceDevice[]
+  // Issue #610 — one-time WLAN pairing codes (Prisma-only back-relation; an Unterbau Erweiterung)
+  presencePairingCodes PresencePairingCode[]
   // Phase 67.2 — Schulferien-Cache pro Tenant pro Bundesland
   schoolHolidayPeriods SchoolHolidayPeriod[]
   // Phase 85 — Phorest staff mapping + sync run history
@@ -78,30 +88,30 @@ enum TenantModule {
 }
 
 // Phase 64b (issue #64) — Unterbau level below Tenant (ADR 0001): a Salon is never hard-deleted,
-// only deactivated (isActive/deactivatedAt). openingHours has the shape of the retired
-// TenantConfig.storeHours column:
+// only deactivated (isActive/deactivatedAt). openingHours has the shape of the former
+// tenant-level opening hours column (dropped in #638):
 // Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>.
 model Salon {
-  id             String    @id @default(uuid())
-  tenantId       String
-  name           String
-  street         String?
-  postalCode     String?
-  city           String?
-  openingHours   Json
+  id            String       @id @default(uuid())
+  tenantId      String
+  name          String
+  street        String?
+  postalCode    String?
+  city          String?
+  openingHours  Json
   // Phase 71b (issue #71): the Bundesland whose statutory holidays apply to work done in this
   // salon (§ 2 EFZG, work location) — required, deliberately WITHOUT a schema default (a new
   // salon without an explicit state inherits Tenant.federalState in createSalon(), D-01, so a
   // default here would silently give a salon that skipped that path the wrong state for a
   // non-NI tenant). Changeable only while no TimeEntry and no EmployeeSalonAssignment references
   // the salon (plan 06, D-12).
-  federalState   FederalState
-  isActive       Boolean   @default(true)
-  deactivatedAt  DateTime? @db.Timestamptz
-  createdAt      DateTime  @default(now()) @db.Timestamptz
-  updatedAt      DateTime  @updatedAt @db.Timestamptz
+  federalState  FederalState
+  isActive      Boolean      @default(true)
+  deactivatedAt DateTime?    @db.Timestamptz
+  createdAt     DateTime     @default(now()) @db.Timestamptz
+  updatedAt     DateTime     @updatedAt @db.Timestamptz
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant      Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   // Phase 67b (issue #67) — Salonzuordnung rows pointing at this salon
   assignments EmployeeSalonAssignment[]
 
@@ -118,6 +128,18 @@ model Salon {
   phorestSyncRuns     PhorestSyncRun[]
   // Phase 71b (issue #71): Prisma-only back-relation — manual holidays are now salon-scoped.
   publicHolidays      PublicHoliday[]
+  // Issue #541: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung, approved by
+  // #541 reaching Ready) — the NFC terminal keys bound to this salon.
+  terminalApiKeys     TerminalApiKey[]
+  // Issue #647: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung named on
+  // #647, D-02) — the coverage rules that apply to this salon's view.
+  coverageRules       CoverageRule[]
+  // Issue #836: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung named on
+  // #836, D-01) — the leave limit rules that name this salon.
+  leaveLimitRules     LeaveLimitRule[]
+  // Issue #835: Prisma-only back-relation, no column on Salon (Unterbau Erweiterung named on
+  // #835, D-835-01) — the leave plans of this salon.
+  leavePlans          LeavePlan[]
 
   @@index([tenantId])
 }
@@ -260,6 +282,9 @@ model TenantConfig {
   bsSlotShortDayMinutes               Int?
   bsSlotBlockWeekMinutes              Int?
   halfDayAllowed                      Boolean @default(true) // Halbe Tage erlaubt
+  // Issue #835 (D-835-03, Unterbau Erweiterung): when true, an employee can no longer change their OWN
+  // leave plan wish after the plan deadline (a manager still can until the takeover).
+  leavePlanDeadlineLocksWishes        Boolean @default(false)
   sickSelfReport                      Boolean @default(true) // MA dürfen Krankmeldung selbst eintragen
   sickNoteRequiredAfterDays           Int     @default(3) // AU-Pflicht nach X Krankheitstagen
   // Teilzeit-Urlaub
@@ -291,6 +316,13 @@ model TenantConfig {
   reminderUpcomingAbsenceDays       Int      @default(3) // MA erinnern X Tage vor Abwesenheit
   reminderPendingLeaveEnabled       Boolean  @default(true)
   reminderUpcomingAbsenceEnabled    Boolean  @default(true)
+  // Shift reminders (Issue #609, D-01; Unterbau-Erweiterung). All three occasions default OFF, so an
+  // existing tenant sees no behaviour change until an admin switches one on.
+  reminderShiftStartEnabled         Boolean  @default(false) // remind a person who has not clocked in N minutes after shift start
+  reminderShiftEndEnabled           Boolean  @default(false) // remind a person who is still clocked in N minutes after shift end
+  reminderDayCloseEnabled           Boolean  @default(false) // evening reminder when a shift day has no recorded time
+  reminderOffsetMinutes             Int      @default(15) // N for start and end reminders, bounds 5-120 live in Zod and the kernel
+  reminderDayCloseTime              String   @default("20:00") @db.VarChar(5) // tenant-local HH:MM of the evening reminder
   // Benachrichtigungen
   clockOutReminderHours             Int      @default(10) // Stunden nach denen an offene Stempelung erinnert wird
   missingEntriesDays                Int      @default(7) // Tage ohne Einträge bevor erinnert wird — mirrors DEFAULT_MISSING_ENTRIES_DAYS in apps/api/src/utils/missing-entries-window.ts (issue #141); change both together.
@@ -318,8 +350,6 @@ model TenantConfig {
   loginLockoutMinutes               Int      @default(15) // Sperrzeit in Minuten
   // Aufbewahrungsfrist in Jahren (Minimum 2, Default 10)
   dataRetentionYears                Int      @default(10)
-  // RETIRED (Issue #433): no code reads or writes this column; kept for image-rollback safety and dropped in a follow-up release.
-  monthlyHoursHolidayDeduction      Boolean  @default(false)
   // DATEV Lohnartennummern (konfigurierbar pro Mandant, Phase 4)
   datevNormalstundenNr              Int      @default(100)
   datevUrlaubNr                     Int      @default(300)
@@ -338,14 +368,6 @@ model TenantConfig {
   defaultCoreDays                   Int[]    @default([]) // 0=Sun..6=Sat day-of-week (same encoding as WorkSchedule.coreDays)
   // WiFi-Presence
   wifiPresenceWindowMinutes         Int      @default(15) // Shift-window gate: ±N minutes around shift start/end
-  // Ladenöffnungszeiten (Phase 42) — JSON array, one entry per weekday.
-  // Shape: Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>
-  // Default: Mo-Sa 08:00-20:00, So closed
-  /// RETIRED (Issue #563): no code reads or writes this column. Opening hours live only on
-  /// `Salon.openingHours`; `PUT /api/v1/settings/work` strips the key and every read omits it
-  /// (`RETIRED_TENANT_CONFIG_COLUMNS`). Dropped in a follow-up release (GitHub #638,
-  /// „storeHours-Spalte entfernen“).
-  storeHours                        Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
   // Phase 47.5 — How tightly to bind shifts to store hours.
   //   DAY_ONLY (default): block only on closed days (lets MAs prep before / clean after)
   //   STRICT:             shift time must be within [open, close]
@@ -369,7 +391,6 @@ model User {
   id                     String    @id @default(uuid())
   email                  String    @unique
   passwordHash           String
-  role                   Role      @default(EMPLOYEE)
   isActive               Boolean   @default(true)
   emailNotifications     Boolean   @default(true) // Per-user email opt-out
   failedLoginAttempts    Int       @default(0)
@@ -381,13 +402,16 @@ model User {
   createdAt              DateTime  @default(now()) @db.Timestamptz
   updatedAt              DateTime  @updatedAt @db.Timestamptz
 
-  employee      Employee?
-  refreshTokens RefreshToken[]
-  otpTokens     OtpToken[]
-  auditLogs     AuditLog[]
-  notifications Notification[]
+  employee           Employee?
+  refreshTokens      RefreshToken[]
+  otpTokens          OtpToken[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
   // Phase 74b (issue #74) — role assignments held by this user
-  roleAssignments RoleAssignment[]
+  roleAssignments    RoleAssignment[]
+  // Issue #608 — Prisma-only back-relation, the devices this user opted into push on
+  pushSubscriptions  PushSubscription[]
+  calendarFeedTokens CalendarFeedToken[] // Issue #597
 }
 
 model RefreshToken {
@@ -401,6 +425,52 @@ model RefreshToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// Issue #608 (Phase 608-01, D-03) — a web-push delivery address owned by a user (Unterbau-Erweiterung:
+// additive, no existing reader has to change). One row per browser subscription: the endpoint is the
+// push service's capability URL and p256dh/auth are the keys the payload is encrypted to, so none of the
+// three is ever returned, logged or audited. A row exists only after an explicit opt-in on that device
+// (consentedAt) and is hard-deleted on revoke, on a 404/410 from the push service and on DSGVO
+// anonymization - it is a transport address, not a retention-relevant record. The tenant FK is Restrict
+// (a tenant is deactivated, never deleted); the user FK is Cascade so a removed user takes the address
+// with it. No @updatedAt on purpose: nothing reads a modification time, lastSuccessAt is the signal.
+model PushSubscription {
+  id            String    @id @default(uuid())
+  tenantId      String
+  userId        String
+  endpoint      String    @unique
+  p256dh        String
+  auth          String
+  deviceLabel   String
+  consentedAt   DateTime  @db.Timestamptz
+  lastSuccessAt DateTime? @db.Timestamptz
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([userId])
+}
+
+// Issue #597 — the secret of a person's subscribable calendar feed („Mein Dienstplan“). One row per
+// user; only the SHA-256 of the token is stored (the token itself is shown once, at creation or
+// rotation). Not retention-relevant (a credential, not a record): hard-deleted on revoke, with the
+// user (Cascade), on anonymization and by the int refresh. Unterbau, like PushSubscription.
+model CalendarFeedToken {
+  id         String    @id @default(uuid())
+  tenantId   String
+  userId     String    @unique
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+  rotatedAt  DateTime? @db.Timestamptz
+  lastUsedAt DateTime? @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 model OtpToken {
@@ -443,6 +513,11 @@ model Employee {
   wifiMacs                     String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
   wifiPresenceEnabled          Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
   wifiOptInAt                  DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
+  // Per-person opt-out of the shift reminders (Issue #609, D-02; Unterbau-Erweiterung). Written only by the
+  // own-data route PATCH /api/v1/employees/me/reminders; never returned in a raw employee read (D-16).
+  reminderShiftStartOff        Boolean                @default(false)
+  reminderShiftEndOff          Boolean                @default(false)
+  reminderDayCloseOff          Boolean                @default(false)
   avatarPath                   String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   // Personalstruktur (Phase 41): classification + Coverage-Gewicht + Aufsichtspflicht
   classification               EmployeeClassification @default(VOLLZEIT)
@@ -499,6 +574,7 @@ model Employee {
   availabilities           EmployeeAvailability[]
   presenceDevices          PresenceDevice[]
   retroEntryRequests       RetroEntryRequest[]
+  monthCorrectionRequests  MonthCorrectionRequest[] // Issue #599
   // Phase 85 — explicit Phorest staff mapping (onDelete: Restrict — never cascade-delete history)
   phorestStaffMappings     PhorestStaffMapping[]
   // Phase 86 — DSGVO-minimal appointment busy-window cache (onDelete: Restrict — never cascade-delete)
@@ -513,6 +589,9 @@ model Employee {
   // cascade-delete history); Prisma-only back-relations, no column
   dayBreaks                DayBreak[]
   dayBreakAcks             DayBreakAck[]
+  // Issue #835 — leave plan wishes (Restrict FK — never cascade-delete history); Prisma-only
+  // back-relation, no column (Unterbau Erweiterung named on #835, D-835-02)
+  leavePlanWishes          LeavePlanWish[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -596,6 +675,10 @@ model TimeEntry {
   startTime         DateTime           @db.Timestamptz
   endTime           DateTime?          @db.Timestamptz
   breakMinutes      Int                @default(0)
+  // Issue #596 (#845): start of the RUNNING break of an open entry, null otherwise. Set and cleared
+  // only by the clock resolver (services/clock); a finished break is a Break row as before, so the
+  // saldo and the § 4 evaluation never read this column.
+  breakStartedAt    DateTime?          @db.Timestamptz
   type              TimeEntryType      @default(WORK)
   source            TimeEntrySource    @default(MANUAL)
   note              String?
@@ -652,6 +735,9 @@ model Break {
   startTime   DateTime @db.Timestamptz
   endTime     DateTime @db.Timestamptz
   createdAt   DateTime @default(now()) @db.Timestamptz
+  // Issue #799 — true only for rows `autoInsertBreak` wrote (the automatic break). Existing rows are
+  // false and are never removed by the clock reopen/merge replacement.
+  isAuto      Boolean  @default(false)
 
   timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
 
@@ -830,9 +916,43 @@ model OvertimeTransaction {
   createdAt         DateTime                @default(now()) @db.Timestamptz
   createdBy         String?
 
-  overtimeAccount OvertimeAccount @relation(fields: [overtimeAccountId], references: [id], onDelete: Cascade)
+  overtimeAccount        OvertimeAccount         @relation(fields: [overtimeAccountId], references: [id], onDelete: Cascade)
+  // Issue #599 — the correction request this CORRECTION row books (null for every other row).
+  monthCorrectionRequest MonthCorrectionRequest?
 
   @@index([overtimeAccountId])
+}
+
+// Issue #599 (owner decision 19.10. and 09.11.2026) — a correction request for a day of a CLOSED
+// month, owned by Arbeitszeitkonto. The closed month, its entries and its SaldoSnapshot are never
+// touched: an approval books `correctionMinutes` on `bookingDate` (a day of the then running month)
+// as an account movement that the saldo core folds in (`closeEmployeeMonth`, `accountCorrections`),
+// plus the journal row `overtimeTransactionId` (type CORRECTION). Never deleted except by the
+// employee hard-delete path; withdrawn requests keep their row (status WITHDRAWN).
+model MonthCorrectionRequest {
+  id                    String                       @id @default(uuid())
+  employeeId            String
+  targetDate            DateTime                     @db.Date // the day of the closed month
+  startTime             String? // "HH:MM" proposed work start (evidence, never a TimeEntry)
+  endTime               String? // "HH:MM" proposed work end
+  breakMinutes          Int? // proposed total break minutes
+  reason                String // mandatory (Revisionssicherheit)
+  status                MonthCorrectionRequestStatus @default(PENDING)
+  requestedByUserId     String // the user who filed it (four-eyes axis)
+  reviewedByUserId      String?
+  reviewedAt            DateTime?                    @db.Timestamptz
+  reviewNote            String? // mandatory on approve/reject (route Zod)
+  correctionMinutes     Int? // signed, set on approval only
+  bookingDate           DateTime?                    @db.Date // tenant-local approval day, set on approval only
+  overtimeTransactionId String?                      @unique
+  createdAt             DateTime                     @default(now()) @db.Timestamptz
+  updatedAt             DateTime                     @updatedAt @db.Timestamptz
+
+  employee            Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  overtimeTransaction OvertimeTransaction? @relation(fields: [overtimeTransactionId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId, status])
+  @@index([employeeId, bookingDate])
 }
 
 model OvertimePlan {
@@ -855,7 +975,7 @@ model OvertimePlan {
 // ─────────────────────────────────────────────
 
 model LeaveType {
-  id               String   @id @default(uuid())
+  id               String        @id @default(uuid())
   tenantId         String
   name             String // Anzeigetext, frei änderbar — Identität steckt in `code`
   // Phase 97 (T2) — Identitätsträger. `name` ist seit dieser Phase reiner Anzeigetext (AC-2).
@@ -863,13 +983,13 @@ model LeaveType {
   // D-20/D-21) hat auf int und prod je 0 codelose Zeilen gemessen, bevor die Spalte verpflichtend
   // wurde (dokumentiert in docs/migrations.md § Phase 97).
   code             LeaveTypeCode
-  isPaid           Boolean  @default(true)
-  requiresApproval Boolean  @default(true)
-  color            String   @default("#3B82F6")
-  allowHalfDay     Boolean  @default(true) // Can this type be requested as half-day?
+  isPaid           Boolean       @default(true)
+  requiresApproval Boolean       @default(true)
+  color            String        @default("#3B82F6")
+  allowHalfDay     Boolean       @default(true) // Can this type be requested as half-day?
   maxDaysPerYear   Int? // Optional annual limit per employee
   leadTimeDays     Int? // Per-type override for lead time (null = use global)
-  createdAt        DateTime @default(now()) @db.Timestamptz
+  createdAt        DateTime      @default(now()) @db.Timestamptz
 
   tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   entitlements LeaveEntitlement[]
@@ -961,14 +1081,16 @@ model LeaveRequest {
   // recomputation. Null on every row approved before #468 and on every other leave type.
   overtimeCompMinutes     Int?
 
-  employee              Employee                 @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  leaveType              LeaveType                @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
-  specialLeaveRule       SpecialLeaveRule?        @relation(fields: [specialLeaveRuleId], references: [id])
-  section9AsSick         Section9Credit[]         @relation("Section9SickRequest")
-  section9AsVacation     Section9Credit[]         @relation("Section9VacationRequest")
+  employee                Employee                 @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType               LeaveType                @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  specialLeaveRule        SpecialLeaveRule?        @relation(fields: [specialLeaveRuleId], references: [id])
+  section9AsSick          Section9Credit[]         @relation("Section9SickRequest")
+  section9AsVacation      Section9Credit[]         @relation("Section9VacationRequest")
   // Issue #468 (D-09/A-1) — § 17 Abs. 1 BEEG manual reduction(s) anchored on this request when
   // it is an APPROVED PARENTAL leave request.
   parentalLeaveReductions ParentalLeaveReduction[]
+  // Issue #835 — the plan wish this request was created from at takeover (at most one)
+  leavePlanWish           LeavePlanWish?
 
   @@index([employeeId])
   @@index([employeeId, status])
@@ -1106,7 +1228,7 @@ model Section9Credit {
   sickRequest     LeaveRequest    @relation("Section9SickRequest", fields: [sickRequestId], references: [id], onDelete: Restrict)
   vacationRequest LeaveRequest    @relation("Section9VacationRequest", fields: [vacationRequestId], references: [id], onDelete: Restrict)
   supersedes      Section9Credit? @relation("Section9CreditSupersedes", fields: [supersedesId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  supersededBy     Section9Credit? @relation("Section9CreditSupersedes")
+  supersededBy    Section9Credit? @relation("Section9CreditSupersedes")
 
   // Phase 104 code review WR-03: exactly ONE § 9 Vorgang per (Krankmeldung, Urlaubsantrag,
   // Revision) triple. The detection path guards with a findFirst/create pair that is NOT in a
@@ -1371,9 +1493,16 @@ model TerminalApiKey {
   lastUsedAt DateTime?
   revokedAt  DateTime?
   createdAt  DateTime  @default(now())
+  // Issue #541: optional binding of the terminal to ONE salon of its tenant. Nullable, no backfill
+  // (an unbound terminal keeps the salon rule of today). Tenant sameness is checked by the
+  // application because the database cannot express it; Restrict because revision-relevant
+  // references onto the Unterbau use Restrict.
+  salonId    String?
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salon      Salon?    @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@index([tenantId])
+  @@index([salonId])
 }
 
 // ─────────────────────────────────────────────
@@ -1397,6 +1526,9 @@ model PresenceSource {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  // Issue #610 — Prisma-only back-relation of the one-time pairing codes issued through this key
+  pairingCodes PresencePairingCode[]
+
   @@index([tenantId])
   @@index([keyHash])
 }
@@ -1406,13 +1538,18 @@ model PresenceSource {
 // ─────────────────────────────────────────────
 
 model PresenceDevice {
-  id            String   @id @default(uuid())
+  id            String            @id @default(uuid())
   tenantId      String
   employeeId    String
   mac           String // Normalized lowercase colon-separated: "aa:bb:cc:dd:ee:ff"
   label         String? // Optional human-readable label (e.g. "iPhone the operator", "Tablet")
   addedByUserId String? // userId of the person who created the mapping (null = system)
-  addedAt       DateTime @default(now()) @db.Timestamptz
+  addedAt       DateTime          @default(now()) @db.Timestamptz
+  // Issue #610 (D-07): how the mapping was made. Existing rows stay MANUAL - no classification is guessed.
+  pairedVia     PresencePairedVia @default(MANUAL)
+  // Issue #610 (D-07, P-610-11): last presence event (connected or disconnected) of this MAC, written by the
+  // webhook. NULL until the first event after the mapping; no backfill.
+  lastSeenAt    DateTime?         @db.Timestamptz
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
@@ -1420,6 +1557,38 @@ model PresenceDevice {
   @@unique([tenantId, mac]) // One MAC maps to exactly one employee per tenant
   @@index([tenantId])
   @@index([employeeId])
+}
+
+// Issue #610 (D-07) - how a PresenceDevice mapping came into being.
+enum PresencePairedVia {
+  MANUAL
+  QR
+}
+
+// Issue #610 (Phase 610-01, D-04 revised) - Zeiterfassung model: a one-time WLAN pairing token. The adapter
+// registers it for a MAC (presence-source key) and the signed-in person confirms it. Only the SHA-256 of the
+// 32-byte code is stored (never the code), it lives at most 5 minutes, is single use (consumedAt), is hard-deleted
+// after one day and on anonymization and is not retention-relevant. Both FKs are onDelete: Cascade for that
+// reason. consumedByUserId is deliberately a plain column without a relation: no new Shared-Kernel
+// dependency on User.
+model PresencePairingCode {
+  id               String    @id @default(uuid())
+  tenantId         String
+  presenceSourceId String
+  codeHash         String    @unique // SHA-256 hex of the raw code
+  mac              String // Normalized lowercase colon-separated
+  hostname         String? // Display only, sanitised and truncated by the writer
+  expiresAt        DateTime  @db.Timestamptz // createdAt + 5 minutes, never longer
+  consumedAt       DateTime? @db.Timestamptz
+  consumedByUserId String? // Plain column on purpose (no FK)
+  createdAt        DateTime  @default(now()) @db.Timestamptz
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  presenceSource PresenceSource @relation(fields: [presenceSourceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, mac])
+  @@index([createdAt])
+  @@index([consumedByUserId])
 }
 
 model ApiKey {
@@ -1456,9 +1625,12 @@ model AccessRole {
   createdAt   DateTime @default(now()) @db.Timestamptz
   updatedAt   DateTime @updatedAt @db.Timestamptz
 
-  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   // Phase 74b (issue #74) — role assignments referencing this role
   roleAssignments RoleAssignment[]
+  // Issue #836: Prisma-only back-relation, no column on AccessRole (Unterbau Erweiterung named on
+  // #836, D-01) — the leave limit rules whose group is this role.
+  leaveLimitRules LeaveLimitRule[]
 
   @@unique([tenantId, nameKey])
   @@index([tenantId])
@@ -1502,12 +1674,6 @@ model RoleAssignment {
 // ─────────────────────────────────────────────
 // ENUMS
 // ─────────────────────────────────────────────
-
-enum Role {
-  ADMIN
-  MANAGER
-  EMPLOYEE
-}
 
 enum FederalState {
   NIEDERSACHSEN
@@ -1577,6 +1743,14 @@ enum OvertimeTransactionType {
   REDUCTION // Abbau (Freizeit genommen)
   PAYOUT // Ausbezahlt
   CORRECTION // Manuelle Korrektur
+}
+
+// Issue #599
+enum MonthCorrectionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
 }
 
 enum OvertimePlanStatus {
@@ -1705,12 +1879,12 @@ model PhorestSyncRun {
   appointmentsRemoved     Int       @default(0)
   appointmentError        String?
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant  Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   // Phase 65b (issue #65, D-03): the salon whose branch this run synced — same tenant as the run
   // by construction of the orchestrator (services/phorest/sync-tenant.ts). Restrict so the run
   // history can never silently lose its salon.
-  salonId                 String
-  salon                   Salon     @relation(fields: [salonId], references: [id], onDelete: Restrict)
+  salonId String
+  salon   Salon  @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@index([tenantId, startedAt])
   @@index([salonId])
@@ -1894,11 +2068,120 @@ model CoverageRule {
   dayOfWeek             Int // 0=Mo..6=So; -1 = "all days"
   minStaff              Decimal        @default(2) @db.Decimal(4, 2)
   requiresNonSupervised Boolean        @default(false)
+  // Issue #647 (D-01): the salon whose view the rule applies to; NULL = tenant-wide, which every
+  // rule written before #647 is (no backfill). The same tenant is enforced by the application
+  // through resolveSalonInReach, not by the database. Restrict because a salon is never
+  // hard-deleted. A new Shared-Kernel dependency, named on #647.
+  salonId               String?
   createdAt             DateTime       @default(now()) @db.Timestamptz
   updatedAt             DateTime       @updatedAt @db.Timestamptz
+  salon                 Salon?         @relation(fields: [salonId], references: [id], onDelete: Restrict)
 
   @@index([tenantId])
   @@index([templateId])
+  @@index([salonId])
+}
+
+enum LeaveLimitGroupKind {
+  ALL
+  CLASSIFICATION
+  ACCESS_ROLE
+}
+
+// Issue #836 — Urlaubsgrenzen und Urlaubssperren je Salon. At most `maxPersons` people of one group
+// (everyone, one classification, or one role) may be on plannable leave on the same day in a salon.
+// A blackout is the same row with maxPersons 0 and a window. Never hard-deleted: removal sets
+// deletedAt (audit-proof). salonId NULL = every salon of the tenant, still counted per salon.
+// The group shape (ALL / CLASSIFICATION / ACCESS_ROLE with exactly the matching column), the window
+// order and maxPersons >= 0 are CHECK constraints in a hand-written later migration (Prisma models
+// none). The same tenant of salonId / accessRoleId is enforced by the application. createdByUserId
+// and deletedByUserId are plain strings without an FK (mirrors LeaveRequest.reviewedBy).
+model LeaveLimitRule {
+  id              String                  @id @default(uuid())
+  tenantId        String
+  tenant          Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  salonId         String?
+  salon           Salon?                  @relation(fields: [salonId], references: [id], onDelete: Restrict)
+  groupKind       LeaveLimitGroupKind
+  classification  EmployeeClassification?
+  accessRoleId    String?
+  accessRole      AccessRole?             @relation(fields: [accessRoleId], references: [id], onDelete: Restrict)
+  maxPersons      Int
+  validFrom       DateTime?               @db.Date
+  validUntil      DateTime?               @db.Date
+  name            String?
+  createdAt       DateTime                @default(now()) @db.Timestamptz
+  createdByUserId String?
+  updatedAt       DateTime                @updatedAt @db.Timestamptz
+  deletedAt       DateTime?               @db.Timestamptz
+  deletedByUserId String?
+
+  @@index([tenantId, deletedAt])
+  @@index([salonId])
+  @@index([accessRoleId])
+}
+
+enum LeavePlanStatus {
+  OPEN
+  TAKEN_OVER
+}
+
+// Issue #835 — Urlaubsplaner. A non-binding yearly leave plan per salon (Abwesenheiten): employees
+// enter VACATION wishes, a holder of leave-plan:manage takes them over into real leave requests
+// through the normal create core. A plan is never deleted; after a takeover a new plan for the same
+// salon and year may be opened (late hires). salonId is an FK onto the Unterbau Salon (a new
+// Shared-Kernel dependency named on #835). *ByUserId are plain strings without an FK (mirrors
+// LeaveLimitRule). At most one OPEN plan per salon and year is a partial unique index and the year
+// range a CHECK, both in a hand-written later migration (Prisma models neither).
+model LeavePlan {
+  id                String          @id @default(uuid())
+  tenantId          String
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  salonId           String
+  salon             Salon           @relation(fields: [salonId], references: [id], onDelete: Restrict)
+  year              Int
+  deadline          DateTime?       @db.Date
+  status            LeavePlanStatus @default(OPEN)
+  openedByUserId    String
+  openedAt          DateTime        @default(now()) @db.Timestamptz
+  takenOverAt       DateTime?       @db.Timestamptz
+  takenOverByUserId String?
+  updatedAt         DateTime        @updatedAt @db.Timestamptz
+  wishes            LeavePlanWish[]
+
+  @@index([tenantId, salonId, year])
+}
+
+// Issue #835 — one wish of one person inside a plan. The leave type is implicitly VACATION (no type
+// column) and there is NO free-text column (data minimisation: nothing for the DSGVO anonymisation
+// to clear). leaveRequestId is set exactly once, at takeover, inside the transaction that creates
+// the request; refusalCode/refusalMessage are system-generated, never person-authored. Removal is
+// soft (deletedAt); a hard delete exists only with the employee hard-delete path.
+model LeavePlanWish {
+  id              String        @id @default(uuid())
+  tenantId        String
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  planId          String
+  plan            LeavePlan     @relation(fields: [planId], references: [id], onDelete: Restrict)
+  employeeId      String
+  employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  startDate       DateTime      @db.Date
+  endDate         DateTime      @db.Date
+  halfDay         Boolean       @default(false)
+  createdByUserId String
+  createdAt       DateTime      @default(now()) @db.Timestamptz
+  updatedAt       DateTime      @updatedAt @db.Timestamptz
+  deletedAt       DateTime?     @db.Timestamptz
+  deletedByUserId String?
+  leaveRequestId  String?       @unique
+  leaveRequest    LeaveRequest? @relation(fields: [leaveRequestId], references: [id], onDelete: Restrict)
+  takenOverAt     DateTime?     @db.Timestamptz
+  refusalCode     String?
+  refusalMessage  String?
+  refusedAt       DateTime?     @db.Timestamptz
+
+  @@index([tenantId, planId, deletedAt])
+  @@index([employeeId, deletedAt])
 }
 
 model Shift {

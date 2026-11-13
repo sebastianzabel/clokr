@@ -1,9 +1,11 @@
 <script lang="ts">
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import PageHead from "$components/layout/PageHead.svelte";
   import Breadcrumb from "$components/ui/Breadcrumb.svelte";
+  import PeriodPicker from "$components/ui/PeriodPicker.svelte";
   import SupportMonthView from "$lib/components/operator/SupportMonthView.svelte";
   import { OperatorApiError, operatorApi } from "$lib/operator/client";
   import {
@@ -120,42 +122,38 @@
     </PageHead>
   </div>
 
-  <div class="month-nav" data-testid="op-support-month-nav">
-    <button
-      type="button"
-      class="btn btn-outline"
-      disabled={month === MIN_MONTH}
-      data-testid="op-support-month-prev"
-      onclick={() => showMonth(shiftMonth(month, -1))}>Vorheriger Monat</button
+  <div data-testid="op-support-month-nav">
+    <PeriodPicker
+      label={monthLabel(month)}
+      prevLabel="Vorheriger Monat"
+      nextLabel="Nächster Monat"
+      prevDisabled={month === MIN_MONTH}
+      nextDisabled={month === MAX_MONTH}
+      onPrev={() => showMonth(shiftMonth(month, -1))}
+      onNext={() => showMonth(shiftMonth(month, 1))}
+      testIdPrefix="op-support-period"
     >
-    <div class="month-pick">
-      <label class="form-label" for="op-support-month-input">Monat</label>
-      <input
-        id="op-support-month-input"
-        class="form-input"
-        type="month"
-        min={MIN_MONTH}
-        max={MAX_MONTH}
-        value={month}
-        data-testid="op-support-month-input"
-        onchange={onPick}
-      />
-    </div>
-    <button
-      type="button"
-      class="btn btn-outline"
-      disabled={month === MAX_MONTH}
-      data-testid="op-support-month-next"
-      onclick={() => showMonth(shiftMonth(month, 1))}>Nächster Monat</button
-    >
+      {#snippet extra()}
+        <div class="month-pick">
+          <label class="form-label" for="op-support-month-input">Monat</label>
+          <input
+            id="op-support-month-input"
+            class="form-input"
+            type="month"
+            min={MIN_MONTH}
+            max={MAX_MONTH}
+            value={month}
+            data-testid="op-support-month-input"
+            onchange={onPick}
+          />
+        </div>
+      {/snippet}
+    </PeriodPicker>
   </div>
 
   {#if loadState === "loading"}
-    <div aria-busy="true" data-testid="op-support-month-loading">
-      <span class="sr-only" role="status">Wird geladen …</span>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
+    <div data-testid="op-support-month-loading">
+      <Skeleton shape="block" count={3} height="48px" />
     </div>
   {:else if loadState === "not-found"}
     <div data-testid="op-support-month-not-found">
@@ -175,17 +173,6 @@
 </div>
 
 <style>
-  .month-nav {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 12px 16px;
-  }
-
-  .month-nav :global(.btn) {
-    min-height: 44px;
-  }
-
   .month-pick {
     display: flex;
     flex-direction: column;
@@ -195,10 +182,5 @@
   .message {
     margin: 0 0 16px;
     font-size: 16px;
-  }
-
-  .row {
-    height: 48px;
-    margin-bottom: 8px;
   }
 </style>

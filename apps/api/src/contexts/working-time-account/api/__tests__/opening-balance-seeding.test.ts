@@ -53,7 +53,6 @@ describe("Opening Balance seeding — manual close & month-saldo parity (OB-02)"
       data: {
         email: `ob-seed-${suffix}-${Date.now().toString(36)}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

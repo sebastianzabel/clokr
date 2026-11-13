@@ -39,6 +39,7 @@ import {
   monthRangeUtc,
   todayInTz, // Phase 91b Plan 04 (#91), D-10
 } from "../../working-time-account"; // Phase 101B
+import { absenceTypeFields } from "../leave-type";
 import { correctLeaveForNewVocationalSchoolDay } from "../bs-leave-correction"; // Issue #448 (D-04)
 
 const previewQuerySchema = z.object({
@@ -387,7 +388,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
           const inserted = await tx.absence.create({
             data: {
               employeeId: employee.id,
-              type: "VOCATIONAL_SCHOOL",
+              ...absenceTypeFields("VOCATIONAL_SCHOOL"),
               source: "MANUAL",
               startDate: dateUtc,
               endDate: dateUtc,

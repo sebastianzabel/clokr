@@ -32,6 +32,7 @@ import {
   salonIdForEmployee,
   configureDatevKanzlei,
   grantSystemRole,
+  numericEmployeeNumber,
 } from "./setup";
 import * as pdfUtils from "../composition/pdf";
 import { checkArbZG } from "../contexts/time-tracking/arbzg";
@@ -76,14 +77,14 @@ async function createEmployee(
   const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const email = `${label}-${suffix}@test.de`;
   const user = await app.prisma.user.create({
-    data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+    data: { email, passwordHash, isActive: true },
   });
   const hireDate = new Date(`${opts.hireDate}T00:00:00Z`);
   const employee = await app.prisma.employee.create({
     data: {
       tenantId,
       userId: user.id,
-      employeeNumber: `${label}-${suffix}`,
+      employeeNumber: numericEmployeeNumber(),
       firstName: label,
       lastName: "Act81",
       hireDate,
@@ -288,8 +289,8 @@ describe("Issue #81 (AK-6, D-13) — classification leaves every figure surface 
     idsA = await seedEntries(app, a.id);
     idsB = await seedEntries(app, b.id);
     await configureDatevKanzlei(app, tenantId);
-    await app.prisma.employee.update({ where: { id: a.id }, data: { employeeNumber: "ACT81-A" } });
-    await app.prisma.employee.update({ where: { id: b.id }, data: { employeeNumber: "ACT81-B" } });
+    await app.prisma.employee.update({ where: { id: a.id }, data: { employeeNumber: "9100081" } });
+    await app.prisma.employee.update({ where: { id: b.id }, data: { employeeNumber: "9100082" } });
   });
 
   afterAll(async () => {

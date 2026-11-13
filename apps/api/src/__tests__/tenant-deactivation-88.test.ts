@@ -424,7 +424,6 @@ describe("credential paths: forgot/reset/change-password and invitation accept",
       data: {
         email: `invitee-${suffix}@test.de`,
         passwordHash: "PENDING",
-        role: "EMPLOYEE",
         isActive: false,
       },
     });

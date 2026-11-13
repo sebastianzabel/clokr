@@ -106,7 +106,6 @@ describe("GET /api/v1/dashboard/open-items — unconfirmedBreakDays contract (is
       data: {
         email,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

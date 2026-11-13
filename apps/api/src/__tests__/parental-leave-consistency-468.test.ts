@@ -28,7 +28,7 @@ describe("Issue #468 plan 07 — Elternzeit-Kürzung consistency guards (D-07/D-
   async function createFixedEmployee(label: string) {
     const s = uniqueSuffix(label);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash: "x", isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

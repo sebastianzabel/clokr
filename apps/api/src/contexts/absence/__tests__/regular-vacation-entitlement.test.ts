@@ -320,7 +320,6 @@ describe("regular VACATION entitlement wrapper (Issue #445, D-02/D-03/D-05/D-06)
       data: {
         email: `rve-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

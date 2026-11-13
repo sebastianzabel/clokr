@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  activePresets,
+  activePreset,
   arrowLabels,
   canStepNext,
   clampToToday,
@@ -12,23 +12,25 @@ import {
   periodEyebrow,
   periodKind,
   periodLabel,
+  periodForZoom,
   periodSearch,
   presetPeriods,
   RANGE_ERROR_TEXT,
   stepPeriod,
   validateRange,
+  zoomOfKind,
 } from "../period-state";
 
 const TODAY = { year: 2026, month: 10 };
 const ym = (year: number, month: number) => ({ year, month });
-const TABS = ["zeiten", "urlaub", "heute"] as const;
+const TABS = ["zeiten", "urlaub", "heute", "verlaeufe"] as const;
 const UUID_A = "3f2b8c1e-6d4a-4b7e-9a10-5c2d8e7f1a33";
 const UUID_B = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
 
 function parse(
   query: string,
   today = TODAY,
-  tabs: readonly ("zeiten" | "urlaub" | "heute")[] = TABS,
+  tabs: readonly ("zeiten" | "urlaub" | "heute" | "verlaeufe")[] = TABS,
 ) {
   return parsePeriodState(new URLSearchParams(query), today, tabs);
 }
@@ -108,6 +110,14 @@ describe("parsePeriodState", () => {
     expect(parse("tab=bogus").tab).toBe("zeiten");
     expect(parse("tab=heute", TODAY, ["heute"]).tab).toBe("heute");
     expect(parse("", TODAY, ["heute"]).tab).toBe("heute");
+  });
+
+  it("accepts the Verläufe tab (Issue #895) only for a caller who may see it, and writes it back", () => {
+    expect(parse("tab=verlaeufe").tab).toBe("verlaeufe");
+    expect(parse("tab=verlaeufe", TODAY, ["zeiten", "urlaub"]).tab).toBe("zeiten");
+    expect(periodSearch(parse("tab=verlaeufe&from=2026-09&to=2026-10"))).toBe(
+      "from=2026-09&to=2026-10&tab=verlaeufe",
+    );
   });
 
   it("drops a malformed person and salonId", () => {
@@ -309,18 +319,33 @@ describe("presets", () => {
     expect(presetPeriods(ym(2026, 3))[2]).toMatchObject({ from: ym(2026, 1), to: ym(2026, 3) });
   });
 
-  it("marks every matching preset at once", () => {
-    expect(activePresets(TODAY, TODAY, TODAY)).toEqual(["this-month", "quarter"]);
-    expect(activePresets(ym(2026, 9), ym(2026, 9), TODAY)).toEqual(["previous-month"]);
-    expect(activePresets(ym(2026, 1), ym(2026, 10), TODAY)).toEqual(["year"]);
-    expect(activePresets(ym(2026, 8), ym(2026, 10), TODAY)).toEqual(["last-3-months"]);
-    expect(activePresets(ym(2026, 2), ym(2026, 4), TODAY)).toEqual([]);
-    // January: this month, quarter and year are all the same single month
-    expect(activePresets(ym(2026, 1), ym(2026, 1), ym(2026, 1))).toEqual([
-      "this-month",
-      "quarter",
-      "year",
-    ]);
+  // Issue #781, owner decision 27.10.2026 (replaces P-20 of #612, which marked every equal preset
+  // at once): exactly ONE preset is pressed - the clicked one, else the first in display order.
+  it("presses exactly one preset, the first matching one without a click", () => {
+    // October: "Dieser Monat" and "Quartal" are the same single month
+    expect(activePreset(TODAY, TODAY, TODAY)).toBe("this-month");
+    expect(activePreset(ym(2026, 9), ym(2026, 9), TODAY)).toBe("previous-month");
+    expect(activePreset(ym(2026, 1), ym(2026, 10), TODAY)).toBe("year");
+    expect(activePreset(ym(2026, 8), ym(2026, 10), TODAY)).toBe("last-3-months");
+    // a custom range matching no preset presses none
+    expect(activePreset(ym(2026, 2), ym(2026, 4), TODAY)).toBeNull();
+  });
+
+  it("presses the clicked preset in October (month vs quarter)", () => {
+    expect(activePreset(TODAY, TODAY, TODAY, "quarter")).toBe("quarter");
+    expect(activePreset(TODAY, TODAY, TODAY, "this-month")).toBe("this-month");
+  });
+
+  it("presses exactly one of month, quarter and year in January", () => {
+    const jan = ym(2026, 1);
+    expect(activePreset(jan, jan, jan)).toBe("this-month");
+    expect(activePreset(jan, jan, jan, "quarter")).toBe("quarter");
+    expect(activePreset(jan, jan, jan, "year")).toBe("year");
+  });
+
+  it("ignores a clicked preset that no longer equals the period", () => {
+    expect(activePreset(ym(2026, 9), ym(2026, 9), TODAY, "quarter")).toBe("previous-month");
+    expect(activePreset(ym(2026, 2), ym(2026, 4), TODAY, "year")).toBeNull();
   });
 });
 
@@ -366,5 +391,53 @@ describe("clampToToday / isPlainLeftClick", () => {
     expect(isPlainLeftClick({ ...base, shiftKey: true })).toBe(false);
     expect(isPlainLeftClick({ ...base, altKey: true })).toBe(false);
     expect(isPlainLeftClick({ ...base, button: 1 })).toBe(false);
+  });
+});
+
+// Issue #854: the PeriodPicker segment of the period bar.
+describe("zoomOfKind / periodForZoom", () => {
+  it("maps a period kind to its zoom level and a free range to none", () => {
+    expect(zoomOfKind("month")).toBe("monat");
+    expect(zoomOfKind("quarter")).toBe("quartal");
+    expect(zoomOfKind("year")).toBe("jahr");
+    expect(zoomOfKind("range")).toBeNull();
+  });
+
+  it("zooms to the month, quarter and year around the anchor", () => {
+    expect(periodForZoom("monat", ym(2026, 8), TODAY)).toEqual({
+      from: ym(2026, 8),
+      to: ym(2026, 8),
+    });
+    expect(periodForZoom("quartal", ym(2026, 8), TODAY)).toEqual({
+      from: ym(2026, 7),
+      to: ym(2026, 9),
+    });
+    expect(periodForZoom("jahr", ym(2025, 8), TODAY)).toEqual({
+      from: ym(2025, 1),
+      to: ym(2025, 12),
+    });
+  });
+
+  it("clamps the end to the current month (P-16) and an anchor in the future to today", () => {
+    expect(periodForZoom("quartal", ym(2026, 10), TODAY)).toEqual({
+      from: ym(2026, 10),
+      to: ym(2026, 10),
+    });
+    expect(periodForZoom("jahr", ym(2026, 3), TODAY)).toEqual({
+      from: ym(2026, 1),
+      to: ym(2026, 10),
+    });
+    expect(periodForZoom("monat", ym(2027, 1), TODAY)).toEqual({ from: TODAY, to: TODAY });
+  });
+
+  it("every zoom result is a period the detector maps back to the same zoom", () => {
+    for (const zoom of ["monat", "quartal", "jahr"] as const) {
+      for (const anchor of [ym(2026, 1), ym(2026, 5), ym(2026, 10), ym(2025, 12)]) {
+        const p = periodForZoom(zoom, anchor, TODAY);
+        expect(zoomOfKind(periodKind(p.from, p.to, TODAY)), `${zoom} ${anchor.month}`).toBe(
+          zoom === "quartal" && p.from.month === p.to.month ? "monat" : zoom,
+        );
+      }
+    }
   });
 });

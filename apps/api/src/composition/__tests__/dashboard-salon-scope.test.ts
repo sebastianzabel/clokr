@@ -34,7 +34,7 @@ describe("Issue #91 (Phase 91b Plan 06) — dashboard.ts salon/person scope", ()
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -44,6 +44,22 @@ describe("Issue #91 (Phase 91b Plan 06) — dashboard.ts salon/person scope", ()
         firstName: label,
         lastName: "DashboardScopeTest",
         hireDate: new Date("2020-01-01"),
+      },
+    });
+    // Issue #576: a member of the team week / attendance holds a contract
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: employee.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2020-01-01"),
       },
     });
     return { user, employee };

@@ -54,7 +54,7 @@ Zeitüberschreitung`). Only then does `promote` `crane copy` the `:sha-{SHA}` im
 ### Release rehearsal (Issue #709)
 
 **Why.** v1.16.0 was the first time its pre- and post-deploy steps ran together, and that happened on
-demo during the rollout: `backfill-539` cannot run before the migration (#707), and the rehearsal
+demo during the rollout: `backfill-539` (retired with #641) cannot run before the migration (#707), and the rehearsal
 added a second find of the same kind, `audit-511` reads a table the release creates. int and prod would
 have hit both. The rehearsal finds them before the merge.
 
@@ -86,6 +86,25 @@ only; scripts print no names). Any deviation exits 1 and **blocks the merge**; f
 or the script, and rehearse again. After a failed `migrate` the later steps are `SKIPPED`. Attach the
 redacted protocol summary to the release PR. Retro proof: `scripts/rehearsal-fixtures/v1.16.0-as-shipped.steps`
 with the 1.16.0 image against a pre-1.16.0 demo dump reports the #707 error.
+
+**On the prod host (mandatory for a release with migrations, Issue #742).** The demo rehearsal missed the
+drifted index on prod (#733): demo did not have it, a pseudonymized prod copy did. Therefore a release with
+migrations is rehearsed against a fresh dump of prod itself, on the prod host (demo stays allowed as an
+additional rehearsal):
+
+```bash
+scripts/release-rehearsal.sh --host dmz-proxy --dump live:clokr-db --steps docs/release-notes/vX.Y.Z.steps \
+  --image ghcr.io/<owner>/clokr-api:sha-<7> --protocol rehearsal-vX.Y.Z-prod.txt
+```
+
+`live:<container>` streams `pg_dump -Fc` from the running DB container straight into the throwaway
+postgres (no dump file, nothing is copied off the host); the throwaway uses the source container's image,
+so it has prod's postgres major version. The script aborts below 1 GB free on the docker root (prod's disk
+is tight) and only reads the live DB; the running stack, volumes, networks and env file are never touched.
+The new image must be pulled to the host first (`docker pull`, an image only, no stack change). Afterwards
+check `docker ps -a`, `docker network ls`, `docker volume ls` and `df -h /` for leftovers. A read-only smoke
+list for the current version is `scripts/rehearsal-fixtures/smoke-readonly.steps` (proof of 25.10.2026 on
+1.16.1: all steps PASS, `migrate deploy` applied nothing, no leftovers; the `backfill-539` step was removed with #641).
 
 ### Why the notes moved in front of the build
 
@@ -202,7 +221,7 @@ returns unnoticed.
 - Write nothing, list the commits without a run:
   `gh workflow run build-push-reconcile.yml -f dry_run=true -f lookback=40`
 - The same locally:
-  `GITHUB_REPOSITORY=sebastianzabel/clokr node .github/scripts/build-push-reconcile.mjs --lookback 40 --dry-run`
+  `GITHUB_REPOSITORY=getclokr/clokr node .github/scripts/build-push-reconcile.mjs --lookback 40 --dry-run`
 - Replay how `main` looked at an earlier commit (`--dry-run` is mandatory with `--tip`):
   `node .github/scripts/build-push-reconcile.mjs --tip <sha> --dry-run`
 - `gh workflow run build-push.yml --ref main` rebuilds and re-scans the tip of `main`; the newest run
@@ -467,7 +486,9 @@ _that_ commit, and only then tag it.
 
 **Never** restore a raw prod dump to int: int is internet-reachable and the dump carries employee
 names, emails and NFC card ids. The pseudonymizer replaces those while preserving ids, employee
-numbers and all time/leave/saldo data, so reports stay meaningful.
+numbers and all time/leave/saldo data, so reports stay meaningful. DSGVO-anonymized persons (the app's
+own rule, `isAnonymizedEmployee()`) are left exactly as they are, so int still recognises them as
+anonymized; the inline check fails the run if their count differs before and after (Issue #805).
 
 After a refresh **nobody can log in to int** — every `passwordHash` becomes `ANONYMIZED`. Create one
 fresh admin; do not resurrect an existing account.
@@ -475,6 +496,23 @@ fresh admin; do not resurrect an existing account.
 `validate-anonymization.ts` belongs to `anonymize-dump.ts` (full erasure), **not** to the
 pseudonymizer — it asserts `firstName === "Gelöscht"` and will fail against pseudonymized data. The
 pseudonymizer runs its own inline verification.
+
+### Before every int rollout (Issue #742)
+
+int is refreshed from a **fresh** pseudonymized prod dump before each release is rolled out to it, so int
+carries prod's real shape (drifted indexes, odd rows). Lessons of the refresh of 23.10.2026:
+
+- Use the pseudonymizer **of prod's schema version**: check out a worktree at prod's tag
+  (`git worktree add ../clokr-worktrees/pseudo-<tag> v<prod version>`) and run its
+  `apps/api/scripts/pseudonymize-dump.ts` against the staging DB; the newer one expects columns prod lacks.
+- A pseudonymizer older than #805 renames anonymized persons too; run the current script, or restore the
+  anonymized persons' names from the staging copy of the dump before dumping.
+- If that older pseudonymizer does not clear WLAN MACs / `PresenceDevice` rows, run the clean-up SQL on the
+  staging DB yourself before dumping (empty the MAC addresses and delete the device rows) and verify zero
+  remain, in addition to the 0 emails / 0 NFC ids / 0 usable hashes check.
+- Keep the previous int DB as `clokr_old_<YYYYMMDD>` (rename, do not drop) until the new int is verified.
+- Afterwards nobody can log in: restore one admin with `seed-int-admin.ts`.
+- Delete every local dump and staging DB when done (the raw prod dump included).
 
 ## References
 

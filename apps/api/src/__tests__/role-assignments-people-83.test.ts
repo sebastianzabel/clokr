@@ -55,7 +55,6 @@ describe("Issue #83 — GET /api/v1/role-assignments/people", () => {
       data: {
         email: `${s}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: opts.isActive ?? true,
       },
     });
@@ -205,7 +204,6 @@ describe("Issue #83 — GET /api/v1/role-assignments/people", () => {
       data: {
         email: `${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "MANAGER",
         isActive: true,
       },
     });

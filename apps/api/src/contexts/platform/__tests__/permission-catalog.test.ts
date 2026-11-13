@@ -123,6 +123,20 @@ const ISSUE_72_TABLE: readonly IssueTableRow[] = [
     relation: "Mandant",
     actions: ["read", "manage"],
   },
+  // Issue #836: the ticket that justifies the resource (leave limits and blackouts per salon).
+  {
+    resource: "leave-limit",
+    context: "Abwesenheiten",
+    relation: "Person",
+    actions: ["manage"],
+  },
+  // Issue #835: the ticket that justifies the resource (the leave planner, Urlaubsplanung).
+  {
+    resource: "leave-plan",
+    context: "Abwesenheiten",
+    relation: "Person",
+    actions: ["manage"],
+  },
   {
     resource: "company-shutdown",
     context: "Abwesenheiten",
@@ -146,6 +160,13 @@ const ISSUE_72_TABLE: readonly IssueTableRow[] = [
     context: "Arbeitszeitkonto",
     relation: "Person",
     actions: ["read", "close", "unlock", "close-year"],
+  },
+  // Issue #599: the ticket that justifies the resource (correction request for a closed month).
+  {
+    resource: "month-correction",
+    context: "Arbeitszeitkonto",
+    relation: "Person",
+    actions: ["read", "create", "approve"],
   },
   { resource: "shift", context: "Schichtplanung", relation: "Person", actions: ["read", "plan"] },
   { resource: "shift-config", context: "Schichtplanung", relation: "Mandant", actions: ["manage"] },

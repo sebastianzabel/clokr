@@ -34,8 +34,8 @@ Copy this template to `${CLOKR_DIR}/.env` on prod-host and fill in real values. 
 ```bash
 # Required: the GHCR images to deploy. Bump BOTH on each release.
 # The prod compose file references ${CLOKR_API_IMAGE} and ${CLOKR_WEB_IMAGE} (NOT ${CLOKR_VERSION}).
-CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.9.2
-CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:1.9.2
+CLOKR_API_IMAGE=ghcr.io/getclokr/clokr-api:1.9.2
+CLOKR_WEB_IMAGE=ghcr.io/getclokr/clokr-web:1.9.2
 
 # Required: database
 POSTGRES_PASSWORD=<strong-random>
@@ -49,6 +49,12 @@ ENCRYPTION_KEY=<32+ char random>
 # from the three secrets above; unset or empty keeps the operator interface off. Operator accounts
 # are created with scripts/operator-account.ts (see docs/runbooks/operator-accounts.md).
 OPERATOR_JWT_SECRET=<32+ char random, optional>
+
+# Optional: Web-Push (Issue #608). All three or none; unset or empty keeps Web-Push off.
+# Generate the pair with scripts/generate-vapid-keys.ts (see docs/runbooks/web-push.md).
+VAPID_PUBLIC_KEY=<optional>
+VAPID_PRIVATE_KEY=<optional, secret>
+VAPID_SUBJECT=<optional, mailto:<contact> or https: URL>
 
 # Required: app URLs (must match HAProxy frontend hostname)
 CORS_ORIGIN=https://clokr.example.com
@@ -67,13 +73,25 @@ FRITZBOX_USER=<user>
 FRITZBOX_PASS=<pass>
 CLOKR_PRESENCE_KEY=<key>
 POLL_INTERVAL_SECONDS=60
+# Optional: QR pairing of phones (Issue #610; off unless PAIRING_ENABLED=true).
+# CLOKR_APP_URL is the https web origin; PAIRING_HOST_BIND the host's LAN IPv4 (default 127.0.0.1 = unreachable from the WLAN).
+# Network recipe and source-address check: docs/runbooks/wlan-qr-kopplung.md
+PAIRING_ENABLED=false
+CLOKR_APP_URL=https://clokr.example.com
+PAIRING_HOST_BIND=<host LAN IPv4>
 ```
 
 ### GHCR access
 
-Per Phase 71 decision **D-11** (verified 2026-06-04 via `gh api user/packages`): the GHCR packages
-`ghcr.io/sebastianzabel/clokr-api` and `ghcr.io/sebastianzabel/clokr-web` are **public**. No
-`docker login ghcr.io` is required on prod-host. Image pulls work unauthenticated.
+Per Phase 71 decision **D-11**: the GHCR packages are **public**, so no `docker login ghcr.io` is
+required on prod-host and image pulls work unauthenticated.
+
+Since 09.11.2026 the repository lives in the organisation `getclokr`. Images built from then on are
+pushed to `ghcr.io/getclokr/clokr-{api,web}`; every image up to v1.18.x stays under
+`ghcr.io/sebastianzabel/clokr-{api,web}`, so a rollback to such a version uses the old path. A new
+GHCR package is created **private** — set `clokr-api` and `clokr-web` under `getclokr` to public once
+after their first push (Package settings → Change visibility), and grant the repository Actions
+write access (Package settings → Manage Actions access), or the next build cannot push.
 
 ---
 
@@ -92,8 +110,8 @@ cd ${CLOKR_DIR}                     # the directory containing docker-compose.pr
 
 # Edit .env to bump BOTH image vars to the new tag (e.g. 1.9.2):
 nano .env
-# Change: CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.9.1  →  ...clokr-api:1.9.2
-#         CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:1.9.1  →  ...clokr-web:1.9.2
+# Change: CLOKR_API_IMAGE=ghcr.io/getclokr/clokr-api:1.9.1  →  ...clokr-api:1.9.2
+#         CLOKR_WEB_IMAGE=ghcr.io/getclokr/clokr-web:1.9.1  →  ...clokr-web:1.9.2
 
 # Pull the new images
 docker compose -f docker-compose.prod.yml pull api web
@@ -116,7 +134,7 @@ curl -sfS --max-time 10 https://clokr.example.com/api/v1/health | jq .status
 
 curl -sfS --max-time 10 https://clokr.example.com/api/v1/version | jq .version
 # Expected: matches the tag in CLOKR_API_IMAGE / CLOKR_WEB_IMAGE
-#   e.g. CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.9.2 ⇒ .version == "1.9.2"
+#   e.g. CLOKR_API_IMAGE=ghcr.io/getclokr/clokr-api:1.9.2 ⇒ .version == "1.9.2"
 ```
 
 If either assertion fails — **STOP** and consider rolling back (next section).
@@ -146,7 +164,7 @@ After a successful deploy **and** passing smoke test, reclaim space:
 
 Only run `docker image prune -a -f` AFTER the new version's smoke test passes — a pending
 rollback needs the previous image present, or confirm it is re-pullable from
-`ghcr.io/sebastianzabel/clokr-{api,web}` before pruning.
+`ghcr.io/getclokr/clokr-{api,web}` before pruning.
 
 ---
 
@@ -167,19 +185,19 @@ PREV_SHA=<7-char-sha>                # e.g. a1b2c3d
 
 # Re-tag the prior sha-{SHA} images as a rollback tag (crane copy is server-side, no pull):
 crane copy \
-  ghcr.io/sebastianzabel/clokr-api:sha-${PREV_SHA} \
-  ghcr.io/sebastianzabel/clokr-api:vROLLBACK
+  ghcr.io/getclokr/clokr-api:sha-${PREV_SHA} \
+  ghcr.io/getclokr/clokr-api:vROLLBACK
 
 crane copy \
-  ghcr.io/sebastianzabel/clokr-web:sha-${PREV_SHA} \
-  ghcr.io/sebastianzabel/clokr-web:vROLLBACK
+  ghcr.io/getclokr/clokr-web:sha-${PREV_SHA} \
+  ghcr.io/getclokr/clokr-web:vROLLBACK
 
 # Then on prod-host:
 ssh prod-host
 cd ${CLOKR_DIR}
 # Set both CLOKR_API_IMAGE and CLOKR_WEB_IMAGE to the :vROLLBACK tag in .env
-#   CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:vROLLBACK
-#   CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:vROLLBACK
+#   CLOKR_API_IMAGE=ghcr.io/getclokr/clokr-api:vROLLBACK
+#   CLOKR_WEB_IMAGE=ghcr.io/getclokr/clokr-web:vROLLBACK
 nano .env
 docker compose -f docker-compose.prod.yml pull api web
 docker compose -f docker-compose.prod.yml up -d api web

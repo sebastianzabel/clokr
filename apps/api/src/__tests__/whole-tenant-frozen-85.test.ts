@@ -1220,6 +1220,10 @@ function amendedTodayAttendance587(): typeof EXPECTED_TODAY_ATTENDANCE {
  * Amendment 2026-10-16 (Issue #92, Phase 92b-03): the rows additionally carry `travelToSalonName`
  * (the display value of `travelToSalonId`, `null` on every ordinary entry). Same mechanism: taken
  * out before the comparison and proven to be `null` on every row.
+ *
+ * Amendment 2026-11-09 (Issue #596, #845): the rows additionally carry `breakStartedAt` (the
+ * running break of an open entry, a server state; `null` on every closed entry — and every entry of
+ * these fixtures is closed). Same mechanism: taken out before the comparison, proven `null`.
  */
 async function withoutSalonName(
   prisma: FastifyInstance["prisma"],
@@ -1230,7 +1234,8 @@ async function withoutSalonName(
     where: { id: { in: rows.map((r) => r.salonId as string) } },
     select: { id: true, name: true },
   });
-  return rows.map(({ salonName, travelToSalonId, travelToSalonName, ...rest }) => {
+  return rows.map(({ salonName, travelToSalonId, travelToSalonName, breakStartedAt, ...rest }) => {
+    expect(breakStartedAt, "a closed entry has no running break").toBeNull();
     expect(typeof salonName).toBe("string");
     expect(salonName).toBe(salons.find((s) => s.id === rest.salonId)?.name);
     expect(travelToSalonId, "an ordinary entry has no travel destination").toBeNull();
@@ -1263,7 +1268,6 @@ describe("Issue #85 / #547 — frozen whole-tenant responses (tenant admin)", ()
       data: {
         email: `${label}-${stamp}@test.de`,
         passwordHash: opts.anonymized ? "ANONYMIZED" : passwordHash,
-        role: "EMPLOYEE",
         isActive: !opts.anonymized,
       },
     });

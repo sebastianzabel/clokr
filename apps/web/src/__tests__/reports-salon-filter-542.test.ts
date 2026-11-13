@@ -217,7 +217,7 @@ describe("Issue #542 — Berichte follow the header salon", () => {
   it("[elsewhere] an attendance row with workedElsewhere shows the badge", () => {
     expect(TODAY_TYPES).toContain("workedElsewhere?: boolean");
     expect(TODAY).toContain("{#if row.workedElsewhere}");
-    expect(TODAY).toMatch(/title="In einem anderen Salon gearbeitet"\s*>anderer Salon<\/span\s*>/);
+    expect(TODAY).toMatch(/title="In einem anderen Salon gearbeitet"\s*>anderer Salon<\/Chip\s*>/);
   });
 });
 

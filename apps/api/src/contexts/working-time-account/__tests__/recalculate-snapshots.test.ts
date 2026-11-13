@@ -83,7 +83,6 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
         data: {
           email: `admin-${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "ADMIN",
           isActive: true,
         },
       });
@@ -114,7 +113,6 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
         data: {
           email: `as-${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -342,7 +340,6 @@ describe("recalculateSnapshots — bridge/opening-balance snapshot protection (2
       data: {
         email: `bridge-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -549,7 +546,6 @@ describe("recalculateSnapshots — injectedDelta preservation for real-activity 
       data: {
         email: `delta-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -803,7 +799,6 @@ describe("recalculateSnapshots — well-behaved multi-month chain is a byte-iden
       data: {
         email: `chain-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1045,7 +1040,6 @@ describe("recalculateSnapshots — OB-06 opening-balance-seeded chain regression
       data: {
         email: `${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1204,7 +1198,6 @@ describe("recalculateSnapshots — OB-06 opening-balance-seeded chain regression
         data: {
           email: `${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1374,7 +1367,6 @@ describe("recalculateSnapshots — locked-month skip-and-report (Phase 99 Plan 0
       data: {
         email: `locked-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1647,7 +1639,6 @@ describe("recalculateSnapshots — no locked months is a provable no-op for the 
       data: {
         email: `nolock-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1799,7 +1790,6 @@ describe("recalculateSnapshots — locked HEAD month with an active OpeningBalan
       data: {
         email: `oblock-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

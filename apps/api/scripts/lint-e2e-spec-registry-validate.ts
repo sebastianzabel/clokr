@@ -31,7 +31,7 @@
  * named project block is absent, or its `testMatch` field matches nothing — the same anti-vacuity
  * discipline this whole phase is enforcing, applied to the config-parsing step itself.
  *
- * Deliberately unions THREE project blocks (`e2e-ci`, `axe-scan`, `visual`), not only the
+ * Deliberately unions FOUR project blocks (`e2e-ci`, `axe-scan`, `visual`, `screenshots`), not only the
  * literally-named `e2e-ci` project plan 275-03 created. `axe-scan.spec.ts` and `visual.spec.ts`
  * already ran in CI, via their OWN dedicated Playwright projects and CI jobs, before this phase
  * existed. D-07 requires EVERY one of the 24 files to carry exactly one of the three category
@@ -60,10 +60,11 @@ export type Category = (typeof CATEGORIES)[number];
  * sentence, not a label". */
 export const MIN_REASON_LENGTH = 30;
 
-/** The three CI-invoked Playwright project blocks whose `testMatch` sets together answer "does
- * some project actually run this file" — see module docblock for why all three, not only
- * `e2e-ci`. */
-const CI_PROJECT_NAMES = ["e2e-ci", "axe-scan", "visual"] as const;
+/** The CI-invoked Playwright project blocks whose `testMatch` sets together answer "does
+ * some project actually run this file" — see module docblock for why all of them, not only
+ * `e2e-ci`. `screenshots` is the non-gating capture project of Issue #854 (D-854-17): its CI job
+ * runs it on every web change, so its spec is `in-ci` like the other three. */
+const CI_PROJECT_NAMES = ["e2e-ci", "axe-scan", "visual", "screenshots"] as const;
 
 export interface RegisterEntry {
   file: string;
@@ -277,14 +278,14 @@ export function diffInCiAgainstTestMatch(
     if (!testMatchSet.has(basename)) {
       errors.push(
         `'${basename}' is registered as 'in-ci' but no CI-invoked Playwright project ` +
-          `(e2e-ci/axe-scan/visual) actually runs it`,
+          `(e2e-ci/axe-scan/visual/screenshots) actually runs it`,
       );
     }
   }
   for (const basename of testMatchSet) {
     if (!inCiBasenames.has(basename)) {
       errors.push(
-        `'${basename}' is run by a CI-invoked Playwright project (e2e-ci/axe-scan/visual) but ` +
+        `'${basename}' is run by a CI-invoked Playwright project (e2e-ci/axe-scan/visual/screenshots) but ` +
           `its register entry is not categorised 'in-ci'`,
       );
     }

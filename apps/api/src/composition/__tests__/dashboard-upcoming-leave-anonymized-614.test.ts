@@ -47,7 +47,6 @@ describe("Issue #614 — upcoming leave never lists an anonymized person", () =>
       data: {
         email: `${s}@example.invalid`,
         passwordHash: await bcrypt.hash(PASSWORD, 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

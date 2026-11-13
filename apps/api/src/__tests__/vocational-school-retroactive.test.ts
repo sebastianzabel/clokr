@@ -81,7 +81,6 @@ async function createExtraEmployee(
     data: {
       email: `bs-retro-${s}@test.de`,
       passwordHash: "unused-not-logged-in",
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

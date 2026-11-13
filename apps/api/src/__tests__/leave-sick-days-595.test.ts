@@ -51,7 +51,7 @@ describe("Issue #595 (D-04) - GET /leave/sick-days", () => {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@example.invalid`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@example.invalid`, passwordHash, isActive: true },
     });
     const employee = withEmployee
       ? await app.prisma.employee.create({

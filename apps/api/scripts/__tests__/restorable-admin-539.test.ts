@@ -40,7 +40,6 @@ describe("restorable-admin (Issue #539, D-12)", () => {
       data: {
         email: `ra539-${label}-${s}@example.invalid`,
         passwordHash: "x",
-        role,
         isActive: true,
       },
     });
@@ -122,7 +121,6 @@ describe("restorable-admin (Issue #539, D-12)", () => {
       data: {
         email: `ra539-bare-${randomBytes(4).toString("hex")}@example.invalid`,
         passwordHash: "x",
-        role: "ADMIN",
         isActive: true,
       },
     });

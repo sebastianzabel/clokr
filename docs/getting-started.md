@@ -9,8 +9,8 @@
 
 ```bash
 # 1. Konfigurationsdateien herunterladen
-curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/docker-compose.prod.yml
-curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/getclokr/clokr/main/docker-compose.prod.yml
+curl -fsSLO https://raw.githubusercontent.com/getclokr/clokr/main/.env.example
 cp .env.example .env
 ```
 
@@ -29,6 +29,12 @@ ENCRYPTION_KEY=<generierter-string>
 # Optional: eigenes Signiergeheimnis für die Betreiber-Oberfläche (mind. 32 Zeichen, verschieden
 # von den drei Werten oben). Ohne Wert ist die Betreiber-Oberfläche aus.
 # OPERATOR_JWT_SECRET=<generierter-string>
+
+# Optional: Web-Push aufs Handy (alle drei Werte oder keiner; ohne Werte ist Push aus).
+# Das Schlüsselpaar erzeugt scripts/generate-vapid-keys.ts, siehe docs/runbooks/web-push.md.
+# VAPID_PUBLIC_KEY=
+# VAPID_PRIVATE_KEY=
+# VAPID_SUBJECT=
 
 # URL unter der Clokr erreichbar ist
 CORS_ORIGIN=http://deine-domain.de:3000
@@ -78,6 +84,6 @@ docker compose -f docker-compose.prod.yml up -d
 
 ```bash
 # In .env — Tags ohne führendes `v`
-CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.12.0
-CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:1.12.0
+CLOKR_API_IMAGE=ghcr.io/getclokr/clokr-api:1.12.0
+CLOKR_WEB_IMAGE=ghcr.io/getclokr/clokr-web:1.12.0
 ```

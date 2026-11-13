@@ -5,11 +5,11 @@ three development seed/reset scripts in `src/`.
 
 ## Scripts
 
-| Script              | Invocation                                           | What it does                                                                                                                                          |
-| ------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/seed.ts`       | `pnpm --filter @clokr/db seed`                       | Minimal demo tenant with an admin and an employee login.                                                                                              |
-| `src/seed-demo.ts`  | `pnpm --filter @clokr/db exec tsx src/seed-demo.ts`  | Rich, pseudonymized demo data for showcase screenshots (10 employees, leave requests, shifts, Phorest data, …). Expects an EMPTY database.            |
-| `src/reset-demo.ts` | `pnpm --filter @clokr/db exec tsx src/reset-demo.ts` | Deletes all non-admin employees of the admin's tenant and recreates five demo employees with time entries/leave/absences. Development-only (GH #213). |
+| Script              | Invocation                                           | What it does                                                                                                                                                                                                                                |
+| ------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/seed.ts`       | `pnpm --filter @clokr/db seed`                       | Minimal demo tenant with an admin and an employee login.                                                                                                                                                                                    |
+| `src/seed-demo.ts`  | `pnpm --filter @clokr/db exec tsx src/seed-demo.ts`  | Rich, pseudonymized demo data for showcase screenshots (10 employees in two salons incl. a Springerin, two SHIFT_BASED rosters, open leave requests, break findings, Phorest data; saldi near zero, Issue #577). Expects an EMPTY database. |
+| `src/reset-demo.ts` | `pnpm --filter @clokr/db exec tsx src/reset-demo.ts` | Deletes all non-admin employees of the admin's tenant and recreates five demo employees with time entries/leave/absences. Development-only (GH #213).                                                                                       |
 
 ## Mutually exclusive seeds
 
@@ -54,6 +54,10 @@ DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \
 #     nothing is left to close). Dry run first, then write; the database name must be spelled out
 #     and must equal the connected one. Without this step the running API's 06:00 auto-close
 #     closes the same month the next morning.
+#     Since Issue #577 the demo tenant has TWO salons, and the backfill core this wrapper hands
+#     on to refuses multi-salon tenants (one tenant-wide holiday set, Phase 71b); the wrapper then
+#     reports every person as a mismatch and writes nothing. The previous month stays open (the
+#     live saldo is still correct) until the running API's 06:00 auto-close closes it.
 DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \
   pnpm --filter @clokr/api exec tsx scripts/demo-close-previous-month.ts --confirm-database clokr
 DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \

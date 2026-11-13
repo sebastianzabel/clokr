@@ -55,7 +55,6 @@ describe("recalculate-shift-based-leave-days — pre-tracking exclusion (Issue #
       data: {
         email: `rsb481-${label}-${t.suffix}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

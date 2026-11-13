@@ -63,7 +63,7 @@ describe("GET /leave/hours-preview — rosterImported (Phase 430, D-15)", () => 
     ): Promise<{ employeeId: string; token: string }> {
       const email = `lhp-${label}-${suffix}@test.de`;
       const user = await prisma.user.create({
-        data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       const employee = await prisma.employee.create({
         data: {
@@ -209,7 +209,7 @@ describe("GET /leave/hours-preview — type/excludeRequestId (Issue #436, D-04/D
     const passwordHash = await bcrypt.hash("test1234", 10);
     const email = `lhp2-emp-${suffix}@test.de`;
     const user = await prisma.user.create({
-      data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     const employee = await prisma.employee.create({
       data: {
@@ -284,7 +284,6 @@ describe("GET /leave/hours-preview — type/excludeRequestId (Issue #436, D-04/D
       data: {
         email: `lhp2-admin-${id}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -361,7 +360,6 @@ describe("GET /leave/hours-preview — type/excludeRequestId (Issue #436, D-04/D
       data: {
         email: `lhp2-other-${Date.now()}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -62,7 +62,6 @@ describe("Issue #681 — open-month chain: Gesamtsaldo == live saldo at the same
       data: {
         email: `c681-${key}-${unique}@example.invalid`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

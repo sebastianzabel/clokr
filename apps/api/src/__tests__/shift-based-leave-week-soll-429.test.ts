@@ -349,7 +349,11 @@ describe("Issue #429 — invariant suite (D-07..D-10): 'a day reduces Soll exact
     expect(juneCredit + julyCredit).toBe(38 * 60); // exactly one week's contract Soll (38h), never doubled
   });
 
-  it("Month-straddle FINDING: workDays narrower than Mo-Sat can under-credit the split total (never negative, never over-credited)", () => {
+  it("Month-straddle: workDays narrower than Mo-Sat credits exactly one week (finding resolved by #323)", () => {
+    // Issue #323: this used to pin a FINDING (July part capped at 1368, total 2128 < 2280). With the
+    // SHIFT_BASED Soll day count capped at contractWorkDaysPerWeek per ISO week-part, the July cap
+    // is no longer narrower than its uncapped 1520, so the split total equals the full week's Soll.
+    // The assertion is stricter than before: exact equality instead of "< one week".
     // Same fixture as above but with this describe block's Mo-Fr `schedule` (workDays
     // [1,2,3,4,5], contractWorkDaysPerWeek 4). D-08 caps each week-PART independently against
     // its OWN calcExpectedMinutesTz Soll — there is no cross-part reallocation of unused
@@ -385,10 +389,8 @@ describe("Issue #429 — invariant suite (D-07..D-10): 'a day reduces Soll exact
     const julyCredit = julyContractSoll - julyResult.expectedMinutes;
 
     expect(juneCredit).toBe(760);
-    expect(julyCredit).toBe(1368);
-    expect(juneCredit + julyCredit).toBe(2128); // < 38*60=2280 — under-credited, never negative/doubled
-    expect(juneCredit + julyCredit).toBeLessThan(38 * 60);
-    expect(juneCredit + julyCredit).toBeGreaterThan(0);
+    expect(julyCredit).toBe(1520);
+    expect(juneCredit + julyCredit).toBe(38 * 60); // exactly one week's contract Soll, never doubled
   });
 
   it("Split-request cap (D-08): two duplicate full-week rows for the SAME week never double-credit that week", () => {

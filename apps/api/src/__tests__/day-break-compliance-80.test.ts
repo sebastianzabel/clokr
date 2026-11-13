@@ -45,7 +45,6 @@ describe("DayBreak / DayBreakAck compliance (Issue #80, D-06)", () => {
       data: {
         email: `${label}-${stamp}@test.local`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

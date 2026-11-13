@@ -300,9 +300,15 @@ describe("Test 3 — AC-4 / D-18: the self-approval sentence exists in exactly t
     // shared component in Plan 03), team/leave/+page.svelte carries it once (moves into the
     // shared component in Plan 02). Target after Plan 04: 2 occurrences in 2 files — the retro
     // dialog's copy (kept, unchanged) plus the shared component's one copy.
+    // Issue #853 (plan 853-10): the Zeitnachtrag decision moved out of the inbox page into
+    // RetroReviewBody.svelte, so the retro dialog's copy now lives there. The invariant is
+    // unchanged: exactly one retro copy plus the shared leave component's one, in two files.
     expect(totalOccurrences).toBe(2);
     expect(carriers.map((f) => f.relPath).sort()).toEqual(
-      ["lib/components/leave/LeaveReviewDialog.svelte", "routes/(app)/inbox/+page.svelte"].sort(),
+      [
+        "lib/components/leave/LeaveReviewDialog.svelte",
+        "lib/components/team/aufgaben/RetroReviewBody.svelte",
+      ].sort(),
     );
   });
 });
@@ -393,5 +399,17 @@ describe("Test 6 — D-06: the nine /team/leave data-testid anchors survive inta
       0,
     );
     expect(total).toBe(1);
+  });
+
+  // #840 E-02: the team page no longer mounts the review dialog (its open rows link to the inbox,
+  // which owns the only approval place). The nine anchors therefore occur exactly once - in the
+  // shared component - and never on the team page itself; the e2e specs reach them through the
+  // inbox.
+  it("[#840 E-02] the nine anchors live in the component, none on the team page", () => {
+    expect(COMPONENT, "LeaveReviewDialog.svelte must exist").not.toBeNull();
+    for (const name of TESTID_NAMES) {
+      expect(countOccurrences(COMPONENT!, `"${name}"`), name).toBe(1);
+      expect(countOccurrences(TEAM_LEAVE_PAGE, `"${name}"`), `${name} on the team page`).toBe(0);
+    }
   });
 });

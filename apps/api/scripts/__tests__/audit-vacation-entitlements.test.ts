@@ -35,7 +35,7 @@ describe("audit-vacation-entitlements (Issue #444)", () => {
     counter += 1;
     const suffix = `v444-${counter}-${Date.now().toString(36)}`;
     const user = await app.prisma.user.create({
-      data: { email: `${suffix}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${suffix}@test.de`, passwordHash: "x", isActive: true },
     });
     const hireDate = opts.hireDate ?? "2020-01-01";
     const employee = await app.prisma.employee.create({

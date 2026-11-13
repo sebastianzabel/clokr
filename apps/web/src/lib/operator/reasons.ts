@@ -34,7 +34,7 @@ export const REASON_TEXTS: Readonly<Record<string, string>> = {
   BRANCH_ALREADY_COUPLED: "Diese Filialkennung ist bereits einem anderen Salon zugeordnet.",
   SALON_INACTIVE: "Deaktivierte Salons können nicht gekoppelt werden.",
   SALON_NOT_FOUND: "Salon nicht gefunden.",
-  // Package refusals (Phase 566). The server sentence addresses the tenant ("Ihr Anbieter schaltet
+  // Package refusals (Phase 566). The server sentence addresses the tenant ("Dein Anbieter schaltet
   // das frei"); the console words its own, chosen by code, and points to the "Pakete" section.
   SALON_QUOTA_REACHED:
     "Salon-Kontingent erreicht. Erst im Abschnitt „Pakete“ das Ketten-Paket buchen oder das Kontingent erhöhen.",

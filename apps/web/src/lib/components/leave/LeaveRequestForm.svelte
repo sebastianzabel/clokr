@@ -50,9 +50,12 @@
     NEUTRAL_CHIP_LABEL,
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility";
-  import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { formatDayCount, leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04), #853-19
   import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588
+  import { leaveRequested } from "$lib/feedback/action-messages"; // #843 (D-843-08)
   import type { EditableLeaveRequest } from "$lib/leave/leave-request-form";
+  import type { LeaveLimitWarning } from "$lib/leave-limits/types";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   // ── Types ────────────────────────────────────────────────────────────────
   interface OverlapEntry {
@@ -100,6 +103,9 @@
      *  in edit mode (the request's own dates win) and left blank when omitted. */
     initialStartDate?: string;
     initialEndDate?: string;
+    /** Issue #845: the type a fresh CREATE opens with (a start-page link „Krank melden“);
+     *  default VACATION. Ignored in edit mode. */
+    initialTypeCode?: CalendarTypeCode;
     /** The year `/leave/entitlements/:employeeId` is queried with — the calendar year the PAGE
      *  is currently showing (`calYear` on both `/leave` and `/team/leave`), not necessarily the
      *  real-world current year. Defaults to the real-world current year when omitted. This
@@ -108,11 +114,16 @@
      *  writer — see the component doc comment) — kept in the same YEAR to still show identical
      *  figures. */
     entitlementYear?: number;
-    /** Page-specific reload after a successful create/edit. */
-    onSaved: () => void | Promise<void>;
+    /** Page-specific reload after a successful create/edit. A create answered with limit
+     *  warnings (Issue #836) passes them along; the request itself is already saved. */
+    onSaved: (result?: { leaveLimitWarnings?: LeaveLimitWarning[] }) => void | Promise<void>;
     /** Team-context-only addition (Phase 415, D-03): the person picker. Rendered above this
      *  component's own first field. Omitted on `/leave` — nothing extra renders there. */
     personPicker?: Snippet;
+    /** Issue #853 (D-853-12, S-15): with a `personPicker`, show only the picker until a person is
+     *  chosen (`employeeId` is empty); type, dates and the rest follow after the choice. Off by
+     *  default - an omitted prop changes nothing. */
+    deferUntilPerson?: boolean;
   }
 
   let {
@@ -121,10 +132,15 @@
     editingRequest = null,
     initialStartDate = "",
     initialEndDate = "",
+    initialTypeCode = "VACATION",
     entitlementYear = new Date().getFullYear(),
     onSaved,
     personPicker,
+    deferUntilPerson = false,
   }: Props = $props();
+
+  // Only a create can wait for a person: an edit always has one.
+  const awaitingPerson = $derived(deferUntilPerson && !editingRequest && !employeeId);
 
   // ── Form state ───────────────────────────────────────────────────────────
   let formType: CalendarTypeCode = $state("VACATION");
@@ -391,7 +407,7 @@
 
   // ── Form lifecycle ───────────────────────────────────────────────────────
   function resetFormFields() {
-    formType = "VACATION";
+    formType = initialTypeCode;
     formStart = initialStartDate;
     formEnd = initialEndDate;
     formHalfDay = false;
@@ -522,6 +538,7 @@
     formSaving = true;
     formError = "";
     try {
+      let leaveLimitWarnings: LeaveLimitWarning[] = [];
       if (editingRequest) {
         await api.patch(`/leave/requests/${editingRequest.id}`, {
           startDate: formStart,
@@ -544,22 +561,31 @@
         // `employeeId === req.user.employeeId` as the plain self-create path and anything else
         // as manager-on-behalf-of (`apps/api/src/contexts/absence/api/leave.ts` POST /requests) —
         // sending it unconditionally is therefore behavior-preserving for `/leave` too.
-        await api.post("/leave/requests", {
-          employeeId,
-          type: src.type,
-          startDate: src.startDate,
-          endDate: src.endDate,
-          halfDay: src.halfDay,
-          note: src.note || null,
-          ...(src.type === "SPECIAL" && src.specialLeaveRuleId
-            ? { specialLeaveRuleId: src.specialLeaveRuleId }
-            : {}),
-        });
+        const created = await api.post<{ leaveLimitWarnings?: LeaveLimitWarning[] } | undefined>(
+          "/leave/requests",
+          {
+            employeeId,
+            type: src.type,
+            startDate: src.startDate,
+            endDate: src.endDate,
+            halfDay: src.halfDay,
+            note: src.note || null,
+            ...(src.type === "SPECIAL" && src.specialLeaveRuleId
+              ? { specialLeaveRuleId: src.specialLeaveRuleId }
+              : {}),
+          },
+        );
+        leaveLimitWarnings = created?.leaveLimitWarnings ?? [];
+        // #843 (D-843-08): acknowledge only after the server answered, only on create. The type
+        // label is the display name of the chosen type, never a server-side name.
+        toasts.success(leaveRequested(typeName(src.type), src.startDate, src.endDate, src.halfDay));
       }
       open = false;
       pendingCreate = null;
       collisionSummary = null;
-      await onSaved();
+      // Warnings never block (D-836-08): the request exists, the page only gets told.
+      if (leaveLimitWarnings.length > 0) await onSaved({ leaveLimitWarnings });
+      else await onSaved();
       return true;
     } catch (e: unknown) {
       // Issue #449 (D-1): prefer the thrown ApiError's own message — it already carries
@@ -578,7 +604,7 @@
 
 <Modal
   bind:open
-  eyebrow={typeName(formType)}
+  eyebrow={editingRequest ? typeName(editingRequest.typeCode) : undefined}
   title={editingRequest
     ? "Antrag bearbeiten"
     : personPicker
@@ -600,72 +626,85 @@
     <form
       id="leave-form"
       data-testid="leave-form"
+      data-awaiting-person={awaitingPerson ? "" : undefined}
       onsubmit={preventDefault(submitRequest)}
       class="form-grid"
     >
-      {#if personPicker}
-        {@render personPicker()}
-      {/if}
+      <!-- Issue #840 G-9: row 1 = who and what (Mitarbeiter + Art; Anlass for Sonderurlaub),
+           row 2 = when (Von + Bis). Every other group below stays a full-width line. -->
+      <div
+        class="form-row"
+        class:form-row--single={!personPicker && formType !== "SPECIAL"}
+        data-form-row="who"
+      >
+        {#if personPicker}
+          {@render personPicker()}
+        {/if}
 
-      <div class="form-group">
-        <label class="form-label" for="f-type">Art der Abwesenheit</label>
-        <select
-          id="f-type"
-          data-testid="leave-form-type"
-          bind:value={formType}
-          class="form-input"
-          disabled={!!editingRequest}
-          onchange={() => {
-            if (formType === "SPECIAL") loadSpecialLeaveRules();
-          }}
-        >
-          {#each LEAVE_TYPE_OPTIONS as t (t.code)}
-            <option value={t.code}>{t.label}</option>
-          {/each}
-        </select>
-      </div>
-
-      {#if formType === "SPECIAL"}
         <div class="form-group">
-          <label class="form-label" for="f-special-rule">Anlass</label>
-          <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
-            <option value="">— Anlass wählen —</option>
-            {#each specialLeaveRules as rule (rule.id)}
-              <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
+          <label class="form-label" for="f-type">Art der Abwesenheit</label>
+          <select
+            id="f-type"
+            data-testid="leave-form-type"
+            bind:value={formType}
+            class="form-input"
+            disabled={!!editingRequest}
+            onchange={() => {
+              if (formType === "SPECIAL") loadSpecialLeaveRules();
+            }}
+          >
+            {#each LEAVE_TYPE_OPTIONS as t (t.code)}
+              <option value={t.code}>{t.label}</option>
             {/each}
           </select>
         </div>
-      {/if}
 
-      <div class="form-group">
-        <label class="form-label" for="f-start">Von</label>
-        <input
-          id="f-start"
-          data-testid="leave-form-from"
-          type="date"
-          bind:value={() => formStart, setFormStart}
-          required
-          class="form-input"
-        />
+        {#if formType === "SPECIAL"}
+          <div class="form-group" class:form-group--full={!!personPicker}>
+            <label class="form-label" for="f-special-rule">Anlass</label>
+            <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
+              <option value="">— Anlass wählen —</option>
+              {#each specialLeaveRules as rule (rule.id)}
+                <option value={rule.id}
+                  >{rule.name} ({formatDayCount(Number(rule.defaultDays))})</option
+                >
+              {/each}
+            </select>
+          </div>
+        {/if}
       </div>
 
-      <div class="form-group">
-        <label class="form-label" for="f-end">Bis</label>
-        <input
-          id="f-end"
-          data-testid="leave-form-to"
-          type="date"
-          bind:value={formEnd}
-          required
-          min={formStart}
-          disabled={formHalfDay}
-          class="form-input"
-        />
-        {#if halfDayRangeErrorText}
-          <p class="form-hint" data-testid="leave-form-half-day-range-hint">
-            {halfDayRangeErrorText}
-          </p>
-        {/if}
+      <div class="form-row" data-form-row="dates">
+        <div class="form-group">
+          <label class="form-label" for="f-start">Von</label>
+          <input
+            id="f-start"
+            data-testid="leave-form-from"
+            type="date"
+            bind:value={() => formStart, setFormStart}
+            required
+            class="form-input"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="f-end">Bis</label>
+          <input
+            id="f-end"
+            data-testid="leave-form-to"
+            type="date"
+            bind:value={formEnd}
+            required
+            min={formStart}
+            disabled={formHalfDay}
+            class="form-input"
+          />
+          {#if halfDayRangeErrorText}
+            <p class="form-hint" data-testid="leave-form-half-day-range-hint">
+              {halfDayRangeErrorText}
+            </p>
+          {/if}
+        </div>
       </div>
 
       {#if !employeeId}
@@ -808,7 +847,7 @@
       {#if employeeId && formType === "VACATION"}
         <div class="form-group form-group--full">
           {#if vacationBalanceLoading}
-            <div class="balance-box"><span class="text-muted">Lädt…</span></div>
+            <div class="balance-box"><Skeleton shape="block" height="56px" /></div>
           {:else if vacationBalance === null}
             <!-- Phase 415 (D-10): explicit instead of empty/zero — root-cause fix is #416. -->
             <p class="balance-hint-warn" data-testid="leave-form-no-entitlement">
@@ -818,7 +857,7 @@
             <div class="balance-box">
               <div class="balance-row">
                 <span class="balance-label">Jahresanspruch</span>
-                <span class="balance-value">{vacationBalance.total} Tage</span>
+                <span class="balance-value">{formatDayCount(vacationBalance.total)}</span>
               </div>
               {#if vacationBalance.carryOver > 0}
                 <div class="balance-row">
@@ -830,7 +869,7 @@
                       >
                     {/if}
                   </span>
-                  <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
+                  <span class="balance-value">+ {formatDayCount(vacationBalance.carryOver)}</span>
                 </div>
               {/if}
               <div class="balance-row">
@@ -840,20 +879,20 @@
                     : "Genommen"}</span
                 >
                 <span class="balance-value"
-                  >− {vacationBalance.used - vacationBalance.provisionalUsed} Tage</span
+                  >− {formatDayCount(vacationBalance.used - vacationBalance.provisionalUsed)}</span
                 >
               </div>
               {#if vacationBalance.provisionalUsed > 0}
                 <div class="balance-row">
                   <span class="balance-label">Verbraucht (vorläufig)</span>
                   <span class="balance-value balance-value--muted"
-                    >− {vacationBalance.provisionalUsed} Tage</span
+                    >− {formatDayCount(vacationBalance.provisionalUsed)}</span
                   >
                 </div>
               {/if}
               <div class="balance-row">
                 <span class="balance-label">Resturlaub</span>
-                <span class="balance-value">{vacRemaining} Tage</span>
+                <span class="balance-value">{formatDayCount(vacRemaining ?? 0)}</span>
               </div>
               {#if vacationBalance.section9Movements?.length}
                 <ul class="section9-movements">
@@ -877,16 +916,17 @@
                     {/if}
                   </span>
                   <span class="balance-value balance-deduct">
-                    {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}− {effectiveDays}
-                      {effectiveDays === 1 ? "Tag" : "Tage"}{/if}
+                    {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}− {formatDayCount(
+                        effectiveDays,
+                      )}{/if}
                   </span>
                 </div>
                 <div class="balance-divider"></div>
                 <div class="balance-row">
                   <span class="balance-label">Verbleibend</span>
                   <span class="balance-value {(vacAfter ?? 0) < 0 ? 'balance-warn' : ''}">
-                    {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}{vacAfter}
-                      {(vacAfter ?? 0) === 1 ? "Tag" : "Tage"}{/if}
+                    {#if hoursPreviewLoading}<span class="text-muted">…</span
+                      >{:else}{formatDayCount(vacAfter ?? 0)}{/if}
                   </span>
                 </div>
                 {#if !hoursPreviewLoading && (vacAfter ?? 0) < 0}
@@ -932,7 +972,7 @@
           <div class="overlap-box">
             <p class="overlap-title">
               Kolleg:innen im gleichen Zeitraum
-              {#if overlapLoading}<span class="text-muted"> laden…</span>{/if}
+              {#if overlapLoading}<Skeleton inline width={6} />{/if}
             </p>
             {#if !overlapLoading && overlapEntries.filter((o) => o.status === "APPROVED").length === 0}
               <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
@@ -988,7 +1028,9 @@
     onCancel={cancelCreateCollision}
   >
     {#snippet body()}
-      <CollisionWarnBody summary={collisionSummary} variant="range" />
+      {#if collisionSummary}
+        <CollisionWarnBody summary={collisionSummary} variant="range" />
+      {/if}
     {/snippet}
   </ConfirmDialog>
 {/if}
@@ -996,8 +1038,53 @@
 <style>
   .form-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
+  }
+  /* Issue 840 G-9: two rows of two. minmax(0, 1fr) lets a select shrink to its column instead of
+     being cut at the dialog edge; the groups and their controls may shrink below their content. */
+  .form-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  /* Issue #853: before a person is chosen only the picker (the first field) and „Abbrechen“ are
+     shown. */
+  .form-grid[data-awaiting-person] > :not([data-form-row="who"]):not(.form-actions) {
+    display: none;
+  }
+  .form-grid[data-awaiting-person] [data-form-row="who"] > :not(:first-child) {
+    display: none;
+  }
+  .form-grid[data-awaiting-person] [data-testid="leave-form-submit"] {
+    display: none;
+  }
+  /* Issue #853 (S-15): the person picker of the team dialog is the #843 FormField with a Combobox. In
+     the form rows it takes this form's own field look (label size, label gap, control height of
+     `.form-input`), so „Für wen?“ and „Art“ line up on one top. */
+  .form-row > :global(.form-field) {
+    gap: 0.5rem;
+  }
+  .form-row :global(.ff-label) {
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .form-row :global(.cb-field) {
+    min-height: 2.6rem;
+  }
+  .form-row :global(.cb-field .cb-input) {
+    min-height: calc(2.6rem - 2px);
+    font-size: 1rem;
+  }
+  .form-row--single {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .form-row > :global(.form-group) {
+    min-width: 0;
+  }
+  .form-row :global(.form-input) {
+    min-width: 0;
   }
   .form-group--full {
     grid-column: 1 / -1;
@@ -1024,8 +1111,8 @@
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 0.875rem 1rem;
   }
@@ -1034,7 +1121,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0 0 0.5rem;
   }
   .overlap-empty {
@@ -1057,19 +1144,19 @@
     font-weight: 600;
   }
   .overlap-type {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
   .overlap-dates {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 0.875rem;
     margin-left: auto;
   }
 
   /* ── Balance Box ──────────────────────────────────────────────────── */
   .balance-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 0.875rem 1rem;
     display: flex;
@@ -1084,27 +1171,27 @@
     font-size: 0.9375rem;
   }
   .balance-label {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-value {
     font-weight: 600;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .balance-meta {
     font-size: 0.8125rem;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-left: 0.25rem;
   }
   .balance-deduct {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-warn {
     color: var(--bad);
   }
   .balance-divider {
     height: 1px;
-    background: var(--border);
+    background: var(--line);
     margin: 0.125rem 0;
   }
   .balance-hint-warn {
@@ -1118,11 +1205,11 @@
     margin: 0.25rem 0 0;
   }
   .balance-value--muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-hint-muted {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0.25rem 0 0;
   }
 
@@ -1158,20 +1245,17 @@
   }
   .section9-movement {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   @media (max-width: 700px) {
-    .form-grid {
-      grid-template-columns: 1fr 1fr;
-    }
     .overlap-dates {
       margin-left: 0;
     }
   }
   @media (max-width: 480px) {
-    .form-grid {
-      grid-template-columns: 1fr;
+    .form-row {
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 </style>

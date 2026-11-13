@@ -11,11 +11,18 @@ test.describe("Accessibility Audit (axe-core)", () => {
     { name: "Dashboard", url: "/dashboard" },
     { name: "Zeiterfassung", url: "/time-entries" },
     { name: "Abwesenheiten", url: "/leave" },
+    // Issue #840: the two absence areas (Team Übersicht, Mein Bereich Team) on the one timeline.
+    { name: "Team Abwesenheiten", url: "/team/leave" },
+    { name: "Abwesenheiten Team-Tab", url: "/leave?tab=team" },
     { name: "Profil", url: "/settings" },
     { name: "Admin Mitarbeiter", url: "/admin/employees" },
-    { name: "Admin Urlaub & Zeiten", url: "/admin/vacation" },
+    { name: "Admin Abwesenheiten", url: "/verwalten/regeln/abwesenheiten" },
     { name: "Admin System", url: "/admin/system" },
-    { name: "Admin Sonderurlaub", url: "/admin/special-leave" },
+    { name: "Admin Sonderurlaub", url: "/verwalten/regeln/abwesenheiten#sonderurlaub" },
+    // Issue #844: the pages created with the three areas
+    { name: "Heute im Salon", url: "/team/heute" },
+    { name: "Verwalten Übersicht", url: "/verwalten" },
+    { name: "Verwalten Regeln", url: "/verwalten/regeln" },
   ];
 
   for (const p of pages) {

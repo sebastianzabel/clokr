@@ -51,7 +51,6 @@ describe("A day reduces Soll exactly once (Phase 71b Plan 04, issue #71, D-08/AC
         data: {
           email: `hloi-${label}-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

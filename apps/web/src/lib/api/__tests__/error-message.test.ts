@@ -26,13 +26,14 @@ describe("ApiError message — the specific reason reaches the user", () => {
     // uses — the point is that BOTH ApiError construction sites actually route through it.
     expect(typeof errorMessage).toBe("function");
     const src = clientSource();
-    // Four, not two: client.ts has two request functions (JSON and blob), each with a 401 path
-    // and a general non-ok path. Pinning the exact count is what makes a NEW, unrouted
-    // ApiError site fail here instead of silently keeping the old bare-category behaviour.
+    // Five, not two: client.ts has two request functions (JSON and upload), each with a 401 path
+    // and a general non-ok path, plus the file download (`requestBlob`, #583) whose error answer is
+    // JSON. Pinning the exact count is what makes a NEW, unrouted ApiError site fail here instead of
+    // silently keeping the old bare-category behaviour.
     expect(
       src.match(/errorMessage\(data,/g) ?? [],
       "not every ApiError construction site routes through errorMessage()",
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(src, "an ApiError still takes data.error directly").not.toMatch(
       /new ApiError\([^)]*\)\?\.error/,
     );

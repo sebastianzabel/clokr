@@ -134,7 +134,7 @@ describe("audit-511-break-placement — report on the worker database", () => {
   ): Promise<string> {
     const s = `${key}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
     const user = await app.prisma.user.create({
-      data: { email: `${s}@a511.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@a511.test`, passwordHash: "x", isActive: true },
     });
     const created = await app.prisma.employee.create({
       data: {

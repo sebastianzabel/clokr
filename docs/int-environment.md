@@ -6,7 +6,7 @@ The `int` environment is the integration / pre-production cluster for clokr. It 
 
 - **URL:** `https://clokr-int.example.com`
 - **Cluster:** k3s in the homelab
-- **Source of truth:** `https://github.com/sebastianzabel/clokr` (public), branch `release/1.9.x`
+- **Source of truth:** `https://github.com/getclokr/clokr` (public), branch `release/1.9.x`
 - **Helm chart:** `charts/clokr-app/` in the clokr repo (single umbrella chart)
 - **ArgoCD Application:** `argocd-apps/clokr-app.yaml` in the `git.internal/home/homelab` repo
 - **Version check:** manual `curl` of `/api/v1/version` after the int pin, see `docs/release-process.md` ("Getting the release onto int and prod")
@@ -60,7 +60,7 @@ ArgoCD UI → Applications → clokr → "Sync"
 
 ## Secrets
 
-The clokr repo is public on GitHub. Real secrets (JWT_SECRET, JWT_REFRESH_SECRET, ENCRYPTION_KEY, the optional OPERATOR_JWT_SECRET, DB passwords) MUST NOT be committed to `charts/clokr-app/values-int.yaml`. The file uses `CHANGEME-*` placeholders.
+The clokr repo is public on GitHub. Real secrets (JWT_SECRET, JWT_REFRESH_SECRET, ENCRYPTION_KEY, the optional OPERATOR_JWT_SECRET, the optional VAPID_PRIVATE_KEY, DB passwords) MUST NOT be committed to `charts/clokr-app/values-int.yaml`. The file uses `CHANGEME-*` placeholders.
 
 Real secret values are injected via the **ArgoCD UI Parameters tab**:
 
@@ -68,6 +68,8 @@ Real secret values are injected via the **ArgoCD UI Parameters tab**:
 2. Override `secrets.jwtSecret`, `secrets.jwtRefreshSecret`, `secrets.encryptionKey` with int-grade test values (32+ chars each, NOT prod values — int is throwaway-anonymized data)
 3. Save → ArgoCD re-syncs with the override values
 4. Verify by hitting `/api/v1/health` — should return 200
+
+Web-Push (Issue #608) is off on int until a VAPID key pair is set the same way: `secrets.vapidPublicKey`, `secrets.vapidPrivateKey` and `secrets.vapidSubject` as ArgoCD parameters (generate the pair with `scripts/generate-vapid-keys.ts`; never reuse the prod pair). The owner's device acceptance of #608 needs this on int. See `docs/runbooks/web-push.md`.
 
 Alternative: create a Kubernetes Secret manually in the clokr namespace that the chart's `secret.yaml` template references. This survives Application deletion but requires manual maintenance.
 

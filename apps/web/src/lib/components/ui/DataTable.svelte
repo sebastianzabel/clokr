@@ -1,0 +1,528 @@
+<script lang="ts" module>
+  import type { SortDirection } from "./SortHeader.svelte";
+
+  export interface DataTableColumn {
+    /** Stable key; also the key a sort state refers to. */
+    key: string;
+    /** Visible head label; on narrow containers the label printed in front of the value. */
+    label: string;
+    /** The name column: single line, the card title on narrow containers, the row's control. */
+    primary?: boolean;
+    sortable?: boolean;
+    align?: "start" | "end";
+    /** Any CSS width for the head cell. */
+    width?: string;
+    /** Issue #851 (additive): an explanation of the column on its head cell (title attribute). */
+    title?: string;
+  }
+
+  /** Row tint of the `rowTone` prop (Issue #853, D-853-10). */
+  export type DataTableRowTone = "warn" | "info" | "highlight";
+
+  export interface DataTableSort {
+    key: string;
+    dir: "asc" | "desc";
+  }
+
+  /**
+   * The one sort cycle of a column head: none -> ascending -> descending -> none. Another column
+   * always starts at ascending. `null` means "no sort".
+   */
+  export function nextSortState(current: DataTableSort | null, key: string): DataTableSort | null {
+    if (!current || current.key !== key) return { key, dir: "asc" };
+    return current.dir === "asc" ? { key, dir: "desc" } : null;
+  }
+
+  export function sortDirectionOf(current: DataTableSort | null, key: string): SortDirection {
+    if (!current || current.key !== key) return "none";
+    return current.dir === "asc" ? "ascending" : "descending";
+  }
+</script>
+
+<script lang="ts" generics="Row extends object">
+  // Issue #843 (D-843-01 block 6, #575, #616) - the table. ONE DOM at every width: a classic table
+  // that scrolls horizontally inside its own container, and below 760 px of container width the same
+  // cells are restyled into cards that print their column label (`data-label`). The component keeps
+  // no table state: sort, search and filters belong to the caller (local state or `urlState()`).
+  // Cells are rendered as text through the `cell` snippet as plain text.
+  import type { Snippet } from "svelte";
+  import EmptyState from "./EmptyState.svelte";
+  import Skeleton from "./Skeleton.svelte";
+  import SortHeader from "./SortHeader.svelte";
+
+  interface Props {
+    columns: DataTableColumn[];
+    rows: Row[];
+    rowKey: (row: Row) => string | number;
+    /** Renders one cell; without it the cell shows `String(row[column.key])`. */
+    cell?: Snippet<[Row, DataTableColumn]>;
+    sort?: DataTableSort | null;
+    /** Called with the next sort state (`null` = back to unsorted). */
+    onSort?: (next: DataTableSort | null) => void;
+    /** True when the empty `rows` are the result of a search or filter („keine Treffer“). */
+    filtered?: boolean;
+    onResetFilters?: () => void;
+    /** Makes rows clickable; the primary cell becomes the keyboard-focusable control. */
+    onRowClick?: (row: Row) => void;
+    toolbar?: Snippet;
+    /** Optional stable `data-testid` of a row (a page whose e2e addresses its rows by id). */
+    rowTestId?: (row: Row) => string | undefined;
+    /**
+     * Issue #853 (D-853-10): tints a row by tone (`data-tone` on the row, in table and card layout).
+     * The block owns the colours; a page never styles DataTable internals.
+     */
+    rowTone?: (row: Row) => DataTableRowTone | undefined;
+    /** Issue #851 (additive): an element id per row, e.g. the scroll target of a notification deep link. */
+    rowId?: (row: Row) => string | undefined;
+    /** Issue #851 (additive): marks a row as the one a deep link points at (tinted background). */
+    rowHighlight?: (row: Row) => boolean;
+    /**
+     * Issue #899 (additive): extra `data-*` attributes of a row (control values a page or a test
+     * reads, e.g. `data-deleted`); a value of `undefined` omits the attribute.
+     */
+    rowAttrs?: (row: Row) => Record<`data-${string}`, string | undefined> | undefined;
+    /** Issue #851 (additive): extra class names of a row the page styles itself (`:global`). */
+    rowClass?: (row: Row) => string | undefined;
+    /** Accessible table caption (visually hidden). */
+    caption: string;
+    loading?: boolean;
+    /**
+     * Row selection (additive, #854): a leading checkbox column on the table and the card layout.
+     * Without it the table renders exactly as before.
+     */
+    selectable?: boolean;
+    /** Keys of the selected rows (bindable). Keys of rows not shown (other page, filtered away) stay. */
+    selectedKeys?: (string | number)[];
+    onSelectionChange?: (next: (string | number)[]) => void;
+    /** Accessible name of a row's checkbox; default „<text of the primary or first column> auswählen“. */
+    selectionLabel?: (row: Row) => string;
+  }
+
+  let {
+    columns,
+    rows,
+    rowKey,
+    cell,
+    sort = null,
+    onSort,
+    filtered = false,
+    onResetFilters,
+    onRowClick,
+    toolbar,
+    rowTestId,
+    rowTone,
+    rowId,
+    rowHighlight,
+    rowClass,
+    rowAttrs,
+    caption,
+    loading = false,
+    selectable = false,
+    selectedKeys = $bindable([]),
+    onSelectionChange,
+    selectionLabel,
+  }: Props = $props();
+
+  const selectedSet = $derived(new Set(selectedKeys));
+  const shownKeys = $derived(rows.map((row) => rowKey(row)));
+  const selectedShown = $derived(shownKeys.filter((key) => selectedSet.has(key)).length);
+  const allShownSelected = $derived(shownKeys.length > 0 && selectedShown === shownKeys.length);
+  const someShownSelected = $derived(selectedShown > 0 && !allShownSelected);
+
+  function setSelection(next: (string | number)[]) {
+    selectedKeys = next;
+    onSelectionChange?.(next);
+  }
+
+  function toggleRow(row: Row, checked: boolean) {
+    const key = rowKey(row);
+    if (checked) {
+      if (!selectedSet.has(key)) setSelection([...selectedKeys, key]);
+    } else if (selectedSet.has(key)) {
+      setSelection(selectedKeys.filter((k) => k !== key));
+    }
+  }
+
+  // The header checkbox acts on the shown rows only; a selection made on another page is kept.
+  function toggleAllShown(checked: boolean) {
+    if (checked) {
+      setSelection([...selectedKeys, ...shownKeys.filter((key) => !selectedSet.has(key))]);
+    } else {
+      const shown = new Set(shownKeys);
+      setSelection(selectedKeys.filter((key) => !shown.has(key)));
+    }
+  }
+
+  function rowSelectionLabel(row: Row): string {
+    if (selectionLabel) return selectionLabel(row);
+    const column = columns.find((c) => c.primary) ?? columns[0];
+    return `${column ? textOf(row, column) : ""} auswählen`.trim();
+  }
+
+  function textOf(row: Row, column: DataTableColumn): string {
+    // #851: rows may be any object type (an interface has no index signature); read by key.
+    const value = (row as Record<string, unknown>)[column.key];
+    return value === null || value === undefined ? "" : String(value);
+  }
+
+  // A click inside another control of the row (an action button, a link) belongs to that control.
+  function onRowActivate(event: MouseEvent, row: Row) {
+    const target = event.target as Element | null;
+    const control = target?.closest("button, a, input, select, textarea, [role='button']");
+    if (control && !control.classList.contains("dt-primary")) return;
+    onRowClick?.(row);
+  }
+
+  // Enter is handled here and its synthesised click suppressed, so the handler runs exactly once.
+  function onPrimaryKeydown(event: KeyboardEvent, row: Row) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    onRowClick?.(row);
+  }
+</script>
+
+<div class="dt-root" aria-busy={loading ? "true" : undefined}>
+  {#if toolbar}
+    <div class="dt-toolbar">{@render toolbar()}</div>
+  {/if}
+
+  {#if loading}
+    <Skeleton shape="row" count={5} />
+  {:else if rows.length === 0}
+    <EmptyState
+      variant={filtered ? "noMatches" : "noData"}
+      onaction={filtered ? onResetFilters : undefined}
+    />
+  {:else}
+    <div class="dt-scroll">
+      <table class="data-table dt-table">
+        <caption class="sr-only">{caption}</caption>
+        <thead>
+          <tr>
+            {#if selectable}
+              <th scope="col" class="dt-select-cell">
+                <input
+                  type="checkbox"
+                  class="dt-check"
+                  aria-label="Alle angezeigten Zeilen auswählen"
+                  checked={allShownSelected}
+                  indeterminate={someShownSelected}
+                  onchange={(e) => toggleAllShown(e.currentTarget.checked)}
+                />
+              </th>
+            {/if}
+            {#each columns as column (column.key)}
+              {#if column.sortable && onSort}
+                <SortHeader
+                  label={column.label}
+                  direction={sortDirectionOf(sort, column.key)}
+                  align={column.align}
+                  width={column.width}
+                  onSort={() => onSort(nextSortState(sort, column.key))}
+                />
+              {:else}
+                <th
+                  scope="col"
+                  title={column.title}
+                  class:dt-end={column.align === "end"}
+                  style={column.width ? `width: ${column.width}` : undefined}>{column.label}</th
+                >
+              {/if}
+            {/each}
+          </tr>
+        </thead>
+        <tbody>
+          {#each rows as row (rowKey(row))}
+            {#if onRowClick}
+              <!-- The keyboard path is the primary cell's button; the row click is the pointer
+                   convenience of the same action, so the row itself needs no role or tabindex. -->
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+              <tr
+                class="dt-row--click {rowClass?.(row) ?? ''}"
+                class:dt-row--highlight={rowHighlight?.(row) ?? false}
+                id={rowId?.(row)}
+                data-testid={rowTestId?.(row)}
+                data-tone={rowTone?.(row)}
+                {...rowAttrs?.(row)}
+                onclick={(e) => onRowActivate(e, row)}
+              >
+                {#if selectable}
+                  <td class="dt-select-cell" data-label="Auswahl">
+                    <input
+                      type="checkbox"
+                      class="dt-check"
+                      aria-label={rowSelectionLabel(row)}
+                      checked={selectedSet.has(rowKey(row))}
+                      onchange={(e) => toggleRow(row, e.currentTarget.checked)}
+                    />
+                  </td>
+                {/if}
+                {#each columns as column (column.key)}
+                  <td
+                    data-label={column.label}
+                    class:dt-primary-cell={column.primary}
+                    class:dt-end={column.align === "end"}
+                  >
+                    {#if column.primary}
+                      <button
+                        type="button"
+                        class="dt-primary"
+                        onkeydown={(e) => onPrimaryKeydown(e, row)}
+                      >
+                        {#if cell}{@render cell(row, column)}{:else}{textOf(row, column)}{/if}
+                      </button>
+                    {:else if cell}
+                      {@render cell(row, column)}
+                    {:else}
+                      {textOf(row, column)}
+                    {/if}
+                  </td>
+                {/each}
+              </tr>
+            {:else}
+              <tr
+                id={rowId?.(row)}
+                class={rowClass?.(row)}
+                class:dt-row--highlight={rowHighlight?.(row) ?? false}
+                data-testid={rowTestId?.(row)}
+                data-tone={rowTone?.(row)}
+                {...rowAttrs?.(row)}
+              >
+                {#if selectable}
+                  <td class="dt-select-cell" data-label="Auswahl">
+                    <input
+                      type="checkbox"
+                      class="dt-check"
+                      aria-label={rowSelectionLabel(row)}
+                      checked={selectedSet.has(rowKey(row))}
+                      onchange={(e) => toggleRow(row, e.currentTarget.checked)}
+                    />
+                  </td>
+                {/if}
+                {#each columns as column (column.key)}
+                  <td
+                    data-label={column.label}
+                    class:dt-primary-cell={column.primary}
+                    class:dt-end={column.align === "end"}
+                  >
+                    {#if cell}{@render cell(row, column)}{:else}{textOf(row, column)}{/if}
+                  </td>
+                {/each}
+              </tr>
+            {/if}
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {/if}
+</div>
+
+<style>
+  /* #851: the row a deep link points at. */
+  .dt-row--highlight > td {
+    background: var(--brand-tint);
+  }
+
+  .dt-root {
+    container-type: inline-size;
+    min-width: 0;
+  }
+
+  .dt-toolbar {
+    margin-bottom: var(--s-3);
+  }
+
+  .dt-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    background: var(--card);
+  }
+
+  .dt-table {
+    font-size: var(--fs-base);
+  }
+
+  /* Table mode: a value stays on one line (a name is never broken, D-03) and the table scrolls
+     inside .dt-scroll only when its single-line width genuinely exceeds the container. A head may
+     still wrap at a space ("Letzter Login"), it carries no value. The card layout below is the
+     only place that lets a value wrap. */
+  .dt-table :global(th) {
+    height: var(--h-th);
+    padding: 0 var(--s-3);
+    font-size: var(--fs-th);
+    vertical-align: middle;
+    white-space: normal;
+  }
+
+  .dt-table td {
+    height: var(--h-row);
+    padding: 0 var(--s-3);
+    white-space: nowrap;
+  }
+
+  .dt-table :global(tbody tr:nth-child(even)) {
+    background-color: transparent;
+  }
+
+  .dt-table :global(tbody tr:hover) {
+    background-color: var(--hover);
+  }
+
+  .dt-end {
+    text-align: end;
+  }
+
+  /* Issue #853: row tones. The hover rule above has the same specificity (:global tr) and comes
+     first, so a tinted row keeps its tint under the pointer. */
+  .dt-table :global(tbody tr[data-tone="warn"]) {
+    background-color: var(--warn-soft);
+  }
+
+  .dt-table :global(tbody tr[data-tone="info"]) {
+    background-color: var(--info-soft);
+  }
+
+  .dt-table :global(tbody tr[data-tone="highlight"]) {
+    background-color: var(--brand-tint);
+  }
+
+  .dt-primary-cell {
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .dt-row--click {
+    cursor: pointer;
+  }
+
+  .dt-table :global(th.dt-select-cell),
+  .dt-table td.dt-select-cell {
+    width: 1%;
+    padding-inline-end: 0;
+  }
+
+  .dt-check {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--brand);
+    cursor: pointer;
+    vertical-align: middle;
+  }
+
+  .dt-check:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+
+  .dt-primary {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .dt-primary:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: var(--r-control);
+  }
+
+  /* Narrow container: the same cells become cards. The head row stays for assistive technology. */
+  @container (max-width: 759.98px) {
+    .dt-scroll {
+      overflow: visible;
+      border: 0;
+      background: transparent;
+    }
+
+    .dt-table,
+    .dt-table tbody,
+    .dt-table tr,
+    .dt-table td {
+      display: block;
+    }
+
+    .dt-table thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .dt-table :global(tbody tr) {
+      margin-bottom: var(--s-3);
+      padding: var(--s-2) var(--s-4);
+      border: 1px solid var(--line);
+      border-radius: var(--r-card);
+      background: var(--card);
+    }
+
+    /* A card is as wide as its container, never wider: a cell with several parts (a status and
+       its chip) wraps them onto another line, and a long name breaks inside the card instead of
+       forcing it open (found by the 390/360 px matrix of hr-view-86, #648). */
+    .dt-table td {
+      display: flex;
+      flex-wrap: wrap;
+      white-space: normal;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: var(--s-1) var(--s-3);
+      min-width: 0;
+      height: auto;
+      min-height: var(--h-control);
+      padding: var(--s-1) 0;
+      border-bottom: 0;
+      text-align: end;
+    }
+
+    .dt-table td::before {
+      content: attr(data-label);
+      flex-shrink: 0;
+      color: var(--text-2);
+      font-size: var(--fs-sm);
+      font-weight: 400;
+      text-align: start;
+    }
+
+    .dt-table td.dt-primary-cell {
+      justify-content: flex-start;
+      padding-bottom: var(--s-2);
+      border-bottom: 1px solid var(--line);
+      text-align: start;
+    }
+
+    .dt-table td.dt-primary-cell::before {
+      display: none;
+    }
+
+    /* The selection checkbox sits at the start of the card, without a printed label. */
+    .dt-table td.dt-select-cell {
+      width: auto;
+      justify-content: flex-start;
+      padding-inline-end: 0;
+    }
+
+    .dt-table td.dt-select-cell::before {
+      display: none;
+    }
+
+    .dt-table td.dt-primary-cell,
+    .dt-primary {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .dt-primary {
+      min-width: 0;
+      max-width: 100%;
+    }
+  }
+</style>

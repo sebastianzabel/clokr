@@ -39,7 +39,7 @@ describe("audit-551-users-without-employee (Issue #551)", () => {
     data = await seedTestData(app, "audit551");
     bareEmail = `bare-audit551-${randomBytes(4).toString("hex")}@test.invalid`;
     const bare = await app.prisma.user.create({
-      data: { email: bareEmail, passwordHash: "x", role: "ADMIN", isActive: true },
+      data: { email: bareEmail, passwordHash: "x", isActive: true },
     });
     bareUserId = bare.id;
     const now = Date.now();

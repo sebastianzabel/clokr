@@ -121,7 +121,6 @@ describe("updateOvertimeAccount — MONTHLY_HOURS leave-skip (#192)", () => {
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -175,7 +174,6 @@ describe("updateOvertimeAccount — MONTHLY_HOURS leave-skip (#192)", () => {
         data: {
           email: `${slug}-${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

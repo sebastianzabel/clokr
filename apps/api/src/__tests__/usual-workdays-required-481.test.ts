@@ -50,7 +50,6 @@ describe("Issue #481 R5 — übliche Arbeitstage are required for SHIFT_BASED co
       data: {
         email: `uwr481-${tag}-${Date.now()}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -280,7 +279,6 @@ describe("D-08 write-path audit (Issue #481) — paths without a validator call 
       data: {
         email: `uwr481d-${tag}-${Date.now()}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -320,7 +318,15 @@ describe("D-08 write-path audit (Issue #481) — paths without a validator call 
     const noScheduleEmp = await bareEmployee("bulk-none");
     const shiftCountBefore = await shiftBasedRowCount();
 
-    const defaults = { defaultWeeklyHours: 39 };
+    // Issue #848: the defaults are a consistent FIXED_SCHEDULE contract (weekly = Σ day hours).
+    const defaults = {
+      defaultWeeklyHours: 39,
+      defaultMondayHours: 7.8,
+      defaultTuesdayHours: 7.8,
+      defaultWednesdayHours: 7.8,
+      defaultThursdayHours: 7.8,
+      defaultFridayHours: 7.8,
+    };
     const preview = await previewBulkApply(app, data.adminToken, { defaults });
     const shiftGroup = preview.nonCandidates.find((g) => g.reason === "OTHER_SCHEDULE_TYPE");
     expect(shiftGroup?.employees.map((e) => e.employeeId)).toContain(shiftEmp.id);

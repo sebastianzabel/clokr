@@ -1,15 +1,23 @@
 <script lang="ts">
+  import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
   import { authStore } from "$stores/auth";
   import { salonContext, roleNamesLabel } from "$stores/salon-context";
   import { tenantFeatures } from "$stores/tenant-features";
   import { versionStore, loadVersion } from "$stores/version";
-  import { hasUnreadReleaseNotes, loadReleaseNotesData, openWhatsNew } from "$stores/release-notes";
+  import {
+    hasUnreadReleaseNotes,
+    loadReleaseNotesData,
+    openWhatsNew,
+    whatsNewEntryLabel,
+  } from "$stores/release-notes";
   import { goto } from "$app/navigation";
   import { clearUnsaved } from "$stores/unsaved";
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
   import { visibleNavSections } from "$lib/nav/app-nav";
   import { activeNavHref } from "$lib/nav/active-route";
+  import { homeHref, navCurrentPath } from "$lib/nav/routes";
+  import { removeThisDevicePush } from "$lib/push/logout";
   import { onMount } from "svelte";
 
   interface Props {
@@ -47,21 +55,15 @@
   const currentHref = $derived(
     activeNavHref(
       sections.flatMap((section) => section.items.map((item) => item.href)),
-      currentPath,
+      navCurrentPath(currentPath),
     ),
   );
 
-  // Phase 73-05 (D-05) — derive a stable, predictable test-id slug from a
-  // route href so every nav link is addressable as `nav-{slug}`.
-  // Examples: `/dashboard` → `dashboard`, `/admin/employees` → `admin-employees`,
-  // `/team/time-entries` → `team-time-entries`. Used by every E2E spec going
-  // forward to navigate without coupling to visible German labels.
-  function navSlug(href: string): string {
-    return href.replace(/^\//, "").replace(/\//g, "-");
-  }
-
   async function handleLogout() {
     try {
+      // Issue #608 (D-18): stop this device's pushes while the token is still valid, so a shared
+      // phone does not keep notifying the previous person. Bounded and never throws.
+      await removeThisDevicePush();
       const state = $authStore;
       const refreshToken = state.refreshToken;
       if (refreshToken) {
@@ -78,17 +80,15 @@
 </script>
 
 <aside class="sidebar" aria-label="Hauptnavigation" data-testid="sidebar">
-  <a href="/dashboard" class="sidebar-brand" data-testid="sidebar-brand">
-    <img class="mark" src="/clokr-wordmark.png" alt="Clokr Zeiterfassung" />
+  <!-- Owner 13.11.2026: mark 40 px in a 64 px rail head (was 32 px, aligned to the header, #852) -->
+  <a href={homeHref($authStore.user)} class="sidebar-brand" data-testid="sidebar-brand">
+    <BrandLogo size={40} label="Clokr Zeiterfassung" />
   </a>
 
   <div class="sidebar-scroll">
-    {#each sections as section (section.label)}
-      {#if section.isAdminGroup}
-        <div class="nav-section-label" aria-hidden="true" translate="no">{section.label}</div>
-      {:else}
-        <div class="sidebar-section-label" translate="no">{section.label}</div>
-      {/if}
+    <!-- #844 (Z-01): one heading per area — Ich · Team · Verwalten -->
+    {#each sections as section (section.area)}
+      <div class="sidebar-section-label" translate="no">{section.label}</div>
       <nav class="sidebar-nav" aria-label={section.label}>
         {#each section.items as item (item.href)}
           {@const active = item.href === currentHref}
@@ -97,9 +97,9 @@
             class="nav-item"
             class:active
             aria-current={active ? "page" : undefined}
-            data-testid={`nav-${navSlug(item.href)}`}
+            data-testid={item.testId}
           >
-            <span class="ico" aria-hidden="true"><Icon name={item.icon} size={17} /></span>
+            <span class="ico" aria-hidden="true"><Icon name={item.icon} size={19} /></span>
             <span class="label" translate="no">{item.label}</span>
           </a>
         {/each}
@@ -137,13 +137,13 @@
         type="button"
         class="version-btn"
         onclick={openWhatsNew}
-        aria-label="Was ist neu in Version {$versionStore}"
+        aria-label={whatsNewEntryLabel($versionStore, $hasUnreadReleaseNotes)}
         title="Was ist neu"
         data-testid="sidebar-whats-new"
       >
         <span class="version-label" translate="no">v{$versionStore}</span>
         {#if $hasUnreadReleaseNotes}
-          <span class="version-dot" aria-hidden="true"></span>
+          <span class="badge badge-purple version-badge" aria-hidden="true">Neu</span>
         {/if}
       </button>
     </div>
@@ -151,42 +151,43 @@
 </aside>
 
 <style>
+  /* #844 (D-844-11): the rail of design concept § 2 — 220 px, tinted, one heading per area */
   .sidebar {
     grid-area: sidebar;
-    background: var(--bg-card);
-    box-shadow: 1px 0 3px rgba(0, 0, 0, 0.04);
-    position: relative;
-    z-index: 10;
+    background: var(--rail);
+    border-right: 1px solid var(--line);
     display: flex;
     flex-direction: column;
-    position: sticky;
+    /* #844 (owner acceptance): the rail always spans the full viewport height with its own scroll, whatever
+       the page length — fixed, not sticky (a sticky grid item depends on every ancestor and the browser);
+       the grid column of the app layout keeps its width. */
+    position: fixed;
     top: 0;
+    left: 0;
+    bottom: 0;
     height: 100vh;
-    width: 232px;
-    min-width: 232px;
+    height: 100dvh;
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
     z-index: 100;
   }
 
   .sidebar-brand,
   .sidebar-brand:hover,
   .sidebar-brand:focus {
-    padding: 44px 20px 22px;
-    margin-bottom: 14px;
+    /* Owner 13.11.2026: a taller rail head for the larger mark (64 px). Until then the row matched the
+       header height (#852/#844); the larger logo no longer fits that line. */
+    box-sizing: border-box;
+    height: 64px;
+    min-height: 64px;
+    padding: 0 18px;
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
     text-decoration: none;
     border: 0;
+    /* the mark takes the brand colour inside BrandLogo; the wordmark is text-coloured (#852) */
     color: var(--text);
-  }
-
-  .sidebar-brand .mark {
-    width: auto;
-    max-width: 190px;
-    height: auto;
-    object-fit: contain;
-    display: block;
   }
 
   .sidebar-scroll {
@@ -194,56 +195,46 @@
     overflow-y: auto;
     min-height: 0;
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: var(--line) transparent;
   }
   .sidebar-scroll::-webkit-scrollbar {
     width: 6px;
   }
   .sidebar-scroll::-webkit-scrollbar-thumb {
-    background: var(--border);
+    background: var(--line);
     border-radius: 3px;
   }
   .sidebar-scroll::-webkit-scrollbar-thumb:hover {
-    background: var(--border-strong);
+    background: var(--line-2);
   }
 
+  /* Owner 13.11.2026: more air above each area heading (12 px, was 6 px) */
   .sidebar-section-label {
-    padding: 18px 20px 6px;
-    font-size: 10px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-faint);
+    padding: 12px 18px 4px;
+    font-size: var(--fs-th);
+    color: var(--text-3);
     font-weight: 600;
-  }
-
-  /* Admin sub-group labels (PERSONAL, PLANUNG, COMPLIANCE, DATEN, SYSTEM).
-     Smaller + slightly indented to nest visually within the admin section. */
-  .nav-section-label {
-    font-size: 0.6875rem; /* ~11px */
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-    padding: var(--s-4) var(--s-3) var(--s-1) 20px;
-    user-select: none;
   }
 
   .sidebar-nav {
     display: flex;
     flex-direction: column;
-    padding: 4px 10px;
-    gap: 1px;
+    padding: 0 10px;
+    gap: 2px;
   }
 
+  /* Owner 13.11.2026: 34 px rows (were 30 px, #844 prototype). The longest menu fits at 1440×900; at
+     1024×768 it scrolls inside the rail, which has its own scroll. */
   .nav-item {
     display: flex;
     align-items: center;
-    gap: 11px;
-    padding: 9px 12px;
-    border-radius: var(--r-sm);
-    color: var(--text-muted);
+    gap: 10px;
+    height: 34px;
+    padding: 0 8px;
+    border-radius: var(--r-control);
+    color: var(--text-2);
     font-weight: 500;
-    font-size: 13.5px;
+    font-size: 14px;
     text-decoration: none;
     position: relative;
     transition:
@@ -252,7 +243,7 @@
   }
 
   .nav-item:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
 
@@ -273,22 +264,22 @@
   }
 
   .nav-item:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
   .nav-item .ico {
     display: grid;
     place-items: center;
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     flex-shrink: 0;
     opacity: 0.85;
   }
 
   .sidebar-foot {
     margin-top: auto;
-    padding: 14px;
+    padding: 8px 14px;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -324,18 +315,18 @@
 
   .userinfo .role {
     font-size: 11.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .icon-btn {
     width: 30px;
     height: 30px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     background: transparent;
     display: grid;
     place-items: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
     transition:
       background 120ms var(--ease),
@@ -343,19 +334,19 @@
   }
 
   .icon-btn:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
 
   .icon-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
   /* Phase 69 — runtime version display.
      Literal font-size 0.75rem per D-07 (no --text-xs token exists in tokens.css). */
   .sidebar-version {
-    padding: var(--s-2) var(--s-3) var(--s-3);
+    padding: 0 var(--s-3) var(--s-2);
     text-align: center;
   }
 
@@ -375,24 +366,29 @@
   }
 
   .version-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
   .version-label {
     font-size: 0.75rem;
-    color: var(--text-faint);
+    color: var(--text-3);
     font-feature-settings: "tnum";
     letter-spacing: 0.02em;
   }
 
   /* Mirrors Topbar.svelte's .notif-dot.unread-dot idiom. */
-  .version-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--brand);
-    flex-shrink: 0;
+  .version-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+
+  /* #851: „Konto“ and the always-on „Dienstplan“ give the Inhaber 19 entries; on a short screen
+     (1024×768) 28 px rows keep every one of them in view without scrolling the rail. */
+  @media (max-height: 800px) {
+    .nav-item {
+      height: 28px;
+    }
   }
 
   @media (max-width: 960px) {

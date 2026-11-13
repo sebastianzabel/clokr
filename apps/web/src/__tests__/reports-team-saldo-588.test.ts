@@ -95,7 +95,7 @@ describe("/reports team area (Issue #588, period table of Issue #612)", () => {
   });
 
   it("the personal KPI Saldo is formatted with fmtBalance", () => {
-    expect(PAGE).toContain("value={fmtBalance(kpiTotalBalanceMin)}");
+    expect(PAGE).toContain("value: fmtBalance(kpiTotalBalanceMin)");
     expect(PAGE).not.toContain("fmtHoursSigned");
   });
 

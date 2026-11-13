@@ -93,7 +93,6 @@ async function addEmployee(tx: Tx, tenantId: string): Promise<{ id: string }> {
     data: {
       email: `fixture-${s}@example.invalid`,
       passwordHash: "not-a-real-hash",
-      role: "EMPLOYEE",
     },
   });
   return tx.employee.create({

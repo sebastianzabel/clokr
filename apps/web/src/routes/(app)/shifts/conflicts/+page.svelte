@@ -1,72 +1,69 @@
 <script lang="ts">
-  // Phase 67.2 Plan 05 — Manager-facing Schicht-Konflikt-Übersicht.
+  // Phase 67.2 Plan 05 / Issue #850 — "Hinweise zur Schichtplanung".
   //
-  // Lists shifts returned by GET /shifts/conflicts in two buckets (softDeleted
-  // and flagged). The backend filters by deletedReason and conflictsWithLeave;
-  // this page is a thin renderer. Each row has a "Wiederherstellen" button
-  // that POSTs to /shifts/:id/restore.
+  // GET /shifts/conflicts answers three buckets (removed automatically, marked, week overbooked).
+  // Since #850 the page shows them as ONE list of notices — date, person, reason, action — built
+  // by `buildShiftNotices()`; the explanation of each kind sits behind (i). The page is a thin
+  // renderer: which shift lands in which bucket stays the API's rule, and the only write is the
+  // unchanged POST /shifts/:id/restore (restores a removed shift, clears the mark of a marked one).
   //
-  // Default window: 30 days back .. 60 days forward. Adjustable via two date
-  // inputs at the top. Page re-fetches on date change.
+  // Issue #853 (D-853-18): the fourth tab of Dienstplan - the v2 head with the link tabs, the date
+  // window in one row and the notices as one List. The old filter card, notice card and hand-built
+  // list markup are replaced, not wrapped.
+  //
+  // Default window: 30 days back .. 60 days forward, adjustable with two date inputs.
 
   import { onMount } from "svelte";
   import { api } from "$api/client";
+  import { authStore } from "$stores/auth";
+  import { tenantFeatures } from "$stores/tenant-features";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import ShiftConflictRow from "$components/ShiftConflictRow.svelte";
+  import TeamSection from "$lib/components/team/TeamSection.svelte";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import { rosterTabs } from "$lib/nav/routes";
+  import PageTabs from "$components/ui/PageTabs.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import List from "$components/ui/List.svelte";
+  import ListRow from "$components/ui/ListRow.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import {
+    buildShiftNotices,
+    NOTICE_KINDS,
+    type ConflictsResponse,
+    type NoticeKind,
+    type ShiftNotice,
+  } from "$lib/shifts/shift-notices";
 
-  interface ConflictShift {
-    id: string;
-    date: string;
-    startTime: string;
-    endTime: string;
-    label: string | null;
-    employee: { firstName: string; lastName: string };
-    deletedAt: string | null;
-    deletedReason: string | null;
-    conflictsWithLeave: boolean;
-  }
+  // The four roster tabs are the link tabs of the route table (D-853-05).
+  const rosterTabsList = $derived(
+    rosterTabs($authStore.user, { availabilityEnabled: $tenantFeatures.availabilityEnabled }),
+  );
 
-  // Phase 430 (D-10): third, live-computed bucket — no Shift row to restore, informational only.
-  interface WeekOverbookedEntry {
-    employeeId: string;
-    employeeName: string;
-    weekStart: string;
-    weekEnd: string;
-    contractDays: number;
-    leaveDays: number;
-    otherAbsenceDays: number;
-    scheduledDays: number;
-    overbookedBy: number;
-  }
+  const KIND_TONE: Record<NoticeKind, "bad" | "warn"> = {
+    removed: "bad",
+    marked: "warn",
+    "week-overbooked": "warn",
+  };
 
-  interface ConflictsResponse {
-    softDeleted: ConflictShift[];
-    flagged: ConflictShift[];
-    weekOverbooked: WeekOverbookedEntry[];
-  }
-
-  let softDeleted = $state<ConflictShift[]>([]);
-  let flagged = $state<ConflictShift[]>([]);
-  let weekOverbooked = $state<WeekOverbookedEntry[]>([]);
+  let notices = $state<ShiftNotice[]>([]);
   let loading = $state(true);
   let loadError = $state("");
-  let restoringId = $state<string | null>(null);
+  let busyKey = $state<string | null>(null);
 
-  // Default window helpers — pure functions, executed once at mount.
-  function defaultFrom(): string {
+  // Local calendar days (never toISOString, which is the UTC day — see #849).
+  function localDay(offsetDays: number): string {
     const d = new Date();
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().slice(0, 10);
-  }
-  function defaultTo(): string {
-    const d = new Date();
-    d.setDate(d.getDate() + 60);
-    return d.toISOString().slice(0, 10);
+    d.setDate(d.getDate() + offsetDays);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
 
-  let fromDate = $state(defaultFrom());
-  let toDate = $state(defaultTo());
+  let fromDate = $state(localDay(-30));
+  let toDate = $state(localDay(60));
 
   async function load() {
     loading = true;
@@ -75,30 +72,26 @@
       const res = await api.get<ConflictsResponse>(
         `/shifts/conflicts?from=${fromDate}&to=${toDate}`,
       );
-      softDeleted = res.softDeleted;
-      flagged = res.flagged;
-      weekOverbooked = res.weekOverbooked;
+      notices = buildShiftNotices(res);
     } catch (err) {
-      loadError = err instanceof Error ? err.message : "Konflikte konnten nicht geladen werden.";
-      softDeleted = [];
-      flagged = [];
-      weekOverbooked = [];
+      loadError = err instanceof Error ? err.message : "Die Hinweise konnten nicht geladen werden.";
+      notices = [];
     } finally {
       loading = false;
     }
   }
 
-  async function restore(id: string) {
-    restoringId = id;
+  async function restore(notice: ShiftNotice) {
+    if (notice.action.type !== "restore") return;
+    busyKey = notice.key;
     try {
-      await api.post(`/shifts/${id}/restore`, {});
-      toasts.success("Schicht wiederhergestellt", 2000);
-      await load(); // refetch — restored shift drops out of both buckets
+      await api.post(`/shifts/${notice.action.shiftId}/restore`, {});
+      toasts.success(notice.action.doneToast, 2000);
+      await load(); // the shift drops out of the list
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Wiederherstellung fehlgeschlagen";
-      toasts.error(msg, 4000);
+      toasts.error(err instanceof Error ? err.message : "Das hat nicht geklappt.", 4000);
     } finally {
-      restoringId = null;
+      busyKey = null;
     }
   }
 
@@ -106,217 +99,132 @@
 </script>
 
 <svelte:head>
-  <title>Schicht-Konflikte – Clokr</title>
+  <title>{pageLabel("/shifts/conflicts")} – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow="Schichtplanung" title="Schicht-Konflikte" />
+<PageHead
+  title={pageLabel("/shifts/conflicts")}
+  sub="Schichten, die automatisch entfernt wurden oder noch einmal geprüft werden sollten."
+/>
+<PageTabs tabs={rosterTabsList} tab="/team/dienstplan/konflikte" tabsLabel="Dienstplan" />
 
-<section class="page">
-  <!-- Date-range filters -->
-  <div class="card-animate filter-card">
-    <label class="filter-field">
-      <span class="filter-label">Von</span>
-      <input
-        type="date"
-        class="form-input"
-        bind:value={fromDate}
-        onchange={load}
-        disabled={loading}
-      />
-    </label>
-    <label class="filter-field">
-      <span class="filter-label">Bis</span>
-      <input
-        type="date"
-        class="form-input"
-        bind:value={toDate}
-        onchange={load}
-        disabled={loading}
-      />
-    </label>
-    <button type="button" class="btn btn-secondary btn-sm" onclick={load} disabled={loading}>
-      {loading ? "Lädt…" : "Aktualisieren"}
+<div class="page">
+  <!-- The window of the list: two dates and the reload, one row. -->
+  <div class="notice-window">
+    <FormField label="Von">
+      {#snippet field({ id, describedBy })}
+        <input
+          {id}
+          aria-describedby={describedBy}
+          type="date"
+          class="form-input"
+          bind:value={fromDate}
+          onchange={load}
+          disabled={loading}
+        />
+      {/snippet}
+    </FormField>
+    <FormField label="Bis">
+      {#snippet field({ id, describedBy })}
+        <input
+          {id}
+          aria-describedby={describedBy}
+          type="date"
+          class="form-input"
+          bind:value={toDate}
+          onchange={load}
+          disabled={loading}
+        />
+      {/snippet}
+    </FormField>
+    <button type="button" class="btn btn-secondary" onclick={load} disabled={loading}>
+      Aktualisieren
     </button>
   </div>
 
-  {#if loadError}
-    <div class="callout error">{loadError}</div>
-  {/if}
-
-  <!-- Section: soft-deleted (auto-cleanup) -->
-  <section class="card-animate conflict-section">
-    <header class="conflict-section-head">
-      <h2>Automatisch entfernte Schichten</h2>
-      <p class="conflict-section-hint">
-        Schichten, die der Generator beim Anlegen neuer Berufsschultage automatisch entfernt hat.
-        Per "Wiederherstellen" zurückholbar — eine SHIFT_RESTORED-Audit-Spur wird erzeugt.
-      </p>
-    </header>
-
-    {#if loading}
-      <p class="empty">Lädt…</p>
-    {:else if softDeleted.length === 0}
-      <p class="empty">Keine entfernten Schichten im Zeitraum.</p>
+  <TeamSection title="Hinweise zur Schichtplanung">
+    {#if loadError}
+      <ErrorState message={loadError} onRetry={load} retrying={loading} />
+    {:else if loading}
+      <Skeleton shape="row" count={3} />
+    {:else if notices.length === 0}
+      <EmptyState icon="calendar" title="Keine Hinweise im Zeitraum" description="Alles passt." />
     {:else}
-      <div class="rows">
-        {#each softDeleted as s (s.id)}
-          <ShiftConflictRow shift={s} onRestore={restore} restoring={restoringId === s.id} />
+      <List ariaLabel="Hinweise zur Schichtplanung" testId="shift-notice-list">
+        {#each notices as n (n.key)}
+          <ListRow
+            variant="task"
+            testId="shift-notice"
+            kind={n.kind}
+            title={n.person}
+            subtitle={n.detail ? `${n.dateLabel} · ${n.detail}` : n.dateLabel}
+          >
+            {#snippet meta()}
+              <Chip tone={KIND_TONE[n.kind]}>{NOTICE_KINDS[n.kind].badge}</Chip>
+              <span class="notice-reason">{n.reason}</span>
+              <details class="notice-info">
+                <summary aria-label="Erklärung: {NOTICE_KINDS[n.kind].badge}">i</summary>
+                <p>{NOTICE_KINDS[n.kind].explanation}</p>
+              </details>
+            {/snippet}
+            {#snippet actions()}
+              {#if n.action.type === "restore"}
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  onclick={() => restore(n)}
+                  disabled={busyKey !== null}
+                >
+                  {busyKey === n.key ? "Einen Moment…" : n.action.label}
+                </button>
+              {:else}
+                <a class="btn btn-ghost btn-sm" href={n.action.href}>{n.action.label}</a>
+              {/if}
+            {/snippet}
+          </ListRow>
         {/each}
-      </div>
+      </List>
     {/if}
-  </section>
-
-  <!-- Section: actively-flagged (past or current conflicts) -->
-  <section class="card-animate conflict-section">
-    <header class="conflict-section-head">
-      <h2>Markierte Schichten</h2>
-      <p class="conflict-section-hint">
-        Schichten mit Konflikt-Flag (z.B. Vergangenheits-Schichten an neu angelegten BS-Tagen oder
-        Schichten in zeitgleichem Urlaub). "Wiederherstellen" löscht den Konflikt-Flag.
-      </p>
-    </header>
-
-    {#if loading}
-      <p class="empty">Lädt…</p>
-    {:else if flagged.length === 0}
-      <p class="empty">Keine markierten Schichten im Zeitraum.</p>
-    {:else}
-      <div class="rows">
-        {#each flagged as s (s.id)}
-          <ShiftConflictRow shift={s} onRestore={restore} restoring={restoringId === s.id} />
-        {/each}
-      </div>
-    {/if}
-  </section>
-
-  <!-- Section: live-computed week-capacity overbooking (Phase 430, D-10) — no restore action,
-       informational only; the full breakdown per employee lives on /shifts/planning. -->
-  <section class="card-animate conflict-section">
-    <header class="conflict-section-head">
-      <h2>Wochenkapazität überschritten</h2>
-      <p class="conflict-section-hint">
-        SHIFT_BASED-Mitarbeiter mit mehr geplanten Schichttagen in einer Woche als Vertrag abzüglich
-        genehmigtem Urlaub und sonstigen Abwesenheiten erlaubt. Rein informativ — nichts zum
-        Wiederherstellen; die volle Übersicht gibt es unter
-        <a href="/shifts/planning">Planungsbedarf</a>.
-      </p>
-    </header>
-
-    {#if loading}
-      <p class="empty">Lädt…</p>
-    {:else if weekOverbooked.length === 0}
-      <p class="empty">Keine Wochenkapazität-Konflikte im Zeitraum.</p>
-    {:else}
-      <div class="rows">
-        {#each weekOverbooked as w (w.employeeId + w.weekStart)}
-          <div class="card week-overbooked-row">
-            <div class="week-overbooked-main">
-              <span class="week-overbooked-name">{w.employeeName}</span>
-              <span class="week-overbooked-week">Woche {w.weekStart} – {w.weekEnd}</span>
-            </div>
-            <div class="week-overbooked-numbers">
-              <span>Vertrag {w.contractDays}</span>
-              <span>− Urlaub {w.leaveDays}</span>
-              <span>− Abwesenheit {w.otherAbsenceDays}</span>
-              <span>= geplant {w.scheduledDays}</span>
-              <span class="badge badge-orange">überbucht um {w.overbookedBy}</span>
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-  </section>
-</section>
+  </TeamSection>
+</div>
 
 <style>
-  .filter-card {
+  /* The window of the list: the two dates and the reload on one row, aligned on the field bottoms. */
+  .notice-window {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--s-4);
-    align-items: end;
-    padding: var(--pad-card);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-  }
-
-  .filter-field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-1);
-  }
-
-  .filter-label {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text-muted);
-  }
-
-  .conflict-section {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: var(--pad-card);
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-4);
-  }
-
-  .conflict-section-head h2 {
-    margin: 0 0 var(--s-2);
-    color: var(--text);
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  .conflict-section-hint {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-  }
-
-  .empty {
-    margin: 0;
-    color: var(--text-muted);
-    font-style: italic;
-  }
-
-  .rows {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-  }
-
-  .week-overbooked-row {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-    padding: var(--s-3);
-  }
-
-  .week-overbooked-main {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--s-2);
-  }
-
-  .week-overbooked-name {
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .week-overbooked-week {
-    color: var(--text-muted);
-    font-size: 0.875rem;
-  }
-
-  .week-overbooked-numbers {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-end;
     gap: var(--s-3);
-    color: var(--text-muted);
-    font-size: 0.875rem;
+  }
+
+  .notice-reason {
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+  }
+
+  /* The explanation behind (i): the opened text takes its own line under the reason. */
+  .notice-info summary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    font-size: var(--fs-xs);
+    cursor: pointer;
+    list-style: none;
+  }
+  .notice-info summary::-webkit-details-marker {
+    display: none;
+  }
+  .notice-info[open] {
+    flex-basis: 100%;
+  }
+  .notice-info p {
+    margin: var(--s-2) 0 0;
+    max-width: 60ch;
+    color: var(--text-2);
+    font-size: var(--fs-sm);
   }
 </style>

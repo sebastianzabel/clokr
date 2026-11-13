@@ -64,7 +64,6 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: adminPasswordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -109,7 +108,6 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
         data: {
           email: `${slug}-${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -309,7 +307,6 @@ describe("selfHealUsedDays resolves the VACATION aggregation scope by code (Phas
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -339,7 +336,6 @@ describe("selfHealUsedDays resolves the VACATION aggregation scope by code (Phas
       data: {
         email: `${slug}-${unique}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -692,7 +688,6 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: adminPasswordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -766,7 +761,6 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
       data: {
         email: `${slug}-${unique}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -971,7 +965,6 @@ describe("carryover expiry gate (COMP-V1814-03)", () => {
       data: {
         email: `admin-ceg-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -1009,7 +1002,6 @@ describe("carryover expiry gate (COMP-V1814-03)", () => {
       data: {
         email: `emp-ceg-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

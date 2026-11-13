@@ -146,7 +146,6 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       data: {
         email: `acm2-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -300,7 +299,6 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         data: {
           email: `${s}@shift.test`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -1029,7 +1027,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     async function createEdgeEmployee(tenantId: string, hireDate: Date) {
       const s = `emp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
       const user = await app.prisma.user.create({
-        data: { email: `${s}@edge.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+        data: { email: `${s}@edge.test`, passwordHash: "x", isActive: true },
       });
       const emp = await app.prisma.employee.create({
         data: {
@@ -1393,7 +1391,6 @@ describe("cron gap-note (closeMonthWithGapsAllowed)", () => {
       data: {
         email: `gapnote-emp-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1595,7 +1592,6 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
       data: {
         email: `gapdayn-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1635,7 +1631,6 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
       data: {
         email: `cleandayn-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -2021,7 +2016,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
     });
 
     const empUser = await prisma.user.create({
-      data: { email: `bd-emp-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `bd-emp-${s}@test.de`, passwordHash: "x", isActive: true },
     });
     const emp = await prisma.employee.create({
       data: {
@@ -2072,7 +2067,7 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
 
     // Manager to receive the (future) defer notification.
     const mgrUser = await prisma.user.create({
-      data: { email: `bd-mgr-${s}@test.de`, passwordHash: "x", role: "ADMIN", isActive: true },
+      data: { email: `bd-mgr-${s}@test.de`, passwordHash: "x", isActive: true },
     });
     await prisma.employee.create({
       data: {
@@ -2268,7 +2263,6 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
       data: {
         email: `bd-flex-emp-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

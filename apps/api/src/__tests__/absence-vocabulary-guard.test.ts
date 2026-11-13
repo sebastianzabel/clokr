@@ -146,9 +146,9 @@ describe("G4 — LeaveTypeCode.OTHER anti-removal pin", () => {
 // Note what this does NOT do: it is still a text scan, so it does not make `Absence.type`
 // structurally unable to hold a requestable code. Before the merge the `AbsenceType` enum made
 // `absence.create({ type: "VACATION" })` impossible at the DB level; after it, `Absence.type` is
-// `LeaveTypeCode` and all eleven codes are type-valid. Closing that structurally (an `AbsenceCode`
-// subtype threaded through the three call sites) is an open design question, not something this
-// gate claims to have solved. Detection is what is here.
+// `LeaveTypeCode` and all eleven codes are type-valid. Issue #215 added the typed write path
+// (`absenceTypeFields(code: AbsenceCode)`, guarded by `absence-type-fields-215.test.ts`); this
+// text scan stays as the independent second net and is not weakened by it.
 //
 // Deliberately NOT repo-wide. Three e2e fixtures (`apps/e2e/tests/leave-flow.spec.ts`,
 // `apps/e2e/tests/overtime-saldo-flow.spec.ts`, `apps/e2e/fixtures/visual-seed.ts`) legitimately

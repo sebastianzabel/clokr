@@ -84,7 +84,6 @@ describe("recalculate-snapshots-after-shift-soll-fix (Phase 76.22 Plan 03)", () 
       data: {
         email: `admin-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -104,7 +103,6 @@ describe("recalculate-snapshots-after-shift-soll-fix (Phase 76.22 Plan 03)", () 
       data: {
         email: `mk-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -3,6 +3,9 @@
   import { authStore } from "$stores/auth";
   import { focusTrap } from "$lib/utils/focus-trap";
   import { canAccessAdminPath, isAdminHref } from "$lib/nav/admin-route-permissions";
+  import { mayOpenTeamPage } from "$lib/nav/team-nav";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import { OPEN_PALETTE_EVENT } from "$lib/nav/palette-event";
 
   interface Action {
     id: string;
@@ -11,6 +14,8 @@
     icon: string;
     href: string;
     group: string;
+    /** #840: a team page this entry opens; offered only when `mayOpenTeamPage` allows it. */
+    teamPage?: string;
   }
 
   interface ActionGroup {
@@ -21,66 +26,85 @@
   const allActions: Action[] = [
     {
       id: "dashboard",
-      label: "Dashboard",
+      label: pageLabel("/ich/tag"),
       description: "Zur Startseite",
       icon: "home",
-      href: "/dashboard",
+      href: "/ich/tag",
       group: "Navigation",
     },
     {
       id: "time-entries",
-      label: "Zeiteinträge",
+      label: pageLabel("/ich/zeiten"),
       description: "Arbeitszeiten verwalten",
       icon: "clock",
-      href: "/time-entries",
+      href: "/ich/zeiten",
       group: "Navigation",
     },
     {
       id: "leave",
-      label: "Abwesenheiten",
+      label: pageLabel("/ich/abwesenheiten"),
       description: "Urlaub & Krankmeldungen",
       icon: "calendar",
-      href: "/leave",
+      href: "/ich/abwesenheiten",
       group: "Navigation",
     },
     {
+      id: "leave-plan",
+      label: "Urlaubsplanung",
+      description: "Urlaubswünsche fürs Jahr planen",
+      icon: "calendar",
+      href: "/ich/abwesenheiten?tab=planung",
+      group: "Navigation",
+    },
+    {
+      id: "team-leave-plan",
+      label: "Team-Urlaubsplanung",
+      description: "Urlaubswünsche des Teams planen",
+      icon: "calendar",
+      href: "/team/abwesenheiten?tab=planung",
+      group: "Navigation",
+      teamPage: "/team/abwesenheiten",
+    },
+    {
       id: "reports",
-      label: "Berichte",
+      label: pageLabel("/reports"),
       description: "Auswertungen & Exporte",
       icon: "chart",
+      // #844: deliberately the old URL (it redirects to Verwalten › Berichte): the page also serves a person's
+      // own documents (report:export:EIGENE), so the entry must not be gated like the Verwalten rail entry.
       href: "/reports",
       group: "Navigation",
     },
     {
       id: "admin",
-      label: "Admin",
-      description: "Verwaltung",
+      label: pageLabel("/verwalten"),
+      description: "Verwalten",
       icon: "settings",
-      href: "/admin",
+      href: "/verwalten",
       group: "Navigation",
     },
     {
       id: "admin-shifts",
-      label: "Schichtplan",
-      description: "Schichten verwalten",
+      label: pageLabel("/verwalten/regeln/dienstplan"),
+      description: "Vorlagen, Mindestbesetzung und Wochenmuster",
       icon: "calendar",
-      href: "/admin/shifts",
+      href: "/verwalten/regeln/dienstplan",
       group: "Admin",
     },
     {
       id: "admin-vacation",
-      label: "Urlaub & Zeiten",
-      description: "Arbeitszeiten konfigurieren",
+      label: pageLabel("/verwalten/regeln/abwesenheiten"),
+      description: "Urlaub, Sonderurlaub und Übertrag",
       icon: "settings",
-      href: "/admin/vacation",
+      href: "/verwalten/regeln/abwesenheiten",
       group: "Admin",
     },
     {
       id: "admin-roles",
-      label: "Rollen & Rechte",
+      label: pageLabel("/verwalten/system/rollen"),
       description: "Rollen anlegen und zuweisen",
       icon: "settings",
-      href: "/admin/roles",
+      href: "/verwalten/system/rollen",
       group: "Admin",
     },
   ];
@@ -91,8 +115,10 @@
   let inputRef: HTMLInputElement | undefined = $state();
 
   // Issue #83: an admin action is offered only when the admin route map lets the user open it.
+  // #840: a team entry follows the team nav's own permission (one source), UX only.
   const offered = (a: Action) =>
-    !isAdminHref(a.href) || canAccessAdminPath($authStore.user, a.href);
+    (!isAdminHref(a.href) || canAccessAdminPath($authStore.user, a.href)) &&
+    (a.teamPage === undefined || mayOpenTeamPage(a.teamPage, $authStore.user));
 
   let filtered = $derived(
     allActions.filter(offered).filter((a) => {
@@ -131,6 +157,18 @@
       selectedIndex = 0;
     }
   }
+
+  /** #844: the header's search button opens the palette through a window event (no shared store). */
+  function handleOpenRequest() {
+    open = true;
+    query = "";
+    selectedIndex = 0;
+  }
+
+  $effect(() => {
+    window.addEventListener(OPEN_PALETTE_EVENT, handleOpenRequest);
+    return () => window.removeEventListener(OPEN_PALETTE_EVENT, handleOpenRequest);
+  });
 
   function handleInputKeydown(e: KeyboardEvent) {
     if (e.key === "ArrowDown") {
@@ -388,13 +426,13 @@
     z-index: 9001;
     display: flex;
     flex-direction: column;
-    background: var(--bg-card);
+    background: var(--card);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     box-shadow:
-      var(--shadow-lg),
+      var(--shadow-pop),
       0 0 0 1px rgba(0, 0, 0, 0.03);
     overflow: hidden;
     animation: cmd-scale-in 0.15s var(--ease-out);
@@ -406,13 +444,13 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.875rem 1rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
     flex-shrink: 0;
   }
 
   .cmd-search-icon {
     flex-shrink: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .cmd-input {
@@ -421,14 +459,14 @@
     border: none;
     outline: none;
     font-size: 1.0625rem;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     color: var(--text);
     caret-color: var(--brand);
     min-width: 0;
   }
 
   .cmd-input::placeholder {
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.7;
   }
 
@@ -439,11 +477,11 @@
     justify-content: center;
     padding: 0.125rem 0.4rem;
     font-size: 0.6875rem;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-weight: 600;
-    color: var(--text-muted);
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    color: var(--text-2);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 4px;
     line-height: 1.4;
   }
@@ -461,7 +499,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.7;
   }
 
@@ -475,7 +513,7 @@
     border: none;
     cursor: pointer;
     text-align: left;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     color: var(--text);
     transition:
       background-color 0.08s,
@@ -490,7 +528,7 @@
   }
 
   .cmd-item--active .cmd-item-desc {
-    color: var(--brand-light);
+    color: var(--brand);
   }
 
   .cmd-item--active .cmd-item-icon {
@@ -509,7 +547,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     transition: color 0.08s;
   }
 
@@ -529,7 +567,7 @@
 
   .cmd-item-desc {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     line-height: 1.3;
     transition: color 0.08s;
   }
@@ -537,7 +575,7 @@
   .cmd-item-arrow {
     flex-shrink: 0;
     opacity: 0;
-    color: var(--text-muted);
+    color: var(--text-2);
     transition: opacity 0.1s;
   }
 
@@ -550,7 +588,7 @@
     padding: 2rem 1rem;
     text-align: center;
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* ── Footer ──────────────────────────────────────────────────────── */
@@ -559,7 +597,7 @@
     align-items: center;
     gap: 1rem;
     padding: 0.5rem 1rem;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     flex-shrink: 0;
   }
 
@@ -568,7 +606,7 @@
     align-items: center;
     gap: 0.25rem;
     font-size: 0.6875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.7;
   }
 
@@ -580,11 +618,11 @@
     height: 1.125rem;
     padding: 0 0.25rem;
     font-size: 0.625rem;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-weight: 600;
-    color: var(--text-muted);
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    color: var(--text-2);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 3px;
     line-height: 1;
   }

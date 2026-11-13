@@ -100,7 +100,7 @@ describe("Issue #494 — MONTHLY_HOURS without monthly hours behaves like TRACK_
   async function createEmp(spec: EmpSpec): Promise<string> {
     const s = `${spec.key}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
     const user = await app.prisma.user.create({
-      data: { email: `${s}@mhnt494.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@mhnt494.test`, passwordHash: "x", isActive: true },
     });
     const emp = await app.prisma.employee.create({
       data: {

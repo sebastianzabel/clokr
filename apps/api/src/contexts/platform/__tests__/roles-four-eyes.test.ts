@@ -38,7 +38,7 @@ import type { FastifyInstance } from "fastify";
 
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
 const ROLE_SYSTEM_UPDATE_MESSAGE =
-  "Systemrollen können nicht geändert werden. Kopieren Sie die Rolle, um sie anzupassen.";
+  "Systemrollen können nicht geändert werden. Kopier die Rolle, um sie anzupassen.";
 const ROLE_MANAGE = "role:manage:ZUGEWIESEN";
 const ASSIGNMENT_MANAGE = "role-assignment:manage:ZUGEWIESEN";
 
@@ -458,7 +458,7 @@ describe("Four-eyes combination (Phase 78b, Issue #78)", () => {
       const s = `4e-lockout-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
       const passwordHash = await bcrypt.hash("test1234", 10);
       const user = await app.prisma.user.create({
-        data: { email: `${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+        data: { email: `${s}@test.de`, passwordHash, isActive: true },
       });
       actorUserIds.push(user.id);
       // countGuardedPermissionHolders (facade/role-assignments.ts) only counts a holder whose

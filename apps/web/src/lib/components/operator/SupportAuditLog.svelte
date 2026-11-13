@@ -8,7 +8,9 @@
   The page owns the requests and the URL; this component only reports what was chosen.
 -->
 <script lang="ts">
+  import FormField from "$components/ui/FormField.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { formatOperatorDateTime } from "$lib/operator/labels";
   import { auditActor, flattenAuditValue, windowError } from "$lib/operator/support-audit";
   import type { SupportAuditPage, SupportEmployee } from "$lib/operator/types";
@@ -70,42 +72,48 @@
 </script>
 
 <div class="log" data-testid="op-support-audit">
-  <form class="filters" onsubmit={apply} novalidate>
-    <div class="field">
-      <label class="form-label" for="op-support-audit-from-input">Von</label>
-      <input
-        id="op-support-audit-from-input"
-        class="form-input"
-        type="date"
-        bind:value={fromValue}
-        aria-describedby="op-support-audit-hint"
-        data-testid="op-support-audit-from"
-      />
-    </div>
-    <div class="field">
-      <label class="form-label" for="op-support-audit-to-input">Bis</label>
-      <input
-        id="op-support-audit-to-input"
-        class="form-input"
-        type="date"
-        bind:value={toValue}
-        aria-describedby="op-support-audit-hint"
-        data-testid="op-support-audit-to"
-      />
-    </div>
-    <div class="field person">
-      <label class="form-label" for="op-support-audit-person-input">Person</label>
-      <select
-        id="op-support-audit-person-input"
-        class="form-input"
-        bind:value={personValue}
-        data-testid="op-support-audit-person"
-      >
-        <option value="">Alle Personen</option>
-        {#each employees as employee (employee.id)}
-          <option value={employee.id}>{personLabel(employee)}</option>
-        {/each}
-      </select>
+  <form class="audit-controls" onsubmit={apply} novalidate>
+    <FormField label="Von">
+      {#snippet field({ id, describedBy })}
+        <input
+          {id}
+          class="form-input"
+          type="date"
+          bind:value={fromValue}
+          aria-describedby={[describedBy, "op-support-audit-hint"].filter(Boolean).join(" ")}
+          data-testid="op-support-audit-from"
+        />
+      {/snippet}
+    </FormField>
+    <FormField label="Bis">
+      {#snippet field({ id, describedBy })}
+        <input
+          {id}
+          class="form-input"
+          type="date"
+          bind:value={toValue}
+          aria-describedby={[describedBy, "op-support-audit-hint"].filter(Boolean).join(" ")}
+          data-testid="op-support-audit-to"
+        />
+      {/snippet}
+    </FormField>
+    <div class="audit-person">
+      <FormField label="Person">
+        {#snippet field({ id, describedBy })}
+          <select
+            {id}
+            class="form-input"
+            aria-describedby={describedBy}
+            bind:value={personValue}
+            data-testid="op-support-audit-person"
+          >
+            <option value="">Alle Personen</option>
+            {#each employees as employee (employee.id)}
+              <option value={employee.id}>{personLabel(employee)}</option>
+            {/each}
+          </select>
+        {/snippet}
+      </FormField>
     </div>
     <button type="submit" class="btn btn-primary" data-testid="op-support-audit-apply"
       >Anzeigen</button
@@ -123,10 +131,7 @@
 
   {#if loading}
     <div aria-busy="true" data-testid="op-support-audit-loading">
-      <span class="sr-only" role="status">Wird geladen …</span>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
+      <Skeleton shape="row" count={3} />
     </div>
   {:else if errorText !== ""}
     <div class="alert alert-error" role="alert" data-testid="op-support-audit-error">
@@ -217,25 +222,19 @@
     min-width: 0;
   }
 
-  .filters {
+  .audit-controls {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
     gap: 12px 16px;
   }
 
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+  .audit-person {
+    flex: 1 1 220px;
     min-width: 0;
   }
 
-  .field.person {
-    flex: 1 1 220px;
-  }
-
-  .filters :global(.btn) {
+  .audit-controls :global(.btn) {
     min-height: 44px;
   }
 
@@ -246,7 +245,7 @@
   }
 
   .problem {
-    color: var(--bad-text);
+    color: var(--bad);
   }
 
   .message {
@@ -254,15 +253,10 @@
     font-size: 16px;
   }
 
-  .row {
-    height: 48px;
-    margin-bottom: 8px;
-  }
-
   .empty {
     margin: 0;
     font-size: 16px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .entries {
@@ -271,15 +265,15 @@
     margin: 0;
     padding: 0;
     list-style: none;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
   }
 
   .entry {
     padding: 12px 16px;
     min-width: 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .entry:last-child {
@@ -296,7 +290,7 @@
 
   .when {
     font-variant-numeric: tabular-nums;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13px;
   }
 
@@ -310,7 +304,7 @@
 
   .who {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .text {
@@ -319,10 +313,10 @@
   }
 
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 13px;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
   }
 
@@ -359,7 +353,7 @@
   .none {
     margin: 0;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .pairs {
@@ -377,7 +371,7 @@
   }
 
   .pair dt {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .pair dd {
@@ -388,7 +382,6 @@
 
   /* The server's redaction marker: present, readable, and visibly not a stored value. */
   .redacted {
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
 </style>

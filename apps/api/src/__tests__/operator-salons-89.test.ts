@@ -771,23 +771,6 @@ describe("PATCH /api/v1/operator/tenants/:id/salons/:salonId", () => {
     );
   });
 
-  it("leaves the legacy store hours of the tenant untouched when the salon hours change", async () => {
-    const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Zeiten" });
-    const before = await app.prisma.tenantConfig.findFirst({
-      where: { tenantId: dataA.tenant.id },
-      select: { storeHours: true },
-    });
-    const res = await patchSalon(dataA.tenant.id, salon.id, {
-      openingHours: OPENING_HOURS.map((h) => ({ ...h, open: "10:00" })),
-    });
-    expect(res.statusCode, res.body).toBe(200);
-    const after = await app.prisma.tenantConfig.findFirst({
-      where: { tenantId: dataA.tenant.id },
-      select: { storeHours: true },
-    });
-    expect(after?.storeHours).toEqual(before?.storeHours);
-  });
-
   it("answers an empty patch with the fixed 400, and rejects unknown keys and isActive", async () => {
     const salon = await createTestSalon(app.prisma, dataA.tenant.id, { name: "Leer" });
     const empty = await patchSalon(dataA.tenant.id, salon.id, {});

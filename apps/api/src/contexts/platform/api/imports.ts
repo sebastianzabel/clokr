@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import { deriveFixedScheduleDayHours } from "../fixed-schedule-hours";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -30,11 +31,12 @@ import { lockTenantForRoleChanges } from "../facade/role-assignments";
 import {
   replaceSystemRoleAssignment,
   requestedRoleNeedsRoleAssignmentManage,
-  syncCompatRoleColumn,
-} from "../compat-role";
+} from "../system-role-assignment";
 import { auditRoleAssignmentChange, createdAssignmentAuditEntry } from "../role-assignment-audit";
 import { tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
 
+/** Issue #848: the CSV carries no workdays; a row keeps the WorkSchedule column default. */
+const IMPORT_WORK_DAYS = [1, 2, 3, 4, 5] as const;
 const employeeRowSchema = z.object({
   email: z.string().email(),
   firstName: z.string().min(1),
@@ -46,6 +48,9 @@ const employeeRowSchema = z.object({
   scheduleType: z.enum(["FIXED_SCHEDULE", "FLEXTIME", "MONTHLY_HOURS"]).default("FIXED_SCHEDULE"),
   monthlyHours: z.coerce.number().min(0).max(999).optional(),
   password: z.string().min(8).optional(),
+  // Issue #531: optional per-row Stammsalon. The value is the salon's UUID, never a display name
+  // (CLAUDE.md: no display string as a control value). Empty cell = resolve automatically.
+  salonId: z.string().uuid("Stammsalon-ID ist keine gültige ID.").optional(),
 });
 
 const timeEntryRowSchema = z.object({
@@ -135,6 +140,8 @@ const EMPLOYEE_COLUMN_ALIASES: Record<string, readonly string[]> = {
   scheduleType: ["scheduletype", "schedule_type", "modell"],
   monthlyHours: ["monthlyhours", "monthly_hours", "monatsstunden"],
   password: ["password", "passwort"],
+  // Issue #531: the Stammsalon (HOME) of the imported employee, by salon UUID.
+  salonId: ["salonid", "salon-id", "stammsalon-id", "stammsalonid"],
 };
 
 // Every column POST /time-entries understands — same shape as EMPLOYEE_COLUMN_ALIASES above.
@@ -171,23 +178,17 @@ export async function importRoutes(app: FastifyInstance) {
       // Issue #356 AC 2: computed once from the header row, not per data row.
       const warnings = unknownColumnHints(headers, EMPLOYEE_COLUMN_ALIASES);
 
-      // Phase 67b Plan 03 (D-23, issue #67): every imported employee needs a Stammsalon (HOME)
-      // row, and this endpoint has no per-row salon column (deferred to #531) — so it only works
-      // when the tenant has EXACTLY ONE active salon, checked up front, before ANY row is
-      // written. Zero or several active salons rejects the WHOLE import; no IMPORT audit row.
+      // Phase 67b Plan 03 (D-23, issue #67) / Issue #531: every imported employee needs a Stammsalon
+      // (HOME) row. A row names it in the optional salonId column; without a value it resolves
+      // automatically when the tenant has exactly one active salon, else that row is refused
+      // (per-row error, the rest continues). Only a tenant with no active salon at all is refused
+      // up front — no row could ever succeed there. No IMPORT audit row in that case.
       const activeSalons = await listSalons(app.prisma, req.user.tenantId, {
         includeInactive: false,
       });
       if (activeSalons.length === 0) {
-        return reply.code(400).send({ error: "Der Mandant hat keinen aktiven Salon." });
+        return reply.code(400).send({ error: "Das Unternehmen hat keinen aktiven Salon." });
       }
-      if (activeSalons.length > 1) {
-        return reply.code(400).send({
-          error:
-            "Bei mehreren aktiven Salons ist kein Import möglich. Bitte legen Sie die Mitarbeiter einzeln an und geben Sie den Stammsalon an.",
-        });
-      }
-      const [theSalon] = activeSalons;
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
 
       const results: { row: number; status: "ok" | "error"; email?: string; error?: string }[] = [];
@@ -206,6 +207,7 @@ export async function importRoutes(app: FastifyInstance) {
             scheduleType: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.scheduleType) ?? "FIXED_SCHEDULE",
             monthlyHours: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.monthlyHours),
             password: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.password),
+            salonId: pickColumn(row, EMPLOYEE_COLUMN_ALIASES.salonId),
           });
 
           // Issue #354 (pre-merge security review of #75): `employee:import` covers the imported
@@ -218,7 +220,7 @@ export async function importRoutes(app: FastifyInstance) {
             !(await hasPermission(req, "role-assignment:manage:ZUGEWIESEN"))
           ) {
             throw new Error(
-              "Zum Vergeben einer Rolle außer Mitarbeiter fehlt die Berechtigung role-assignment:manage.",
+              "Zum Vergeben einer Rolle außer Mitarbeiter fehlt die Berechtigung „Rollen an Personen zuweisen und entziehen“.",
             );
           }
 
@@ -228,19 +230,24 @@ export async function importRoutes(app: FastifyInstance) {
             : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
 
           await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-            // D-23/D-02: re-checks the salon under FOR SHARE — a race with a concurrent
-            // deactivation between the up-front check and this row's own transaction throws,
-            // which the per-row catch below reports as this row's error (rolled back).
+            // D-23/D-02 + Issue #531: the same resolver as employee creation, under FOR SHARE.
+            // An explicit id of a foreign tenant and one that exists nowhere give the identical
+            // SALON_NOT_FOUND text (no membership oracle); a race with a concurrent deactivation
+            // throws too. The per-row catch below reports it as this row's error (rolled back).
             const salonOutcome = await resolveHomeSalonForNewEmployee(
               tx,
               req.user.tenantId,
-              theSalon.id,
+              data.salonId,
             );
             if (salonOutcome.status !== "OK") {
               throw new Error(
                 salonOutcome.status === "SALON_INACTIVE"
                   ? "Einem deaktivierten Salon kann keine neue Zuordnung zugewiesen werden."
-                  : "Salon nicht gefunden",
+                  : salonOutcome.status === "HOME_SALON_REQUIRED"
+                    ? "Das Unternehmen hat mehrere aktive Salons: bitte den Stammsalon in der Spalte salonId angeben."
+                    : salonOutcome.status === "NO_ACTIVE_SALON"
+                      ? "Das Unternehmen hat keinen aktiven Salon."
+                      : "Salon nicht gefunden",
               );
             }
 
@@ -248,7 +255,6 @@ export async function importRoutes(app: FastifyInstance) {
               data: {
                 email: data.email,
                 passwordHash,
-                role: data.role as Prisma.UserCreateInput["role"],
                 isActive: hasPassword,
               },
             });
@@ -269,6 +275,11 @@ export async function importRoutes(app: FastifyInstance) {
                 employeeId: emp.id,
                 type: data.scheduleType,
                 weeklyHours: data.weeklyHours,
+                // Issue #848: a FIXED_SCHEDULE row's day hours follow weeklyHours over the
+                // column-default workDays (Mo–Fr, the CSV carries none) instead of staying at Mo–Fr 8 h.
+                ...(data.scheduleType === "FIXED_SCHEDULE"
+                  ? deriveFixedScheduleDayHours(data.weeklyHours, IMPORT_WORK_DAYS)
+                  : {}),
                 monthlyHours: data.monthlyHours ?? null,
                 validFrom: new Date(data.hireDate),
               },
@@ -279,8 +290,7 @@ export async function importRoutes(app: FastifyInstance) {
             // Phase 75b (D-15): the imported user's system-role assignment and its audit row, in
             // this row's transaction — a failing row leaves no assignment behind. A grant takes
             // the tenant lock but needs no holder count; the actor is resolved API-key safe
-            // (never `req.user.sub` as userId, #333). The column already holds the role, so the
-            // write-back is a no-op kept for one uniform path.
+            // (never `req.user.sub` as userId, #333).
             await lockTenantForRoleChanges(tx, req.user.tenantId);
             const { created: roleAssignment } = await replaceSystemRoleAssignment(
               tx,
@@ -291,7 +301,6 @@ export async function importRoutes(app: FastifyInstance) {
             await auditRoleAssignmentChange(app, req, tx, {
               userId: user.id,
               entries: roleAssignment !== null ? [createdAssignmentAuditEntry(roleAssignment)] : [],
-              compatRole: await syncCompatRoleColumn(tx, req.user.tenantId, user.id),
             });
 
             // D-23: the imported employee's Stammsalon (HOME) row, open-ended from its

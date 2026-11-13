@@ -35,7 +35,6 @@ describe("PUT/GET /api/v1/settings/vacation/:employeeId — statutory minimum (I
       data: {
         email: `svsm-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

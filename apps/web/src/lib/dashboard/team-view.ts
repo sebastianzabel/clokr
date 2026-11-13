@@ -68,10 +68,10 @@ export const TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE =
 
 /** Issue #85 D-06: why the Soll series is missing for a caller whose reach covers only part of the team. */
 export const TEAM_SOLL_PARTIAL_SCOPE_NOTE =
-  "Das Soll fehlt, weil ein Teil der Arbeitszeit in Salons außerhalb Ihrer Reichweite erfasst ist.";
+  "Das Soll fehlt, weil ein Teil der Arbeitszeit in Salons außerhalb deiner Reichweite erfasst ist.";
 
 export const TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE =
-  "Der Saldo ist eine Vertragsgröße der Person und lässt sich keinem Salon zuordnen. Ohne Salonfilter sehen Sie hier den Verlauf über alle Salons.";
+  "Der Saldo ist eine Vertragsgröße der Person und lässt sich keinem Salon zuordnen. Ohne Salonfilter siehst du hier den Verlauf über alle Salons.";
 
 /**
  * D-11: the dashboard sends a `salonId` only while the header offers salon options. The store
@@ -141,7 +141,7 @@ export function teamTrendView(resp: TeamTrendResponse): TeamTrendView {
     chartSub: salonEntries
       ? "Erfasste Arbeitszeit im Salon · Letzte 6 Monate"
       : scopeEntries
-        ? "Erfasste Arbeitszeit in Ihrer Reichweite · Letzte 6 Monate"
+        ? "Erfasste Arbeitszeit in deiner Reichweite · Letzte 6 Monate"
         : "Letzte 6 Monate",
     sollNote:
       resp.sollUnavailableReason === "SALON_FILTER"
@@ -152,6 +152,36 @@ export function teamTrendView(resp: TeamTrendResponse): TeamTrendView {
     trendNote:
       resp.sollUnavailableReason === "SALON_FILTER" ? TEAM_SALDO_NOT_ATTRIBUTABLE_NOTE : null,
   };
+}
+
+/** `GET /dashboard/overtime-trend` (Phase 76b): month-end carry-overs and the live team balance. */
+export interface OvertimeTrendResponse {
+  snapshots: { month: string; teamCarryOverMinutes: number }[];
+  currentTeamBalanceMinutes: number;
+}
+
+/**
+ * The team saldo at the end of each shown month, in hours, aligned to the trend window (Issue #895,
+ * moved verbatim from the former dashboard): the last month is the live balance, an earlier month
+ * is its snapshot, a month without a snapshot repeats the previous value (0 at the leading edge).
+ */
+export function overtimeTrendHours(
+  months: ReadonlyArray<{ month: string }>,
+  trend: OvertimeTrendResponse,
+): number[] {
+  // The API returns "YYYY-MM-DD" (the day is always 01); the window is keyed by "YYYY-MM".
+  const snapshotByMonth = new Map<string, number>();
+  for (const s of trend.snapshots) snapshotByMonth.set(s.month.slice(0, 7), s.teamCarryOverMinutes);
+  let lastKnown = 0;
+  return months.map((m, i) => {
+    if (i === months.length - 1) {
+      lastKnown = trend.currentTeamBalanceMinutes / 60;
+    } else {
+      const snap = snapshotByMonth.get(m.month);
+      if (snap !== undefined) lastKnown = snap / 60;
+    }
+    return +lastKnown.toFixed(1);
+  });
 }
 
 /**
@@ -167,7 +197,7 @@ export function teamWeekHasElsewhere(
 
 /** D-16: shown instead of the Team block when the server rejects the selected salon (404). */
 export const TEAM_SALON_UNAVAILABLE_TEXT =
-  "Für diesen Salon liegt keine Teamansicht vor. Wählen Sie in der Kopfleiste „Alle Salons“ oder einen anderen Salon.";
+  "Für diesen Salon liegt keine Teamansicht vor. Wähl in der Kopfleiste „Alle Salons“ oder einen anderen Salon.";
 
 /**
  * D-01: what the Team divider says the figures refer to — null while no salon options are shown

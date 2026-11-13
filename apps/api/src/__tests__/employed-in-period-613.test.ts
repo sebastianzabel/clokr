@@ -84,6 +84,23 @@ describe("Issue #613 — the period population", () => {
     return res.body.rows.map((r) => r.employeeId);
   }
 
+  // Issue #304: the DATEV file lists a person only with something to book (no zero lines), so the
+  // persons the DATEV tests read get one worked entry in each month of their employment.
+  async function worked(who: { employeeId: string }, day: string) {
+    await app.prisma.timeEntry.create({
+      data: {
+        employeeId: who.employeeId,
+        date: new Date(`${day}T00:00:00.000Z`),
+        startTime: new Date(`${day}T07:00:00.000Z`),
+        endTime: new Date(`${day}T15:00:00.000Z`),
+        breakMinutes: 30,
+        type: "WORK",
+        source: "MANUAL",
+        salonId: d.salonId,
+      },
+    });
+  }
+
   beforeAll(async () => {
     app = await getTestApp();
     d = await seedTestData(app, "pop613");
@@ -126,6 +143,11 @@ describe("Issue #613 — the period population", () => {
         exitDate: new Date("2026-10-31T00:00:00.000Z"),
       }),
     };
+    // September: day 2, October: day 5. The period population itself is unchanged.
+    // The seeded admin and employee are part of the population too (hired 2024).
+    const seeded = [{ employeeId: d.adminEmployee.id }, { employeeId: d.employee.id }];
+    for (const who of [p.E1, p.E2, p.D, p.A, p.C, ...seeded]) await worked(who, "2026-09-02");
+    for (const who of [p.D, p.A, p.C, p.H, ...seeded]) await worked(who, "2026-10-05");
   });
 
   afterAll(async () => {
@@ -183,6 +205,8 @@ describe("Issue #613 — the period population", () => {
         tag: "mgr",
         hireDate: new Date("2024-01-01T00:00:00.000Z"),
       });
+      await worked(manager, "2026-09-02");
+      await worked(manager, "2026-10-05");
       const roleName = `Pop613 ${crypto.randomBytes(3).toString("hex")}`;
       const role = await app.prisma.accessRole.create({
         data: {
@@ -366,6 +390,19 @@ describe("Issue #613 — the period population", () => {
         hireDate: new Date("2025-01-01T00:00:00.000Z"),
         exitDate: new Date("2026-09-30T00:00:00.000Z"),
         anonymized: true,
+      });
+      // Something to book in the month of employment (the file lists no person without a booking).
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: a2.employeeId,
+          date: new Date("2026-09-03T00:00:00.000Z"),
+          startTime: new Date("2026-09-03T07:00:00.000Z"),
+          endTime: new Date("2026-09-03T15:00:00.000Z"),
+          breakMinutes: 30,
+          type: "WORK",
+          source: "MANUAL",
+          salonId: d.salonId,
+        },
       });
       const september = await datevPnrs(9);
       expect(september).toContain(a2.employeeNumber);

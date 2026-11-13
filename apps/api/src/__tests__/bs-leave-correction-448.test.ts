@@ -10,11 +10,15 @@
  * Task 2 (appended below): the same behaviour through the real HTTP write paths.
  *
  * Every date is a fixed 2027/2028 calendar literal — the same NIEDERSACHSEN / no-holiday weeks
- * leave-bs-day-448.test.ts (plan 01) already established as safe.
+ * leave-bs-day-448.test.ts (plan 01) already established as safe. The Task 2 HTTP tests use
+ * fixed October/November 2026 weeks, and the generator's default window is today + 13 weeks,
+ * so the application clock is pinned to FAKE_NOW for the whole file: the dates never pass into
+ * "yesterday" and the generator always covers them (a real clock turned this file red on
+ * 2026-11-12, the day after the Tuesday 2026-11-10 left the window).
  */
 import type { FastifyInstance } from "fastify";
 import { Prisma } from "@clokr/db";
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import {
   getTestApp,
@@ -34,6 +38,10 @@ import {
   LEAVE_CORRECTION_NEEDED_VOCATIONAL_SCHOOL,
 } from "../contexts/absence/bs-leave-correction";
 
+// Monday before every fixed date of Task 2 (earliest: 2026-10-26); today + 13 weeks
+// (2027-01-04) covers the latest generator week (2026-11-23..27).
+const FAKE_NOW = "2026-10-05T08:00:00.000Z";
+
 describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigiert Buchung", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
@@ -42,6 +50,8 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
   let sickTypeId: string;
 
   beforeAll(async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(FAKE_NOW));
     app = await getTestApp();
     data = await seedTestData(app, "bscorr448");
     await app.prisma.employee.update({
@@ -60,7 +70,6 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
       data: {
         email: `bscorr448-sb-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -110,6 +119,7 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
       console.error("Test cleanup failed:", err);
     }
     await closeTestApp();
+    vi.useRealTimers();
   });
 
   // ── Fixture helpers ──────────────────────────────────────────────────────────────────────
@@ -416,7 +426,6 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
       data: {
         email: `bscorr448-inactive-${Date.now()}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "MANAGER",
         isActive: false,
       },
     });
@@ -613,7 +622,6 @@ describe("Issue #448 (D-04) — Berufsschultag über bestehendem Urlaub korrigie
       data: {
         email: `${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

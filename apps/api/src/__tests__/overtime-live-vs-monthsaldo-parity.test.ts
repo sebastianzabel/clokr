@@ -62,7 +62,7 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
 
     // Admin (same tenant) for HTTP-level GET /overtime/:id + /overtime/month-saldo assertions.
     const adminUser = await prisma.user.create({
-      data: { email: `b5admin-${suffix}@test.de`, passwordHash, role: "ADMIN", isActive: true },
+      data: { email: `b5admin-${suffix}@test.de`, passwordHash, isActive: true },
     });
     await prisma.employee.create({
       data: {
@@ -77,7 +77,7 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
     await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     const user = await prisma.user.create({
-      data: { email: `b5-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `b5-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const emp = await prisma.employee.create({
       data: {
@@ -351,7 +351,7 @@ describe("SALDO-DISP-01 (required_test_assertions #1) — TRACK_ONLY confirmedMi
 
     const passwordHash = await bcrypt.hash("test1234", 10);
     const adminUser = await prisma.user.create({
-      data: { email: `trkoadmin-${suffix}@test.de`, passwordHash, role: "ADMIN", isActive: true },
+      data: { email: `trkoadmin-${suffix}@test.de`, passwordHash, isActive: true },
     });
     await prisma.employee.create({
       data: {
@@ -366,7 +366,7 @@ describe("SALDO-DISP-01 (required_test_assertions #1) — TRACK_ONLY confirmedMi
     await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     const user = await prisma.user.create({
-      data: { email: `trko-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `trko-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const emp = await prisma.employee.create({
       data: {
@@ -489,7 +489,7 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
     const passwordHash = await bcrypt.hash("test1234", 10);
 
     const adminUser = await prisma.user.create({
-      data: { email: `riadmin-${suffix}@test.de`, passwordHash, role: "ADMIN", isActive: true },
+      data: { email: `riadmin-${suffix}@test.de`, passwordHash, isActive: true },
     });
     await prisma.employee.create({
       data: {
@@ -510,7 +510,6 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
         data: {
           email: `ripartial-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -573,7 +572,6 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
         data: {
           email: `rinonshift-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -612,7 +610,7 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
     // already has its own guard and contributes 0 — SALDO-DISP-07).
     {
       const user = await prisma.user.create({
-        data: { email: `rizero-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+        data: { email: `rizero-${suffix}@test.de`, passwordHash, isActive: true },
       });
       const emp = await prisma.employee.create({
         data: {
@@ -745,7 +743,7 @@ describe("WR-01 — rosterIncomplete anchor parity at the last calendar day of t
     const passwordHash = await bcrypt.hash("test1234", 10);
 
     const user = await prisma.user.create({
-      data: { email: `wr01-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `wr01-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const emp = await prisma.employee.create({
       data: {

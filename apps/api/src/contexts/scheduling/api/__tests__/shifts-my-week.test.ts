@@ -54,7 +54,6 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
       data: {
         email: `a-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -92,7 +91,6 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
       data: {
         email: `b-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -130,7 +128,6 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
       data: {
         email: `c-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -168,7 +165,6 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
       data: {
         email: `orphan-${suffix}@test.de`,
         passwordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });

@@ -10,8 +10,8 @@
  * caller wraps the write and its own `app.audit()` call in one `$transaction`, passing `tx` to
  * both (Phase 64b Plan 02 adds the write functions this docblock originally deferred).
  *
- * Weekday encoding: `day` is 0 = Monday … 6 = Sunday — identical to the retired
- * `TenantConfig.storeHours` column and deliberately NOT `WorkSchedule.workDays`'s encoding
+ * Weekday encoding: `day` is 0 = Monday … 6 = Sunday — identical to the former
+ * tenant-level opening-hours column (dropped in #638) and deliberately NOT `WorkSchedule.workDays`'s encoding
  * (0 = Sunday). This module's `openingHours` shape is a verbatim copy of that column's shape
  * (D-03) so the one-time migration data section could copy the JSON without reshaping it, and so
  * #325's shift-check reader could switch from tenant to salon level without changing its parsing.
@@ -31,12 +31,10 @@
  *   a config flag.
  * - Phase 71b (issue #71): every salon carries the Bundesland of its work location; a new salon
  *   without one inherits Tenant.federalState, which is otherwise no longer read for holidays.
- * - `TenantConfig.storeHours` is retired (Issue #563, D-13): nothing reads or writes it, and
+ * - The tenant-level opening hours are gone (retired in Issue #563, D-13, column dropped in #638);
  *   opening hours live only on `Salon.openingHours`. Since Phase 325 (issue #325) the shift check
  *   (`contexts/scheduling/api/shifts.ts`) reads the shift's own salon; the former mirror of a
- *   `PUT /api/v1/settings/work` write into the sole active salon was removed with #563 — pinned by
- *   `store-hours-readers.test.ts`'s living allowlist (`settings.ts` only, inside the retired-column
- *   constant). The column itself is dropped by a follow-up release.
+ *   `PUT /api/v1/settings/work` write into the sole active salon was removed with #563.
  * - Every tenant-creating path (`seed.ts`, `seed-demo.ts`, `test-bootstrap.ts`) creates that
  *   tenant's default salon in the same step (D-18).
  * - Phase 67b (issue #67, D-14): a salon that is, on the deactivation day, the current or future
@@ -57,12 +55,12 @@ import {
   type EndedDeploymentAssignment,
 } from "./salon-assignments";
 
-// A real HH:MM time: hours 00-23, minutes 00-59. Plain `\d{2}:\d{2}` (as `settings.ts`'s weaker,
-// retired `storeHours` schema used) would also accept "99:99" — D-04 requires a real time.
+// A real HH:MM time: hours 00-23, minutes 00-59. Plain `\d{2}:\d{2}` (as the weaker, former tenant-level
+// schema used) would also accept "99:99" — D-04 requires a real time.
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
- * D-04: one canonical opening-hours schema for the whole Salon surface (the former `storeHours`
+ * D-04: one canonical opening-hours schema for the whole Salon surface (the former tenant-level
  * schema of `settings.ts` was weaker — it had no `superRefine` for "each day exactly
  * once" or "open < close unless closed"). Array length exactly 7; every weekday 0..6 occurs
  * exactly once; `open`/`close` are real HH:MM times; `open < close` unless `closed: true`.
@@ -105,11 +103,8 @@ export type SalonOpeningHours = z.infer<typeof salonOpeningHoursSchema>;
 
 /**
  * The default default-salon opening hours (D-14's migration data section, and every future
- * `createSalon` call with no explicit hours). Equals the retired `TenantConfig.storeHours`
- * column's `@default(...)` literal in `schema.prisma` until the follow-up release drops it —
- * pinned by a living assertion in
- * `salon-migration.test.ts` (comparing this constant against the migration's own COALESCE
- * fallback JSON) rather than restated as an assumption here.
+ * `createSalon` call with no explicit hours). The seeds carry a second, deliberate copy
+ * (`packages/db/src/default-salon.ts`); `salon-migration.test.ts` pins the two equal.
  */
 export const DEFAULT_SALON_OPENING_HOURS: SalonOpeningHours = [
   { day: 0, open: "08:00", close: "20:00" },

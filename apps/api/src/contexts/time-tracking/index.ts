@@ -34,6 +34,7 @@ export {
   getClaimedEntryDatesInRange,
   countLockedEntries,
   getInvalidEntries,
+  findMissingClockOutEntries, // Issue #853 (D-853-21a): open entries of past days for the Aufgaben work queue
   getEntryActivityFeed,
   revalidateLeaveCancellationEntries,
   lockEntriesForMonth,
@@ -41,6 +42,8 @@ export {
   archiveEntriesBefore,
   archiveDayBreakDataBefore,
   clearEntryNotesForEmployee,
+  timeEntryIdsOfEmployee,
+  RETRO_REASON_ANONYMIZED,
   hardDeleteTimeDataForEmployee,
   createImportedTimeEntry,
   type ImportedTimeEntryData,
@@ -54,6 +57,8 @@ export {
   deletePresenceDevicesOfEmployee,
   type CreatePresenceDeviceData,
 } from "./facade/presence-devices";
+// Issue #610 (D-04): pairing codes leave the system after a day and with the person who consumed them
+export { purgeStalePairingCodes, deletePairingCodesOfUser } from "./facade/presence-pairing";
 
 // ── ArbZG §4 break-constant values (issue #246, E-6) ─────────────────────────────────────────
 // Declared public: a constant carries no query semantics, no soft-delete guard, no tenant scope
@@ -73,7 +78,7 @@ export {
 // getEffectiveSchedule is DEFINED in ./entry-invariants (the leaf plan 04 lifted it into) —
 // sourced from there, never from ./api/time-entries, so this index never has to publish a route
 // module's whole import set.
-export { getEffectiveSchedule } from "./entry-invariants";
+export { getEffectiveSchedule, defaultScheduleFromTenantConfig } from "./entry-invariants"; // Issue #696 — the fallback, shared with the bulk chain loader
 export { getEffectiveBreakDuration } from "./break-effective";
 export type { BreakEmployeeShape, BreakTenantConfigShape } from "./break-effective";
 // Issue #587 — `resolveDayStatus` is the one day-status function (obligation + timing + presence state).

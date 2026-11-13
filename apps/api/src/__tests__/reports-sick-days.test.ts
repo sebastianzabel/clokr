@@ -76,7 +76,6 @@ describe("Reports: sick day double-count regression (WR-05)", () => {
       data: {
         email: `emp-a-${Date.now()}@rpt-sick-test.de`,
         passwordHash: "DUMMY",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -142,7 +141,6 @@ describe("Reports: sick day double-count regression (WR-05)", () => {
       data: {
         email: `emp-b-${Date.now()}@rpt-sick-test.de`,
         passwordHash: "DUMMY",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -196,7 +194,6 @@ describe("Reports: sick day double-count regression (WR-05)", () => {
       data: {
         email: `emp-c-${Date.now()}@rpt-sick-test.de`,
         passwordHash: "DUMMY",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -714,7 +711,6 @@ describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 9
       data: {
         email: `emp-renamed-${Date.now()}@rpt-code-test.de`,
         passwordHash: "DUMMY",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -778,7 +774,6 @@ describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 9
       data: {
         email: `emp-nullcode-${Date.now()}@rpt-code-test.de`,
         passwordHash: "DUMMY",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -829,7 +824,6 @@ describe("Reports: Monatsbericht type comparisons run on LeaveType.code (Phase 9
       data: {
         email: `emp-parity-${Date.now()}@rpt-code-test.de`,
         passwordHash: "DUMMY",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

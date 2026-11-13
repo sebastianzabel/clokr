@@ -20,7 +20,7 @@ import { renderWithTheme } from "$tests/test-utils";
 import { authStore } from "$stores/auth";
 import { tenantFeatures } from "$stores/tenant-features";
 import { visibleNavSections } from "$lib/nav/app-nav";
-import { ADMIN_ROUTE_PERMISSIONS } from "$lib/nav/admin-route-permissions";
+import { APP_ROUTES } from "$lib/nav/routes";
 import personas from "$lib/nav/__tests__/fixtures/system-role-permissions.json";
 import BottomTabBar from "../BottomTabBar.svelte";
 
@@ -37,56 +37,63 @@ const on = { availabilityEnabled: true };
 const hrefsOf = (sections: { items: { href: string }[] }[]) =>
   sections.flatMap((s) => s.items.map((i) => i.href));
 
-describe("visibleNavSections — the one definition (#516)", () => {
-  it("shows the personal, team and admin targets of an admin under the sidebar headings", () => {
+describe("visibleNavSections — the one definition (#516, since #844 three areas)", () => {
+  it("shows the Ich, Team and Verwalten targets of an admin under the three area headings", () => {
     const sections = visibleNavSections({ permissions: p.ADMIN }, on);
-    expect(sections.map((s) => s.label)).toEqual([
-      "Mein Bereich",
-      "Team",
-      "PERSONAL",
-      "PLANUNG",
-      "COMPLIANCE",
-      "DATEN",
-      "SYSTEM",
-    ]);
+    expect(sections.map((s) => s.label)).toEqual(["Ich", "Team", "Verwalten"]);
     const hrefs = hrefsOf(sections);
-    // The two admin targets that were missing on mobile, and the personal one with the same label.
-    for (const href of ["/admin/availability", "/admin/phorest", "/availability"]) {
+    // Ich › Dienstplan and Team › Dienstplan are offered (D-05); since #853 the team availability is the
+    // fourth tab of Team › Dienstplan and has no rail entry of its own.
+    for (const href of ["/ich/dienstplan", "/team/dienstplan", "/verwalten/system"]) {
       expect(hrefs).toContain(href);
     }
-    // Every navigable admin route is offered, a redirect-only one never.
-    for (const entry of ADMIN_ROUTE_PERMISSIONS) {
-      expect(hrefs.includes(entry.href), entry.href).toBe(entry.inNav);
+    expect(hrefs).not.toContain("/team/verfuegbarkeit");
+    // Every rail entry of the route table is offered, a hub child or an alias never.
+    // #853 (D-853-15): the one exception is Team › Personen, which an administration persona sees as
+    // Verwalten › Personen instead (exactly one „Personen“).
+    for (const route of APP_ROUTES.filter((r) => r.area !== "ich" || r.inNav)) {
+      if (route.href === "/team/personen") continue;
+      expect(hrefs.includes(route.href), route.href).toBe(route.inNav);
     }
+    expect(hrefs).toContain("/verwalten/personen");
+    expect(hrefs).not.toContain("/team/personen");
     expect(hrefs).not.toContain("/admin/special-leave");
-    expect(hrefs).not.toContain("/admin/wifi-presence");
+    expect(hrefs).not.toContain("/verwalten/system/phorest");
   });
 
-  it("lists no target twice and keeps the two Verfügbarkeit entries under different headings", () => {
+  it("lists no target twice; Ich › Dienstplan stays in Ich and Team › Verfügbarkeit is a tab of Team › Dienstplan", () => {
     const sections = visibleNavSections({ permissions: p.ADMIN }, on);
     const hrefs = hrefsOf(sections);
     expect(new Set(hrefs).size).toBe(hrefs.length);
     const headingOf = (href: string) =>
       sections.find((s) => s.items.some((i) => i.href === href))?.label;
-    expect(headingOf("/availability")).toBe("Mein Bereich");
-    expect(headingOf("/admin/availability")).toBe("PLANUNG");
+    expect(headingOf("/ich/dienstplan")).toBe("Ich");
+    expect(headingOf("/team/dienstplan")).toBe("Team");
+    expect(headingOf("/team/verfuegbarkeit")).toBeUndefined();
+    const tab = APP_ROUTES.find((r) => r.href === "/team/verfuegbarkeit");
+    expect(tab?.inNav).toBe(false);
+    expect(tab?.parent).toBe("/team/dienstplan");
   });
 
-  it("follows the permissions per persona and drops the availability entries with the feature", () => {
+  it("follows the permissions per persona and drops the team availability with the feature", () => {
     expect(hrefsOf(visibleNavSections({ permissions: p.EMPLOYEE }, on))).toEqual([
-      "/dashboard",
-      "/time-entries",
-      "/leave",
-      "/availability",
+      "/ich/tag",
+      "/ich/zeiten",
+      "/ich/abwesenheiten",
+      "/ich/dienstplan",
+      "/ich/konto", // #594 (Phase 851)
     ]);
     const salon = hrefsOf(visibleNavSections({ permissions: p.SALON_MANAGER }, on));
-    expect(salon).toContain("/admin/availability");
-    expect(salon).not.toContain("/admin/phorest");
+    expect(salon).toContain("/team/dienstplan");
+    expect(salon).not.toContain("/team/verfuegbarkeit");
+    expect(salon).not.toContain("/verwalten/system");
     const off = hrefsOf(
       visibleNavSections({ permissions: p.SALON_MANAGER }, { availabilityEnabled: false }),
     );
-    expect(off).not.toContain("/availability");
-    expect(off).not.toContain("/admin/availability");
+    expect(off).toContain("/ich/dienstplan"); // #597 (Phase 851): the own shifts need no feature
+    expect(off).not.toContain("/team/verfuegbarkeit");
+    // the roster itself does not depend on the feature
+    expect(off).toContain("/team/dienstplan");
   });
 });
 
@@ -99,7 +106,7 @@ describe("mobile Mehr sheet renders the same sections (#516)", () => {
     it(`${persona}: every sidebar target is a link in the sheet under its sidebar heading`, async () => {
       const user = { role: persona === "ADMIN" ? "ADMIN" : "EMPLOYEE", permissions: p[persona] };
       (authStore as unknown as { set(v: unknown): void }).set({ user });
-      renderWithTheme(BottomTabBar, { currentPath: "/admin/phorest" });
+      renderWithTheme(BottomTabBar, { currentPath: "/verwalten/system" });
       await fireEvent.click(screen.getByRole("button", { name: /^Mehr/, hidden: true }));
       const dialog = screen.getByRole("dialog", { name: "Weitere Navigation" });
 
@@ -117,13 +124,15 @@ describe("mobile Mehr sheet renders the same sections (#516)", () => {
     });
   }
 
-  it("marks the new targets as the page (admin Verfügbarkeit and Phorest)", async () => {
+  it("marks the current target as the page (Team › Dienstplan on its Verfügbarkeit tab and Verwalten › System)", async () => {
     (authStore as unknown as { set(v: unknown): void }).set({
       user: { permissions: p.ADMIN },
     });
-    for (const [path, group] of [
-      ["/admin/availability", "PLANUNG"],
-      ["/admin/phorest", "SYSTEM"],
+    // #853: the Verfügbarkeit tab is no rail entry; the sheet marks its parent „Dienstplan“ as the page.
+    for (const [path, group, target] of [
+      ["/team/verfuegbarkeit", "Team", "/team/dienstplan"],
+      ["/team/dienstplan/planung", "Team", "/team/dienstplan"],
+      ["/verwalten/system", "Verwalten", "/verwalten/system"],
     ] as const) {
       const { unmount } = renderWithTheme(BottomTabBar, { currentPath: path });
       await fireEvent.click(screen.getByRole("button", { name: /^Mehr/, hidden: true }));
@@ -133,7 +142,7 @@ describe("mobile Mehr sheet renders the same sections (#516)", () => {
         within(within(dialog).getByRole("navigation", { name: group })).getByRole("link", {
           current: "page",
         }),
-      ).toHaveAttribute("href", path);
+      ).toHaveAttribute("href", target);
       unmount();
     }
   });

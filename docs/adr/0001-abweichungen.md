@@ -1437,6 +1437,8 @@ Salonangabe entgegen; die Bindung eines Terminals an einen Salon ist #541. Kein 
 Mitarbeiter: ein erneutes Stempeln öffnet den Eintrag des Tages und lässt dessen Salon unverändert, ein
 ausdrücklich abweichender Salon ist 409 `SALON_DIFFERS_FROM_DAY_ENTRY` (#70).
 
+_(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
+
 ### Nachtrag 2026-10-16 (Phase 70b, Issue #70): Ein ausdrücklich anderer Salon beginnt einen neuen Eintrag
 
 Der letzte Satz oben („Kein zweiter Salon je Tag und Mitarbeiter … 409 `SALON_DIFFERS_FROM_DAY_ENTRY`“) gilt nicht mehr.
@@ -1449,6 +1451,33 @@ Eintrags („Zuletzt erfasst in …“) und bietet in einem Mandanten mit mehrer
 (Ausnahme: nennen die aktuellen und künftigen Zuordnungen genau diesen einen Salon); an einem laufenden Tag bietet es
 nichts an. Unverändert: NFC und WLAN nehmen weiter keine Salonangabe entgegen (#541). Begründung, Sicherung und Grenzen:
 Eintrag AA.
+
+_(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
+
+---
+
+Nachtrag Issue #638 (01.11.2026): Die Spalte `TenantConfig.storeHours` ist gelöscht. Das ist die
+Entfernung eines Unterbau-Feldes (Semantikänderung nach ADR 0002, Entscheidung 7); die Owner-Entscheidung
+steht als Kommentar auf #563, #638 ist das dort vorgesehene Folge-Issue. Voraussetzung (ein Release nach
+dem, das #563 ausliefert, auf int und prod) ist erfüllt: v1.16.0 lieferte #563, int und prod laufen v1.17.0.
+
+- **Migration.** `*_drop_store_hours` enthält genau ein `ALTER TABLE "TenantConfig" DROP COLUMN "storeHours"`;
+  sie wurde nach dem Shadow-DB-Ablauf aus CLAUDE.md erzeugt (kein `migrate dev`, kein `db push`).
+  `schema.prisma` kennt das Feld nicht mehr, `RETIRED_TENANT_CONFIG_COLUMNS` in
+  `contexts/platform/api/settings.ts` ist jetzt leer (der Omit-Typ der Antwort entfällt). Ein alter Client,
+  der den Schlüssel noch sendet, erhält weiter 200 (der Zod-Parser verwirft unbekannte Schlüssel).
+- **Rollback.** Nach der Migration ist ein Image-Rollback auf v1.16.x oder älter nicht möglich (deren
+  Prisma-Client selektiert die Spalte); siehe `docs/migrations.md`, „Phase 638“.
+- **Tests.** Die Prüfungen, die die Spalte lasen (`salon-migration.test.ts`, `operator-salons-89.test.ts`,
+  `settings-store-hours-retired-563.test.ts`, `salon-admin-563.test.ts`), sind entfernt oder umgeschrieben.
+  Die Beweise von Phase 64b, die den Datenteil der Migration `20260924071637_add_salon` ausführten, entfallen:
+  dieser Datenteil liest die Spalte und kann gegen das neue Schema nicht mehr laufen; die Migration selbst
+  bleibt unverändert in der Historie. `store-hours-readers.test.ts` erwartet jetzt null Vorkommen (die eine
+  erlaubte Stelle entfällt).
+- **Auswirkung auf die Kontexte:** Unterbau: Feld entfernt. Zeiterfassung, Abwesenheiten, Schichtplanung,
+  Arbeitszeitkonto, Kompositionsschicht: keine (lesen die Spalte seit #563 nicht mehr).
+- **Kennungs-Gate:** `git grep storeHours` findet nur noch Migrationen, Doku-Historie, die Negativ-Assertions
+  der Wächter-Tests und die Begründungstexte der Ausnahmeliste `lint-tenant-scoping-exceptions.json`.
 
 ---
 
@@ -1920,7 +1949,7 @@ Namen der gelöschten Funktionen. `lint:role-checks` behält `compat-role.ts` al
 (Ablauf: `docs/migrations.md`, „Phase 539“). Ohne ihn können sich aktive Nutzer ohne Zuweisung nach dem Deploy nicht anmelden.
 
 **Release B.** Spalte `User.role` und Enum `Role` entfernen, `compat-role.ts` und die `lint:role-checks`-Ausnahme streichen,
-den Firmen-PDF-Filter über Zuweisungen ausdrücken, das Übernahme-Skript stilllegen: #641.
+den Firmen-PDF-Filter über Zuweisungen ausdrücken, das Übernahme-Skript stilllegen: #641. (Erledigt mit #641, siehe Nachtrag „Release B“.)
 
 ### Nachtrag 2026-10-17 (Issue #614) — Anonymisierung beendet die Beschäftigung, Personalnummer bleibt
 
@@ -2005,6 +2034,98 @@ weiter, und die überschriebene Personalnummer ließ spätere Lohnkorrekturen al
 409), dazu `leave-correction-core-614.test.ts`, `dashboard-upcoming-leave-anonymized-614.test.ts` und
 `scripts/__tests__/audit-614-anonymized-employment.test.ts`.
 
+### Nachtrag 2026-11-05 (Issue #615) — Deaktivieren mit letztem Arbeitstag, Saldo und Resturlaub
+
+**Entscheidung.** Ticket-Text vom 05.11.2026 (Ready). Das Deaktivieren (`PATCH /api/v1/employees/:id/deactivate`) nimmt den
+letzten Arbeitstag entgegen, beendet damit die Beschäftigung wie die Anonymisierung (#614) und zeigt vor dem Bestätigen,
+was das bedeutet. Das ist **keine** Unterbau-Semantikänderung: Es ändert sich kein Feld, keine Relation, kein Enum-Wert und
+kein Export von `contexts/platform/index.ts`. Das Deaktivieren schreibt jetzt die Konvention, die #614 für
+`Employee.exitDate` festhält: UTC-Mitternacht eines Kalendertags in der Zeitzone des Mandanten (vorher: der Zeitpunkt des
+Klicks).
+
+**Was sich geändert hat.**
+
+- **Kalendertag.** `exitDate` ist ein Kalendertag `YYYY-MM-DD`, ohne Angabe der heutige Tag des Mandanten. Ein Tag nach heute
+  antwortet **400** `EXIT_DATE_IN_FUTURE` (wer noch arbeitet, muss weiter erfassen, § 16 Abs. 2 ArbZG; ein künftiger Austritt
+  gehört in die Stammdaten). Ein Tag vor dem Eintrittsdatum (Kalendertag des Mandanten) antwortet **400**
+  `EXIT_DATE_BEFORE_HIRE` (D-22). Die Monatsprüfung beurteilt die **Verschiebung** des Beschäftigungsendes: Sie deckt alle
+  Monate vom früheren des gespeicherten Austrittstags und des gewählten Tags bis zum laufenden Monat ab und antwortet
+  **409** `MONTH_LOCKED`, nach der Regel für geschlossene Monate (#595) über die Arbeitszeitkonto-Fassade. Wer den
+  gespeicherten Tag selbst wählt, verschiebt nichts und wird nicht abgelehnt; einen gespeicherten Tag aus einem
+  abgeschlossenen Monat heraus zu verschieben, ist abgelehnt. In jedem Fall wird nichts geschrieben. Die Prüfungen laufen
+  zusätzlich in der Transaktion unter einer Zeilensperre auf dem Mitarbeiter (`FOR NO KEY UPDATE`): zwei gleichzeitige
+  Deaktivierungen ergeben genau eine 200 und eine 409, und der Audit-`oldValue` ist der gesperrt gelesene Stand.
+- **Person ohne Eintritt.** Liegt der Eintrittstag des Mandanten nach heute, gibt es keinen zulässigen letzten Arbeitstag.
+  Das Deaktivieren sperrt dann nur den Zugang und widerruft die Tokens; Austrittsdatum und Austrittsregel bleiben
+  unberührt, der Audit trägt `exitDateUnchanged: "HIRE_IN_FUTURE"`, die Vorschau meldet `loginOnlyReason: "HIRE_IN_FUTURE"`.
+- **Austrittsregel als zweiter Aufrufer.** Das Deaktivieren plant die Austrittsregel vor der Transaktion und wendet sie in ihr
+  an, über dieselbe Dekoration `app.absenceExit` wie die Anonymisierung, mit dem Marker `trigger: "DEACTIVATION"` /
+  `auditReason` „Deaktivierung“. Dieselben Fälle werden übersprungen und gelistet (`CLOSED_MONTH`,
+  `PARENTAL_REDUCTION_ACTIVE`, `CORRECTION_REFUSED`, `SPANNING_ABSENCE`); ändert sich ein geplanter Antrag zwischen Plan und
+  Anwendung, antwortet die Route **409** `EMPLOYMENT_EXIT_CONFLICT` und schreibt nichts. Danach läuft der Abgleich des
+  Austrittsjahres aus #447.
+- **Audit alt/neu.** Der `UPDATE Employee`-Eintrag trägt `oldValue { isActive: true, exitDate }` (das bisherige Datum oder
+  `null`) und `newValue { isActive: false, exitDate, absencesEnded, exitSkipped }`; Zeilen-IDs und Codes, kein Freitext. Jede
+  geänderte Zeile bekommt ihren eigenen Audit-Eintrag mit dem Marker.
+- **Vorschau.** `POST /api/v1/employees/:id/deactivate/preview` (`employee:manage-access:ZUGEWIESEN`, dieselbe
+  Personen-Reichweite und derselbe 404 wie das Deaktivieren, T-100-09-Register) zeigt den Tag, die Ablehnung (dieselben Codes und
+  Texte), die Abwesenheiten, die die Regel beendet (Art, Status und Zeitraum nur mit `leave-request:read` über die
+  Person, sonst nur Zähler je Aktion und `absencesUnavailableReason: "NO_PERMISSION"`; Krankmeldungen sind
+  Gesundheitsdaten), das aktuelle Live-Saldo bis gestern (nur mit `overtime:read` über die Person; es ist nicht der
+  Endsaldo, den erst der Monatsabschluss des Austrittsmonats festlegt) und den Resturlaub des Austrittsjahres (nur mit
+  `leave-entitlement:read`). Ein nicht sichtbarer Wert ist `null` mit Grund (`NO_PERMISSION`, `NOT_TRACKED`, `UNAVAILABLE`,
+  `NO_ENTITLEMENT`, `EXIT_DATE_REFUSED`, `HIRE_IN_FUTURE`), nie berechnet und verworfen. Ein Fehler der Resturlaub-Projektion
+  wird wie beim Saldo zu `UNAVAILABLE`, die Vorschau bleibt benutzbar. Nach jedem Deaktivieren wird das gespeicherte
+  Überstundenkonto neu geschrieben, auch wenn keine Abwesenheit geändert wurde.
+- **D-17: Fragen schreibt nichts.** Eine erfolgreiche Vorschau legt keine Zeile an und schreibt keinen Audit-Eintrag; der
+  gemeinsame 404 schreibt seine Ablehnungs-Audits (`CROSS_TENANT_ACCESS_DENIED`, `SCOPE_ACCESS_DENIED`) auch bei der Vorschau.
+  Der Nachweis vergleicht
+  Mitarbeiter, Benutzer, Anträge, Abwesenheiten, Ansprüche, Überstundenkonto, Snapshots, Refresh-Tokens und die Zahl der
+  Audit-Zeilen vor und nach dem Aufruf.
+- **D-18: Resturlaub über denselben § 5-Planer.** `exitVacationBalance` (`contexts/absence/facade/vacation-balance.ts`) fragt
+  den Planer des Abgleichs aus #447 (`planExitYearVacationEntitlement`) mit einem hypothetischen Austrittstag; es gibt keine
+  zweite § 5-Berechnung, und das Ergebnis ist der Wert, den das Deaktivieren danach speichert.
+- **Dialog.** Das Web fragt „Letzter Arbeitstag“ (Vorgabe: das gespeicherte Austrittsdatum, wenn es heute oder früher ist, sonst
+  heute; Obergrenze: das `today` des Servers), lädt die Vorschau beim Öffnen und bei jeder Änderung, verwirft veraltete
+  Antworten und sperrt „Deaktivieren“ bei einem abgelehnten Tag. Das Reaktivieren behält seinen Dialog; es stellt nichts
+  wieder her, was die Regel beendet hat, und der Dialog sagt das.
+
+**Auswirkung auf die Kontexte.**
+
+| Kontext             | Wirkung                                                                                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unterbau            | Die Route nimmt den Tag und ruft die Regel über `app.absenceExit` auf; schreibt `Employee.exitDate` als Kalendertag; kein neues Feld, keine neue Relation, kein neuer Export |
+| Zeiterfassung       | keine                                                                                                                                                                        |
+| Abwesenheiten       | `preview` an `app.absenceExit` und `exitVacationBalance` samt Planer `planExitYearVacationEntitlement`; die Regel selbst bleibt in `employment-exit.ts`                      |
+| Schichtplanung      | keine                                                                                                                                                                        |
+| Arbeitszeitkonto    | nur lesend: abgeschlossener Monat und Live-Saldo, über die Kompositions-Naht; keine Änderung am Saldo oder an Snapshots                                                      |
+| Kompositionsschicht | neue Naht `composition/employee-exit-ports.ts` (`closedMonthInRange`, `liveSaldo`), ohne Geschäftsregel                                                                      |
+
+**Grenzen.**
+
+- _Frühere Deaktivierungen._ Ihr Austrittsdatum ist ein Zeitpunkt, kein Kalendertag. Es wird nicht umgeschrieben; Leser nehmen
+  den UTC-Tag des gespeicherten Werts, wie schon für #614.
+- _`PATCH /employees/:id` mit `exitDate`._ Die Stammdaten-Route prüft weiterhin keinen abgeschlossenen Monat; die
+  Monatsprüfung gilt nur für das Deaktivieren.
+- _Zeiteinträge nach dem gewählten Tag._ Sie werden weder abgelehnt noch gemeldet; das Deaktivieren beendet Abwesenheiten, es
+  prüft die Zeiterfassung nicht.
+- _Übertrag in der Vorschau._ Der Resturlaub liest den gespeicherten Übertrag. Ein Rest aus dem Vorjahr, der noch nicht
+  übertragen wurde (das passiert lazy beim ersten Lesen der Ansprüche oder per Cron), fehlt in der Vorschau, während die
+  Kontoseite ihn danach zeigt.
+- _Anspruch im alten Austrittsjahr._ Liegt der gespeicherte Austrittstag in einem anderen Jahr, bringt das Deaktivieren auch
+  den Urlaubsanspruch dieses Jahres wieder auf seinen Regelwert (derselbe Abgleich wie #447, je Zeile auditiert). Die Vorschau
+  zeigt nur das neue Austrittsjahr.
+- _Ablehnungs-Audits._ Der gemeinsame 404 für unbekannte, fremde und nicht erreichbare Personen schreibt weiter seine
+  Ablehnungs-Audits wie bisher, auch bei der Vorschau; nur eine erfolgreiche Vorschau schreibt keine Zeile.
+
+**Nachweis.** `deactivate-exit-day-615.test.ts` (Kalendertag, 400/409, Regel, Audit, Reihenfolge),
+`employment-exit-preview-615.test.ts` (Zeilen der Vorschau, keine Schreibung, Parität mit dem Deaktivieren),
+`exit-vacation-balance-615.test.ts` (Resturlaub gegen das Konto danach, kein zweites § 5),
+`deactivate-preview-615.test.ts` (Antwort, Ablehnungsparität, Tageswechsel um Mitternacht, nichts geschrieben),
+`deactivate-preview-rights-615.test.ts` (Zahl nur mit eigenem Recht, derselbe 404 in drei Fällen) und
+`t100-09-oracle-probe.test.ts`; im Web `deactivate-format.test.ts` und `DeactivateEmployeeDialog.test.ts`
+(gemountet, veraltete Antworten, gesperrter Button).
+
 ### Nachtrag 2026-10-17 (Issue #617) — Der D-12-Leser entfällt
 
 Der firmenweite Monatsbericht (`GET /reports/monthly/pdf/all`) ist mit #617 entfernt, und mit ihm der Rollenfilter, der als
@@ -2012,7 +2133,108 @@ D-12 der dritte dokumentierte Leser der Kompatibilitätsspalte `User.role` war. 
 Zurückschreiben (D-06) und das Übernahme-Skript (D-01). `legacy-role-reads-539.test.ts` zählte D-12 nie als Fund
 (`compatRoleUserWhere()` liefert `{ role }` außerhalb eines `where`-Literals), seine Allowlist braucht deshalb keine
 Änderung. `parseCompatRoleFilter` und `compatRoleUserWhere` bleiben ohne Aufrufer exportiert, bis Release B (#641) die
-Spalte und das Enum entfernt; ein Hinweis steht am Issue #641.
+Spalte und das Enum entfernt; ein Hinweis steht am Issue #641 (erledigt mit #641, siehe Nachtrag „Release B“).
+
+### Nachtrag 2026-11-02 (Issue #641, Release B) — Spalte `User.role` und Enum `Role` entfernt
+
+**Entscheidung.** Owner-Entscheidung vom 01.11.2026 (am Issue #641 dokumentiert): Release B von #539 entfernt die Spalte
+`User.role` und das Enum `Role` per einmaliger Migration. Es ist eine **Unterbau-Semantikänderung** im Sinn von ADR 0002,
+Entscheidung 7: ein Feld und ein Enum des Unterbaus entfallen, und Exporte von `contexts/platform/index.ts` ändern sich. Keine
+Systemrolle und keine Berechtigung ändert sich; die Rolle einer Person stand seit Release A nur noch in den gespeicherten
+Zuweisungen, die Spalte wurde bis jetzt nur noch für ein Image-Rollback mitgeführt.
+
+**Was sich geändert hat.**
+
+- **Migration** `20261103000000_drop_user_role` mit genau zwei Anweisungen, `ALTER TABLE "User" DROP COLUMN "role";` und
+  `DROP TYPE "Role";`. Sie wurde gegen eine Wegwerf-Shadow-Datenbank erzeugt, gelesen und nicht von Hand geändert; der CI-Drift-
+  Check (`migrate diff --exit-code`) liefert 0. Ablauf, Sicherung und Vorab-Prüfung: `docs/migrations.md`, „Phase 641“.
+- **Das Modul heißt `contexts/platform/system-role-assignment.ts`** (vorher `compat-role.ts`, per `git mv`). Die Ableitung heißt
+  `deriveFormRole()` (vorher `deriveCompatRole`), die angeforderte Rolle ist der Typ `SystemRoleName` (`"ADMIN" | "MANAGER" |
+"EMPLOYEE"`) statt des Prisma-Enums. Der Schreib-Vertrag der Anforderungen ist byte-gleich geblieben: die drei
+  `z.enum(["ADMIN", "MANAGER", "EMPLOYEE"])` im Mitarbeiterformular, in `POST /employees` und im CSV-Import.
+- **Es wird nichts mehr zurückgeschrieben.** `syncCompatRoleColumn` samt Änderungstyp ist gelöscht; Anlegen, Import,
+  Operator-Bereitstellung und Anonymisierung schreiben keinen `role`-Wert mehr. Folge für das Protokoll: neue
+  Rollenzuweisungs-Zeilen tragen kein `compatRole`, und eine Rollenänderung schreibt keine UPDATE-Zeile mehr auf die Entität
+  `User`. Bestehende Zeilen behalten ihre Werte (`compatRole`, `legacyRole`, `actorRole`); das Protokoll ist append-only.
+- **Filterhelfer entfernt, Akzeptanzkriterium 3 von #641 durch Entfernung erfüllt.** `parseCompatRoleFilter`,
+  `compatRoleUserWhere` und `CompatRoleFilter` sind gelöscht und aus `contexts/platform/index.ts` nicht mehr exportiert; der
+  Barrel exportiert nichts mehr aus dem Modul. Das Firmen-PDF, dessen Rollenfilter sie bedienten, gibt es seit #617 nicht mehr
+  (`git grep -n -E "pdf/all|COMPANY_MONTHLY_PDF" -- apps/api/src ':!**/__tests__/**'` ist leer).
+- **`backfill-539-role-assignments.ts` ist entfernt** (samt Test und der Zeile in `smoke-readonly.steps`): Er las die Spalte,
+  die es nicht mehr gibt. Die Vorab-Prüfung ersetzt ihn rein lesend (`docs/migrations.md`).
+- **`lint:role-checks` hat keine Ausnahme-Datei und keinen Altspalten-Leser mehr, aber eine benannte Ausnahme für die
+  Zuweisungslogik.** Jede Nicht-Test-Datei unter `apps/api/src` wird geprüft; Bezeichner vom Typ `SystemRoleName` /
+  `LegacySystemRoleName` gelten als rollenwertig, ausgenommen allein `contexts/platform/system-role-assignment.ts`
+  (benannt mit Begründung im Gate, bei fehlender Datei bricht der Lauf ab; die Vergleiche dort sind in
+  `docs/permissions.md` „Nicht gezählte Treffer“ eingeordnet). Ein Vergleich auf einem solchen Parameter in jeder anderen
+  Datei und `body.role !== "EMPLOYEE"` auf einer Anfrage sind Funde (Review-Befund WR-02).
+- **`legacy-role-reads-539.test.ts`** behält ihre Leser-Erlaubnisliste als bewusst leere Liste (`toHaveLength(0)`); der Wächter
+  läuft über 363 Quelldateien und verbietet weiter `select: { role: true }`, `role` unter einem `where`, `req.user.role`, ein
+  `role`-Feld im `JwtPayload` und die Namen der gelöschten Funktionen.
+- **Neutralitäts-Fixtures ohne Wiedergabe der Migration.** Die drei Neutralitäts-Suiten bekamen ihre gespeicherten Zuweisungen
+  bisher, indem sie die SQL der Migration von #75b gegen die Spalte ausführten. Sie leiten sie jetzt aus den Rollen ab, die
+  die Fixtures deklarieren (`grantLegacyMigrationRoles`, gleiche Auswahlregeln); ein Äquivalenz-Probelauf über alle drei
+  Aufbauten bestätigte Zeile für Zeile dieselben Zuweisungen. **Alle Aufzeichnungen und Ausnahmeregister unter
+  `neutrality/recorded/` sind byte-gleich zum Merge-Basisstand.**
+- **Fixture-Codemod über das Gate von #808.** Alle toten `role:`-Schlüssel in Prisma-Aufrufen (600 Schlüssel in 343 Dateien:
+  556 in 314 Dateien unter `apps/api/src`, 44 in 29 Dateien unter `apps/api/scripts`) entfernte ein geprüftes Codemod, das nur
+  die vom Compiler als unbekannt gemeldeten Schlüssel auf dem Pfad `data.` anfasste; danach meldet `lint:prisma-unknown-keys`
+  in allen Programmen (Quellen mit Tests, Skripte, Seeds, die beiden Demo-Skripte) null Funde.
+
+**Was bewusst nicht geschah.**
+
+- Alte Protokollzeilen werden nicht umgeschrieben; sie behalten `compatRole`, `legacyRole` und `actorRole`.
+- Die historische Migration von #75b bleibt unverändert, ebenso die Release-Notes und `.steps`-Dateien von v1.16.0.
+- Die `role`-Literale in den `EXPECTED_*`-Blöcken von `whole-tenant-frozen-85.test.ts` bleiben: Sie sind Pins der
+  ABGELEITETEN Antwortrolle, die die Mitarbeiter-Antworten (`GET /employees`, `GET /employees/:id`, `POST /employees`,
+  Reaktivieren) unter `user.role` weiter liefern (ohne Zuweisung `null`); das Mitarbeiterformular liest sie.
+- Berechtigungen, Systemrollen-Templates, `AccessRole`/`RoleAssignment` und der Rollen-Editor sind unverändert. Die beiden
+  Neutralitätszellen aus #357 (Anonymisierung) bleiben als Amendment aufgezeichnet; ihre Begründung nennt die Spalte als
+  historischen Grund.
+- `packages/mcp` hatte keinen Bezug zur Spalte (die Angabe im Issue war veraltet).
+
+**Auswirkung auf die Kontexte.**
+
+| Kontext             | Wirkung                                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Unterbau            | Feld `User.role` und Enum `Role` entfallen, `compat-role.ts` wird zu `system-role-assignment.ts`, der Barrel verliert die Filterhelfer, neue Rollenzuweisungs-Protokollzeilen tragen kein `compatRole`; Migration einweg |
+| Zeiterfassung       | keine                                                                                                                                                                                                                    |
+| Abwesenheiten       | keine                                                                                                                                                                                                                    |
+| Schichtplanung      | keine                                                                                                                                                                                                                    |
+| Arbeitszeitkonto    | keine                                                                                                                                                                                                                    |
+| Kompositionsschicht | keine                                                                                                                                                                                                                    |
+
+**Gemessen.** Gelöscht wurden Tests, deren Gegenstand mit der Spalte entfiel: 11 Fälle in `system-roles-migration.test.ts`
+(sie führten die Migration von #75b gegen Fixture-Nutzer aus; der Drift-Fall bleibt), die 23 Fälle von
+`backfill-539-role-assignments.test.ts` samt Skript und der Wiedergabe-Helfer `legacy-role-migration-sql.ts` samt seinen
+Nutzern. Die Suite lief nach dem Entfernen der Spalte vollständig grün (755 Dateien, 11 078 Tests, davon 3 übersprungen; die
+Untergrenzen in `check-test-completeness.mjs` sind auf diese Summen gesetzt, `MIN_TESTS` sank dabei um 3 gegenüber `main`); `drop-user-role-641.test.ts` (11 Fälle) prüft Migrationsdatei,
+Katalog und Anmeldung des Admins auf dem Schema ohne Spalte.
+
+**Grenzen.**
+
+- **Der Rollback ist datenerhaltend, aber keine Rückwärtsmigration (Review-Befund WR-01).** Ein Image von v1.17.x oder älter
+  fordert die Spalte bei jedem Lesen von `User` an, liest ihren Wert aber für keine Entscheidung (Beleg am Quelltext des Tags
+  `v1.17.0`: nur `syncCompatRoleColumn` vergleicht und schreibt zurück, das Übernahmeskript liest sie von Hand). Der Rollback
+  legt Typ und Spalte mit dem Standardwert `EMPLOYEE` neu an und löscht die Zeile der Migration aus `_prisma_migrations`
+  (`docs/migrations.md`, „Phase 641“, Schritt 5, am 02.11.2026 auf einer Wegwerf-Datenbank geprobt: `migrate status` und
+  `migrate diff --exit-code` gegen das Schema von v1.17.0 ohne Unterschied). Es geht nichts verloren, was nach dem Deploy
+  geschrieben wurde; die alten Spaltenwerte sind weg und laufen bei der nächsten Zuweisungsänderung von allein auf den
+  abgeleiteten Wert zurück. Der `pg_dump` vor dem Deploy bleibt Pflicht als Rückfall, falls die Umkehr scheitert.
+- **Fehlerfenster beim Rolling Update.** Solange ein altes Pod-Exemplar neben einem neuen läuft, kann das alte Pod an der
+  fehlenden Spalte scheitern; die Migration läuft im Einstiegspunkt des neuen Images.
+- **Die `SystemRoleName`-Grenze des Gates ist eine benannte Ausnahme.** Bezeichner dieses Typs (und `LegacySystemRoleName`)
+  gelten als rollenwertig; allein `system-role-assignment.ts` ist davon ausgenommen (Review-Befund WR-02, siehe oben). Die
+  Einordnung der Vergleiche steht in `docs/permissions.md`, und `permission-site-mapping.test.ts` zählt die Treffer je Datei.
+- **Drei Kopien der Rollenmenge (Review-Befund IN-01, bewusst nicht geändert).** `SystemRoleName`, das testseitige
+  `LegacySystemRoleName` und das gepinnte `SeedSystemRoleName` in `packages/db` führen dieselben drei Werte, und die drei
+  `z.enum([...])` der Anforderungsfelder werden nur in einer Richtung geprüft (ihre Werte müssen in `SystemRoleName`
+  passen). Ein vierter Wert im Typ würde kompilieren und von keiner API angenommen. Eine gemeinsame Tupel-Konstante wäre
+  die Abhilfe; der Vertrag der Anforderungen bleibt in diesem Release byte-gleich (D-04).
+- **`newValue.role` im Mitarbeiter-UPDATE ist die Anforderung (Review-Befund IN-04, bewusst nicht geändert).** Die
+  Protokollzeile `UPDATE` auf `Employee` trägt `role: body.role`, den angeforderten Wert (auch bei einer unveränderten
+  Anforderung, sonst `undefined`), nicht das Ergebnis. Maßgeblich für den Verlauf einer Rolle sind die lückenlosen
+  `RoleAssignment`-Zeilen (CREATE/UPDATE/DELETE); der Mitarbeiter-UPDATE belegt nur, was angefragt wurde.
 
 ---
 
@@ -2668,6 +2890,8 @@ Besetzungsregeln), `/admin/salons` (ist selbst die Salonverwaltung), persönlich
   behoben; der Filter setzt auf dieser Reichweite auf.
 - `GET /leave/calendar` bleibt für Aufrufer ohne Vollzugriff mandantenweit, typmaskiert wie zuvor; unter einem
   Filter zeigt er weiterhin die Feiertage des Arbeitsorts des Anfragenden.
+  _Nachtrag Phase 840 (Issue #840):_ Dieser Satz gilt nicht mehr — `GET /leave/calendar` entscheidet seitdem je Person
+  nach Reichweite und maskiert fremde Zeilen; siehe Eintrag AI. Der Satz bleibt als Stand von Phase 558 stehen.
 - Berichte (#542) bekommen keinen Salonfilter.
 - Mindestbesetzung je Salon (Folge-Issue #647): `CoverageRule` hat keinen Salonbezug, unter einem Filter
   gelten die mandantenweiten Regeln für die Schichten des Salons.
@@ -3002,6 +3226,103 @@ personenbezogene Eingrenzung des Monatsberichts (#85).
 ```
 grep -rn "resolveStammsalonScopedEmployeeIds(\|isStammsalonScopeMatch(" apps/api/src/composition   # kein Zeitpunkt als letztes Argument
 pnpm --filter @clokr/api exec vitest run src/composition/__tests__/reach-stichtag-679.test.ts
+```
+
+### Nachtrag 2026-11-05 (Phase 647, Issue #647) — Mindestbesetzung je Salon: Besetzungsregeln mit Salonbezug
+
+Der Satz des Nachtrags zu #558, „Mindestbesetzung je Salon (Folge-Issue #647): `CoverageRule` hat keinen Salonbezug, unter
+einem Filter gelten die mandantenweiten Regeln für die Schichten des Salons“, beschreibt den Stand vor #647. Eine
+Besetzungsregel kann seitdem einen Salon nennen.
+
+**Schwere: Neue Abhängigkeit der Schichtplanung auf den Unterbau (Fremdschlüssel `CoverageRule.salonId → Salon`), nach ADR
+0002, Entscheidung 7 eine Erweiterung: additiv, kein bestehender Leser muss sich ändern, genehmigt dadurch, dass Issue #647
+mit dem Abschnitt „Auswirkung auf die Kontexte“ auf `Ready` stand. Keine Semantikänderung des Unterbaus. Am
+Besetzungsalgorithmus ändert sich nur die Kandidatenmenge.**
+
+### Neue Shared-Kernel-Abhängigkeit
+
+`CoverageRule.salonId → Salon` (Fremdschlüssel, `ON DELETE RESTRICT`, nullable, Index `CoverageRule_salonId_idx`, kein
+Backfill: jede bestehende Regel bleibt mandantenweit). Die Mandantengleichheit sichert die Anwendung beim Schreiben
+(`resolveSalonInReach`), nicht die Datenbank. Am Unterbau entsteht nur die Prisma-Rückrelation `Salon.coverageRules` (keine
+Spalte); kein Export von `contexts/platform/index.ts` ändert sich, und `Salon` wird nie hart gelöscht. Migration:
+`20261105075545_coverage_rule_salon` (drei additive Anweisungen).
+
+### Was sich geändert hat
+
+- **Auswertung.** `GET /shifts/week` rechnet die Besetzung mit den Regeln des Salons „in der Ansicht“ plus den
+  mandantenweiten (D-03 bis D-05). In der Ansicht ist: der geprüfte `salonId`-Filter; sonst der einzige Salon der
+  `shift:read`-Reichweite des Aufrufers, wenn die Reichweite genau ein Salon ohne Personenbezug ist (D-03a, ein
+  Salonmanager sendet nie einen Filter); sonst der einzige aktive Salon des Mandanten (D-03); sonst keiner. Die Stufenfolge
+  (Vorlage + Wochentag, alle Vorlagen + Wochentag, Vorlage + alle Tage, alle Vorlagen + alle Tage) bleibt; innerhalb einer
+  Stufe gewinnt die Regel des Salons. Die Regel steht nur in `contexts/scheduling/coverage-rule.ts`
+  (`coverageSalonInView`, `pickCoverageRule`). Die Antwort von `/week` bekommt keinen neuen Schlüssel.
+- **Schreiben.** `POST` und `PUT /shifts/coverage-rules` nehmen ein optionales `salonId` und prüfen es nur über
+  `resolveSalonInReach`: ein fremder, unbekannter oder deaktivierter Salon antwortet mit derselben 404. `PUT` prüft nur einen
+  geänderten Salon; eine Regel eines später deaktivierten Salons bleibt bearbeitbar und wird nicht verschoben (D-06, „ein
+  unveränderter Salon wird nicht neu geprüft“).
+- **Schließung eines Orakels (D-13).** `PUT /coverage-rules/:id` nahm bisher eine fremde `templateId` an und schrieb den Verweis
+  auf die Vorlage eines anderen Mandanten (gemessen im roten Lauf: 200). Eine geänderte `templateId` wird jetzt gegen den
+  Mandanten geprüft; fremd und unbekannt antworten mit derselben 404 „Vorlage nicht gefunden“, nichts wird geschrieben.
+- **Liste (D-09).** `GET /coverage-rules` liefert je Regel `salonId`, `salonName`, `salonActive` (Anzeige, serverseitig
+  zusammengesetzt wie bei den NFC-Terminals, #541); Name und Aktiv-Kennzeichen nur für Aufrufer mit `shift-config:manage`
+  oder `salon:read`, sonst `null` (Salonstammdaten folgen dem `salon:read`-Tor, Review WR-01).
+- **Oberfläche (D-10).** `/admin/shifts` zeigt im Regelformular die Auswahl „Salon“ nur unter `showSalonOptions()` (#64) und
+  sendet `salonId` nur, solange die Auswahl sichtbar ist; die Spalte „Salon“ erscheint bei Salonwahl oder sobald eine Regel
+  einen Salon trägt; ein deaktivierter Salon bleibt Auswahl (`<Name> (deaktiviert)`) und wird in der Liste markiert. Die Seite
+  bleibt vom Salonfilter der Kopfleiste ausgenommen (Tabelle in `salon-filter-exempt-pages-558.test.ts`, nur der Grundtext
+  geändert); `/shifts` ist unverändert.
+
+### Auswirkung auf die Kontexte
+
+- **Unterbau:** neue eingehende Beziehung `Salon` ← `CoverageRule.salonId` (Erweiterung, additiv).
+- **Schichtplanung:** Modell `CoverageRule`, Auswertung (`coverage-rule.ts`), die Routen `/shifts/coverage-rules` und
+  `/shifts/week`, Formular und Liste in `/admin/shifts`.
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** keine.
+- **Arbeitszeitkonto:** keine. Die Mindestbesetzung geht in kein Soll, Ist oder Saldo ein.
+- **Kompositionsschicht:** keine Regel.
+
+### Was bewusst NICHT geschah
+
+- **Kein Backfill und keine geratene Zuordnung** bestehender Regeln.
+- **Die Stufenfolge bleibt unverändert**; die Salonregel ist nur ein Vorrang innerhalb einer Stufe, nie eine Stufe darüber.
+- **Keine Zeile je Vorlage und Salon** (offene Idee), kein neuer Schlüssel in der `/week`-Antwort.
+- **Doppelte Regeln** derselben Stufe werden beim Schreiben nicht abgelehnt (kein 409); die Wochenansicht nimmt die zuerst
+  angelegte (`createdAt`, dann `id`), damit die Wahl stabil ist (Review IN-02).
+- **Keine Reichweitenprüfung für mandantenweite Regeln** (D-07). Sie kann heute nicht eintreten: `shift-config:manage` ist ein
+  Mandanten-Schlüssel, nur eine Zuweisung mit Scope Mandant besteht die Prüfung; ein Salonmanager bekommt bei jedem Schreiben
+  403 (getestet). Der Wächter von `GET /coverage-rules` bleibt `requireAuth` (die Statuscodes der Neutralitätsaufnahmen sind
+  unverändert), der Inhalt wurde aber bewusst eingeschränkt (Review WR-01): `salonName` und `salonActive` stehen nur für
+  Aufrufer mit `shift-config:manage` oder `salon:read`, für alle anderen sind beide `null`; `salonId` bleibt sichtbar.
+- **Kein `migrate deploy` gegen die Dev-Datenbank während der Phase.** Gemessen mit `prisma migrate status`: dort fehlte die
+  Migration `20261103000000_drop_user_role` (#641), und der laufende Dev-Stack ist auf einer Basis vor #641 gebaut und liest
+  `User.role`; ein Deploy hätte die Spalte entfernt. Dev erhält die Migration mit dem nächsten Neubau aus `main`.
+
+### Grenzen
+
+- Die Mandantengleichheit ist keine Datenbankbedingung; sie hängt an der Prüfung der Anwendung.
+- Ohne Filter rechnet die Ansicht eines Mandanten mit mehreren Salons nur mit den mandantenweiten Regeln — auch für einen
+  Aufrufer, der nur einen Salon erreicht, sofern dessen Reichweite Personen einschließt (D-03).
+- Die Regeln eines deaktivierten Salons bleiben gespeichert und wirken nie (der Salon ist nie „in der Ansicht“).
+
+### Gemessen
+
+Neue API-Testdateien: `contexts/scheduling/__tests__/coverage-rule` (12 Fälle, darunter ein Frozen-Copy-Vergleich des
+Auswählers über 672 Kombinationen), `coverage-rule-salon-647` (13), `coverage-rule-write-salon-647` (12),
+`coverage-rule-salon-migration-647` (4); Web: `coverage-rule-salon` (14 Fälle) und `admin-shifts-coverage-salon-647`
+(8 Quelltext-Prüfungen). Mutationsbeweise stehen in den Kopfzeilen der Testdateien (Migration 2, Schreibweg 4, Auswertung 5,
+Web 2), jeweils aus einer Sicherungskopie wiederhergestellt. Die drei Neutralitätssuiten (1720 Fälle) sind unverändert, `git
+diff origin/main` über `neutrality/recorded`, `route-surface.txt` und das T-100-09-Register ist leer, der Driftcheck
+(`migrate diff --exit-code`) meldet keinen Unterschied. Laufbuch: `docs/migrations.md`, „Phase 647“.
+
+### Nachrechnen (Nachtrag Phase 647)
+
+```
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/api exec vitest run src/contexts/scheduling/__tests__/coverage-rule.test.ts src/__tests__/coverage-rule-salon-647.test.ts src/__tests__/coverage-rule-write-salon-647.test.ts src/__tests__/coverage-rule-salon-migration-647.test.ts
+pnpm --filter @clokr/api exec vitest run src/__tests__/permission-neutrality-matrix.test.ts
+pnpm --filter @clokr/web exec vitest run src/lib/shifts/__tests__/coverage-rule-salon.test.ts src/__tests__/admin-shifts-coverage-salon-647.test.ts
+grep -rn "pickCoverageRule(\|coverageSalonInView(" apps/api/src --include=*.ts | grep -v __tests__   # Definition und genau ein Aufruf je Funktion in shifts.ts
 ```
 
 ## Q — Systemrollen-Templates und zwei Saldo-Gates (Phase 76b, Issue #76)
@@ -3372,7 +3693,7 @@ Positivliste im Code auf Urlaub beschränkt. Eine künftige Abwesenheitsart gela
 - **Anonymisierte Personen.** Der Monatsexport folgt der DATEV-Population: Eine anonymisierte Person erscheint für ihre
   Beschäftigungsmonate (bis #666 auch ohne Austrittsdatum), ihr Anspruch wird nie geschrieben (kein Heilen, im Speicher
   ausgerichtet).
-- Die Kompatibilitätsfunktionen `parseCompatRoleFilter`/`compatRoleUserWhere` bleiben bis Release B (#641). Die Absence-Exporte
+- Die Kompatibilitätsfunktionen `parseCompatRoleFilter`/`compatRoleUserWhere` bleiben bis Release B (#641; erledigt, siehe Nachtrag „Release B“ in Eintrag N). Die Absence-Exporte
   ohne Produktivaufrufer sind mit #674 entfernt (`BS_NO_LEAVE_LABEL`, `leaveRequestDaysWithin`) bzw. nicht mehr aus
   `index.ts` exportiert (`vocationalSchoolDatesForLeaveRequests`, bleibt im Kontext).
 - Die Kachel „PDF-Bericht“ der Admin-Exportseite → #593; die Neugestaltung der Berichtsseite → #612.
@@ -4385,7 +4706,7 @@ pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts 
   weiterhin als belegt (kein Rückfluss in den Wochen-Union-Pool).
 - Werden zwei Anträge derselben Woche gleichzeitig angelegt, entscheidet die Reihenfolgeregel über
   `createdAt`/Id — eine echte Gleichzeitigkeit zweier Schreibtransaktionen ist nicht gesondert
-  gesperrt.
+  gesperrt (seit Issue #467 gesperrt: Employee-Zeilensperre, siehe WR-01 unten).
 - **(Code Review 436, WR-01, 02.10.2026)** `PATCH /requests/:id/correct` kann einen früher
   angelegten, bereits genehmigten Antrag per Datumsänderung so AUSWEITEN, dass die neue
   Tagesmenge zusammen mit einem später angelegten, bereits genehmigten Geschwisterantrag über die
@@ -4410,6 +4731,12 @@ pnpm --filter @clokr/api exec tsx scripts/recalculate-shift-based-leave-days.ts 
   FRÜHEREN Antrags statt durch Ablehnung/Stornierung des Geschwisterantrags selbst. Gepinnt (als
   bekannte Grenze, nicht als Spezifikation eines zukünftigen Fixes) in
   `apps/api/src/__tests__/leave-week-union-436.test.ts` ("[KNOWN LIMITATION, 436-REVIEW WR-01]").
+  **Behoben mit Issue #467:** Anlage (`POST /requests`) und Korrektur (`/correct`) nehmen als erstes
+  die Employee-Zeilensperre `lockEmployeeForLeavePricing()` (`contexts/absence/employee-leave-lock.ts`,
+  `FOR NO KEY UPDATE`) und bepreisen unter ihr; die Korrektur berechnet danach später angelegte,
+  überlappende VACATION-Anträge derselben Wochen neu (`later-request-reprice.ts`) — nur günstiger,
+  nie in gesperrten Monaten, Entitlement-Delta und `LEAVE_DAYS_ADJUSTED`-Audit
+  (`triggerSource: "CORRECTION"`) in derselben Transaktion. Der obige Test wurde bewusst geändert.
 - **(Code Review 436, WR-02, 02.10.2026)** `scripts/recalculate-shift-based-leave-days.ts
 --confirm` ist, seit dieser Phase, AUCH der Weg, einen genehmigten SHIFT_BASED-VACATION-Antrag
   unter der NEUEN Wochen-Union-Regel neu zu bepreisen — das ist ein zusätzlicher Effekt
@@ -5869,7 +6196,7 @@ die Tätigkeitsarten auswerten. Die Owner-Entscheidung vom 13.10.2026 trennt ein
   ArbZG-Prüfung, Urlaub, Monatsabschluss, Berichte, DATEV, DSGVO-Auskunft und -Anonymisierung, Aufbewahrung),
   die Systemrollen, die Dienstplanung und **ein** aktiver Salon.
 - **Ketten-Paket** (`CHAIN`): mehrere aktive Salons bis zu einem vertraglichen Kontingent (`salonQuota`);
-  dem Katalog nach gehören die erweiterten Rollen ebenfalls dazu, sie werden in dieser Phase aber nicht gesperrt (D-07).
+  dem Katalog nach gehören die erweiterten Rollen ebenfalls dazu; sie wurden in dieser Phase nicht gesperrt (D-07), seit Issue #624 nur bei Neuanlage (Nachtrag Issue #624 unten).
 - **Zusatzmodule:** Integrationen (`INTEGRATIONS`: Phorest-Kopplung, API-Schlüssel), Hardware-Stempeln
   (`HARDWARE_CLOCK`: NFC-Terminal, WLAN-Anwesenheitsquelle), Auswertungen (`ANALYTICS`: Tätigkeitsarten, Issue #81).
 
@@ -5998,7 +6325,7 @@ Es gibt keinen Lizenzschlüssel und keine Abrechnung; der Betreiber setzt die Pa
 
 ### Folge-Issues
 
-- **#624** — Erweiterte Rollen an das Ketten-Paket binden (nur Neuanlage, nie Auflösung; D-07).
+- **#624** — Erweiterte Rollen an das Ketten-Paket binden (nur Neuanlage, nie Auflösung; D-07). (Umgesetzt, siehe Nachtrag Issue #624 unten.)
 - **#563** — Salonverwaltung für Mandanten-Admins; bekommt den Ketten-Paket-Hinweis am Anlegen/Aktivieren
   (Kommentar am Issue). (Umgesetzt in Phase 563, siehe Nachtrag Phase 563 unter Eintrag L.)
 
@@ -6011,6 +6338,20 @@ Vorschau, Mandant für Mandant), `tenant-provisioning-88` (Grundversion, Seeds),
 `tenant-modules`, `ModuleHint`, `PackagesSection`, `module-teaser-placement-566`, `salon-context`; Playwright
 `operator-console.spec.ts` (Abschnitt „Pakete“, 360 px, axe). Die Neutralitätsmatrix (1712 Zellen) und die
 Ausnahmeliste des Tenant-Scoping-Gates (44) sind unverändert.
+
+### Nachtrag Issue #624 — Erweiterte Rollen am Ketten-Paket (löst D-07 ein)
+
+Ohne `CHAIN` antworten mit 409 `MODULE_NOT_BOOKED` (Entscheidungsfunktion `assertModuleBooked`, Ketten-Paket): eine **neue**
+eigene Rolle (`POST /roles`), eine **Kopie** (`POST /roles/:id/copy`) und eine **neue** Zuweisung mit Reichweite Salons
+oder Personen (`POST /role-assignments`). Frei bleiben: Zuweisungen mit Reichweite Mandant (Grundversion), Ändern und
+Löschen bestehender Rollen und Zuweisungen. Die Auflösung (`resolveAccessReach`, `request-permissions.ts` und ihre
+Bausteine) liest nie ein Paket: Bestehendes wirkt unverändert weiter, auch nach gekündigtem Paket. Reihenfolge: die
+Paketsperre läuft zuerst, vor Namenskonflikt und vor der Vier-Augen-Bestätigung (#78), weil sie nur vom Mandanten
+abhängt und keine Hinweise auf Namen oder Rechte preisgeben soll; bei der Kopie nach der 404-Prüfung der Quelle
+(T-100-09 unverändert). Ein `PATCH`, das eine Zuweisung auf eine Reichweite Salons oder Personen umstellt, die sie vorher nicht hatte (Mandant -> Salons, Salons -> Personen), nimmt dieselbe Sperre; bleibt die Reichweitenart gleich (neue Salonliste, andere Rolle), bleibt es frei. Die Neutralitätsmatrix bleibt unverändert, weil die gemeinsamen
+Testmandanten alle Pakete buchen. Nachweis: `role-chain-package-624`, `packages-legal-core-isolation-566` (drei neue
+Sperrstellen, Auflösungsdateien sauber, nur zwei Dateien erzeugen Rollen/Zuweisungen), Web `module-teaser-placement-566`
+(sechster Hinweis) und `RolesTab`.
 
 ---
 
@@ -6091,6 +6432,8 @@ das Überspringen von Fahrzeiteinträgen):
 | Fremder / unbekannter Salon                                     | identische 404, inaktiver Salon 400 `SALON_INACTIVE`                                                  |
 | NFC / WLAN                                                      | nehmen keine Salonangabe entgegen: setzen den letzten Eintrag fort (Salonbindung des Terminals: #541) |
 
+_(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
+
 Vor **jedem** START prüft der Resolver Monatssperre und Überschneidung, bevor er etwas schreibt: ein Tag mit einem
 gesperrten Eintrag oder ein Tag in einem abgeschlossenen Monat ergibt `MONTH_LOCKED` (auch bei einem anderen Salon);
 ein Zeitpunkt innerhalb eines abgeschlossenen Eintrags — oder **vor einem späteren abgeschlossenen Eintrag desselben
@@ -6141,6 +6484,8 @@ Der Zeitnachtrag bleibt vorerst **ein Antrag je Mitarbeiter und Tag** (Owner-Ent
 des heutigen Tages blockiert weiterhin das Stempeln (`RETRO_PENDING`). Die Freigabe mit korrigierten Zeiten sperrt die
 Mitarbeiterzeile und prüft die Überschneidung in derselben Transaktion; bei einem Treffer bleibt der Antrag `PENDING`
 und nichts wird geschrieben. Folge-Issue: #657 (Antrag je Eintrag).
+
+_(Nachtrag Phase 657: umgesetzt - der Zeitnachtrag gilt je Zeitraum, ein offener Antrag blockiert das Stempeln nicht mehr; siehe Eintrag AA, Nachtrag Phase 657.)_
 
 ### Oberfläche
 
@@ -6211,6 +6556,8 @@ INDEX`. Das `DROP INDEX` des alten Index steht daher von Hand als erste Anweisun
 - **Die automatische Pause bleibt je Eintrag** (`placeAutoBreak`, #81); die Pause zwischen Salons ist weiter eine
   erfasste Tagespause (`DayBreak`) oder Quittung.
 - **Kein Zeitnachtrag je Eintrag** (siehe oben), **keine Fahrzeit** (#92), **keine Salonbindung von NFC und WLAN** (#541).
+  _(Nachtrag Phase 541: umgesetzt, siehe Eintrag AA, Nachtrag Phase 541.)_
+  _(Nachtrag Phase 657: der Zeitnachtrag je Eintrag ist umgesetzt, siehe Eintrag AA, Nachtrag Phase 657; die Fahrzeit bleibt nicht beantragbar.)_
 - **Keine Neuberechnung und kein Backfill:** geschlossene Monate werden nie neu bewertet.
 - **Entfallen sind** `checkOneEntryPerDay`, `SALON_DIFFERS_FROM_DAY_ENTRY`, das Bereinigungsskript
   `cleanup-time-entry-duplicates.ts` (es hätte rechtmäßige zweite Einträge weich gelöscht) und alle
@@ -6275,6 +6622,118 @@ den Stand vor #92 und gelten nicht mehr (Eintrag AB). Für die Regeln dieses Ein
   eines Tages.
 - Der Zeitnachtrag bleibt ein Antrag je Tag; eine Fahrt ist als Zeitnachtrag nicht beantragbar (409
   `TRAVEL_NOT_AS_RETRO_REQUEST`, Hinweis am Folge-Issue #657).
+  _(Nachtrag Phase 657: der Zeitnachtrag gilt seitdem je Zeitraum, siehe Eintrag AA, Nachtrag Phase 657; die Fahrt bleibt als Zeitnachtrag abgewiesen.)_
+
+### Nachtrag 2026-11-02 (Phase 541, Issue #541) — NFC-Terminal an einen Salon gebunden
+
+Die Aussagen „NFC und WLAN nehmen keine Salonangabe entgegen“ und „keine Salonbindung von NFC und WLAN (#541)“ beschreiben
+den Stand vor #541. Für NFC gelten sie nicht mehr; für WLAN gelten sie unverändert.
+
+**Schwere: Neue Abhängigkeit der Zeiterfassung auf den Unterbau (Fremdschlüssel `TerminalApiKey.salonId → Salon`), nach
+ADR 0002, Entscheidung 7 eine Erweiterung: additiv, kein bestehender Leser muss sich ändern, genehmigt dadurch, dass Issue
+#541 mit dem Abschnitt „Auswirkung auf die Kontexte“ auf `Ready` stand. Keine Semantikänderung des Unterbaus, kein Eingriff
+in den Resolver (`services/clock/resolver.ts`), in den Zeitkern oder in die Kompositionsschicht.**
+
+### Neue Shared-Kernel-Abhängigkeit
+
+`TerminalApiKey.salonId → Salon` (Fremdschlüssel, `ON DELETE RESTRICT`, nullable, Index `TerminalApiKey_salonId_idx`,
+kein Backfill: bestehende Terminals bleiben ungebunden). Die Mandantengleichheit sichert die Anwendung beim Schreiben
+(`validateTerminalSalon`) und beim Stempeln (`terminalPunchSalon`), nicht die Datenbank. Am Unterbau entsteht nur die
+Prisma-Rückrelation `Salon.terminalApiKeys` (keine Spalte); kein Export von `contexts/platform/index.ts` ändert sich, und
+`Salon` wird nie hart gelöscht. Migration: `20261102003032_terminal_api_key_salon` (drei additive Anweisungen).
+
+### Was sich geändert hat
+
+- **Stempeln.** `POST /nfc-punch` reicht den gebundenen Salon nur dann als ausdrücklichen Salon (`ClockEvent.salonId`)
+  weiter, wenn er aktiv ist. Damit gelten die Regeln von #70 unverändert: ein abgeschlossener Tag in einem anderen Salon
+  beginnt einen neuen Eintrag, derselbe Salon öffnet den Eintrag wieder, ein offener Eintrag wird beendet. Ein ungebundener
+  Schlüssel, eine Bindung an einen inzwischen deaktivierten Salon und WLAN nehmen keine Salonangabe entgegen (Regel wie
+  bisher, nur eine Warnzeile im Log, nie eine Ablehnung). Verliert die Prüfung gegen eine gleichzeitige Deaktivierung, wiederholt
+  der Adapter den Stempel genau einmal ohne Salon, damit kein Stempel verloren geht (§ 16 Abs. 2 ArbZG).
+- **Eine Stelle.** Die Regel steht nur in `contexts/time-tracking/terminal-salon.ts` (`terminalPunchSalon`,
+  `resolveTerminalPunch`, `validateTerminalSalon`); der Resolver liest die Bindung nie.
+- **Schreiben.** Gesetzt wird die Bindung bei `POST /terminals`, geändert oder entfernt durch `PATCH /terminals/:id`
+  (`terminal:manage`, Audit `UPDATE TerminalApiKey` mit altem und neuem `salonId`). Ein fremder und ein unbekannter Salon
+  antworten mit derselben 404, ein deaktivierter Salon mit 400 `SALON_INACTIVE`, ein widerrufener Schlüssel mit 409
+  `KEY_REVOKED`, ein unveränderter Wert mit 200 ohne Audit. Das Ändern ist nicht durch das Modul `HARDWARE_CLOCK`
+  geschützt (es richtet nichts Neues ein, #566); das Anlegen bleibt geschützt.
+- **Liste und Oberfläche.** `GET /terminals` liefert je Schlüssel `salonId`, `salonName`, `salonActive`. Unter
+  Admin → System → Integration zeigt „NFC-Terminals“ die Spalte „Salon“ (Auswahl mit sofortigem Speichern) nur in
+  Mandanten mit Salonwahl (#64) oder bei einem Schlüssel mit Bindung; ein deaktivierter Salon wird markiert und bleibt
+  entfernbar.
+
+### Auswirkung auf die Kontexte
+
+- **Unterbau:** neue eingehende Beziehung `Salon` ← `TerminalApiKey.salonId` (Erweiterung, additiv).
+- **Zeiterfassung:** `terminal-salon.ts`, der Adapter `/nfc-punch`, `terminals.ts` samt Liste, Audit und Oberfläche.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine. Der Salon eines Eintrags geht in kein Soll, Ist oder Saldo ein.
+- **Kompositionsschicht:** keine Regel.
+
+### Was bewusst NICHT geschah
+
+- **Kein Lesen der Bindung im Resolver.** Er bleibt unverändert; der Adapter übersetzt die Bindung in die bestehende
+  Salonangabe.
+- **Keine Salonangabe im Body des Terminals.** Der Vertrag des Geräts (`{ nfcCardId }` hinein, unveränderte Antwort heraus)
+  bleibt; ein mitgesendeter `salonId` wird ignoriert.
+- **Keine Bindung für WLAN** und **keine Anzeige des gebundenen Salons am Gerät** (offene Ideen).
+- **Kein Backfill und keine geratene Bindung.**
+- **Keine Sperre der Deaktivierung:** ein Salon lässt sich trotz Bindung deaktivieren; die Bindung bleibt gespeichert und
+  wird in der Liste markiert.
+- **Kein Modul-Gate für die Änderung** einer Bindung.
+
+### Grenzen
+
+- Die Mandantengleichheit ist keine Datenbankbedingung (die Datenbank kann sie nicht ausdrücken); sie hängt an den beiden
+  Prüfungen der Anwendung.
+- Wiederholt wird nur bei `SALON_INACTIVE`. Jede andere Ablehnung (`LEAVE_APPROVED`, `MONTH_LOCKED`, `RETRO_PENDING`,
+  `ENTRY_OVERLAP`) bleibt wie bisher; ein Salon wird nie gelöscht, daher wird `SALON_NOT_FOUND` nicht wiederholt.
+- Die Bindung entscheidet nur über neue Einträge, nie über bestehende: ein wieder geöffneter Eintrag behält seinen Salon.
+- Bekannte Lücke außerhalb dieser Phase: `POST /nfc-punch` antwortet 500, wenn der Zustandsautomat `CONFIRMED` liefert
+  (bestätigt eine Anwesenheit, im Resolver nur für andere Quellen vorgesehen); #541 verändert das nicht.
+
+### Gemessen
+
+Fünf neue API-Testdateien: `nfc-punch-salon-binding-541` (13 Fälle, Abdeckung gebunden/ungebunden/Sperren/Deaktivierung),
+`terminal-salon-migration-541` (4), `contexts/time-tracking/__tests__/terminal-salon` (12), `nfc-punch-salon-race-541` (2),
+`api/__tests__/terminals-salon-541` (17); Web: `TerminalSalonCell` (7 Fälle, Einhängetest) und
+`admin-system-terminal-salon-541` (5). Die Neutralitätsmatrix (1680 Fälle) ist unverändert, `git diff origin/main` über
+`neutrality/recorded` und `presence.ts` ist leer, der CI-Driftcheck (`migrate diff --exit-code`) meldet keinen Unterschied.
+Laufbuch: `docs/migrations.md`, „Phase 541“.
+
+### Nachtrag 2026-11-05 (Phase 657, Issue #657) — Zeitnachtrag je Zeitraum
+
+Die Aussagen „ein Antrag je Mitarbeiter und Tag“ und „ein ausstehender Antrag blockiert das Stempeln (`RETRO_PENDING`)“
+gelten nicht mehr. **Schwere:** keine Änderung am Unterbau, kein Schema, keine Migration; nur Zeiterfassung.
+
+- **Die Regel (eine Stelle):** `findOverlappingRetroRequest()` (`contexts/time-tracking/retro-request-overlap.ts`)
+  entscheidet, ob ein neuer Antrag einen offenen Antrag desselben Tages überlappt. Es zählen nur offene (`PENDING`) Anträge
+  (mit gekoppelter Zeile über deren Intervall, sonst über die beantragten Zeiten). Freigegebene, abgelehnte, verbrauchte
+  und zurückgezogene Anträge zählen nicht: ein freigegebener Antrag ist entschieden, wird von nichts im Produkt eingelöst
+  oder zurückgezogen (ein freigegebener Korrekturvorschlag, ein freigegebener Nachtrag mit später gelöschter Zeile) und
+  würde seinen Zeitraum sonst dauerhaft sperren; eine echte Kollision mit gebuchter Zeit fängt die
+  Überschneidungsprüfung des Eintrags beim Schreiben. Halboffene Intervalle; ein Antrag ohne Zeiten deckt den ganzen Tag ab. Antwort
+  bei einem Treffer: 409 `RETRO_REQUEST_OVERLAP`, es wird nichts geschrieben.
+- **Beide Anlagewege** (`POST /retro-entry-requests` und der Zeitnachtrag „Eintrag zuerst“ in `POST /time-entries`)
+  prüfen und schreiben unter `lockEmployeeForEntryWrite()` als erster Anweisung. Der Korrekturvorschlag hat keine
+  Eintragsprüfung (D-12), weil er den Eintrag überlappt, den er korrigiert.
+- **Die Stempeluhr (D-14):** eine Zeile, die an einen ausstehenden Antrag gekoppelt ist (`retroRequestId`, `isInvalid`,
+  Code `RETRO_APPROVAL_PENDING`), ist kein Kandidat von `openEntryOf()` / `latestEndingClosed()` und verdeckt jede Zeile,
+  die vor ihr endet. Die Uhr beginnt einen neuen Eintrag, in jedem Salon; ein Zeitpunkt innerhalb oder vor dem beantragten
+  Zeitraum wird von der Überschneidungsregel mit `ENTRY_OVERLAP` abgelehnt. Ein Ausstempeln neben einer offenen
+  Antragszeile antwortet `RETRO_PENDING`; die Datenbankprüfung desselben Codes bleibt als Rückfallprüfung für Zeilen ohne
+  Markierung (`PATCH /time-entries/:id/revalidate` weist eine solche Zeile seit dem Review-Fix WR-03 mit 409 `RETRO_REQUEST_PENDING` ab). Die Zusammenführung (`consolidate.ts`) kennt die Sperre
+  `retro_row`. Die Salonauswahl der Uhr (`clockSalonChoice()`) und der Tageszustand im Dashboard
+  (`resolveDayState()`, `isPendingNachtragRow()`) folgen denselben Selektoren.
+- **Die Freigabe bleibt unverändert (D-06):** Sperre zuerst, Statuswechsel, Überschneidungsprüfung in derselben
+  Transaktion. Nachweis: `retro-two-approvals-657.test.ts` (nacheinander, gleichzeitig, Sperrenrennen).
+- **Fahrzeit bleibt als Zeitnachtrag abgewiesen (D-15).** Folge-Issue (nicht angelegt): Fahrzeit als Zeitnachtrag über
+  `validateTravelEntry()`.
+- **Gemessen:** neue API-Testdateien `retro-request-overlap` (4), `retro-request-per-interval-657` (17),
+  `retro-pending-clock-657` (20), `retro-two-approvals-657` (3); Web: 7 neue Fälle in `day-state.test.ts`. Die
+  Neutralitätsmatrix (1680 Fälle), die Empfänger- und Aktivitätsaufzeichnungen sind unverändert (`git diff origin/main`
+  über `neutrality/recorded` ist leer), das Fixture der Tagespausen-Äquivalenz (#80) ist unberührt.
 
 ## AB — Fahrzeit zwischen Salons als eigener Zeiteintrag (Phase 92b, Issue #92)
 
@@ -6373,6 +6832,7 @@ verschiedenen Salons. Die Fahrt dazwischen ist Arbeitszeit, hatte aber keinen Or
   (`BREAK_TOO_SHORT`); `MAX_DAILY_EXCEEDED` entsteht bei 630 Minuten (5 h + 30 Min + 5 h).
 - Eine **nicht erfasste** Lücke bleibt die Klärungsfrage „Fahrzeit oder Pause?“ (Grenzfall-Rechnung). Das System erkennt
   eine Fahrt nicht selbst; ein Angebot „Lücke als Fahrzeit erfassen“ ist das Folge-Issue #660.
+  _(Nachtrag Phase 660: umgesetzt; die Tagesprüfung bietet die Lücke als Fahrzeit an, siehe Nachtrag Phase 660 unten.)_
 - **Das Erfassen, Ändern oder Löschen einer Fahrzeit ändert den Tagesstand.** Der Schnappschuss einer Quittung
   (`DayBreakAck`) enthält die Ids der Einträge und die Nettominuten des Tages (`DaySnapshot`, D-17 des Tageskerns). Eine
   schon erteilte Quittung für diesen Tag wird dadurch **veraltet** und muss neu erteilt werden; das ist der bestehende
@@ -6452,8 +6912,11 @@ gestellt (die Seite zeigt einen Text statt des Zeitnachtrag-Formulars). Mandante
 - **Kein Geld:** keine Kilometer-, Reisekosten- oder Spesenabrechnung; **keine Standorterkennung**; **keine Wegezeit**
   Wohnung ↔ Salon.
 - **Kein Lücken-Angebot:** „Als Fahrzeit erfassen“ für eine nicht aufgelöste Lücke (D-08, nur Folge-Issue #660).
+  _(Nachtrag Phase 660: das Angebot gibt es seit Phase 660; die Massenübernahme bleibt zurückgestellt.)_
 - **Keine Fahrzeit als Zeitnachtrag** (409 `TRAVEL_NOT_AS_RETRO_REQUEST`; solange ein Zeitnachtrag je Tag gilt, Folge-Issue
   #657). **Keine Fahrzeit per CSV-Import oder Stempelereignis.**
+  _(Nachtrag Phase 657: die Bedingung „solange ein Zeitnachtrag je Tag gilt“ besteht nicht mehr; die Abweisung bleibt
+  bewusst (D-15), eine Fahrzeit als Zeitnachtrag wäre ein eigenes Folge-Issue über `validateTravelEntry()`.)_
 - **Berichte, PDFs, DATEV und Dashboard** zeigen die Fahrzeit als gewöhnliche Arbeitszeitzeile; es gibt weder eine eigene
   Spalte noch einen eigenen Bericht.
 - **Keine Neuberechnung und kein Backfill:** die Migration schreibt keine Zeile, geschlossene Monate werden nie neu
@@ -6512,3 +6975,1112 @@ API: `travel-activity-kind-92`, `travel-entry-tracer-92`, `travel-migration-92`,
 `travel-clock-selectors-92`, `time-entries-travel-list-92`, `time-entries-travel-summary-92`,
 `travel-saldo-isolation-92`, `travel-saldo-equality-92`; Web: `travel-entry-form`, `today-entries-travel-92`,
 `time-entries-travel-wiring-92`; Playwright `travel-between-salons.spec.ts`.
+
+### Nachtrag 2026-11-05 (Phase 660, Issue #660) — Lücke zwischen zwei Salons als Fahrzeit übernehmen
+
+Die Aussage „das System erkennt eine Fahrt nicht selbst“ bleibt: das System bietet an, es unterstellt nichts. Die Tagesprüfung
+bietet eine Lücke mit dem Befund „Klärung nötig: Fahrzeit oder Pause?“ (`UNCLEAR`) als Fahrzeit an; erst ein bewusster Klick
+legt die Fahrzeit an.
+
+- **Schwere:** Erweiterung einer Leseantwort und eine Aktion der Oberfläche; keine Unterbau-, Schema-, Migrations-, Routen-
+  oder Permission-Katalog-Änderung. Eine neue Handler-Prüfung `time-entry:create` in `GET /day-breaks/checks` steht in
+  `docs/permissions.md`.
+- **Was sich geändert hat:**
+  - **Das Angebot (eine Stelle):** `GET /api/v1/day-breaks/checks` trägt auf einem Tag mit vollem Detail und ohne gesperrten
+    Eintrag den additiven Schlüssel `travelOffers` (nur wenn nicht leer). Jedes Element nennt die genaue Lücke
+    (`startTime`, `endTime`), den Abfahrtssalon (Salon des Eintrags davor) und den Zielsalon (Salon des Eintrags danach)
+    mit Id und Name. Gebaut wird es ausschließlich in `contexts/time-tracking/travel-offer.ts` aus den Lücken des
+    Tageskerns und der Ankerprüfung der Schreibregel (`validateTravelEntry()`); der Kern selbst ist unverändert.
+  - **Die eine Reichweitenregel:** `travelWriteCoversDay()` (`travel-entry.ts`) entscheidet, wer eine Fahrzeit auf diesem
+    Tag anlegen darf. `validateTravelEntry()` ruft dieselbe Funktion auf; Angebot und Schreibregel können nicht auseinanderlaufen.
+  - **Nachtragsfenster:** am eigenen Tag der Person erscheint das Angebot nur innerhalb des Nachtragsfensters, so wie die
+    Schreibregel den Eintrag dort zulässt.
+  - **Aktive Salons:** ein deaktivierter Salon als Abfahrts- oder Zielsalon erzeugt kein Angebot.
+  - **Keine Angebote** an einem geschwärzten Tag (kein Detail, keine verdeckte Zahl), an einem Tag mit gesperrtem Eintrag
+    oder geschlossenem Monat, an einer Lücke, die eine Fahrzeit oder eine ausstehende Zeitnachtragszeile berührt oder von
+    einer erfassten Tagespause überdeckt wird.
+  - **Die Aktion** ist das unveränderte `POST /api/v1/time-entries` (Fahrzeit-Körper wie im Formular; in der
+    Team-Zeiterfassung zusätzlich `employeeId` und `source: CORRECTION`). Die Oberfläche lädt unmittelbar vor dem Schreiben
+    die Tagesprüfung dieser Person und dieses Tages neu und sendet nur, wenn ein Angebot mit identischem Intervall und
+    identischem Salonpaar noch geliefert wird; sonst erscheint der Hinweis „Das Angebot ist nicht mehr aktuell – die
+    Tagesprüfung wurde neu geladen.“ und es wird nichts gesendet (ein weiter gewordenes Fenster wird so nicht aus einem
+    veralteten Panel geschrieben). Die Schreibregel prüft Anker, Überschneidung und Tagespausen, nicht, dass das Intervall
+    der angebotenen Lücke entspricht: das verbleibende Zeitfenster zwischen erneuter Prüfung und Schreiben und jede andere
+    Abweisung (Zieleintrag gelöscht oder verschoben, Tagespause erfasst, Angebot ein zweites Mal gesendet) sind die Antwort
+    der Schreibregel (409). In der Team-Zeiterfassung geht die Aktion an die Person, zu der die geladene Tagesprüfung gehört
+    (nicht an die aktuelle Auswahl); Antworten eines früheren Personenwechsels werden verworfen.
+  - **Oberfläche:** eine Schaltfläche je Angebot in der Tagesprüfung beider Zeiterfassungsseiten (`/time-entries`,
+    `/team/time-entries`), nur für Mandanten mit Salonauswahl (#64, `multiEntryUi`); ein Mandant mit einem Salon sieht keine Änderung.
+- **Was bewusst NICHT geschah:** kein zweiter Schreibweg und keine zweite Regel; keine Änderung am Tageskern (deshalb kein
+  Eintrag im Nachtragsregister `fixtures/day-break-equivalence-80-amendments.json`, das Äquivalenz-Fixture ist unberührt);
+  kein Angebot an einem geschwärzten oder gesperrten Tag; keine Massenübernahme aller Lücken (zurückgestellt); keine
+  Unterstellung einer Fahrt (bewusster Klick; § 2 Abs. 1 und § 4 ArbZG, BAG 12.12.2012 – 5 AZR 355/12 für die Fahrt zwischen
+  Arbeitsstätten, BAG 25.02.2015 – 5 AZR 886/12 für die Pause).
+- **Akzeptierte Restrisiken:** das Angebot sagt Abweisungen nicht voraus, die die Schreibregel selbst ausspricht (genehmigter
+  Urlaub, § 8 BUrlG; deaktivierte Person; § 9 JArbSchG am Berufsschultag; eine Zeile der Art `OVERTIME` oder
+  `PUBLIC_HOLIDAY`, die in der Lücke liegt – sie fehlt in den Zeilen des Tageskerns, die Lücke wird also gemeldet, die
+  Überschneidungsprüfung der Schreibregel weist den Eintrag aber ab) – der Klick antwortet dann mit der Begründung der
+  Schreibregel. Eine zu Unrecht übernommene private Lücke ist wie jede Fahrzeit durch die Führungskraft korrigierbar
+  (Begründung, Audit). Eine erteilte Quittung des Tages veraltet durch die Fahrzeit (#80, keine neue Regel).
+- **Auswirkung auf die Kontexte:** Zeiterfassung – `travel-offer.ts`, `travelWriteCoversDay()`, Antwortschlüssel
+  `travelOffers`, Oberfläche. Abwesenheiten – keine. Schichtplanung – keine. Arbeitszeitkonto – keine (kein Saldo-, Soll-
+  oder Ist-Pfad liest das Angebot, `travel-offer-one-rule-660.test.ts`). Unterbau – keine. Kompositionsschicht – keine.
+- **Nachweis:** API `day-break-travel-offer-660` (6 Fälle: Angebot mit genauer Lücke, Weg durch `POST /time-entries` mit
+  einer Fahrzeit, einem `CREATE`-Audit, ohne `UNCLEAR` und mit +30 Minuten Saldo), `day-break-travel-offer-rules-660`
+  (17 Fälle: jeder Nicht-Angebotsfall mit Kontrolle aus derselben Antwort, Reichweite je Akteur, keine verdeckte Zahl,
+  veraltete Angebote mit 409 der Schreibregel), `travel-offer-one-rule-660` (6 Fälle: eine Reichweitenregel, kein Kern-, Saldo- oder
+  Kompositionsmodul nennt das Angebot); Web `DayBreakPanel` (5 neue Fälle), `travel-entry-form` (19 neue Fälle),
+  `latest-request` (3 Fälle), `time-entries-travel-offer-wiring-660` (Quellprüfung beider Seiten); Playwright `travel-between-salons.spec.ts` (Klick
+  legt die Fahrzeit an, ein veraltetes Angebot – das Fenster wurde weiter – wird nicht gesendet und die Seite meldet es,
+  Mandant mit einem Salon ohne Schaltfläche). Mutationsbeweise: zehn Mutanten (alle Personen berechtigt, Angebot auch am geschwärzten Tag, Tagespause
+  nicht ausgenommen, Nachbarschaftsregel entfernt, Nachtragsfenster entfernt, gesperrter Tag nicht ausgenommen, Import des
+  Angebots im Tageskern, Seite am Salonauswahl-Schalter vorbei, Hilfsfunktion ohne Salonauswahl, Team-Seite ohne `source`) –
+  jeder macht mindestens einen Fall rot. Die
+  Neutralitätsaufzeichnungen, das Äquivalenz-Fixture des Tageskerns und die Wächter von #92 sind gegenüber dem Merge-Basisstand
+  unverändert (Byte-Vergleich).
+
+## U — Nachtrag Issue #470: Spalte `TenantConfig.monthlyHoursHolidayDeduction` gelöscht
+
+**Schwere: Entfernung eines Unterbau-Feldes (Semantikänderung nach ADR 0002, Entscheidung 7). Owner-Entscheidung = Issue #433 (Kommentar vom 03.10.2026), die das Folge-Issue #470 ausdrücklich vorsieht.**
+
+Eintrag U hatte die Spalte nur stillgelegt, damit ein Image-Rollback auf v1.13.x funktioniert. Voraussetzung der Löschung (int und prod laufen v1.16.1, also nach v1.14.0) ist erfüllt. Die Migration `*_drop_monthly_hours_holiday_deduction` enthält genau ein `ALTER TABLE "TenantConfig" DROP COLUMN "monthlyHoursHolidayDeduction"`; sie wurde nach dem Shadow-DB-Ablauf aus CLAUDE.md erzeugt, nicht mit `migrate dev`. `schema.prisma` kennt das Feld nicht mehr, der Eintrag verlässt `RETIRED_TENANT_CONFIG_COLUMNS` in `contexts/platform/api/settings.ts`. Ein alter Client, der den Schlüssel noch sendet, erhält weiter 200 (der Zod-Parser verwirft unbekannte Schlüssel).
+
+- **Rollback:** nach der Migration ist ein Image-Rollback auf v1.16.1 oder älter nicht möglich (deren Prisma-Client selektiert die Spalte); siehe `docs/migrations.md`, „Phase 470“.
+- **Auswirkung auf die Kontexte:** Unterbau: Feld entfernt. Zeiterfassung, Abwesenheiten, Schichtplanung, Arbeitszeitkonto, Kompositionsschicht: keine (lesen das Feld seit #433 nicht mehr).
+- **Kennungs-Gate:** `git grep monthlyHoursHolidayDeduction` findet nur noch Migrationen, diese Historie und drei Negativ-Assertions in Tests.
+
+## AC — Freitext im AuditLog anonymisierter Personen (Issue #512)
+
+### Ausgangslage
+
+Die Anonymisierung ersetzte bisher nur die Audit-Werte der Entitäten `Employee` und `User` (COMP-V1814-01). Freitext, den
+Menschen in andere Audit-Werte geschrieben haben (`auditReason` beim Löschen einer Tagespause, Korrektur- und
+Stornobegründungen, Prüfnotizen), blieb stehen und konnte über „Kundentermin bei Frau X“ wieder auf eine Person verweisen.
+
+### Rechtslage
+
+- Art. 5 Abs. 1 lit. c, e DSGVO (Datenminimierung, Speicherbegrenzung) und Art. 17 DSGVO verlangen, dass Personenbezug
+  verschwindet, sobald er nicht mehr gebraucht wird.
+- Art. 17 Abs. 3 lit. b DSGVO (rechtliche Verpflichtung) und lit. e (Rechtsansprüche) tragen die Aufbewahrung nur so weit, wie
+  die Pflicht reicht: § 147 Abs. 1 AO / § 257 HGB (10 Jahre, Buchungsbelege), § 16 Abs. 2 ArbZG (2 Jahre, Nachweis der
+  Arbeitszeit), GoBD (BMF-Schreiben vom 28.11.2019): Nachvollziehbarkeit und Unveränderbarkeit verlangen, dass erkennbar
+  bleibt WER WANN WAS geändert hat und dass der ursprüngliche Inhalt der BUCHUNG feststellbar bleibt.
+- Beides zusammen ergibt: aufbewahrungspflichtig sind Akteur, Zeitpunkt, Vorgang und alle Zahlen- und Kennwerte. Ein von einer
+  Person frei formulierter Text ist kein Wert der Buchung; die Begründung als Kategorie steht als Kennwert (UPPER_SNAKE-Code)
+  oder in der Zeile der Fachtabelle. Eine DSK-Orientierungshilfe, die Freitext in Protokolldaten über die Löschung der Person
+  hinaus verlangt, gibt es nicht; Protokolldaten unterliegen der Zweckbindung (§ 31 BDSG) und der Speicherbegrenzung.
+
+### Entscheidung (Owner delegiert, 27.10.2026)
+
+Sofort, bei der Anonymisierung, in derselben Transaktion: Der Freitext der Audit-Werte der Person wird TYPBASIERT durch
+„[ausgeblendet]“ ersetzt (`redactSupportAuditValue()`, D-17: bleibt Zahlen, Booleans, `null`, Zahlenstrings, ISO-Daten und
+-Zeitpunkte, UUIDs, UPPER_SNAKE-Kennwerte, dazu „HH:MM“ und die ganze Struktur samt `actor`-Stempel). Keine Schlüsselnamen-Liste,
+damit das nächste Freitextfeld ohne Codeänderung erfasst ist. Zeilen werden nie gelöscht, Zeitpunkt/Aktion/Entität/Id bleiben;
+eine Zeile ohne Änderung wird nicht geschrieben. Erfasst werden Zeilen, die der Benutzer der Person verfasst hat (`userId`,
+vor dem Nullsetzen), und Zeilen, deren Wert `employeeId` der Person nennt. Der Zählwert `auditRowsRedacted` steht im
+ANONYMIZE-Audit, nie ein Text. Eine nachträgliche Frist („nach Ablauf der Aufbewahrung“) entfällt: für den Text gibt es keine
+Aufbewahrungspflicht, die eine Frist rechtfertigte.
+
+Der AuditLog hat keinen Trigger und ist nicht append-only (anders als `OperatorAuditLog`/`SupportAccess`); die Aktualisierung in
+place ist dieselbe Art Eingriff wie die bestehende Schwärzung der Employee/User-Zeilen. Die Alternative „nur beim Lesen
+schwärzen“ wurde verworfen: der Text bliebe in der Datenbank und in jedem Dump, die Löschpflicht wäre nicht erfüllt.
+
+### Akzeptierte Restrisiken
+
+- Eine Zeile über die Person, die weder `employeeId` im Wert trägt noch von ihrem Benutzer verfasst wurde, behält ihren Text.
+- Ein einzelnes GROSSgeschriebenes Wort ohne Leerzeichen ist von einem Kennwert nicht zu unterscheiden und bleibt (wie D-17).
+- Bestand: Zeilen, die die Person selbst verfasst hat, sind bei vor #512 Anonymisierten nicht mehr auffindbar (`userId` ist
+  null); der Backfill erreicht nur die Zeilen mit `employeeId`.
+
+### Auswirkung auf die Kontexte
+
+Unterbau: neue Funktion `audit-freetext-redaction.ts`, kein Export von `index.ts`, keine Spalte. Zeiterfassung,
+Abwesenheiten, Schichtplanung, Arbeitszeitkonto, Kompositionsschicht: keine.
+
+### Bestand und Nachweis
+
+`scripts/backfill-512-anonymized-audit-freetext.ts` (Probelauf als Voreinstellung, `--confirm`, Marker `BACKFILL_512`;
+`docs/migrations.md` „Phase 512“). Tests: `anonymization-audit-freetext-512`, `backfill-512-anonymized-audit-freetext`.
+
+## AD — Web-Push-Abos als Zustelladresse im Unterbau (Phase 608, Issue #608)
+
+### Ausgangslage
+
+Benachrichtigungen erreichten eine Person nur in der App (Glocke) und, je nach Einstellung, per E-Mail. Wer die Seite nicht
+geöffnet hat, erfährt von einem neuen Antrag oder einer fehlenden Ausstempelung erst später. Phase 608 ergänzt Web-Push auf
+dem Handy: pro Gerät einwilligen, eine neutrale Mitteilung auf dem Sperrbildschirm, ein Tipp öffnet die passende Seite; die
+App ist dazu als Web-App installierbar (Android Chrome; iPhone ab iOS 16.4 nur als Home-Bildschirm-App).
+
+### Rechtslage
+
+- Art. 6 Abs. 1 lit. a DSGVO: Einwilligung. Sie wird je Gerät erteilt, durch das aktive Einschalten im Browser (die
+  Berechtigungsabfrage des Browsers erscheint erst beim Tippen, nie beim Seitenaufruf) und mit `consentedAt` festgehalten.
+- Art. 7 Abs. 3 DSGVO: Der Widerruf ist so einfach wie die Erteilung: „Push deaktivieren“ auf demselben Bildschirm, „Entfernen“
+  je Gerät in der Geräteliste, und die ausdrückliche Abmeldung auf einem geteilten Telefon entfernt dessen Registrierung zuerst.
+- Art. 5 Abs. 1 lit. c DSGVO: Datenminimierung auf dem Sperrbildschirm. Der Text ist je Benachrichtigungstyp ein neutraler,
+  fest hinterlegter Satz ohne Namen, Zahlen, Zeiten, Saldo oder Entscheidung; der Titel der In-App-Mitteilung und ihre Meldung
+  verlassen den Server nie.
+- Art. 9 DSGVO: Eine Krankmeldung ist ein Gesundheitsdatum. Ihr Push hat denselben neutralen Text wie jeder andere Antrag
+  („Es gibt einen neuen Antrag zur Prüfung.“), und die vier `SECTION9_*`-Typen (§ 9 BUrlG, Erkrankung im Urlaub) werden nie
+  gepusht.
+- Art. 17 DSGVO: Eine Zustelladresse ist kein aufbewahrungspflichtiger Beleg. Die Anonymisierung einer Person löscht ihre
+  Geräte; der Abzug für int (`pseudonymize-dump.ts`) löscht alle, damit keine echte Zustelladresse ein Produktivsystem verlässt.
+
+### Entscheidung
+
+- **D-01 Schlüssel optional je Instanz.** `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` nur als vollständiger Satz
+  oder gar nicht (Prüfung beim Start, auch ob der öffentliche zum privaten Schlüssel gehört). Ohne Satz gibt es die vier
+  Schreib- und Leseroutinen unter `/api/v1/me/push` nicht, `GET /api/v1/me/push/config` meldet `enabled: false`, nichts wird
+  gesendet und die Profilseite zeigt keinen Abschnitt. Wie `OPERATOR_JWT_SECRET`: nie ein Standardwert.
+- **D-03 Modell.** `PushSubscription` im Unterbau: `tenantId` (FK `Restrict`), `userId` (FK `Cascade`), eindeutiger `endpoint`,
+  `p256dh`, `auth`, `deviceLabel` (nur Anzeige, aus dem User-Agent abgeleitet), `consentedAt`, `lastSuccessAt`. Keine neue
+  Berechtigung: Die fünf Routen sind Eigene-Daten-Routen hinter `requireAuth` (JWT; ein API-Schlüssel erhält 400).
+- **D-04 Löschen statt Sperren.** Abmelden, ein 404/410 des Push-Dienstes, die Anonymisierung und der int-Abzug löschen die
+  Zeile hart. Erteilung, Aktualisierung und Löschung stehen im AuditLog (`CREATE`/`UPDATE`/`DELETE`) ohne Endpunkt und
+  Schlüssel; Systemzeilen tragen den Mandanten der Zeile als Akteurstempel.
+- **D-05 / P-608-07 Mehrere Geräte, ein Endpunkt eine Zeile.** Höchstens 10 Geräte je Person. Wird ein Endpunkt erneut
+  registriert, wird er für dieselbe Person aktualisiert; eine andere Person (geteiltes Telefon) übernimmt ihn nur mit
+  demselben Schlüsselpaar `p256dh` und `auth` (das beweist denselben Browser), sonst 409 und nichts wird geändert. Die alte
+  Zeile wird gelöscht und im Mandanten der alten Zeile protokolliert.
+- **D-08 Eine Textquelle, ein Sender.** `notification-push-policy.ts` (fail-closed, je `notify()`-Typ ein Eintrag oder
+  `never`, scan-getestet, E-Mail `never` ⇒ Push `never`) ist die einzige Stelle für Sperrbildschirmtexte;
+  `push-sender.ts` ist der einzige Importeur von `web-push`. Die Nutzlast ist genau `{ title, body, url }`.
+- **D-17 Zieladressen-Allowlist (SSRF).** Ein Endpunkt ist nur https mit einem Host aus vier Familien erlaubt
+  (`fcm.googleapis.com`, `push.services.mozilla.com`, `notify.windows.com`, `push.apple.com`, jeweils der Host selbst oder
+  eine Subdomain), geprüft vor jeder Schreibung und vor jedem Senden; `PUSH_SERVICE_HOST_SUFFIXES` ist die eine Konstante.
+- **Dienst-Worker.** `service-worker.ts` hat nur `push` und `notificationclick` (plus die Lebenszyklusereignisse), keinen
+  Netzwerk-Handler und keinen Cache; er zeigt immer eine Mitteilung. Die CSP nennt `worker-src 'self'`, sonst bleibt sie
+  unverändert. Ein Tipp bei abgelaufener Sitzung führt nach der Anmeldung auf die Zielseite (`?next=`, nur relative Pfade).
+
+### Auswirkung auf die Kontexte
+
+- **Unterbau:** neues Modell `PushSubscription` (21 `platform`-Modelle statt 20), neue Dateien `push-*.ts` und
+  `notification-push-policy.ts`; `notify()` liegt im Unterbau. Eine **Erweiterung** nach ADR 0002, Entscheidung 7 (rein
+  additiv, kein bestehender Leser ändert sich): freigegeben mit dem Status `Ready` des Issues.
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine.
+- **Arbeitszeitkonto:** keine.
+- **Kompositionsschicht:** keine (ein Eintrag in der Routenregistrierung von `app.ts`, keine Fachregel).
+
+Belegt durch `608-untouched.sh`: die vier Fachkontexte, `composition/`, `services/` und die aufgezeichneten
+Neutralitätsmatrizen sind gegenüber dem Basisstand unverändert.
+
+### Grenzen
+
+- **D-16:** Direkte `notification.create`-Stellen, die `notify()` umgehen (`bs-leave-correction.ts`,
+  `vocational-school-generator.ts`), senden keinen Push. Sie auf `notify()` umzustellen ist ein eigener Schritt.
+- Die Inaktivitäts-Abmeldung und eine erzwungene Abmeldung nach abgelaufener Sitzung (401) entfernen das Gerät nicht (es gibt
+  kein gültiges Token); erst die ausdrückliche Abmeldung oder das manuelle Entfernen tut es.
+- iPhone und iPad: Push gibt es nur in der zum Home-Bildschirm hinzugefügten App (ab iOS 16.4); im Safari-Tab zeigt die Seite
+  eine Anleitung statt des Schalters.
+- Ein Schlüsselwechsel macht alle Geräte ungültig; jedes Gerät schaltet Push neu ein (Laufbuch `docs/runbooks/web-push.md`).
+- Die 10-Geräte-Grenze ist eine Missbrauchsgrenze, keine Datenbankinvariante: zwei gleichzeitige Registrierungen
+  verschiedener Endpunkte bei neun vorhandenen Geräten können beide durchgehen.
+- Das 512-Pixel-Symbol ist eine hochskalierte Übergangslösung (Quelle 256 Pixel); echte Grafik folgt.
+- AC-2 und AC-3 (Zustellung auf ein echtes Telefon, Tipp-Ziel, Sperrbildschirm) lassen sich nicht automatisieren: Sie werden
+  als Abnahme-Checkliste im Pull Request vom Owner auf Android Chrome und einem iPhone abgenommen.
+
+### Nachweise
+
+Tests: `me-push-608`, `push-config-608`, `push-surface-off-608`, `push-endpoint-guard-608`, `push-device-label-608`,
+`push-reassign-608`, `anonymization-push-608`, `notification-push-policy-608`, `notification-push-dispatch-608`,
+`generate-vapid-keys-608` (API); `service-worker-608`, `manifest-608`, `payload`, `login-next`, `support`,
+`device-subscription`, `logout`, `PushSettings` (Web); `push-pwa.spec.ts` (Browser: Worker unter der echten CSP, Manifest,
+Symbole, Profilseite ohne Schlüssel). Geänderte Prüfwerte: Modellzahlen (`measure-foreign-context-access`,
+`lint-tenant-scoping-model-graph`), Routenoberfläche (`route-surface.txt`), `pinnedTenantCsp` (`worker-src 'self'`),
+Ausschlüsse der Neutralitätsmatrix für die fünf Push-Routen.
+
+## AE — WLAN-Kopplung per QR-Code: Einmal-Codes in der Zeiterfassung (Phase 610, Issue #610)
+
+### Ausgangslage
+
+Die WLAN-Anwesenheit (Phasen 388 ff.) ordnet einer Person Geräte über deren MAC-Adresse zu. Die Adresse musste bisher von Hand
+eingetragen werden — fehleranfällig, und für Beschäftigte ohne Technikwissen kaum machbar. Phase 610 lässt eine Person ihr
+Handy im Salon selbst koppeln: QR-Code scannen, die vom FRITZ!Box-Adapter bereitgestellte lokale Seite öffnet sich, der
+Adapter ermittelt über TR-064, welches Gerät die Adresse des Handys im Netz trägt, und die angemeldete Person bestätigt in
+Clokr mit einem Tipp. Die Uhrenlogik (Anwesenheitsereignis → Stempelereignis) bleibt unverändert.
+
+### Rechtslage
+
+- Art. 6 Abs. 1 lit. a DSGVO, § 26 BDSG: Einwilligung. Sie entsteht durch den Tipp auf „Das ist mein Handy – koppeln“ mit
+  sichtbarem Zweck (einschließlich der Angabe, dass der Zeitpunkt der letzten Erkennung gespeichert wird, Review IN-03) und
+  Hinweis auf den Widerruf; `wifiOptInAt` wird auf den Bestätigungszeitpunkt gesetzt und im AuditLog mit
+  altem und neuem Wert festgehalten.
+- Art. 7 Abs. 3 DSGVO: Der Widerruf (Schalter im Profil) entfernt **alle** Geräte der Person und die alte Adressliste, jedes
+  mit eigenem `DELETE`-Eintrag („Einwilligung widerrufen“).
+- Art. 5 Abs. 1 lit. c DSGVO: Die Vorschau zeigt nur die letzten zwei Adressteile; der Hinweis auf dem Sperrbildschirm ist
+  ein neutraler Satz ohne Angabe zur Person.
+- Art. 17 DSGVO: Ein Kopplungscode ist ein flüchtiges Token, kein aufbewahrungspflichtiger Beleg.
+
+### Entscheidung
+
+- **Die Geräteadresse kommt nie vom Browser.** Der Adapter nimmt allein die TCP-Gegenstelle der Verbindung, fragt die Box
+  (`X_AVM-DE_GetSpecificHostEntryByIP`; nur die Live-Antwort zählt, eine veraltete Hostliste wird nie befragt) und meldet `{ mac, hostname }` mit dem Schlüssel der
+  Präsenzquelle an `POST /api/v1/presence/pairing-codes`. Er liest keinen Weiterleitungs-Header und keinen Parameter. Daraus
+  folgt: Ein weitergeleiteter Link koppelt höchstens das Gerät, das die QR-Seite geöffnet hat.
+- **Neues Modell `PresencePairingCode` (Zeiterfassung).** `codeHash` (SHA-256 eines 32-Byte-Zufallscodes; der Klartext wird
+  nie gespeichert), `mac`, `hostname` (nur Anzeige), `expiresAt` (jetzt + 5 Minuten, nie länger), `consumedAt`,
+  `consumedByUserId`, `createdAt`. Ein Code ist einmal verwendbar, an Mandant, Quelle und Gerät gebunden; jeder ungültige
+  Zustand antwortet mit derselben 404.
+- **Zwei Fremdschlüssel, beide `onDelete: Cascade`.** `presenceSourceId` auf `PresenceSource` (innerhalb der Zeiterfassung)
+  und `tenantId` auf `Tenant` (eine Abhängigkeit des Shared Kernel). Cascade statt `Restrict`, weil die Zeile flüchtig und
+  nicht aufbewahrungspflichtig ist (D-04, überarbeitet): Sie darf eine Quelle oder einen Mandanten nie am Löschen hindern.
+  `consumedByUserId` ist eine einfache Spalte ohne Fremdschlüssel — keine zusätzliche Abhängigkeit vom Unterbau.
+- **Zwei neue Spalten an `PresenceDevice`.** `pairedVia` (`MANUAL` | `QR`, Standard `MANUAL`, kein Rückfüllen geraten) und
+  `lastSeenAt` (Zeitpunkt des letzten Anwesenheitsereignisses, geklammert auf `min(Ereignis, jetzt)` und nur vorwärts).
+- **Eine Codequelle, eine Bestätigungstransaktion.** `pairing-code.ts` ist die einzige Stelle für Format, Laufzeit und
+  Hash; `presence-pairing.ts` bestätigt in einer Transaktion unter der Personensperre (`lockPresenceOwner`: Employee + User),
+  danach Code-Zeile `FOR UPDATE`. Ein Gerät, das einer anderen Person gehört, ergibt 409 `PRESENCE_DEVICE_TAKEN` und der Code
+  bleibt gültig. Vorherige `QR`-Geräte derselben Person werden ersetzt, `MANUAL`-Geräte bleiben; ein Admin-Zuordnen setzt
+  `MANUAL`.
+- **D-08 Verhaltensänderung.** Der Widerruf der Einwilligung entfernt jetzt alle Geräte (bisher blieben sie stehen). Wer vor
+  dieser Version widerrufen hat, behält inaktive Restzeilen bis zur nächsten Aktion; es gibt keine rückwirkende Bereinigung.
+- **Hinweis zum erneuten Koppeln.** Ein Tagesjob (Funktion 11 des Anwesenheitsprüfers, 09:20 Mandantenzeit) benachrichtigt die
+  Person einmal in der App und per neutralem Push, wenn ihr `QR`-Handy seit dem dritten jüngsten Schichttag mit Stempelung
+  über eine Nicht-WLAN-Quelle kein Lebenszeichen zeigte; ein Mandant ohne jedes Ereignis im Fenster (Adapterausfall) bekommt
+  nichts. E-Mail ist ausgeschaltet.
+- **Ausnahme von der #608-Paritätsregel (D-16).** Dort gilt „E-Mail `never` ⇒ Push `never`“. `WIFI_DEVICE_NOT_SEEN` ist
+  ausdrücklich benannt (`PUSH_WITHOUT_EMAIL`, mit Begründung): kein Personenbezug, nur der Hinweis zum erneuten Koppeln; die
+  Zahl der gesendeten Typen steigt von 27 auf 28.
+- **Der Adapter-Listener ist standardmäßig aus.** `PAIRING_ENABLED=true` und ein https-Ursprung in `CLOKR_APP_URL`; die
+  Compose-Dateien veröffentlichen den Port nur auf der Loopback-Adresse, solange `PAIRING_HOST_BIND` nicht die LAN-Adresse des
+  Hosts nennt. Das Laufbuch `docs/runbooks/wlan-qr-kopplung.md` beschreibt die Netzwerkvoraussetzungen und die Prüfung der
+  Quelladresse (Docker kann sie verdecken).
+- **Aufräumen.** Zeilen älter als ein Tag löscht der tägliche Token-Bereinigungsjob; die Anonymisierung entfernt die Codes der
+  Person, der int-Abzug alle.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** Eigentümer des neuen Modells, der Routen (`POST /presence/pairing-codes`, `POST /employees/me/wifi/pairing`
+  und `…/preview`), des Tagesjobs und der Fassade `facade/presence-pairing.ts`.
+- **Abwesenheiten:** keine.
+- **Schichtplanung:** keine (der Job liest Schichttage ausschließlich über `getShiftsInRange`).
+- **Arbeitszeitkonto:** keine (nur die Zeitzonenhilfen werden gelesen).
+- **Kompositionsschicht:** keine.
+- **Unterbau:** Rückbeziehung `Tenant.presencePairingCodes` — eine **Erweiterung** nach ADR 0002, Entscheidung 7 (rein additiv,
+  kein bestehender Leser ändert sich), freigegeben mit dem Status `Ready` des Issues. Die Token-Bereinigung und die
+  Anonymisierung rufen die Zeiterfassungs-Fassade auf; der Unterbau importiert keine Fachregel.
+
+Belegt durch `610-untouched.sh`: die Kontexte Abwesenheiten, Schichtplanung und Arbeitszeitkonto, `composition/`, `services/`,
+die aufgezeichneten Neutralitätsmatrizen und die festgenagelten WLAN-Tests sind gegenüber dem Basisstand unverändert.
+
+### Grenzen
+
+- **Weitergeleiteter Link (D-09):** Innerhalb von fünf Minuten kann der Link an eine Kollegin geschickt werden, die damit das Handy
+  der scannenden Person an ihr Konto koppelt. Begrenzt durch Einmalcode, Vorschau des Geräts und AuditLog.
+- **Klartext-HTTP im LAN (D-14):** Die Adapterseite ist unverschlüsselt; ein Mitschnitt im Salon-LAN zeigt die Weiterleitung mit
+  dem Code. Begrenzt durch Einmalcode und fünf Minuten.
+- **Code in einem Zugriffsprotokoll (P-610-24):** Die Seiten-URL trägt den Code einmal; ein Reverse-Proxy vor der Web-App kann
+  ihn protokollieren. Die API-Anfrageprotokolle nie, weil Vorschau und Bestätigung den Code im Körper nehmen. Die Web-App sendet für die Kopplungsseite und für `/login` und `/otp` (dort steckt der Code in `?next=`) `Referrer-Policy: no-referrer`, damit der Code nicht als `Referer` in Zugriffsprotokollen eines Ingress landet (Review WR-01). Auch das Client-Fehlerprotokoll (`POST /api/v1/logs/client`) kennt nur den Pfad: Der Browser sendet `location.pathname`, die API schneidet Query und Fragment zusätzlich ab (Review WR-02).
+- **Netzwerk (D-15, P-610-23):** Ein Gast-WLAN mit Geräteisolation, ein offenes WLAN (rotierende private Adresse) und Docker-
+  Aufbauten, die die Quelladresse verdecken, funktionieren nicht; das Laufbuch führt die Prüfung auf dem echten Host.
+- **Gerätename nur in der Vorschau (Review WR-05):** Der vom Handy gemeldete DHCP-Name („Annas-iPhone“) steht nur in der
+  kurzlebigen Codezeile (nach einem Tag gelöscht) und in der Vorschau. `PresenceDevice.label` und alle Audit-Werte der Kopplung
+  tragen den neutralen Namen „Handy (QR-Kopplung, TT.MM.JJJJ)“. Bekannte Grenze, kein neuer Umfang: Die Audit-Zeilen der
+  Entität `PresenceDevice` tragen die MAC-Adresse (gleich wie bei der manuellen Zuordnung) und werden bei der Anonymisierung
+  nicht geschwärzt (nur `Employee` und `User`, COMP-V1814-01); nur `userId` wird auf null gesetzt.
+- **IP-, ARP- und MAC-Fälschung im Salon-LAN (Review WR-04):** Wer im Salon-LAN eine fremde feste IP-Adresse setzt oder per
+  ARP-Fälschung auftritt, wird von der Box unter dieser IP aufgelöst; wer seine eigene MAC fälscht, koppelt die gefälschte
+  Adresse. Das ist der Weg für „eine MAC meiner Wahl“ durch einen Innentäter und lässt sich ohne Netzwerkauthentifizierung
+  (802.1X) nicht schließen. Begrenzt durch: Kopplung nur aus dem Salon-WLAN, Einmalcode, Vorschau, AuditLog mit Person und
+  Gerät. Ein Host hinter NAT (Router, NAS, Docker-Host) wird nur abgelehnt, wenn die Box ihn als kabelgebunden meldet.
+- Die Feldnamen der TR-064-Antwort der Abfrage nach IP sind aus der Dokumentation und aus Testdaten abgeleitet und erst auf
+  einer echten FRITZ!Box bestätigt (`probe-host.js`); bis dahin lehnt die Seite bei einer Abweichung ab (es gibt keinen Rückfall auf die Hostliste). Das Feld `NewInterfaceType` ist dabei besonders ungeprüft: Meldet die Box für ein Gerät eindeutig eine kabelgebundene Schnittstelle (z. B. „Ethernet“), lehnt der Adapter ab; fehlt der Wert oder ist er unbekannt, wird gekoppelt und eine Warnung protokolliert („auf der echten Box prüfen“).
+- `lastSeenAt` heißt „letztes Anwesenheitsereignis“, nicht „zuletzt im Netz gesehen“: Der Adapter meldet nur Wechsel.
+- Die Hostlisten-Abfrage des Adapters (`GetHostListPath` statt AVMs `X_AVM-DE_GetHostListPath`) blieb bewusst unverändert.
+- AC-1 und AC-6 (ein echtes iPhone und Android in einem echten FRITZ!Box-WLAN, Gast-WLAN-Ablehnung) lassen sich nicht
+  automatisieren: Sie werden als Abnahme-Checkliste im Pull Request vom Owner abgenommen.
+
+### Nachweise
+
+Tests (API): `presence-pairing-610`, `presence-pairing-contract-610`, `presence-pairing-replace-610`,
+`presence-pairing-race-610`, `presence-withdrawal-610`, `presence-last-seen-610`, `pairing-no-client-mac-610`,
+`presence-pairing-lifecycle-610`, `wifi-device-not-seen-610` (Einheit), `wifi-device-not-seen-job-610`; erweitert:
+`notification-push-policy-608`, `cron-deactivated-tenants-88`, `with-advisory-lock`. Adapter: `tr064-host-by-ip`,
+`pairing-config`, `pairing`, `index-wiring`. Web: `pairing-view`, `device-labels`, `DevicePairing`, `WifiPresenceSettings`,
+`pairing-url`, `qr-svg`, `PairingGuide`, `device-pairing-page-610`, `admin-integrations-pairing-guide-610`. Geänderte
+Prüfwerte (jeweils „Issue #610“): Modellzahlen (`measure-foreign-context-access` 54 → 55, Zeiterfassung 9 → 10;
+`lint-tenant-scoping-model-graph`), Routenoberfläche (`route-surface.txt`), Ausschlüsse der Neutralitätsmatrix, die
+#608-Paritätsliste und 27 → 28 gesendete Typen, Läuferliste und Untergrenze von `cron-deactivated-tenants-88` (16 → 17),
+Advisory-Schlüssel (18 → 19), die Untergrenzen von `check-test-completeness.mjs`.
+
+## AF — Schicht-Erinnerungen an Beginn, Ende und Tagesabschluss (Phase 609, Issue #609)
+
+### Ausgangslage
+
+Wer seine Zeit nicht stempelt, merkt es oft erst am Folgetag: Die bestehende Erinnerung nach zehn Stunden und die Meldung um 09:00
+am nächsten Morgen kommen zu spät, um einen Zeiteintrag noch am selben Tag zu retten. Phase 609 erinnert Personen mit einer
+geplanten Schicht an drei Anlässen: nach dem Schichtbeginn, wenn noch nicht eingestempelt ist; nach dem Schichtende, wenn noch
+eingestempelt ist; am Abend, wenn an einem Schichttag keine Zeit erfasst wurde. Die Mitteilung läuft über die In-App-Glocke und,
+wenn die Person Push eingerichtet hat, über den Kanal aus Phase 608.
+
+### Rechtslage
+
+- § 16 Abs. 2 ArbZG: Die Aufzeichnungspflicht trifft den Arbeitgeber; eine Erinnerung hilft, sie am selben Tag zu erfüllen. Sie
+  ersetzt keine Aufzeichnung: Clokr stempelt nie selbst. Ein Tipp auf die Mitteilung öffnet nur eine Bestätigung, gestempelt wird
+  erst nach der ausdrücklichen Bestätigung der Person, mit der aktuellen Uhrzeit und über den unveränderten Stempelweg.
+- Art. 5 Abs. 1 lit. c DSGVO: Datenminimierung auf dem Sperrbildschirm. Die drei Texte sind feste, neutrale Sätze ohne Uhrzeit,
+  Salon oder Namen; die Uhrzeit der Schicht steht nur in der In-App-Meldung (eigene Daten).
+- Art. 9 DSGVO: An einem Krankheitstag (und an jedem anderen Tag mit wirksamem Urlaub, Abwesenheit oder Feiertag) wird still
+  nichts gesendet. Kein Text erklärt je, warum eine Erinnerung fehlt, und der Empfänger ist immer die Person der Schicht selbst,
+  nie eine Führungskraft.
+- Art. 5 Abs. 1 lit. c und Art. 25 DSGVO: Die Abwahl einer Erinnerung ist die eigene Entscheidung der Person. Die Mitarbeiter-
+  Routen (Liste, Einzelansicht, Anlegen, Ändern) und deren Prüfprotokollwerte nennen sie nicht. Die Änderung selbst wird
+  nachvollziehbar protokolliert (Revisionssicherheit) und ist deshalb für Inhaber von `audit-log:read` sichtbar, für einen
+  Betreiber unter einem aktiven Support-Zugriff nach Typ geschwärzt (Zahlen und Wahrheitswerte bleiben erhalten); siehe D-16.
+
+### Entscheidung
+
+- **D-01/D-02 Daten.** Fünf Spalten in `TenantConfig` (drei Schalter, Standard aus; `reminderOffsetMinutes`, Standard 15, erlaubt
+  5 bis 120; `reminderDayCloseTime`, Standard 20:00) und drei Spalten in `Employee` (`reminderShiftStartOff`,
+  `reminderShiftEndOff`, `reminderDayCloseOff`, Standard `false`). Eine additive Migration (`20261103020000_shift_reminders`),
+  keine Datenmigration, kein Skript. Die Mandantenwerte laufen über das bestehende `PUT /settings/work` (Prüfprotokoll der
+  geänderten Schlüssel, #285), die Abwahl über die Eigene-Daten-Route `GET`/`PATCH /api/v1/employees/me/reminders`.
+- **D-03/D-04 Auftrag.** Ein Cron alle fünf Minuten unter dem Advisory-Lock `ATTENDANCE_SHIFT_REMINDER` (`1020n`), je aktivem
+  Mandanten mit mindestens einem Schalter; alle Zeiten in der Mandantenzeitzone. Fenster: Beginn und Ende je 60 Minuten ab
+  Beginn/Ende + N, Abend 30 Minuten ab der Uhrzeit, damit ein Neustart nach einer Pause nicht überschwemmt.
+- **D-05/D-12 Ausschlüsse.** Wirksamer Urlaub jeder Art (Krankheit und halbe Tage eingeschlossen; ein offener Antrag zählt nicht),
+  auferlegte Abwesenheit, Feiertag am Salon der Schicht, eine als Konflikt markierte Schicht; ausgeschiedene, anonymisierte,
+  gesperrte und von der Zeiterfassung befreite Personen; eine Abwahl; ein deaktivierter Mandant.
+- **D-06/D-07 Doppelungen.** Eine Mitteilung je Person, Schicht und Anlass, geprüft gegen jede vorhandene Zeile (auch eine
+  gelesene oder verworfene); ein gemeinsamer Schlüssel für zwei Schichten mit identischem Beginn oder Ende; eine Abend-Mitteilung
+  je Person und Tag. Eine Person, die aus einer früheren Schicht noch eingestempelt ist, bekommt für die direkt anschließende
+  Schicht keine Beginn-Erinnerung (D-07, ein gültiger offener Eintrag); umgekehrt gibt es keine Ende-Erinnerung, solange eine
+  weitere Schicht der Person nahtlos anschließt (P-609-06: das Ende der letzten Schicht deckt den Abend ab).
+- **D-06 Abstimmung.** Hat die Ende-Erinnerung einen offenen Eintrag schon abgedeckt, schweigt die 10-Stunden-Erinnerung für
+  diesen Eintrag; die Meldung um 09:00 am Folgetag bleibt unverändert. „Abgedeckt“ heißt: eine Ende-Mitteilung, die ab dem
+  Beginn der aktuellen offenen Phase des Eintrags entstand (der spätere Zeitpunkt aus `startTime` und `updatedAt`; ein erneutes
+  Einstempeln am selben Tag öffnet dieselbe Zeile und setzt `updatedAt` neu) und zu einer Schicht des Tages dieses Eintrags
+  gehört. Ein wieder geöffneter, erneut vergessener Eintrag und ein alter offener Eintrag eines früheren Tages bekommen die
+  10-Stunden-Erinnerung. Im Zweifel kommt sie lieber doppelt als gar nicht (WR-01).
+- **D-07 „Eingestempelt“ (WR-03, WR-04).** Nur ein offener Eintrag des Schichttages (Nachtschicht: Beginn- oder Endtag; ein
+  frühes Einstempeln bis 2 Stunden vor dem Beginn zählt auch über Mitternacht) unterdrückt die Beginn-Erinnerung und löst die
+  Ende-Erinnerung aus; ein vergessener offener Eintrag eines früheren Tages tut keines von beidem. Die Beginn-Erinnerung
+  unterdrückt außerdem ein geschlossener Eintrag, der zum Schichtbeginn noch lief (Ende nach Beginn minus 5 Minuten), nie ein
+  früherer geschlossener Eintrag (etwa einer vorherigen Teilschicht). Die Ende-Erinnerung schweigt, wenn eine weitere gearbeitete
+  Schicht der Person innerhalb von 60 Minuten nach diesem Ende beginnt (eine als Konflikt markierte oder an dem Tag stumme
+  Folgeschicht zählt nicht).
+- **Beantwortet (IN-03).** Ein erfolgreiches Einstempeln (Web, NFC, WLAN) verwirft die offenen Beginn-Mitteilungen der Person,
+  ein Ausstempeln die offenen Ende-Mitteilungen (weich verworfen, die Zeilen bleiben und zählen weiter für die Doppelungsprüfung);
+  nachgelagert, ein Fehler dabei lässt das Stempeln nie scheitern.
+- **D-13/D-15 Abend.** Wer noch eingestempelt ist, bekommt keine Abend-Erinnerung (die Ende-Erinnerung und die 10-Stunden-
+  Erinnerung decken das ab); eine Schicht, die nach der Abend-Uhrzeit endet, löst an dem Tag keine Abend-Erinnerung aus. Der
+  Hinweistext in den Einstellungen sagt es.
+- **D-08 Kanal.** Drei neue Typen, E-Mail `never`, Push `send` mit neutralem Text und der neuen Lebensdauer `TTL_1H` (eine
+  verspätete Mitteilung „begonnen“ wäre falsch). Sie sind die Einträge der benannten Ausnahmeliste `PUSH_WITHOUT_EMAIL`; die
+  Regel „E-Mail `never` heißt Push `never`“ gilt für alle anderen Typen unverändert.
+- **D-09/D-14 Tippziel.** Beginn und Ende führen auf `/dashboard?clock=1`, der Abend auf die Listenansicht des Tages. Das
+  Dashboard öffnet eine Bestätigung, deren Text aus dem aktuellen Stempelstand abgeleitet ist und die Handlung nennt;
+  der Parameter wird danach entfernt. Ist der Stand inzwischen ein anderer, stempelt nichts, es erscheint ein Hinweis.
+- **D-16 Datensparsamkeit.** Die drei Abwahl-Spalten fehlen in jeder Antwort und in jedem Prüfprotokollwert der Mitarbeiter-
+  Routen (Liste, Einzelansicht, Anlegen, Ändern, Reaktivieren) und im Anlege-Eintrag der gemeinsamen Funktion
+  `employeeCreatedAuditValue()`; nur die Eigene-Daten-Route liefert sie. **Ausnahme, bewusst (WR-02):** die Änderung über
+  `PATCH /api/v1/employees/me/reminders` schreibt ihren eigenen Prüfprotokolleintrag (`UPDATE Employee`, geänderte Schlüssel mit
+  altem und neuem Wert), weil jede Änderung an Personendaten nachvollziehbar sein muss. Diesen Eintrag lesen Inhaber von
+  `audit-log:read` (Mandanten-Administration) und, nach Typ geschwärzt, ein Betreiber unter einem aktiven Support-Zugriff;
+  Führungskräfte ohne diese Berechtigung sehen ihn nicht. Der Test `employee-reminder-columns-hidden-609` hält beide Hälften fest.
+- **Aus der Planung.** 400 statt 401 für eine Person ohne Mitarbeiterprofil (ein 401 würde im Web eine Anmelde-Schleife
+  auslösen); der Eintrag `AE` ist für #610 reserviert.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** der Auftrag (`shift-reminders.ts`, `shift-reminder-job.ts`), die Eigene-Daten-Route
+  (`api/employee-reminders.ts`) und die Auslassung der 10-Stunden-Erinnerung für einen schon abgedeckten Eintrag.
+- **Abwesenheiten:** keine. Urlaub, Krankheit und Abwesenheit werden nur lesend über die Fassade geprüft.
+- **Schichtplanung:** eine additive Auswahl (`conflictsWithLeave`) in der Fassade `getShiftsInRange`; sonst nur lesend.
+- **Arbeitszeitkonto:** keine.
+- **Kompositionsschicht:** keine.
+- **Unterbau:** **Erweiterung** nach ADR 0002, Entscheidung 7: fünf `TenantConfig`- und drei `Employee`-Spalten mit Standard
+  aus/`false`, die Registerzeilen von `notify()` (E-Mail und Push) und die Push-Lebensdauer `TTL_1H`. Kein bestehender Leser
+  ändert sich; freigegeben mit dem Status `Ready` des Issues. Kein neues Modell, keine neue Berechtigung.
+
+Belegt durch `609-untouched.sh`: Abwesenheiten, Arbeitszeitkonto, die Kompositionsschicht, `services/` und die aufgezeichneten
+Neutralitätsmatrizen sind gegenüber dem Basisstand unverändert; unter Schichtplanung ändern sich nur `facade/shifts.ts` und
+ihr Test.
+
+### Grenzen
+
+- Eine neu angelegte Schicht hat eine neue Kennung und kann deshalb erneut erinnern, auch wenn für den Termin schon eine
+  Mitteilung stand (der gemeinsame Schlüssel über den Zeitpunkt fängt gleichzeitige Schichten, nicht jede Neuanlage). Wird eine
+  Schicht nach der Erinnerung verschoben (gleiche Kennung, neue Zeit), erinnert sie für die neue Zeit nicht noch einmal (IN-01).
+- Eine Uhrzeit in der übersprungenen Stunde der Umstellung auf Sommerzeit (etwa 02:30 am 28.03.2027) wird nicht nach vorn
+  normalisiert: der Zeitpunkt kann vor dem der Stunde davor liegen. Für einen Salonbetrieb ohne Schichtbeginn um diese Zeit
+  folgenlos; der Test prüft nur, dass kein Fehler auftritt (IN-02).
+- Der Bestätigungstext des Dashboards nennt die Uhrzeit in der Zeitzone des Geräts, nicht des Mandanten; der Server stempelt
+  mit seiner eigenen Uhr (IN-04).
+- Der Feiertag wird am Salon der Schicht beurteilt, nicht am Stammsalon.
+- Ein Tipp auf eine veraltete Mitteilung bietet die aktuell mögliche Handlung an (nicht die in der Mitteilung gemeinte), nach
+  Bestätigung mit der jetzigen Uhrzeit.
+- Die Abend-Uhrzeit gilt je Mandant, nicht je Salon oder Person.
+- Personen ohne Schicht (feste Arbeitszeit ohne Beginn) werden nicht erinnert; das braucht eine vertragliche Beginnzeit und ist
+  ein eigenes Ticket. E-Mail-Erinnerungen gibt es bewusst nicht.
+- Die Abwahl-Spalten bleiben bei der Anonymisierung stehen (eine Einstellung ohne Personenbezug im Sinne von Art. 17; die
+  anonymisierte Person gehört ohnehin nicht zur Empfängermenge).
+- Zustellung auf ein echtes Telefon, Sperrbildschirmtext und Tippziel lassen sich nicht automatisieren und werden vom Owner
+  mit der Abnahme-Checkliste im Pull Request abgenommen.
+
+### Nachweise
+
+Tests (API): `shift-reminders-kernel-609`, `shift-reminders-start-609`, `shift-reminders-end-609`,
+`shift-reminders-day-close-609`, `shift-reminders-exclusions-609`, `shift-reminders-same-instant-609`,
+`shift-reminders-recipients-609`, `shift-reminders-no-stamp-609`, `shift-reminders-perf-609`,
+`clock-out-reminder-coordination-609`, `shift-reminders-clock-dismiss-609`, `settings-reminders-609`, `me-reminders-609`,
+`employee-reminder-columns-hidden-609`; geänderte Prüfwerte: `notification-push-policy-608` (Ausnahmeliste, Anzahl der
+Push-Typen), `with-advisory-lock` (Schlüsselzahl), `cron-deactivated-tenants-88` (Untergrenze, Läuferliste), Routenoberfläche
+(`route-surface.txt`), Ausschlüsse der Neutralitätsmatrix für die zwei Routen. Tests (Web): `shift-reminder-settings`,
+`reminders`, `ReminderSettings`, `clock-reminder`, `dashboard-clock-reminder-wiring-609`, `admin-vacation-save-wiring`
+(Schlüsselzahl 41 auf 46).
+
+## AG — Urlaubsgrenzen und Urlaubssperren je Salon (Phase 836, Issue #836)
+
+### Ausgangslage
+
+Wie viele Personen eines Salons gleichzeitig im Urlaub sein dürfen, stand bisher nur in den Köpfen der Führungskräfte. Der
+Antrag, die Genehmigung und die Korrektur prüften nichts gegen eine Obergrenze. Phase 836 führt je Salon (oder für alle Salons)
+eine Regel ein: höchstens N Personen einer Gruppe (alle, eine Beschäftigungsart oder eine Zugriffsrolle) gleichzeitig im
+Urlaub, optional in einem Zeitfenster. Eine Urlaubssperre ist dieselbe Regel mit Gruppe „alle“ und N = 0. Die Regel warnt beim
+Antrag, verlangt bei Genehmigung und Korrektur eine begründete, protokollierte Ausnahme und ändert nie einen bereits
+genehmigten Antrag. Der Urlaubsplaner (#835) nutzt später denselben Zähler.
+
+### Rechtslage
+
+- § 7 Abs. 1 BUrlG: Der Arbeitgeber berücksichtigt die Urlaubswünsche, es sei denn, dringende betriebliche Belange oder
+  Urlaubswünsche anderer Arbeitnehmer stehen entgegen. Die Grenze ist ein betrieblicher Belang; die Abwägung bleibt bei der
+  genehmigenden Person. Deshalb ist die Überschreitung eine **Ausnahme mit Begründung**, kein hartes Verbot: Clokr lehnt nie
+  selbst ab, und die Begründung ist im Prüfprotokoll nachvollziehbar (Revisionssicherheit).
+- Art. 5 Abs. 1 lit. c, Art. 9 und Art. 32 DSGVO: Wer sonst noch Urlaub hat, ist Personendatum. Warnungen, der 409-Antwortkörper
+  und die Tageslast nennen eine andere Person nur, wenn die lesende Person deren Urlaub ohnehin lesen darf
+  (`leave-request:read` mit Reichweite `ZUGEWIESEN`, oder sie selbst); alle anderen sehen eine Zahl (`hiddenCount`). Kein Feld sagt,
+  wer verborgen ist oder warum. Das Prüfprotokoll der Genehmigung enthält Regel- und Salon-Kennungen und Zählstände, nie die
+  Kennung einer anderen Person (D-836-10).
+- Krankheit zählt nie (Art. 9 DSGVO, kein Urlaubswunsch): Die zählenden Arten sind eine Positivliste
+  (`LEAVE_LIMIT_COUNTED_CODES`), keine Negativliste (D-836-04).
+
+### Entscheidung
+
+- **Modell (D-836-01/02).** `LeaveLimitRule` in Abwesenheiten, eine Tabelle für Grenze und Sperre, nie hart gelöscht
+  (`deletedAt`, Entfernen und Ändern protokolliert mit altem und neuem Wert). Zwei Migrationen:
+  `20261106131444_leave_limit_rule` (erzeugt über `migrate diff`: Enum `LeaveLimitGroupKind`, Tabelle, drei Indizes, drei
+  Fremdschlüssel) und `20261106132018_leave_limit_rule_checks` (von Hand: `LeaveLimitRule_maxPersons_check`,
+  `LeaveLimitRule_window_check`, `LeaveLimitRule_group_shape_check`; Prisma modelliert keine CHECKs).
+- **Zwei neue Shared-Kernel-Fremdschlüssel (ADR 0002, Entscheidung 4).** `LeaveLimitRule.salonId` → `Salon` und
+  `LeaveLimitRule.accessRoleId` → `AccessRole`, beide `onDelete: Restrict`, dazu `LeaveLimitRule.tenantId` → `Tenant`
+  (`Restrict`). Beides sind **Erweiterungen** des Unterbaus (nichts ändert sich für einen bestehenden Leser) und mit dem
+  Status `Ready` des Issues freigegeben. Der referenzierte Salon und die Rolle gehören demselben Mandanten (oder die Rolle ist
+  eine Systemrolle); die Routen prüfen das mit `resolveSalonInReach` und `accessRoleOfTenant`, eine fremde oder unbekannte
+  Kennung ist dieselbe 404.
+- **Zusätzliche Unterbau-Lesezugriffe (Erweiterungen).** `accessRoleIdsByUserId` (Gruppenzugehörigkeit nach Zugriffsrolle in
+  einer Abfrage), `accessRoleChoices` und `accessRoleOfTenant` (Rollenauswahl und -prüfung für das Formular) und der Berechtigungs-
+  schlüssel `leave-limit:manage` (Ressource `leave-limit`, Relation `PERSON`, damit ein Salonmanager ihn halten kann). Außerdem
+  antwortet `DELETE /roles/:id` mit 409, wenn eine Regel die Rolle nennt (statt einer Restrict-Verletzung als 500). Die
+  Vorlagen der Systemrollen erhalten den neuen Schlüssel erst mit einem Nachtrag aus Plan 836-08.
+- **Ein Zähler (D-836-03, AC-3).** `contexts/absence/leave-limits/` hält den einzigen Zählcode in drei Schichten: der reine Kern
+  `parallelLeaveLoad` (`parallel-leave-load.ts`), der Lader (`load-facts.ts`, konstante Abfragezahl, alle Lesezugriffe
+  mandantengebunden) und der Prüfer `evaluateLeaveLimits` (`check.ts`). Die Tageslast (`GET /leave/limits/load`,
+  `load-view.ts`) liest denselben Kern. `leave-limits-one-place-836.test.ts` schlägt bei einer zweiten Zählung fehl. Das Modul
+  wird **nicht** aus `contexts/absence/index.ts` re-exportiert (D-836-21): es zieht `leave-days.ts` und die
+  Schichtplanungs-Fassade, ein Re-Export würde den gemessenen Importzyklus über die Obergrenze 22 heben
+  (`measure-context-boundary-imports.ts --cycles --check 22`). Aufrufer in Abwesenheiten importieren es relativ.
+- **Zählregeln (D-836-04, D-836-17, D-836-20).** Eine Person zählt je Salon, Gruppe und Tag einmal, im Stammsalon des Tages,
+  nur an eigenen Arbeitstagen (Vertragssegment, ohne Feiertag am Arbeitsort), nur im Beschäftigungsfenster, nie anonymisiert.
+  Ein halber Tag zählt als eine Person; ein offener Antrag zählt mit. **D-836-17:** Bei `SHIFT_BASED` zählt ein Tag, wenn eine
+  Schicht im Dienstplan steht **oder** der Wochentag in den üblichen Arbeitstagen liegt, sonst über die Arbeitstagskette;
+  ein reines „Schicht vorhanden“ zählt zu wenig, weil Dienstpläne an Urlaubstagen keine Schicht enthalten. **D-836-20:** Ein
+  Berufsschultag verdrängt Erholungsurlaub (nur `VACATION`), wie die Preisberechnung es tut.
+- **Überschreitung (D-836-07).** `Anzahl > Höchstzahl` an einem Tag, an dem der geprüfte Antrag selbst zählt; die Last
+  schließt den Antrag ein. Je Gruppe gilt die strengste Regel (kleinstes Maximum, bei Gleichstand die kleinere Kennung).
+- **Wirkung (D-836-08/09/19).** `POST /leave/requests` legt an und warnt (`leaveLimitWarnings`, ausfallsicher offen: eine
+  fehlschlagende Prüfung wird protokolliert und lässt den Antrag bestehen). `PATCH …/review` (APPROVED) und `PATCH …/correct`
+  antworten ohne Ausnahme mit 409 `LEAVE_LIMIT_EXCEPTION_REQUIRED` und schreiben nichts; mit `limitException: { reason }`
+  (10 bis 500 Zeichen) geht es durch und das Prüfprotokoll (`APPROVE`, `LEAVE_CORRECTED`) trägt `leaveLimitException`. Die
+  Genehmigung ist **fail-closed** (eine fehlschlagende Prüfung ist ein 500, nie eine stille Genehmigung). Die Korrektur prüft nur
+  die **hinzugekommenen** Tage; eine Verkürzung verlangt nie eine Ausnahme. Die Mitarbeiterbeendigung (#614) teilt sich den Kern
+  der Korrektur und wird von einer Grenze nie abgewiesen.
+- **Nie rückwirkend (D-836-11).** Eine Regel ändert keinen genehmigten Antrag. Die Tageslast kennzeichnet an einem überschrittenen
+  Tag Anträge, die vor dem Anlegen der Regel genehmigt wurden (`approvedBeforeRule`, Zähler `approvedBeforeRuleCount`), neutral
+  und ohne Folge.
+- **Sichtbarkeit (D-836-12).** Siehe Rechtslage: `redact.ts` (`readerVisibilityFrom`, `isPersonVisibleOn`) ist die einzige Stelle.
+- **Berechtigungen (D-836-13/22).** Schreiben: `leave-limit:manage:ZUGEWIESEN`, eine Regel für alle Salons nur mit
+  Mandanten-Reichweite (sonst 403). Lesen (`GET /leave/limits`, `GET /leave/limits/load`): `leave-limit:manage` oder
+  `leave-request:approve`, als zwei Handler-Prüfungen, weil `requireAnyPermission` zwei `Ressource:Aktion`-Paare nicht mischen kann.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** das Modell, das Modul `leave-limits/`, die Routen `api/leave-limits.ts` und drei Prüfstellen in `api/leave.ts`
+  (Antrag, Genehmigung, Korrektur).
+- **Schichtplanung:** liest Schichten ausschließlich über `index.ts` (`getShiftsInRange`); keine Änderung.
+- **Arbeitszeitkonto:** keine. Der Zähler liest weder Saldo noch Soll und ändert `calcLeaveAbsenceMinutesTz()` nicht.
+- **Kompositionsschicht:** keine (außer der Registrierung der Routen in `app.ts`); kein Geschäftsregel-Code dort.
+- **Unterbau:** **Erweiterung** nach ADR 0002, Entscheidung 7: die beiden Fremdschlüssel, die genannten Lesezugriffe, der neue
+  Berechtigungsschlüssel und die 409-Zuordnung in `DELETE /roles/:id`. Kein bestehender Leser ändert sich.
+
+### Grenzen
+
+- **Keine Historie (D-836-05).** Weder `Employee.classification` noch `RoleAssignment` speichern eine Gültigkeit. Die
+  Gruppenzugehörigkeit wird aus dem **jetzt** Gespeicherten beurteilt (`groupMembershipOn`, der Tag ist die Nahtstelle für ein
+  späteres Historienmodell). Eine geänderte Beschäftigungsart oder eine entzogene Rolle ändert die Zählung sofort und auch für
+  Tage, die schon in der Vergangenheit liegen.
+- **`reviewedAt` als Genehmigungsstempel (D-836-18).** `approvedBeforeRule` vergleicht `reviewedAt` mit `updatedAt` der Regel, damit eine nachträgliche Verschärfung derselben Regel (Bearbeitung an Ort und Stelle, D-836-02) wie eine neue Regel wirkt.
+  `reviewedAt` wird von der abgelehnten Stornierung überschrieben (der Antrag geht zurück auf `APPROVED`); danach kann der Hinweis
+  verschwinden. Eine Korrektur nach dem Anlegen der Regel schreibt ihre eigene Ausnahme.
+- **Entfernte Regeln halten die Rolle fest (WR-02).** Der Fremdschlüssel `LeaveLimitRule.accessRoleId` bleibt `Restrict`, und eine entfernte Regel behält ihre Zeile samt Rollenverweis zur Nachvollziehbarkeit; deshalb lässt sich eine Rolle, die je in einer Regel stand, nie löschen, und die Antwort 409 von `DELETE /roles/:id` nennt auch entfernte Regeln.
+- **Gleichzeitige Genehmigungen (C-2, T-836-18).** Die Prüfung ist ein lesender Vorabcheck vor dem ersten Schreiben; die
+  Genehmigungsroute läuft nicht in einer Transaktion, und die Sperre je Mitarbeiter serialisiert nicht zwei verschiedene
+  Personen. Zwei gleichzeitige Genehmigungen verschiedener Personen können deshalb beide bestehen und gemeinsam über die Grenze
+  gehen. Akzeptiert: die Grenze ist ein betrieblicher Belang mit Ausnahme, keine Integritätsinvariante.
+- **Ausfallsicherheit.** Die Warnung beim Antrag ist ausfallsicher offen, die Genehmigung und die Korrektur sind ausfallsicher
+  geschlossen. Eine Warnung kann also fehlen, eine Genehmigung nie ohne Prüfung geschehen.
+- **Zeitfenster der Tageslast:** höchstens 92 Tage.
+- Eine Regel ohne Stammsalon der Person an einem Tag zählt diesen Tag nicht.
+- Der Pfad `PATCH /leave/requests/:id` (Bearbeiten eines offenen Antrags) warnt nicht; die Genehmigung fängt es.
+
+### Nachweise
+
+Tests (API): `leave-limits-migration-836`, `leave-limits-kernel-836`, `contract-segments-for-many-836`, `access-role-ids-836`,
+`leave-limits-counting-836` (Nachrechnen der Zählregeln, auch gegen `filterLeaveRowsToHomeSalon`), `leave-limits-request-warning-836`,
+`leave-limits-approve-exception-836`, `leave-limits-correct-836`, `leave-limits-exception-836`, `leave-limits-routes-836`,
+`roles-delete-leave-limit-836`, `leave-limits-redact-836`, `leave-limits-redaction-836`, `leave-limits-load-836`,
+`leave-limits-one-place-836` (AST-Wächter mit Untergrenze und Positivkontrolle). Geänderte Prüfwerte: die Modellzahlen in
+`measure-foreign-context-access` und `lint-tenant-scoping-model-graph`, die Ausschlüsse der Neutralitätsmatrix für die vier
+Routen, der Importzähler der Kompositionswurzel.
+
+### Nachtrag Phase 836 — Systemrollen-Templates (Semantikänderung des Unterbaus)
+
+Die globalen Templates **Admin** (`…a001`), **Inhaber** (`…a004`) und **Salonmanager** (`…a005`) erhalten
+`leave-limit:manage:ZUGEWIESEN`; Manager, Mitarbeiter, Personalabteilung und Ausbilder bekommen ihn nicht. Das ist eine
+**Semantikänderung** des Unterbaus nach ADR 0002, Entscheidung 7: Die Änderung gilt sofort für jedes Konto, das eine dieser
+Rollen hält (die Kundenkopien der Templates, also mandanteneigene Rollen, bleiben unverändert).
+
+- **Owner-Entscheidung 06.11.2026: Admin, Inhaber, Salonmanager.** Der Owner hat die vorgeschlagene Rollenmenge (Option a) vor
+  dem Merge bestätigt (Issue #836). Die Vergabe steht in einem eigenen Commit und in einer eigenen Datenmigration.
+- **Admin und Inhaber sind keine Wahl.** Admin hält jeden Schlüssel, dessen Zeilen in `docs/permissions.md` den Buchstaben „A“
+  nennen (`system-roles.test.ts` (iv)), und Inhaber gleicht dem lebenden Katalog (`system-roles.test.ts` (D-04)). Den Schlüssel
+  bei einem der beiden wegzulassen hieße, ihn aus dem Katalog zu entfernen. Offen war nur der Salonmanager.
+- **Salonmanager.** Seine Reichweite ist `ZUGEWIESEN`: er pflegt die Regeln seiner Salons (Prüfung über `resolveSalonInReach`),
+  eine Regel für alle Salons braucht Mandanten-Reichweite und bleibt bei Admin und Inhaber. Lesen der Regeln und der Tageslast
+  geht auch mit `leave-request:approve` im Salon, unabhängig von dieser Vergabe.
+- **Mechanik.** Neue, rein datenverändernde Migration `20261106143731_leave_limit_template_grant` (drei `UPDATE "AccessRole"`,
+  `"tenantId" IS NULL`, `IS DISTINCT FROM`, kein DDL, keine `RoleAssignment`, kein `AuditLog`); die Arrays sind aus
+  `SYSTEM_ROLE_PERMISSIONS` erzeugt. Frühere Migrationen bleiben unberührt. Drift-Pins: `system-roles.test.ts` ((iv), (v) 88/63/22,
+  (D-04), Salonmanager 25 Einträge), `system-roles-migration.test.ts`, die Persona-Fixture des Web
+  (`web-system-role-fixture-83`) und die neue `leave-limits-template-migration-836.test.ts`.
+- **Auswirkung auf die Kontexte.** Zeiterfassung: keine. Abwesenheiten: Konten mit den drei Rollen dürfen `/admin/leave-limits`
+  bedienen und `/leave/limits` schreiben. Schichtplanung: keine. Arbeitszeitkonto: keine. Kompositionsschicht: keine.
+  Unterbau: die drei Template-Zeilen.
+- **Runbook und Rollback:** `docs/migrations.md`, Abschnitt „Phase 836“.
+
+## AH — Urlaubsplaner: unverbindliche Jahresplanung je Salon mit Übernahme (Phase 835, Issue #835)
+
+### Ausgangslage
+
+Urlaubswünsche für das ganze Jahr wurden bisher außerhalb von Clokr gesammelt (Zettel, Tabelle, Chat) und danach einzeln als
+Anträge nachgetragen. Phase 835 führt den Urlaubsplaner ein: Eine Führungskraft eröffnet je Salon und Jahr eine **nicht
+bindende** Planung, die Personen des Salons tragen Wünsche ein (Zeitleiste am Desktop, Liste am Telefon), und ein Klick
+„Planung übernehmen“ macht aus den Wünschen echte Urlaubsanträge durch dieselben Prüfungen, die auch ein normaler Antrag
+durchläuft. Ein Wunsch ist **kein** Urlaub: Er zählt in keinem Saldo, keinem Bericht, keiner Grenze, keinem Dienstplan und
+keiner Preisberechnung, bis er ein Antrag ist (D-835-19).
+
+### Rechtslage
+
+- § 7 Abs. 1 BUrlG: Urlaubswünsche sind zu berücksichtigen, die Entscheidung bleibt beim Arbeitgeber. Der Planer sammelt
+  Wünsche und entscheidet nichts: Jede Genehmigung läuft über den bestehenden Genehmigungskern mit Vier-Augen-Prinzip, den
+  Urlaubsgrenzen (#836) und den Sperren eines geschlossenen Monats.
+- Art. 5 Abs. 1 lit. c, Art. 9 und Art. 32 DSGVO: Wer wann welchen Urlaub hat, ist Personendatum. Die Planungsansicht folgt den
+  Regeln des Urlaubskalenders (siehe „Sichtbarkeit“); Krankheitsarten sieht nur die Person selbst. `LeavePlanWish` hat bewusst
+  **keine Freitextspalte** (Datensparsamkeit): Die Anonymisierung hat dort nichts zu leeren.
+- Revisionssicherheit: Wünsche werden nur weich entfernt (`deletedAt`), jede Wunsch- und Planänderung ist ein Prüfprotokoll-
+  Eintrag mit Handelndem und Person, jeder durch die Übernahme entstandene Antrag trägt `trigger: "LEAVE_PLAN"` mit
+  `leavePlanId` und `leavePlanWishId`.
+
+### Entscheidung
+
+- **Modell (D-835-01/02/03).** `LeavePlan` (Salon, Jahr, optionale Frist, Status `OPEN` / `TAKEN_OVER`; nie gelöscht, es gibt
+  keine DELETE-Route) und `LeavePlanWish` (Person, Von/Bis, halber Tag, weiche Entfernung, `leaveRequestId` genau einmal beim
+  Übernehmen gesetzt, gespeicherte Ablehnung `refusalCode` / `refusalMessage` als systemerzeugter Text). Der Wunsch hat keine
+  Art-Spalte: Er ist immer `VACATION` (D-835-05). Drei Migrationen: `20261106200013_leave_plan` (erzeugt über `migrate diff`:
+  Enum, beide Tabellen, vier Indizes, sechs Fremdschlüssel mit `RESTRICT`, die Spalte `TenantConfig.leavePlanDeadlineLocksWishes`),
+  `20261106203800_leave_plan_checks` (von Hand: Teil-Unique-Index `LeavePlan_open_unique` — höchstens eine offene Planung je
+  Salon und Jahr —, sieben CHECKs, Ausschluss-Constraint `LeavePlanWish_no_overlap_active` über `btree_gist`: keine zwei aktiven,
+  nicht übernommenen Wünsche einer Person überschneiden sich) und `20261106201828_leave_plan_template_grant` (nur Daten, siehe
+  Nachtrag). Die Datenbank ist die letzte Verteidigungslinie jeder Invariante; die Anwendung erkennt die Refusals strukturell
+  (`P2002` + Indexname, `P2039` + `23P01`), nie an der Meldung.
+- **Drei neue Shared-Kernel-Abhängigkeiten (ADR 0002, Entscheidung 4).** `LeavePlan.salonId` → `Salon`,
+  `LeavePlanWish.employeeId` → `Employee` (beide `onDelete: Restrict`) und die Mandanten-Fremdschlüssel
+  `LeavePlan.tenantId` / `LeavePlanWish.tenantId` → `Tenant` (`Restrict`); dazu die Spalte
+  `TenantConfig.leavePlanDeadlineLocksWishes` (`Boolean`, Vorgabe `false`). Alle vier sind **Erweiterungen** des Unterbaus
+  (kein bestehender Leser ändert sich) und mit dem Status `Ready` des Issues freigegeben. Der referenzierte Salon und die
+  Person gehören demselben Mandanten; `Restrict` ist beabsichtigt (siehe „Löschen“).
+- **Neuer Unterbau-Lesezugriff.** `employeeIdsHomedInSalonDuring(db, tenantId, salonId, from, to)` (`contexts/platform/facade/`)
+  liefert die Personen mit Stammsalon in einem Fenster; er ist die einzige Quelle der Planungsbevölkerung (`planPopulation`).
+  Reine Erweiterung (Fassadenzähler 158 → 160 zusammen mit dem Hard-Delete-Zugriff).
+- **Berechtigung (D-835-04).** `leave-plan:manage:ZUGEWIESEN` (Ressource `leave-plan`, Relation `PERSON`, damit ein
+  Salonmanager ihn halten kann): Planung eröffnen, Frist setzen, Wünsche anderer Personen in Reichweite bearbeiten, übernehmen.
+  Eigene Wünsche braucht nur `leave-request:create:EIGENE`; wer Anträge stellen darf, darf wünschen. Lesen folgt
+  `leave-request:read` oder dem eigenen Stammsalon (Leser-Zulassung, siehe unten). Der Schlüssel hat Label, Katalogeintrag und
+  Zeilen in `docs/permissions.md`; `permission-site-mapping.test.ts` vergleicht Anzahl und Berechtigung je Datei.
+- **Zwei extrahierte Kerne (D-835-12), kein zweiter Prüfer.** `createLeaveRequestCore` (`contexts/absence/leave-request-create.ts`;
+  Optionen `auditExtra`, `notifyApprovers`, `hooks.inTransaction`) ist der Körper von `POST /leave/requests`;
+  `decidePendingLeaveRequest` / `approveLeaveRequestCore` / `leaveDecisionGuard` (`contexts/absence/leave-decision.ts`) sind der
+  PENDING-Zweig von `PATCH /leave/requests/:id/review`. Die Routen sind dünne Adapter, Verweigerungen sind Daten mit
+  Maschinen-Grund. Die Übernahme **legt Anträge ausschließlich über diese beiden Kerne an und entscheidet sie**; sie schreibt nie
+  selbst eine `LeaveRequest`, einen Anspruch oder ein Prüfprotokoll eines Antrags. Der Beweis ist die unveränderte Verhaltens-
+  Testmenge des Urlaubs (AC-0): 86 Dateien, 2655 Tests liefen nach der Extraktion ohne Änderung grün; angepasst wurden nur die
+  vier in D-835-28 benannten Wächter, die Code-Orte festhalten (`leave-limits-one-place-836`, `permission-site-mapping`,
+  `absence-vocabulary-guard`, `leave-type-identity-guard`).
+- **Ein Zähler, ein Preis (D-835-10/11/23/25).** Die Tageszahl im Planer kommt ausschließlich aus `leaveLimitLoadView` des
+  #836-Kerns, neu mit den additiven, standardmäßig ausgeschalteten Optionen `candidates` (Wünsche zählen dort als Kandidaten
+  wie ein offener Antrag) und `includeAllGroup` (Last auch ohne Regel). Der Preis eines Wunsches kommt ausschließlich aus
+  `resolveLeaveDays`, neu mit `extraSiblings` in `LeaveDaysPricing` (frühere Wünsche derselben Person wirken wie frühere offene
+  Anträge, damit die Prognose dasselbe rechnet wie die Übernahme; Beweis `leave-plan-takeover-parity-835`: einzeln gestellte
+  Anträge und die Übernahme liefern dieselben Tage, auch bei `SHIFT_BASED`). Die Prognose je Person ist der gespeicherte
+  Anspruch (`getVacationBalance`, sonst lesend `resolveRegularVacationDays`, es entsteht oder heilt nichts) minus offene Anträge
+  minus bepreiste Wünsche.
+- **Die Übernahme (D-835-13/14/15/27/29/30).** Je Person in fester Reihenfolge (Mitarbeiterkennung, Beginn, Kennung), je Wunsch
+  in eigener Transaktion mit Zeilensperre: (1) Beschäftigungsfenster (`LEAVE_PLAN_WISH_NOT_EMPLOYED`) und Stammsalon-Prüfung
+  gegen den Planungs-Salon (`LEAVE_PLAN_WISH_NOT_IN_SALON`) werden **erneut** geprüft, weil der Antragskern sie nicht kennt und
+  sich beides seit dem Eintragen geändert haben kann; (2) die Urlaubsgrenzen (#836) werden **nur für Wünsche vorab geprüft, die
+  die übernehmende Person sofort genehmigt** (ein Wunsch, der offen bleibt, bekommt keine Ausnahme; die genehmigende Person
+  entscheidet später über den normalen Weg); eine Überschreitung ohne Begründung je Wunsch ist
+  `LEAVE_LIMIT_EXCEPTION_REQUIRED`, die Begründung (10 bis 500 Zeichen) kommt als `limitExceptions: [{ wishId, reason }]` und
+  steht im Prüfprotokoll der Genehmigung; (3) `createLeaveRequestCore` im Namen der Person; (4) der Wunsch wird mit dem Antrag
+  verknüpft; (5) `approveLeaveRequestCore` mit der übernehmenden Person als Prüferin — **außer** der Wunsch gehört ihr selbst
+  oder liegt außerhalb ihrer Genehmigungsreichweite: dann bleibt der Antrag `PENDING` und die übrigen Genehmigenden werden
+  benachrichtigt (Vier-Augen-Prinzip, nie Selbstgenehmigung). Eine Ablehnung beim Anlegen steht als `refusalCode` am Wunsch.
+  Ein Wiederholungslauf versucht nur Wünsche ohne Antrag und Wünsche, deren Antrag wegen einer **Ablehnung der Genehmigung**
+  (`APPROVAL_*`) offen blieb — **auf demselben Antrag**, nie ein zweiter; ein absichtlich offener Vier-Augen-Antrag zählt als
+  übernommen. **Abstimmung D-835-15 mit D-835-30:** Die Planung wird erst `TAKEN_OVER`, wenn kein aktiver Wunsch mehr ohne Antrag
+  und keiner mit einer `APPROVAL_*`-Ablehnung übrig ist; sonst bleibt sie `OPEN` und gilt als „teilweise übernommen“ (abgeleitet,
+  nicht gespeichert). Die Anträge einer Person entstehen in Beginn-Reihenfolge mit **streng aufsteigendem `createdAt`**
+  (monotone Wartezeit von 1,5 ms; der Rest der Rechnung ist `SHIFT_BASED`-relevant, weil die Preise von früheren offenen Anträgen
+  abhängen). Genehmigte Übernahme-Anträge benachrichtigen die Genehmigenden nicht (`notifyApprovers: false`, D-835-35), die
+  Benachrichtigung der Person durch den Genehmigungskern bleibt.
+- **Verknüpfung nur mit dem gespeicherten Wunsch (D-835-17).** Der Hook `inTransaction` des Anlegekerns sperrt den Wunsch
+  `FOR UPDATE`, vergleicht Beginn, Ende und halben Tag mit dem **in diesem Moment gespeicherten** Stand und verknüpft nur dann;
+  weicht er ab (ein Verschieben oder Entfernen zwischen Lesen und Anlegen), wird der Antrag zurückgerollt (kein Antrag, kein
+  CREATE-Eintrag, keine Benachrichtigung) und die Übernahme versucht es einmal mit frischen Werten, sonst überspringt sie den
+  Wunsch in diesem Lauf. `LeavePlanWish.leaveRequestId` ist `UNIQUE`; die Planungszeile wird für den Statuswechsel gesperrt.
+- **Die Frist (D-835-07).** Standard ist ein Hinweis (`deadlinePassed` im Lesen). Mit `TenantConfig.leavePlanDeadlineLocksWishes`
+  sperrt die abgelaufene Frist **nur die eigenen Änderungen** einer Person (409 `LEAVE_PLAN_DEADLINE_PASSED`); eine Führungskraft
+  mit Reichweite über die Person ist nie gesperrt, auch nicht für den eigenen Wunsch. Der Frist-Tag selbst ist offen; „abgelaufen“
+  wird am Kalendertag des Mandanten entschieden. Eine übernommene Planung ist schreibgeschützt (409 `LEAVE_PLAN_CLOSED`).
+- **Leser-Zulassung (D-835-04/22).** Die Planung eines Salons sieht, wer `leave-request:read` mit Reichweite über den Salon hat
+  **oder** dort sein eigenes Stammsalon (im Planungsjahr) hat; jede andere Ursache (unbekannte Kennung, fremder Mandant,
+  fremder Salon, inaktiver Salon, fehlende Reichweite) ist **dieselbe 404** (`SALON_NOT_FOUND` / `PLAN_NOT_FOUND`, byte-identisch,
+  Register `lint-t100-09-routes.json`). Ein Wunsch außerhalb der Reichweite ist dieselbe 404 wie ein unbekannter (`WISH_NOT_FOUND`).
+- **Sichtbarkeit und Maskierung (D-835-22/31/34).** Die Zeilen der Personen sind `GESETZT` (wirksamer Urlaub, Abwesenheit,
+  Betriebsurlaub ohne Ausnahme) und `BEANTRAGT` (offen); die Art folgt der Kalenderregel (`canSeeLeaveType`): ohne
+  `leave-request:read:ZUGEWIESEN` ist die Art fremder Zeilen `null`, **Krankheitsarten (`SICK`, `SICK_CHILD`) sieht nur die
+  Person selbst**. Die Prognose (Anspruch) nur für die eigene Zeile oder Personen in der Reichweite von `leave-entitlement:read`.
+  Regelnamen, Höchstzahlen und Überschreitungsmarken der Tageslast nur mit `leave-plan:manage` oder `leave-request:approve`
+  über den Salon; alle anderen sehen nur die Zahl. Namen anderer Personen in Warnungen folgen der #836-Redaktion. Die Tageszahl
+  heißt „Urlaub“ (nur zählende Arten, D-835-34); gesetzte Krankheit, Abwesenheit und Betriebsurlaub stehen in den Zeilen, nicht in
+  der Zahl. Ein Wunsch, der eine Zeile überdeckt, trägt `conflict` (nie über Abwesenheit, Betriebsurlaub oder Feiertag).
+- **Wünsche zählen nirgends (D-835-19).** `leave-plan-isolation-835.test.ts` (AST, Anti-Vakuitäts-Untergrenze: 167 geprüfte
+  Dateien, Positivkontrolle je Form) schlägt fehl, wenn Saldo, Bericht, DATEV, Dienstplan, Preisberechnung, Monatsabschluss oder
+  die Kompositionsschicht `LeavePlan` / `LeavePlanWish` nennen. Das Modul `contexts/absence/leave-plan/` wird **nicht** aus
+  `contexts/absence/index.ts` re-exportiert (Importzyklus-Obergrenze 22).
+- **Benachrichtigung (D-835-18/32).** Typ `LEAVE_PLAN_OPENED`: nach dem Eröffnen an jede Person der Planungsbevölkerung (außer die
+  eröffnende Person; Stammsalon im Jahr, beschäftigt, nicht anonymisiert, mit Konto), in der App, per E-Mail (Richtlinie `always`)
+  und als neutraler Push „Die Urlaubsplanung ist eröffnet.“ (Klasse `TTL_3D`, Eintrag in `notification-push-policy.ts`, vom
+  Scan `notification-push-policy-608.test.ts` erzwungen). Die Übernahme, die die Planung schließt, entfernt die offenen
+  Hinweise (`dismissByRelated`).
+- **Zwei Leistungsentscheidungen (D-835-36/37, Messung 835-07/835-11).** Gemessen wurden 0,7 s je Wunsch (40 Wünsche ≈ 28 s) auf
+  einem stark belasteten Rechner; 57 % davon kostete `computeOvertimeBalanceHours` im Genehmigungskern. Der Entscheidungskern
+  bekommt `deferOvertimeRecompute?: boolean` (überspringt **nur** die Live-Saldo-Berechnung und ihre Speicherung; Buchung des
+  Überstundenausgleichs, Prüfprotokoll, Vier-Augen-Prinzip und Grenzen bleiben), die Übernahme setzt es und aktualisiert danach
+  **einmal je genehmigter Person** mit einem Wunsch, der vor dem Kalendertag „heute“ des Mandanten beginnt (der Live-Saldo
+  enthält „heute“ nie, #438; ein zukünftiger Urlaub kann ihn nicht ändern), den gespeicherten Überstundenstand über
+  `updateOvertimeAccount` (reaktiv: ein Fehler wird protokolliert und lässt die Übernahme nie scheitern). Gemessen auf ruhigem
+  Rechner, 40 Wünsche in einer Anfrage: **vorher 253 SQL-Anweisungen und 3,8 s je 40 Wünsche (ohne geschlossene Monate), 117 und
+  2,1 s (mit); nachher 93 Anweisungen und 1,5 bis 1,6 s in beiden Fällen**, also etwa 0,039 s je Wunsch und rund 4 s je 100
+  Wünsche. Die Stapelung der Übernahme mit Cursor (D-835-36) wurde deshalb **nicht gebaut**: die Entscheidungsregel (20 s je
+  100 Wünsche) ist weit unterschritten; der Wert aus 835-07 war derselbe Code auf einem rund 7-fach belasteten Rechner. Neu
+  bewerten, wenn die Planungsgrößen eines Mandanten oder die Last eine einzelne Anfrage an 20 s bringen. Die Anweisungszahl
+  ist über einen Treiber-Patch im Test gepinnt, weil die Wanduhrzeit von der Rechnerlast abhängt.
+- **Löschen.** Wünsche werden nur weich entfernt. Ausschließlich der bestehende Hard-Delete-Pfad für Mitarbeitende löscht sie
+  hart (`hardDeleteLeavePlanWishesForEmployee` direkt **vor** `hardDeleteLeaveRequestsForEmployee`, wegen der `Restrict`-
+  Fremdschlüssel auf Person und Antrag), genauso wie Urlaubsanträge; derselbe Aufruf steht im Test-Teardown
+  (`DELETE /api/v1/test/tenant/:id`, löscht Wünsche vor Plänen). Sonst gibt es keinen harten Löschpfad.
+
+### Auswirkung auf die Kontexte
+
+- **Zeiterfassung:** keine.
+- **Abwesenheiten:** das Modell, das Modul `contexts/absence/leave-plan/`, die Routen `api/leave-plans.ts`, die zwei extrahierten
+  Kerne (`leave-request-create.ts`, `leave-decision.ts`), die additiven Optionen des #836-Kerns und des Preises, der
+  Hard-Delete-Zugriff der Fassade und die Typregel `canSeeLeaveType` (jetzt aus `leave-calendar-visibility.ts` exportiert).
+- **Schichtplanung:** keine (liest Schichten nicht neu; der Planer nutzt den bestehenden Zähler, der sie bereits liest).
+- **Arbeitszeitkonto:** keine. Weder Saldo noch Soll werden gelesen oder geändert, `calcLeaveAbsenceMinutesTz()` bleibt unberührt;
+  die Übernahme aktualisiert den gespeicherten Überstundenstand nur über den bestehenden Schreiber `updateOvertimeAccount`.
+- **Kompositionsschicht:** keine (nur die Registrierung der Routen in `app.ts`); keine Geschäftsregel dort.
+- **Unterbau:** **Erweiterung** nach ADR 0002, Entscheidung 7: die Fremdschlüssel auf `Salon`, `Employee` und `Tenant`, die Spalte
+  `TenantConfig.leavePlanDeadlineLocksWishes`, der Lesezugriff `employeeIdsHomedInSalonDuring`, der Schlüssel
+  `leave-plan:manage` mit Label und Katalogeintrag und das Einstellungsfeld in `PUT /settings/work`. Dazu die **Semantikänderung**
+  der drei Systemrollen-Templates (Nachtrag).
+
+### Grenzen
+
+- **Eine offene Planung eines später deaktivierten Salons wird unerreichbar.** Die Zulassung verlangt einen aktiven Salon; die
+  Zeile und ihre Wünsche bleiben erhalten, sind aber über die Oberfläche nicht mehr zu öffnen. Ein neues Eröffnen ist für einen
+  inaktiven Salon nicht möglich.
+- **Der Überschneidungstest beim Anlegen läuft außerhalb der Sperre (C-8).** Ein Antrag, der zwischen Lesen und Anlegen eines
+  Wunsches entsteht, wird erst als `conflict` sichtbar; die Datenbank erzwingt nur die Überschneidung zweier Wünsche. Beim
+  Übernehmen entscheidet der Anlegekern (Überschneidung → Ablehnung am Wunsch).
+- **Keine Aufbewahrungsfrist-Bereinigung für Pläne und Wünsche.** Die Jahresbereinigung (`data-retention`) kennt die Tabellen
+  noch nicht; sie sind nicht aufbewahrungspflichtig (kein Lohnbeleg), wachsen aber. Eine Folgearbeit, kein Blocker.
+- **Übernahme in einer Anfrage.** Die Messung (siehe oben) trägt rund 100 Wünsche in 4 s; auf einem stark belasteten Rechner
+  rechnet 835-11 mit etwa 27 s und damit nahe am 30-s-Abbruch des Web-Proxys. Eine Stapelung bleibt als eigener Plan verfügbar.
+- **Ein Wunsch einer später anonymisierten oder ausgetretenen Person** wird bei der Übernahme mit `LEAVE_PLAN_WISH_NOT_EMPLOYED`
+  abgelehnt und zählt nirgends; seit der Review-Korrektur (Nachtrag unten) hält er die Planung nicht mehr offen.
+- **Gleichzeitige Übernahmen** sind seit der Review-Korrektur ganz ausgeschlossen: ein zweiter Lauf derselben Planung antwortet
+  409 `LEAVE_PLAN_TAKEOVER_RUNNING` (Nachtrag unten); die eindeutige Verknüpfung bleibt die Absicherung darunter.
+
+### Nachtrag Phase 835 — Systemrollen-Templates (Semantikänderung des Unterbaus)
+
+Die globalen Templates **Admin** (`…a001`), **Inhaber** (`…a004`) und **Salonmanager** (`…a005`) erhalten
+`leave-plan:manage:ZUGEWIESEN`; Manager (Legacy) und Personalabteilung erhalten ihn nicht. Das ist eine **Semantikänderung** des
+Unterbaus nach ADR 0002, Entscheidung 7: Sie gilt sofort für jedes Konto, das eine dieser Rollen hält (mandanteneigene
+Kopien bleiben unverändert).
+
+- **Owner-Entscheidung 06.11.2026: Admin, Inhaber, Salonmanager** (Issue #835, D-835-20), vor der Umsetzung entschieden; die
+  Vergabe steht in einem eigenen Commit und einer eigenen Datenmigration.
+- **Mechanik.** `20261106201828_leave_plan_template_grant` (drei `UPDATE "AccessRole"`, `"tenantId" IS NULL`,
+  `IS DISTINCT FROM`, kein DDL, keine `RoleAssignment`, kein `AuditLog`; Vorher/Nachher 88/88/25 → 89/89/26). Die Pins sind
+  vorwärtssicher: `leave-limits-template-migration-836.test.ts` vergleicht gegen das Template **zum Zeitpunkt seiner Migration**
+  und spielt die Kette in einer zurückgerollten Transaktion nach (`template-grant-chain.ts`); sonst hätte sein Nachspielen der
+  älteren Migration die drei Zeilen zurückgesetzt. Weitere Drift-Pins: `system-roles.test.ts`, `system-roles-migration.test.ts`,
+  die Persona-Fixture des Web, `leave-plan-template-migration-835.test.ts`.
+- **Auswirkung auf die Kontexte.** Zeiterfassung: keine. Abwesenheiten: Konten mit den drei Rollen dürfen Planungen ihrer Salons
+  eröffnen, bearbeiten und übernehmen. Schichtplanung: keine. Arbeitszeitkonto: keine. Kompositionsschicht: keine. Unterbau: die
+  drei Template-Zeilen.
+- **Runbook und Rollback:** `docs/migrations.md`, Abschnitt „Phase 835“ (Vorher/Nachher-Abfragen, Rollback als neue Migration).
+
+### Nachtrag Phase 835 — Review-Korrekturen (835-REVIEW.md, D-835-38..45)
+
+- **Eine Planung bleibt nie hängen (D-835-38).** `LEAVE_PLAN_WISH_NOT_EMPLOYED` und `LEAVE_PLAN_WISH_NOT_IN_SALON` sind für die
+  Planung endgültig: der Wunsch bleibt mit seiner Ablehnung als Aufzeichnung stehen, hält den Abschluss aber nicht mehr auf
+  (das deckt auch den Wunsch einer Person, die der Planer nicht mehr zeigt). Abschluss und Zähler des Übernehmen-Knopfs folgen
+  einer Regel (`BLOCKS_PLAN_CLOSE` in `leave-plan/constants.ts`); der Planer liefert sie als `plan.openWishCount` an Leser, die
+  übernehmen dürfen. Darf ein Wiederholungslauf die Person nicht genehmigen, wird die gespeicherte Ablehnung gelöscht, der Antrag
+  bleibt PENDING und die Genehmigenden werden benachrichtigt.
+- **Kein stiller PENDING-Antrag (D-835-39).** Scheitert die Genehmigung eines Übernahme-Antrags, erhalten die Genehmigenden die
+  gewöhnliche `LEAVE_REQUEST`-Benachrichtigung, einmal je Antrag (`notifyLeaveRequestApprovers`, dieselbe Empfängerregel wie
+  der Anlegekern).
+- **Neuprüfung nach einer Verschiebung (D-835-40).** Der zweite Anlegeversuch nach einer gleichzeitigen Verschiebung durchläuft
+  die ganze Prüfkette (`preCheck`: Beschäftigung, Stammsalon, Anlege-Reichweite, Genehmigungsentscheidung, Grenzen-Vorprüfung).
+- **Ein Lauf je Planung (D-835-41).** Der Lauf hält eine Advisory-Sperre je Planung; ein zweiter Lauf antwortet 409
+  `LEAVE_PLAN_TAKEOVER_RUNNING`. Abweichend vom Wortlaut der Entscheidung ist es keine Sitzungssperre, sondern die
+  transaktionsgebundene Sperre auf einer für den Lauf festgehaltenen Verbindung (das poolsichere Muster von
+  `utils/with-advisory-lock.ts`; eine Sitzungs-Freigabe kann eine andere Pool-Verbindung treffen und die Sperre verlieren). Dazu
+  ist der Statuswechsel im Entscheidungskern bedingt (`status = 'PENDING'`): auch zwei gewöhnliche Prüfungen ziehen den Urlaub
+  nicht mehr doppelt ab.
+- **Protokoll (D-835-42).** Ablehnung setzen oder löschen und die Verknüpfung schreiben je eine `UPDATE LeavePlanWish`-Zeile mit
+  alten und neuen Werten (Ids, Codes, Zeitstempel, nie der Ablehnungstext).
+- **Saldo-Fenster (D-835-43).** Der nachgezogene Überstundenstand wird für jede Person mit einem genehmigten Wunsch bis zum
+  letzten Tag des laufenden Monats aktualisiert (ein SHIFT_BASED-Saldo liest den ganzen laufenden Monat).
+- **Sichtbarkeit (D-835-44).** Ablehnungsgrund und Antragsstatus fremder Wünsche nur innerhalb der `leave-request:read`-Reichweite;
+  ein weich gelöschter verknüpfter Antrag wird nicht gezeigt.
+- **Anlege-Reichweite (D-835-45).** Übernommen wird nur, wo der Übernehmende `leave-request:create` über die Person hält
+  (ZUGEWIESEN, für den eigenen Wunsch EIGENE), sonst `LEAVE_PLAN_WISH_NO_CREATE_REACH` am Wunsch; das hält die Planung für einen
+  Berechtigten offen. Die Systemrollen halten beide Schlüssel, ihr Verhalten ändert sich nicht.
+- **Eröffnen (IN-05).** Planungsjahr: das laufende Jahr bis zwei Jahre voraus (`LEAVE_PLAN_YEAR_OUT_OF_RANGE`); Frist: spätestens
+  am 31.12. des Planungsjahres (`LEAVE_PLAN_DEADLINE_OUT_OF_RANGE`), nicht vor Jahresbeginn, weil eine Planung des laufenden
+  Jahres (D-835-01) und eine Frist im Januar des Planungsjahres gewöhnlich sind.
+- **Auswirkung auf die Kontexte.** Zeiterfassung: keine. Abwesenheiten: die Punkte oben. Schichtplanung: keine.
+  Arbeitszeitkonto: keine Regeländerung (nur das Fenster, in dem der bestehende Schreiber `updateOvertimeAccount` aufgerufen
+  wird). Kompositionsschicht: keine. Unterbau: keine.
+- **Nachweise:** `leave-plan-review-fix-835` (ein Fall je Befund), `reset-demo-leave-plan-835`, Web
+  `lib/leave-plan/__tests__/deep-link`, `takeover-result`, `leave-plan-page-835`, `LeavePlanTakeoverDialog`.
+
+### Nachweise
+
+Tests (API): `leave-request-create-core-835`, `leave-decision-core-835`, `leave-plan-migration-835`,
+`leave-plan-template-migration-835`, `leave-plan-tracer-835`, `leave-plan-routes-835`, `leave-plan-notification-835`,
+`leave-plan-wishes-835`, `leave-plan-deadline-835`, `leave-plan-closed-835`, `leave-plan-isolation-835` (AST-Wächter mit
+Untergrenze und Positivkontrolle), `leave-plan-read-835`, `leave-plan-load-835`, `leave-days-extra-siblings-835`,
+`leave-plan-forecast-835`, `leave-plan-takeover-835`, `leave-plan-takeover-retry-835`, `leave-plan-takeover-parity-835`,
+`leave-plan-takeover-concurrency-835`, `leave-plan-takeover-perf-835`, `leave-plan-takeover-defer-835`, `employee-ids-homed-in-salon-835`
+(Fassade `employeeIdsHomedInSalonDuring`). Web: `lib/leave-plan/__tests__/*`, vier eingehängte Komponententests, `leave-plan-page-835`.
+Browser: `apps/e2e/tests/leave-plan.spec.ts` (Eröffnen → Wunsch → Ziehen → Übernehmen, genehmigter Antrag auf den verschobenen
+Tagen). Geänderte Prüfwerte: die Register der Fremdzugriffe und Mandantenbindung, das T-100-09-Register (+8 Routen), die
+Neutralitätsausschlüsse, `route-surface.txt`, `permission-site-mapping`, der Fassadenzähler und der Nutzlast-Zähler
+`admin-vacation-save-wiring`.
+
+### Nachtrag Phase 840 (Issue #840)
+
+Die Planungsansicht liegt seit Phase 840 auf der gemeinsamen Zeitleiste der Abwesenheiten, und der Planer-Lesezugriff
+maskiert fremde Zeilen je Person nach derselben Regel wie der Kalender (`MASKED` / „abwesend“, `view=own` für den
+persönlichen Planer). Die oben unter „Sichtbarkeit“ beschriebene Typmaskierung („Krankheitsarten sieht nur die Person
+selbst“) gilt weiter für Zeilen innerhalb der Reichweite; für Zeilen außerhalb der Reichweite ersetzt die Maskierung je
+Person die Typmaskierung. Details: Eintrag AI.
+
+## AI — Abwesenheiten: ein Bereich, eine Zeitleiste (Phase 840, Issue #840)
+
+### Herkunft der Entscheidungen
+
+Die **Owner-Entscheidungen** sind genau E-01 bis E-06 (Issue-Text und Kommentar des Owners vom 08.11.2026): die Struktur
+mit Team-Bereich und Mein Bereich (E-01), Genehmigen bleibt in der Inbox (E-02), der persönliche Kalender zeigt nur eigene
+Einträge (E-03), die Auslieferung ohne Release (E-04), der Team-Tab für alle Mitarbeitenden (E-05) und die Zoomstufen Jahr,
+Quartal und Monat (E-06). Alle weiteren Punkte — D-840-01 bis D-840-31, darunter das Weglassen fremder beantragter Zeilen, das
+Zusammenführen angrenzender maskierter Zeiträume, `scope=team` mit Maskierung für jede Rolle, der Umzug der § 9-Fälle in die
+Inbox und die Weiterleitungen alter Links — sind **Grauzonen-Entscheidungen des Planungsagenten**, begründet und als
+Kommentare am Issue #840 dokumentiert. Die Abnahme dieser Punkte durch den Owner auf dev (AC-14) steht zum Zeitpunkt dieses
+Eintrags **noch aus**; dieser Eintrag beschreibt den gebauten Stand und behauptet keine Zustimmung des Owners zu einem
+D-840-Punkt.
+
+### Ausgangslage
+
+Abwesenheiten waren auf vier Orte verteilt: der Monatsraster von `/team/leave`, der Team-Kalender `/teamcal`, der Urlaubsplaner
+`/leave/planung` und die Genehmigungen (Anträge und § 9-Fälle) in einem Tab von `/team/leave`. Jeder Ort hatte eigene Farben,
+eine eigene Legende, einen eigenen Zeitraumwechsel und eigene Sichtbarkeitsregeln; `GET /leave/calendar` zeigte jedem
+Aufrufer mandantenweit alle Zeilen, nur nach Art maskiert.
+
+### Rechtslage
+
+- Art. 5 Abs. 1 lit. c, Art. 9 und Art. 32 DSGVO: Wer wann abwesend ist, ist Personendatum; Art und Status einer Abwesenheit
+  (Krankheit!) sind besonders schützenswert. Wer eine Person nicht verwalten darf, sieht nur „abwesend“ — ohne Art, Status,
+  halben Tag und § 9-Angaben.
+- Revisionssicherheit: Die Phase schreibt nichts Neues und löscht nichts; Entscheidungen laufen unverändert über die
+  Genehmigungskerne mit Prüfprotokoll. Es gibt keine Migration, keine neue Berechtigung und keine neue Route.
+
+### Entscheidung — was gebaut wurde
+
+- **Maskierung je Person (Abwesenheiten, D-840-19).** `GET /leave/calendar` löst die Reichweite
+  `leave-request:read:ZUGEWIESEN` einmal je Anfrage auf und entscheidet je Zeile mit `isPersonVisibleOnSomeDay`
+  (`contexts/absence/leave-limits/redact.ts`, dieselbe Tagesregel „Stammsalon je Tag“ wie die Urlaubsgrenzen, #836). Den
+  reinen Kern bildet `maskCalendarRows` (`contexts/absence/leave-calendar-masking.ts`, ohne Laufzeit-Importe): eigene Zeilen
+  und Zeilen in Reichweite bleiben vollständig; fremde wirksame Zeilen werden zur maskierten Form (Person und Zeitraum, ohne
+  Id, Status, halben Tag, Art und § 9); fremde **beantragte** Zeilen entfallen ganz (sie sind noch keine Abwesenheit); angrenzende
+  maskierte Zeiträume einer Person werden mit `mergeDayRanges` zusammengeführt, damit keine Naht die Art verrät. Die frühere
+  Typprüfung `canSeeLeaveType` bleibt nur für `/overlap`.
+- **Zeitraumform und Bereiche.** `from`/`to` (höchstens 366 Tage) antworten `{ entries, salons }` (der Salon in der Ansicht
+  mit seinen Öffnungszeiten); die Monatsform bleibt das nackte Array. `scope=own|team` bedient Mein Bereich: `own` liefert nur
+  eigene Zeilen, `team` die eigenen Zeilen und die Personen mit Stammsalon am eigenen Salon an mindestens einem Tag des
+  Fensters, **jede fremde Zeile maskiert, für jede Rolle** (auch für Aufrufer mit Vollzugriff; Details gibt es nur im
+  Team-Bereich); `scope` zusammen mit `salonId` ist 400. Mit gültigem `salonId` stammen die Feiertage aus
+  `holidaysForSalon` (Unterbau-Fassade, nur lesend).
+- **Planer (D-840-20).** `GET /leave/plans/:id` maskiert fremde Zeilen mit derselben Regel (`MASKED`, Zustand `ABWESEND`,
+  beantragte Fremdzeilen entfallen, `mergeDayRanges`); `?view=own` maskiert jede fremde Zeile unabhängig von der
+  Reichweite und gibt jedem fremden Wunsch nur den Zeitraum (nie bearbeitbar, kein Antragsstatus, keine Ablehnung, kein
+  Konfliktkennzeichen, keine Prognose, keine Regeldaten im Tageswert; Review WR-02, die Web-App verengt die Antwort ein
+  zweites Mal in `lib/leave-plan/neutral.ts`); die Antwort nennt den Planungssalon mit Öffnungszeiten. Ohne `view=own`
+  bleiben Wünsche unverändert. Maskierte Zeiträume werden vor dem Zusammenführen auf das Fenster (Kalender) bzw. das Planjahr
+  gekürzt (Review WR-03), und ein Aufrufer ohne Leseberechtigungsreichweite, der kein `scope` sendet, wird wie mit
+  `scope=team` beantwortet (Review WR-04); wer eine Reichweite hat, behält den mandantenweiten Kalender.
+- **Benachrichtigungslinks (D-840-28).** Neuer Antrag → `/inbox?request=<id>`, beide § 9-Links → `/inbox?section9=<id>`,
+  „Urlaubsplanung eröffnet“ → `/leave?tab=planung&salonId&year`. Gespeicherte Benachrichtigungen werden nicht umgeschrieben.
+  Zwei Links bleiben auf `/team/leave?request=` (Korrektur nach Berufsschule: der Antrag ist nicht offen, die Inbox listet
+  ihn nicht; offene-Anträge-Erinnerung: sie dedupliziert nach der Link-Zeichenkette); die Web-App leitet sie weiter.
+- **Genehmigen nur in `/inbox` (E-02).** Der Tab „Genehmigungen“ ist entfallen. Die Inbox hat den Abschnitt „§ 9-Fälle“, lässt
+  `section9:decide` zu (ein reiner § 9-Entscheider erreicht sie weiterhin und löst keine Antragsliste aus), liest die
+  Deep Links `?request=` und `?section9=` (`inbox-deep-link.ts`) und listet im Tab „Offen“ **jeden** offenen Antrag in der
+  Genehmigungsreichweite, gleich in welchem Jahr er beginnt (`GET /leave/requests?status=PENDING` ohne `year`). Die
+  Prüfmaske ist `LeaveReviewDialog`. Der gemeinsame `ApprovalRow` hat dafür den additiven Modus `onPrimary` (der Name ist
+  der eine Zeilenknopf, die Aktionen sind Geschwister; axe `nested-interactive`).
+- **Eine Zeitleiste (D-840-01 ff.).** `AbsenceTimeline` ist das einzige Personen-mal-Tag-Raster der Abwesenheiten
+  (Wächter `leave-one-timeline-840`); sie rechnet nichts selbst, die Daten kommen aus dem reinen `timeline-model.ts`. Jahr:
+  ISO-Wochen, das ganze Jahr ohne Scrollen bei 1440 px, der Füllgrad ist der Anteil abwesender Werktage (offene Tage des
+  Salons, sonst Mo–Sa nach § 3 Abs. 2 BUrlG, ohne Feiertage), ein Klick auf eine Woche öffnet das Quartal. Quartal und Monat:
+  Wochentag und Tageszahl, Wochenende, Feiertag (Name beim Überfahren und Fokussieren), Schließtag des Salons
+  (`closedDaysFor()`), heute; Ziehen und Ändern von Wünschen nur im Quartal und im Monat. Balkenstile: gesetzt durchgezogen,
+  beantragt gestrichelt, Wunsch schraffiert, abwesend neutral. Unter 768 px zeigt `AbsenceList` eine Liste statt des Rasters.
+- **Eine Farbquelle, eine Legende, ein Zeitraumwechsel.** `leave-colors.ts` ist die einzige Farbquelle der Urlaubsarten
+  (Wächter `leave-colors-one-place-840`); `LeaveLegend` die eine Legende unter der Werkzeugleiste; `PeriodSwitcher`
+  (UI-Primitiv) der Zeitraumwechsel, `LeaveToolbar` die eine Werkzeugleiste (Tabs, Zeitraum, Heute, Zoom). Die zweite
+  Salonanzeige (`SalonScopeLabel`) ist von den Urlaubsseiten entfallen; der Salonfilter aus #558 bleibt.
+- **Bereiche und Wege.** Team → Abwesenheiten (`/team/leave`, Tabs Übersicht / Anträge / Planung) und Mein Bereich → Abwesenheiten
+  (`/leave`, Tabs Kalender / Meine Anträge / Team / Planung; der Team-Tab für alle, E-05). „Planung verwalten“ ist ein Dialog
+  (Status, Plan eröffnen, Frist mit eigenem Speichern, Übernehmen). Die Seitenleiste hat unter Team „Abwesenheiten“ und „Inbox“;
+  „Team-Kalender“ entfällt. Alte Links werden ausschließlich in `area-tabs.ts` abgebildet (`/teamcal`, `/leave/planung`,
+  `/team/leave?view=approvals|request|section9`), als SvelteKit-Weiterleitung (307) in `+page.ts`, mit übernommener Abfrage.
+- **Neutralitätsaufzeichnung.** `recorded/matrix.json` ist unverändert. Die geänderte Antwort von `GET /api/v1/leave/calendar`
+  für EMPLOYEE, FALLBACK_EMPLOYEE, FALLBACK_MANAGER und FALLBACK_ADMIN (zwei Zellen je Akteur, acht Verweise mit
+  `issue: 840`) ist als Änderungsverweis in `matrix-amendments.json` erfasst; der Tool-Schalter `--retired` von
+  `neutrality-amendments-from-run.ts` toleriert dabei nur die seit #617 fehlenden Routen.
+
+### Dokumentierte Grenzen
+
+- Berufsschule (auferlegte Abwesenheit) und Betriebsurlaub stehen nicht in der Team-Übersicht (der Kalenderlesezugriff
+  liefert sie nicht); zurückgestellt.
+- Der Kalender **ohne** `salonId` behält die Feiertage des Arbeitsorts des Anfragenden (#71, Zwischenlösung); Feiertage je Salon
+  gibt es nur mit gültigem `salonId`.
+- Schließtage zeichnet die Zeitleiste nur, wenn genau ein Salon in der Ansicht ist; bei mehreren Salons steht ein Hinweis in
+  der Legende, nichts wird gezeichnet.
+- Unter dem Zoom Jahr zeichnet die Zeitleiste keine Urlaubsgrenzen-Marker (#836; die Lesegrenze von 92 Tagen), und die Liste
+  „Alle“ im Tab Anträge ist an das Jahr gebunden; die Inbox-Liste „Offen“ ist es nicht.
+- Der Team-iCal-Download (`GET /leave/ical/team`) ist nicht Teil dieser Maskierung und unverändert.
+- Der Farbkontrast der gemeinsamen Shell-Token (Seitenleiste, Eyebrows, Badges) erreicht nicht überall AA; er ist älter als
+  die Phase. Der Browser-Test prüft die Kontrastregel deshalb nur auf dem Markup, das die Phase einführt, und alle übrigen
+  axe-Regeln auf jeder Seite.
+
+### Auswirkung auf die Kontexte
+
+- Abwesenheiten: Eigentümer der Änderung (Maskierung, Planer-Lesezugriff, Benachrichtigungslinks, die Seiten der Bereiche).
+- Unterbau: keine. Reichweitenauflösung (`resolveAccessReach`), `homeSalonsForDays`, `holidaysForSalon`, die Salonfassade und
+  `closedDaysFor()` werden nur gelesen; kein Feld, keine Relation, kein Export ändert sich.
+- Zeiterfassung: keine. Ihre Kalender wurden nur auf die gemeinsame Farbzuordnung umgestellt.
+- Schichtplanung: keine.
+- Arbeitszeitkonto: keine. `calcLeaveAbsenceMinutesTz` und die einmalige Soll-Minderung pro Tag sind nicht berührt.
+- Kompositionsschicht: keine.
+
+### Nachweise
+
+API: `leave-calendar-masking-840`, `leave-calendar-scope-840`, `leave-plan-masking-840`,
+`leave-requests-pending-all-years-840`, Kerntest `leave-calendar-masking`, angepasste Fixierungen (`leave-type-visibility`,
+`section9-credit`, `leave-plan-read-835`, Benachrichtigungslinks), Änderungsverweise der Neutralitätsmatrix. Web:
+`leave-colors-one-place-840`, `leave-one-timeline-840`, `team-leave-area-840`, `my-leave-area-840`, `inbox-section9-840`,
+`inbox-open-all-years-840`, `teamcal-redirect-840`, die Komponententests der Zeitleiste, Liste, Legende, Werkzeugleiste,
+des Zeitraumwechsels, des Planungsdialogs und des `ApprovalRow`-Modus `onPrimary`. Browser: `apps/e2e/tests/leave-area-840.spec.ts`
+(Manager-Pfad, Mitarbeiter-Pfad, Markierungen, Weiterleitungen, axe auf jeder Seite einschließlich Inbox).
+
+### Nachtrag: Lückenrunde nach dem Manager-Selbsttest (840-15 … 840-18)
+
+**Herkunft, genau.** Die Befunde G-1 bis G-8 stammen aus dem Selbsttest des Managers auf dev vom 08.11.2026
+(`840-UAT.md`); G-9 hat der Owner am selben Tag gemeldet. Die Befunde sind Beobachtungen, keine Entscheidungen. **Jede
+Lösung im Einzelnen ist eine Grauzonen-Entscheidung des Planungsagenten**, begründet in den Plänen 840-15 bis 840-18 —
+keine ist eine Owner-Entscheidung (die Owner-Entscheidungen bleiben genau E-01 bis E-06). Die Abnahme dieser Lösungen
+durch den Owner auf dev steht zum Zeitpunkt dieses Nachtrags **noch aus**; er behauptet keine Zustimmung.
+
+**Was gefunden wurde und was jetzt gilt.**
+
+- **G-1 Zähler am Tab „Anträge“.** Der rote Zähler war unerklärt und fehlte auf der Planung, solange die Seite lud. Jetzt:
+  ein neutraler Zähler mit Erklärung („3 offen: 2 Anträge, 1 Storno angefragt“), eigener Ladevorgang (`loadOpenRequests`),
+  sichtbar auf jedem Tab; ein Klick führt zu Anträge mit dem Filter „Offen“. Entscheidung des Planungsagenten:
+  „Offen“ umfasst beide wartenden Status (beantragt und Storno angefragt), und der Zähler ignoriert den Personenfilter,
+  weil dieser auf der Planung nicht sichtbar ist.
+- **G-2 Wochenenden.** Wochenenden waren in Quartal und Monat ohne einen einzelnen Salon nicht sichtbar. Jetzt: ein Token
+  (`--weekend-shade`, 12 % Textfarbe), in allen vier Oberflächen (editorial und modern, hell und dunkel) sichtbar; Schließtage
+  behalten die Schraffur.
+- **G-3 Farben der Typ-Chips.** Die Anträge-Liste und die Inbox zeigten jeden Typ in Violett. Jetzt: `LeaveTypeChip` mit der
+  einen Farbzuordnung (`leave-colors.ts`); beantragte Zeilen gestrichelt, gesetzte gefüllt.
+- **G-4 Legende.** „Gesetzt“ war irreführend, und „Andere Abwesenheit“ teilte sich ein Grau mit einer anderen Bedeutung.
+  Jetzt: „Genehmigt (voll)“, „Beantragt (gestrichelt)“, „Wunsch (gestreift)“, „Abwesend“; „Mehrere Arten“ nur im Jahr und nur,
+  wenn vorhanden. Entscheidungen des Planungsagenten: der Wortlaut der Legende, eine Woche mit mehreren sichtbaren Arten
+  hat einen eigenen Stil (Streifen; eine maskierte Woche bleibt „abwesend“, es wird nie aus einem maskierten Tag auf eine
+  Mischung geschlossen), und die Farbe der unbekannten Art ist ein Braun, das kein anderer Stil teilt (die Werte in
+  `tokens.css` wurden dafür geändert; `leave-chip-contrast` nennt die neuen Werte).
+- **G-5 Prognosespalte.** Die Spalte „Anspruch“ überdeckte die letzten Tage des Quartals. Jetzt: eine eigene Spalte neben dem
+  Tagesraster, kein Tag liegt darunter; der Hinweis „weiter →“ steht als Bildunterschrift unter dem Raster.
+- **G-6 Planungstext und Steuerung.** Die Hilfezeile sprach von einer „Kopfzeile“, die Zeile heißt „Abwesend (Personen)“; eine
+  Karte mit Status und „Wunsch hinzufügen“ lag auf der Zeitleistenkarte. Jetzt: ein Wortlaut aus derselben Quelle wie die
+  Zeile, der Planer ist eine Karte, Status, Frist und „Wunsch hinzufügen“ stehen in der Werkzeugleiste beider Bereiche.
+- **G-7 Primärknöpfe.** Gemessen im Browser (Test 9 von `leave-area-840.spec.ts`) vor der Änderung: Die Knöpfe der
+  Urlaubsseiten berechnen **dieselben** Farben wie der Referenzknopf auf `/admin/employees` — die Ursache ist das gemeinsame
+  Rezept, keine lokale Überschreibung. Im modernen Stil stand weißer Text auf einem hellen Neonverlauf (1,40:1 bis 2,07:1 im
+  hellen Modus), und die Rezeptregel `.btn-primary:hover` ersetzte den Verlauf durch einen einfarbigen hellen Grund; im
+  Editorial-Stil hellte der Hover den Grund unter weißem Text auf (Pflaume 4,44:1, Nacht 3,85:1, Wald 2,47:1). Jetzt: ein
+  eigenes Token `--text-on-brand-modern` (dunkle Tinte `#0a0a10`) für den Text des modernen Primärknopfs in beiden Modi, der
+  Hover behält den Verlauf, und der Editorial-Hover dunkelt (`--brand-dark`, die ursprüngliche v1-Regel). Alle 12
+  Kombinationen aus Stil, Thema und Modus erreichen im Ruhezustand und beim Überfahren mindestens 4,5:1.
+  `--text-on-brand` selbst bleibt unverändert weiß: Es wird auch als **Hintergrund** gelesen (die invertierte Primärfläche
+  der Dashboard-Zeitkarte, Issue #546).
+- **G-8 Kopf der Inbox.** Eigener Kopf mit Eyebrow „MANAGER“ und kursivem Titel. Jetzt: derselbe `PageHead` wie auf den
+  Urlaubsseiten (Eyebrow „Team“, Titel „Inbox“).
+- **G-9 Formular „Neue Abwesenheit“.** „Bis“ brach allein um, die Mitarbeiterauswahl war abgeschnitten, der Eyebrow „Urlaub“
+  stand über einem allgemeinen Formular. Jetzt: Zeile 1 Mitarbeiter + Art (im eigenen Formular Art, bei Sonderurlaub mit
+  „Anlass“ daneben), Zeile 2 Von + Bis nebeneinander, alle übrigen Felder in voller Breite, unter 480 px eine Spalte. Das
+  Anlegen zeigt keinen Eyebrow (der Typ wird im Formular gewählt), das Bearbeiten zeigt den Typ des bearbeiteten Antrags.
+  Entscheidungen des Planungsagenten: die Zeilenaufteilung und der Wegfall des Eyebrows beim Anlegen.
+
+**Grenzen dieser Runde.**
+
+- Der Monatsraster von „Mein Bereich → Kalender“ und die Kalender der Zeiterfassung behalten das gemeinsame
+  Wochenendrezept; nur die Zeitleiste und ihre Legende nutzen das neue Token.
+- Die Zähler der Inbox-Tabs bleiben rot; die Neutralisierung gilt nur dem Zähler am Tab „Anträge“.
+- Folgebefunde, bewusst nicht in dieser Runde angefasst: Andere Leser von `--text-on-brand` zeigen im modernen Stil weißen
+  Text auf hellen Neonflächen — die Schrittkreise von `ToolPage`, das Wunschfarbpaar
+  (`leave-colors.ts`, `WISH`) und die Zähler-Pille `.tab-bar .btn-primary .count-pill` (fester weißer Text). Sie brauchen
+  jeweils eine eigene Entscheidung; die Dashboard-Zeitkarte liest das Token als Hintergrund und bleibt unberührt.
+
+**Auswirkung auf die Kontexte.** Abwesenheiten: nur die Web-Oberfläche (Zeitleiste, Legende, Planer, Formular, Inbox-Kopf);
+keine API-Änderung, keine Migration, keine neue Berechtigung. Oberflächenrezepte der gesamten App: das Primärknopf-Rezept
+(`app.css`, `tokens.css`) gilt für jede Seite. Unterbau, Zeiterfassung, Schichtplanung, Arbeitszeitkonto,
+Kompositionsschicht: keine.
+
+**Nachweise.** Web: `btn-primary-contrast-840` (Kontrast jeder Kombination aus Stil, Thema, Modus und Zustand aus den
+Tokens, dazu die Rezeptdeklarationen), `leave-looks-840-gaps`, `leave-chip-contrast`, `inbox-chrome-840`, die
+Komponententests von `LeaveRequestForm`, `LeaveTypeChip`, `LeaveToolbar`, `LeavePlanningPanel`, `AbsenceTimeline` und
+`LeaveLegend` sowie die angepassten Fixierungen (jede mit `#840 G-n` im Test benannt). Browser:
+`apps/e2e/tests/leave-area-840.spec.ts`, Tests 6 bis 9 (Planung, Zähler/Chips/Inbox-Kopf, Formular, Primärknöpfe).
+
+## AJ — Korrektur abgeschlossener Monate als Kontobewegung (Phase 599, Issue #599)
+
+**Entscheidung (Owner 19.10. und 09.11.2026, Grauzonen auf #599 dokumentiert).** Ein Tag eines abgeschlossenen Monats wird nie
+nachträglich geändert. Eine Person stellt eine Korrekturanfrage (`MonthCorrectionRequest`, Arbeitszeitkonto), eine andere Person mit
+`month-correction:approve:ZUGEWIESEN` über sie entscheidet. Die Genehmigung bucht im laufenden Monat:
+
+- die Journalzeile `OvertimeTransaction` (Typ `CORRECTION`, Verweis auf Anfrage und Tag, `referenceMonth` = Monat des Tages),
+- `correctionMinutes` und `bookingDate` (Tag der Genehmigung, Zeitzone des Mandanten) an der Anfrage.
+
+**Warum nicht nur das Journal.** `OvertimeTransaction` bewegt den Saldo nicht: Der Saldo wird aus Einträgen, Abwesenheiten und
+Snapshots gerechnet, `OvertimeAccount.balanceHours` wird bei jeder Neuberechnung überschrieben. Eine Buchung nur im Journal wäre
+wirkungslos. Deshalb ist die Korrektur eine Kontobewegung im einen Saldo-Kern: `closeEmployeeMonth()` nimmt
+`accountCorrections` (Tag, Minuten) und addiert die Minuten der Tage seines Fensters auf `balanceMinutes`, außerhalb der
+§ 615-Klauseln, ohne Soll und Ist zu ändern — dasselbe Muster wie der Überstundenausgleich (#220). Gelesen wird nur über
+`booked-month-corrections.ts` (ein Person, viele Personen für die #696-Kette). Jeder Produktionsaufrufer übergibt das Feld;
+`month-correction-saldo-callers-599.test.ts` hält das fest (im Typ ist das Feld optional, damit die Kern-Fixtures unverändert bleiben).
+
+**Regeln.** Vier Augen (wer anfragt und um wen es geht, entscheidet nie; Sperre, keine Permission). Reichweite: Stammsalon am
+betroffenen Tag; außerhalb dieselbe 404 wie für eine unbekannte Anfrage. Keine stille Buchung: ist der laufende Monat geschlossen
+(409 `MONTH_LOCKED`) oder führt die Person heute keinen Saldo (Nur erfassen #494, kein Vertrag #780, ausgetreten:
+409 `CORRECTION_NO_SALDO`), wird nicht gebucht. Wie jede Buchung eines Tages wirkt sie ab dem Folgetag im Live-Saldo (#438).
+
+**Unterbau.** Neue Fremdschlüssel nur auf `Employee` (Unterbau, `Restrict`) und innerhalb von Arbeitszeitkonto
+(`OvertimeTransaction`, `Restrict`). Semantikänderung der Systemvorlagen: `month-correction:*` spiegelbildlich zu den
+Zeitnachtrag-Rechten (`20261109180000_month_correction_template_grant`).
+
+**Nachtrag Phase 599 — Systemrollen-Vorlagen (Unterbau-Semantikänderung, Owner-Entscheidung 12.11.2026,
+[Kommentar auf #599](https://github.com/getclokr/clokr/issues/599#issuecomment-6817644873)).** Freigegeben wie vorgeschlagen und so ausgeliefert:
+
+| Vorlage                      | neu                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Admin, Inhaber, Manager      | `month-correction:read:EIGENE`, `read:ZUGEWIESEN`, `create:EIGENE`, `create:ZUGEWIESEN`, `approve:ZUGEWIESEN` |
+| Mitarbeiter                  | `month-correction:read:EIGENE`, `create:EIGENE`                                                               |
+| Salonmanager                 | `month-correction:read:ZUGEWIESEN`, `create:ZUGEWIESEN`, `approve:ZUGEWIESEN`                                 |
+| Personalabteilung, Ausbilder | keine                                                                                                         |
+
+Die Änderung wirkt sofort auf jedes bestehende Konto mit dieser Rolle; Kundenkopien der Vorlagen bleiben unverändert, niemandem
+wird eine Rolle zugewiesen. Die Vier-Augen-Sperre (wer anfragt oder um wen es geht, entscheidet nie) ist keine Permission und gilt
+für jede Rolle. Die reine Datenmigration setzt je Vorlage genau die Vorlage von vorher plus diese Schlüssel (geprüft gegen
+`SYSTEM_ROLE_PERMISSIONS` vor #599: kein Recht entfernt oder geändert), jede Anweisung mit `IS DISTINCT FROM`-Guard und
+`"tenantId" IS NULL`; `month-correction-template-migration-599.test.ts` beweist das am eingecheckten SQL (Form, Wiederholbarkeit,
+Gleichheit mit der Konstante). Konstante, Datenbankzeile, `docs/permissions.md` und die Web-Persona-Fixture ändern sich zusammen.
+
+**Auswirkung auf die Kontexte.** Zeiterfassung: keine (der Zeitnachtrag bleibt für offene Monate, kein `TimeEntry` entsteht).
+Abwesenheiten: keine. Schichtplanung: keine. Arbeitszeitkonto: neues Modell, Routen `/api/v1/month-corrections`, Saldo-Kern-Eingang.
+Kompositionsschicht: keine eigene Regel; Berichte lesen die Wirkung über `computeMonthReportFigures` (Kontobewegung =
+`balanceAdjustmentMinutes`). Unterbau: Vorlagen, Benachrichtigungstypen `MONTH_CORRECTION_REQUESTED`/`_DECIDED`, Anonymisierung
+(Begründung → neutraler Text, Prüfnotiz → null).
+
+## AK — Kalender-Abo „Mein Dienstplan“: ein Token je Person im Unterbau (Phase 597, Issue #597)
+
+**Entscheidung (Grauzonen auf #597 dokumentiert).** Eine Person kann ihre eigenen Schichten, wirksamen Abwesenheiten und die
+Feiertage ihres Arbeitsorts als ICS abonnieren. Kalender-Apps senden keinen Header; das Geheimnis steht deshalb im Link
+(`/api/v1/calendar-feed/dienstplan.ics?token=…`). Das Token (`CalendarFeedToken`, Unterbau) ist 32 Zufallsbytes, gespeichert
+wird nur der SHA-256; es gibt eins je Person, Rotation ersetzt es sofort, Widerruf löscht es. Der Link wird nur in der Antwort
+auf Anlegen/Rotieren genannt.
+
+**Wann der Link nichts mehr liefert.** Bei jedem Abruf prüft `resolveCalendarFeedToken()` (`contexts/platform/calendar-feed-token.ts`,
+die eine Stelle) Nutzer aktiv, Mandant aktiv, Person nicht anonymisiert und die eigenen Leserechte (`shift:read:EIGENE` für
+Schichten, `leave-request:read:EIGENE` für Abwesenheiten). Jeder ungültige Zustand ist dieselbe 404. Deaktivierung,
+Rollenentzug und Anonymisierung beenden den Link also ohne weiteren Schritt; die Anonymisierung löscht das Token zusätzlich.
+
+**Inhalt minimal (Art. 5 Abs. 1 lit. c, Art. 9 DSGVO).** Schichten heißen „Schicht“ und tragen nur Zeit und Salon (keine Notiz,
+keine Bezeichnung, kein Integrationsname, keine Kolleginnen); Abwesenheiten ganztägig, Krankheit neutral „Abwesend“; Feiertage
+mit Namen. Fenster 30 Tage zurück, 180 voraus. Eine Schicht, die genehmigter Urlaub verdrängt, erscheint nicht.
+
+**Abwägung eines geleakten Links.** Wer den Link hat, sieht die eigenen Arbeitszeiten und Abwesenheitstage dieser Person, nichts
+sonst und nichts Schreibendes. Gegenmittel: Rotieren und Widerrufen im Profil, `lastUsedAt` zeigt den letzten Abruf (höchstens
+stündlich aktualisiert, kein Audit je Abruf, weil Kalender-Apps alle paar Minuten abfragen), Ratenbegrenzung 60/Stunde, das Token
+erscheint in keiner Logzeile (`redactCalendarFeedPath`, Route auf Log-Stufe `warn`). Anlegen, Rotieren und Widerrufen sind
+auditiert, ohne Token.
+
+**Ort im Code.** Token und eigene Routen (`/api/v1/me/calendar-feed`) im Unterbau; der öffentliche Feed in der Kompositionsschicht
+(`composition/calendar-feed.ts`), weil er drei Kontexte liest — jeden nur über sein `index.ts`. Der ICS-Schreiber bleibt der eine
+in Abwesenheiten (`ical.ts`, additiv um zeitgebundene Termine und `LOCATION` erweitert).
+
+**Auswirkung auf die Kontexte.** Zeiterfassung: keine (gelesen werden nur die eigenen Arbeitseinträge für die Feiertagsauflösung).
+Abwesenheiten: `ical.ts` additiv erweitert und über `index.ts` exportiert, sonst keine. Schichtplanung: keine. Arbeitszeitkonto:
+keine. Kompositionsschicht: neue Lese-Route ohne eigene Regel. Unterbau: neues Modell `CalendarFeedToken` (Erweiterung, FKs auf
+`Tenant` Restrict und `User` Cascade), Anonymisierung und Int-Refresh löschen die Tokens.

@@ -47,7 +47,6 @@ describe("holidaysAtWorkLocation — tracer (Phase 71b Plan 02, issue #71, D-04,
         data: {
           email: `hr-tracer-${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}@test.de`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -167,7 +166,6 @@ describe("Resolver behaviour matrix — AC-5/AC-6/AC-7, holidaysForSalon, fail-c
       data: {
         email: `hr-matrix-${label}-${suffix}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -414,7 +412,6 @@ describe("Resolver behaviour matrix — AC-5/AC-6/AC-7, holidaysForSalon, fail-c
               data: {
                 email: `hr-matrix-fc-${Date.now().toString(36)}@test.de`,
                 passwordHash: "x",
-                role: "EMPLOYEE",
                 isActive: true,
               },
             })

@@ -77,10 +77,11 @@ function mountCard(props: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   charts.length = 0;
-  document.documentElement.style.setProperty("--good", "rgb(0, 128, 0)");
+  // #842 D-842-11: the chart theme reads the new token names (ok, text-2, line).
+  document.documentElement.style.setProperty("--ok", "rgb(0, 128, 0)");
   document.documentElement.style.setProperty("--bad", "rgb(200, 0, 0)");
-  document.documentElement.style.setProperty("--text-muted", "rgb(90, 90, 90)");
-  document.documentElement.style.setProperty("--border", "rgb(220, 220, 220)");
+  document.documentElement.style.setProperty("--text-2", "rgb(90, 90, 90)");
+  document.documentElement.style.setProperty("--line", "rgb(220, 220, 220)");
 });
 
 afterEach(() => {
@@ -217,7 +218,7 @@ describe("TeamSaldoCard (Issue #588)", () => {
 
   it("shows an empty text and no chart when no row is in reach", () => {
     mountCard({ rows: [] });
-    expect(screen.getByText("Keine Salden in Ihrer Reichweite")).toBeInTheDocument();
+    expect(screen.getByText("Keine Salden in deiner Reichweite")).toBeInTheDocument();
     expect(charts).toHaveLength(0);
     expect(screen.queryByTestId("team-saldo-values")).toBeNull();
   });
@@ -234,7 +235,7 @@ describe("TeamSaldoCard (Issue #588)", () => {
     expect(container.querySelector(".saldo-skeleton")).not.toBeNull();
     expect(screen.getByText("Salden")).toBeInTheDocument();
     expect(charts).toHaveLength(0);
-    expect(screen.queryByText("Keine Salden in Ihrer Reichweite")).toBeNull();
+    expect(screen.queryByText("Keine Salden in deiner Reichweite")).toBeNull();
   });
 
   it("destroys the chart on unmount and replaces it when the rows change", async () => {

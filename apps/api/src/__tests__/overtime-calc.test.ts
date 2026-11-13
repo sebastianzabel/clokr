@@ -829,7 +829,6 @@ describe("Overtime Saldo Calculation", () => {
         data: {
           email: `${suffix}@test.de`,
           passwordHash: "not-used-in-test",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

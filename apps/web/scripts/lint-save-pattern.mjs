@@ -27,9 +27,11 @@
  * be a D-02 violation on `onblur`, but this scanner only walks `<input>` tags — a `<textarea>`
  * autosave has to be caught in review, not by this gate.
  *
- * Scope:
+ * Scope (every entry must yield at least one file, else the script fails):
  *   - apps/web/src/routes/(app)/admin/**\/+page.svelte
+ *   - apps/web/src/routes/(app)/verwalten/**\/*.svelte (Issue #854)
  *   - apps/web/src/lib/components/admin/**\/*.svelte
+ *   - apps/web/src/lib/components/employees/**\/*.svelte (Issue #854)
  *
  * Flags:
  *   (none — full sweep only; the script is fast)
@@ -61,7 +63,15 @@ const repoRoot = (() => {
   return execSync("git rev-parse --show-toplevel").toString().trim();
 })();
 
-const SCOPES = ["apps/web/src/routes/(app)/admin", "apps/web/src/lib/components/admin"];
+// Issue #854 (D-854-28): the Verwalten routes and the person components are scanned as well. The
+// pages are moving from `routes/(app)/admin` to the Verwalten rebuild, and a path-bound gate that
+// does not follow them passes over nothing.
+export const SCOPES = [
+  "apps/web/src/routes/(app)/admin",
+  "apps/web/src/routes/(app)/verwalten",
+  "apps/web/src/lib/components/admin",
+  "apps/web/src/lib/components/employees",
+];
 
 // `[Ss]ave[A-Z]` rather than `save[A-Z]` so `handleSaveField` — a plausible name in this
 // codebase — is matched too; `persist`/`commitX`/`fetch(` close the same class of near-misses.
@@ -173,9 +183,9 @@ export function findSavePatternViolations(source, file) {
   return violations;
 }
 
-/** @param {string} scope @returns {string[]} */
-function listSvelteFiles(scope) {
-  const abs = resolve(repoRoot, scope);
+/** @param {string} scope @param {string} [root] @returns {string[]} */
+function listSvelteFiles(scope, root = repoRoot) {
+  const abs = resolve(root, scope);
   if (!existsSync(abs)) return [];
   /** @type {string[]} */
   const out = [];
@@ -195,6 +205,17 @@ function listSvelteFiles(scope) {
   return out;
 }
 
+/**
+ * The scopes that yield no `.svelte` file (non-vacuity, Issue #854): a scope directory that moved
+ * or emptied would otherwise let the gate pass over nothing as long as another scope still has files.
+ * @param {readonly string[]} scopes
+ * @param {string} [root] repository root
+ * @returns {string[]}
+ */
+export function findEmptyScopes(scopes, root = repoRoot) {
+  return scopes.filter((scope) => listSvelteFiles(scope, root).length === 0);
+}
+
 /** All `.svelte` files across every SCOPES entry, combined. A named function calling
  * `listSvelteFiles` directly (rather than `SCOPES.flatMap(...)`) so the walk-derivation this
  * binding needs is a plain direct call, not a chain over a non-derived receiver.
@@ -212,6 +233,14 @@ function main() {
   // Build the file list first (SCOPES above), abort on empty, THEN run the content check over
   // it — this is what makes the empty case a hard failure instead of a silent "0 violation(s)"
   // success.
+  const emptyScopes = findEmptyScopes(SCOPES);
+  if (emptyScopes.length > 0) {
+    console.error(
+      `[lint:save-pattern] scope(s) with no .svelte file: ${emptyScopes.join(", ")} — the directory ` +
+        `moved or the filter matched nothing. This is a failure, not a clean result.`,
+    );
+    process.exit(1);
+  }
   const files = listAllSvelteFiles();
   if (files.length === 0) {
     console.error(

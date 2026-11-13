@@ -247,6 +247,8 @@ export interface CalendarLeaveOverlap {
   startDate: Date;
   endDate: Date;
   status: LeaveRequestStatus;
+  /** Issue #743: a half-day request (read by the day status, never by a Soll input). */
+  halfDay: boolean;
   leaveType: { name: string; code: LeaveTypeCode | null };
 }
 
@@ -283,6 +285,7 @@ export async function getCalendarLeaveOverlapping(
       startDate: true,
       endDate: true,
       status: true,
+      halfDay: true,
       leaveType: { select: { name: true, code: true } },
     },
   });
@@ -501,6 +504,8 @@ export interface OwnLeaveActivityItem {
   id: string;
   status: LeaveRequestStatus;
   updatedAt: Date;
+  startDate: Date;
+  endDate: Date;
   leaveType: { name: string } | null;
 }
 
@@ -524,6 +529,9 @@ export async function getOwnLeaveActivity(
       id: true,
       status: true,
       updatedAt: true,
+      // Issue #845 (D-05): the period names the request in the history sentence
+      startDate: true,
+      endDate: true,
       leaveType: { select: { name: true } },
     },
   });
@@ -676,11 +684,18 @@ export async function getPendingLeaveForShiftProtection(
 export async function anonymizeLeaveRequestsForEmployee(
   db: Prisma.TransactionClient,
   employeeId: string,
-): Promise<void> {
+): Promise<number> {
   await db.leaveRequest.updateMany({
     where: { employeeId, note: { not: null } },
     data: { note: null },
   });
+  // Issue #718: the approver's free-text `reviewNote` is the same class as `note`; status,
+  // reviewer and review timestamp stay (they are the approval record). Reaches soft-deleted rows.
+  const cleared = await db.leaveRequest.updateMany({
+    where: { employeeId, reviewNote: { not: null } },
+    data: { reviewNote: null },
+  });
+  return cleared.count; // Issue #718: row count for the ANONYMIZE audit, never text
 }
 
 /**
@@ -697,6 +712,23 @@ export async function hardDeleteLeaveRequestsForEmployee(
   employeeId: string,
 ): Promise<void> {
   await db.leaveRequest.deleteMany({ where: { employeeId } });
+}
+
+/**
+ * Issue #835 (D-835-26, C-6): HARD delete of every `LeavePlanWish` row of `employeeId`, invoked ONLY
+ * from `platform/api/employees.ts`'s `DELETE /:id/hard-delete` sequence (the retention hard delete),
+ * inside its own `$transaction`, DIRECTLY BEFORE `hardDeleteLeaveRequestsForEmployee`: a wish
+ * references both its person and its linked request with `onDelete: Restrict`, so the wishes must go
+ * first. No `deletedAt` guard — a hard delete must reach soft-deleted wishes too. `tenantId` is part
+ * of the statement. This is the only hard delete of wishes in production code; the leave plan row
+ * itself stays.
+ */
+export async function hardDeleteLeavePlanWishesForEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<void> {
+  await db.leavePlanWish.deleteMany({ where: { employeeId, tenantId } });
 }
 
 /**

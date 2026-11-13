@@ -334,11 +334,14 @@ describe("Issue #670 - one day status for my-week, open-items, team-week and att
       expect(v.open.invalidEntries).toBeGreaterThan(0);
     });
 
-    it("a half-day leave is no gap and reads as leave (B6)", async () => {
+    // Issue #743 (owner decision 25.10.2026) replaced the #670 pin "half-day leave reads as leave,
+    // no gap": a PAST half day without an entry is owed for the other half and now reads
+    // "missing" in every reader. Today and a day with an entry are unchanged (half-day-missing-743).
+    it("a past half-day leave without an entry is missing in every reader (B6, #743)", async () => {
       const v = await views(AT_MON_AFTER, WED, "HF");
-      expect(v.mine[2].status).toBe("leave");
-      expect(v.team[2].status).toBe("absent");
-      expect(v.open.missingDays).not.toContain(WED);
+      expect(v.mine[2].status).toBe("missing");
+      expect(v.team[2].status).toBe("missing");
+      expect(v.open.missingDays).toContain(WED);
     });
 
     it("the Berufsschule day displaces the vacation: absent, not leave", async () => {

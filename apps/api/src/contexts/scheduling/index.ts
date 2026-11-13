@@ -33,6 +33,7 @@ export {
   getShiftsInRange,
   flagShiftsConflictingWithLeave,
   cancelOrphanShifts,
+  clearSchedulingNotesForEmployee,
 } from "./facade/shifts";
 export { getEmployeeAvailability } from "./facade/availability";
 // Phase 89 (#89, D-12a) — the coupling rules for other contexts (operator composition port).

@@ -45,7 +45,7 @@ const NO_CHANGES = "Keine Änderungen angegeben.";
 const ALREADY_INACTIVE_MESSAGE = "Der Salon ist bereits deaktiviert.";
 const ALREADY_ACTIVE_MESSAGE = "Der Salon ist bereits aktiv.";
 const LAST_ACTIVE_SALON_MESSAGE =
-  "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.";
+  "Der letzte aktive Salon eines Unternehmens kann nicht deaktiviert werden.";
 
 /**
  * D-12: names only COUNTS, never any entry or assignment — same convention as

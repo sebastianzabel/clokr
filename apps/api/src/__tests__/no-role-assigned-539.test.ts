@@ -71,7 +71,6 @@ describe("Issue #539 - NO_ROLE_ASSIGNED at login, verify-otp and refresh", () =>
         email,
         passwordHash: await bcrypt.hash(PASSWORD, 4),
         // The column value is irrelevant since #539: permissions come only from stored rows.
-        role: "ADMIN",
         isActive,
       },
     });

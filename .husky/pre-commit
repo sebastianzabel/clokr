@@ -4,10 +4,24 @@
 # a scoped <style> declaration.
 pnpm --filter @clokr/web lint:ui-classes || exit 1
 
+# One-shot lint:tokens (Issue #842, D-842-23). Full tree, not staged-only: a retired token name or an
+# undeclared var() can come back in any web source file. Fast (single node process, no build).
+pnpm --filter @clokr/web lint:tokens || exit 1
+
+# One-shot lint:no-alert (Issue #843, D-843-06). Full tree: a native alert/prompt/confirm can come
+# back in any web source file. Single node process, no build.
+pnpm --filter @clokr/web lint:no-alert || exit 1
+
 # One-shot lint:ui (NOT inside lint-staged — see Plan 34-08 rationale).
 # Strict since UI-17 (admin/shifts migrated, all inline-color converted to
 # style: directive, auth pages whitelisted in lint-ui.mjs).
 pnpm --filter @clokr/web lint:ui --staged || exit 1
+
+# One-shot lint:ui-terms (Issue #574): no forbidden term in shown web-app text (docs/glossar.md).
+pnpm --filter @clokr/web lint:ui-terms || exit 1
+
+# One-shot lint:api-terms (Issue #861): the same glossary check for German API texts and mails.
+pnpm --filter @clokr/api run lint:api-terms || exit 1
 
 # One-shot lint-guard-vacuity (Phase 235-09, Issues #235/#240/#245). Full-repo, not staged-only —
 # lint-staged's *.{ts,js,svelte} glob does not match .mjs at all, and four of the guards this gate
@@ -35,9 +49,8 @@ pnpm --filter @clokr/api exec tsx scripts/lint-e2e-spec-registry.ts --check || e
 pnpm --filter @clokr/api run lint:t100-09-routes --check || exit 1
 
 # One-shot lint:role-checks (Phase 75b Plan 12, Issue #75, D-19). Full-repo, not staged-only — a
-# role comparison can come back in any non-test file under apps/api/src, and the single allowlisted
-# compat module (contexts/platform/compat-role.ts) must still exist, which a staged-files-only
-# invocation cannot see. ~0.98s measured on this machine for the whole pnpm invocation
+# role comparison can come back in any non-test file under apps/api/src (no file is allowlisted
+# since #641), which a staged-files-only invocation cannot see. ~0.98s measured on this machine for the whole pnpm invocation
 # (`time pnpm --filter @clokr/api run lint:role-checks`, averaged over 3 runs: 1.00s, 0.99s,
 # 0.94s, this plan's own measurement).
 pnpm --filter @clokr/api run lint:role-checks || exit 1
@@ -46,5 +59,10 @@ pnpm --filter @clokr/api run lint:role-checks || exit 1
 # anywhere under apps/api/src can reintroduce an unordered auditLog/notification findFirst, and the
 # walked set must be the whole tree. About 1s.
 pnpm --filter @clokr/api run lint:unordered-test-reads || exit 1
+
+# One-shot svelte-check (Issue #699). `tsc` does not read .svelte files, so a type error inside a
+# component is invisible to every other gate. Whole web app, not staged-only: a changed type in a
+# .ts module breaks the components that import it. 0 errors, warnings frozen (see the script). About 15 s measured.
+pnpm --filter @clokr/web run check:svelte || exit 1
 
 pnpm exec lint-staged

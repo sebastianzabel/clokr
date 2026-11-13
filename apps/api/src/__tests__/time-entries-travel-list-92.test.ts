@@ -109,7 +109,6 @@ describe("Issue #92 — GET /time-entries rows of a travel entry name both salon
       data: {
         email: `tl92-${suffix}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

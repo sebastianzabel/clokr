@@ -243,7 +243,6 @@ async function seedKarenzFixture(app: FastifyInstance, suffix: string) {
     data: {
       email: `karenz-admin-${suffix}@test.de`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -281,7 +280,6 @@ async function seedKarenzFixture(app: FastifyInstance, suffix: string) {
     data: {
       email: `karenz-emp-${suffix}@test.de`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });
@@ -799,7 +797,6 @@ describe("Self-service Hinweis (D-21)", () => {
         data: {
           email: "karenz-empb-d21-4@test.de",
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -880,7 +877,6 @@ describe("Self-service Hinweis (D-21)", () => {
         data: {
           email: "karenz-bare-admin-d21-6@test.de",
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "ADMIN",
           isActive: true,
         },
       });

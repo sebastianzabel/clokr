@@ -59,7 +59,7 @@ describe("Issue #85 (Phase 85b Plan 16) — GET /leave/overtime-balance saldo ma
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const email = `${s}@test.de`;
     const user = await app.prisma.user.create({
-      data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

@@ -34,6 +34,7 @@ import {
   createTestSalon,
   cleanupTestData,
   configureDatevKanzlei,
+  numericEmployeeNumber,
 } from "./setup";
 import { signOperatorToken } from "../contexts/platform/operator-auth";
 import { DEFAULT_SALON_OPENING_HOURS } from "../contexts/platform/facade/salons";
@@ -219,7 +220,6 @@ async function createClosedMonthEmployee(): Promise<string> {
     data: {
       email: `nr566-${randomUUID().slice(0, 8)}@example.invalid`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });
@@ -227,7 +227,7 @@ async function createClosedMonthEmployee(): Promise<string> {
     data: {
       tenantId: t.tenant.id,
       userId: user.id,
-      employeeNumber: `NR566-${randomUUID().slice(0, 6)}`,
+      employeeNumber: numericEmployeeNumber(),
       firstName: "Abschluss",
       lastName: "Monat",
       hireDate: new Date("2026-06-01T00:00:00Z"),
@@ -535,17 +535,18 @@ describe("Phase 566 AC-3 — cancelling every module and lowering the quota deac
     expect(deactivate.statusCode, deactivate.body).toBe(200);
     expect(JSON.parse(deactivate.body).isActive).toBe(false);
 
-    // Using a key records `lastUsedAt` (and the source's `updatedAt`); nothing else about the
-    // setups changed, and none of them is revoked or deleted.
+    // Using a key records `lastUsedAt` (and the source's `updatedAt`), and a presence event records
+    // the device's `lastSeenAt` (Issue #610); nothing else about the setups changed, and none of
+    // them is revoked or deleted.
     const rows = await readRows();
     const withoutUsage = (list: unknown) =>
       (list as Array<Record<string, unknown>>).map(
-        ({ lastUsedAt: _used, updatedAt: _updated, ...rest }) => rest,
+        ({ lastUsedAt: _used, updatedAt: _updated, lastSeenAt: _seen, ...rest }) => rest,
       );
     expect(withoutUsage(rows.apiKeys)).toEqual(withoutUsage(rowsBefore.apiKeys));
     expect(withoutUsage(rows.terminalKeys)).toEqual(withoutUsage(rowsBefore.terminalKeys));
     expect(withoutUsage(rows.sources)).toEqual(withoutUsage(rowsBefore.sources));
-    expect(rows.devices).toEqual(rowsBefore.devices);
+    expect(withoutUsage(rows.devices)).toEqual(withoutUsage(rowsBefore.devices));
     expect(rows.couplings).toEqual(rowsBefore.couplings);
     for (const list of [rows.apiKeys, rows.terminalKeys, rows.sources] as Array<
       Array<{ revokedAt: unknown }>

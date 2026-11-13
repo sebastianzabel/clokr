@@ -42,6 +42,7 @@ import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve as resolvePath } from "node:path";
 import bcrypt from "bcryptjs";
+import { absenceTypeFields } from "../src/contexts/absence/leave-type";
 import { assertTestDatabaseMarker } from "./test-database-guard";
 // `apps/api/src/utils/test-database.ts` itself has zero imports and no module-evaluation side
 // effect (see that module's own header) — unlike `config.ts`/`app.ts`/the routes and utils
@@ -342,7 +343,8 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
   const prisma = app.prisma;
   // Issue #539: the function employee creation uses for the system-role row; loaded here, like
   // every other `../src/*` module of this script (see the note above `MEASURE_SCRIPT_...`).
-  const { replaceSystemRoleAssignment } = await import("../src/contexts/platform/compat-role");
+  const { replaceSystemRoleAssignment } =
+    await import("../src/contexts/platform/system-role-assignment");
   const s = `t22-parity-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
 
   const tenant = await prisma.tenant.create({
@@ -373,7 +375,6 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
     data: {
       email: `admin-${s}@t22.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -422,7 +423,6 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
     data: {
       email: `azubi-${s}@t22.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });
@@ -489,7 +489,7 @@ async function seedGoldenAzubiJan2026(app: FastifyApp): Promise<ScenarioFixture>
   await prisma.absence.create({
     data: {
       employeeId: empId,
-      type: "VOCATIONAL_SCHOOL",
+      ...absenceTypeFields("VOCATIONAL_SCHOOL"),
       source: "PATTERN",
       startDate: new Date("2026-01-14T00:00:00Z"),
       endDate: new Date("2026-01-14T00:00:00Z"),

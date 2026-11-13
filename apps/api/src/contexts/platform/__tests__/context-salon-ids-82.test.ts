@@ -20,7 +20,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import type { Role } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { contextSalonIds, resolveAccessReach } from "../facade/role-assignments";
 import type { AccessContext } from "../access-context";
@@ -54,11 +53,11 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
   let allActive: string[];
   const actors: { label: string; ctx: AccessContext }[] = [];
 
-  async function createUser(role: Role, label: string, tenantId = tA.tenant.id) {
+  async function createUser(label: string, tenantId = tA.tenant.id) {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await app.prisma.user.create({
-      data: { email: `csi-${s}@test.de`, passwordHash, role, isActive: true },
+      data: { email: `csi-${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -162,32 +161,30 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
   });
 
   it("a stored TENANT Manager assignment reaches every active salon, a stored Mitarbeiter assignment none", async () => {
-    const { user: managerUser, ctx: manager } = await createUser("EMPLOYEE", "stManager");
-    const { user: employeeUser, ctx: employee } = await createUser("MANAGER", "stEmployee");
+    const { user: managerUser, ctx: manager } = await createUser("stManager");
+    const { user: employeeUser, ctx: employee } = await createUser("stEmployee");
     await assign(managerUser.id, SYSTEM_ROLE_IDS.MANAGER, { scopeType: "TENANT" });
     await assign(employeeUser.id, SYSTEM_ROLE_IDS.EMPLOYEE, { scopeType: "TENANT" });
     expect((await contextSalonIds(app.prisma, manager, TODAY)).managedSalonIds).toEqual(allActive);
     expect((await contextSalonIds(app.prisma, employee, TODAY)).managedSalonIds).toEqual([]);
   });
 
-  it("a user without a stored assignment manages no salon, whatever User.role says (#539: no Altrollen-Rückfall)", async () => {
-    for (const role of ["MANAGER", "ADMIN", "EMPLOYEE"] as const) {
-      const { ctx } = await createUser(role, `fb${role}`);
-      const result = await contextSalonIds(app.prisma, ctx, TODAY);
-      expect(result.managedSalonIds, role).toEqual([]);
-      expect(result.salonIds, role).toEqual([]);
-    }
+  it("a user without a stored assignment manages no salon (#539: no Altrollen-Rückfall)", async () => {
+    const { ctx } = await createUser("noAssignment");
+    const result = await contextSalonIds(app.prisma, ctx, TODAY);
+    expect(result.managedSalonIds).toEqual([]);
+    expect(result.salonIds).toEqual([]);
   });
 
-  it("a stored row on an EIGENE-only role reaches no managed salon, even for User.role ADMIN", async () => {
-    const { user, ctx } = await createUser("ADMIN", "eigeneAdmin");
+  it("a stored row on an EIGENE-only role reaches no managed salon", async () => {
+    const { user, ctx } = await createUser("eigeneOnly");
     const role = await customerRole(tA.tenant.id, "eigene", ["time-entry:read:EIGENE"]);
     await assign(user.id, role.id, { scopeType: "TENANT" });
     expect((await contextSalonIds(app.prisma, ctx, TODAY)).managedSalonIds).toEqual([]);
   });
 
   it("SALONS [A, I] reaches A only", async () => {
-    const { user, ctx } = await createUser("EMPLOYEE", "salonsAI");
+    const { user, ctx } = await createUser("salonsAI");
     await assign(user.id, SYSTEM_ROLE_IDS.SALON_MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA.id, salonI.id],
@@ -196,7 +193,7 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
   });
 
   it("SALONS [A] plus TENANT on the same user reaches every active salon", async () => {
-    const { user, ctx } = await createUser("EMPLOYEE", "salonsPlusTenant");
+    const { user, ctx } = await createUser("salonsPlusTenant");
     await assign(user.id, SYSTEM_ROLE_IDS.SALON_MANAGER, {
       scopeType: "SALONS",
       salonIds: [salonA.id],
@@ -206,15 +203,15 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
   });
 
   it("PERSONS reaches no salon; a malformed row alone reaches nothing", async () => {
-    const { employee: target } = await createUser("EMPLOYEE", "personsTarget");
-    const { user, ctx } = await createUser("EMPLOYEE", "persons");
+    const { employee: target } = await createUser("personsTarget");
+    const { user, ctx } = await createUser("persons");
     await assign(user.id, SYSTEM_ROLE_IDS.TRAINER, {
       scopeType: "PERSONS",
       employeeIds: [target.id],
     });
     expect((await contextSalonIds(app.prisma, ctx, TODAY)).managedSalonIds).toEqual([]);
 
-    const { user: malformedUser, ctx: malformed } = await createUser("ADMIN", "malformed");
+    const { user: malformedUser, ctx: malformed } = await createUser("malformed");
     // TENANT scope must carry no salon id (D-03 shape) — the row contributes nothing, fail closed.
     await assign(malformedUser.id, SYSTEM_ROLE_IDS.HR, {
       scopeType: "TENANT",
@@ -224,7 +221,7 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
   });
 
   it("a row on a foreign tenant's customer role contributes nothing", async () => {
-    const { user, ctx } = await createUser("EMPLOYEE", "foreignRole");
+    const { user, ctx } = await createUser("foreignRole");
     const role = await customerRole(tB.tenant.id, "foreign", ["time-entry:read:ZUGEWIESEN"]);
     await assign(user.id, role.id, { scopeType: "TENANT" });
     expect((await contextSalonIds(app.prisma, ctx, TODAY)).managedSalonIds).toEqual([]);
@@ -264,7 +261,7 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
   });
 
   it("own reach uses the tenant-local day of `today`", async () => {
-    const { employee, ctx } = await createUser("EMPLOYEE", "tzEdge");
+    const { employee, ctx } = await createUser("tzEdge");
     await deployment(employee.id, salonA.id, "2026-06-01", "2026-06-30");
     await deployment(employee.id, salonB.id, "2026-06-01", "2026-07-01");
     // 2026-06-30T22:30Z is 2026-07-01 00:30 in Europe/Berlin: the row ending 30.06. is over.
@@ -273,7 +270,7 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
   });
 
   it("an anonymized employee has no own reach", async () => {
-    const { employee, ctx } = await createUser("EMPLOYEE", "anonymized");
+    const { employee, ctx } = await createUser("anonymized");
     await deployment(employee.id, salonA.id, "2026-01-01", "2026-12-31");
     await app.prisma.employee.update({
       where: { id: employee.id },
@@ -305,11 +302,11 @@ describe("contextSalonIds (Phase 82, Issue #82, D-03/D-04)", () => {
 
   it("D-04: managed reach equals the union of resolveAccessReach over every ZUGEWIESEN key", async () => {
     expect(ZUGEWIESEN_KEYS.length).toBeGreaterThanOrEqual(50);
-    // A stored TENANT grant and an unassigned admin (holds nothing since #539), so every comparison
+    // A stored TENANT grant and an unassigned user (holds nothing since #539), so every comparison
     // class is represented.
-    const { user: tenantUser } = await createUser("EMPLOYEE", "storedTenant");
+    const { user: tenantUser } = await createUser("storedTenant");
     await assign(tenantUser.id, SYSTEM_ROLE_IDS.HR, { scopeType: "TENANT" });
-    await createUser("ADMIN", "fbAdmin");
+    await createUser("unassigned");
 
     const classes = new Set<string>();
     for (const { label, ctx } of actors) {

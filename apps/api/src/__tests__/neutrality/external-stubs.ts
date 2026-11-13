@@ -102,7 +102,7 @@ export function installExternalStubs(app: FastifyInstance): ExternalStubs {
     },
     check: async () => true,
     refresh: () => {},
-    status: () => ({ available: true, unconfigured: false, checkedAt: null }),
+    status: () => ({ available: true, checkedAt: null }),
   };
 
   vi.stubGlobal("fetch", async (input: string | URL | Request) => {

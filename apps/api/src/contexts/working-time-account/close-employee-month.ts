@@ -65,12 +65,13 @@
 import type { FastifyInstance } from "fastify";
 import { findMissingWorkdays, type WorkdayGap } from "./find-missing-workdays";
 import { calcShiftBasedSaldo } from "./shift-based-saldo";
+import { isNoContractSchedule, NO_CONTRACT_SCHEDULE } from "./month-contract"; // Issue #780
 import { isTrackOnlySchedule } from "./track-only-schedule"; // Issue #494 — the one track-only rule
 import {
+  getEffectiveSchedule,
   getEffectiveBreakDuration, // Phase 101B (Issue #101, wave 8)
   getValidWorkedEntriesInRange, // Phase 100B Plan 08 — T1; THE SALDO INPUT (computeWeekProgress)
   getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, feeds the holiday resolver (computeWeekProgress)
-  getEffectiveSchedule, // computeWeekProgress's per-piece contract resolution
   entryDurations, // Phase 79 (Issue #79), D-03/D-05 — presence/working-time kernel
 } from "../time-tracking";
 import { holidaysAtWorkLocation } from "../platform"; // Phase 71b (issue #71) — central resolver (computeWeekProgress)
@@ -83,6 +84,7 @@ import {
   getDayOfWeekInTz,
   dateStrInTz,
   iterateDaysInTz,
+  calcMonthlyHoursDayMinutesTz, // Issue #473 — MONTHLY_HOURS BS credit
   getTenantTimezone, // computeWeekProgress
   monthRangeUtc, // computeWeekProgress
   weekRangeUtc, // computeWeekProgress
@@ -179,6 +181,18 @@ export type CloseMonthInput = {
   }>;
   holidayDateStrings: Set<string>; // YYYY-MM-DD in tenant TZ
 
+  /**
+   * Issue #599 — approved corrections of a CLOSED month, booked as an account movement on their
+   * `date` (the tenant-local approval day, `MonthCorrectionRequest.bookingDate`). Optional in the
+   * type only so the pure-core unit fixtures stay as they are; EVERY production call site passes it
+   * explicitly (a forgotten caller would silently drop a booked correction) — pinned by
+   * `month-correction-saldo-callers-599.test.ts`. Absent reads as `[]`. Rows outside
+   * `[effectiveStart, effectiveEnd]` are ignored here, so a caller may pass a wider set; callers
+   * that only read Soll/Ist (week progress, the MONTHLY_HOURS month Soll) pass `[]`. Read only
+   * through {@link toCloseMonthAccountCorrections} / `getBookedMonthCorrections`.
+   */
+  accountCorrections?: ReadonlyArray<{ date: Date; minutes: number }>;
+
   // Tenant config
   tenantConfig: {
     defaultBreakOver6h: number;
@@ -265,6 +279,14 @@ export type CloseMonthResult = {
    * re-deriving it; no production writer consumes it today.
    */
   overtimeCompensationMinutes: number;
+
+  /**
+   * Issue #599 — the sum of the `accountCorrections` booked inside `[effectiveStart, effectiveEnd]`,
+   * in minutes (signed), already ADDED to `balanceMinutes` (and therefore to `carryOverOut`).
+   * Like the withdrawal it moves the balance only: `workedMinutes` and `expectedMinutes` stay as
+   * they are, the correction is no record of this month's work.
+   */
+  accountCorrectionMinutes: number;
 
   // Gap detection results (for warning UX in 76.28)
   gaps: WorkdayGap[];
@@ -403,6 +425,8 @@ export function monthlyHoursMonthSollMinutes(input: {
       unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
     })),
     holidayDateStrings: input.holidayDateStrings,
+    // Issue #599: the Soll alone is asked for; a correction moves the balance, never the Soll.
+    accountCorrections: [],
     tenantConfig: {
       defaultBreakOver6h: 30,
       defaultBreakOver9h: 45,
@@ -589,6 +613,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
         effectiveCarryOverOut: carryOverIn,
         snapshotExpectedMinutes: 0,
         overtimeCompensationMinutes: 0,
+        accountCorrectionMinutes: 0,
         gaps: [],
         coveredDates: new Set<string>(),
       };
@@ -720,20 +745,29 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   const bsDailySollMinutes = computeDailySollMinutes(
     schedule as Parameters<typeof computeDailySollMinutes>[0],
   );
-  const bsHierarchy = buildSlotOverrideHierarchy({
-    employee: employeeSlots ?? null,
-    pattern: patternSlots ?? null,
-    tenantConfig: {
-      bsSlotFirstLongDayMinutes: tenantConfig?.bsSlotFirstLongDayMinutes ?? null,
-      bsSlotSecondLongDayMinutes: tenantConfig?.bsSlotSecondLongDayMinutes ?? null,
-      bsSlotShortDayMinutes: tenantConfig?.bsSlotShortDayMinutes ?? null,
-      bsSlotBlockWeekMinutes: tenantConfig?.bsSlotBlockWeekMinutes ?? null,
-      vocationalSchoolMinutesPerDay: tenantConfig?.vocationalSchoolMinutesPerDay ?? null,
-      vocationalSchoolBlockMinutesPerWeek:
-        tenantConfig?.vocationalSchoolBlockMinutesPerWeek ?? null,
-    },
-    dailySollMinutes: bsDailySollMinutes,
-  });
+  const makeBsHierarchy = (dailySollMinutes: number) =>
+    buildSlotOverrideHierarchy({
+      employee: employeeSlots ?? null,
+      pattern: patternSlots ?? null,
+      tenantConfig: {
+        bsSlotFirstLongDayMinutes: tenantConfig?.bsSlotFirstLongDayMinutes ?? null,
+        bsSlotSecondLongDayMinutes: tenantConfig?.bsSlotSecondLongDayMinutes ?? null,
+        bsSlotShortDayMinutes: tenantConfig?.bsSlotShortDayMinutes ?? null,
+        bsSlotBlockWeekMinutes: tenantConfig?.bsSlotBlockWeekMinutes ?? null,
+        vocationalSchoolMinutesPerDay: tenantConfig?.vocationalSchoolMinutesPerDay ?? null,
+        vocationalSchoolBlockMinutesPerWeek:
+          tenantConfig?.vocationalSchoolBlockMinutesPerWeek ?? null,
+      },
+      dailySollMinutes,
+    });
+  const bsHierarchy = makeBsHierarchy(bsDailySollMinutes);
+  // Issue #473: an explicit block-week figure (any bsSlotBlockWeekMinutes layer) is a deliberate
+  // override and wins over the MONTHLY_HOURS Ø-day default below.
+  const hasExplicitBlockWeekMinutes =
+    (employeeSlots?.bsSlotBlockWeekMinutes ??
+      patternSlots?.bsSlotBlockWeekMinutes ??
+      tenantConfig?.bsSlotBlockWeekMinutes ??
+      null) !== null;
 
   // Build set of distinct VOCATIONAL_SCHOOL dates within [effectiveStart, effectiveEnd]
   // from the provided absences array. Group by ISO week (Mon–Sun, UTC-based per
@@ -825,13 +859,34 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       unterrichtsMinutesByDate,
     };
 
+    // Issue #473 (owner delegated, decided by law): a MONTHLY_HOURS Azubi's Berufsschultag is
+    // credited to worked time at the Ø-day value (monthlyHours x 60 / contractual workdays of
+    // the full month, the value leave and holidays are priced at) - the individual daily Soll of
+    // §15 Abs. 2 BBiG for a contract that has no weekly-hours Soll. It is credited to worked
+    // minutes ONLY (contributesToExpected stays false), so the day reduces Soll exactly once.
+    // Without it dailySollMinutes was 0 (weeklyHours of a MONTHLY_HOURS row) and a school day
+    // credited nothing. Explicit bsSlot* overrides still win for the three daily slots; in a block
+    // week the Ø-day replaces the 40 h default cap (the legacy NOT-NULL figure) unless a
+    // bsSlotBlockWeekMinutes override exists, so a capped block week cannot turn into a minus.
+    const monthlyHoursBsDay =
+      scheduleType === "MONTHLY_HOURS"
+        ? calcMonthlyHoursDayMinutesTz(
+            schedule as Record<string, unknown>,
+            ds,
+            tz,
+            tenantConfig?.defaultWorkDays,
+          )
+        : 0;
     const res = resolveBsTagSlot(
       new Date(ds + "T00:00:00Z"),
       ordinalInWeek,
       weekContext,
-      bsHierarchy,
+      monthlyHoursBsDay > 0 ? makeBsHierarchy(monthlyHoursBsDay) : bsHierarchy,
       scheduleType as ScheduleType,
     );
+    if (monthlyHoursBsDay > 0 && res.slotType === "BLOCK_WEEK" && !hasExplicitBlockWeekMinutes) {
+      res.creditedMinutes = monthlyHoursBsDay;
+    }
 
     bsWorkedMinutes += res.creditedMinutes;
     // Phase 125 (D-01): step 8 returns totalWorked = workedMinutes + bsWorkedMinutes, so a BS day
@@ -1238,7 +1293,22 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   // `snapshotExpectedMinutes` exactly as before — the Ausgleichstag remains a paid,
   // Soll-free day — and moves only the balance.
   const withdrawalMinutes = Math.round(overtimeCompensationMinutes);
-  const balanceMinutes = grossBalanceMinutes - withdrawalMinutes;
+  // Issue #780: a month without an agreed contract (`month-contract.ts`) owes nothing and moves no
+  // balance - Ist stays reported in `workedMinutes`, the carry passes through unchanged.
+  // Issue #599 — approved corrections of a closed month, booked on a day of this window. An account
+  // movement like the withdrawal above: outside the § 615 clauses, Soll and Ist untouched. Compared
+  // by calendar day (`bookingDate` is a @db.Date, the window bounds are UTC-midnight days).
+  const windowFromDay = effectiveStart.toISOString().slice(0, 10);
+  const windowToDay = effectiveEnd.toISOString().slice(0, 10);
+  let accountCorrectionMinutes = 0;
+  for (const c of input.accountCorrections ?? []) {
+    const day = c.date.toISOString().slice(0, 10);
+    if (day >= windowFromDay && day <= windowToDay) accountCorrectionMinutes += c.minutes;
+  }
+  accountCorrectionMinutes = Math.round(accountCorrectionMinutes);
+  const balanceMinutes = isNoContractSchedule(schedule)
+    ? 0
+    : grossBalanceMinutes - withdrawalMinutes + accountCorrectionMinutes;
 
   const carryOverOut = carryOverIn + balanceMinutes;
 
@@ -1268,6 +1338,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     effectiveCarryOverOut,
     snapshotExpectedMinutes,
     overtimeCompensationMinutes: withdrawalMinutes,
+    accountCorrectionMinutes: isNoContractSchedule(schedule) ? 0 : accountCorrectionMinutes,
     gaps,
     coveredDates,
   };
@@ -1323,6 +1394,8 @@ export type WeekProgress = {
   toDateSollMinutes: number;
   /** The Ist of the part of the week up to and including yesterday (issue #438). */
   toDateWorkedMinutes: number;
+  /** Issue #596 (#845): today's net Soll (the day goal of the clock), same core, today alone. */
+  todaySollMinutes: number;
 };
 
 type WeekMonthPiece = { start: string; end: string };
@@ -1393,7 +1466,7 @@ export async function computeWeekProgress(
     pieces.map(async (piece) => {
       const [y, m] = piece.start.split("-").map(Number) as [number, number];
       const { start: calMonthStart, end: calMonthEnd } = monthRangeUtc(y, m, tz);
-      const schedule = await getEffectiveSchedule(app, employeeId, calMonthEnd);
+      const schedule = await resolveMonthContract(app, employeeId, calMonthEnd);
       return { piece, calMonthStart, schedule };
     }),
   );
@@ -1474,6 +1547,7 @@ export async function computeWeekProgress(
   let weekSollMinutes = 0;
   let toDateSollMinutes = 0;
   let toDateWorkedMinutes = 0;
+  let todaySollMinutes = 0;
 
   for (const { piece, calMonthStart, schedule } of pieceSchedules) {
     const pieceStartDate = new Date(piece.start + "T00:00:00Z");
@@ -1511,6 +1585,8 @@ export async function computeWeekProgress(
       employeeSlots,
       patternSlots,
       patternUnterrichtsMinutenByDow,
+      // Issue #599: week progress reads Soll and Ist only; a correction moves no week figure.
+      accountCorrections: [],
     };
 
     // Whole piece, no entries — the piece's own Soll (D-06: the WHOLE week's net Soll).
@@ -1522,6 +1598,21 @@ export async function computeWeekProgress(
       holidayDateStrings: pieceHolidays,
     });
     weekSollMinutes += wholePieceResult.expectedMinutes;
+
+    // Issue #596 (#845): today's own Soll — the piece's core on the one day, no entries (the
+    // goal of the day, not its saldo; today still never counts towards the saldo, #438).
+    if (todayStr >= piece.start && todayStr <= piece.end) {
+      const todayResult = closeEmployeeMonth({
+        ...sharedPieceInput,
+        monthStart: todayDate,
+        monthFirstDay: todayDate,
+        monthEnd: todayDate,
+        monthLastDay: todayDate,
+        entries: [],
+        holidayDateStrings: new Set([...pieceHolidays].filter((d) => d === todayStr)),
+      });
+      todaySollMinutes = todayResult.expectedMinutes;
+    }
 
     // The piece clipped to <= yesterday, with its entries — to-date Soll and Ist (issue #438:
     // today never counts). A piece entirely after yesterday (a future piece of the current
@@ -1552,5 +1643,25 @@ export async function computeWeekProgress(
     toDateWorkedMinutes += toDateResult.workedMinutes;
   }
 
-  return { weekSollMinutes, toDateSollMinutes, toDateWorkedMinutes };
+  return { weekSollMinutes, toDateSollMinutes, toDateWorkedMinutes, todaySollMinutes };
+}
+
+/**
+ * The contract of a month, or {@link NO_CONTRACT_SCHEDULE} when none is valid at `monthEnd`.
+ * `scheduleAt` is the instant the contract row itself is read at - the report and live paths use
+ * the month's end, the close paths their historical mid-month convention; only the question
+ * "is there a contract at all in this month" is always judged at `monthEnd`.
+ */
+export async function resolveMonthContract(
+  app: FastifyInstance,
+  employeeId: string,
+  monthEnd: Date,
+  scheduleAt: Date = monthEnd,
+) {
+  const anyContract = await app.prisma.workSchedule.findFirst({
+    where: { employeeId, validFrom: { lte: monthEnd } },
+    select: { id: true },
+  });
+  if (!anyContract) return NO_CONTRACT_SCHEDULE;
+  return getEffectiveSchedule(app, employeeId, scheduleAt);
 }

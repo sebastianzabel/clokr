@@ -125,7 +125,6 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
         data: {
           email: `admin-${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "ADMIN",
           isActive: true,
         },
       });
@@ -164,7 +163,6 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
         data: {
           email: `as-${s}@test.de`,
           passwordHash: await bcrypt.hash("test1234", 10),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -393,7 +391,6 @@ describe("auto-close-month plugin — per-tenant fault isolation (D-04)", () => 
       data: {
         email: `u-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

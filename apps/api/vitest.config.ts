@@ -1,6 +1,11 @@
 import { defineConfig } from "vitest/config";
 import { TEST_DATABASE_WORKER_COUNT } from "./src/utils/test-database";
 
+// Issue #172: pin the process timezone BEFORE any worker is forked (workers inherit the env), so a
+// run no longer depends on the host TZ. An explicit TZ=... in the shell wins, which is how the DST
+// regression tests are run under Europe/Berlin as well.
+process.env.TZ ??= "UTC";
+
 export default defineConfig({
   test: {
     globals: true,

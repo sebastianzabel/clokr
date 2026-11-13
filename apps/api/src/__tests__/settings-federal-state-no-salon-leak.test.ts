@@ -2,7 +2,7 @@
  * Phase 71b Plan 06 (issue #71), D-13/AC-18 — `PUT /api/v1/settings/work` changing
  * `Tenant.federalState` must NOT touch any `Salon.federalState` or any `PublicHoliday` row. Mirrors
  * `settings-store-hours-salon-mirror.test.ts`'s structure with the OPPOSITE expectation: that file
- * proves a `storeHours` write DOES mirror into a salon; this one proves `federalState` never does.
+ * proves a tenant-level opening-hours write DID mirror into a salon; this one proves `federalState` never does.
  *
  * `seedTestData()` does not create a Salon here — this file opts out via `{ withDefaultSalon:
  * false }`, matching the mirror test's own convention, and builds its own two-salon topology.

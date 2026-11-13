@@ -44,7 +44,7 @@ async function loginAsTenantAdmin(
   await page.getByRole("button", { name: /anmelden/i }).click();
   // Wait for the app shell to take over — the redirect target may vary
   // (/dashboard, /time-entries, /) so wait on any (app)-layout marker.
-  await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+  await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
 }
 
 /**
@@ -147,8 +147,10 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await page.goto("/leave");
 
     await page.getByTestId("leave-view-list").click();
-    await expect(page.getByTestId("leave-filter-status")).toBeVisible();
-    await expect(page.getByTestId("leave-filter-type")).toBeVisible();
+    // #851: the status and type filters live in the TableToolbar block („+ Filter“ popover).
+    const filters = page.getByTestId("leave-filters");
+    await expect(filters).toBeVisible();
+    await expect(filters.getByRole("button", { name: "+ Filter" })).toBeVisible();
   });
 
   test("opens form modal with full leave-form-* testid coverage", async ({ page, tenant }) => {
@@ -222,11 +224,12 @@ test.describe("Leave (Urlaub) UI flow", () => {
   });
 
   test("manager review modal exposes leave-approval-modal-* testids", async ({ page, tenant }) => {
-    // Seed a SICK leave for the bootstrap admin's employee via the API so the
-    // /team/leave Genehmigungen tab has something to render. Using SICK over
-    // VACATION sidesteps the vacation-entitlement guard on bare-bones tenants.
-    // Kept inside the current year — /team/leave loads its rows year-scoped, so a
-    // next-year request is created but never rendered (issue #319).
+    // Seed a SICK leave for another employee of the tenant via the API so the /team/leave Anträge
+    // tab has an open row to show. Using SICK over VACATION sidesteps the vacation-entitlement
+    // guard on bare-bones tenants. Kept inside the current year - the Anträge list is year-scoped
+    // (issue #319); the open filter and the inbox list open requests of every year since #840.
+    // Issue #840 (E-02): the decision itself is made in the inbox, so the open row's action leads
+    // there and the review dialog (and its testids) is asserted on /inbox.
     const dateStr = futureWeekdayInCurrentYear(100);
 
     // Create a second employee in the tenant so the admin (manager) is not
@@ -262,9 +265,8 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/team/leave");
 
-    // Open the review modal via the row's testid action — works regardless
-    // of which tab the page lands on (list shows it, approvals tab shows it).
-    // Switch to the list view tab first to guarantee a stable row.
+    // Open the review modal via the row's testid action. The Anträge tab shows the open row; its
+    // action „Im Posteingang prüfen“ is a link into the inbox, where the review dialog opens.
     const reviewBtn =
       leave.status === "CANCELLATION_REQUESTED"
         ? page.getByTestId(`leave-team-row-${leave.id}-review-cancel`)
@@ -276,6 +278,7 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await page.getByTestId("leave-team-view-list").click();
     await expect(reviewBtn).toBeVisible();
     await reviewBtn.click();
+    await page.waitForURL(/\/team\/aufgaben/);
 
     const modal = page.getByTestId("leave-approval-modal");
     await expect(modal).toBeAttached();
@@ -291,13 +294,19 @@ test.describe("Leave (Urlaub) UI flow", () => {
     await page.goto("/leave");
     await page.getByTestId("leave-view-list").click();
 
-    // Select the "Genehmigt" option via the testid wired on the <option>.
-    // Playwright's selectOption resolves either by value or by label; here
-    // we use value because the testid lives on the option element itself.
-    await page.getByTestId("leave-filter-status").selectOption("APPROVED");
+    // #851: pick „Genehmigt“ in the Status group of the toolbar popover.
     // No assertion on row count — the empty-tenant state has no rows.
-    // The contract proven here is "filter-status is addressable + driveable
-    // via testid"; row-state behavior is covered by the SICK-create test.
-    await expect(page.getByTestId("leave-filter-status")).toHaveValue("APPROVED");
+    // The contract proven here is "the status filter is addressable + driveable";
+    // row-state behavior is covered by the SICK-create test.
+    const filters = page.getByTestId("leave-filters");
+    await filters.getByRole("button", { name: "+ Filter" }).click();
+    const status = page.getByRole("radiogroup", { name: "Status" });
+    await status.getByRole("radio", { name: "Genehmigt" }).click();
+    await expect(status.getByRole("radio", { name: "Genehmigt" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await page.keyboard.press("Escape");
+    await expect(filters.getByText("Status: Genehmigt")).toBeVisible();
   });
 });

@@ -86,6 +86,8 @@ Applied to every employee in the staging DB (`apps/api/scripts/pseudonymize-dump
 | User                               | passwordHash        | `"ANONYMIZED"` (no login possible — see step 8)                                                                                                                              |
 | Invitation, OtpToken, RefreshToken | (whole row)         | hard-deleted                                                                                                                                                                 |
 | OperatorAccount                    | all credentials     | email `operator-{id8}@example.invalid`, `passwordHash` `"ANONYMIZED"`, `isActive` false, TOTP secret, enrolment, replay step null, recovery-code hashes empty, lockout reset |
+| PushSubscription                   | (whole row)         | hard-deleted (Issue #608, D-22): a real device push address of prod never reaches int; people re-enable push on int themselves                                               |
+| PresencePairingCode                | (whole row)         | hard-deleted (Issue #610): one-time pairing codes (hash, device address, hostname) of prod never reach int                                                                   |
 
 What is **preserved**: `Employee.id`, `Employee.employeeNumber`, `User.isActive`, `AuditLog`, `OperatorAuditLog`, `SupportAccess`, and all time/leave/absence/schedule/overtime rows **including their free-text notes**.
 
@@ -258,7 +260,7 @@ Example output:
   Change it in the app if this environment is shared.
 ```
 
-The script picks an **existing active user with an Employee who holds the Admin system role as a stored assignment** (lowest id among them; since Issue #539 the `User.role` column is not consulted) and never creates a person. Since Issue #551 an admin without an Employee has no tenant and cannot sign in (403 `TENANT_REQUIRED`), so the default pick skips such users and a pinned `--email` of one is refused before anything is written. The same refusal applies to a pinned user without any stored role assignment (it would be refused at sign-in with 403 `NO_ROLE_ASSIGNED`, so a restored password for it would not log in). Useful flags:
+The script picks an **existing active user with an Employee who holds the Admin system role as a stored assignment** (lowest id among them; since Issue #539 no role column is consulted, and since Issue #641 the column does not exist any more) and never creates a person. Since Issue #551 an admin without an Employee has no tenant and cannot sign in (403 `TENANT_REQUIRED`), so the default pick skips such users and a pinned `--email` of one is refused before anything is written. The same refusal applies to a pinned user without any stored role assignment (it would be refused at sign-in with 403 `NO_ROLE_ASSIGNED`, so a restored password for it would not log in). Useful flags:
 
 - `--email <address>` — pin a specific admin (one that has an Employee) instead of the deterministic lowest-id pick
 - `--password <value>` — supply a password instead of letting the script generate one

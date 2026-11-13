@@ -75,7 +75,6 @@ describe("Überstundenausgleich — ONE formula for gate, booking and preview (I
       data: {
         email: `ot468f-f1-${Date.now().toString(36)}@test.de`,
         passwordHash: f1PasswordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -127,7 +126,6 @@ describe("Überstundenausgleich — ONE formula for gate, booking and preview (I
       data: {
         email: `ot468f-m1-${Date.now().toString(36)}@test.de`,
         passwordHash: data.adminUser.passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -386,7 +384,6 @@ describe("Überstundenausgleich — ONE formula for gate, booking and preview (I
       data: {
         email: `ot468f-m2-${Date.now().toString(36)}@test.de`,
         passwordHash: data.adminUser.passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

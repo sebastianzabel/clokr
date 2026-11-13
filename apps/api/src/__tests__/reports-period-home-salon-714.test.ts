@@ -519,7 +519,6 @@ describe("Issue #714 — the salon views of the period report add up to all salo
         data: {
           email: `rph714-${suffix}@example.invalid`,
           passwordHash: await bcrypt.hash("test1234", 4),
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

@@ -23,16 +23,15 @@
  * own. A registered reader that moved or stopped calling the rule turns the test red; re-register
  * it deliberately.
  *
- * Exceptions (check A): the auto-close cron and the deferred close select by login state on
- * purpose (owner decision 16.10.2026, D-03: a switch changes WHOM payroll months are closed for
- * and needs its own decision; follow-up #668), and two recipient lookups decide who is TOLD by
- * login state - not a person population of a report. Every exception is dated, reasoned and must
+ * Exceptions (check A): two recipient lookups decide who is TOLD by login state - not a person
+ * population of a report. (The auto-close cron and the deferred close used to be registered here
+ * too; since Issue #668 they select by employment and the guard enforces it.) Every exception is dated, reasoned and must
  * match exactly one finding; a finding without an exception, or an exception without a finding,
  * fails.
  *
  * Why the TypeScript AST and not a regex: a comment or a string mentioning the text is trivia or a
  * token to the parser, never a property. Stated blind spots: a filter assembled from a variable or
- * a spread (for example `...compatRoleUserWhere(...)`) is not a literal and is not seen; a `where`
+ * a spread (a helper's spread return value) is not a literal and is not seen; a `where`
  * held in a variable is not seen. Review, not this test, has to catch a creative workaround.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -142,27 +141,6 @@ function matchExceptions(
 
 // The register. Dates are the day the owner decision / the guard was written.
 const LOGIN_FILTER_EXCEPTIONS: readonly LoginFilterException[] = [
-  {
-    file: "apps/api/src/contexts/working-time-account/plugins/auto-close-month.ts",
-    anchor: "user: { isActive: true },",
-    kind: "D-03",
-    since: "2026-10-16",
-    issue: "#668",
-    reason:
-      "Owner decision 16.10.2026 (D-03): the auto-close cron keeps selecting by login state; whom " +
-      "payroll months are closed for is a write-path behaviour change with its own decision. " +
-      "Measured by scripts/audit-613-month-close-population.ts.",
-  },
-  {
-    file: "apps/api/src/contexts/working-time-account/deferred-month-close.ts",
-    anchor: "user: { isActive: true },",
-    kind: "D-03",
-    since: "2026-10-16",
-    issue: "#668",
-    reason:
-      "Owner decision 16.10.2026 (D-03): the deferred close keeps the cron's population (parity " +
-      "with auto-close-month.ts) until the follow-up switches both.",
-  },
   {
     file: "apps/api/src/contexts/working-time-account/plugins/auto-close-month.ts",
     anchor: "user: { isActive: true, id: { in: scopedMonthCloseCloseHolderIds } },",
@@ -314,10 +292,19 @@ const READERS: readonly ReaderEntry[] = [
     name: "vacationYearRows",
     calls: ["reportPopulationWhere", "listEntitlementsForYear"],
   },
-  route(OVERTIME, "/close-month/status", ["reportPopulationWhere"]),
-  route(OVERTIME, "/close-month/year-status", ["reportPopulationWhere"]),
-  route(DASHBOARD, "/team-week", ["reportPopulationWhere"]),
-  route(DASHBOARD, "/today-attendance", ["reportPopulationWhere"]),
+  // Issue #668: the deferred close selects by employment (the month-close variant of the rule).
+  {
+    file: "apps/api/src/contexts/working-time-account/deferred-month-close.ts",
+    kind: "function",
+    name: "getDeferredMonthCloseState",
+    calls: ["monthClosePopulationWhere"],
+  },
+  // Issue #668: the status routes show exactly the persons the cron and the deferred list can
+  // produce, so an overdue month can always be opened and closed in the UI.
+  route(OVERTIME, "/close-month/status", ["monthClosePopulationWhere"]),
+  route(OVERTIME, "/close-month/year-status", ["monthClosePopulationWhere"]),
+  route(DASHBOARD, "/team-week", ["reportPopulationWhere", "hasWorkScheduleInPeriodWhere"]),
+  route(DASHBOARD, "/today-attendance", ["reportPopulationWhere", "hasWorkScheduleInPeriodWhere"]),
   route(DASHBOARD, "/team-trend", ["reportPopulationWhere"]),
   route(DASHBOARD, "/overtime-trend", ["reportPopulationWhere"]),
   route(DASHBOARD, "/overtime-overview", ["listOvertimeAccountsForTenant", "isEmployedInPeriod"]),
@@ -469,7 +456,7 @@ describe("Issue #613 (AC-613-4) - the real tree", () => {
     for (const rel of rels) expect(statSync(join(REPO_ROOT, rel)).size).toBeGreaterThan(0);
   });
 
-  it("every exception is dated, reasoned and (D-03) tied to the follow-up issue", () => {
+  it("every exception is dated, reasoned and (D-03, if any) tied to the follow-up issue", () => {
     expect(LOGIN_FILTER_EXCEPTIONS.length).toBeGreaterThan(0);
     for (const ex of LOGIN_FILTER_EXCEPTIONS) {
       expect(ex.since).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -505,7 +492,7 @@ describe("Issue #613 (AC-613-4) - the real tree", () => {
       ambiguous.map((e) => `${e.file} ${e.anchor}`),
       "an exception matches more than one finding - make its anchor unique",
     ).toEqual([]);
-    // The measured register: exactly the four owner-deferred / recipient sites.
+    // The measured register: exactly the recipient lookups.
     expect(findings).toHaveLength(LOGIN_FILTER_EXCEPTIONS.length);
   });
 

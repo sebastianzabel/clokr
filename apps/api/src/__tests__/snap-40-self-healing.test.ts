@@ -102,7 +102,6 @@ async function createTenant(
     data: {
       email: `admin-${s}@snap40.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -137,7 +136,6 @@ async function createTenant(
     data: {
       email: `emp-${s}@snap40.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

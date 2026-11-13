@@ -43,7 +43,6 @@ describe("Issue #664 - a month closed in the legacy format is closed for every l
       data: {
         email: `lg664-${s}@test.de`,
         passwordHash: "unused",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

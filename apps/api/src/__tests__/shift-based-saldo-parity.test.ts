@@ -102,7 +102,6 @@ async function createFixtureTenant(
     data: {
       email: `admin-${s}@parity.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -139,7 +138,6 @@ async function createFixtureTenant(
     data: {
       email: `emp-${s}@parity.test`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

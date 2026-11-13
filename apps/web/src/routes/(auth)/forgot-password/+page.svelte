@@ -1,4 +1,8 @@
 <script lang="ts">
+  import AuthFrame from "$lib/components/auth/AuthFrame.svelte";
+  import FormField from "$lib/components/ui/FormField.svelte";
+  import Note from "$lib/components/ui/Note.svelte";
+  import Spinner from "$lib/components/ui/Spinner.svelte";
   import { preventDefault } from "svelte/legacy";
 
   import { api } from "$api/client";
@@ -26,164 +30,47 @@
   <title>Passwort vergessen – Clokr</title>
 </svelte:head>
 
-<div class="login-page">
-  <div class="login-card">
-    <div class="login-logo">
-      <span class="login-logo-icon">⏱️</span>
-      <h1 class="login-title">Passwort vergessen</h1>
-      <p class="login-subtitle">
-        Geben Sie Ihre E-Mail-Adresse ein, um einen Link zum Zurücksetzen zu erhalten.
-      </p>
+<AuthFrame
+  title="Passwort vergessen"
+  subtitle="Gib deine E-Mail-Adresse ein, dann schicken wir dir einen Link zum Zurücksetzen."
+>
+  {#if success}
+    <div role="status">
+      <Note tone="ok"
+        >Falls es ein Konto mit dieser E-Mail-Adresse gibt, haben wir dir einen Link geschickt.
+        Schau in dein Postfach.</Note
+      >
     </div>
+  {:else}
+    <form onsubmit={preventDefault(handleSubmit)} class="auth-form">
+      {#if error}
+        <div role="alert"><Note tone="bad">{error}</Note></div>
+      {/if}
 
-    {#if success}
-      <div class="alert alert-success" role="alert">
-        <span>✓</span>
-        <span
-          >Falls ein Konto mit dieser E-Mail existiert, haben wir einen Link zum Zurücksetzen
-          gesendet.</span
-        >
-      </div>
-      <div class="back-footer">
-        <a href="/login" class="back-link">Zurück zur Anmeldung</a>
-      </div>
-    {:else}
-      <form onsubmit={preventDefault(handleSubmit)} class="login-form">
-        {#if error}
-          <div class="alert alert-error" role="alert">
-            <span>⚠</span>
-            <span>{error}</span>
-          </div>
-        {/if}
-
-        <div class="form-group">
-          <label class="form-label" for="email">E-Mail-Adresse</label>
+      <FormField label="E-Mail-Adresse">
+        {#snippet field({ id, describedBy, invalid })}
           <input
-            id="email"
+            {id}
             type="email"
             bind:value={email}
             required
             class="form-input"
-            placeholder="max@clokr.de"
+            placeholder="name@firma.de"
             autocomplete="email"
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
           />
-        </div>
+        {/snippet}
+      </FormField>
 
-        <button type="submit" disabled={loading} class="btn btn-primary login-submit">
-          {#if loading}
-            <span class="login-spinner"></span>
-            Senden…
-          {:else}
-            Link senden
-          {/if}
-        </button>
-      </form>
+      <button type="submit" disabled={loading} class="btn btn-primary auth-submit">
+        {#if loading}<Spinner size={16} label="Link wird gesendet" />{/if}
+        Link senden
+      </button>
+    </form>
+  {/if}
 
-      <div class="back-footer">
-        <a href="/login" class="back-link">Zurück zur Anmeldung</a>
-      </div>
-    {/if}
-  </div>
-</div>
-
-<style>
-  .login-page {
-    min-height: 100dvh;
-    background-color: var(--bg-subtle);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
-  }
-
-  .login-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-lg);
-    padding: 2.5rem;
-    width: 100%;
-    max-width: 420px;
-  }
-
-  .login-logo {
-    text-align: center;
-    margin-bottom: 2rem;
-  }
-  .login-logo-icon {
-    display: inline-block;
-    font-size: 2.5rem;
-    margin-bottom: 0.75rem;
-    line-height: 1;
-  }
-  .login-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--brand);
-    margin-bottom: 0.375rem;
-  }
-  .login-subtitle {
-    font-size: 0.9375rem;
-    color: var(--text-muted);
-  }
-
-  .login-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1.125rem;
-  }
-
-  .login-submit {
-    width: 100%;
-    padding: 0.7rem 1.25rem;
-    font-size: 1rem;
-    margin-top: 0.25rem;
-  }
-
-  .login-spinner {
-    display: inline-block;
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-top-color: #fff;
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .back-footer {
-    text-align: center;
-    margin-top: 1.5rem;
-  }
-
-  .back-link {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    text-decoration: underline;
-  }
-
-  .alert {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-radius: var(--r-md);
-    font-size: 0.875rem;
-  }
-
-  .alert-error {
-    background: #fef2f2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
-  }
-  .alert-success {
-    background: #f0fdf4;
-    color: #166534;
-    border: 1px solid #bbf7d0;
-  }
-</style>
+  {#snippet footer()}
+    <a href="/login" class="auth-link">Zurück zur Anmeldung</a>
+  {/snippet}
+</AuthFrame>

@@ -41,7 +41,6 @@ describe("GET /api/v1/salons", () => {
       data: {
         email: `mgr-salons-${s}@test.de`,
         passwordHash,
-        role: "MANAGER",
         isActive: true,
       },
     });
@@ -196,7 +195,7 @@ async function createManagerFor(app: FastifyInstance, tenantId: string, labelPre
   const s = labelPrefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const passwordHash = await bcrypt.hash("test1234", 10);
   const mgrUser = await app.prisma.user.create({
-    data: { email: `${s}@test.de`, passwordHash, role: "MANAGER", isActive: true },
+    data: { email: `${s}@test.de`, passwordHash, isActive: true },
   });
   const mgrEmployee = await app.prisma.employee.create({
     data: {
@@ -622,7 +621,7 @@ describe("Salon deactivate/activate (Phase 64b Plan 02, issue #64)", () => {
     const res = await postAction(tenantA.adminToken, salonA1.id, "deactivate");
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body)).toEqual({
-      error: "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.",
+      error: "Der letzte aktive Salon eines Unternehmens kann nicht deaktiviert werden.",
     });
 
     const row = await app.prisma.salon.findUnique({ where: { id: salonA1.id } });

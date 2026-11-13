@@ -78,7 +78,6 @@ describe("GET /shifts/week — workDays-primary divisor, end-to-end (SOLL-WORKDA
       data: {
         email: `admin-${suffix}@test.de`,
         passwordHash: adminPasswordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -126,7 +125,6 @@ describe("GET /shifts/week — workDays-primary divisor, end-to-end (SOLL-WORKDA
       data: {
         email: `emp-${suffix}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

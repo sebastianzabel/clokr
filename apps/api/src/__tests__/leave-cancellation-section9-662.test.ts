@@ -44,7 +44,6 @@ describe("Cancellation approval supersedes § 9 credits (Issue #662)", () => {
       data: {
         email: `second-admin-662-${Date.now().toString(36)}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

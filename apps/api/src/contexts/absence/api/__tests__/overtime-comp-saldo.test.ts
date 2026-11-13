@@ -65,7 +65,6 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
       data: {
         email: `otc-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -167,7 +166,6 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
       data: {
         email: `mgr2-${Date.now().toString(36)}@test.de`,
         passwordHash: pw,
-        role: "MANAGER",
         isActive: true,
       },
     });
@@ -381,7 +379,7 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
     const n = ++fixtureCounter;
     const s = `${Date.now().toString(36)}-sb${n}`;
     const user = await app.prisma.user.create({
-      data: { email: `otc-sb-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `otc-sb-${s}@test.de`, passwordHash: "x", isActive: true },
     });
     const hire = new Date(DAY + "T00:00:00Z");
     hire.setUTCDate(1);
@@ -445,7 +443,6 @@ describe("Überstundenausgleich debits the Arbeitszeitkonto (issue #220)", () =>
             data: {
               email: `otc-sbv-${s}@test.de`,
               passwordHash: "x",
-              role: "EMPLOYEE",
               isActive: true,
             },
           })

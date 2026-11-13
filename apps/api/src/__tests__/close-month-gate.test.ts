@@ -84,7 +84,6 @@ async function createGapEmployee(
     data: {
       email: `gap-${suffix}@test.de`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });
@@ -160,7 +159,6 @@ describe("close-month-gate — HTTP confirmGaps gate (Cases 1/2/3/4)", () => {
       data: {
         email: `admin-gate-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -203,7 +201,6 @@ describe("close-month-gate — HTTP confirmGaps gate (Cases 1/2/3/4)", () => {
       data: {
         email: `nogap-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -436,7 +433,6 @@ describe("close-month-gate — BREAK-05 unconfirmedBreakDays gate (RED, Phase 92
       data: {
         email: `bg-${suffix}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -515,7 +511,6 @@ describe("close-month-gate — BREAK-05 unconfirmedBreakDays gate (RED, Phase 92
       data: {
         email: `admin-bg-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });

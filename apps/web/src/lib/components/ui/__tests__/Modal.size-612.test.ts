@@ -4,7 +4,8 @@ import { describe, it, expect } from "vitest";
 import { createRawSnippet } from "svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import Modal from "../Modal.svelte";
-import modalSource from "../Modal.svelte?raw";
+// #843 D-843-16: the size CSS moved from Modal.svelte into the Dialog block Modal renders through
+import modalSource from "../Dialog.svelte?raw";
 
 const children = createRawSnippet(() => ({ render: () => "<p>Inhalt</p>" }));
 

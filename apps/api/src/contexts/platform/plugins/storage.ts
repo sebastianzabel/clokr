@@ -56,8 +56,6 @@ export function isStorageUnavailableError(err: unknown): boolean {
 
 export type StorageStatus = {
   available: boolean;
-  /** True when MINIO_* is missing (production without configuration): no client exists. */
-  unconfigured: boolean;
   checkedAt: string | null;
 };
 
@@ -85,28 +83,7 @@ const CHECK_TIMEOUT_MS = 2_000;
 const STORAGE_REFRESH_MIN_INTERVAL_MS = 30_000;
 
 export const storagePlugin = fp(async (app) => {
-  const { MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_MISSING } = config;
-
-  // Production without configuration (Issue #184): no client is built, so no call can ever go to a
-  // guessed host. One clear error at start; every operation answers StorageUnavailableError.
-  if (MINIO_MISSING.length > 0 || !MINIO_ENDPOINT || !MINIO_ACCESS_KEY || !MINIO_SECRET_KEY) {
-    app.log.error(
-      { missing: MINIO_MISSING },
-      `MinIO: object store is NOT configured (missing ${MINIO_MISSING.join(", ")}) — uploads answer 503 STORAGE_UNAVAILABLE until it is set`,
-    );
-    const refuse = async (): Promise<never> => {
-      throw new StorageUnavailableError();
-    };
-    app.decorate("storage", {
-      upload: refuse,
-      getBuffer: refuse,
-      delete: refuse,
-      check: async () => false,
-      refresh: () => {},
-      status: () => ({ available: false, unconfigured: true, checkedAt: null }),
-    });
-    return;
-  }
+  const { MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY } = config;
 
   const bucket = config.MINIO_BUCKET;
   const client = new Client({
@@ -117,9 +94,9 @@ export const storagePlugin = fp(async (app) => {
     secretKey: MINIO_SECRET_KEY,
   });
 
-  let state: StorageStatus = { available: false, unconfigured: false, checkedAt: null };
+  let state: StorageStatus = { available: false, checkedAt: null };
   function mark(available: boolean) {
-    state = { available, unconfigured: false, checkedAt: new Date().toISOString() };
+    state = { available, checkedAt: new Date().toISOString() };
   }
 
   // Probes the bucket; creates it when the store answers but the bucket is missing.
@@ -149,7 +126,7 @@ export const storagePlugin = fp(async (app) => {
 
   // Start-up probe. An unreachable store does not stop the API (an orphaned object store must not
   // take time tracking down with it); it is reported loudly here, in /api/v1/ready and on every
-  // upload. A MISSING configuration is handled above (unconfigured, also no start abort).
+  // upload. A MISSING configuration never gets here: config.ts refuses the start in production.
   await probe();
 
   // Runs a store call; a store-level failure flips the state and surfaces as the typed error.

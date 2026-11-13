@@ -7,6 +7,7 @@
   and stays signed in. Nothing is cached here - the API answers every read afresh.
 -->
 <script lang="ts">
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -99,11 +100,8 @@
         >
       </div>
     {:else}
-      <div aria-busy="true" data-testid="op-support-loading">
-        <span class="sr-only" role="status">Wird geladen …</span>
-        <div class="skeleton row"></div>
-        <div class="skeleton row"></div>
-        <div class="skeleton row"></div>
+      <div data-testid="op-support-loading">
+        <Skeleton shape="block" count={3} height="48px" />
       </div>
     {/if}
   </div>
@@ -113,10 +111,5 @@
   .message {
     margin: 0 0 16px;
     font-size: 16px;
-  }
-
-  .row {
-    height: 48px;
-    margin-bottom: 8px;
   }
 </style>

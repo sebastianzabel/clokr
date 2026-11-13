@@ -11,8 +11,9 @@
  *  2. Isolation (D-04) — each test gets a different tenantId. Combined with
  *     the first test, the annotations on the run prove the two ids differ.
  *  3. Admin token validity — the returned bearer token authenticates against
- *     `/api/v1/me` and resolves to an ADMIN user inside the freshly-created
- *     tenant.
+ *     `/api/v1/me/context`, resolves to the freshly-created tenant and carries admin rights:
+ *     a route behind `audit-log:read` (tenant-wide, admin-level) answers 200 for it and 401
+ *     without it.
  *
  * Per-test scope (D-04) means teardown of all three tenants runs inside the
  * fixture afterEach phase. A separate Plan 73-02 verification step in the
@@ -56,12 +57,20 @@ test.describe("tenant fixture", () => {
   });
 
   test("admin token authenticates against the API", async ({ tenant }) => {
-    const res = await fetch(`${API_BASE}/api/v1/me`, {
+    const res = await fetch(`${API_BASE}/api/v1/me/context`, {
       headers: { authorization: `Bearer ${tenant.adminToken}` },
     });
     expect(res.status).toBe(200);
-    const me = (await res.json()) as { tenantId: string; role: string };
-    expect(me.tenantId).toBe(tenant.tenantId);
-    expect(me.role).toBe("ADMIN");
+    const context = (await res.json()) as { tenant: { id: string } };
+    expect(context.tenant.id).toBe(tenant.tenantId);
+
+    // The token also carries admin rights: the stored Admin assignment of the bootstrap user
+    // grants `audit-log:read`, which a token without any permission would be refused (403).
+    const guarded = await fetch(`${API_BASE}/api/v1/audit-logs?limit=1`, {
+      headers: { authorization: `Bearer ${tenant.adminToken}` },
+    });
+    expect(guarded.status).toBe(200);
+    const unauthenticated = await fetch(`${API_BASE}/api/v1/audit-logs?limit=1`);
+    expect(unauthenticated.status).toBe(401);
   });
 });

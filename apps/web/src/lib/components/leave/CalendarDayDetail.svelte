@@ -87,9 +87,9 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     padding: 0.5rem 0.75rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
   }
   .day-detail-dot {
     width: 10px;
@@ -104,6 +104,6 @@
   }
   .day-detail-type {
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 </style>

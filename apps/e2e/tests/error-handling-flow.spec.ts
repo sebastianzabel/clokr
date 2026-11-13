@@ -3,15 +3,15 @@ import { loginAsAdmin, loginAsTenantAdmin, screenshotPage, TEST_ADMIN } from "./
 
 const WRONG_CURRENT_PASSWORD = "wrongcurrentpassword";
 
-// Routes whose location the main navigation must mark (#515). The alternatives in `name` are the
-// two layouts' labels, not a branch: the sidebar says "Zeiterfassung" where the tab bar says
-// "Zeit", and on <=960px a page behind "Mehr" is held by the overflow trigger, whose accessible
-// name then reads "Mehr, aktuelle Seite: <Label>" instead of the sidebar link's plain label.
+// Routes whose location the main navigation must mark (#515, URLs of #844). The alternatives in `name`
+// are the two layouts' labels, not a branch: on <=960px a page that is no tab of the (team) tab bar is
+// held by the overflow trigger, whose accessible name then reads "Mehr, aktuelle Seite: <Label>"
+// instead of the sidebar link's plain label.
 const NAV_LOCATIONS: { route: string; name: RegExp }[] = [
-  { route: "/dashboard", name: /^Übersicht$/ },
-  { route: "/time-entries", name: /^Zeit(erfassung)?$/ },
-  { route: "/leave", name: /^Abwesenheiten$/ },
-  { route: "/admin/employees", name: /^(Mehr, aktuelle Seite: )?Mitarbeitende$/ },
+  { route: "/ich/tag", name: /^Mein Tag$/ },
+  { route: "/ich/zeiten", name: /^(Mehr, aktuelle Seite: )?Zeiten$/ },
+  { route: "/ich/abwesenheiten", name: /^(Mehr, aktuelle Seite: )?Abwesenheiten$/ },
+  { route: "/verwalten/personen", name: /^(Mehr, aktuelle Seite: )?Personen$/ },
 ];
 
 test.describe("Error Handling + UX Plausibility", () => {
@@ -27,10 +27,13 @@ test.describe("Error Handling + UX Plausibility", () => {
     // The What's-New drawer, which would intercept the pointer events aimed at the settings form,
     // is stubbed away by the `page` override of the `../fixtures` test.
     await page.goto("/settings");
+    // #851 (prototype „Sicherheit“): the password form opens in a dialog.
+    await page.getByRole("button", { name: "Passwort ändern", exact: true }).click();
 
-    const curPw = page.locator("#cur-pw");
-    const newPw = page.locator("#new-pw");
-    const confirmPw = page.locator("#confirm-pw");
+    // #851: the fields come from the FormField block (generated ids); found by their labels.
+    const curPw = page.getByLabel("Aktuelles Passwort", { exact: true });
+    const newPw = page.getByLabel("Neues Passwort", { exact: true });
+    const confirmPw = page.getByLabel("Passwort bestätigen", { exact: true });
 
     // A missing form must fail the test, never skip its body.
     await expect(curPw).toBeVisible();
@@ -41,7 +44,7 @@ test.describe("Error Handling + UX Plausibility", () => {
     await newPw.fill("NewStr0ng!Pass#42");
     await confirmPw.fill("NewStr0ng!Pass#42");
 
-    const submit = page.getByRole("button", { name: "Passwort ändern", exact: true });
+    const submit = page.getByRole("button", { name: "Passwort speichern", exact: true });
     await expect(submit).toBeEnabled();
 
     // Register the response wait BEFORE the click so a fast answer cannot be missed.
@@ -69,41 +72,34 @@ test.describe("Error Handling + UX Plausibility", () => {
     await screenshotPage(page, "flow-error-password-change");
   });
 
-  test("dashboard provides clear information hierarchy", async ({ page }, testInfo) => {
+  test("dashboard provides clear information hierarchy", async ({ page }) => {
     await page.goto("/dashboard");
 
-    // 1. The page greets the user (PageHead h1 "Guten Morgen/Tag/Abend, <name>").
-    await expect(page.getByTestId("dashboard-page").getByRole("heading", { level: 1 })).toHaveText(
-      /Guten (Morgen|Tag|Abend)/,
-    );
+    // 1. The H1 is the page name (Issue #574: H1 = menu name); the greeting is the PageHead sub.
+    const dashboardHead = page.getByTestId("dashboard-page").locator(".page-head");
+    await expect(dashboardHead.getByRole("heading", { level: 1 })).toHaveText("Übersicht");
+    await expect(dashboardHead.locator(".sub")).toHaveText(/Guten (Morgen|Tag|Abend)/);
 
     // 2. The hero clock is prominent.
-    const clock = page.locator(".timer-card-wrap .timer-display");
+    const clock = page.getByTestId("clock-big");
     await expect(clock).toBeVisible();
     const fontSize = await clock.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
     expect(fontSize).toBeGreaterThanOrEqual(24);
 
-    // 3. Hierarchy: the hero starts inside the device's first viewport on EVERY project, and the
-    // KPI pair never starts above the hero. The layout goes single-column at max-width 900px
-    // (dashboard +page.svelte:2019): there the KPI pair is stacked under the hero, so it must start
-    // at or below the hero's bottom; in the two-column layout both start in the same row, so it
-    // must start at or below the hero's top.
-    //
-    // Decision for issue #506 (orchestrator, 2026-10-08): "KPI pair inside the first viewport" is
-    // NOT a requirement on the phone project. The calm mobile layout puts the clock first and lets
-    // the content follow by scrolling (measured on Pixel 7: KPI top ~1124px vs viewport 839px), and
-    // the former fixed 600px check never ran on mobile, so no such requirement was ever
-    // established. It still holds on desktop-chrome and tablet. The device distinction is this ONE
-    // bound; the mobile project is not skipped and still asserts the order above.
+    // 3. Hierarchy: the clock stage starts inside the device's first viewport on EVERY project and
+    // the Kennzahlen never start above it. Below 760 px the page is one column, so the Kennzahlen
+    // sit under the stage. Issue #845 (D-01, owner 09.11.2026) replaces the #506 phone exemption:
+    // on the phone too the Kennzahlen start in the first viewport (their full visibility at
+    // 390×844 is proven by mein-tag-845.spec.ts).
     const viewport = page.viewportSize();
     expect(viewport).not.toBeNull();
     const viewportHeight = viewport?.height ?? 0;
-    const singleColumn = (viewport?.width ?? 0) <= 900;
-    const kpiMustBeInFirstViewport = testInfo.project.name !== "mobile-chrome";
-    const kpiViewportBound = kpiMustBeInFirstViewport ? viewportHeight : Number.POSITIVE_INFINITY;
+    // The stage and the Kennzahlen are always stacked (one column of the page).
+    const singleColumn = true;
+    const kpiViewportBound = viewportHeight;
 
-    const hero = page.locator(".timer-card-wrap");
-    const kpiPair = page.locator(".kpi-pair");
+    const hero = page.getByTestId("mein-tag-stage");
+    const kpiPair = page.getByTestId("mein-tag-kpis");
     await expect(hero).toBeVisible();
     await expect(kpiPair).toBeVisible();
     const heroBox = await hero.boundingBox();
@@ -226,13 +222,21 @@ test.describe("Error Handling + UX Plausibility", () => {
   // mobile (and the personal Verfügbarkeit, which shares its label with the admin one) are the
   // reason this exists; the redirect-only /admin/special-leave is in no navigation at all.
   test("navigation offers the same targets on every device profile", async ({ page }) => {
-    const targets: { route: string; heading: string; name: string }[] = [
-      { route: "/availability", heading: "Mein Bereich", name: "Verfügbarkeit" },
-      { route: "/admin/availability", heading: "PLANUNG", name: "Verfügbarkeit" },
-      { route: "/admin/phorest", heading: "SYSTEM", name: "Phorest" },
-      { route: "/admin/audit", heading: "COMPLIANCE", name: "Audit & Log" },
+    // `entry` is the rail item that stands for the page: the page itself, except for a tab of Dienstplan
+    // (#853), which the rail and the crumb represent by its parent.
+    const targets: { route: string; entry?: string; heading: string; name: string }[] = [
+      // #844: the three areas; Phorest and Protokoll are hub pages behind System and Daten
+      { route: "/ich/dienstplan", heading: "Ich", name: "Dienstplan" },
+      {
+        route: "/team/verfuegbarkeit",
+        entry: "/team/dienstplan",
+        heading: "Team",
+        name: "Dienstplan",
+      },
+      { route: "/verwalten/system", heading: "Verwalten", name: "System" },
+      { route: "/verwalten/daten", heading: "Verwalten", name: "Daten" },
     ];
-    for (const { route, heading, name } of targets) {
+    for (const { route, entry = route, heading, name } of targets) {
       await page.goto(route);
       const sidebar = page.getByRole("complementary", { name: "Hauptnavigation", exact: true });
       await expect(page.locator("h1").first()).toBeVisible();
@@ -244,7 +248,7 @@ test.describe("Error Handling + UX Plausibility", () => {
         scope = page.getByRole("dialog", { name: "Weitere Navigation" });
       }
       const group = scope.getByRole("navigation", { name: heading, exact: true });
-      const link = group.locator(`a[href="${route}"]`);
+      const link = group.locator(`a[href="${entry}"]`);
       await expect(link, `${route}: listed under ${heading}`).toHaveCount(1);
       await expect(link).toHaveAccessibleName(name);
       await expect(link, `${route}: marked as the page`).toHaveAttribute("aria-current", "page");
@@ -253,16 +257,17 @@ test.describe("Error Handling + UX Plausibility", () => {
   });
 
   test("empty states provide guidance", async ({ page }) => {
-    await page.goto("/admin/shutdowns");
+    // The company shutdown list is the Betriebsurlaub tab of Regeln › Abwesenheiten since #854.
+    await page.goto("/verwalten/regeln/abwesenheiten#betriebsurlaub");
     await page.waitForLoadState("networkidle");
 
-    // Empty state should tell user what to do
-    const emptyText = page.getByText(/Keine|Erstellen|anlegen/i).first();
-    await expect(emptyText).toBeVisible();
+    // Empty state should tell user what to do (scoped to the tab: the other tabs' panels are not on screen)
+    await expect(page.getByText("Keine Betriebsurlaube").first()).toBeVisible();
 
     // Should have a CTA button
-    const ctaBtn = page.getByText(/Neu|Erstellen|anlegen/i).first();
-    await expect(ctaBtn).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Betriebsurlaub anlegen/ }).first(),
+    ).toBeVisible();
 
     await screenshotPage(page, "flow-empty-state-guidance");
   });

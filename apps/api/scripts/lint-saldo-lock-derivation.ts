@@ -20,10 +20,12 @@
  * needed to know which model a `periodStart:` key belongs to. Two further restrictions narrow this
  * to the ACTUAL defect surface, not periodStart in general:
  *
- *   1. Only `where:` fragments — a `data:` fragment (the monthly closer's OWN
- *      `saldoSnapshot.create({ data: { periodStart: monthStart, ... } })`) is the AUTHORITATIVE
- *      WRITE this whole gate exists to defend the READ side against re-deriving independently; it
- *      is not itself a comparison and must never be flagged.
+ *   1. Only `where:` filters AND (since Issue #277) the write fragments `data:` / `create:` /
+ *      `update:` — the monthly closer's OWN `saldoSnapshot.create({ data: { periodStart:
+ *      monthStart, ... } })` is the AUTHORITATIVE WRITE and traces "safe" to `monthRangeUtc()`;
+ *      a write that builds its date locally and naively is the same defect origin as a naive
+ *      read filter and is flagged. Before #277 writes were skipped entirely, so a naive date in a
+ *      `create()` was invisible to this gate.
  *   2. Only `where:` fragments with a sibling `periodType: "MONTHLY"` — `YEARLY` snapshots are a
  *      deliberately DIFFERENT, self-consistent convention: `auto-close-month.ts` writes their
  *      `periodStart` as a plain UTC year boundary (`new Date(\`${year}-01-01T00:00:00Z\`)`), never
@@ -136,6 +138,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import * as ts from "typescript";
 
 // ── Constants ─────────────────────────────────────────────────────────────────────────────────
+
+/** Property names whose object literal is a MONTHLY row filter (`where`) or row write (Issue #277). */
+const CHECKED_FRAGMENT_KEYS: ReadonlySet<string> = new Set(["where", "data", "create", "update"]);
 
 export const EXCEPTIONS_FILE = "apps/api/scripts/lint-saldo-lock-derivation-exceptions.json";
 export const MIN_REASON_LENGTH = 30;
@@ -539,10 +544,18 @@ export function analyzeSource(
         )
       ) {
         const grandparent = parentObj.parent;
+        // Issue #277 (finding 3): a naive date WRITTEN into a MONTHLY row (`data:` of create /
+        // createMany / update, `create:` / `update:` of upsert) is the same defect origin as a naive
+        // read filter, so the write fragments are candidates too. The authoritative writer
+        // (`monthStart` from monthRangeUtc) traces "safe"; only a locally built naive date is
+        // "unsafe", and a parameter stays "unknown" exactly as for reads.
+        const isCheckedFragment = (n: ts.Node): boolean =>
+          ts.isPropertyAssignment(n) &&
+          ts.isIdentifier(n.name) &&
+          CHECKED_FRAGMENT_KEYS.has(n.name.text);
         const isWhereFragment =
-          ts.isPropertyAssignment(grandparent) &&
-          ts.isIdentifier(grandparent.name) &&
-          grandparent.name.text === "where";
+          isCheckedFragment(grandparent) ||
+          (ts.isArrayLiteralExpression(grandparent) && isCheckedFragment(grandparent.parent));
         if (isWhereFragment) {
           const verdict = isSafeExpr(node.initializer, {
             localFunctions,
@@ -824,7 +837,7 @@ export function formatSummary(
   const deferredExceptions = exceptions.filter((e) => e.disposition === "deferred").length;
   return (
     `[lint:saldo-lock-derivation] ${candidates.length} candidate(s) (periodType:"MONTHLY" ` +
-    `where-comparisons on periodStart) — ${safe} safe / ${unsafe} unsafe / ${unknown} unknown ` +
+    `where/data/create/update fragments on periodStart) — ${safe} safe / ${unsafe} unsafe / ${unknown} unknown ` +
     `(unresolved across a function-call boundary, NOT verified — see this gate's own module ` +
     `header); ${exceptions.length} exception(s) applied (${safeExceptions} verified-safe / ` +
     `${deferredExceptions} deferred-known-bug, tracked separately — NOT a safety claim), ` +

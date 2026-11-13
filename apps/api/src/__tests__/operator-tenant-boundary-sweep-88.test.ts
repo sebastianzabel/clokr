@@ -332,7 +332,6 @@ beforeAll(async () => {
     data: {
       email: `legacy-${randomBytes(5).toString("hex")}@test.invalid`,
       passwordHash: "x",
-      role: "ADMIN",
       isActive: true,
     },
   });

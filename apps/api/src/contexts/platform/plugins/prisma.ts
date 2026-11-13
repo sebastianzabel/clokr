@@ -19,12 +19,15 @@ export const prismaPlugin = fp(async (app) => {
 
   const prisma = new PrismaClient({
     adapter,
+    // Issue #799: `Break.isAuto` is an internal marker for the clock replacement. Omitted by default
+    // so no `include: { breaks }` response grows a field; queries filter on it in `where` freely.
+    omit: { break: { isAuto: true } },
     log: app.log.level === "debug" ? ["query", "error", "warn"] : ["error"],
   });
 
   await prisma.$connect();
 
-  app.decorate("prisma", prisma);
+  app.decorate("prisma", prisma as unknown as PrismaClient);
 
   app.addHook("onClose", async () => {
     await prisma.$disconnect();

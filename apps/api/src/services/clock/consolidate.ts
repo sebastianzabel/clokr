@@ -7,6 +7,7 @@
 // Fix: add `endTime: { lte: openEntry.startTime }` to the lookup.
 import type { Prisma, TimeEntry } from "@clokr/db";
 import type { FastifyBaseLogger } from "fastify";
+import { removeAutoBreaksOfEntry, type RemovedAutoBreak } from "./auto-break-replace"; // Issue #799
 import { MIN_MERGE_PREDECESSOR_DURATION_MS } from "./thresholds";
 import { findEntriesOfDay, latestEndingClosed } from "../../contexts/time-tracking/day-entries"; // Phase 69b, Issue #70 (selector)
 import type { ActivityShareInput } from "../../contexts/time-tracking/activity-minutes"; // Issue #81
@@ -31,6 +32,8 @@ export type ConsolidateResult =
       after: TimeEntry & { activityShares: ActivityShareInput[] };
       deletedEntryId: string;
       deletedEntryBefore: TimeEntry;
+      // Issue #799: automatic breaks of the target removed before the gap break was added.
+      removedAutoBreaks: RemovedAutoBreak[];
     };
 
 export async function consolidateSameDayEntries(
@@ -105,6 +108,33 @@ export async function consolidateSameDayEntries(
         previousEntryId: previousEntry.id,
         openEntryId: openEntry.id,
         reason: "travel_row",
+      },
+      "merge_skipped",
+    );
+    return { merged: false };
+  }
+
+  // Issue #657 (D-14): never merge across a row coupled to a Zeitnachtrag. Such rows are off-limits
+  // as predecessor (Phase 118 D-08, filtered above), so when one lies between the chosen predecessor
+  // and the row just closed, extending the predecessor over the successor would cover it — the
+  // database refuses that overlap and the clock-out would fail. Reachable since #657, because a
+  // pending row no longer blocks the clock. The rows stay as they are, the clock-out itself is kept.
+  const retroBetween = dayEntries.some(
+    (e) =>
+      e.id !== openEntry.id &&
+      e.retroRequestId !== null &&
+      e.endTime !== null &&
+      e.endTime > previousEntry.endTime! &&
+      e.endTime <= openEntry.startTime,
+  );
+  if (retroBetween) {
+    log.info(
+      {
+        employeeId: openEntry.employeeId,
+        date: openEntry.date,
+        previousEntryId: previousEntry.id,
+        openEntryId: openEntry.id,
+        reason: "retro_row",
       },
       "merge_skipped",
     );
@@ -213,6 +243,9 @@ export async function consolidateSameDayEntries(
       data: { deletedAt: new Date() },
     });
 
+    // 1b. Issue #799: a recorded gap replaces the target's automatic break.
+    const removedAutoBreaks = await removeAutoBreaksOfEntry(tx, previousEntry);
+
     // 2. Create Break row for the gap
     const breakRow = await tx.break.create({
       data: {
@@ -234,6 +267,7 @@ export async function consolidateSameDayEntries(
       data: {
         endTime: openEntry.endTime,
         breakMinutes: totalBreakMins,
+        ...(removedAutoBreaks.length > 0 && { breakStatus: "CONFIRMED" as const }),
         ...(materialized && {
           activityKind: materialized.kind,
           activityShares: activitySharesReplace(materialized.shares),
@@ -252,6 +286,7 @@ export async function consolidateSameDayEntries(
       after,
       deletedEntryId: openEntry.id,
       deletedEntryBefore: openEntry,
+      removedAutoBreaks,
     };
   } catch (err) {
     log.error(

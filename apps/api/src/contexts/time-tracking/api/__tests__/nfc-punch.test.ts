@@ -119,6 +119,43 @@ describe("NFC Punch API", () => {
       expect(body.employee.firstName).toBe("Max");
     });
 
+    it("clock out at the terminal closes an entry opened by the web clock-in (Issue #818)", async () => {
+      // Start from a clean day: a web clock-in would otherwise re-open the earlier NFC entry
+      // (a re-open keeps the stored source), which is not the case under test.
+      await app.prisma.break.deleteMany({ where: { timeEntry: { employeeId: data.employee.id } } });
+      await app.prisma.timeEntry.deleteMany({ where: { employeeId: data.employee.id } });
+
+      // Opened through the web route: the stored source is MOBILE, not NFC.
+      const inRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/clock-in",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {},
+      });
+      expect(inRes.statusCode).toBe(200);
+      const open = await app.prisma.timeEntry.findFirstOrThrow({
+        where: { employeeId: data.employee.id, endTime: null, deletedAt: null },
+      });
+      expect(open.source).not.toBe("NFC");
+      // Past the 60s double-tap window so the tap is a real clock-out.
+      await app.prisma.timeEntry.update({
+        where: { id: open.id },
+        data: { startTime: new Date(Date.now() - 70_000) },
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: punchHeaders(),
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).action).toBe("OUT");
+      const closed = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: open.id } });
+      expect(closed.endTime).not.toBeNull();
+    });
+
     it("returns 404 for unknown NFC card", async () => {
       const res = await app.inject({
         method: "POST",

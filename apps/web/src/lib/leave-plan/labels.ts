@@ -1,0 +1,80 @@
+// Issue #835 — German display wording of the leave planner (du-form). Display only: a label is
+// never compared or used as a control value; states and kinds are decided by their codes.
+import { LEAVE_TYPES, NEUTRAL_CHIP_LABEL } from "$lib/leave/team-calendar-visibility";
+import type { PlannerRow, TakeoverPendingReason } from "./types";
+
+export const PLAN_STATUS_LABELS = {
+  OPEN: "Offen",
+  TAKEN_OVER: "Übernommen",
+  PARTIALLY_TAKEN_OVER: "Teilweise übernommen",
+} as const;
+
+export function planStatusLabel(plan: {
+  status: "OPEN" | "TAKEN_OVER";
+  partiallyTakenOver: boolean;
+}): string {
+  if (plan.status === "TAKEN_OVER") return PLAN_STATUS_LABELS.TAKEN_OVER;
+  return plan.partiallyTakenOver
+    ? PLAN_STATUS_LABELS.PARTIALLY_TAKEN_OVER
+    : PLAN_STATUS_LABELS.OPEN;
+}
+
+export const ROW_STATE_LABELS = {
+  GESETZT: "gesetzt",
+  BEANTRAGT: "beantragt",
+  WISH: "Wunsch",
+  ABWESEND: NEUTRAL_CHIP_LABEL,
+} as const;
+
+export const ROW_KIND_LABELS: Record<PlannerRow["kind"], string> = {
+  LEAVE: "Urlaub",
+  ABSENCE: "Abwesenheit",
+  COMPANY_SHUTDOWN: "Betriebsurlaub",
+  MASKED: NEUTRAL_CHIP_LABEL,
+};
+
+export const HOLIDAY_LABEL = "Feiertag";
+
+/** Legend hint (#840, D-840-10/25): with several salons in view a closed weekday belongs to one salon. */
+export const CLOSED_DAYS_HINT_SEVERAL_SALONS = "Schließtage nur bei einem Salon";
+
+/** The label of a row's type: the leave-type display helper, neutral when the type is masked. */
+export function rowTypeLabel(row: Pick<PlannerRow, "kind" | "typeCode">): string {
+  if (row.kind === "MASKED") return NEUTRAL_CHIP_LABEL;
+  if (row.kind === "COMPANY_SHUTDOWN") return ROW_KIND_LABELS.COMPANY_SHUTDOWN;
+  if (row.typeCode === null) return NEUTRAL_CHIP_LABEL;
+  return LEAVE_TYPES.find((t) => t.code === row.typeCode)?.label ?? ROW_KIND_LABELS[row.kind];
+}
+
+export const DAY_LOAD_LABEL = "Urlaub";
+export const DAY_LOAD_HINT =
+  "Genehmigt, beantragt und gewünscht – ohne Krankheit, Berufsschule und Betriebsurlaub";
+
+// Issue 840 G-6: the load row's name per zoom. Quartal and Monat show the server's day load of
+// the leave-limit kernel (counted codes only, wishes included); Jahr shows the week load of the
+// rows in view (any visible or masked absent Werktag, wishes not counted).
+export const PLAN_DAY_LOAD_ROW_LABEL = "Urlaub (Personen)";
+export const PLAN_WEEK_LOAD_ROW_LABEL = "Abwesend (Personen)";
+export const PLAN_WEEK_LOAD_HINT =
+  "Personen mit mindestens einem abwesenden Werktag in der Woche – Wünsche zählen nicht";
+
+export const PENDING_REASON_LABELS: Record<TakeoverPendingReason, string> = {
+  OWN_WISH: "Eigener Wunsch – wartet auf eine zweite Genehmigung",
+  OUTSIDE_APPROVE_REACH: "Wartet auf Genehmigung durch eine berechtigte Person",
+  APPROVAL_REFUSED: "Genehmigung gescheitert – erneut übernehmen",
+};
+
+export const FORECAST_WARNING = "Der Plan übersteigt den Anspruch";
+
+/** „Noch 12,5 Tage nach Plan“ — the remaining days if the plan were filed as it stands. */
+export function forecastLabel(forecastDays: number): string {
+  const text = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 }).format(forecastDays);
+  return `Noch ${text} Tage nach Plan`;
+}
+
+export const WISH_CONFLICT_HINT = "Überschneidet sich mit einem Antrag";
+export const WISH_TAKEN_OVER_HINT = "Übernommen – nicht mehr änderbar";
+export const WISH_FOREIGN_PLAN_HINT = "Wunsch aus einer anderen Planung";
+export const WISH_READ_ONLY_HINT = "Du kannst diesen Wunsch nicht ändern.";
+export const NO_WISHES_LABEL = "Noch keine Wünsche";
+export const ADD_WISH_LABEL = "Wunsch hinzufügen";

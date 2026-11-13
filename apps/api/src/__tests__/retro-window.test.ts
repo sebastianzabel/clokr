@@ -84,7 +84,6 @@ async function seedRetroTenant(
     data: {
       email: `admin-${s}@retro.test`,
       passwordHash: await bcrypt.hash("pwTest123", 4),
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -121,7 +120,6 @@ async function seedRetroTenant(
     data: {
       email: `mgr-${s}@retro.test`,
       passwordHash: await bcrypt.hash("pwTest123", 4),
-      role: "MANAGER",
       isActive: true,
     },
   });
@@ -157,7 +155,6 @@ async function seedRetroTenant(
     data: {
       email: `emp-${s}@retro.test`,
       passwordHash: await bcrypt.hash("pwTest123", 4),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

@@ -1,4 +1,11 @@
 import crypto from "crypto";
+import { GENERIC_INVALID, registerGermanZodErrors, validationSummary } from "./utils/zod-german"; // Issue #573
+import {
+  WRITE_CONFLICT,
+  duplicateConflictMessage,
+  isWriteConflict,
+} from "./utils/duplicate-conflict"; // Issue #573
+import { uniqueViolationTarget } from "./utils/prisma-unique-violation"; // Issue #573
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -19,13 +26,18 @@ import { operatorSupportAccessRoutes } from "./contexts/platform/api/operator/su
 import { operatorSupportRoutes } from "./contexts/platform/api/operator/support"; // Issue #93
 import { seedDefaultsForNewTenant } from "./composition/tenant-onboarding"; // Phase 88 (#88)
 import { operatorSalonPorts } from "./composition/operator-salon-ports"; // Phase 89 (#89)
+import { employeeExitPorts } from "./composition/employee-exit-ports"; // Issue #615 (D-15)
 import { operatorSupportPorts } from "./composition/operator-support-ports"; // Issue #93
 import { employeeRoutes } from "./contexts/platform/api/employees";
 import { employeeWifiRoutes } from "./contexts/time-tracking/api/employee-wifi"; // Phase 243 Plan 02 (B2)
+import { employeeReminderRoutes } from "./contexts/time-tracking/api/employee-reminders"; // Issue #609 (D-02)
 import { timeEntryRoutes } from "./contexts/time-tracking/api/time-entries";
 import { dayBreakRoutes } from "./contexts/time-tracking/api/day-breaks"; // Issue #80 (D-02..D-06, D-21)
 import { leaveRoutes } from "./contexts/absence/api/leave";
+import { leaveLimitRoutes } from "./contexts/absence/api/leave-limits"; // Issue #836
+import { leavePlanRoutes } from "./contexts/absence/api/leave-plans"; // Issue #835
 import { overtimeRoutes } from "./contexts/working-time-account/api/overtime";
+import { monthCorrectionRoutes } from "./contexts/working-time-account/api/month-corrections"; // Issue #599
 import { reportRoutes } from "./composition/reports";
 import { reportsPeriodRoutes } from "./composition/reports-period"; // Issue #612
 import { settingsRoutes } from "./contexts/platform/api/settings";
@@ -54,8 +66,10 @@ import { invitationRoutes } from "./contexts/platform/api/invitations";
 import { auditLogRoutes } from "./contexts/platform/api/audit-logs";
 import { supportAccessRoutes } from "./contexts/platform/api/support-accesses"; // Issue #93 (D-08)
 import { activityRoutes } from "./composition/activity";
+import { calendarFeedRoutes } from "./composition/calendar-feed"; // Issue #597
 import { companyShutdownRoutes } from "./contexts/absence/api/company-shutdowns";
 import { dashboardRoutes } from "./composition/dashboard";
+import { tasksOpenRoutes } from "./composition/tasks-open"; // Issue #853 (D-853-22)
 import { shiftRoutes } from "./contexts/scheduling/api/shifts";
 import {
   shiftPatternRoutes,
@@ -80,11 +94,15 @@ import { presenceRoutes } from "./contexts/time-tracking/api/presence";
 import { adminPresenceSourcesRoutes } from "./contexts/time-tracking/api/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./contexts/platform/api/admin/school-holidays";
 import { meRoutes } from "./contexts/platform/api/me";
+import { mePushRoutes } from "./contexts/platform/api/me-push";
+import { meCalendarFeedRoutes } from "./contexts/platform/api/me-calendar-feed"; // Issue #597
 import { meAvailabilityRoutes } from "./contexts/scheduling/api/me-availability"; // Phase 243 Plan 02 (B3)
 import { releaseNotesRoutes } from "./contexts/platform/api/release-notes";
 import { testBootstrapRoutes } from "./contexts/platform/api/test-bootstrap";
 import { retroEntryRequestRoutes } from "./contexts/time-tracking/api/retro-entry-requests";
 import { requireAuth } from "./middleware/auth";
+import { redactCalendarFeedPath } from "./contexts/platform"; // Issue #597
+import { clientLogUrl } from "./utils/client-log-url"; // Issue #610 (WR-02): no query/fragment in the client log
 
 // Phase 69 (DEVOPS-V8-02): bake version from package.json at module init.
 // Image content is the source of truth per Memory feedback_image_content_is_source_of_truth.
@@ -96,6 +114,8 @@ const PKG_VERSION = (() => {
 })();
 
 export async function buildApp() {
+  // Issue #573 (D-01): Zod's default validation texts are German for every schema (idempotent).
+  registerGermanZodErrors();
   // ── Logger configuration ──────────────────────────────────
   const logLevel = config.LOG_LEVEL ?? (config.NODE_ENV === "production" ? "info" : "debug");
   const logFormat = config.LOG_FORMAT ?? (config.NODE_ENV === "production" ? "json" : "pretty");
@@ -171,20 +191,58 @@ export async function buildApp() {
       reply,
     ) => {
       if (error.name === "ZodError" || error.issues) {
-        let parsed: { path: string[]; message: string }[];
-        try {
-          parsed = JSON.parse(error.message);
-        } catch {
-          parsed = [{ path: [], message: error.message }];
-        }
-        const fieldErrors = parsed.map(
-          (i: { path: string[]; message: string }) => `${i.path.join(".") || "Feld"}: ${i.message}`,
+        // Issue #573 (D-04…D-07): German texts come from the global Zod map (utils/zod-german.ts);
+        // `details[]` keeps the machine-readable path for the web's field mapping, `message` names
+        // fields by German label only. The keys go to the log, never into the summary.
+        const issues = (Array.isArray(error.issues) ? error.issues : []) as Array<{
+          path?: PropertyKey[];
+          code?: string;
+          message?: string;
+        }>;
+        const details = issues.map((i) => {
+          const path = (i.path ?? []).map((p) => (typeof p === "symbol" ? String(p) : p));
+          return {
+            path,
+            field: path.join("."),
+            code: i.code ?? "custom",
+            message: i.message || GENERIC_INVALID,
+          };
+        });
+        req.log.info(
+          {
+            route: req.routeOptions?.url,
+            method: req.method,
+            issues: details.map((d) => ({ field: d.field, code: d.code })),
+          },
+          "validation failed",
         );
         return reply.code(400).send({
           error: "Validierungsfehler",
-          message: fieldErrors.join("; "),
-          details: parsed,
+          message: validationSummary(details),
+          details,
         });
+      }
+      // Issue #573 (D-08, D-10): a duplicate or a write conflict nobody handled is a 409 with plain
+      // German text from ONE table (utils/duplicate-conflict.ts), never a 500. A route that knows
+      // its conflict still answers it itself; only unhandled ones reach this point.
+      const duplicate = duplicateConflictMessage(error);
+      if (duplicate !== null) {
+        req.log.warn(
+          {
+            route: req.routeOptions?.url,
+            method: req.method,
+            target: uniqueViolationTarget(error),
+          },
+          "unhandled unique violation answered 409",
+        );
+        return reply.code(409).send({ error: duplicate, code: "DUPLICATE" });
+      }
+      if (isWriteConflict(error)) {
+        req.log.warn(
+          { route: req.routeOptions?.url, method: req.method },
+          "write conflict answered 409",
+        );
+        return reply.code(409).send({ error: WRITE_CONFLICT, code: "WRITE_CONFLICT" });
       }
       // Phase 77b (Issue #77, D-10): a missing tenant frame is a programming error. Fail closed
       // with a fixed body and its own log line naming the route, so the unguarded caller can be
@@ -299,7 +357,8 @@ export async function buildApp() {
       msg: "request completed",
       http: {
         method: req.method,
-        url: req.url,
+        // Issue #597: a calendar-feed path carries its secret and is never logged in clear.
+        url: redactCalendarFeedPath(req.url),
         status_code: reply.statusCode,
         response_time: reply.elapsedTime,
       },
@@ -381,12 +440,16 @@ export async function buildApp() {
       ports: operatorSupportPorts,
     });
   }
-  await app.register(employeeRoutes, { prefix: "/api/v1/employees" });
+  // Issue #615 (D-15): the closed-month answer of Arbeitszeitkonto reaches the Unterbau route as a port.
+  await app.register(employeeRoutes, { prefix: "/api/v1/employees", exitPorts: employeeExitPorts });
   await app.register(timeEntryRoutes, { prefix: "/api/v1/time-entries" });
   await app.register(dayBreakRoutes, { prefix: "/api/v1/day-breaks" }); // Issue #80 (D-02..D-06, D-21)
   await app.register(leaveRoutes, { prefix: "/api/v1/leave" });
+  await app.register(leaveLimitRoutes, { prefix: "/api/v1/leave/limits" }); // Issue #836
+  await app.register(leavePlanRoutes, { prefix: "/api/v1/leave/plans" }); // Issue #835
   await app.register(retroEntryRequestRoutes, { prefix: "/api/v1/retro-entry-requests" });
   await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });
+  await app.register(monthCorrectionRoutes, { prefix: "/api/v1/month-corrections" }); // Issue #599
   await app.register(reportRoutes, { prefix: "/api/v1/reports" });
   await app.register(reportsPeriodRoutes, { prefix: "/api/v1/reports" }); // Issue #612
   await app.register(settingsRoutes, { prefix: "/api/v1/settings" });
@@ -404,6 +467,8 @@ export async function buildApp() {
   await app.register(activityRoutes, { prefix: "/api/v1/activity" });
   await app.register(companyShutdownRoutes, { prefix: "/api/v1/company-shutdowns" });
   await app.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });
+  // Issue #853 (D-853-22): read-only work queue of the Aufgaben page (missing clock-outs in reach)
+  await app.register(tasksOpenRoutes, { prefix: "/api/v1/tasks/open" });
   await app.register(notificationRoutes, { prefix: "/api/v1/notifications" });
   await app.register(shiftRoutes, { prefix: "/api/v1/shifts" });
   // Phase 43 — recurring shift patterns live under the employees namespace
@@ -422,6 +487,7 @@ export async function buildApp() {
   // under the employees namespace (GET/PATCH /api/v1/employees/me/wifi, POST
   // /api/v1/employees/me/wifi/devices, DELETE /api/v1/employees/me/wifi/devices/:id)
   await app.register(employeeWifiRoutes, { prefix: "/api/v1/employees" });
+  await app.register(employeeReminderRoutes, { prefix: "/api/v1/employees" });
   // Phase 67b — salon assignments live under the employees namespace (GET/POST
   // /api/v1/employees/:id/salon-assignments…)
   await app.register(salonAssignmentRoutes, { prefix: "/api/v1/employees" });
@@ -445,6 +511,10 @@ export async function buildApp() {
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
   await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
   await app.register(meRoutes, { prefix: "/api/v1/me" });
+  await app.register(mePushRoutes, { prefix: "/api/v1/me/push" });
+  // Issue #597 — the own calendar-feed token and the public feed it unlocks.
+  await app.register(meCalendarFeedRoutes, { prefix: "/api/v1/me/calendar-feed" });
+  await app.register(calendarFeedRoutes, { prefix: "/api/v1/calendar-feed" });
   // Phase 243 Plan 02 (B3) — the caller's own availability, kept under the /me prefix
   // (GET/PUT /api/v1/me/availability); sibling to availabilityRoutes's
   // /employees/:id/availability above.
@@ -481,7 +551,7 @@ export async function buildApp() {
         client: {
           ...body.extra,
           stack: typeof body.stack === "string" ? body.stack.slice(0, 2000) : undefined,
-          url: typeof body.url === "string" ? body.url.slice(0, 500) : undefined,
+          url: clientLogUrl(body.url),
           userAgent: typeof body.userAgent === "string" ? body.userAgent.slice(0, 500) : undefined,
           userId: req.user.sub, // JWT-bound; wins over any body.extra.userId to prevent attribution forgery
         },
@@ -510,11 +580,7 @@ export async function buildApp() {
       app.storage.refresh();
       return {
         status: "ok",
-        storage: app.storage.status().unconfigured
-          ? "unconfigured"
-          : app.storage.status().available
-            ? "ok"
-            : "unavailable",
+        storage: app.storage.status().available ? "ok" : "unavailable",
         timestamp: new Date().toISOString(),
       };
     } catch {

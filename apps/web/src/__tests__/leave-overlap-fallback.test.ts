@@ -102,21 +102,22 @@ describe("inbox/+page.svelte — review dialog delegated to the shared component
   });
 });
 
-describe("team/leave/+page.svelte — manager review modal's overlap panel (D-11b)", () => {
+describe("team/leave/+page.svelte — no review dialog of its own (D-11b, #840 E-02)", () => {
   it("Test 0: the page source actually loaded", () => {
-    // Phase 255 Plan 03: the review dialog markup and mutation moved into
-    // LeaveReviewDialog.svelte, shrinking the page from ~97 KB to ~83.5 KB. The floor sits at
-    // least 10 KB below the measured value (85_460 bytes on 2026-09-20) so it does not become a
-    // time bomb on ordinary future edits.
-    expect(TEAM_LEAVE_PAGE.length).toBeGreaterThan(75_000); // ~83.5 KB as of Phase 255 Plan 03
+    // Phase 255 Plan 03 shrank the page to ~83.5 KB; #840 (E-01/E-02) removed the month grid and the
+    // approval queue (~73 KB measured on 2026-11-08). The floor sits at least 10 KB below the
+    // measured value so it does not become a time bomb on ordinary future edits.
+    expect(TEAM_LEAVE_PAGE.length).toBeGreaterThan(60_000);
   });
 
-  it("delegates the review dialog to the shared component and keeps no stray literal", () => {
-    // A bare `expect(abwesendCount(TEAM_LEAVE_PAGE)).toBe(0)` would also be true if the page
-    // rendered nothing at all — pairing it with the positive assertion that the shared component
-    // IS wired in closes that vacuity hole (CONTEXT.md D-12, same class as #203/#235 and the
-    // Phase 96 discriminator-swap trap).
-    expect(TEAM_LEAVE_PAGE).toContain("<LeaveReviewDialog");
+  it("hands decisions to the inbox, mounts no review dialog and keeps no stray literal", () => {
+    // #840 E-02: /inbox is the only approval place, so the review dialog (and with it the overlap
+    // panel of D-11b) is no longer mounted here; the inbox keeps it (pinned above). A bare
+    // `abwesendCount(...) === 0` would also be true if the page rendered nothing, so it is paired
+    // with the positive assertion that the page really links its open rows to the inbox (the same
+    // vacuity-hole closure as before, CONTEXT.md D-12).
+    expect(TEAM_LEAVE_PAGE).not.toContain("<LeaveReviewDialog");
+    expect(TEAM_LEAVE_PAGE).toContain("/inbox?request=");
     expect(abwesendCount(TEAM_LEAVE_PAGE)).toBe(0);
   });
 });

@@ -139,7 +139,7 @@ describe("POST /leave/requests OVERTIME_COMP — validates against confirmed car
     const passwordHash = await bcrypt.hash("test1234", 10);
 
     const user = await prisma.user.create({
-      data: { email: `occ-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `occ-${suffix}@test.de`, passwordHash, isActive: true },
     });
     // hireDate/validFrom/periodStart/periodEnd/closedAt below are PAST-anchored fixture dates —
     // they can never expire (only FORWARD-dated literals, like the old REQUEST_MONDAY, are time

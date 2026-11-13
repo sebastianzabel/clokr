@@ -1,554 +1,496 @@
+<!--
+  Verwalten › Daten › Protokoll (Issue #583, #854, D-854-10/-11/-19/-21): who changed what and when, in German
+  words only. The list shows Zeitpunkt · Wer · Was · Betroffene Person · Objekt, filtered by period (default:
+  the last 30 days), affected person and object kind; the filters live in the URL (`list-url-state.ts`), the
+  words come only from `$lib/audit/labels` (codes stay control values). „Als CSV exportieren“ downloads
+  exactly the filtered list through `GET /audit-logs/export`. The second tab holds the retention period
+  (registry section `protokoll-aufbewahrung`). An entry's before/after table is the detail page.
+
+  Reading is `audit-log:read` (the API decides); the person filter is offered only to a caller who may read
+  people, and its options are the reach-scoped `GET /employees` answer.
+-->
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
-  import { api } from "$api/client";
-  import { toasts } from "$stores/toast";
-  import { markUnsaved } from "$stores/unsaved";
+  import { page } from "$app/stores";
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
-  import Pagination from "$components/ui/Pagination.svelte";
-  import SectionStack from "$lib/components/admin/SectionStack.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
-  import EmptyState from "$components/ui/EmptyState.svelte";
-  import Spinner from "$components/ui/Spinner.svelte";
+  import { api } from "$api/client";
+  import { downloadFromApi } from "$api/download";
+  import { authStore } from "$stores/auth";
+  import { markUnsaved } from "$stores/unsaved";
+  import { toasts } from "$stores/toast";
+  import { hasPermission } from "$lib/permissions";
+  import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
+  import { urlState } from "$lib/table/url-state";
   import { auditActorLabel } from "$lib/audit/actor-label";
+  import { actionLabel, AUDIT_ENTITY_CODES, entityLabel } from "$lib/audit/labels";
+  import {
+    auditExportQuery,
+    auditQuery,
+    effectiveFilters,
+    exportProblem,
+    listUrlSchema,
+    localDay,
+    periodProblem,
+  } from "$lib/audit/list-url-state";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import RetentionSection from "$lib/components/admin/protokoll/RetentionSection.svelte";
+  import Chip, { type ChipTone } from "$components/ui/Chip.svelte";
+  import Combobox from "$components/ui/Combobox.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import DatePicker from "$components/ui/DatePicker.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
+  import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
 
-  // ── Tabs (Phase 58: split log from config) ─────────────────────────────────
+  // ── Tabs (D-854-26: lowercase German ids) ──
   const TABS = [
-    { id: "log", label: "Audit-Trail" },
-    { id: "config", label: "Aufbewahrung & DSGVO" },
+    { value: "protokoll", label: "Protokoll" },
+    { value: "aufbewahrung", label: "Aufbewahrung" },
   ];
-  let activeTab = $state<string>("log");
+  const TAB_IDS = TABS.map((tab) => tab.value);
+  let activeTab = $state<string>("protokoll");
 
-  interface AuditLog {
+  function selectTab(next: string) {
+    activeTab = next;
+    writeTabHash(next);
+  }
+
+  // A type alias, not an interface: DataTable rows must be assignable to Record<string, unknown>.
+  type AuditRow = {
     id: string;
     action: string;
     entity: string;
     entityId: string | null;
-    oldValue: unknown;
     newValue: unknown;
-    ipAddress: string | null;
     createdAt: string;
     user: { email: string } | null;
-  }
+    affectedEmployee: { firstName: string; lastName: string; employeeNumber: string } | null;
+  };
 
   interface AuditResponse {
-    logs: AuditLog[];
+    logs: AuditRow[];
     total: number;
     page: number;
     limit: number;
   }
 
-  interface WorkSettings {
-    dataRetentionYears?: number;
+  type PersonOption = { id: string; firstName: string; lastName: string; employeeNumber: string };
+
+  // ── The filters: the URL is the state ──
+  const listUrl = urlState(listUrlSchema);
+  const urlFilters = $derived(listUrl.read());
+  // Browser-local calendar day: the web has no tenant-local "today" helper (the API judges by the tenant zone).
+  const today = localDay();
+  const filters = $derived(effectiveFilters(urlFilters, today));
+  const problem = $derived(periodProblem(filters));
+  // „keine Treffer“ (not „noch nichts da“) whenever the person set a filter of their own.
+  const filtersActive = $derived(
+    Boolean(urlFilters.from || urlFilters.to || urlFilters.employeeId || urlFilters.entity),
+  );
+
+  let pageSize = $state(25);
+  const listQuery = $derived(
+    problem === null
+      ? auditQuery(urlFilters, { today, paging: { page: urlFilters.page, limit: pageSize } })
+      : null,
+  );
+
+  function resetFilters() {
+    listUrl.write({ from: "", to: "", employeeId: "", entity: "", page: 1 });
   }
 
-  let logs: AuditLog[] = $state([]);
+  // The object kinds on offer: every code of the vocabulary, sorted by its German word.
+  const entityOptions = AUDIT_ENTITY_CODES.map((code) => ({ code, label: entityLabel(code) })).sort(
+    (a, b) => a.label.localeCompare(b.label, "de"),
+  );
+
+  // ── The list ──
+  let logs: AuditRow[] = $state([]);
   let total = $state(0);
-  // Phase 116 (issue #119) — starts TRUE. Genuine fix: `onMount` (:62) calls `loadLogs()`, which
-  // fires AFTER mount, so the first painted frame hit the `{:else if logs.length === 0}` arm at
-  // :208 and showed "Keine Audit-Einträge" before any request had been made. Safe: loadLogs is
-  // `loading = true` → try → `finally { loading = false }`, no early return. `retentionLoading`
-  // (:56) is a separate flag with its own finally and is deliberately NOT flipped.
   let loading = $state(true);
   let loadError = $state("");
+  // Plain let: an older response never overwrites a newer one (not reactive on purpose).
+  let generation = 0;
 
-  let filterAction = $state("");
-  let filterEntity = $state("");
-  let page = $state(1);
-  let pageSize = $state(10);
-
-  // Retention setting (Phase 31 — ADM-03)
-  let retentionYears = $state(10);
-  let retentionLoading = $state(false);
-  let retentionSaving = $state(false);
-
-  // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
-  // At exactly one persisted value, `String(retentionYears)` would be shorter — the snap()
-  // helper is used anyway so this page carries the same, everywhere-recognizable idiom as the
-  // other six pages this phase touched.
-  function snap(...values: unknown[]): string {
-    return JSON.stringify(values);
-  }
-
-  // filterAction/filterEntity parameterise a READ (applyFilter → loadLogs); changing one is not
-  // an unsaved edit and must never arm the guard — they are deliberately excluded here.
-  let retentionSnapshot = $state("");
-  let retentionDirty = $derived(snap(retentionYears) !== retentionSnapshot);
-
-  // Gate on "the baseline has been taken" (WR-01): loadRetention swallows its error and keeps the
-  // default of 10, which would otherwise read as an unsaved change to a retention period nobody
-  // touched — a claim with legal weight (§ 147 AO / § 41 EStG).
-  let snapshotsReady = $state(false);
-
-  $effect(() => {
-    markUnsaved("admin-audit", snapshotsReady && retentionDirty);
-    return () => markUnsaved("admin-audit", false);
-  });
-
-  const ACTIONS = ["LOGIN", "CREATE", "UPDATE", "DELETE", "EXPORT"];
-  const ENTITIES = ["TimeEntry", "LeaveRequest", "Employee", "User", "OvertimeAccount", "Settings"];
-
-  onMount(() => {
-    void loadLogs();
-    void loadRetention();
-  });
-
-  async function loadLogs() {
+  async function loadLogs(query: string) {
+    const mine = ++generation;
     loading = true;
     loadError = "";
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        limit: String(pageSize),
-        ...(filterAction ? { action: filterAction } : {}),
-        ...(filterEntity ? { entity: filterEntity } : {}),
-      });
-      const res = await api.get<AuditResponse>(`/audit-logs?${params}`);
+      const res = await api.get<AuditResponse>(`/audit-logs?${query}`);
+      if (mine !== generation) return;
       logs = res.logs;
       total = res.total;
     } catch (e: unknown) {
-      loadError = e instanceof Error ? e.message : "Fehler beim Laden";
+      if (mine !== generation) return;
+      logs = [];
+      total = 0;
+      loadError = e instanceof Error ? e.message : "Das Protokoll konnte nicht geladen werden.";
     } finally {
+      if (mine === generation) loading = false;
+    }
+  }
+
+  $effect(() => {
+    const query = listQuery;
+    if (query === null) {
+      // An impossible period (end before start) lists nothing; the field names the problem.
+      generation += 1;
+      logs = [];
+      total = 0;
       loading = false;
+      loadError = "";
+      return;
     }
-  }
+    untrack(() => void loadLogs(query));
+  });
 
-  async function loadRetention() {
-    retentionLoading = true;
+  // A link to a page beyond the last one lands on the last one.
+  $effect(() => {
+    if (!loading && !loadError && logs.length === 0 && total > 0 && urlFilters.page > 1) {
+      const last = Math.max(1, Math.ceil(total / pageSize));
+      untrack(() => listUrl.write({ page: Math.min(urlFilters.page, last) }));
+    }
+  });
+
+  // Writable derived: the URL is the state, Pagination may move it locally until the URL write lands.
+  let pageNumber = $derived(urlFilters.page);
+
+  // ── The person filter (offered only to a caller who may read people) ──
+  const user = $derived($authStore.user);
+  const canPickPerson = $derived(hasPermission(user, "employee:read:ZUGEWIESEN"));
+  const ALL_PEOPLE = "__all__";
+  let people = $state<PersonOption[]>([]);
+
+  async function loadPeople() {
     try {
-      const cfg = await api.get<WorkSettings>("/settings/work");
-      retentionYears = cfg.dataRetentionYears ?? 10;
-      retentionSnapshot = snap(retentionYears);
-      snapshotsReady = true;
+      people = await api.get<PersonOption[]>("/employees?includeAnonymized=true");
     } catch {
-      // keep default — non-blocking
-    } finally {
-      retentionLoading = false;
+      // The filter then offers only „Alle Personen“; the list itself is unaffected.
+      people = [];
     }
   }
 
-  async function saveRetention() {
-    retentionSaving = true;
-    try {
-      await api.put("/settings/work", { dataRetentionYears: retentionYears });
-      retentionSnapshot = snap(retentionYears); // Phase 109 — section is clean again
-      toasts.success("Aufbewahrungsfrist aktualisiert");
-    } catch (e: unknown) {
-      toasts.error(e instanceof Error ? e.message : "Fehler beim Speichern");
-    } finally {
-      retentionSaving = false;
+  const personItems = $derived.by(() => {
+    const items = [
+      { value: ALL_PEOPLE, label: "Alle Personen" },
+      ...people
+        .map((p) => ({
+          value: p.id,
+          label: `${p.lastName}, ${p.firstName} (${p.employeeNumber})`,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label, "de")),
+    ];
+    // A person named by a link but not in the offered list stays selectable and visible.
+    if (urlFilters.employeeId && !items.some((item) => item.value === urlFilters.employeeId)) {
+      items.push({ value: urlFilters.employeeId, label: "Ausgewählte Person" });
     }
-  }
+    return items;
+  });
 
-  async function applyFilter() {
-    page = 1;
-    await loadLogs();
-  }
-
-  function actionChip(action: string): string {
-    const map: Record<string, string> = {
-      LOGIN: "chip chip-good",
-      CREATE: "chip chip-brand",
-      UPDATE: "chip chip-warn",
-      DELETE: "chip chip-bad",
-      EXPORT: "chip",
-    };
-    return map[action] ?? "chip";
-  }
+  // ── Table ──
+  const columns: DataTableColumn[] = [
+    { key: "time", label: "Zeitpunkt", primary: true },
+    { key: "who", label: "Wer" },
+    { key: "what", label: "Was" },
+    { key: "person", label: "Betroffene Person" },
+    { key: "object", label: "Objekt" },
+  ];
 
   function fmtDate(iso: string): string {
     return format(new Date(iso), "dd.MM.yyyy HH:mm:ss", { locale: de });
   }
 
-  function hasDetail(v: unknown): boolean {
-    if (v == null) return false;
-    if (typeof v === "object" && Object.keys(v as Record<string, unknown>).length === 0)
-      return false;
-    return true;
+  /** Tone by the action CODE (a control value); the label is display only. */
+  function actionTone(code: string): ChipTone {
+    if (code === "CREATE") return "brand";
+    if (code === "UPDATE") return "warn";
+    if (code === "DELETE") return "bad";
+    if (code === "LOGIN") return "ok";
+    return "neutral";
   }
 
-  function navigateToEntry(id: string) {
-    void goto(`/admin/audit/${id}`);
+  /** The list's own query string, so the detail's back link returns to the same filtered list. */
+  function detailHref(id: string): string {
+    return `/verwalten/daten/protokoll/${id}${$page.url.search}`;
   }
 
-  function onRowKeydown(e: KeyboardEvent, id: string) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      void goto(`/admin/audit/${id}`);
+  // ── CSV export of exactly the filtered list ──
+  let exporting = $state(false);
+
+  async function exportCsv() {
+    if (exporting) return;
+    const refused = problem ?? exportProblem(filters, today);
+    if (refused) {
+      toasts.error(refused);
+      return;
+    }
+    exporting = true;
+    try {
+      await downloadFromApi(
+        `/audit-logs/export?${auditExportQuery(urlFilters, today)}`,
+        "protokoll.csv",
+      );
+      toasts.success("Die Datei mit dem Protokoll wurde heruntergeladen.");
+    } catch (e: unknown) {
+      toasts.error(e instanceof Error ? e.message : "Der Export ist fehlgeschlagen.");
+    } finally {
+      exporting = false;
     }
   }
+
+  // ── Aufbewahrung (registry section) ──
+  type Loaded<T> =
+    { status: "loading" } | { status: "ready"; data: T } | { status: "failed"; message: string };
+  let retention = $state<Loaded<{ dataRetentionYears?: number | null }>>({ status: "loading" });
+  let retentionChanges = $state(0);
+
+  async function loadRetention() {
+    try {
+      retention = { status: "ready", data: await api.get("/settings/work") };
+    } catch (e: unknown) {
+      retention = {
+        status: "failed",
+        message:
+          e instanceof Error ? e.message : "Die Aufbewahrungsfrist konnte nicht geladen werden.",
+      };
+    }
+  }
+
+  // Gated on "a baseline has been taken": a page that shows nothing but an error must not arm the guard.
+  const snapshotsReady = $derived(retention.status === "ready");
+
+  $effect(() => {
+    markUnsaved("admin-audit", snapshotsReady && retentionChanges > 0);
+    return () => markUnsaved("admin-audit", false);
+  });
+
+  onMount(() => {
+    activeTab = tabFromHash($page.url.hash, TAB_IDS);
+    void loadRetention();
+    if (untrack(() => canPickPerson)) void loadPeople();
+  });
 </script>
 
 <svelte:head>
-  <title>Audit & Log – Clokr</title>
+  <title>{pageLabel("/admin/audit")} – Clokr</title>
 </svelte:head>
 
-<SectionStack
-  eyebrow="Compliance"
-  title="Audit & Log"
-  sub="Audit-Trail, Aufbewahrung und DSGVO"
-  tabs={TABS}
-  bind:activeTab
-  animate
->
-  {#snippet tabContent(currentTab)}
-    {#if currentTab === "log"}
-      <!-- ── Audit-Trail ───────────────────────────────────────── -->
-      <Section title="Audit-Trail" sub="Manipulationssicheres Protokoll aller Aktionen">
-        {#snippet actions()}
-          <span class="chip">
-            <span class="dot"></span>
-            {total.toLocaleString("de-DE")} Einträge
-          </span>
-        {/snippet}
+<div data-testid="admin-audit-page" style="display: contents;">
+  <PageHead
+    title={pageLabel("/admin/audit")}
+    sub="Hier siehst du, wer wann was geändert hat, und legst fest, wie lange Daten aufbewahrt werden."
+  />
 
+  <PageTabs
+    tabs={TABS}
+    tab={activeTab}
+    onTabChange={selectTab}
+    tabsLabel="Bereiche des Protokolls"
+    look="segments"
+  >
+    {#snippet panel(value)}
+      {#if value === "protokoll"}
         {#if loadError}
-          <div class="alert alert-error" role="alert"><span>⚠</span><span>{loadError}</span></div>
-        {/if}
-
-        <div class="audit-filter-bar">
-          <select
-            class="form-input"
-            bind:value={filterAction}
-            onchange={applyFilter}
-            aria-label="Nach Aktion filtern"
-          >
-            <option value="">Alle Aktionen</option>
-            {#each ACTIONS as a (a)}
-              <option value={a}>{a}</option>
-            {/each}
-          </select>
-          <select
-            class="form-input"
-            bind:value={filterEntity}
-            onchange={applyFilter}
-            aria-label="Nach Entität filtern"
-          >
-            <option value="">Alle Entitäten</option>
-            {#each ENTITIES as e (e)}
-              <option value={e}>{e}</option>
-            {/each}
-          </select>
-          <span class="audit-filter-count">{logs.length} von {total}</span>
-        </div>
-
-        {#if loading}
-          <div class="audit-skeleton">
-            <div class="skeleton audit-skel-row-1"></div>
-            <div class="skeleton audit-skel-row-2"></div>
-          </div>
-        {:else if logs.length === 0}
-          <EmptyState
-            icon="search"
-            title="Keine Audit-Einträge"
-            description="Wähle einen anderen Zeitraum oder Filter."
-          />
+          <ErrorState message={loadError} onRetry={() => listQuery && loadLogs(listQuery)} />
         {:else}
-          <ul class="audit-timeline" aria-label="Audit-Einträge">
-            {#each logs as log (log.id)}
-              {@const actor = auditActorLabel(log)}
-              <li
-                class="audit-row"
-                role="button"
-                tabindex="0"
-                aria-label="Audit-Eintrag {log.action} {log.entity} vom {fmtDate(
-                  log.createdAt,
-                )} öffnen"
-                onclick={() => navigateToEntry(log.id)}
-                onkeydown={(e) => onRowKeydown(e, log.id)}
-              >
-                <div class="audit-row-main">
-                  <span class="audit-time">{fmtDate(log.createdAt)}</span>
-                  <span class="audit-actor">
-                    {#if actor.kind === "user"}{actor.text}{:else}<span class="audit-muted"
-                        >{actor.text}</span
-                      >{/if}
-                  </span>
-                  <span class={actionChip(log.action)}>
-                    <span class="dot"></span>{log.action}
-                  </span>
-                  <span class="audit-entity">{log.entity}</span>
-                  <span class="audit-hash">
-                    {log.entityId ? log.entityId.slice(0, 8) + "…" : "—"}
-                  </span>
-                  <span class="audit-ip">{log.ipAddress ?? "—"}</span>
-                  {#if hasDetail(log.oldValue) || hasDetail(log.newValue)}
-                    <span class="audit-has-detail" aria-label="Hat Details">↗</span>
-                  {:else}
-                    <span class="audit-toggle-spacer"></span>
-                  {/if}
-                </div>
-              </li>
-            {/each}
-          </ul>
-
-          <div class="audit-pagination">
-            <Pagination {total} bind:page bind:pageSize onChange={() => loadLogs()} />
-          </div>
-        {/if}
-      </Section>
-    {:else if currentTab === "config"}
-      <!-- ── Aufbewahrung ──────────────────────────────────────── -->
-      <Section
-        title="Aufbewahrung"
-        sub="Standard: 10 Jahre (GoBD, § 147 AO)"
-        dirty={retentionDirty}
-      >
-        {#snippet footer()}
-          <span class="audit-spacer"></span>
-          <button
-            class="btn btn-primary sm"
-            onclick={saveRetention}
-            disabled={retentionSaving || retentionLoading}
+          <DataTable
+            {columns}
+            rows={logs}
+            rowKey={(row) => row.id}
+            rowTestId={(row) => `admin-audit-row-${row.id}`}
+            onRowClick={(row) => goto(detailHref(row.id))}
+            filtered={filtersActive}
+            onResetFilters={resetFilters}
+            {loading}
+            caption="Protokolleinträge: Zeitpunkt, Wer, Was, Betroffene Person und Objekt"
           >
-            {#if retentionSaving}<Spinner />{/if}
-            Speichern
-          </button>
-        {/snippet}
-
-        <label class="audit-field">
-          <span class="audit-field-label">Aufbewahrungsfrist</span>
-          <select class="form-input" bind:value={retentionYears} disabled={retentionLoading}>
-            <option value={10} translate="no">10 Jahre (GoBD)</option>
-            <option value={6} translate="no">6 Jahre (§ 41 EStG Lohnkonten)</option>
-            <option value={3}>3 Jahre</option>
-            <option value={2} translate="no">2 Jahre (Minimum § 16 ArbZG)</option>
-          </select>
-          <span class="audit-field-hint">
-            Nach Ablauf werden Daten automatisch anonymisiert. Aggregierte Salden bleiben erhalten.
-            Hinweis: <span translate="no">§ 147 AO</span> verlangt 10 Jahre für lohnrelevante Belege;
-            kürzere Fristen nur, wenn keine Buchungsbelege betroffen sind.
-          </span>
-        </label>
-      </Section>
-
-      <!--
-        2FA toggle lives on /admin/system#sicherheit (single source of truth).
-        It used to also appear here as a placeholder card, but a duplicate
-        "Inaktiv" stub with no working control was just confusing.
-      -->
-
-      <!-- ── DSGVO-Werkzeuge ───────────────────────────────────── -->
-      <Section title="DSGVO-Werkzeuge" sub="Datenexport · Anonymisierung · Löschauftrag">
-        <div class="audit-dsgvo-actions">
-          <a class="btn btn-outline audit-dsgvo-btn" href="/admin/employees">
-            Datenexport pro Mitarbeiter:in
-          </a>
-          <a class="btn btn-outline audit-dsgvo-btn" href="/admin/employees">
-            Anonymisierung verwalten
-          </a>
-        </div>
-      </Section>
-    {/if}
-  {/snippet}
-</SectionStack>
+            {#snippet toolbar()}
+              <div class="audit-controls">
+                <div class="audit-controls-fields">
+                  <FormField label="Von" error={problem ?? undefined}>
+                    {#snippet field({ id, describedBy, invalid })}
+                      <DatePicker
+                        label="Von"
+                        value={filters.from}
+                        max={filters.to || undefined}
+                        {id}
+                        {describedBy}
+                        {invalid}
+                        onValueChange={(next) => listUrl.write({ from: next ?? "", page: 1 })}
+                      />
+                    {/snippet}
+                  </FormField>
+                  <FormField label="Bis">
+                    {#snippet field({ id, describedBy })}
+                      <DatePicker
+                        label="Bis"
+                        value={filters.to || null}
+                        min={filters.from || undefined}
+                        {id}
+                        {describedBy}
+                        onValueChange={(next) => listUrl.write({ to: next ?? "", page: 1 })}
+                      />
+                    {/snippet}
+                  </FormField>
+                  {#if canPickPerson}
+                    <FormField label="Betroffene Person">
+                      {#snippet field({ id, describedBy })}
+                        <Combobox
+                          items={personItems}
+                          value={urlFilters.employeeId || ALL_PEOPLE}
+                          label="Betroffene Person"
+                          {id}
+                          {describedBy}
+                          onValueChange={(next) =>
+                            listUrl.write({
+                              employeeId: next === ALL_PEOPLE ? "" : next,
+                              page: 1,
+                            })}
+                        />
+                      {/snippet}
+                    </FormField>
+                  {/if}
+                  <FormField label="Objekt">
+                    {#snippet field({ id, describedBy })}
+                      <select
+                        {id}
+                        class="form-input"
+                        value={urlFilters.entity}
+                        aria-describedby={describedBy}
+                        data-testid="admin-audit-filter-entity"
+                        onchange={(event) =>
+                          listUrl.write({ entity: event.currentTarget.value, page: 1 })}
+                      >
+                        <option value="">Alle Objekte</option>
+                        {#each entityOptions as option (option.code)}
+                          <option value={option.code}>{option.label}</option>
+                        {/each}
+                      </select>
+                    {/snippet}
+                  </FormField>
+                </div>
+                <div class="audit-controls-actions">
+                  {#if filtersActive}
+                    <button type="button" class="btn btn-ghost" onclick={resetFilters}>
+                      Filter zurücksetzen
+                    </button>
+                  {/if}
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    onclick={exportCsv}
+                    disabled={exporting || problem !== null}
+                    data-testid="admin-audit-export"
+                  >
+                    {#if exporting}<Spinner size={14} label="Datei wird erstellt" />{/if}
+                    Als CSV exportieren
+                  </button>
+                </div>
+              </div>
+              {#if !loading}
+                <p class="audit-count" aria-live="polite">
+                  {total.toLocaleString("de-DE")}
+                  {total === 1 ? "Eintrag" : "Einträge"}
+                </p>
+              {/if}
+            {/snippet}
+            {#snippet cell(row, column)}
+              {#if column.key === "time"}
+                <span class="audit-time">{fmtDate(row.createdAt)}</span>
+              {:else if column.key === "who"}
+                {@const actor = auditActorLabel(row)}
+                {#if actor.kind === "user"}{actor.text}{:else}<span class="audit-muted"
+                    >{actor.text}</span
+                  >{/if}
+              {:else if column.key === "what"}
+                <Chip tone={actionTone(row.action)}>{actionLabel(row.action)}</Chip>
+              {:else if column.key === "person"}
+                {#if row.affectedEmployee}
+                  {row.affectedEmployee.lastName}, {row.affectedEmployee.firstName}
+                  <span class="audit-muted">({row.affectedEmployee.employeeNumber})</span>
+                {:else}
+                  <span class="audit-muted">—</span>
+                {/if}
+              {:else if column.key === "object"}
+                {entityLabel(row.entity)}
+              {/if}
+            {/snippet}
+          </DataTable>
+          {#if !loading && total > 0}
+            <Pagination
+              {total}
+              bind:page={pageNumber}
+              bind:pageSize
+              onChange={(next) => listUrl.write({ page: next.page })}
+              labelSingular="Eintrag"
+              labelPlural="Einträge"
+            />
+          {/if}
+        {/if}
+      {:else if value === "aufbewahrung"}
+        {#if retention.status === "loading"}
+          <Skeleton shape="card" lines={3} />
+        {:else if retention.status === "failed"}
+          <div role="alert"><Note tone="bad">{retention.message}</Note></div>
+        {:else}
+          <RetentionSection config={retention.data} bind:changes={retentionChanges} />
+        {/if}
+        <Note tone="info">
+          Daten einer Person exportierst oder anonymisierst du unter
+          <a href="/verwalten/personen">Verwalten › Personen</a>.
+        </Note>
+      {/if}
+    {/snippet}
+  </PageTabs>
+</div>
 
 <style>
-  /* ── Filter bar ── */
-  .audit-filter-bar {
+  .audit-controls {
     display: flex;
-    align-items: center;
-    gap: 10px;
     flex-wrap: wrap;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 6px;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--s-3);
   }
 
-  .audit-filter-bar select {
-    width: auto;
-    min-width: 160px;
-    flex: 0 0 auto;
-  }
-
-  .audit-filter-count {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin-left: auto;
-  }
-
-  @media (max-width: 480px) {
-    .audit-filter-bar select {
-      flex: 1 1 100%;
-      min-width: 0;
-      width: 100%;
-    }
-    .audit-filter-count {
-      flex: 1 1 100%;
-      margin-left: 0;
-      text-align: left;
-    }
-  }
-
-  /* ── Timeline list ── */
-  .audit-timeline {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+  .audit-controls-fields {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--s-3);
+    min-width: 0;
   }
 
-  .audit-row {
-    border-bottom: 1px solid var(--border);
-    padding: 10px 0;
-    cursor: pointer;
-    transition: background-color 160ms var(--ease);
-    border-radius: var(--r-sm);
+  .audit-controls-fields > :global(.form-field) {
+    width: 12rem;
+    max-width: 100%;
   }
 
-  .audit-row:last-child {
-    border-bottom: none;
+  .audit-controls-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
   }
 
-  .audit-row:hover,
-  .audit-row:focus-visible {
-    background: var(--bg-subtle);
-    padding-left: 8px;
-    padding-right: 8px;
-    outline: none;
-  }
-
-  .audit-row:focus-visible {
-    box-shadow: 0 0 0 2px var(--brand);
-  }
-
-  .audit-row-main {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto auto auto auto;
-    align-items: center;
-    gap: 12px;
+  .audit-count {
+    margin: var(--s-2) 0 0;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
   }
 
   .audit-time {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-faint);
-    white-space: nowrap;
-  }
-
-  .audit-actor {
-    font-size: 13px;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .audit-muted {
-    color: var(--text-muted);
-    font-style: italic;
-  }
-
-  .audit-entity {
-    font-size: 12.5px;
-    color: var(--text-muted);
-    white-space: nowrap;
-  }
-
-  .audit-hash {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--text-faint);
-    white-space: nowrap;
-  }
-
-  .audit-ip {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--text-faint);
-    white-space: nowrap;
-  }
-
-  .audit-has-detail {
-    font-size: 13px;
-    color: var(--brand);
-    width: 28px;
-    display: inline-block;
-    text-align: center;
-  }
-
-  .audit-toggle-spacer {
-    width: 28px;
-    display: inline-block;
-  }
-
-  /* ── Skeleton state ── */
-  .audit-skeleton {
-    padding: 20px 0;
-  }
-  .audit-skel-row-1 {
-    height: 1.5rem;
-    width: 60%;
-    margin-bottom: 0.75rem;
-  }
-  .audit-skel-row-2 {
-    height: 1.5rem;
-    width: 80%;
-  }
-
-  .audit-pagination {
-    margin-top: 8px;
-  }
-
-  /* ── Retention field controls ── */
-  .audit-field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .audit-field-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-faint);
-  }
-
-  .audit-field-hint {
-    font-size: 12px;
-    color: var(--text-muted);
-    line-height: 1.5;
-    margin-top: 4px;
-  }
-
-  .audit-spacer {
-    flex: 1 1 auto;
-  }
-
-  .audit-body-text {
-    font-size: 13px;
-    color: var(--text-muted);
-    margin: 4px 0 0;
-    line-height: 1.55;
-  }
-
-  .audit-dsgvo-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 4px;
-  }
-
-  .audit-dsgvo-btn {
-    justify-content: flex-start;
-  }
-
-  /* ── Responsive ── */
-  @media (max-width: 720px) {
-    .audit-row-main {
-      grid-template-columns: 1fr auto;
-      gap: 6px 12px;
-    }
-    .audit-time {
-      grid-column: 1 / -1;
-    }
-    .audit-entity,
-    .audit-hash,
-    .audit-ip {
-      grid-column: 1 / -1;
-    }
+    color: var(--text-2);
   }
 </style>

@@ -18,6 +18,7 @@ import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { cleanupShiftsForBSAbsence } from "../scheduling"; // Phase 101B (Issue #101, wave 9)
+import { absenceTypeFields } from "./leave-type";
 import { BS_PATTERN_ORDER_BY, findAmbiguousClaimDates } from "./vocational-school-pattern-order.js";
 import {
   getClosedMonthsInRange, // Phase 100B Plan 07 — W2b
@@ -646,7 +647,7 @@ async function runOrPreview(
             const created = await tx.absence.create({
               data: {
                 employeeId: employee.id,
-                type: "VOCATIONAL_SCHOOL",
+                ...absenceTypeFields("VOCATIONAL_SCHOOL"),
                 source: "PATTERN", // Phase 63 D-22: distinguishes auto-generated rows from MANUAL (D-23) inserts
                 startDate: date,
                 endDate: date,

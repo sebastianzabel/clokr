@@ -13,9 +13,10 @@
   import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
   import ErrorBoundary from "$lib/components/ui/ErrorBoundary.svelte";
   import WhatsNewPanel from "$lib/components/layout/WhatsNewPanel.svelte";
-  import { hasUnreadReleaseNotes, whatsNewOpen } from "$stores/release-notes";
-  import { isMobileViewport } from "$lib/utils/viewport";
-  import { activeNavHref } from "$lib/nav/active-route";
+  import { labelForPath } from "$lib/nav/page-labels";
+  import { areaLabelForPath, pageWidthForPath } from "$lib/nav/routes";
+  import { loginPathWithNext } from "$lib/nav/login-next";
+  import { installPushNavigateListener } from "$lib/push/navigate-message";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -23,52 +24,12 @@
 
   let { children }: Props = $props();
 
-  // ── Page label mapping (longest-prefix match) ──────────────────
-  // German labels match docs/design/reference/i18n.js DE entries verbatim.
-  const PAGE_LABELS: Record<string, string> = {
-    "/dashboard": "Übersicht",
-    "/time-entries": "Zeiterfassung",
-    "/leave": "Urlaub",
-    "/reports": "Berichte",
-    // v1.5 Phase 30 manager screens — primary nav targets.
-    "/inbox": "Anträge",
-    "/teamcal": "Team-Kalender",
-    "/shifts": "Schichtplanung",
-    // Pre-v1.5 team pages kept for direct-link compatibility (no longer in nav).
-    "/team/leave": "Team-Anträge",
-    "/team/time-entries": "Team-Zeiten",
-    "/admin/employees": "Mitarbeitende",
-    "/admin/month-close": "Monatsabschluss",
-    "/admin/audit": "Compliance & Audit",
-    "/admin/support-access": "Support-Zugriffe",
-    "/admin/themes": "Branding & Themes",
-    "/admin/import": "CSV Import",
-    "/admin/export": "DATEV Export",
-    "/admin/shifts": "Schichtplanung",
-    "/admin/system": "Allgemein",
-    // /admin/wifi-presence 301-redirects to /admin/integrations (Phase 52 rename)
-    "/admin/wifi-presence": "Integrationen",
-    "/admin/integrations": "Integrationen",
-    "/admin/shutdowns": "Betriebsurlaub",
-    "/admin/special-leave": "Sonderurlaub",
-    "/admin/vacation": "Urlaub",
-    "/admin/roles": "Rollen & Rechte",
-    "/admin/availability": "Verfügbarkeit",
-    "/admin/salons": "Salons",
-    "/admin/phorest": "Phorest",
-    "/admin": "Administration",
-    "/settings": "Mein Profil",
-  };
-  const PAGE_LABEL_KEYS = Object.keys(PAGE_LABELS);
-
-  // Longest matching key wins, so '/admin/employees' beats '/admin' (shared rule, $lib/nav/active-route).
-  function labelForPath(path: string): string {
-    const key = activeNavHref(PAGE_LABEL_KEYS, path);
-    return key === null ? "" : PAGE_LABELS[key];
-  }
-
+  // ── Page label: the one table in $lib/nav/page-labels (Issue #574) ──
   let currentPath = $derived($page.url.pathname);
   let currentPageLabel = $derived(labelForPath(currentPath));
+  // #844 (D-844-11/12): the crumb's area and the page width come from the route table only
+  let currentAreaLabel = $derived(areaLabelForPath(currentPath));
+  let pageWidth = $derived(pageWidthForPath(currentPath));
 
   // ── Inactivity timer ───────────────────────────────────────────
   let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
@@ -121,32 +82,15 @@
     pendingUrl = null;
   }
 
-  // Phase 110 (D-07/AK-07): auto-open once per session when this user has not yet acknowledged
-  // the newest release baked into the running image. Fires only once — autoOpened latches — so
-  // dismissing it (which writes the seen state server-side) is final for this session even if the
-  // PUT fails.
-  //
-  // WhatsNewPanel is a non-modal drawer: it sets no `inert` on sibling nodes and does not lock
-  // body scroll, so the "Einstempeln" button stays reachable in MECHANISM while it is open (N-07,
-  // asserted in WhatsNewPanel.test.ts). That held on desktop but not in OUTCOME on a phone —
-  // measured live at 390x844, the drawer covered 92% of the viewport width and its full height
-  // directly over the button (`elementFromPoint()` on the button's centre resolved into
-  // `aside.whats-new`). Below the app's mobile breakpoint (isMobileViewport(), same 960px
-  // BottomTabBar.svelte/`.app` grid already use) auto-open is therefore suppressed entirely —
-  // manual opening via the version-line dot (Sidebar + MobileMoreSheet) stays available at every
-  // width; only the AUTOMATIC trigger yields to the primary clock-in action on a phone.
-  let autoOpened = $state(false);
-  $effect(() => {
-    if (autoOpened) return;
-    if (!$hasUnreadReleaseNotes) return;
-    if (isMobileViewport()) return;
-    autoOpened = true;
-    whatsNewOpen.set(true);
-  });
+  // Issue #576: the What's-New panel opens only on the reader's click (version line in the
+  // sidebar or the Mehr sheet, which show an unread badge); there is no automatic opening.
+
+  let removePushNavigateListener: (() => void) | undefined;
 
   onMount(() => {
     if (!$authStore.accessToken) {
-      goto("/login");
+      // Issue #608 (D-20): keep the page the person was heading to through sign-in.
+      goto(loginPathWithNext($page.url));
       return;
     }
 
@@ -167,6 +111,10 @@
     // store fails closed for presentation and never gates data — the server decides every request.
     void salonContext.load($authStore.user?.id ?? null, { force: true });
 
+    // Issue #608 (review WR-05): a tapped push notification asks this window to navigate; it goes
+    // through the router, so the unsaved-changes guard above applies.
+    removePushNavigateListener = installPushNavigateListener((path) => goto(path));
+
     // Start inactivity timer
     resetInactivityTimer();
     for (const evt of ACTIVITY_EVENTS) {
@@ -184,6 +132,7 @@
   });
 
   onDestroy(() => {
+    removePushNavigateListener?.();
     if (inactivityTimer) clearTimeout(inactivityTimer);
     if (typeof document !== "undefined") {
       for (const evt of ACTIVITY_EVENTS) {
@@ -197,9 +146,9 @@
   <div class="app">
     <a href="#main-content" class="skip-to-content">Zum Inhalt springen</a>
     <Sidebar {currentPath} />
-    <Topbar {currentPath} {currentPageLabel} />
+    <Topbar {currentPath} {currentPageLabel} {currentAreaLabel} />
     <main class="main" id="main-content">
-      <div class="page-fade">
+      <div class="page-fade page-frame" data-width={pageWidth} data-testid="page-frame">
         <ErrorBoundary scope="view">
           {@render children?.()}
         </ErrorBoundary>
@@ -224,7 +173,8 @@
 <style>
   .app {
     display: grid;
-    grid-template-columns: var(--sidebar-w) 1fr;
+    /* #844: minmax(0, 1fr) — the header's crumb never widens the column past the viewport */
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
     grid-template-rows: var(--topbar-h) 1fr;
     grid-template-areas:
       "sidebar topbar"
@@ -236,9 +186,24 @@
   .main {
     grid-area: main;
     padding: 28px 32px 60px;
-    max-width: 1400px;
     width: 100%;
     min-width: 0;
+  }
+
+  /* #844 (owner 09.11.2026): two page widths, chosen per route in $lib/nav/routes — reading width (forms,
+     settings, details) up to 1120 px, full width (planners, calendars, tables, reports, start pages) up to
+     2400 px; the 32 px side padding of .main is the margin. No page sets its own content max-width.
+     Owner decision 13.11.2026 (#907): both widths start at the same left edge - the reading width is
+     left-aligned, no longer centred, so every page begins at the same x on every screen width. */
+  .page-frame {
+    width: 100%;
+    margin: 0;
+  }
+  .page-frame[data-width="read"] {
+    max-width: var(--page-read);
+  }
+  .page-frame[data-width="full"] {
+    max-width: var(--page-full);
   }
 
   .page-fade {
@@ -252,22 +217,22 @@
     left: 8px;
     padding: 8px 12px;
     background: var(--brand);
-    color: white;
+    color: var(--brand-ink);
     text-decoration: none;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     z-index: 1000;
     transition: top 120ms var(--ease);
   }
 
   .skip-to-content:focus {
     top: 8px;
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
   @media (max-width: 960px) {
     .app {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
       grid-template-rows: var(--topbar-h) 1fr;
       grid-template-areas:
         "topbar"

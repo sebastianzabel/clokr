@@ -40,9 +40,9 @@
     >
       {#snippet tabContent(tab)}
         {#if tab === "general"}
-          <Section title="ALLGEMEIN">…</Section>
+          <Section title="Allgemein">…</Section>
         {:else if tab === "rules"}
-          <Section title="REGELN">…</Section>
+          <Section title="Regeln">…</Section>
         {/if}
       {/snippet}
     </SectionStack>

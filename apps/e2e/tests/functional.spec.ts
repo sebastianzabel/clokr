@@ -40,7 +40,7 @@ async function loginAsTenantAdmin(page: Page, tenant: TestTenant): Promise<void>
   await page.getByLabel("E-Mail").fill(`admin@${tenant.tenantId}.test`);
   await page.getByLabel("Passwort", { exact: true }).fill(TEST_PASSWORD);
   await page.getByRole("button", { name: /anmelden/i }).click();
-  await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+  await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
 }
 
 test.describe("Functional — happy paths across primary surfaces", () => {
@@ -56,7 +56,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await expect(stempelBtn.first()).toBeVisible({ timeout: 10_000 });
 
       // Greeting at the top of the page proves the auth-store hydrated and
-      // the user data resolved (Guten Morgen/Tag/Abend, ...).
+      // the user data resolved (the PageHead sub line "Guten Morgen/Tag/Abend, ...", Issue #574).
       await expect(page.getByText(/Guten (Morgen|Tag|Abend)/)).toBeVisible();
     });
 
@@ -77,30 +77,29 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(box!.y).toBeLessThan(800);
     });
 
-    test("team saldo card sits at the top of the team area", async ({ page, tenant }) => {
-      // Issue #588 (AC-588-1): the card "Salden" is the first block under the team divider, so with
-      // the divider scrolled to the top of the viewport its heading and its first figure (the
-      // team median, or the empty text when nobody is in reach) are in view without scrolling on.
+    test("Heute im Salon carries no saldo card and no team chart (#846 D-04)", async ({
+      page,
+      tenant,
+    }) => {
+      // Issue #846 (owner decision D-04): the card "Salden" (#588) and the three team charts (#591)
+      // left the start page; they live on Verwalten › Berichte, tab „Verläufe“ (#895), see below.
+      // Positive control first:
+      // the Kennzahlen-Band has rendered, so the absences below are measured on a loaded page.
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/dashboard");
+      await page.goto("/team/heute");
+      await expect(page.getByTestId("kpi-present")).toBeVisible({ timeout: 15_000 });
+      await page.waitForLoadState("networkidle");
 
-      const card = page.locator(".team-saldo-card");
-      await expect(card).toBeVisible({ timeout: 15_000 });
-      await page.locator(".team-divider").scrollIntoViewIfNeeded();
-      await page.locator(".team-divider").evaluate((el) => el.scrollIntoView({ block: "start" }));
-
-      await expect(card.getByText("Salden", { exact: true })).toBeInViewport();
-      const firstFigure = card
-        .getByTestId("team-saldo-median")
-        .or(card.getByText("Keine Salden in Ihrer Reichweite"));
-      // The figure arrives with the overview request, which starts after the team block loaded; the
-      // wait is for that load under a busy full run (a single run needs about 3 s), the assertion
-      // itself - the figure lies inside the viewport - is unchanged.
-      await expect(firstFigure).toBeInViewport({ timeout: 20_000 });
+      await expect(page.locator(".team-saldo-card")).toHaveCount(0);
+      await expect(page.locator("canvas")).toHaveCount(0);
+      await expect(page.getByRole("link", { name: /im Bericht öffnen$/ })).toHaveCount(0);
     });
   });
 
-  test.describe("Dashboard charts", () => {
+  // Issue #895: the team charts live on Verwalten › Berichte, tab „Verläufe“ (they left Heute im Salon
+  // with #846). Their drill-down contract (#591: a month column and the header link open the report
+  // of those months) is the acceptance of that tab.
+  test.describe("Berichte › Verläufe charts", () => {
     test("a month of the team charts opens the report of that month", async ({ page, tenant }) => {
       // Issue #591 (AC-591-3, D-591-3): the header links "Bericht →" and the click on a month
       // column both lead to the reports page; the URL is written by the reports page's own
@@ -120,7 +119,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
         "Dezember",
       ];
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/dashboard");
+      await page.goto("/verwalten/berichte?tab=verlaeufe"); // #895: the tab „Verläufe“ of Berichte
 
       const hoursCanvas = page.getByRole("img", {
         name: /^(Gruppiertes )?Säulendiagramm: .*Arbeitsstunden/,
@@ -161,7 +160,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(box).not.toBeNull();
       await hoursCanvas.click({ position: { x: box!.width * 0.9, y: box!.height * 0.45 } });
 
-      await page.waitForURL(/\/reports\?from=(\d{4}-\d{2})&to=\1&tab=zeiten/);
+      await page.waitForURL(/\/verwalten\/berichte\?from=(\d{4}-\d{2})&to=\1&tab=zeiten/);
       expect(new URL(page.url()).searchParams.get("to")).toBe(lastMonth);
       const [year, month] = lastMonth.split("-").map(Number);
       await expect(page.getByTestId("reports-period-label")).toContainText(
@@ -176,7 +175,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       // Issue #591 (P-591-06): a canvas click is not keyboard-operable, so the same drill-down
       // exists as a link in the card header.
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/dashboard");
+      await page.goto("/verwalten/berichte?tab=verlaeufe"); // #895: the tab „Verläufe“ of Berichte
 
       const sickLink = page.getByRole("link", { name: "Krankheitstage im Bericht öffnen" });
       await expect(sickLink).toBeVisible({ timeout: 15_000 });
@@ -184,8 +183,9 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(href).toMatch(/^\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub$/);
 
       await sickLink.click();
-      await page.waitForURL(/\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
-      expect(page.url()).toContain(href);
+      await page.waitForURL(/\/verwalten\/berichte\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
+      // #844: the link's /reports URL redirects to Verwalten › Berichte and keeps its whole query
+      expect(page.url()).toContain(href.replace(/^\/reports\?/, "/verwalten/berichte?"));
     });
   });
 
@@ -201,10 +201,11 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await expect(page.getByTestId("sidebar-brand")).toBeVisible();
 
       const targets = [
-        { testid: "nav-time-entries", url: /\/time-entries/ },
-        { testid: "nav-leave", url: /\/leave/ },
-        { testid: "nav-reports", url: /\/reports/ },
-        { testid: "nav-dashboard", url: /\/dashboard/ },
+        // #844: the test ids stay those of the route files, the URLs are the new ones
+        { testid: "nav-time-entries", url: /\/ich\/zeiten$/ },
+        { testid: "nav-leave", url: /\/ich\/abwesenheiten$/ },
+        { testid: "nav-reports", url: /\/verwalten\/berichte$/ },
+        { testid: "nav-dashboard", url: /\/ich\/tag$/ },
       ];
 
       for (const t of targets) {
@@ -282,13 +283,27 @@ test.describe("Functional — happy paths across primary surfaces", () => {
   });
 
   test.describe("Admin System surface", () => {
-    test("admin/system page mounts with documented testid", async ({ page, tenant }) => {
+    test("admin/system page mounts with documented testid and its four sections", async ({
+      page,
+      tenant,
+    }) => {
       // Merged from ui-audit.spec.ts "admin system page loads all sections".
       // Trimmed to the testid contract emitted by Phase 73-05.
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/admin/system");
 
       await expect(page.getByTestId("admin-system-page")).toBeAttached();
+      // Issue #854 (plan 854-15): System › Allgemein holds the company and the sign-in security, no tabs.
+      await expect(page.getByRole("heading", { level: 1, name: "Allgemein" })).toBeVisible();
+      for (const title of [
+        "Unternehmen & Region",
+        "Zwei-Faktor-Authentifizierung",
+        "Passwort-Richtlinie",
+        "Sitzungen",
+      ]) {
+        await expect(page.getByRole("heading", { level: 2, name: title })).toBeVisible();
+      }
+      await expect(page.getByRole("tab")).toHaveCount(0);
     });
   });
 
@@ -329,40 +344,57 @@ test.describe("Functional — happy paths across primary surfaces", () => {
     });
   });
 
-  // Phase 110 follow-up: the visual-regression suite (visual.spec.ts) now seeds every test
-  // tenant's admin as "already acknowledged the newest release note" so the auto-opening
-  // WhatsNewPanel drawer doesn't sit over every screenshot baseline (see visual-seed.ts's
-  // "2b. Acknowledge the newest release note" step). That means the drawer's auto-open behavior
-  // itself is no longer exercised anywhere at the browser level — this describe block is that
-  // coverage. Kept out of visual.spec.ts on purpose: asserting on a mid-animation drawer via
-  // `toHaveScreenshot()` would be flaky (the drawer slides in), so this only checks visibility
-  // via `getByRole`/`aria-label`, which Playwright's auto-waiting handles independently of the
-  // open/close transition.
-  test.describe("What's-New drawer (Phase 110)", () => {
-    test("auto-opens once for a fresh user and can be dismissed", async ({ page, tenant }) => {
-      // `tenant` fixture creates a brand-new admin per test (Plan 73-02, D-04 isolation), so
-      // `User.lastSeenReleaseVersion` is null here — exactly the "never seen a release" state
-      // the auto-open `$effect` in `(app)/+layout.svelte` reacts to.
+  // Issue #576: the What's-New panel opens only on click; an unread release shows a „Neu“ badge
+  // on the sidebar's version entry. The tenant fixture stubs an empty corpus, so this test serves
+  // its own synthetic release (one section for everyone, one operator section) — Playwright applies
+  // the later route over the fixture's stub. The tenant admin holds tenant-settings:update and
+  // therefore sees the operator section too.
+  test.describe("What's-New nur auf Klick (Issue #576)", () => {
+    test("no automatic opening; the badge leads to the panel", async ({ page, tenant }) => {
+      await page.route("**/api/v1/release-notes*", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            releases: [
+              {
+                version: "1.99.0",
+                title: "Ruhigere Oberfläche",
+                intro: [],
+                footnote: null,
+                sections: [
+                  {
+                    heading: "Neue Funktionen",
+                    audience: "all",
+                    bullets: [{ spans: [{ text: "Neues für alle", bold: false }] }],
+                  },
+                  {
+                    heading: "Betrieb & Migration",
+                    audience: "admin",
+                    bullets: [{ spans: [{ text: "Hinweis für den Betrieb", bold: false }] }],
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+      );
       await loginAsTenantAdmin(page, tenant);
       await page.goto("/dashboard");
 
+      const entry = page.getByTestId("sidebar-whats-new");
+      await expect(entry).toBeVisible();
+      await expect(entry.getByText("Neu", { exact: true })).toBeVisible();
       const panel = page.getByRole("complementary", { name: "Was ist neu" });
-      // An older/local API image can serve an empty release-notes corpus (AK-06 fail-silent
-      // contract in release-notes.ts) — in that case there is nothing to auto-open and this
-      // assertion would hang. Skip gracefully rather than asserting a false negative.
-      const opened = await panel
-        .waitFor({ state: "visible", timeout: 10_000 })
-        .then(() => true)
-        .catch(() => false);
-      test.skip(!opened, "No release notes baked into this image — nothing to auto-open.");
+      await expect(panel).not.toBeVisible();
 
+      await entry.click();
+      await expect(panel).toBeVisible();
+      await expect(panel.getByText("Neues für alle")).toBeVisible();
+      await expect(panel.getByText("Hinweis für den Betrieb")).toBeVisible();
       await page.getByRole("button", { name: "Schließen" }).click();
       await expect(panel).not.toBeVisible();
-      // Not asserting on a post-dismiss reload here: markReleaseNotesSeen() persists the
-      // acknowledgement via a fire-and-forget PUT (apps/web/src/lib/stores/release-notes.ts),
-      // so reloading immediately after the click races that request rather than testing
-      // anything deterministic. Server-side persistence of the marker is covered by
-      // apps/api/src/__tests__/release-notes.test.ts.
+      await expect(entry.getByText("Neu", { exact: true })).toHaveCount(0);
     });
   });
 });

@@ -1699,7 +1699,6 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
     data: {
       email: `admin-${s}@test.invalid`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -1743,7 +1742,6 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
     data: {
       email: `emp-${s}@test.invalid`,
       passwordHash: await bcrypt.hash("test1234", 10),
-      role: "EMPLOYEE",
       isActive: true,
     },
   });
@@ -2527,7 +2525,6 @@ describe("GT-08 — reopen earliest snapshot: live saldo == cumulative, not Feb-
       data: {
         email: `admin-${s}@test.invalid`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -2570,7 +2567,6 @@ describe("GT-08 — reopen earliest snapshot: live saldo == cumulative, not Feb-
       data: {
         email: `emp-${s}@test.invalid`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

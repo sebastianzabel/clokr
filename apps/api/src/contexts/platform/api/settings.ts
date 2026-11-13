@@ -13,6 +13,11 @@ import {
   snapToMonthFirstUtc,
 } from "../month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../calculate-work-days";
+import {
+  fixedScheduleDaySum,
+  fixedScheduleHoursMismatch,
+  WEEKLY_HOURS_MISMATCH_CODE,
+} from "../fixed-schedule-hours";
 import { accessContextFromRequest, employeeScopeFor } from "../access-context";
 import { resolveAccessReach } from "../facade/role-assignments"; // Phase 91b Plan 10 (#91), D-10/D-14
 import { isShiftInScope, isStammsalonScopeMatch } from "../scope-filter"; // Phase 91b Plan 10 (#91), D-10/D-14; #86 (D-02)
@@ -56,7 +61,8 @@ import {
 } from "../../absence"; // issue #246, E-6
 import { validateUsualWorkDays } from "../usual-work-days"; // Phase 436 (D-02)
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../employee-anonymization-filter"; // Issue #569
-import { requestAuditFields } from "../request-audit-fields"; // Issue #450 (D-08) — attributes the recompute's audit to the acting user
+import { requestAuditFields } from "../request-audit-fields";
+import { changedFieldsAudit } from "../../../utils/audit-diff"; // Issue #450 (D-08) — attributes the recompute's audit to the acting user
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -85,18 +91,11 @@ const decimalFromApi = (schema: z.ZodType<number>) =>
 /**
  * Retired `TenantConfig` columns — they stay in the schema for image-rollback safety until a
  * follow-up release drops them; no code path may read or write them any more. Delete an entry
- * together with its column.
- *
- * - `monthlyHoursHolidayDeduction`: Issue #433 (D-04), dropped by GitHub #470.
- * - `storeHours`: Issue #563 (D-13) retires the tenant-level opening hours the same way. Opening
- *   hours live only on `Salon.openingHours`; the settings schema no longer knows the key (a stale
- *   client's value is stripped, 200, nothing written) and every read and the upsert omit the
- *   column. The column is dropped by GitHub #638 (follow-up, pattern of #470).
+ * together with its column. Currently empty: `monthlyHoursHolidayDeduction` (#470) and
+ * `storeHours` (#563, dropped by #638) are gone; the omit call sites stay so the next retirement
+ * is a one-line entry again.
  */
-const RETIRED_TENANT_CONFIG_COLUMNS: Prisma.TenantConfigOmit = {
-  monthlyHoursHolidayDeduction: true,
-  storeHours: true,
-};
+const RETIRED_TENANT_CONFIG_COLUMNS: Prisma.TenantConfigOmit = {};
 
 /**
  * The working-time part of the tenant defaults (Issue #568). Shared by `tenantConfigSchema` and the
@@ -193,6 +192,9 @@ const tenantConfigSchema = z
     vacationLeadTimeDays: z.number().int().min(0).max(365).optional(),
     vacationMaxAdvanceMonths: z.number().int().min(0).max(24).optional(),
     halfDayAllowed: z.boolean().optional(),
+    // Issue #835 (D-835-03, Unterbau Erweiterung): when on, an employee's OWN change of a leave plan
+    // wish is locked after the plan deadline; a manager covering the person is never locked.
+    leavePlanDeadlineLocksWishes: z.boolean().optional(),
     sickSelfReport: z.boolean().optional(),
     // Phase 104 (D-22 / R4): § 5 Abs. 1 EFZG spricht wörtlich von "länger als drei
     // Kalendertage" — mehr als 3 ist kein zulässiger Schwellwert. Bereich daher 0-3
@@ -223,6 +225,16 @@ const tenantConfigSchema = z
     reminderUpcomingAbsenceDays: z.number().int().min(1).max(30).optional(),
     reminderPendingLeaveEnabled: z.boolean().optional(),
     reminderUpcomingAbsenceEnabled: z.boolean().optional(),
+    // Shift reminders (Issue #609, D-01): three occasions, all off by default (existing tenants
+    // keep their behaviour). The offset is bounded to 5-120 minutes, the evening time is HH:MM.
+    reminderShiftStartEnabled: z.boolean().optional(),
+    reminderShiftEndEnabled: z.boolean().optional(),
+    reminderDayCloseEnabled: z.boolean().optional(),
+    reminderOffsetMinutes: z.number().int().min(5).max(120).optional(),
+    reminderDayCloseTime: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional(),
     // DATEV Lohnartennummern (Phase 4 — DATEV-03)
     datevNormalstundenNr: z.number().int().min(1).max(9999).optional(),
     datevUrlaubNr: z.number().int().min(1).max(9999).optional(),
@@ -238,7 +250,7 @@ const tenantConfigSchema = z
     // Mandantennummer 5 digits.
     datevBeraterNr: z.number().int().min(1).max(9999999).nullable().optional(),
     datevMandantenNr: z.number().int().min(1).max(99999).nullable().optional(),
-    // Issue #563 (D-13): the retired tenant-level `storeHours` key is deliberately absent. The schema
+    // Opening hours are per salon (Issue #563); the tenant-level key no longer exists. The schema
     // is not strict, so a stale client that still sends it is stripped here (200, nothing written).
     // Phase 47.5 — STRICT / DAY_ONLY / OFF
     shiftStoreHoursMode: z.enum(["STRICT", "DAY_ONLY", "OFF"]).optional(),
@@ -271,6 +283,9 @@ const tenantConfigSchema = z
       .min(1200, "Berufsschul-Block pro Woche muss mindestens 1200 Min (20h) sein")
       .max(3000, "Berufsschul-Block pro Woche darf höchstens 3000 Min (50h) sein")
       .optional(),
+    // Issue #854 (D-854-20): the admin toggle existed but the key was stripped, so nothing
+    // persisted. The column defaults to true; shift-cleanup.ts reads it.
+    vocationalSchoolAutoCleanupShifts: z.boolean().optional(),
     // Phase 76.31 D-06 — 4-layer bsSlot* override hierarchy (TenantConfig layer).
     // Nullable: an explicit null CLEARS the tenant override so resolution delegates
     // down to the daily-Soll fallback. Daily bounds 240..600 (4h..10h);
@@ -752,6 +767,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         vacationLeadTimeDays: 0,
         vacationMaxAdvanceMonths: 0,
         halfDayAllowed: true,
+        leavePlanDeadlineLocksWishes: false,
         sickSelfReport: true,
         sickNoteRequiredAfterDays: 3,
         autoCalcPartTimeVacation: true,
@@ -763,6 +779,11 @@ export async function settingsRoutes(app: FastifyInstance) {
         reminderUpcomingAbsenceDays: 3,
         reminderPendingLeaveEnabled: true,
         reminderUpcomingAbsenceEnabled: true,
+        reminderShiftStartEnabled: false,
+        reminderShiftEndEnabled: false,
+        reminderDayCloseEnabled: false,
+        reminderOffsetMinutes: 15,
+        reminderDayCloseTime: "20:00",
         datevNormalstundenNr: 100,
         datevUrlaubNr: 300,
         datevKrankNr: 200,
@@ -834,9 +855,15 @@ export async function settingsRoutes(app: FastifyInstance) {
       // Phase 64 (D-11): Snapshot pre-change break-default values so the
       // dedicated BREAK_DEFAULT_CHANGED audit row below carries a stable
       // before-image even if the upsert later mutates the row in place.
+      // Issue #285: the full pre-change row (retired columns omitted) is the before-image of the
+      // generic UPDATE audit row below, not just the two break defaults.
       const previousConfig = await app.prisma.tenantConfig.findUnique({
         where: { tenantId },
-        select: { defaultBreakOver6h: true, defaultBreakOver9h: true },
+        omit: RETIRED_TENANT_CONFIG_COLUMNS,
+      });
+      const previousTenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { federalState: true, name: true },
       });
 
       // federalState and tenantName belong to Tenant, not to TenantConfig (D-17: renaming the
@@ -900,8 +927,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (tenantName !== undefined) tenantUpdate.name = tenantName;
 
       // The tenantConfig upsert and the optional tenant update run in ONE transaction. Since
-      // Issue #563 (D-04) a settings write never touches a Salon row: the former storeHours
-      // mirror into the sole active salon is gone.
+      // Issue #563 (D-04) a settings write never touches a Salon row: there is no
+      // mirror into the sole active salon.
       //
       // Issue #568 (D-02, D-06): the guarded bulk apply joins this very transaction — the tenant
       // lock, the recomputation and fingerprint check, every new WorkSchedule row with its CREATE
@@ -914,7 +941,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         : undefined;
       const applied: { employeeId: string }[] = [];
       let skippedModelSwitch = 0;
-      let config: Omit<TenantConfig, "monthlyHoursHolidayDeduction" | "storeHours">;
+      let config: TenantConfig;
       try {
         config = await app.prisma.$transaction(
           async (tx) => {
@@ -946,6 +973,17 @@ export async function settingsRoutes(app: FastifyInstance) {
                 bulkTimeZone,
                 configBody,
               );
+              // Issue #848: the defaults become FIXED_SCHEDULE contracts, so their weekly hours
+              // must equal Σ default day hours — refused before anything is written.
+              const proposedWeekly = proposedContractValues(state.proposed);
+              const weeklyMismatch = fixedScheduleHoursMismatch(
+                "FIXED_SCHEDULE",
+                proposedWeekly.weeklyHours,
+                proposedWeekly,
+              );
+              if (weeklyMismatch) {
+                throw new BulkApplyRejection(400, WEEKLY_HOURS_MISMATCH_CODE, weeklyMismatch);
+              }
               if (state.fingerprint !== previewFingerprint) {
                 throw new BulkApplyRejection(
                   409,
@@ -1085,17 +1123,25 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
 
       // The selection and fingerprint live in the BULK_APPLY row only (D-06); this row keeps the
-      // saved values and the count of written rows.
-      const auditBody: Record<string, unknown> = { ...body };
-      delete auditBody.applyEmployeeIds;
-      delete auditBody.previewFingerprint;
-      delete auditBody.effectiveFrom;
+      // CHANGED config fields with their before and after value (Issue #285) and the count of
+      // written rows. The writable set is the key set of what the upsert wrote - no field list.
+      const written: Record<string, unknown> = { ...configData };
+      if (tenantUpdate.federalState !== undefined) written.federalState = tenantUpdate.federalState;
+      if (tenantUpdate.name !== undefined) written.tenantName = tenantUpdate.name;
+      const stored: Record<string, unknown> = {
+        ...(previousConfig ?? {}),
+        federalState: previousTenant?.federalState,
+        tenantName: previousTenant?.name,
+      };
+      const diff = changedFieldsAudit(previousConfig || previousTenant ? stored : null, written);
       await app.audit({
         userId: req.user.sub,
         action: "UPDATE",
         entity: "TenantConfig",
         entityId: config.id,
-        newValue: { ...auditBody, appliedCount },
+        oldValue: diff.oldValue,
+        newValue: { ...diff.newValue, appliedCount },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       // Phase 64 (D-11): Dedicated audit row for break-default changes — emitted
@@ -1192,6 +1238,16 @@ export async function settingsRoutes(app: FastifyInstance) {
         tz,
         proposedBody,
       );
+      // Issue #848: the preview refuses inconsistent defaults the same way the apply does.
+      const proposedWeekly = proposedContractValues(state.proposed);
+      const weeklyMismatch = fixedScheduleHoursMismatch(
+        "FIXED_SCHEDULE",
+        proposedWeekly.weeklyHours,
+        proposedWeekly,
+      );
+      if (weeklyMismatch) {
+        return reply.code(400).send({ error: weeklyMismatch, code: WEEKLY_HOURS_MISMATCH_CODE });
+      }
       return {
         effectiveFrom,
         earliestEffectiveFrom: window.earliest,
@@ -1289,6 +1345,22 @@ export async function settingsRoutes(app: FastifyInstance) {
       const access = accessContextFromRequest(req);
       const { employeeId } = req.params as { employeeId: string };
       const body = employeeScheduleSchema.parse(req.body);
+      // Issue #848: for FIXED_SCHEDULE weeklyHours must equal Σ {day}Hours. A body that names no
+      // weeklyHours takes the day sum (the Zod default of 40 would otherwise contradict it).
+      if (
+        body.type === "FIXED_SCHEDULE" &&
+        (req.body as { weeklyHours?: unknown } | null)?.weeklyHours === undefined
+      ) {
+        body.weeklyHours = fixedScheduleDaySum(body as PerDayHours);
+      }
+      const weeklyMismatch = fixedScheduleHoursMismatch(
+        body.type,
+        body.weeklyHours,
+        body as PerDayHours,
+      );
+      if (weeklyMismatch) {
+        return reply.code(400).send({ error: weeklyMismatch, code: WEEKLY_HOURS_MISMATCH_CODE });
+      }
 
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
@@ -1858,6 +1930,10 @@ export async function settingsRoutes(app: FastifyInstance) {
         smtpFromEmail: cfg?.smtpFromEmail ?? null,
         smtpFromName: cfg?.smtpFromName ?? null,
         smtpSecure: cfg?.smtpSecure ?? false,
+        // Issue #847: whether mail can actually be delivered — the tenant's own SMTP OR the server's
+        // fallback, decided by the mailer's one rule (`getSmtpConfig`). A boolean only: no fallback
+        // value ever leaves the server.
+        deliveryReady: (await app.mailer.getSmtpConfig(tenantId)) !== null,
       };
     },
   });
@@ -1896,25 +1972,34 @@ export async function settingsRoutes(app: FastifyInstance) {
         create: { tenantId, ...updateData },
       });
 
+      // Issue #286: changed fields only, before and after. The password is stored encrypted and
+      // is a secret: it is masked on both sides and flagged, never written in clear text.
+      const diff = changedFieldsAudit(
+        oldConfig
+          ? {
+              ...oldConfig,
+              // Compared as presence, not as ciphertext: a fresh encrypt() differs on every call.
+              smtpPassword: undefined,
+            }
+          : null,
+        {
+          smtpHost: body.smtpHost,
+          smtpPort: body.smtpPort,
+          smtpUser: body.smtpUser,
+          smtpFromEmail: body.smtpFromEmail,
+          smtpFromName: body.smtpFromName,
+          smtpSecure: body.smtpSecure,
+          ...(body.smtpPassword ? { smtpPassword: "changed" } : {}),
+        },
+        { maskedKeys: ["smtpPassword"] },
+      );
       await app.audit({
         userId: req.user.sub,
         action: "UPDATE",
         entity: "TenantConfig",
         entityId: tenantId,
-        oldValue: oldConfig
-          ? {
-              smtpHost: oldConfig.smtpHost,
-              smtpPort: oldConfig.smtpPort,
-              smtpUser: oldConfig.smtpUser,
-              smtpFromEmail: oldConfig.smtpFromEmail,
-            }
-          : null,
-        newValue: {
-          smtpHost: body.smtpHost,
-          smtpPort: body.smtpPort,
-          smtpUser: body.smtpUser,
-          smtpFromEmail: body.smtpFromEmail,
-        },
+        oldValue: oldConfig ? diff.oldValue : null,
+        newValue: diff.newValue,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 

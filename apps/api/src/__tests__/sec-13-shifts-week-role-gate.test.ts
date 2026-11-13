@@ -65,7 +65,6 @@ describe("GET /api/v1/shifts/week — role gate (#267)", () => {
       data: {
         email: `krank-sec13-${Date.now()}@test.de`,
         passwordHash: "UNUSED",
-        role: "EMPLOYEE",
         isActive: false,
       },
     });
@@ -102,7 +101,7 @@ describe("GET /api/v1/shifts/week — role gate (#267)", () => {
     const passwordHash = await bcrypt.hash("test1234", 10);
     const email = `mgr-sec13-${Date.now()}@test.de`;
     const mgrUser = await app.prisma.user.create({
-      data: { email, passwordHash, role: "MANAGER", isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     await app.prisma.employee.create({
       data: {

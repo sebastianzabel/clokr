@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { homeHref } from "$lib/nav/routes";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import { leaveTypeColor, FALLBACK } from "$lib/leave/leave-colors"; // Issue #840 (D-840-12)
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
@@ -6,11 +9,26 @@
   import { authStore } from "$stores/auth";
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
-  import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-fkz
-  import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-fkz
+  import PageTabs from "$components/ui/PageTabs.svelte"; // Issue #853 (D-853-10)
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import PersonPicker from "$lib/components/team/zeiten/PersonPicker.svelte";
+  import { personOptions } from "$lib/team/person-options";
+  import KpiStrip from "$components/ui/KpiStrip.svelte"; // Issue #853 (D-853-18)
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import DataTable, {
+    type DataTableColumn,
+    type DataTableRowTone,
+  } from "$components/ui/DataTable.svelte"; // Issue #853 (D-853-10)
+  import ErrorState from "$components/ui/ErrorState.svelte";
+  // Issue #853 (owner review): the four Kennzahlen of the prototype's „Zeiten“, worded by the same
+  // module Ich › Zeiten uses (#851); one row per day and the day sheet replace the entry table.
+  import { zeitenKpis, zeitenStatus } from "$lib/me/zeiten-kpis";
+  import { fmtBalance } from "$lib/utils/format-minutes";
+  import { pauseLabel, teamDayRows, type TeamDayRow } from "$lib/team/zeiten-day-rows";
+  import DaySheet, { type DaySheetEntry } from "$lib/components/me/DaySheet.svelte";
+  import Chip from "$components/ui/Chip.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import { toasts } from "$stores/toast";
@@ -29,10 +47,14 @@
     isTravelRow,
     travelArrivalOptions,
     travelFormMode,
+    travelOfferErrorText,
+    postOfferIfStillServed,
+    travelOfferPayload,
+    travelOffersShown,
     travelPayload,
     travelRouteLabel,
     type TravelRowFields,
-  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08
+  } from "$lib/time-entries/travel-entry-form"; // Issue #92, D-08; offer: Issue #660
   // Issue #85 D-09/D-14/D-15 — the Salonansicht. The salon decision lives in team-view.ts (never
   // the raw selection getter); the server decides which entries are visible.
   import { isTeamSalonRejected, teamSalonViewSalon } from "$lib/dashboard/team-view";
@@ -55,6 +77,7 @@
     salonViewRequestPath,
   } from "$lib/team/salon-time-entries";
   import DayBreakPanel from "$lib/components/breaks/DayBreakPanel.svelte"; // Issue #80
+  import { createLatestRequestGuard } from "$lib/time-entries/latest-request"; // Issue #660
   // Issue #80 (D-09c/D-10/D-20) — the notification deep link and the server-computed day checks;
   // the browser never derives a cross-salon finding itself.
   import {
@@ -64,6 +87,7 @@
   } from "$lib/breaks/deep-link";
   import {
     type DayCheck,
+    type DayCheckTravelOffer,
     type DayCheckWarning,
     type DayChecksResponse,
     type DayWarning,
@@ -114,6 +138,8 @@
     endTime: string | null;
     breakMinutes: number;
     breaks?: Break[];
+    /** Set while a break is running (break start/stop, #851). */
+    breakStartedAt?: string | null;
     type: string;
     source: "NFC" | "MOBILE" | "MANUAL" | "CORRECTION";
     note: string | null;
@@ -203,20 +229,17 @@
     source: "PATTERN" | "MANUAL";
   }
 
-  // Discriminated union for the merged list view (TimeEntry + BsAbsence).
-  type ListRow =
-    | (TimeEntry & { kind: "TE" })
-    | { kind: "BS"; id: string; date: string; source: "PATTERN" | "MANUAL" };
-
   interface Employee {
     id: string;
     firstName: string;
     lastName: string;
+    /** Served by GET /employees; the picker finds a person by it. */
+    employeeNumber?: string | null;
   }
 
   // ── State ─────────────────────────────────────────────────────────────────
   let entries: TimeEntry[] = $state([]);
-  let schedule: WorkSchedule | null = $state(null);
+  let schedule = $state<WorkSchedule | null>(null);
   let holidays: Map<string, string> = $state(new Map()); // dateStr → name
   let calendarDays: CalDay[] = $state([]);
   // Phase 116 (issue #119) — starts TRUE so the first painted frame is never "loaded and empty".
@@ -228,8 +251,8 @@
   let saldoFetchFailed = $state(false);
   // Issue #85 (Phase 76b note) — the server refused the contract, saldo or month-saldo read for
   // this person (403, or the identical 404 of an out-of-scope person). A refusal is not a failure:
-  // the cards that depend on it disappear silently and the month card shows only the Ist of the
-  // entries the server returned for the caller's scope. `overtimeDenied` hides the Konto card.
+  // the figures that depend on it disappear silently and the month cell shows only the Ist of the
+  // entries the server returned for the caller's scope. `overtimeDenied` hides the account cell.
   let saldoDenied = $state(false);
   let overtimeDenied = $state(false);
   let saving = $state(false);
@@ -270,6 +293,10 @@
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
   let teView = $state<"calendar" | "list">("calendar");
+  const VIEW_OPTIONS = [
+    { value: "calendar", label: "Kalender" },
+    { value: "list", label: "Liste" },
+  ];
 
   // §615 Team-Zeiten display: month-saldo from the shared §615 core (SHIFT_BASED only).
   // For non-SHIFT schedule types this stays null and existing derived values apply unchanged.
@@ -295,7 +322,7 @@
     monthSollMinutes?: number;
     days: MonthSaldoDay[];
   }
-  let monthSaldo: MonthSaldo | null = $state(null);
+  let monthSaldo = $state<MonthSaldo | null>(null);
   // Map from YYYY-MM-DD → cumulativeSaldoMinutes for O(1) cell lookup (per-month day cells).
   let monthSaldoDayMap: Map<string, number> = $derived(
     monthSaldo
@@ -305,7 +332,7 @@
 
   // Modal
   let modalOpen = $state(false);
-  let editEntry: TimeEntry | null = $state(null);
+  let editEntry = $state<TimeEntry | null>(null);
   let formDate = $state(todayStr);
   let formStart = $state("09:00");
   let formEnd = $state("17:00");
@@ -356,12 +383,15 @@
   // source of the calendar markers and of the day panels. For a partially scoped manager a day
   // arrives redacted; the page renders it as received and computes no finding itself.
   let dayChecks = $state<DayCheck[]>([]);
+  // Issue #660 (WR-03): the person the rendered `dayChecks` were loaded for. An offer is posted
+  // for THIS person, never for whoever is selected at click time.
+  let dayChecksEmployeeId = $state<string | null>(null);
+  // Issue #660 (WR-03): only the response of the latest person load may be applied.
+  const loadGuard = createLatestRequestGuard();
 
   // ── Employee selector state ────────────────────────────────────────────────
   let employees: Employee[] = $state([]);
   let selectedEmployeeId = $state<string | null>(null);
-  let empSearch = $state("");
-  let empDropdownOpen = $state(false);
 
   // Issue #558 D-14: the salon narrows only who can be picked; the chosen person's month is a
   // contract figure and is never split by salon. A person chosen before a salon change stays
@@ -389,6 +419,11 @@
   // "person" = the per-person view (unchanged); "salon" = every entry recorded in one salon for the
   // shown month. `mode=salon` in the URL selects the salon view.
   let teamMode = $state<"person" | "salon">("person");
+  // The tabs of the Seitenkopf (Issue #853, D-853-10); the order is the order they are shown in.
+  const viewTabs = [
+    { value: "person", label: "Personenansicht" },
+    { value: "salon", label: "Salonansicht" },
+  ];
   let salonViewDays = $state<SalonViewDay[]>([]);
   let salonViewStatus = $state<SalonViewStatus>("prompt");
   let salonViewCapHit = $state(false);
@@ -449,13 +484,20 @@
     if (mode === "person") await loadAll();
   }
 
-  let filteredEmployees = $derived(
-    employees.filter((e) => {
-      if (!empSearch.trim()) return true;
-      const q = empSearch.toLowerCase();
-      return e.firstName.toLowerCase().includes(q) || e.lastName.toLowerCase().includes(q);
-    }),
+  // Issue #853 (D-853-10): the picker's items. A person kept selected across a salon change (the
+  // chosen record, see above) stays in the list so the picker keeps showing who is chosen.
+  let pickerItems = $derived(
+    personOptions(
+      selectedEmployee !== null && !employees.some((e) => e.id === selectedEmployee.id)
+        ? [...employees, selectedEmployee]
+        : employees,
+    ),
   );
+
+  async function pickEmployee(id: string) {
+    const emp = employees.find((e) => e.id === id);
+    if (emp) await selectEmployee(emp);
+  }
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
@@ -463,7 +505,11 @@
     // only holds the team leave read (e.g. the Personalabteilung) is sent to the leave page; the
     // team layout's OR-guard lets them in, the API would answer 403 to every time read. UX only.
     if (!mayOpenTeamPage("/team/time-entries", $authStore.user)) {
-      await goto(mayOpenTeamPage("/team/leave", $authStore.user) ? "/team/leave" : "/dashboard");
+      await goto(
+        mayOpenTeamPage("/team/leave", $authStore.user)
+          ? "/team/abwesenheiten"
+          : homeHref($authStore.user),
+      );
       return;
     }
     // Read URL params
@@ -544,6 +590,11 @@
   async function loadAll() {
     // The salon view loads its own month (see the effect above); nothing to do for the person view.
     if (teamMode === "salon") return;
+    const loadToken = loadGuard.begin();
+    // Issue #660 (WR-03): the checks of the previous person must not stay clickable while the
+    // next ones load.
+    dayChecks = [];
+    dayChecksEmployeeId = null;
     if (!selectedEmployeeId) {
       entries = [];
       schedule = null;
@@ -630,8 +681,12 @@
               .catch(() => null)
           : Promise.resolve(null),
       ]);
+      // Issue #660 (WR-03): a newer load started meanwhile; this response belongs to a person or
+      // month that is no longer shown.
+      if (!loadGuard.isCurrent(loadToken)) return;
       entries = rawEntries;
       dayChecks = rawDayChecks?.days ?? [];
+      dayChecksEmployeeId = rawDayChecks ? rawDayChecks.employeeId : null;
       schedule = valueOr(rawSchedule, null);
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
@@ -675,6 +730,7 @@
             `/overtime/month-saldo/${empId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
           ),
         );
+        if (!loadGuard.isCurrent(loadToken)) return;
         monthSaldo = valueOr(rawMonthSaldo, null);
         if (anyFailed(rawMonthSaldo)) saldoFetchFailed = true;
         if (isDenied(rawMonthSaldo)) saldoDenied = true;
@@ -695,6 +751,7 @@
           .catch(
             () => [] as Array<{ date: string; durationMin: number; durationMinNetto: number }>,
           );
+        if (!loadGuard.isCurrent(loadToken)) return;
         const m = new Map<string, number>();
         for (const s of rawShifts) {
           // v1.8.9 — Soll = netto (brutto − getEffectiveBreakDuration on the server).
@@ -717,17 +774,18 @@
         bsAbsences,
       );
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Laden";
+      if (loadGuard.isCurrent(loadToken)) {
+        error = e instanceof Error ? e.message : "Fehler beim Laden";
+      }
     } finally {
-      loading = false;
+      // A superseded run leaves `loading` to the run that replaced it.
+      if (loadGuard.isCurrent(loadToken)) loading = false;
     }
   }
 
   async function selectEmployee(emp: Employee) {
     selectedEmployeeId = emp.id;
     selectedEmployeeRecord = emp;
-    empSearch = "";
-    empDropdownOpen = false;
     await loadAll();
   }
 
@@ -1048,15 +1106,6 @@
     return labels[type] ?? type;
   }
 
-  function sourceBadge(s: TimeEntry["source"]): string {
-    return s === "NFC"
-      ? "badge-purple"
-      : s === "MOBILE"
-        ? "badge-blue"
-        : s === "CORRECTION"
-          ? "badge-yellow"
-          : "badge-gray";
-  }
   function sourceLabel(s: TimeEntry["source"]): string {
     return s === "NFC"
       ? "NFC"
@@ -1065,14 +1114,6 @@
         : s === "CORRECTION"
           ? "Korrektur"
           : "Manuell";
-  }
-
-  function fmtBreaks(e: TimeEntry): string {
-    if (e.breaks && e.breaks.length > 0) {
-      return e.breaks.map((b) => `${fmtTime(b.startTime)}–${fmtTime(b.endTime)}`).join(", ");
-    }
-    if (e.breakMinutes) return e.breakMinutes + " Min.";
-    return "—";
   }
 
   function slotNet(e: TimeEntry): string {
@@ -1141,22 +1182,23 @@
     openNew(day, action.start, action.end);
   }
 
-  // Issue #70: a calendar cell with one entry still opens it for editing, a cell with several
-  // switches to the list focused on that day, an empty cell opens the new form.
-  async function onCellClick(day: string) {
+  // Issue #853 (AC-4): the Kalender/Liste switch sits above the figures strip, which on a phone fills
+  // the first screen - the chosen view is brought into the viewport (`nearest`: a view that is already
+  // visible does not move the page), so the click's result is never out of sight.
+  async function selectView(value: string) {
+    teView = value === "list" ? "list" : "calendar";
+    await tick();
+    document
+      .querySelector(teView === "list" ? '[data-testid="team-time-entries-list"]' : ".cal-section")
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  // Issue #853 (owner review, prototype „Zeiten“): a day is read first. A calendar cell with entries
+  // opens the day sheet (the same one the list's „Öffnen“ opens); an empty cell opens the new form.
+  function onCellClick(day: string) {
     const action = cellClickAction(rowsOfDay(day));
-    if (action.kind === "edit") {
-      openEdit(action.entry);
-    } else if (action.kind === "list") {
-      selectedDate = day;
-      teView = "list";
-      await tick();
-      document
-        .querySelector(".row-day-focus")
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    } else {
-      openAdd(day);
-    }
+    if (action.kind === "new") openAdd(day);
+    else openDaySheet(day);
   }
 
   // The tooltip of a calendar cell: its own reason (holiday, absence, ...) plus the entry count.
@@ -1225,6 +1267,47 @@
       endTime: new Date(`${date}T${slot.endLocal}:00`).toISOString(),
     });
     await loadAll();
+  }
+
+  // Issue #660: an offer of the day check is recorded for the person the check was loaded for
+  // (`dayChecksEmployeeId`, WR-03 - not the current selection) exactly like the form's trip create
+  // (body of the form, `source: "CORRECTION"`). Right before writing, that person's day check is
+  // loaded again and the trip is posted only if the identical offer is still served (WR-01); the
+  // server then re-decides the write.
+  // A refusal is the server's own text (a toast survives the reload, the panel may not), and the
+  // reload shows the new day state either way.
+  async function recordTravelOffer(date: string, offer: DayCheckTravelOffer) {
+    const checkedEmployeeId = dayChecksEmployeeId;
+    if (!checkedEmployeeId) return;
+    try {
+      const outcome = await postOfferIfStillServed({
+        date,
+        offer,
+        multiEntryUi,
+        loadChecks: () =>
+          api
+            .get<DayChecksResponse>(
+              `/day-breaks/checks?employeeId=${checkedEmployeeId}&from=${date}&to=${date}`,
+            )
+            .catch(() => null),
+        post: () =>
+          api.post<{ warnings?: unknown }>("/time-entries", {
+            ...travelOfferPayload(date, offer),
+            employeeId: checkedEmployeeId,
+            source: "CORRECTION",
+          }),
+      });
+      if (!outcome.posted) {
+        toasts.warning(TRAVEL_TEXTS.offerStale);
+      } else {
+        const notice = breakFindingSaveNotice(outcome.result?.warnings);
+        if (notice) toasts.warning(notice);
+      }
+    } catch (e: unknown) {
+      toasts.error(travelOfferErrorText(e));
+    } finally {
+      await loadAll();
+    }
   }
 
   async function deleteDayBreak(id: string, reason: string) {
@@ -1398,12 +1481,6 @@
   // monthSollMinutes routes into saldoFetchFailed above instead of being rendered as a
   // fabricated 0 (see the month-saldo fetch in loadAll).
   let monthlyBudgetSoll = $derived(hasMonthlyTarget ? (monthSaldo?.monthSollMinutes ?? 0) : 0);
-  let mBalance = $derived(
-    // For MONTHLY_HOURS with a monthly target: compare worked against the server's month Soll
-    // (monthlyBudgetSoll), "budget remaining" semantic, full-month.
-    // For FIXED_SCHEDULE / FLEXTIME and no-target MONTHLY_HOURS: keep the up-to-today accrual.
-    hasMonthlyTarget ? totalWorked - monthlyBudgetSoll : totalWorked - totalExpected,
-  );
   // Worked + Expected up to cutoff: always YESTERDAY, never today. Today's entry may still be
   // open, or it may be closed only because of a lunch-break clock-out that the clock resolver
   // reopens on the next clock-in (commit 446d4bb6) — there is no reliable signal that today is
@@ -1443,6 +1520,13 @@
       })
       .reduce((s, d) => s + d.expectedMin, 0),
   );
+  // Declared after totalWorked/totalExpected, which it reads.
+  let mBalance = $derived(
+    // For MONTHLY_HOURS with a monthly target: compare worked against the server's month Soll
+    // (monthlyBudgetSoll), "budget remaining" semantic, full-month.
+    // For FIXED_SCHEDULE / FLEXTIME and no-target MONTHLY_HOURS: keep the up-to-today accrual.
+    hasMonthlyTarget ? totalWorked - monthlyBudgetSoll : totalWorked - totalExpected,
+  );
   // §615 SHIFT_BASED: Soll (bisher) + Monat-Saldo come from the §615 core (monthSaldo).
   // Non-SHIFT: fall through to the existing derived values (totalExpected, mBalance).
   let isShiftBased = $derived(schedule?.type === "SHIFT_BASED");
@@ -1454,8 +1538,7 @@
   // selecting among already-computed values). Two deliberate omissions vs. /time-entries (D-04):
   //  - no `extraNote` — this page has no FLEXTIME "Woche Saldo" tile (verified: `weekExpectedMin`/
   //    `weekWorkedMin`/"Woche" do not occur here), so there is nothing to carry.
-  //  - no `rosterIncomplete` — /time-entries sets it but MonatSaldoCard has no such prop (dead
-  //    field there); not replicated here.
+  //  - `rosterIncomplete` is added where the figures are worded (zeitenKpis, Issue #853).
   type MonthMetrics = {
     sollToDateMin: number;
     istMin: number;
@@ -1592,20 +1675,42 @@
     arbzgEnabled ? dayChecksToArbzgMap(dayChecks) : new Map<string, DayWarning[]>(),
   );
 
+  // Issue #853 (owner review, prototype „Zeiten“): the four Kennzahlen Gearbeitet, Monatssaldo, Pausen
+  // and Status, worded by lib/me/zeiten-kpis.ts from the page's MonthMetrics (#125, #433, #495) - the
+  // same module Ich › Zeiten uses, so both pages say the same thing. Breaks are the stored ones of the
+  // counted entries (the set of the Ist); findings come from the server's day check (#80/#511).
+  // A refused saldo read (#85) shows the Ist only and says who sees the rest.
+  let breakMinutesToDate = $derived(entriesToDate.reduce((s, e) => s + (e.breakMinutes ?? 0), 0));
+  let zeitenItems = $derived(
+    zeitenKpis({
+      // The server sends `rosterIncomplete` for a SHIFT_BASED open month only (#97-05); never a
+      // fabricated flag.
+      month: { ...monthMetrics, rosterIncomplete: monthSaldo?.rosterIncomplete ?? false },
+      locked: monthIsLocked || monthMetrics.closed,
+      breakMinutes: breakMinutesToDate,
+      findingDays: arbzgEnabled ? arbzgDayMap.size : null,
+      runningCount,
+      saldoWithheld: saldoDenied,
+    }),
+  );
+  let zeitenMonthStatus = $derived(zeitenStatus(monthIsLocked || monthMetrics.closed));
+
   // Legend is derived from what the displayed month actually contains, and split by the
   // three encoding channels — quick task 260820-1i7. Colour = Soll status (left edge),
   // surface = Abwesenheit, mark = Hinweis.
+  // The swatch colour of an absence entry comes from the one leave-colour mapping and reaches the
+  // CSS as the custom property `--leg-fill` (#840, D-840-12).
   const LEGEND_ABSENCE = [
-    { code: "VACATION", cls: "leg-abs-vacation", label: "Urlaub" },
-    { code: "SICK", cls: "leg-abs-sick", label: "Krank" },
-    { code: "SICK_CHILD", cls: "leg-abs-sick_child", label: "Kinderkrank" },
-    { code: "SPECIAL", cls: "leg-abs-special", label: "Sonderurlaub" },
-    { code: "OVERTIME_COMP", cls: "leg-abs-overtime_comp", label: "Freizeitausgl." },
+    { code: "VACATION", label: "Urlaub" },
+    { code: "SICK", label: "Krank" },
+    { code: "SICK_CHILD", label: "Kinderkrank" },
+    { code: "SPECIAL", label: "Sonderurlaub" },
+    { code: "OVERTIME_COMP", label: "Freizeitausgl." },
   ] as const;
 
   let legendGroups = $derived.by(() => {
     const days = calendarDays.filter((d) => d.isCurrentMonth);
-    const soll: { cls: string; label: string }[] = [];
+    const soll: { cls: string; label: string; fill?: string }[] = [];
     if (days.some((d) => d.status === "ok" || d.status === "today-ok"))
       soll.push({ cls: "leg-ok", label: "Soll erfüllt" });
     if (days.some((d) => d.status === "partial" || d.status === "today-partial"))
@@ -1615,47 +1720,117 @@
       soll.push({ cls: "leg-noexpect", label: "Kein Soll" });
 
     const codes = new Set(days.map((d) => d.absenceType).filter(Boolean) as string[]);
-    const abwesenheit: { cls: string; label: string }[] = [];
+    const abwesenheit: { cls: string; label: string; fill?: string }[] = [];
     for (const e of LEGEND_ABSENCE)
-      if (codes.has(e.code)) abwesenheit.push({ cls: e.cls, label: e.label });
+      if (codes.has(e.code))
+        abwesenheit.push({ cls: "leg-abs", label: e.label, fill: leaveTypeColor(e.code).fill });
     // Absence codes outside the catalogue (e.g. EDUCATION, UNPAID) DO get a cell
     // background from app.css's .cal-abs-* recipes, so they must not stay unexplained.
     if ([...codes].some((c) => !LEGEND_ABSENCE.some((e) => e.code === c)))
-      abwesenheit.push({ cls: "leg-abs-other", label: "Sonstige Abwesenheit" });
+      abwesenheit.push({ cls: "leg-abs", label: "Sonstige Abwesenheit", fill: FALLBACK.fill });
     if (days.some((d) => d.isVocationalSchool))
       abwesenheit.push({ cls: "leg-abs-vocational_school", label: "Berufsschule" });
 
-    const hinweise: { cls: string; label: string }[] = [];
+    const hinweise: { cls: string; label: string; fill?: string }[] = [];
     if (days.some((d) => arbzgDayMap.has(d.dateStr)))
       hinweise.push({ cls: "leg-arbzg", label: "ArbZG-Hinweis" });
 
     return { soll, abwesenheit, hinweise };
   });
 
-  // All entries for the current month, sorted by date descending then start time descending.
-  // 260611-ly6 — merges TimeEntries (kind="TE") with BS-Absences (kind="BS") for the
-  // list view. BS rows are read-only synthetic rows; lifecycle stays on /shifts.
-  let allEntries = $derived.by<ListRow[]>(() => {
-    const teRows: ListRow[] = entries.map((e) => ({ ...e, kind: "TE" as const }));
-    const bsRows: ListRow[] = bsAbsences.map((b) => ({
-      kind: "BS" as const,
-      // Prefix with "bs-" so the {#each} key cannot collide with a TimeEntry UUID.
-      id: `bs-${b.id}`,
-      date: b.date,
-      source: b.source,
-    }));
-    return [...teRows, ...bsRows].sort((a, b) => {
-      const dA = a.kind === "TE" ? (a.date ?? a.startTime).split("T")[0] : a.date;
-      const dB = b.kind === "TE" ? (b.date ?? b.startTime).split("T")[0] : b.date;
-      if (dA !== dB) return dB.localeCompare(dA); // desc by date
-      // Tiebreak: TE before BS so a working day stays grouped; within TE, descending
-      // by startTime.
-      if (a.kind !== b.kind) return a.kind === "TE" ? -1 : 1;
-      if (a.kind === "TE" && b.kind === "TE") {
-        return new Date(b.startTime).getTime() - new Date(a.startTime).getTime();
-      }
-      return 0;
-    });
+  // Issue #853 (owner review, prototype „Zeiten“): the list is ONE row per day - Tag, Salon, Zeiten,
+  // Pause, Netto, Soll, Differenz and „Öffnen“ - built by lib/team/zeiten-day-rows.ts from the loaded
+  // entries and the page's per-day Soll. Source, note and the edit/delete actions of each entry live
+  // in the day sheet. Soll and Differenz appear only where the page has a per-day Soll to show: not
+  // for a refused saldo read (#85), not without a contract, and not for a weekly or monthly total
+  // (#164, isNoDailyTarget).
+  let sollVisible = $derived(!saldoDenied && !!schedule && !isNoDailyTarget);
+  let calendarDayByDate = $derived(new Map(calendarDays.map((d) => [d.dateStr, d])));
+  let dayRows = $derived(
+    teamDayRows({
+      // The salons of the day by name (a trip counts with its departure salon); the trip route
+      // itself is shown in the day sheet, inside the #64 gate.
+      entries: entries.map((e) => ({ ...e, salonLabel: e.salonName ?? null })),
+      vocationalSchoolDays: bsAbsences.map((b) => b.date),
+      dayInfo: (day) => calendarDayByDate.get(day),
+      sollVisible,
+      findingDays: new Set(arbzgDayMap.keys()),
+    }),
+  );
+  const listColumns = $derived<DataTableColumn[]>([
+    { key: "day", label: "Tag", primary: true },
+    ...(multiEntryUi ? [{ key: "salon", label: "Salon" }] : []),
+    { key: "times", label: "Zeiten" },
+    { key: "pause", label: "Pause", align: "end" as const },
+    { key: "net", label: "Netto", align: "end" as const },
+    ...(sollVisible ? [{ key: "soll", label: "Soll", align: "end" as const }] : []),
+    // SHIFT_BASED (#291, §615): a day's difference against the roster is not the account's figure, so
+    // the column shows the server's cumulative saldo of the day; its name and tooltip say what it holds.
+    ...(isShiftBased && monthSaldo
+      ? [
+          {
+            key: "saldo",
+            label: "Saldo seit Abschluss",
+            align: "end" as const,
+            title:
+              "Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt der Bericht.",
+          },
+        ]
+      : sollVisible
+        ? [{ key: "diff", label: "Differenz", align: "end" as const }]
+        : []),
+    { key: "open", label: "", align: "end" as const },
+  ]);
+  // Without a Differenz or saldo column the day's status chip (running, invalid) sits next to its times.
+  let stateInTimes = $derived(!listColumns.some((c) => c.key === "diff" || c.key === "saldo"));
+  // The day a deep link or a calendar cell pointed at (Issue #70) is highlighted; nothing else is
+  // tinted - a running or invalid day says so in its chip, never through a coloured row.
+  function dayRowTone(row: TeamDayRow): DataTableRowTone | undefined {
+    return multiEntryUi && row.day === selectedDate ? "highlight" : undefined;
+  }
+
+  // ── Day sheet (prototype „Tagesdialog“, #851 DaySheet) ─────────────────────
+  let daySheetOpen = $state(false);
+  let daySheetDay = $state<string | null>(null);
+  function openDaySheet(day: string) {
+    daySheetDay = day;
+    selectedDate = day;
+    daySheetOpen = true;
+  }
+  let daySheetEntries = $derived(
+    daySheetDay
+      ? rowsOfDay(daySheetDay)
+          .slice()
+          .sort((x, y) => x.startTime.localeCompare(y.startTime))
+      : [],
+  );
+  let daySheetInfo = $derived(daySheetDay ? calendarDayByDate.get(daySheetDay) : undefined);
+  let daySheetLocked = $derived(daySheetEntries.some((e) => e.isLocked === true));
+  let daySheetRows = $derived<DaySheetEntry[]>(
+    daySheetEntries.map((e) => ({
+      id: e.id,
+      from: fmtTime(e.startTime),
+      to: e.endTime ? fmtTime(e.endTime) : "läuft",
+      pause: pauseLabel([e]),
+      net: e.endTime ? slotNet(e) : "–",
+      source: sourceLabel(e.source),
+      note: e.isInvalid && e.invalidReason ? e.invalidReason : e.note,
+      testId: `team-time-entry-row-${e.id}`,
+    })),
+  );
+  let daySheetIst = $derived(
+    daySheetEntries
+      .filter((e) => e.endTime && !e.isInvalid)
+      .reduce((sum, e) => sum + netEntryMinutes(e), 0),
+  );
+  let daySheetPrimary = $derived.by(() => {
+    if (!daySheetDay || daySheetLocked || daySheetInfo?.isFuture) return null;
+    // An existing entry is edited from its own row; the primary action only ever adds one.
+    return addActionForDay(rowsOfDay(daySheetDay), multiEntryUi).kind === "edit"
+      ? null
+      : rowsOfDay(daySheetDay).length > 0
+        ? "Weiteren Eintrag hinzufügen"
+        : "Eintrag hinzufügen";
   });
 
   // Phase 116 (issue #119) — the ONE answer to "what does the list render right now".
@@ -1666,7 +1841,7 @@
     resolveMonthListState({
       loading,
       hasEmployeeLink: selectedEmployeeId !== null,
-      rowCount: allEntries.length,
+      rowCount: dayRows.length,
     }),
   );
   let saldoCardState = $derived(
@@ -1679,18 +1854,21 @@
   );
 </script>
 
-<svelte:head><title>Team-Zeiten – Clokr</title></svelte:head>
+<svelte:head><title>{pageLabel("/team/time-entries")} – Clokr</title></svelte:head>
 <svelte:window
   onkeydown={(e) => {
     if (e.key === "Escape" && modalOpen) closeModal();
   }}
 />
 
-<PageHead eyebrow="Team" title="Team-Zeiten" accent="Zeiten">
+<PageHead
+  title={pageLabel("/team/time-entries")}
+  sub="Arbeitszeiten deines Teams, pro Person oder für einen ganzen Salon."
+>
   {#snippet actions()}
     {#if teamMode === "person" && selectedEmployee}
-      <!-- quick 260820-fkz — Gesamt-Saldo moved OUT of the page head entirely, into the
-           quiet Konto card in the metrics row below (see KontoSaldoCard). -->
+      <!-- quick 260820-fkz — Gesamt-Saldo lives outside the page head, as the Stundenkonto cell
+           of the figures strip below (Issue #853, D-853-18). -->
       <button class="btn btn-primary" onclick={() => openAdd()}>
         <span aria-hidden="true">＋</span> Eintrag hinzufügen
       </button>
@@ -1698,101 +1876,29 @@
   {/snippet}
 </PageHead>
 
-<!-- ── Ansicht: Person oder Salon (Issue #85, D-09) ───────────────────── -->
-<div class="view-tabs" role="group" aria-label="Ansicht">
-  <button
-    class="view-tab"
-    class:view-tab--active={teamMode === "person"}
-    aria-pressed={teamMode === "person"}
-    onclick={() => setTeamMode("person")}
-  >
-    Personenansicht
-  </button>
-  <button
-    class="view-tab"
-    class:view-tab--active={teamMode === "salon"}
-    aria-pressed={teamMode === "salon"}
-    onclick={() => setTeamMode("salon")}
-  >
-    Salonansicht
-  </button>
-</div>
+<!-- ── Ansicht: Person oder Salon (Issue #85, D-09) ─────────────────────
+     The two views are the tabs of the Seitenkopf (Issue #853, D-853-10). The content of the
+     active view is the tab panel the active tab controls (aria-controls), so a screen reader finds
+     the toolbar, the figures, the calendar and the lists inside the tabpanel; the inactive tab's
+     panel stays empty and hidden, so nothing is rendered twice. -->
+<PageTabs
+  tabs={viewTabs}
+  tab={teamMode}
+  onTabChange={(value) => setTeamMode(value === "salon" ? "salon" : "person")}
+  tabsLabel="Ansicht"
+>
+  {#snippet panel(value)}
+    {#if value === teamMode}
+      {@render viewBody()}
+    {/if}
+  {/snippet}
+</PageTabs>
 
-{#if teamMode === "person"}
-  <SalonScopeLabel label={scopeLabel} rejected={listRejected} />
-  <!-- ── Mitarbeiter-Auswahl ─────────────────────────────────────────── -->
-  <div class="employee-selector">
-    <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="emp-input-wrap" onclick={() => (empDropdownOpen = !empDropdownOpen)}>
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <input
-          class="emp-search-input"
-          type="text"
-          placeholder={selectedEmployee
-            ? `${selectedEmployee.firstName} ${selectedEmployee.lastName}`
-            : "Mitarbeiter auswählen…"}
-          bind:value={empSearch}
-          onclick={(e) => {
-            e.stopPropagation();
-            empDropdownOpen = true;
-          }}
-          onfocus={() => (empDropdownOpen = true)}
-          oninput={() => (empDropdownOpen = true)}
-          aria-label="Mitarbeiter suchen"
-          autocomplete="off"
-        />
-        <svg
-          class="emp-chevron"
-          class:emp-chevron--up={empDropdownOpen}
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"
-          aria-hidden="true"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </div>
-      {#if empDropdownOpen}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="emp-backdrop" onclick={() => (empDropdownOpen = false)}></div>
-        <ul class="emp-dropdown" role="listbox" aria-label="Mitarbeiterliste">
-          {#if filteredEmployees.length === 0}
-            <li class="emp-dropdown-empty">Keine Treffer</li>
-          {:else}
-            {#each filteredEmployees as emp (emp.id)}
-              <li
-                class="emp-dropdown-item"
-                class:emp-dropdown-item--active={emp.id === selectedEmployeeId}
-                role="option"
-                aria-selected={emp.id === selectedEmployeeId}
-                tabindex="0"
-                onclick={() => selectEmployee(emp)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") selectEmployee(emp);
-                }}
-              >
-                {emp.lastName}, {emp.firstName}
-              </li>
-            {/each}
-          {/if}
-        </ul>
-      {/if}
-    </div>
-  </div>
-{/if}
-
-<!-- ── Month navigation (quick 260820-fkz) ─────────────────────────────
-     Bare nav only — no stats/statRenders/extraActions, so MonthBar's tile cluster stays
-     empty (D-NAV). Used in TWO places: passed as MonatSaldoCard's monthNav slot when an
-     employee is selected, and rendered inside the existing .te-monthbar-card in the
-     no-employee branch, so month navigation keeps working before an employee is picked. -->
+<!-- ── Period control (quick 260820-fkz, Issue #853 D-853-18) ──────────
+     Bare month bar, no stats and no eyebrow (the month figures live in the figures of the person
+     view). Rendered once per view, in the toolbar row under the tabs. -->
 {#snippet monthNavBar()}
   <MonthBar
-    eyebrow="Buchungsmonat"
     date={calMonth}
     onPrev={() => gotoMonth(-1)}
     onNext={() => gotoMonth(1)}
@@ -1801,230 +1907,227 @@
   />
 {/snippet}
 
-{#if teamMode === "salon"}
-  <Card animate class="te-monthbar-card">
-    {@render monthNavBar()}
-  </Card>
-  {#if salonViewError}
-    <div class="alert alert-error" role="alert"><span>⚠</span><span>{salonViewError}</span></div>
-  {:else}
-    <SalonTimeEntries
-      days={salonViewDays}
-      status={salonViewStatus}
-      capReached={salonViewCapHit}
-      salonName={salonViewSalonName}
-    />
-  {/if}
-{:else if selectedEmployee}
-  <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
-  <div class="view-tabs">
-    <button
-      class="view-tab"
-      class:view-tab--active={teView === "calendar"}
-      onclick={() => (teView = "calendar")}
-    >
-      Kalender
-    </button>
-    <button
-      class="view-tab"
-      class:view-tab--active={teView === "list"}
-      onclick={() => (teView = "list")}
-    >
-      Liste
-    </button>
-  </div>
-
-  {#if error}
-    <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
-  {/if}
-
-  <!-- Metrics row (design variant 1c "Fortschritt", quick 260820-fkz).
-       Mirrors /time-entries (commit d88cdcba). Rendered ONLY with an employee
-       selected (D-01); the no-employee branch keeps its own bare nav card. -->
-  <div class="te-metrics" class:te-metrics--single={overtimeDenied}>
-    <MonatSaldoCard
-      sollToDateMin={monthMetrics.sollToDateMin}
-      istMin={monthMetrics.istMin}
-      saldoMin={monthMetrics.saldoMin}
-      noSollTarget={monthMetrics.noSollTarget}
-      sollLabel={monthMetrics.sollLabel}
-      workdaysSoFar={monthMetrics.workdaysSoFar}
-      {runningCount}
-      isLocked={monthIsLocked || monthMetrics.closed}
-      loading={saldoCardState === "loading"}
-      error={saldoCardState === "error"}
-      onRetry={loadAll}
-      monthNav={monthNavBar}
-    />
-    {#if !overtimeDenied}
-      <KontoSaldoCard
-        totalHours={overtimeTotalHours}
-        confirmedMinutes={overtimeConfirmedMinutes}
-        openMonthMinutes={overtimeOpenMonthMinutes}
-        hasClosedMonth={overtimeHasClosedMonth}
-        unconfirmedMonths={overtimeUnconfirmedMonths}
-        rosterIncomplete={overtimeRosterIncomplete}
-        {loading}
-      />
-    {/if}
-  </div>
-  {#if saldoDenied && !loading}
-    <p class="text-muted te-denied-note">
-      Soll und Saldo dieser Person sehen Inhaber, Personalabteilung und die Person selbst.
-    </p>
-  {/if}
-
-  <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
-       nothing for a day without a cross-salon finding or a recorded day break, so single-entry
-       days look exactly as before. Acknowledge/revoke are offered only where the server's
-       mayAcknowledge allows (D-08); the page makes no permission decision of its own. -->
-  {#each dayChecks as dayCheck (dayCheck.date)}
-    <DayBreakPanel
-      check={dayCheck}
-      onAddBreak={(slot) => addDayBreak(dayCheck.date, slot)}
-      onDeleteBreak={deleteDayBreak}
-      onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
-      onRevoke={revokeDayAck}
-    />
-  {/each}
-
-  <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
-  {#if teView === "calendar"}
-    <div class="cal-section card card-animate">
-      <!-- Wochentage-Header -->
-      <div class="cal-grid cal-header-row">
-        {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
-          <div class="cal-dow">{d}</div>
-        {/each}
-      </div>
-
-      <!-- Tage -->
-      {#if loading}
-        <div class="cal-grid">
-          {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
-        </div>
-      {:else}
-        <div class="cal-grid">
-          {#each calendarDays as day (day.dateStr)}
-            {@const baseTitle = day.isBeforeHire
-              ? "Vor Eintrittsdatum"
-              : day.isHoliday
-                ? day.holidayName
-                : day.absenceType
-                  ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-                  : day.isVocationalSchoolNoLeave
-                    ? "Berufsschule – kein Urlaub"
-                    : day.isVocationalSchool
-                      ? "Berufsschule"
-                      : undefined}
-            <button
-              type="button"
-              data-date={day.dateStr}
-              class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
-                ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
-                : (day.isVocationalSchool || day.isVocationalSchoolNoLeave) &&
-                    !day.absenceType &&
-                    !day.isHoliday
-                  ? ' cal-abs cal-abs-vocational_school'
-                  : ''}"
-              class:cal-other={!day.isCurrentMonth}
-              class:cal-current={day.isCurrentMonth}
-              class:cal-today={day.isToday}
-              class:cal-weekend={day.isWeekend}
-              class:cal-holiday={day.isHoliday && day.isCurrentMonth}
-              class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
-              class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
-              disabled={day.isBeforeHire || !day.isCurrentMonth}
-              title={cellTitle(baseTitle, day.entryCount)}
-              onclick={() => onCellClick(day.dateStr)}
-            >
-              <span class="cal-day-num">{day.dayNum}</span>
-              {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
-                {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
-                <span
-                  class="cal-arbzg-mark"
-                  title={arbzgWarnings.map((w) => w.message).join("\n")}
-                  aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
-                  >⚠&#xFE0E;</span
-                >
-              {/if}
-              {#if day.isHoliday && day.isCurrentMonth}
-                <span class="cal-holiday-label">{day.holidayName}</span>
-              {:else if day.absenceType}
-                <span class="cal-abs-type"
-                  >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
-                >
-              {:else if (day.isVocationalSchool || day.isVocationalSchoolNoLeave) && day.isCurrentMonth}
-                <span class="cal-abs-type">Berufsschule</span>
-              {/if}
-              {#if day.isBeforeHire}
-                <span class="day-before-hire">—</span>
-              {:else if day.isCurrentMonth && day.hasEntries}
-                <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-                {#if isShiftBased}
-                  <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
-                       a cumulative for this day (past days up to windowEnd). For today-not-yet-worked
-                       and future days (no monthSaldoDayMap entry) show ONLY the hours — never fall back
-                       to the per-day delta, which would look like a spurious "today penalty". -->
-                  {#if monthSaldoDayMap.has(day.dateStr)}
-                    {@const cum = monthSaldoDayMap.get(day.dateStr)!}
-                    <span class="day-bal {balClass(cum)}"
-                      >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
-                    >
-                  {/if}
-                {:else if day.expectedMin > 0 && !isNoDailyTarget && !day.isToday}
-                  {@const b = day.workedMin - day.expectedMin}
-                  <span class="day-bal {balClass(b)}"
-                    >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
-                  >
-                {/if}
-              {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
-                <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
-              {/if}
-            </button>
-          {/each}
+{#snippet viewBody()}
+  {#if teamMode === "person"}
+    <SalonScopeLabel label={scopeLabel} rejected={listRejected} />
+    <!-- Prototype .toolbar2: person picker (once a person is chosen; before that it sits in the
+       empty state), the month and the Kalender/Liste segment. -->
+    <div class="te-controls-row">
+      {#if selectedEmployee}
+        <div class="employee-selector">
+          <PersonPicker
+            items={pickerItems}
+            value={selectedEmployeeId ?? ""}
+            onValueChange={pickEmployee}
+          />
         </div>
       {/if}
-
-      <!-- Legende -->
-      <div class="cal-legend">
-        {#if legendGroups.soll.length > 0}
-          <div class="leg-group">
-            <span class="leg-group-label">Soll-Status</span>
-            {#each legendGroups.soll as e (e.cls)}<span class="leg {e.cls}">{e.label}</span>{/each}
-          </div>
-        {/if}
-        {#if legendGroups.abwesenheit.length > 0}
-          <div class="leg-group">
-            <span class="leg-group-label">Abwesenheit</span>
-            {#each legendGroups.abwesenheit as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
-              >{/each}
-          </div>
-        {/if}
-        {#if legendGroups.hinweise.length > 0}
-          <div class="leg-group">
-            <span class="leg-group-label">Hinweise</span>
-            {#each legendGroups.hinweise as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
-              >{/each}
-          </div>
-        {/if}
-      </div>
+      {@render monthNavBar()}
+      {#if selectedEmployee}
+        <div class="te-view-segment">
+          <SegmentedControl
+            options={VIEW_OPTIONS}
+            value={teView}
+            onchange={(value) => void selectView(value)}
+            ariaLabel="Darstellung"
+            name="te-view"
+            size="sm"
+          />
+        </div>
+      {/if}
+    </div>
+  {:else}
+    <div class="te-controls-row">
+      {@render monthNavBar()}
     </div>
   {/if}
 
-  <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
-  {#if teView === "list"}
-    <div class="card card-animate list-card">
-      {#if listState === "loading"}
-        <!-- Phase 116 (issue #119, Akzeptanzkriterium 3) — the mirror of the own page's fix.
-             This page was built as a copy of /time-entries and inherited the same ungated
-             empty state. -->
-        <div class="list-skeleton" data-testid="team-time-entries-list-skeleton" aria-hidden="true">
-          {#each Array(6) as _, i (i)}<div class="skeleton list-skel-row"></div>{/each}
-        </div>
+  {#if teamMode === "salon"}
+    {#if salonViewError}
+      <div class="alert alert-error" role="alert"><span>⚠</span><span>{salonViewError}</span></div>
+    {:else}
+      <SalonTimeEntries
+        days={salonViewDays}
+        status={salonViewStatus}
+        capReached={salonViewCapHit}
+        salonName={salonViewSalonName}
+      />
+    {/if}
+  {:else if selectedEmployee}
+    {#if error}
+      <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
+    {/if}
+
+    <!-- Figures strip (Issue #853, owner review; prototype #p-zeiten stats): Gearbeitet, Monatssaldo,
+       Pausen and Status of the chosen person, worded by lib/me/zeiten-kpis.ts like Ich › Zeiten.
+       Rendered ONLY with an employee selected (D-01). -->
+    <div class="te-figures">
+      {#if saldoCardState === "loading"}
+        <Skeleton shape="block" height="6.5rem" />
+      {:else if saldoCardState === "error"}
+        <ErrorState message="Werte konnten nicht geladen werden." hint="" onRetry={loadAll} />
       {:else}
+        <KpiStrip items={zeitenItems} ariaLabel="Monat in Zahlen">
+          {#snippet extra()}
+            <div class="te-status" data-testid="zeiten-kpi-status">
+              <span class="te-status-label">Status</span>
+              <span class="te-status-value"
+                ><Chip tone={zeitenMonthStatus.tone}>{zeitenMonthStatus.label}</Chip></span
+              >
+              <span class="te-status-note">{zeitenMonthStatus.explanation}</span>
+            </div>
+          {/snippet}
+        </KpiStrip>
+      {/if}
+    </div>
+
+    <!-- Issue #80 — one panel per multi-entry day of the server's day check. The panel renders
+       nothing for a day without a cross-salon finding or a recorded day break, so single-entry
+       days look exactly as before. Acknowledge/revoke are offered only where the server's
+       mayAcknowledge allows (D-08); the page makes no permission decision of its own. -->
+    {#each dayChecks as dayCheck (dayCheck.date)}
+      <DayBreakPanel
+        check={dayCheck}
+        onAddBreak={(slot) => addDayBreak(dayCheck.date, slot)}
+        onDeleteBreak={deleteDayBreak}
+        onAcknowledge={(reason) => acknowledgeDay(dayCheck.date, reason)}
+        onRevoke={revokeDayAck}
+        travelOffers={travelOffersShown(dayCheck, multiEntryUi)}
+        onRecordTravel={(offer) => recordTravelOffer(dayCheck.date, offer)}
+      />
+    {/each}
+
+    <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
+    {#if teView === "calendar"}
+      <div class="cal-section card card-animate">
+        <!-- Wochentage-Header -->
+        <div class="cal-grid cal-header-row">
+          {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
+            <div class="cal-dow">{d}</div>
+          {/each}
+        </div>
+
+        <!-- Tage -->
+        {#if loading}
+          <div class="cal-grid">
+            {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+          </div>
+        {:else}
+          <div class="cal-grid">
+            {#each calendarDays as day (day.dateStr)}
+              {@const baseTitle = day.isBeforeHire
+                ? "Vor Eintrittsdatum"
+                : day.isHoliday
+                  ? day.holidayName
+                  : day.absenceType
+                    ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
+                    : day.isVocationalSchoolNoLeave
+                      ? "Berufsschule – kein Urlaub"
+                      : day.isVocationalSchool
+                        ? "Berufsschule"
+                        : undefined}
+              <button
+                type="button"
+                data-date={day.dateStr}
+                class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
+                  ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
+                  : (day.isVocationalSchool || day.isVocationalSchoolNoLeave) &&
+                      !day.absenceType &&
+                      !day.isHoliday
+                    ? ' cal-abs cal-abs-vocational_school'
+                    : ''}"
+                class:cal-other={!day.isCurrentMonth}
+                class:cal-current={day.isCurrentMonth}
+                class:cal-today={day.isToday}
+                class:cal-weekend={day.isWeekend}
+                class:cal-holiday={day.isHoliday && day.isCurrentMonth}
+                class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
+                class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
+                disabled={day.isBeforeHire || !day.isCurrentMonth}
+                title={cellTitle(baseTitle, day.entryCount)}
+                onclick={() => onCellClick(day.dateStr)}
+              >
+                <span class="cal-day-num">{day.dayNum}</span>
+                {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
+                  {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
+                  <span
+                    class="cal-arbzg-mark"
+                    title={arbzgWarnings.map((w) => w.message).join("\n")}
+                    aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
+                  ></span>
+                {/if}
+                {#if day.isHoliday && day.isCurrentMonth}
+                  <span class="cal-holiday-label">{day.holidayName}</span>
+                {:else if day.absenceType}
+                  <span class="cal-abs-type"
+                    >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
+                  >
+                {:else if (day.isVocationalSchool || day.isVocationalSchoolNoLeave) && day.isCurrentMonth}
+                  <span class="cal-abs-type">Berufsschule</span>
+                {/if}
+                {#if day.isBeforeHire}
+                  <span class="day-before-hire">—</span>
+                {:else if day.isCurrentMonth && day.hasEntries}
+                  <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
+                  {#if isShiftBased}
+                    <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
+                       a cumulative for this day (past days up to windowEnd). For today-not-yet-worked
+                       and future days (no monthSaldoDayMap entry) show ONLY the hours — never fall back
+                       to the per-day delta, which would look like a spurious "today penalty". -->
+                    {#if monthSaldoDayMap.has(day.dateStr)}
+                      {@const cum = monthSaldoDayMap.get(day.dateStr)!}
+                      <span class="day-bal {balClass(cum)}"
+                        >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
+                      >
+                    {/if}
+                  {:else if day.expectedMin > 0 && !isNoDailyTarget && !day.isToday}
+                    {@const b = day.workedMin - day.expectedMin}
+                    <span class="day-bal {balClass(b)}"
+                      >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
+                    >
+                  {/if}
+                {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
+                  <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+
+        <!-- Legende -->
+        <div class="cal-legend">
+          {#if legendGroups.soll.length > 0}
+            <div class="leg-group">
+              <span class="leg-group-label">Soll-Status</span>
+              {#each legendGroups.soll as e (e.label)}<span class="leg {e.cls}">{e.label}</span
+                >{/each}
+            </div>
+          {/if}
+          {#if legendGroups.abwesenheit.length > 0}
+            <div class="leg-group">
+              <span class="leg-group-label">Abwesenheit</span>
+              {#each legendGroups.abwesenheit as e (e.label)}<span
+                  class="leg {e.cls}"
+                  style:--leg-fill={e.fill ? `var(${e.fill})` : undefined}>{e.label}</span
+                >{/each}
+            </div>
+          {/if}
+          {#if legendGroups.hinweise.length > 0}
+            <div class="leg-group">
+              <span class="leg-group-label">Hinweise</span>
+              {#each legendGroups.hinweise as e (e.label)}<span class="leg {e.cls}">{e.label}</span
+                >{/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
+    {#if teView === "list"}
+      <div class="te-list" data-testid="team-time-entries-list">
         {#if multiEntryUi}
-          {#if rowsOfDay(selectedDate).length > 0}
+          {#if listState === "rows" && rowsOfDay(selectedDate).length > 0}
             <div class="list-day-bar" data-testid="team-time-entries-list-day-bar">
               <span class="list-day-label"
                 >{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", {
@@ -2041,188 +2144,169 @@
             </div>
           {/if}
         {/if}
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Datum</th>
-                {#if multiEntryUi}<th>Salon</th>{/if}
-                <th>Von</th>
-                <th>Bis</th>
-                <th>Pause</th>
-                <th>Netto</th>
-                {#if isShiftBased && monthSaldo}
-                  <th
-                    title="Kumulierter Saldo seit dem letzten Monatsabschluss bis zu diesem Tag (§615). Nicht abgeschlossene Vormonate sind darin nicht enthalten — den Gesamt-Saldo zeigt die Kachel „Konto“."
-                    >Saldo seit Abschluss</th
-                  >
-                {/if}
-                <th>Quelle</th>
-                <th>Notiz</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each allEntries as slot (slot.id)}
-                {#if slot.kind === "TE"}
-                  {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-                  {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                  <tr
-                    class:row-invalid={slot.isInvalid}
-                    class:row-day-focus={multiEntryUi && slotDate === selectedDate}
-                  >
-                    <td class="font-mono"
-                      >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })}{#if slotArbzg}
-                        <span class="list-arbzg-hint"
-                          >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                            class="arbzg-tooltip"
-                            >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                                />{/if}{/each}</span
-                          ></span
-                        >
-                      {/if}</td
-                    >
-                    {#if multiEntryUi}<td data-testid={`team-time-entry-row-${slot.id}-salon`}
-                        >{#if isTravelRow(slot)}<span
-                            class="badge badge-gray"
-                            data-testid={`team-time-entry-row-${slot.id}-travel-badge`}
-                            >{TRAVEL_TEXTS.badge}</span
-                          >
-                          <span
-                            class="travel-route"
-                            data-testid={`team-time-entry-row-${slot.id}-travel-route`}
-                            >{travelRouteLabel(slot)}</span
-                          >{:else}{slot.salonName ?? "—"}{/if}</td
-                      >{/if}
-                    <td class="font-mono">{fmtTime(slot.startTime)}</td>
-                    <td class="font-mono">
-                      {#if slot.endTime}{fmtTime(slot.endTime)}
-                      {:else}<span class="badge badge-green">Aktiv</span>{/if}
-                    </td>
-                    <td>{fmtBreaks(slot)}</td>
-                    <td class="font-mono font-medium">{slotNet(slot)}</td>
-                    {#if isShiftBased && monthSaldo}
-                      {@const cum = monthSaldoDayMap.get(slotDate)}
-                      <td class="font-mono {cum != null ? balClass(cum) : ''}">
-                        {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
-                      </td>
-                    {/if}
-                    <td
-                      ><span class="badge {sourceBadge(slot.source)}"
-                        >{sourceLabel(slot.source)}</span
-                      ></td
-                    >
-                    <td class="note-cell text-muted">
-                      {#if slot.isInvalid && slot.invalidReason}
-                        <span class="invalid-reason">{slot.invalidReason}</span>
-                      {:else}
-                        {slot.note ?? "---"}
-                      {/if}
-                    </td>
-                    <td class="action-cell">
-                      {#if slot.isLocked}
-                        <!-- locked entries are read-only; no actions shown (D-08) -->
-                      {:else}
-                        <span class="row-actions row-actions--visible">
-                          <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                            >✏️</button
-                          >
-                          <button
-                            class="btn-icon btn-icon-danger"
-                            onclick={() => openDeleteDialog(slot.id)}
-                            title="Löschen">🗑</button
-                          >
-                        </span>
-                      {/if}
-                    </td>
-                  </tr>
-                {:else}
-                  <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions. -->
-                  <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
-                    <td class="font-mono"
-                      >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })}</td
-                    >
-                    {#if multiEntryUi}<td class="text-muted">—</td>{/if}
-                    <td class="font-mono text-muted">—</td>
-                    <td class="font-mono text-muted">—</td>
-                    <td class="text-muted">—</td>
-                    <td class="font-mono font-medium text-muted">—</td>
-                    <td><span class="badge badge-blue">Berufsschule</span></td>
-                    <td class="note-cell text-muted"
-                      >{slot.source === "PATTERN"
-                        ? "Automatisch (Muster)"
-                        : "Manuell eingefügt"}</td
-                    >
-                    <td class="action-cell">
-                      <span
-                        class="text-muted"
-                        style="font-size: 0.75rem;"
-                        title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
-                      >
-                    </td>
-                  </tr>
-                {/if}
-              {/each}
-            </tbody>
-          </table>
-        </div>
         {#if listState === "empty"}
-          <div class="empty-state">
-            <span class="empty-icon">📋</span>
-            <h3>Keine Einträge</h3>
-            <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
-          </div>
+          <EmptyState
+            icon="inbox"
+            title="Keine Einträge"
+            description="Keine Zeiteinträge in diesem Monat."
+          />
+        {:else}
+          <!-- Phase 116 (issue #119, Akzeptanzkriterium 3): while loading there is a skeleton and
+             never the empty state. #853 (owner review): one row per day, the prototype's columns; the
+             entries of a day, their source and note and their actions are in the day sheet. -->
+          <DataTable
+            columns={listColumns}
+            rows={dayRows}
+            rowKey={(row) => row.day}
+            rowTestId={(row) => `team-day-row-${row.day}`}
+            rowTone={dayRowTone}
+            loading={listState === "loading"}
+            caption="Tage im Monat"
+          >
+            {#snippet cell(row, column)}
+              {#if column.key === "day"}
+                <span class="day-cell"
+                  >{row.dayLabel}{#if row.finding}<Chip tone="warn" title="ArbZG-Hinweis"
+                      >prüfen</Chip
+                    >{/if}</span
+                >
+              {:else if column.key === "salon"}
+                {#if multiEntryUi}{row.salon}{/if}
+              {:else if column.key === "times"}
+                <span class="times-cell" class:text-muted={row.vocationalSchool}
+                  >{row.times}{#if row.state && stateInTimes}<Chip tone={row.state.tone}
+                      >{row.state.label}</Chip
+                    >{/if}</span
+                >
+              {:else if column.key === "pause"}
+                {row.pause}
+              {:else if column.key === "net"}
+                {row.net}
+              {:else if column.key === "soll"}
+                {row.soll ?? "–"}
+              {:else if column.key === "diff"}
+                {#if row.state}
+                  <Chip tone={row.state.tone}>{row.state.label}</Chip>
+                {:else if row.diff}
+                  <Chip tone={row.diff.tone}>{row.diff.label}</Chip>
+                {:else}
+                  <span class="text-muted">–</span>
+                {/if}
+              {:else if column.key === "saldo"}
+                {#if isShiftBased && monthSaldo}
+                  {@const cum = monthSaldoDayMap.get(row.day)}
+                  {#if row.state}
+                    <Chip tone={row.state.tone}>{row.state.label}</Chip>
+                  {:else if cum != null}
+                    <Chip tone={cum > 0 ? "ok" : cum < 0 ? "bad" : "neutral"}
+                      >{cum === 0 ? "±0:00" : fmtBalance(cum)}</Chip
+                    >
+                  {:else}
+                    <span class="text-muted">–</span>
+                  {/if}
+                {/if}
+              {:else if column.key === "open" && !row.vocationalSchool}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  data-testid={`team-day-row-${row.day}-open`}
+                  onclick={() => openDaySheet(row.day)}>Öffnen</button
+                >
+              {/if}
+            {/snippet}
+          </DataTable>
         {/if}
-      {/if}
-    </div>
-  {/if}
-{:else}
-  <Card animate class="te-monthbar-card">
-    {@render monthNavBar()}
-  </Card>
-  <!-- Empty calendar when no employee selected -->
-  {@const y = calMonth.getFullYear()}
-  {@const m = calMonth.getMonth()}
-  {@const firstDay = new Date(y, m, 1)}
-  {@const startDow = (firstDay.getDay() + 6) % 7}
-  {@const daysInMonth = new Date(y, m + 1, 0).getDate()}
-  {@const totalCells = startDow + daysInMonth + ((7 - ((startDow + daysInMonth) % 7)) % 7)}
-  <div class="cal-section card card-animate">
-    <div class="cal-grid cal-header-row">
-      {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
-        <div class="cal-dow">{d}</div>
-      {/each}
-    </div>
-    <div class="cal-grid">
-      {#each Array(totalCells) as _, i (i)}
-        {@const dayNum = i - startDow + 1}
-        {@const isCurrentMonth = dayNum >= 1 && dayNum <= daysInMonth}
-        {@const displayDay = isCurrentMonth
-          ? dayNum
-          : dayNum < 1
-            ? new Date(y, m, dayNum).getDate()
-            : new Date(y, m + 1, dayNum - daysInMonth).getDate()}
-        {@const cellDow = i % 7}
-        <div
-          class="cal-cell cal-cell--noExpect"
-          class:cal-other={!isCurrentMonth}
-          class:cal-current={isCurrentMonth}
-          class:cal-weekend={cellDow >= 5}
-        >
-          <span class="cal-day-num">{displayDay}</span>
+      </div>
+    {/if}
+  {:else}
+    <!-- S-11 (D-853-10): without a chosen person there is one empty state with the picker as its
+       action - never an empty calendar. -->
+    <EmptyState
+      icon="users"
+      title="Wähle eine Person"
+      description="Wessen Zeiten möchtest du sehen? Such nach dem Namen oder der Personalnummer."
+    >
+      {#snippet action()}
+        <div class="employee-selector">
+          <PersonPicker
+            items={pickerItems}
+            value={selectedEmployeeId ?? ""}
+            onValueChange={pickEmployee}
+          />
         </div>
-      {/each}
-    </div>
-    <p class="no-emp-hint">Mitarbeiter auswählen, um Zeiteinträge anzuzeigen.</p>
-  </div>
+      {/snippet}
+    </EmptyState>
+  {/if}
+{/snippet}
+
+<!-- The salon cell of an entry in the day sheet: only with salon choice (#64 gate); a trip shows its
+     route (#92). -->
+{#snippet daySheetSalon(row: DaySheetEntry)}
+  {#if multiEntryUi}
+    {@const target = daySheetEntries.find((e) => e.id === row.id)}
+    {#if target && isTravelRow(target)}<span
+        class="badge badge-gray"
+        data-testid={`team-time-entry-row-${row.id}-travel-badge`}>{TRAVEL_TEXTS.badge}</span
+      >
+      <span class="travel-route" data-testid={`team-time-entry-row-${row.id}-travel-route`}
+        >{travelRouteLabel(target)}</span
+      >{:else}<span data-testid={`team-time-entry-row-${row.id}-salon`}
+        >{target?.salonName ?? "—"}</span
+      >{/if}
+  {/if}
+{/snippet}
+
+<!-- ── Day sheet (Issue #853, owner review; the #851 DaySheet) ───────────────────
+     Read first: Soll, Ist and Differenz of the day, its entries with source and note, the findings of
+     the server's day check. Edit and delete are per entry; the primary action adds (or, without salon
+     choice, edits) the day's entry. A closed month offers nothing to change. -->
+{#if daySheetDay}
+  <DaySheet
+    bind:open={daySheetOpen}
+    title={format(new Date(daySheetDay + "T12:00:00"), "EEEE, d. MMMM", { locale: de })}
+    subtitle={selectedEmployee
+      ? `${selectedEmployee.firstName} ${selectedEmployee.lastName}`
+      : undefined}
+    sollMin={sollVisible && daySheetInfo && daySheetInfo.expectedMin > 0
+      ? daySheetInfo.expectedMin
+      : null}
+    istMin={daySheetIst}
+    entries={daySheetRows}
+    findings={(arbzgDayMap.get(daySheetDay) ?? []).map((w) => w.message)}
+    locked={daySheetLocked}
+    lockedText="Dieser Monat ist abgeschlossen. Die Einträge bleiben, wie sie sind; eine Korrektur wird als neuer Eintrag im laufenden Monat gebucht."
+    future={daySheetInfo?.isFuture ?? false}
+    primaryLabel={daySheetPrimary}
+    onPrimary={() => {
+      if (daySheetDay) openAdd(daySheetDay);
+    }}
+    entrySalon={multiEntryUi ? daySheetSalon : undefined}
+    wide
+  >
+    {#snippet entryActions(row)}
+      {@const target = daySheetEntries.find((e) => e.id === row.id)}
+      {#if target && !target.isLocked}
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          data-testid={`team-time-entry-row-${row.id}-edit`}
+          onclick={() => {
+            daySheetOpen = false;
+            openEdit(target);
+          }}>Bearbeiten</button
+        >
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          data-testid={`team-time-entry-row-${row.id}-delete`}
+          onclick={() => {
+            daySheetOpen = false;
+            openDeleteDialog(target.id);
+          }}>Löschen</button
+        >
+      {/if}
+    {/snippet}
+  </DaySheet>
 {/if}
 
 <!-- ── Modal (Modal primitive — owns backdrop/escape/focus-trap) ────────── -->
@@ -2471,59 +2555,41 @@
 />
 
 <style>
-  /* ── MonthBar card spacing (primitive owns its 18px 24px inner padding,
-       same as .cal-monthbar — so header height matches /leave et al.) ──── */
-  :global(.te-monthbar-card) {
-    padding: 0;
-    margin-bottom: 18px;
-    /* Allow month-picker dropdown to escape .card overflow:clip and lift
-       above sibling .card stacking contexts (each .card creates its own via
-       backdrop-filter). Without these three lines the dropdown is invisible. */
-    overflow: visible;
+  /* ── Toolbar row (Issue #853, D-853-18; prototype .toolbar2) ─────────────────────
+       Person picker, month and Kalender/Liste segment in one row under the tabs. The row lifts
+       above the cards that follow so the month grid dropdown of the period control is not hidden
+       by their backdrop-filter stacking contexts. */
+  .te-controls-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2) var(--s-4);
+    margin-bottom: var(--s-3);
     position: relative;
     z-index: 30;
+  }
+
+  /* The period keeps its label and arrows (block); only its page-sized padding goes, so the row
+     starts at the page edge like the prototype's .period. */
+  .te-controls-row :global(.month-bar) {
+    padding: 0;
+  }
+
+  .te-view-segment {
+    margin-left: auto;
   }
 
   /* MonthBar + mini-stats styles live in the MonthBar primitive. */
 
-  /* ── Metrics row (quick 260820-fkz, mirrors /time-entries d88cdcba) ────
-       Month card (nav + progress bar) + quiet Konto card, side by side. */
-  .te-metrics {
-    display: grid;
-    grid-template-columns: 1.55fr 1fr;
-    gap: var(--s-4);
+  /* ── Figures strip under the toolbar row (Issue #853) ─────────────────── */
+  .te-figures {
     margin-bottom: 18px;
-    /* Load-bearing, not decoration: the month/year picker dropdown (now rendered
-       inside MonatSaldoCard's nav row) must escape .card's overflow:clip and lift
-       above the calendar card's own backdrop-filter stacking context. */
-    overflow: visible;
-    position: relative;
-    z-index: 30;
-  }
-
-  @media (max-width: 1000px) {
-    .te-metrics {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* Issue #85 — without the Konto card (refused saldo read) the month card takes the full row. */
-  .te-metrics--single {
-    grid-template-columns: 1fr;
   }
   .te-denied-note {
     margin: calc(-1 * var(--s-2)) 0 18px;
     font-size: 0.875rem;
   }
-
-  /* MonthBar owns its 18px 24px inner padding by default; reset it here since it now
-     renders inside MonatSaldoCard's own padded card body. */
-  .te-metrics :global(.month-bar) {
-    padding: 0 0 var(--s-3);
-  }
-
-  /* ── View Tabs ───────────────────────────────────────── */
-  /* view-tabs, view-tab → global in app.css */
 
   /* ── Day bar above the list (Issue #70): the focused day and its per-day add ─── */
   .list-day-bar {
@@ -2532,8 +2598,6 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--s-2);
-    padding: var(--s-3) var(--s-4);
-    border-bottom: 1px solid var(--border);
   }
   .list-day-label {
     font-size: 0.875rem;
@@ -2561,50 +2625,19 @@
     display: flex;
     margin-top: var(--s-3);
   }
-  .data-table tbody tr.row-day-focus {
-    background: var(--bg-subtle);
+  /* ── List view (Issue #853): the table is the DataTable block, its rows are tinted by the block's row tone. ── */
+  .te-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
   }
-
-  /* ── List card (v1.5) ────────────────────────────────── */
-  .list-card {
-    padding: 0;
+  .list-note {
+    display: inline-block;
+    max-width: 160px;
     overflow: hidden;
-  }
-  .list-card .table-wrapper {
-    overflow-x: auto;
-  }
-  /* Phase 116 (issue #119) — list-view loading skeleton. Reuses the global .skeleton shimmer
-     recipe (app.css:883); only the row geometry is page-scoped. */
-  .list-card .list-skeleton {
-    display: grid;
-    gap: 0.75rem;
-    padding: 1.25rem 1.5rem;
-  }
-  .list-card .list-skel-row {
-    height: 2.25rem;
-    border-radius: var(--r-sm);
-  }
-  .list-card .empty-state {
-    padding: 48px 24px;
-    text-align: center;
-    color: var(--text-muted);
-  }
-  .list-card .empty-state .empty-icon {
-    font-size: 32px;
-    display: block;
-    margin-bottom: 8px;
-    opacity: 0.6;
-  }
-  .list-card .empty-state h3 {
-    font-family: var(--font-serif);
-    font-weight: 400;
-    font-size: 18px;
-    margin: 0 0 4px;
-    color: var(--text);
-  }
-  .list-card .empty-state p {
-    margin: 0;
-    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
   }
 
   /* ── List view actions always visible ────────────────── */
@@ -2619,7 +2652,7 @@
 
   .day-before-hire {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.5;
   }
 
@@ -2640,7 +2673,7 @@
 
   .day-missing {
     font-size: 0.7rem;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     color: var(--bad);
     opacity: 0.75;
   }
@@ -2663,7 +2696,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     opacity: 0.7;
   }
   .leg {
@@ -2672,7 +2705,7 @@
     gap: 0.4rem;
     font-size: 0.75rem;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .leg::before {
     content: "";
@@ -2682,8 +2715,8 @@
     border-radius: 3px;
   }
   .leg-ok::before {
-    background: var(--good-soft);
-    border: 1px solid color-mix(in srgb, var(--good) 25%, transparent);
+    background: var(--ok-soft);
+    border: 1px solid color-mix(in srgb, var(--ok) 25%, transparent);
   }
   .leg-partial::before {
     background: var(--warn-soft);
@@ -2694,31 +2727,12 @@
     border: 1px solid color-mix(in srgb, var(--bad) 25%, transparent);
   }
   .leg-noexpect::before {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
   }
-  .leg-abs-vacation::before {
-    background: var(--leave-type-vacation);
-    border: none;
-  }
-  .leg-abs-sick::before {
-    background: var(--leave-type-sick);
-    border: none;
-  }
-  .leg-abs-sick_child::before {
-    background: var(--leave-type-sick-child);
-    border: none;
-  }
-  .leg-abs-other::before {
-    background: var(--leave-type-default);
-    border: none;
-  }
-  .leg-abs-special::before {
-    background: var(--leave-type-special);
-    border: none;
-  }
-  .leg-abs-overtime_comp::before {
-    background: var(--leave-type-overtime);
+  /* Absence swatch: the colour is the custom property the template feeds from leave-colors.ts. */
+  .leg-abs::before {
+    background: var(--leg-fill);
     border: none;
   }
   /* bs-tage-in-calendar — Berufsschultag legend swatch. Mirrors the brand-tinted
@@ -2746,11 +2760,11 @@
 
   /* bs-tage-in-calendar — Berufsschultag cell background. Uses --brand at the
      same 15% mix as the other .cal-abs-* recipes in app.css. Scoped to this
-     page (mirrors the 260611-ly6 .row-bs scoped CSS pattern); a token-level
-     --leave-type-vocational-school would be the long-term home if BS gets
-     promoted to a first-class leave type. */
+     page (the Berufsschule list rows use the block's `info` row tone); a token-level
+     leave type for Berufsschule would be the long-term home if BS gets promoted
+     to a first-class leave type. */
   :global(.cal-cell.cal-abs-vocational_school:not(.cal-selected)) {
-    background: color-mix(in srgb, var(--brand) 15%, var(--bg-card)) !important;
+    background: color-mix(in srgb, var(--brand) 15%, var(--card)) !important;
     opacity: 1;
   }
 
@@ -2767,8 +2781,8 @@
     padding: 0.875rem 1rem;
     gap: 1rem;
     flex-wrap: wrap;
-    border-bottom: 1px solid var(--bg-subtle);
-    background: var(--bg-card);
+    border-bottom: 1px solid var(--sunk);
+    background: var(--card);
   }
 
   .day-detail-title {
@@ -2791,14 +2805,14 @@
   }
 
   .dstat {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .dstat strong {
     color: var(--text);
     font-weight: 600;
   }
   .dstat.bal.pos strong {
-    color: var(--good);
+    color: var(--ok);
   }
   .dstat.bal.neg strong {
     color: var(--bad);
@@ -2808,7 +2822,7 @@
     padding: 1.5rem 1rem;
     display: flex;
     align-items: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -2827,19 +2841,19 @@
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-align: left;
     white-space: nowrap;
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border);
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
   }
   .slots-table tbody td {
     padding: 0.5rem 0.75rem;
-    border-top: 1px solid var(--bg-subtle);
+    border-top: 1px solid var(--sunk);
     vertical-align: middle;
   }
   .slots-table tbody tr:hover {
-    background: var(--bg-card);
+    background: var(--card);
   }
   .note-cell {
     max-width: 160px;
@@ -2852,7 +2866,7 @@
     text-align: right;
   }
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .fw-med {
     font-weight: 500;
@@ -2864,33 +2878,14 @@
     opacity: 0;
     transition: opacity 0.15s;
   }
-  tr:hover .row-actions {
-    opacity: 1;
-  }
   .row-del td {
     background: var(--bad-soft);
   }
 
-  .row-invalid {
-    opacity: 0.5;
-  }
-  .row-invalid td {
-    text-decoration: line-through;
-    background: var(--bad-soft);
-  }
-  .row-invalid td:last-child {
-    text-decoration: none;
-  }
-  .row-invalid .invalid-reason {
+  .invalid-reason {
     color: var(--bad);
     font-size: 0.8rem;
     font-weight: 500;
-    text-decoration: none;
-  }
-
-  /* 260611-ly6 — Berufsschultag list-row tint. UI Style Guide v1.5: only var(--brand) via color-mix; no legacy tokens. */
-  .row-bs td {
-    background: color-mix(in srgb, var(--brand) 6%, transparent);
   }
 
   .btn-xs {
@@ -2906,14 +2901,14 @@
     border-radius: 4px;
     font-size: 0.9375rem;
     line-height: 1;
-    color: var(--text-muted);
+    color: var(--text-2);
     transition: background 0.15s;
   }
   .btn-icon:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .btn-icon-danger {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .btn-icon-danger:hover {
     background: var(--bad-soft);
@@ -2921,7 +2916,7 @@
   }
 
   .btn-danger-sm {
-    color: white;
+    color: var(--card);
     background: var(--bad);
     border-radius: 4px;
     font-size: 0.8125rem;
@@ -2936,8 +2931,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border-radius: var(--r-control);
     margin-top: 4px;
   }
   .net-label {
@@ -2945,10 +2940,10 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--text-faint);
+    color: var(--text-3);
   }
   .net-value {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 24px;
     font-weight: 400;
@@ -2962,11 +2957,11 @@
     color: var(--bad);
   }
   .net-unit {
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-variant-numeric: normal;
     font-size: 12px;
     font-weight: 500;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .form-row-two {
@@ -3010,7 +3005,7 @@
     min-width: 0;
   }
   .break-sep {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-weight: 600;
     flex-shrink: 0;
   }
@@ -3022,7 +3017,7 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.5rem 0.625rem;
-    background: var(--bg-card);
+    background: var(--card);
     border-radius: 6px;
     font-size: 0.8125rem;
   }
@@ -3051,7 +3046,7 @@
     bottom: 100%;
     left: 0;
     background: var(--text);
-    color: #fff;
+    color: var(--card);
     font-size: 0.75rem;
     line-height: 1.4;
     padding: 0.5rem 0.75rem;
@@ -3158,135 +3153,52 @@
     }
   }
 
-  /* ── Mitarbeiter-Auswahl ─────────────────────────────────────────── */
+  /* ── Person picker (Issue #853, D-853-10) ──────────────────────────── */
+  /* In the toolbar row the flex basis decides; in the empty state (a shrink-wrapped column) the
+     width does, so the placeholder is never cut. */
   .employee-selector {
-    margin-bottom: 0.75rem;
-    position: relative;
-    z-index: 60; /* v1.8.8 — must beat sibling .te-monthbar-card / .te-metrics (z=30) so dropdown is clickable */
-  }
-
-  .emp-combobox {
-    position: relative;
-    max-width: 360px;
-  }
-
-  .emp-input-wrap {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.875rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-md);
-    cursor: pointer;
-    min-height: 2.5rem;
-  }
-
-  .emp-combobox--open .emp-input-wrap {
-    border-color: var(--brand);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 20%, transparent);
-  }
-
-  .emp-search-input {
-    flex: 1;
-    border: none;
-    outline: none;
-    background: transparent;
-    font-size: 0.9375rem;
-    color: var(--text);
+    flex: 0 1 22rem;
+    width: 22rem;
     min-width: 0;
+    max-width: 100%;
+    text-align: left;
   }
-
-  .emp-search-input::placeholder {
-    color: var(--text-muted);
-  }
-
-  .emp-chevron {
-    flex-shrink: 0;
-    color: var(--text-muted);
-    transition: transform 0.15s;
-  }
-
-  .emp-chevron--up {
-    transform: rotate(180deg);
-  }
-
-  .emp-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-  }
-
-  .emp-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-lg);
-    list-style: none;
-    margin: 0;
-    padding: 0.25rem 0;
-    max-height: 280px;
-    overflow-y: auto;
-    z-index: 50;
-  }
-
-  .emp-dropdown-item {
-    padding: 0.5rem 0.875rem;
-    font-size: 0.9375rem;
-    color: var(--text);
-    cursor: pointer;
-    transition: background 0.1s;
-  }
-
-  .emp-dropdown-item:hover,
-  .emp-dropdown-item:focus {
-    background: var(--bg-subtle);
-    outline: none;
-  }
-
-  .emp-dropdown-item--active {
-    color: var(--brand);
-    font-weight: 600;
-  }
-
-  .emp-dropdown-empty {
-    padding: 0.75rem 0.875rem;
-    font-size: 0.875rem;
-    color: var(--text-muted);
-  }
-
-  /* ── No-employee empty state ──────────────────────────────────────── */
-  .no-emp-hint {
-    text-align: center;
-    padding: 1.5rem 1rem;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-    margin: 0;
-  }
-  .no-emp-card {
-    padding: 3rem 2rem;
+  /* Issue #853 (owner review): the Status cell of the figures strip, like Ich › Zeiten (#851). */
+  .te-status {
     display: flex;
     flex-direction: column;
+    gap: var(--s-1);
+  }
+  .te-status-label {
+    font-size: var(--fs-sm, 12.5px);
+    color: var(--text-2);
+  }
+  .te-status-value {
+    margin-top: var(--s-1);
+  }
+  .te-status-note {
+    font-size: var(--fs-sm, 12.5px);
+    color: var(--text-3);
+  }
+  /* The day cell: weekday and date, and a quiet „prüfen“ chip for a day with a finding. */
+  .day-cell {
+    display: inline-flex;
     align-items: center;
-    gap: 1rem;
-    text-align: center;
+    gap: var(--s-2);
+    white-space: nowrap;
   }
-
-  .no-emp-icon {
-    color: var(--brand);
-    opacity: 0.5;
+  /* A calendar day with a finding: a small warn dot instead of a symbol. */
+  .cal-arbzg-mark {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--warn);
+    opacity: 1;
   }
-
-  .no-emp-text {
-    font-size: 0.9375rem;
-    color: var(--text-muted);
-    max-width: 32rem;
-    margin: 0;
-    line-height: 1.6;
+  .times-cell {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2);
   }
 </style>

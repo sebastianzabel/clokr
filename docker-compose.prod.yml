@@ -78,7 +78,7 @@ services:
     # Pitfall #8: pinned image, NO build directive (no source tree on prod-host). The
     # image refs are the same CLOKR_API_IMAGE / CLOKR_WEB_IMAGE that docs/prod-deploy.md
     # and scripts/prod-deploy.sh write.
-    image: "${CLOKR_API_IMAGE:?CLOKR_API_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/sebastianzabel/clokr-api:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
+    image: "${CLOKR_API_IMAGE:?CLOKR_API_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/getclokr/clokr-api:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
     restart: unless-stopped
     # D-01: NO Traefik labels — HAProxy on OPNsense handles TLS + SNI routing.
     ports:
@@ -93,6 +93,11 @@ services:
       # Optional (Phase 88). Empty means the operator interface is off; set a separate value of
       # at least 32 characters, different from the secrets above, to switch it on.
       OPERATOR_JWT_SECRET: "${OPERATOR_JWT_SECRET:-}"
+      # Optional (Issue #608). All three or none; empty means Web-Push is off.
+      # Generate with scripts/generate-vapid-keys.ts - docs/runbooks/web-push.md
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY:-}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY:-}"
+      VAPID_SUBJECT: "${VAPID_SUBJECT:-}"
       JWT_EXPIRES_IN: "15m"
       JWT_REFRESH_EXPIRES_IN: "7d"
       CORS_ORIGIN: "${CORS_ORIGIN}"
@@ -123,7 +128,7 @@ services:
       retries: 5
 
   web:
-    image: "${CLOKR_WEB_IMAGE:?CLOKR_WEB_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/sebastianzabel/clokr-web:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
+    image: "${CLOKR_WEB_IMAGE:?CLOKR_WEB_IMAGE must be set in .env to a full image reference, e.g. ghcr.io/getclokr/clokr-web:1.12.0 (GHCR tags have no leading v). Replaces the legacy CLOKR_VERSION variable.}"
     restart: unless-stopped
     # D-01: NO Traefik labels — HAProxy on OPNsense terminates TLS.
     ports:
@@ -172,7 +177,7 @@ services:
   fritzbox-adapter:
     # NOTE: kept as `build:` because prod-host has the source tree
     # (single-tenant utility). If multi-tenant prod is added later, publish
-    # as ghcr.io/sebastianzabel/clokr-fritzbox-adapter and switch to `image:`.
+    # as ghcr.io/getclokr/clokr-fritzbox-adapter and switch to `image:`.
     build:
       context: apps/fritzbox-adapter
       dockerfile: Dockerfile
@@ -185,8 +190,17 @@ services:
       CLOKR_PRESENCE_KEY: "${CLOKR_PRESENCE_KEY}"
       POLL_INTERVAL_SECONDS: "${POLL_INTERVAL_SECONDS:-60}"
       DEVICES_BIND: "0.0.0.0"
+      PAIRING_ENABLED: "${PAIRING_ENABLED:-false}"
+      PAIRING_PORT: "8766"
+      PAIRING_BIND: "0.0.0.0"
+      CLOKR_APP_URL: "${CLOKR_APP_URL:-}"
     ports:
       - "127.0.0.1:8765:8765"
+      # Issue #610: the pairing page must be reachable from the salon WLAN, so a phone can open it.
+      # It stays on loopback unless PAIRING_HOST_BIND is set to the host's LAN address (opt in).
+      # Docker can hide the phone's source address (userland proxy, Docker Desktop, rootless):
+      # the adapter then refuses the request - see docs/runbooks/wlan-qr-kopplung.md.
+      - "${PAIRING_HOST_BIND:-127.0.0.1}:8766:8766"
     depends_on:
       api:
         condition: service_healthy

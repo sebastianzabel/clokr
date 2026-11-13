@@ -46,7 +46,6 @@ describe("currentAndFutureAssignmentSalonIds (Phase 87b, Issue #87, D-10)", () =
       data: {
         email: `asi-${suffix}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

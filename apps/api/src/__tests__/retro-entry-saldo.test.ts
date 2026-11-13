@@ -79,7 +79,7 @@ async function mkUser(
   const prisma = app.prisma;
   const email = `${role.toLowerCase()}-${idx}-${s}@resaldo.test`;
   const user = await prisma.user.create({
-    data: { email, passwordHash: await bcrypt.hash("pwTest123", 4), role, isActive: true },
+    data: { email, passwordHash: await bcrypt.hash("pwTest123", 4), isActive: true },
   });
   const emp = await prisma.employee.create({
     data: {

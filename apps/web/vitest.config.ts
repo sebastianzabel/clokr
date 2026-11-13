@@ -87,6 +87,10 @@ export default defineConfig({
       "$app/environment": path.resolve(__dirname, "./src/__tests__/stubs/app-environment.ts"),
       // Issue #588: the same kind of narrow shim for `goto`, so the dashboard page can be mounted.
       "$app/navigation": path.resolve(__dirname, "./src/__tests__/stubs/app-navigation.ts"),
+      // Issue #609: and for `page`, so the dashboard's reminder parameter can be read when it is mounted.
+      "$app/stores": path.resolve(__dirname, "./src/__tests__/stubs/app-stores.ts"),
+      // Issue #843: and for `page.url`, the default reader of the table URL state helper.
+      "$app/state": path.resolve(__dirname, "./src/__tests__/stubs/app-state.ts"),
     },
   },
 });

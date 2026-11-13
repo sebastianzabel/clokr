@@ -1,8 +1,14 @@
 name: CI
 
 on:
+  # Every PR gets CI, whatever its base: redesign work stacks PRs on feature branches
+  # (e.g. a page PR on the navigation PR), and without this they ran no checks at all until
+  # retargeted to main. Branch protection and the merge queue still apply to main only.
   pull_request:
-    branches: [main, "release/**"]
+  # The merge queue on main (since 09.11.2026, repo in the getclokr organisation) runs this
+  # workflow on the queued merge commit. Every required check (test, codeql, secret-scan,
+  # docker-gate) must therefore report for this event too, or a queued PR waits forever.
+  merge_group:
 
 # Least-privilege default: every job states its own scopes below, see the job blocks.
 permissions:
@@ -10,31 +16,76 @@ permissions:
 
 jobs:
   # ── Tests, Lint, Type-Check ──────────────────────────────────────────
-  test:
+  #
+  # Issue #884: what used to be ONE serial job (`test`, ~32 min with the API suite) runs as
+  # parallel jobs — `changes` (path filter), `checks` (every lint, type check, format check,
+  # build and the security scans), `api-tests` (the API integration suite, three shards),
+  # `api-coverage` (merges the shard reports: the coverage thresholds and the completeness floor)
+  # and `web-tests`. The job named `test` at the end is the required check: it needs all of them,
+  # always runs, and fails unless each one succeeded (or was legitimately skipped), so the
+  # branch-protection name stays `test`. Nothing was dropped — every former step runs in one of
+  # these jobs.
+  changes:
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout
-      pull-requests: write # dorny/paths-filter lists the PR's changed files; Post PR Summary comment
-      issues: write # Post PR Summary uses the issues comments API on the PR
-      security-events: write # Trivy FS SARIF upload via codeql-action/upload-sarif (DEVOPS-V8-04)
-      actions: read # Post PR Summary (listJobsForWorkflowRun); upload-sarif run metadata
+      pull-requests: read # dorny/paths-filter lists the PR's changed files
+    outputs:
+      api: ${{ steps.changes.outputs.api }}
+      web: ${{ steps.changes.outputs.web }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # In the merge queue paths-filter diffs against the queue base commit with git, so the
+          # history must be present; on pull_request it reads the changed files from the API.
+          fetch-depth: ${{ github.event_name == 'merge_group' && 0 || 1 }}
 
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_USER: clokr
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: clokr
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+      # The API integration suite exercises Postgres, Prisma and MinIO, so a PR that touches only
+      # docs, workflows or scripts cannot change its outcome. `api-tests` and `api-coverage` are
+      # skipped at job level then; `test` below treats exactly that case, and only that case, as a
+      # pass.
+      - name: Detect changes that can affect the API suite
+        id: changes
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          # Ignored on pull_request; in the merge queue the diff runs against the queue base.
+          base: ${{ github.event.merge_group.base_sha }}
+          filters: |
+            api:
+              - 'apps/api/**'
+              # apps/api/scripts/__tests__/sim-invariants-715.test.ts runs the checker code of apps/sim.
+              - 'apps/sim/**'
+              - 'packages/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'package.json'
+              - '.github/workflows/ci.yml'
+              # Read by permission-site-mapping.test.ts: a doc-only PR must still run the suite (#284).
+              - 'docs/permissions.md'
+            # Issue #854 (D-854-17): what can change a rendered page; read by `screenshots-854` only.
+            web:
+              - 'apps/web/**'
+              - 'apps/e2e/**'
+              - 'packages/**'
+              - 'docker-compose.test.yml'
+              - 'docker-compose.e2e.yml'
+              - '.github/workflows/ci.yml'
+
+      - name: Skip notice (no API-relevant changes)
+        if: steps.changes.outputs.api != 'true'
+        run: |
+          echo "::notice title=API suite skipped::No changes under apps/api/**, packages/**, the lockfile or ci.yml — the API integration suite cannot be affected by this PR, so its ~11 minutes are skipped. Lint, format, typecheck, builds and the security scans still ran."
+
+  checks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout
+      security-events: write # Trivy FS SARIF upload via codeql-action/upload-sarif (DEVOPS-V8-04)
+      actions: read # upload-sarif run metadata
 
     env:
+      # Issue #172: behaviour must not depend on the runner's host timezone.
+      TZ: UTC
       DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr
       # apps/api tests connect to a separate `clokr_test` DATABASE (not a schema — D-01, Phase 101:
       # `?schema=` is a Prisma-only parameter that `pg.Pool` silently ignored, so every run was
@@ -73,138 +124,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # The API integration suite is 11 of this job's 14 minutes. It exercises
-      # Postgres, Prisma and MinIO, so a PR that touches only docs, workflows or
-      # scripts cannot change its outcome — and a large share of PRs here are
-      # exactly that.
-      #
-      # Same shape as `visual-regression` below and for the same reason: the JOB
-      # always runs and always reports, only its expensive STEPS are conditional.
-      # `test` is a required status check, and a required check that is skipped
-      # at job level never reports, which would leave every PR waiting forever.
-      - name: Detect changes that can affect the API suite
-        id: changes
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        with:
-          filters: |
-            api:
-              - 'apps/api/**'
-              - 'packages/**'
-              - 'pnpm-lock.yaml'
-              - 'pnpm-workspace.yaml'
-              - 'package.json'
-              - '.github/workflows/ci.yml'
-              # Read by permission-site-mapping.test.ts: a doc-only PR must still run the suite (#284).
-              - 'docs/permissions.md'
-
       - uses: actions/setup-node@v6
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Start MinIO (object storage for the § 9 AU-document tests)
-        # apps/api/src/__tests__/section9-upload.test.ts (Phase 104, D-26/R6) performs a REAL
-        # object-storage round-trip: upload -> byte-verbatim retrieval -> Art. 17 deletion. It is
-        # the only such test in the repo and it is deliberately NOT skippable — the § 9 AU document
-        # is an Art. 9 DSGVO health datum and "it is genuinely erasable again" has to be proven on
-        # every PR, not once on a developer laptop.
-        #
-        # Why a `docker run` step and not a `services:` container: GitHub Actions service containers
-        # cannot override a container's command, and the MinIO image's default CMD is bare `minio`
-        # (no `server /data`), so a service-container MinIO exits immediately after printing usage.
-        # Verified via `docker inspect` on the pinned image below. docker-compose.yml can use
-        # `services` only because compose supports `command:`.
-        #
-        # Registry: cgr.dev (Chainguard's source build of MinIO). MinIO no longer serves anonymous
-        # pulls: docker.io/minio/minio was removed, and quay.io/minio/minio answers 401 since
-        # 2026-09-24. Pinned by digest (multi-arch: amd64 for CI, arm64 for local dev). Chainguard's
-        # free tier only tags `latest`; if this digest is ever garbage-collected, re-pin to the
-        # current `latest` digest and re-run the put/get round trip before merging.
-        #
-        # Same image as docker-compose.yml so dev and CI cannot drift.
-        run: |
-          docker run -d --name minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
-            cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
-          echo "Waiting for MinIO to become ready…"
-          for i in $(seq 1 30); do
-            if curl -fsS http://localhost:9000/minio/health/live > /dev/null; then
-              echo "MinIO ready after ${i} attempt(s)"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::MinIO did not become ready within 60s"
-          docker logs minio
-          exit 1
-
       - name: Generate Prisma client
         run: pnpm --filter @clokr/db exec prisma generate
-
-      - name: Runner capacity (Phase 106 / D-10 — measure, never assume)
-        # CONTEXT.md D-10 forbids assuming the documented 4 vCPU / 16 GB standard-runner spec.
-        # apps/api/vitest.config.ts pins a FIXED worker count derived from these numbers, so if
-        # GitHub ever changes the runner shape this step is the record that says so. Unconditional
-        # on purpose: the capacity record must exist even on runs where the API suite is skipped.
-        run: |
-          echo "nproc:              $(nproc)"
-          free -g
-          df -h /
-          echo "cgroup mem.max:     $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo 'n/a')"
-          echo "postgres max_connections:"
-          PGPASSWORD=password psql -h localhost -U clokr -d clokr -tAc 'SHOW max_connections'
-
-      - name: Skip notice (no API-relevant changes)
-        if: steps.changes.outputs.api != 'true'
-        run: |
-          echo "::notice title=API suite skipped::No changes under apps/api/**, packages/**, the lockfile or ci.yml — the API integration suite cannot be affected by this PR, so its ~11 minutes are skipped. Lint, format, typecheck, builds and the security scans still ran."
-
-      - name: Provision isolated test database
-        if: steps.changes.outputs.api == 'true'
-        # Explicit step rather than relying solely on pnpm's pretest:coverage hook firing before
-        # `Run API tests with coverage` below. Phase 101 Task 1 empirically confirmed the hook DOES
-        # fire on this pnpm version even without a root .npmrc — this step stays anyway,
-        # deliberately redundant, so a future pnpm default change cannot silently un-provision CI.
-        # Runs the SAME script (apps/api/scripts/ensure-test-database.ts, via `test:setup`) a local
-        # developer runs, against the SAME target named in TEST_DATABASE_URL above.
-        run: pnpm --filter @clokr/api run test:setup
-
-      - name: Push schema to the dev-shaped reference database (clokr)
-        if: steps.changes.outputs.api == 'true'
-        # `clokr` (DATABASE_URL above) is NOT the isolated test target anymore (D-01, Phase 101) —
-        # it is now (a) the database the drift-guard step below connects through via `psql` to
-        # create `prisma_migrate_shadow`, and (b) the READ-ONLY reference database
-        # ISOLATION_CHECK_DEV_DATABASE_URL points at, which src/__tests__/test-isolation.test.ts
-        # (the TI-01 proof) queries for `public."Tenant"`. That proof is non-vacuous only if this
-        # step has run, so do not remove it even though nothing calls it "the test DB" anymore.
-        run: pnpm --filter @clokr/db exec prisma db push
-
-      - name: Check migration drift (schema.prisma vs migrations history)
-        if: steps.changes.outputs.api == 'true'
-        # OPS-V1814-01 drift guard: fails the build if schema.prisma has diverged
-        # from the committed Prisma migrations history (e.g. someone edited the
-        # schema without running `migrate dev`, or regenerated 0_init).
-        # `migrate diff --from-migrations` replays the migrations into a shadow
-        # database, so it needs the postgres service above (Prisma 7 reads the
-        # shadow URL from prisma.config.ts — there is NO CLI flag; it is env-gated
-        # via SHADOW_DATABASE_URL so it never affects the app or test databases).
-        # Exit code: 0 = no drift, 2 = drift (fail).
-        env:
-          SHADOW_DATABASE_URL: postgresql://clokr:password@localhost:5432/prisma_migrate_shadow
-        run: |
-          PGPASSWORD=password psql -h localhost -U clokr -d clokr \
-            -c "DROP DATABASE IF EXISTS prisma_migrate_shadow;" \
-            -c "CREATE DATABASE prisma_migrate_shadow;"
-          pnpm --filter @clokr/db exec prisma migrate diff \
-            --from-migrations prisma/migrations \
-            --to-schema prisma/schema.prisma \
-            --exit-code
 
       - name: Sync SvelteKit generated files
         # ESLint + tsc on apps/web extend ./.svelte-kit/tsconfig.json (generated
@@ -324,7 +254,7 @@ jobs:
         # `später-datum` / `später-seed`, plus a mandatory written reason); this gate fails the
         # build the instant that completeness is no longer true — a new spec file with no entry,
         # a register entry pointing at a file that no longer exists, or an `in-ci` entry the
-        # e2e-ci/axe-scan/visual Playwright projects do not actually run (the concrete sub-case
+        # e2e-ci/axe-scan/visual/screenshots Playwright projects do not actually run (the concrete sub-case
         # that produced Issue #275: a file believed to run in CI that no project executed). The
         # check is on the INPUT set (spec files discovered), same discipline as the gate above.
         # There is no "exception" concept here — every file gets exactly one category, never zero.
@@ -343,17 +273,17 @@ jobs:
         # a gate a path filter can skip is not a gate, and the cost is ~1s.
         run: pnpm --filter @clokr/api run lint:t100-09-routes --check
 
-      - name: Lint role checks (Issue #75 — no role comparison outside the compat derivation)
+      - name: Lint role checks (Issue #75 — no role comparison in any API source file)
         # Since #75 every access decision asks for a catalog permission (requirePermission /
         # requireAnyPermission / hasPermission / permissionReach / userIdsHoldingPermission from
-        # contexts/platform); the legacy role survives only as a compat field until #539. This AST
+        # contexts/platform); the legacy role column and enum are gone since #641. This AST
         # gate fails on any call of the removed role guard and on any comparison of a role value
         # (`.role`, or an identifier bound to one) with ADMIN / MANAGER / EMPLOYEE — ===/!==/==/!=,
         # switch cases, .includes/.indexOf/.has, and role-literal Prisma predicates under `where` —
-        # in non-test apps/api/src. Exactly ONE file is allowlisted, as a constant in the script:
-        # contexts/platform/compat-role.ts, the single place that derives the compat role (D-14).
-        # There is no exceptions file on purpose: a second allowlisted file would be a second
-        # derivation. Unconditional, no path filter — a gate a path filter can skip is not a gate,
+        # in non-test apps/api/src. No file is allowlisted and there is no exceptions file; a
+        # helper whose parameter is typed `SystemRoleName` (a request payload's requested role) is
+        # invisible to it by design and classified in docs/permissions.md instead.
+        # Unconditional, no path filter — a gate a path filter can skip is not a gate,
         # and the cost is ~1s. What it structurally cannot see is listed in the script's header
         # and in apps/api/scripts/README.md § lint-role-checks.ts.
         run: pnpm --filter @clokr/api run lint:role-checks
@@ -382,7 +312,7 @@ jobs:
         run: pnpm --filter @clokr/web exec eslint src/
 
       - name: Format check (Prettier)
-        run: pnpm exec prettier --check "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,svelte,css}" "packages/**/*.ts" "packages/**/*.json"
+        run: pnpm exec prettier --check "apps/api/src/**/*.ts" "apps/sim/{src,test}/**/*.ts" "apps/web/src/**/*.{ts,svelte,css}" "packages/**/*.ts" "packages/**/*.json"
 
       - name: Lint UI primitives usage
         run: pnpm --filter @clokr/web lint:ui
@@ -399,6 +329,22 @@ jobs:
         # Text and number fields in the admin area never write outside a button-gated
         # group. See docs/ADMIN_STRUCTURE.md §3.2.1.
         run: pnpm --filter @clokr/web lint:save-pattern
+
+      - name: Lint native dialogs (Issue #843, D-843-06)
+        # No alert/prompt/confirm in apps/web/src: feedback goes through toasts, decisions through
+        # ConfirmDialog or ReasonDialog.
+        run: pnpm --filter @clokr/web lint:no-alert
+
+      - name: Lint shown text against the glossary (Issue #574)
+        # No forbidden term (Tenant, enum values, env names, Sie-forms, Σ, Coverage, …) in any
+        # text the web app shows. Vocabulary and the address form "du": docs/glossar.md.
+        run: pnpm --filter @clokr/web lint:ui-terms
+
+      - name: Lint German API texts against the glossary (Issue #861)
+        # The API sibling of lint:ui-terms: the same term list, read in every German text the API
+        # shows (error messages, notifications, e-mail templates, PDF texts). Vocabulary and the
+        # address form "du": docs/glossar.md. Unconditional, ~2s.
+        run: pnpm --filter @clokr/api run lint:api-terms
 
       - name: Test comment-language script (extractor + classifier unit tests)
         # Root-level, node environment (see vitest.config.mjs) — protects the detector
@@ -422,46 +368,31 @@ jobs:
         # in an operator script (a missing field handed to closeEmployeeMonth) was invisible.
         run: pnpm --filter @clokr/api typecheck:scripts
 
+      - name: Lint unknown Prisma keys (scripts and src)
+        # Issue #804: tsc accepts a nonexistent field in a Prisma select/include/where/orderBy/data
+        # as soon as one sibling key is valid (SelectSubset only maps top-level keys).
+        run: |
+          pnpm --filter @clokr/api run lint:prisma-unknown-keys
+          pnpm --filter @clokr/api run lint:prisma-unknown-keys -- -p tsconfig.json
+
       - name: Type check Web
         run: pnpm --filter @clokr/web typecheck
 
-      - name: Run API tests with coverage
-        id: tests
-        if: steps.changes.outputs.api == 'true'
-        run: pnpm --filter @clokr/api test:coverage
+      - name: Lint, type check and test the simulation tooling (Issue #715)
+        # apps/sim never ships in a release image; this is its only gate. Pure unit tests, no
+        # database: the invariants that need the schema are proven in the API suite
+        # (apps/api/scripts/__tests__/sim-invariants-715.test.ts).
+        run: |
+          pnpm --filter @clokr/sim lint
+          pnpm --filter @clokr/sim typecheck
+          pnpm --filter @clokr/sim test
 
-      - name: Prove every worker database was used (R2)
-        # Phase 106, D-02/T-106-19: run-level complement to
-        # src/__tests__/worker-database-isolation.test.ts (which can only prove isolation for the
-        # ONE worker its own test file happens to run in). Reads pg_stat_database's own write
-        # counters for every clokr_test_<n> — fails the job if any is missing or received zero
-        # writes, which would mean fewer than N workers actually ran.
-        if: steps.changes.outputs.api == 'true'
-        run: pnpm --filter @clokr/api exec tsx scripts/check-worker-database-usage.ts
-        env:
-          TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
-
-      - name: Test completeness floor (D-09 — protects R6)
-        # Phase 106, D-09: hard floor over the vitest JSON reporter output (apps/api/vitest.config.ts
-        # `outputFile.json`). Parallelisation can silently collect fewer files; every collected test
-        # would still pass and coverage could still clear the 40% line threshold, so R6 would be
-        # violated in effect with nothing else turning red. See
-        # apps/api/scripts/check-test-completeness.mjs for the floor values and the remedy text.
-        if: steps.changes.outputs.api == 'true'
-        run: node apps/api/scripts/check-test-completeness.mjs apps/api/vitest-report.json
-
-      - name: Run Web tests with coverage
-        id: tests_web
-        run: pnpm --filter @clokr/web test:coverage
-
-      - name: Web coverage gate (lib/ lines floor)
-        # Phase 76-03 (D-05): hard CI gate on apps/web/src/lib/** line coverage.
-        # The floor is encoded in apps/web/scripts/check-coverage.mjs (v1.8: 5%,
-        # v1.9 target: 40%). Separate from vitest's built-in threshold so CI
-        # produces a cleaner error message and the floor is decoupled from
-        # vitest.config.ts drift.
-        id: coverage_gate_web
-        run: node apps/web/scripts/check-coverage.mjs
+      - name: Type check and test the FRITZ!Box adapter (Issue #610)
+        # The adapter never ran in CI before this step. Pure unit tests with a stubbed TR-064
+        # client and API; its own vitest config is what makes the tests findable at all.
+        run: |
+          pnpm --filter @clokr/fritzbox-adapter exec tsc --noEmit
+          pnpm --filter @clokr/fritzbox-adapter test
 
       - name: Audit dependencies (pnpm audit)
         # Exits 1 when HIGH or CRITICAL vulnerabilities are found in production dependencies.
@@ -480,6 +411,7 @@ jobs:
       #     undici WebSocket DoS) that have no production impact
       #   - .claude/worktrees/** — isolated agent worktrees with stale lockfiles
       #   - .svelte-kit/** — generated build artifacts
+
       - name: Trivy filesystem scan — table output (CI log diagnostics)
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0 (action) — runs Trivy v0.71.0 via `version:` input
         with:
@@ -513,8 +445,12 @@ jobs:
           version: v0.71.0
 
       - name: Upload Trivy FS scan to GitHub Security
+        # Not in the merge queue: the queue's temporary ref (refs/heads/gh-readonly-queue/…) is gone
+        # once the entry leaves the queue, and code scanning then refuses the upload with "ref not
+        # found", which turned `test` red. The scan above still runs and still blocks there; the
+        # upload happens on the pull_request run of the same change.
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && github.event_name != 'merge_group'
         with:
           sarif_file: trivy-fs-results.sarif
           category: trivy-fs
@@ -526,17 +462,400 @@ jobs:
         id: build_web
         run: pnpm --filter @clokr/web build
 
+  api-tests:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: clokr
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: clokr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Issue #172: behaviour must not depend on the runner's host timezone.
+      TZ: UTC
+      DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr
+      # apps/api tests connect to a separate `clokr_test` DATABASE (not a schema — D-01, Phase 101:
+      # `?schema=` is a Prisma-only parameter that `pg.Pool` silently ignored, so every run was
+      # actually hitting `clokr` above). Provisioned by the "Provision isolated test database" step
+      # below, which runs the SAME `pnpm --filter @clokr/api run test:setup` a local developer runs.
+      # apps/api/.env.test is TRACKED in git (see .gitignore) and MUST hold this same value.
+      TEST_DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr_test
+      # Phase 132 (D-02/D-06): CI has exactly ONE working directory, so the per-working-directory
+      # namespace must be empty and the database names must stay literally clokr_test /
+      # clokr_test_1..4 — byte-identical to every run before this phase. The derivation in
+      # apps/api/src/utils/test-database.ts already returns "" for a main working tree (an
+      # actions/checkout clone is one), so this line changes no behaviour. It is here to make that
+      # a STATEMENT rather than a heuristic that happens to be right: if a future runner image or
+      # checkout action ever produced a linked worktree, an unset variable would silently rename
+      # every database this job provisions. Empty string = "main-tree names, please" (D-02).
+      CLOKR_TEST_NAMESPACE: ""
+      JWT_SECRET: test-jwt-secret-min-32-characters-long
+      JWT_REFRESH_SECRET: test-refresh-secret-min-32-characters
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      ENCRYPTION_KEY: test-encryption-key-min-32-characters-long!!
+      # Phase 88 (D-02a): separate operator signing secret, distinct from every secret above.
+      OPERATOR_JWT_SECRET: test-operator-jwt-secret-min-32-characters
+      NODE_ENV: test
+      # Object storage for the § 9 AU-document tests (Phase 104). Values match the
+      # "Start MinIO" step below and docker-compose.yml's dev service. Set EXPLICITLY rather than
+      # relying on apps/api/vitest.setup.ts's `MINIO_ENDPOINT ??= "localhost"` default, so this
+      # job's dependency on an object store is visible in the workflow itself.
+      MINIO_ENDPOINT: localhost
+      MINIO_PORT: "9000"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: clokr
+      MINIO_USE_SSL: "false"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start MinIO (object storage for the § 9 AU-document tests)
+        # apps/api/src/__tests__/section9-upload.test.ts (Phase 104, D-26/R6) performs a REAL
+        # object-storage round-trip: upload -> byte-verbatim retrieval -> Art. 17 deletion. It is
+        # the only such test in the repo and it is deliberately NOT skippable — the § 9 AU document
+        # is an Art. 9 DSGVO health datum and "it is genuinely erasable again" has to be proven on
+        # every PR, not once on a developer laptop.
+        #
+        # Why a `docker run` step and not a `services:` container: GitHub Actions service containers
+        # cannot override a container's command, and the MinIO image's default CMD is bare `minio`
+        # (no `server /data`), so a service-container MinIO exits immediately after printing usage.
+        # Verified via `docker inspect` on the pinned image below. docker-compose.yml can use
+        # `services` only because compose supports `command:`.
+        #
+        # Registry: cgr.dev (Chainguard's source build of MinIO). MinIO no longer serves anonymous
+        # pulls: docker.io/minio/minio was removed, and quay.io/minio/minio answers 401 since
+        # 2026-09-24. Pinned by digest (multi-arch: amd64 for CI, arm64 for local dev). Chainguard's
+        # free tier only tags `latest`; if this digest is ever garbage-collected, re-pin to the
+        # current `latest` digest and re-run the put/get round trip before merging.
+        #
+        # Same image as docker-compose.yml so dev and CI cannot drift.
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
+          echo "Waiting for MinIO to become ready…"
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/live > /dev/null; then
+              echo "MinIO ready after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::MinIO did not become ready within 60s"
+          docker logs minio
+          exit 1
+
+      - name: Generate Prisma client
+        run: pnpm --filter @clokr/db exec prisma generate
+
+      - name: Runner capacity (Phase 106 / D-10 — measure, never assume)
+        # CONTEXT.md D-10 forbids assuming the documented 4 vCPU / 16 GB standard-runner spec.
+        # apps/api/vitest.config.ts pins a FIXED worker count derived from these numbers, so if
+        # GitHub ever changes the runner shape this step is the record that says so. Since #884 it
+        # runs on every shard, i.e. on exactly the runners whose shape the worker count assumes.
+        run: |
+          echo "nproc:              $(nproc)"
+          free -g
+          df -h /
+          echo "cgroup mem.max:     $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo 'n/a')"
+          echo "postgres max_connections:"
+          PGPASSWORD=password psql -h localhost -U clokr -d clokr -tAc 'SHOW max_connections'
+
+      - name: Provision isolated test database
+        # Explicit step rather than relying solely on pnpm's pretest:coverage hook firing before
+        # `Run API tests with coverage` below. Phase 101 Task 1 empirically confirmed the hook DOES
+        # fire on this pnpm version even without a root .npmrc — this step stays anyway,
+        # deliberately redundant, so a future pnpm default change cannot silently un-provision CI.
+        # Runs the SAME script (apps/api/scripts/ensure-test-database.ts, via `test:setup`) a local
+        # developer runs, against the SAME target named in TEST_DATABASE_URL above.
+        run: pnpm --filter @clokr/api run test:setup
+
+      - name: Push schema to the dev-shaped reference database (clokr)
+        # `clokr` (DATABASE_URL above) is NOT the isolated test target anymore (D-01, Phase 101) —
+        # it is now (a) the database the drift-guard step below connects through via `psql` to
+        # create `prisma_migrate_shadow`, and (b) the READ-ONLY reference database
+        # ISOLATION_CHECK_DEV_DATABASE_URL points at, which src/__tests__/test-isolation.test.ts
+        # (the TI-01 proof) queries for `public."Tenant"`. That proof is non-vacuous only if this
+        # step has run, so do not remove it even though nothing calls it "the test DB" anymore.
+        run: pnpm --filter @clokr/db exec prisma db push
+
+      - name: Check migration drift (schema.prisma vs migrations history)
+        # Once per run is enough: the migrations history is the same on every shard.
+        if: matrix.shard == 1
+        # OPS-V1814-01 drift guard: fails the build if schema.prisma has diverged
+        # from the committed Prisma migrations history (e.g. someone edited the
+        # schema without running `migrate dev`, or regenerated 0_init).
+        # `migrate diff --from-migrations` replays the migrations into a shadow
+        # database, so it needs the postgres service above (Prisma 7 reads the
+        # shadow URL from prisma.config.ts — there is NO CLI flag; it is env-gated
+        # via SHADOW_DATABASE_URL so it never affects the app or test databases).
+        # Exit code: 0 = no drift, 2 = drift (fail).
+        env:
+          SHADOW_DATABASE_URL: postgresql://clokr:password@localhost:5432/prisma_migrate_shadow
+        run: |
+          PGPASSWORD=password psql -h localhost -U clokr -d clokr \
+            -c "DROP DATABASE IF EXISTS prisma_migrate_shadow;" \
+            -c "CREATE DATABASE prisma_migrate_shadow;"
+          pnpm --filter @clokr/db exec prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema prisma/schema.prisma \
+            --exit-code
+
+      - name: Run API tests with coverage (shard ${{ matrix.shard }}/3)
+        # The suite is split by file over three runners (Issue #884): every shard has its own
+        # postgres service and provisions its own clokr_test + worker databases above, so the
+        # per-worker isolation of Phase 106 holds inside each shard unchanged. Coverage is
+        # collected here and written into the blob report; the thresholds of vitest.config.ts are
+        # checked ONCE, on the merged coverage of all shards, in `api-coverage` below — a single
+        # shard covers only a third of the files and would fail them on its own, so they are
+        # switched off for the shard run only (never in vitest.config.ts).
+        # `json` keeps writing vitest-report.json, the input of the shard file floor below.
+        working-directory: apps/api
+        run: >-
+          pnpm exec vitest run --coverage --shard=${{ matrix.shard }}/3
+          --reporter=default --reporter=blob --reporter=json
+          --outputFile.blob=.vitest-reports/blob-${{ matrix.shard }}-3.json
+          --coverage.thresholds.lines=0 --coverage.thresholds.functions=0
+          --coverage.thresholds.branches=0
+
+      - name: Prove every worker database was used (R2)
+        # Phase 106, D-02/T-106-19: run-level complement to
+        # src/__tests__/worker-database-isolation.test.ts (which can only prove isolation for the
+        # ONE worker its own test file happens to run in). Reads pg_stat_database's own write
+        # counters for every clokr_test_<n> — fails the job if any is missing or received zero
+        # writes, which would mean fewer than N workers actually ran.
+        run: pnpm --filter @clokr/api exec tsx scripts/check-worker-database-usage.ts
+        env:
+          TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+
+      - name: Shard file floor (a shard that ran no file is red)
+        # Anti-vacuity for the split: vitest itself refuses a shard count above the file count,
+        # but a shard that collected zero files must never pass silently. The total floor
+        # (check-test-completeness.mjs) runs on the merged report in `api-coverage`.
+        working-directory: apps/api
+        run: |
+          node -e '
+            const r = require("./vitest-report.json");
+            const files = r.testResults.length;
+            console.log(`shard ${{ matrix.shard }}/3: ${files} file(s), ${r.numTotalTests} test(s)`);
+            if (files === 0) { console.error("::error::shard ${{ matrix.shard }}/3 ran no test file"); process.exit(1); }
+          '
+          test -s .vitest-reports/blob-${{ matrix.shard }}-3.json
+
+      - name: Upload the shard's blob report
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-blob-${{ matrix.shard }}
+          path: apps/api/.vitest-reports/blob-${{ matrix.shard }}-3.json
+          retention-days: 3
+          if-no-files-found: error
+
+  api-coverage:
+    needs: [changes, api-tests]
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout
+    env:
+      TZ: UTC
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        # The merge reads every src file for the coverage map; same toolchain state as the shards.
+        run: pnpm --filter @clokr/db exec prisma generate
+
+      - name: Download the shard blob reports
+        uses: actions/download-artifact@v8
+        with:
+          pattern: api-blob-*
+          path: apps/api/.vitest-reports
+          merge-multiple: true
+
+      - name: Exactly three shard reports
+        # A missing shard report must never shrink the merged coverage silently.
+        run: |
+          ls -la apps/api/.vitest-reports
+          n=$(ls apps/api/.vitest-reports/blob-*-3.json | wc -l)
+          if [ "$n" -ne 3 ]; then echo "::error::expected 3 shard reports, found $n"; exit 1; fi
+
+      - name: Merge the shard reports — API coverage gate (lines >= 40)
+        # Replays the three blob reports as one run: the merged coverage is checked against the
+        # thresholds of apps/api/vitest.config.ts (lines 40, functions 37, branches 24) exactly as
+        # the former single run did, and the json reporter writes the merged vitest-report.json.
+        # A merge executes no test again and needs no database.
+        working-directory: apps/api
+        run: pnpm exec vitest run --merge-reports --coverage
+
+      - name: Test completeness floor (D-09 — protects R6)
+        # Phase 106, D-09: hard floor over the vitest JSON reporter output (apps/api/vitest.config.ts
+        # `outputFile.json`). Parallelisation can silently collect fewer files; every collected test
+        # would still pass and coverage could still clear the 40% line threshold, so R6 would be
+        # violated in effect with nothing else turning red. See
+        # apps/api/scripts/check-test-completeness.mjs for the floor values and the remedy text.
+        run: node apps/api/scripts/check-test-completeness.mjs apps/api/vitest-report.json
+
+  web-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # actions/checkout
+
+    env:
+      # Issue #172: behaviour must not depend on the runner's host timezone.
+      TZ: UTC
+      DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr
+      # apps/api tests connect to a separate `clokr_test` DATABASE (not a schema — D-01, Phase 101:
+      # `?schema=` is a Prisma-only parameter that `pg.Pool` silently ignored, so every run was
+      # actually hitting `clokr` above). Provisioned by the "Provision isolated test database" step
+      # below, which runs the SAME `pnpm --filter @clokr/api run test:setup` a local developer runs.
+      # apps/api/.env.test is TRACKED in git (see .gitignore) and MUST hold this same value.
+      TEST_DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr_test
+      # Phase 132 (D-02/D-06): CI has exactly ONE working directory, so the per-working-directory
+      # namespace must be empty and the database names must stay literally clokr_test /
+      # clokr_test_1..4 — byte-identical to every run before this phase. The derivation in
+      # apps/api/src/utils/test-database.ts already returns "" for a main working tree (an
+      # actions/checkout clone is one), so this line changes no behaviour. It is here to make that
+      # a STATEMENT rather than a heuristic that happens to be right: if a future runner image or
+      # checkout action ever produced a linked worktree, an unset variable would silently rename
+      # every database this job provisions. Empty string = "main-tree names, please" (D-02).
+      CLOKR_TEST_NAMESPACE: ""
+      JWT_SECRET: test-jwt-secret-min-32-characters-long
+      JWT_REFRESH_SECRET: test-refresh-secret-min-32-characters
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      ENCRYPTION_KEY: test-encryption-key-min-32-characters-long!!
+      # Phase 88 (D-02a): separate operator signing secret, distinct from every secret above.
+      OPERATOR_JWT_SECRET: test-operator-jwt-secret-min-32-characters
+      NODE_ENV: test
+      # Object storage for the § 9 AU-document tests (Phase 104). Values match the
+      # "Start MinIO" step below and docker-compose.yml's dev service. Set EXPLICITLY rather than
+      # relying on apps/api/vitest.setup.ts's `MINIO_ENDPOINT ??= "localhost"` default, so this
+      # job's dependency on an object store is visible in the workflow itself.
+      MINIO_ENDPOINT: localhost
+      MINIO_PORT: "9000"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: clokr
+      MINIO_USE_SSL: "false"
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync SvelteKit generated files
+        # ESLint + tsc on apps/web extend ./.svelte-kit/tsconfig.json (generated
+        # by `svelte-kit sync`). The file is gitignored, so we must regenerate
+        # it before any lint/typecheck step that touches Web. Required for
+        # Lint Web, Type check Web, Run Web tests with coverage.
+        run: pnpm --filter @clokr/web exec svelte-kit sync
+
+      - name: Run Web tests with coverage
+        id: tests_web
+        run: pnpm --filter @clokr/web test:coverage
+
+      - name: Web coverage gate (lib/ lines floor)
+        # Phase 76-03 (D-05): hard CI gate on apps/web/src/lib/** line coverage.
+        # The floor is encoded in apps/web/scripts/check-coverage.mjs (v1.8: 5%,
+        # v1.9 target: 40%). Separate from vitest's built-in threshold so CI
+        # produces a cleaner error message and the floor is decoupled from
+        # vitest.config.ts drift.
+        id: coverage_gate_web
+        run: node apps/web/scripts/check-coverage.mjs
+
+  # The required check. `if: always()` so it reports even when a job it needs failed or was
+  # skipped (a required check that never reports blocks the PR forever — same reason as
+  # `docker-gate`). A skipped `api-tests`/`api-coverage` counts as a pass ONLY when the path
+  # filter said the API suite cannot be affected; when it can, they must have succeeded.
+  test:
+    needs: [changes, checks, api-tests, api-coverage, web-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # Post PR Summary comment
+      issues: write # Post PR Summary uses the issues comments API on the PR
+      actions: read # Post PR Summary (listJobsForWorkflowRun)
+    steps:
+      - name: Assert every test job succeeded
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          CHECKS: ${{ needs.checks.result }}
+          WEB: ${{ needs.web-tests.result }}
+          API: ${{ needs.api-tests.result }}
+          COVERAGE: ${{ needs.api-coverage.result }}
+          API_RELEVANT: ${{ needs.changes.outputs.api }}
+        run: |
+          fail=0
+          for pair in "changes:$CHANGES" "checks:$CHECKS" "web-tests:$WEB"; do
+            if [ "${pair#*:}" != "success" ]; then echo "::error::${pair%%:*} result was '${pair#*:}', expected 'success'"; fail=1; fi
+          done
+          if [ "$API_RELEVANT" = "true" ]; then want=success; else want=skipped; fi
+          for pair in "api-tests:$API" "api-coverage:$COVERAGE"; do
+            if [ "${pair#*:}" != "$want" ]; then echo "::error::${pair%%:*} result was '${pair#*:}', expected '$want' (API suite relevant: '$API_RELEVANT')"; fail=1; fi
+          done
+          exit $fail
+
       - name: Post PR Summary
-        if: always()
+        # A merge-queue run has no PR to comment on.
+        if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v9
         with:
           script: |
-            const lintStatus = '${{ steps.lint.conclusion }}';
-            const typecheckStatus = '${{ steps.typecheck.conclusion }}';
-            const testsStatus = '${{ steps.tests.conclusion }}';
-            const testsWebStatus = '${{ steps.tests_web.conclusion }}';
-            const coverageGateWebStatus = '${{ steps.coverage_gate_web.conclusion }}';
-            const buildWebStatus = '${{ steps.build_web.conclusion }}';
+            // Issue #884: the former steps live in their own jobs now; their results come from
+            // `needs`. `checks` holds lint, type checks, format check, scans and both builds.
+            const checksStatus = '${{ needs.checks.result }}';
+            const testsStatus = '${{ needs.api-tests.result }}';
+            const coverageStatus = '${{ needs.api-coverage.result }}';
+            const testsWebStatus = '${{ needs.web-tests.result }}';
 
             // Visual regression status (separate job, Phase 75) — fetch via API.
             // The visual-regression job runs in parallel with this `test` job, so its
@@ -569,12 +888,10 @@ jobs:
 
             | Check | Status |
             |-------|--------|
-            | ${icon(lintStatus)} Lint (API + Web) | ${lintStatus} |
-            | ${icon(typecheckStatus)} TypeScript (API) | ${typecheckStatus} |
-            | ${icon(testsStatus)} API Tests + Coverage (lines >= 40) | ${testsStatus} |
-            | ${icon(testsWebStatus)} Web Tests + Coverage | ${testsWebStatus} |
-            | ${icon(coverageGateWebStatus)} Web Coverage Gate (lib/ lines floor) | ${coverageGateWebStatus} |
-            | ${icon(buildWebStatus)} Web Build | ${buildWebStatus} |
+            | ${icon(checksStatus)} Lint, type checks, format, scans, builds | ${checksStatus} |
+            | ${icon(testsStatus)} API tests (3 shards) | ${testsStatus} |
+            | ${icon(coverageStatus)} API coverage (merged, lines >= 40) + completeness floor | ${coverageStatus} |
+            | ${icon(testsWebStatus)} Web tests + coverage gate (lib/ lines floor) | ${testsWebStatus} |
             | ${icon(visualStatus)} Visual regression (Phase 75) | ${visualStatus} |
 
             _Detailed errors are in the job logs above._
@@ -623,15 +940,18 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:javascript-typescript"
+          # Analysis runs in the merge queue too; only the upload is skipped there, for the same
+          # reason as the Trivy SARIF upload (the queue ref is gone once the entry leaves the queue).
+          upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}
 
   # ── Secret scan (DEVOPS-V8-04) ───────────────────────────────────────
-  # NOTE: gitleaks/gitleaks-action requires a free GITLEAKS_LICENSE for org repos.
-  # If license cannot be provisioned, fallback action is `gacts/gitleaks` (MIT, no license).
-  # See 70-03-SUMMARY.md for setup instructions.
+  # gitleaks/gitleaks-action handles only push, pull_request, workflow_dispatch and schedule
+  # events, so it would not report in the merge queue (and documents a licence requirement for
+  # organisation repos, where this repository lives since 09.11.2026). The job therefore runs the gitleaks CLI (MIT) from its pinned image over exactly the commits the PR or
+  # the queued merge adds. `.gitleaks.toml` and `.gitleaksignore` in the repo root are read as before.
   secret-scan:
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
       contents: read
     steps:
       - uses: actions/checkout@v6
@@ -639,10 +959,23 @@ jobs:
           fetch-depth: 0 # required for gitleaks to access commit history
 
       - name: Gitleaks secret scan
-        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          set -o pipefail
+          # gitleaks exits 0 on a PARTIAL scan (e.g. git refusing the mounted repo), so the log is
+          # checked too: no "commits scanned" line or any "partial scan" fails the job.
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            -v "$PWD:/repo" -w /repo ghcr.io/gitleaks/gitleaks:v8.24.0 \
+            git --redact --verbose --no-color --config /repo/.gitleaks.toml \
+            --gitleaks-ignore-path /repo/.gitleaksignore \
+            --log-opts="${BASE_SHA}..${HEAD_SHA}" /repo 2>&1 | tee gitleaks.log
+          if grep -q "partial scan" gitleaks.log || ! grep -q "commits scanned" gitleaks.log; then
+            echo "::error::gitleaks did not scan the full commit range"
+            exit 1
+          fi
 
   # ── Lighthouse CI (DEVOPS-V8-05, advisory in Phase 70) ───────────────
   # Phase 73 will upgrade to blocking + extend to authenticated pages via
@@ -670,7 +1003,7 @@ jobs:
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -690,8 +1023,9 @@ jobs:
   # ── Axe a11y scan (DEVOPS-V8-05) ──────────────────────────────────────
   # Blocking as of Phase 275 (Issue #275, D-08): the assertion in
   # axe-scan.spec.ts was made real (toEqual([])) and continue-on-error
-  # removed, both in the same phase. Scans the public /login page only;
-  # extending to authenticated pages remains open, not scheduled.
+  # removed, both in the same phase. Scans the public pages: every
+  # signed-out page and state plus the 404 page (Issue #855, API mocked
+  # in the spec); extending to authenticated pages remains open.
   axe-scan:
     # Playwright has no chromium build for ubuntu26.04 yet (image ubuntu26/20261012.163); drop this pin once it does.
     runs-on: ubuntu-24.04
@@ -704,7 +1038,7 @@ jobs:
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -762,11 +1096,14 @@ jobs:
     # whether the heavy steps run.
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: ${{ github.event_name == 'merge_group' && 0 || 1 }}
 
       - name: Detect visual-relevant changes
         id: changes
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          base: ${{ github.event.merge_group.base_sha }}
           filters: |
             visual:
               - 'apps/web/**'
@@ -786,7 +1123,7 @@ jobs:
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         if: steps.changes.outputs.visual == 'true'
 
       - name: Install dependencies
@@ -892,7 +1229,7 @@ jobs:
         with:
           node-version: 24
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -961,10 +1298,85 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.test.yml down -v || true
 
+  # ── Acceptance screenshots (Issue #854, AC-9, D-854-17) ─────────────────
+  # Issue #854 (D-854-17): acceptance screenshots, never gating. Captures every page of
+  # apps/e2e/fixtures/verwalten-854-pages.json at 1440 and 390 px against the CI e2e stack
+  # (the throwaway fixture tenant, synthetic names, no demo seed - nothing personal reaches the
+  # artifact) with the Playwright project `screenshots`, and uploads the PNGs as the artifact
+  # `screenshots-854` for the comparison with the prototype. `continue-on-error` keeps a failure
+  # here from ever turning the PR red, and the job is not part of any required-check list nor of
+  # the aggregate `test` job.
+  screenshots-854:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read # actions/checkout
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @clokr/db exec prisma generate
+
+      - name: Build web (for the screenshot stack)
+        run: pnpm --filter @clokr/web build
+        env:
+          PUBLIC_API_URL: http://localhost:4000
+
+      - name: Start docker test stack
+        run: |
+          docker compose -f docker-compose.test.yml up --wait --quiet-pull
+          curl -sf http://localhost:4001/api/v1/health || (echo "api-test not healthy" && exit 1)
+          curl -sf http://localhost:3001/login || (echo "web-test not reachable" && exit 1)
+
+      - name: Capture the Verwalten pages inside pinned image
+        run: |
+          docker compose -f docker-compose.e2e.yml build e2e-visual
+          # Same shape as e2e-ci above: pnpm install inside the sh -c chain (anonymous volumes
+          # shadow node_modules), --user root (bind-mounted /work is owned by uid 1001) and
+          # WEB_SERVER_DISABLED=true (the stack is already up). CAPTURE_854=1 switches the
+          # capture spec on; without it the spec skips itself.
+          docker compose -f docker-compose.e2e.yml run --rm \
+            --user root \
+            -e PLAYWRIGHT_BASE_URL=http://localhost:3001 \
+            -e E2E_API_BASE=http://localhost:4001 \
+            -e CI=true \
+            -e WEB_SERVER_DISABLED=true \
+            -e CAPTURE_854=1 \
+            e2e-visual \
+            sh -c "pnpm install --frozen-lockfile && pnpm --filter e2e exec playwright test --project=screenshots"
+
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshots-854
+          path: apps/e2e/test-results/screenshots-854/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Tear down docker stack
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v || true
+
   # ── Docker Build Check (no push) ──────────────────────────────────────
   # Validates Dockerfiles compile and warms the GHA cache for faster builds on main.
   docker:
     needs: test
+    # Explicit, not the implicit `success()`: that one also looks at `test`'s own skipped needs. On a PR
+    # that cannot affect the API suite, `api-tests` and `api-coverage` are skipped by design and `test`
+    # passes — but `success()` then skipped this job and turned `docker-gate` red (Issue #884 follow-up).
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout (the gha build cache uses the runtime token)

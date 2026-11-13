@@ -60,7 +60,11 @@ export function readDataSection(): string {
     section,
     "data section must not contain an ALTER TABLE (D-02: that belongs outside the marker section)",
   ).not.toContain("ALTER TABLE");
-  return section;
+  // Issue #638 dropped TenantConfig.storeHours, which this historical data section still selects
+  // (`tc."storeHours"`) as the first COALESCE operand of a default salon's opening hours. The
+  // fixtures never set a custom week, so the old read always fell through to the COALESCE fallback
+  // literal; substituting NULL keeps exactly that path and leaves every other statement unchanged.
+  return section.replaceAll('tc."storeHours"', "NULL::jsonb");
 }
 
 /**

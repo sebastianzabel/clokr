@@ -1,22 +1,35 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import { onMount, tick, untrack } from "svelte";
   import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { salonContext } from "$stores/salon-context";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import Pagination from "$components/ui/Pagination.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte"; // Issue #853 (D-853-18)
+  import PeriodSwitcher from "$components/ui/PeriodSwitcher.svelte"; // Issue #853 (D-853-11)
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
+  import DataTable, {
+    type DataTableColumn,
+    type DataTableRowTone,
+  } from "$components/ui/DataTable.svelte"; // Issue #853 (D-853-18)
+  import Chip, { type ChipTone } from "$components/ui/Chip.svelte";
+  import PersonPicker from "$lib/components/team/zeiten/PersonPicker.svelte"; // Issue #853 (D-853-12)
+  import { personOptions } from "$lib/team/person-options";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import { matchesSearch } from "$lib/table/search";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-ef6
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
-  import {
-    isSalonFilterRejected,
-    salonPageFilter,
-    salonScopeLabel,
-    withSalonId,
-  } from "$lib/salons/page-scope"; // Issue #558 (D-03/D-04/D-09)
+  import { isSalonFilterRejected, salonPageFilter, withSalonId } from "$lib/salons/page-scope"; // Issue #558 (D-03/D-04/D-09)
   import AttestFields from "$lib/components/leave/AttestFields.svelte"; // Phase 201
   import {
     resolveStornoAction,
@@ -25,23 +38,76 @@
     type StornoKind,
   } from "$lib/leave/storno"; // Quick 260824-ef6
   import {
-    canSeeLeaveType,
-    resolveChipVisual,
     LEAVE_TYPE_OPTIONS,
     SICK_CODES,
-    isDrawnInCalendar,
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility"; // Phase 257, Phase 262, #269, Issue #446 (D-04)
   import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19
   import { parseLeaveCreateDeepLink, type LeaveCreateDeepLink } from "$lib/leave/create-deep-link"; // Issue #587
-  import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // #265
+  import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
+  import LeaveTypeChip from "$lib/components/leave/LeaveTypeChip.svelte"; // Issue #840 (G-3)
+  import LeavePlanningPanel from "$lib/components/leave/LeavePlanningPanel.svelte"; // Issue #840 (D-840-17)
+  import LeavePlanControls from "$lib/components/leave/LeavePlanControls.svelte"; // Issue #840 (G-6)
+  import { legendFrom } from "$lib/leave/leave-colors";
+  import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte"; // Issue #840
+  import AbsenceList from "$lib/components/leave/timeline/AbsenceList.svelte"; // Issue #840 (D-840-11)
+  import {
+    calendarDayLoad,
+    calendarRangeQuery,
+    calendarToTimeline,
+    dayColumns,
+    hasMixedWeek,
+    periodOf,
+    shiftPeriod,
+    weekLoad,
+    workdaySet,
+    werktageBasis,
+    type CalendarRangeAnswer,
+    type CalendarSalon,
+    type TimelineBar,
+    type TimelinePerson,
+    type Zoom,
+  } from "$lib/leave/timeline-model"; // Issue #840 (D-840-07)
+  import {
+    parseTeamLeaveState,
+    teamLeaveSearch,
+    type LeaveStatusFilter,
+    type TeamLeaveState,
+    type TeamLeaveTab,
+  } from "$lib/leave/area-tabs"; // Issue #840 (D-840-01/02)
+  import {
+    emptyRequestsText,
+    inLeaderReach,
+    locateDeepLinkedRequest,
+    matchesStatusFilter,
+    openRequestsSummary,
+    overviewPersons,
+    pageOfRequest,
+    requestsForStatus,
+  } from "$lib/leave/team-leave-model"; // Issue #840 (E-06)
+  import { closedDaysFor } from "$lib/shifts/closed-days"; // Issue #563 (D-03), #840 (D-840-14)
+  import { teamSalonViewSalon } from "$lib/dashboard/team-view"; // Issue #82/#558, #840 (D-840-17)
+  import { deepLinkSalon } from "$lib/leave-plan/deep-link"; // Issue #835 (WR-07)
   import { resolveAdjustmentBadge, type LastDaysAdjustment } from "$lib/leave/vacation-balance"; // Phase 107-07
-  import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // Phase 255
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
   // create modal, its collision-confirm flow, and the mutation itself.
   import LeaveRequestForm from "$lib/components/leave/LeaveRequestForm.svelte";
   // Issue #468 (D-12, A-2): "Elternzeit-Kürzung erklären" row action on an approved PARENTAL
   // request.
+  import LeaveLimitNotice from "$lib/components/leave/LeaveLimitNotice.svelte";
+  import { exceedanceDescription, warningSentences } from "$lib/leave-limits/sentences";
+  import {
+    exceedancesOf,
+    isLeaveLimitExceptionRequired,
+    validateExceptionReason,
+  } from "$lib/leave-limits/exception"; // Issue #836 (AC-7)
+  import {
+    exceededDaysFromLoad,
+    limitBadgeTitle,
+    type ExceededDay,
+  } from "$lib/leave-limits/calendar-load"; // Issue #836 (AC-10)
+  import type { LeaveLimitLoadResponse } from "$lib/leave-limits/types";
   import ParentalReductionDialog from "$lib/components/leave/ParentalReductionDialog.svelte";
   import { showsParentalReductionAction } from "$lib/leave/parental-reduction";
   import { halfDayRangeError, endDateForHalfDay } from "$lib/leave/half-day"; // Issue #449 (D-4)
@@ -83,6 +149,7 @@
     id: string;
     firstName: string;
     lastName: string;
+    employeeNumber?: string | null;
   }
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -100,18 +167,13 @@
   // tenant-wide decision support.
   const contextLoaded = $derived($salonContext.loaded);
   const pageSalonId = $derived(salonPageFilter($salonContext));
-  const scopeLabel = $derived(salonScopeLabel($salonContext));
+  // #840 (D-840-14): the page shows no salon label of its own; the header selection is the one
+  // salon display, and a rejected salon only gets a calm sentence (no alert).
   let salonRejected = $state(false);
   // Plain lets: an older response never overwrites a newer one (not reactive on purpose).
   let dataGeneration = 0;
-  let calendarGeneration = 0;
-  let section9Generation = 0;
-
-  // Review-Modal (Modal primitive owns Escape/backdrop/focus-trap) — Phase 255: markup and
-  // mutation now live in the shared LeaveReviewDialog component; the page only keeps the two
-  // pieces of state that select which request is under review.
-  let reviewModal: LeaveRequest | null = $state(null);
-  let reviewOpen = $state(false);
+  // #840 G-1: the open count has its own loader so it shows on every tab as soon as it is known.
+  let openGeneration = 0;
 
   // Korrektur-Modal (EDIT-05): Manager korrigiert einen bereits GENEHMIGTEN Antrag
   let correctModal: LeaveRequest | null = $state(null);
@@ -157,7 +219,7 @@
   // Quick 260824-ef6: Storno-Button (Zurückziehen / Stornierung beantragen) in der
   // Anträge-Tabelle. `resolveStornoAction` gates which button (if any) a row gets;
   // see apps/web/src/lib/leave/storno.ts for the full decision matrix and reasoning.
-  let stornoRequest: LeaveRequest | null = $state(null);
+  let stornoRequest = $state<LeaveRequest | null>(null);
   let stornoOpen = $state(false);
   let stornoKind: StornoKind | null = $derived(
     stornoRequest
@@ -182,204 +244,29 @@
     // neither. Do NOT wrap this in a try/catch that swallows: ReasonDialog needs the
     // throw to keep itself open and surface the server message inline.
     await api.delete(`/leave/requests/${stornoRequest.id}`, { reason });
-    await Promise.all([loadData(), loadCalendar()]);
+    await reloadAll();
     toasts.success(stornoSuccessToast(kind));
   }
 
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
 
-  // ── § 9 BUrlG — "AU liegt vor" (Phase 104-10, R6/D-27/D-11/D-26) ────────────
-  interface Section9Case {
-    id: string;
-    employeeId: string;
-    employeeName: string;
-    // #468: GET /leave/section9 can also return SUPERSEDED — a CONFIRMED credit a correction
-    // (PATCH /correct) made obsolete, never an open case (the filter below still only lists
-    // AU_PENDING and REJECTED).
-    status: "AU_PENDING" | "CONFIRMED" | "REJECTED" | "SUPERSEDED";
-    overlapStart: string;
-    overlapEnd: string;
-    creditedStart: string | null;
-    creditedEnd: string | null;
-    creditedDays: number | null;
-    attestSource: string | null;
-    attestValidFrom: string | null;
-    attestValidTo: string | null;
-    reason: string | null;
-    sickRequest: { id: string; startDate: string; endDate: string; status: string };
-    vacationRequest: {
-      id: string;
-      startDate: string;
-      endDate: string;
-      halfDay: boolean;
-      days: number;
-      typeName: string;
-    };
-  }
-
-  let section9Cases: Section9Case[] = $state([]);
-  let highlightSection9Id: string | null = $state(null);
-
-  async function loadSection9Cases() {
-    const generation = ++section9Generation;
-    try {
-      const cases = await api.get<Section9Case[]>(withSalonId("/leave/section9", pageSalonId));
-      if (generation !== section9Generation) return;
-      section9Cases = cases;
-    } catch {
-      if (generation !== section9Generation) return;
-      section9Cases = [];
-    }
-  }
-
-  // ── Confirm-Dialog ("AU liegt vor") ──────────────────────────────────────
-  let section9ConfirmCase: Section9Case | null = $state(null);
-  let section9ConfirmOpen = $state(false);
-  let section9AttestFrom = $state("");
-  let section9AttestTo = $state("");
-  let section9AttestSource: "EAU" | "PAPIER" = $state("EAU");
-  let section9File: File | null = $state(null);
-  let section9Reason = $state("");
-  let section9Saving = $state(false);
-  let section9Error = $state("");
-
-  function openSection9Confirm(c: Section9Case) {
-    section9ConfirmCase = c;
-    section9AttestFrom = c.overlapStart;
-    section9AttestTo = c.overlapEnd;
-    section9AttestSource = "EAU";
-    section9File = null;
-    section9Reason = "";
-    section9Error = "";
-    section9ConfirmOpen = true;
-  }
-
-  function closeSection9Confirm() {
-    section9ConfirmOpen = false;
-    section9ConfirmCase = null;
-  }
-
-  // D-26: `api.post` always JSON.stringifies its body and cannot carry multipart/form-data,
-  // so this goes through `api.upload` — which, unlike the previous raw fetch (Phase 104
-  // review IN-06), shares the client's 401-refresh-and-retry. That matters here more than
-  // elsewhere: the upload runs BEFORE the confirm call, so an expired access token used to
-  // abort the whole "AU liegt vor" flow with "Upload fehlgeschlagen (401)".
-  async function uploadSection9Document(creditId: string, file: File): Promise<void> {
-    const formData = new FormData();
-    formData.append("file", file);
-    await api.upload(`/section9-documents/${creditId}`, formData);
-  }
-
-  async function submitSection9Confirm() {
-    if (!section9ConfirmCase) return;
-    const reason = section9Reason.trim();
-    if (!reason) {
-      section9Error = "Begründung ist erforderlich (revisionssicherheitspflichtig).";
-      return;
-    }
-    section9Saving = true;
-    section9Error = "";
-    try {
-      // T-104-10-PARTIAL: upload FIRST — a CONFIRMED case must never claim a paper
-      // certificate that was never actually stored. Only relevant when a file was
-      // actually chosen; "Papier" without a file just means the paper original is
-      // kept outside the system (documentPath stays null).
-      if (section9AttestSource === "PAPIER" && section9File) {
-        await uploadSection9Document(section9ConfirmCase.id, section9File);
-      }
-      await api.post(`/leave/section9/${section9ConfirmCase.id}/confirm`, {
-        attestSource: section9AttestSource,
-        attestValidFrom: section9AttestFrom,
-        attestValidTo: section9AttestTo,
-        reason,
-      });
-      closeSection9Confirm();
-      await Promise.all([loadData(), loadCalendar(), loadSection9Cases()]);
-      toasts.success("AU bestätigt — Urlaubstage gutgeschrieben");
-    } catch (e: unknown) {
-      section9Error = e instanceof Error ? e.message : "Fehler";
-    } finally {
-      section9Saving = false;
-    }
-  }
-
-  // ── Ablehnen / Wieder eröffnen (D-11) ────────────────────────────────────
-  let section9RejectCase: Section9Case | null = $state(null);
-  let section9RejectOpen = $state(false);
-
-  function openSection9Reject(c: Section9Case) {
-    section9RejectCase = c;
-    section9RejectOpen = true;
-  }
-
-  async function confirmSection9Reject(reason: string) {
-    if (!section9RejectCase) return;
-    await api.post(`/leave/section9/${section9RejectCase.id}/reject`, { reason });
-    section9RejectCase = null;
-    await Promise.all([loadData(), loadSection9Cases()]);
-    toasts.success("AU-Vorgang abgelehnt");
-  }
-
-  async function reopenSection9Case(c: Section9Case) {
-    try {
-      await api.post(`/leave/section9/${c.id}/reopen`, {});
-      await loadSection9Cases();
-      toasts.success("Vorgang wieder eröffnet");
-    } catch (e: unknown) {
-      toasts.error(e instanceof Error ? e.message : "Fehler");
-    }
-  }
-
   // ── Manager-on-behalf-of: Neue Abwesenheit anlegen ───────────────────────
   // Phase 415 (#415): the create dialog itself — fields, balances, preview, overlap, the
   // collision-confirm flow, and the mutation — moved into the shared `LeaveRequestForm.svelte`.
   // The page keeps only the person picker (its one addition, Phase 415 D-03) and what opens it.
   let createModalOpen = $state(false);
+  // Issue #836: sentences of the limit warnings returned by the last create (empty = no notice).
+  let limitSentences: string[] = $state([]);
   let createEmployeeId = $state("");
   // Preserves this page's pre-existing default (today/today) as the shared component's initial
   // date props — the component itself defaults to blank when these are omitted (matching
   // `/leave`'s own default). Set once per openCreate() call, not reactive.
   let createInitialDate = $state("");
 
-  // ── Kalender ──────────────────────────────────────────────────────────────
-  interface CalEntry {
-    id: string;
-    isOwn: boolean;
-    employeeId: string;
-    firstName: string;
-    lastName: string;
-    typeCode: TypeCode | null;
-    typeName: string | null;
-    startDate: string;
-    endDate: string;
-    halfDay: boolean;
-    status: Status;
-    isHoliday: boolean;
-  }
-
-  interface CalDay {
-    date: Date;
-    dateStr: string;
-    dayNum: number;
-    isCurrentMonth: boolean;
-    isToday: boolean;
-    isWeekend: boolean;
-  }
-
-  type View = "calendar" | "list" | "approvals";
-  let view: View = $state("calendar");
-
-  // Phase 378 (#378): the one place this page decides whether a colleague's absence TYPE may be
-  // named (DSGVO Art. 9, #257/D-10). Permission-based, not role-based — a Salonmanager/Ausbilder
-  // (Salon-/Personen-Scope role assignment, #76) holds `leave-request:read:ZUGEWIESEN`, which the
-  // server already grants this on (`docs/permissions.md:309`), but their compat role stays
-  // EMPLOYEE (#357).
-  const canSeeOthersLeaveType = $derived(
-    hasPermission($authStore.user, "leave-request:read:ZUGEWIESEN"),
-  );
-
-  /** Format a local Date to YYYY-MM-DD without UTC shift */
+  // ── URL state: tab, zoom and anchor day (Issue #840, E-01, D-840-01/02/13/17) ────────────────
+  // Tab, zoom and anchor come only from `parseTeamLeaveState`; a change writes the URL through
+  // `navigate` (the back button walks the tabs, a zoom or period change replaces the entry).
   function toLocalDateStr(d: Date): string {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -387,153 +274,136 @@
     return `${y}-${m}-${day}`;
   }
 
-  const now = new Date();
-  let calYear = $state(now.getFullYear());
-  let calMonth = $state(now.getMonth() + 1); // 1-12
+  const today = toLocalDateStr(new Date());
+  const urlState: TeamLeaveState = $derived(parseTeamLeaveState($page.url.searchParams, today));
+  const activeTab: TeamLeaveTab = $derived(urlState.tab);
+  const TAB_IDS: readonly TeamLeaveTab[] = ["uebersicht", "antraege", "planung"];
+  const TIMELINE_ZOOMS: Zoom[] = ["jahr", "quartal", "monat"];
 
-  let calEntries: CalEntry[] = $state([]);
-  let calLoading = $state(false);
+  /** The period of the two timeline tabs (Übersicht, Planung). */
+  const overviewPeriod = $derived(periodOf(urlState.zoom, urlState.datum));
+  /** The period the toolbar shows: the Anträge list is bound to a year, so its switcher steps by year. */
+  const toolbarPeriod = $derived(
+    activeTab === "antraege" ? periodOf("jahr", urlState.datum) : overviewPeriod,
+  );
+  const listYear = $derived(Number(urlState.datum.slice(0, 4)));
 
-  function buildCalMap(entries: CalEntry[]): Map<string, CalEntry[]> {
-    const map = new Map<string, CalEntry[]>();
-    for (const e of entries) {
-      const cur = new Date(e.startDate + "T00:00:00");
-      const end = new Date(e.endDate + "T00:00:00");
-      while (cur <= end) {
-        const k = toLocalDateStr(cur);
-        if (!map.has(k)) map.set(k, []);
-        map.get(k)!.push(e);
-        cur.setDate(cur.getDate() + 1);
-      }
-    }
-    return map;
+  function navigate(
+    patch: Partial<Pick<TeamLeaveState, "tab" | "zoom" | "datum" | "status" | "allSalons">> & {
+      requestId?: string | null;
+    },
+    replaceState = false,
+  ): Promise<void> {
+    // A highlighted request and a status filter belong to one navigation; neither rides along.
+    const next: TeamLeaveState = { ...urlState, ...patch, requestId: patch.requestId ?? null };
+    if (next.tab !== "antraege") next.status = null;
+    return goto(`?${teamLeaveSearch(next)}`, { replaceState, keepFocus: true, noScroll: true });
   }
 
-  function buildCalDays(y: number, m: number): CalDay[] {
-    const days: CalDay[] = [];
-    const first = new Date(y, m - 1, 1);
-    // Woche beginnt Montag: 0=Mo..6=So
-    let startDow = first.getDay(); // 0=So
-    startDow = startDow === 0 ? 6 : startDow - 1;
-
-    const todayStr = toLocalDateStr(new Date());
-
-    // Vortage aus Vormonat
-    for (let i = startDow - 1; i >= 0; i--) {
-      const d = new Date(y, m - 1, -i);
-      days.push(mkCalDay(d, false, todayStr));
-    }
-    // Aktueller Monat
-    const lastDay = new Date(y, m, 0).getDate();
-    for (let d = 1; d <= lastDay; d++) {
-      days.push(mkCalDay(new Date(y, m - 1, d), true, todayStr));
-    }
-    // Folgetage um letzte Woche zu vervollständigen
-    const lastDowMo = (new Date(y, m - 1, lastDay).getDay() + 6) % 7;
-    const remaining = (7 - ((lastDowMo + 1) % 7)) % 7;
-    for (let i = 1; i <= remaining; i++) {
-      days.push(mkCalDay(new Date(y, m - 1, lastDay + i), false, todayStr));
-    }
-    return days;
+  function selectTab(id: string) {
+    const tab = TAB_IDS.find((t) => t === id);
+    if (tab !== undefined && tab !== activeTab) void navigate({ tab });
   }
 
-  function mkCalDay(d: Date, isCurrentMonth: boolean, todayStr: string): CalDay {
-    const dateStr = toLocalDateStr(d);
-    const dow = d.getDay();
-    return {
-      date: d,
-      dateStr,
-      dayNum: d.getDate(),
-      isCurrentMonth,
-      isToday: dateStr === todayStr,
-      isWeekend: dow === 0 || dow === 6,
-    };
-  }
+  // Deep link (WR-07): the LEAVE_PLAN_OPENED notice links with `?salonId=…`. Once the salon context
+  // is loaded, a salon the caller reaches is preselected in the header selection, then the
+  // parameter is dropped from the URL; an unreachable id is ignored (the API validates anyway).
+  let salonDeepLinkHandled = false;
+  $effect(() => {
+    if (!contextLoaded || salonDeepLinkHandled) return;
+    const param = $page.url.searchParams.get("salonId");
+    untrack(() => {
+      salonDeepLinkHandled = true;
+      if (param === null) return;
+      const linked = deepLinkSalon(param, $salonContext);
+      if (linked !== null) salonContext.setSelection(linked);
+      const url = new URL($page.url);
+      url.searchParams.delete("salonId");
+      void goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+    });
+  });
 
-  async function loadCalendar() {
-    const generation = ++calendarGeneration;
-    calLoading = true;
+  // ── Issue #836 (AC-10): days over a leave limit, read from the daily-load endpoint ─────
+  // Shown only to callers who may read the load; the request is a UX gate, the API decides
+  // (403/404). No count is computed here: every number comes from the response. The endpoint
+  // answers at most 92 days, so the Jahr zoom draws no limit markers.
+  const canReadLimitLoad = $derived(
+    hasPermission($authStore.user, "leave-limit:manage:ZUGEWIESEN") ||
+      hasPermission($authStore.user, "leave-request:approve:ZUGEWIESEN"),
+  );
+  let limitDays: Map<string, ExceededDay> = $state(new Map());
+  let limitGeneration = 0;
+
+  async function loadLimitDays() {
+    const generation = ++limitGeneration;
+    if (!canReadLimitLoad) {
+      limitDays = new Map();
+      return;
+    }
+    if (overviewPeriod.zoom === "jahr") {
+      limitDays = new Map();
+      return;
+    }
+    const { startDay: from, endDay: to } = overviewPeriod;
     try {
-      const entries = await api.get<CalEntry[]>(
-        withSalonId(`/leave/calendar?year=${calYear}&month=${calMonth}`, pageSalonId),
+      const view = await api.get<LeaveLimitLoadResponse>(
+        withSalonId(`/leave/limits/load?from=${from}&to=${to}`, pageSalonId),
       );
-      if (generation !== calendarGeneration) return;
-      calEntries = entries;
+      if (generation !== limitGeneration) return;
+      limitDays = exceededDaysFromLoad(view);
     } catch {
-      if (generation !== calendarGeneration) return;
-      calEntries = [];
-    } finally {
-      if (generation === calendarGeneration) calLoading = false;
+      // A failed load leaves no marker and no error: the marker is a hint, not a gate.
+      if (generation !== limitGeneration) return;
+      limitDays = new Map();
     }
   }
 
-  let showMonthPicker = $state(false);
-  let pickerYear = $state(new Date().getFullYear());
+  // ── Übersicht (Issue #840, D-840-07/10/17) ────────────────────────────────────────────────
+  // The read is the range form of the one calendar route: the server decides per person what the
+  // reader sees in detail and what is only the neutral word, the page draws it.
+  let overviewRows: TimelinePerson[] = $state([]);
+  let overviewHolidays: Array<{ day: string; name: string }> = $state([]);
+  let overviewSalons: CalendarSalon[] = $state([]);
+  let overviewLoading = $state(false);
+  let overviewGeneration = 0;
 
-  function prevMonth() {
-    const prevYear = calYear;
-    if (calMonth === 1) {
-      calMonth = 12;
-      calYear--;
-    } else calMonth--;
-    loadCalendar();
-    if (calYear !== prevYear) loadData();
-  }
-  function nextMonth() {
-    const prevYear = calYear;
-    if (calMonth === 12) {
-      calMonth = 1;
-      calYear++;
-    } else calMonth++;
-    loadCalendar();
-    if (calYear !== prevYear) loadData();
-  }
-  function gotoMonthYear(m: number, y: number) {
-    const prevYear = calYear;
-    calMonth = m;
-    calYear = y;
-    showMonthPicker = false;
-    loadCalendar();
-    if (calYear !== prevYear) loadData();
-  }
-  function gotoToday() {
-    const n = new Date();
-    const prevYear = calYear;
-    calMonth = n.getMonth() + 1;
-    calYear = n.getFullYear();
-    showMonthPicker = false;
-    loadCalendar();
-    if (calYear !== prevYear) loadData();
-  }
-  function prevYear() {
-    calYear--;
-    loadCalendar();
-    loadData();
-  }
-  function nextYear() {
-    calYear++;
-    loadCalendar();
-    loadData();
+  async function loadOverview() {
+    void loadLimitDays();
+    const generation = ++overviewGeneration;
+    overviewLoading = true;
+    try {
+      const answer = await api.get<CalendarRangeAnswer>(
+        withSalonId(`/leave/calendar?${calendarRangeQuery(overviewPeriod)}`, pageSalonId),
+      );
+      if (generation !== overviewGeneration) return;
+      const timeline = calendarToTimeline(answer.entries);
+      overviewRows = timeline.rows;
+      overviewHolidays = timeline.holidays;
+      overviewSalons = answer.salons ?? [];
+    } catch {
+      // The calm 404 of an inadmissible salon and every other failure: an empty view, no alert.
+      if (generation !== overviewGeneration) return;
+      overviewRows = [];
+      overviewHolidays = [];
+      overviewSalons = [];
+    } finally {
+      if (generation === overviewGeneration) overviewLoading = false;
+    }
   }
 
-  // Year dropdown options for the list-view filter (current ± 2).
-  const _currentYear = new Date().getFullYear();
-  const yearOptions = [_currentYear - 2, _currentYear - 1, _currentYear, _currentYear + 1];
+  /** Below 768 px the list replaces the timeline (D-840-11). */
+  let isMobile = $state(false);
 
-  const MONTH_NAMES = [
-    "Januar",
-    "Februar",
-    "März",
-    "April",
-    "Mai",
-    "Juni",
-    "Juli",
-    "August",
-    "September",
-    "Oktober",
-    "November",
-    "Dezember",
-  ];
+  /** A bar with a request opens the Anträge tab at that request; a masked bar has none. */
+  async function selectBar(bar: TimelineBar) {
+    const id = bar.requestId;
+    if (!id) return;
+    filterLeaveType = "";
+    requestQuery = "";
+    await navigate({ tab: "antraege", status: null, requestId: id });
+    await tick();
+    focusRequest(id);
+  }
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   async function loadData() {
@@ -541,14 +411,12 @@
     loading = true;
     error = "";
     try {
-      const [all, pending, emps] = await Promise.all([
-        api.get<LeaveRequest[]>(withSalonId(`/leave/requests?year=${calYear}`, pageSalonId)),
-        api.get<LeaveRequest[]>(withSalonId("/leave/requests?status=PENDING", pageSalonId)),
+      const [all, emps] = await Promise.all([
+        api.get<LeaveRequest[]>(withSalonId(`/leave/requests?year=${listYear}`, pageSalonId)),
         api.get<Employee[]>(withSalonId("/employees", pageSalonId)),
       ]);
       if (generation !== dataGeneration) return;
       allTeamRequests = all;
-      pendingRequests = pending;
       employees = emps;
       salonRejected = false;
     } catch (e: unknown) {
@@ -556,7 +424,6 @@
       if (isSalonFilterRejected(e)) {
         // The one 404 of an inadmissible salon: a calm text, no error alert.
         allTeamRequests = [];
-        pendingRequests = [];
         employees = [];
         salonRejected = true;
       } else {
@@ -567,45 +434,104 @@
     }
   }
 
+  /**
+   * The open requests (`PENDING` and a requested cancellation, every year) of the header salon.
+   * Read on its own so the count of the Anträge tab shows on every tab as soon as it is known and
+   * keeps its last value while a reload runs (Issue #840 G-1): a failure other than the calm
+   * rejected salon leaves the shown count in place.
+   */
+  async function loadOpenRequests() {
+    const generation = ++openGeneration;
+    try {
+      const pending = await api.get<LeaveRequest[]>(
+        withSalonId("/leave/requests?status=PENDING", pageSalonId),
+      );
+      if (generation !== openGeneration) return;
+      pendingRequests = pending;
+    } catch (e: unknown) {
+      if (generation !== openGeneration) return;
+      if (isSalonFilterRejected(e)) {
+        // The one 404 of an inadmissible salon: nothing is open there; the calm text is loadData's.
+        pendingRequests = [];
+      } else {
+        error = e instanceof Error ? e.message : "Fehler beim Laden";
+      }
+    }
+  }
+
   // Deep-link targets read from the URL by onMount; the scroll and highlight run only after the
   // first completed (salon-filtered) load, because the rows do not exist before it.
   let deepLinkRequestId: string | null = null;
-  let deepLinkSection9Id: string | null = null;
   // Issue #587 (D-587-4): ?create=1&employeeId&date from the „Abwesenheit erfassen“ action.
   let deepLinkCreate: LeaveCreateDeepLink | null = null;
   let firstLoadDone = false;
 
-  function runDeepLink() {
-    // Deep-link: highlight a specific request from notification
-    const requestId = deepLinkRequestId;
-    if (requestId) {
-      highlightRequestId = requestId;
+  /** Pages to, marks and scrolls to one request of the Anträge list; never navigates. */
+  function focusRequest(requestId: string) {
+    const at = pageOfRequest(
+      filteredTeamRequests.map((req) => req.id),
+      requestId,
+      teamReqPageSize,
+    );
+    if (at !== null) teamReqPage = at;
+    highlightRequestId = requestId;
+    void tick().then(() => {
       requestAnimationFrame(() => {
         const el = document.getElementById(`request-${requestId}`);
         if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
       });
-      setTimeout(() => {
-        highlightRequestId = null;
-      }, 3000);
-    }
+    });
+    setTimeout(() => {
+      highlightRequestId = null;
+    }, 3000);
+  }
 
-    // Deep-link: section9=<id> from the manager notification (SECTION9_AU_PENDING_MANAGER
-    // / SECTION9_CREDIT_REOPENED) — mirrors the ?request= handling above.
-    const section9Id = deepLinkSection9Id;
-    if (section9Id) {
-      highlightSection9Id = section9Id;
-      requestAnimationFrame(() => {
-        const el = document.getElementById(`section9-${section9Id}`);
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
-      setTimeout(() => {
-        highlightSection9Id = null;
-      }, 3000);
-    }
+  // A deep-linked request waiting for its list: the effect below highlights it as soon as the row
+  // exists (the year or the filter may have to change first, WR-05).
+  let pendingFocusId: string | null = $state(null);
 
-    // Deep-link: create=1 (Issue #587) opens the EXISTING „Neue Abwesenheit“ dialog, prefilled.
-    // Only with the create permission; the person is taken over only when it is in this page's own
-    // (salon-filtered) list, else the picker stays empty; nothing is submitted from here.
+  /**
+   * Finds the request of a `?request=` link and shows it. The link carries no year, so a request
+   * outside the loaded year list is looked up in the open list of every year: found, the Anträge
+   * tab switches to the open filter and to the request's own year; not found (decided, in another
+   * salon, out of reach) the page says so calmly instead of highlighting nothing.
+   */
+  async function showLinkedRequest(requestId: string) {
+    const located = locateDeepLinkedRequest(requestId, allTeamRequests, pendingRequests);
+    if (located.kind === "year") {
+      focusRequest(requestId);
+      return;
+    }
+    if (located.kind === "open") {
+      pendingFocusId = requestId;
+      setTimeout(() => {
+        if (pendingFocusId === requestId) pendingFocusId = null;
+      }, 5000);
+      await navigate({ status: "PENDING", datum: located.startDate, requestId }, true);
+      return;
+    }
+    toasts.info("Dieser Antrag ist nicht in deiner aktuellen Auswahl.");
+  }
+
+  $effect(() => {
+    const id = pendingFocusId;
+    if (id === null || loading) return;
+    if (!filteredTeamRequests.some((req) => req.id === id)) return;
+    untrack(() => {
+      pendingFocusId = null;
+      focusRequest(id);
+    });
+  });
+
+  function runDeepLink() {
+    // Deep-link: highlight a specific request from a notification or a bar (Anträge tab only).
+    const requestId = deepLinkRequestId;
+    if (requestId && activeTab === "antraege") void showLinkedRequest(requestId);
+
+    // Deep-link: create=1 (Issue #587) opens the EXISTING „Neue Abwesenheit“ dialog, prefilled, on
+    // whatever tab is active (#840 D-840-03). Only with the create permission; the person is taken
+    // over only when it is in this page's own (salon-filtered) list, else the picker stays empty;
+    // nothing is submitted from here.
     const createLink = deepLinkCreate;
     deepLinkCreate = null;
     if (createLink && hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN")) {
@@ -617,36 +543,37 @@
   }
 
   onMount(() => {
-    // Deep-link: ?view=approvals (Phase 378, #378) — the dashboard "Offene Vorgänge" widget links
-    // here with this param; it never selected a tab because neither /leave nor /team/leave read
-    // it before this phase. Kept separate from the ?request=/?section9= handling below: those
-    // additionally highlight and scroll to one row, this only selects the tab.
-    if ($page.url.searchParams.get("view") === "approvals") {
-      view = "approvals";
-    }
-
-    // Deep-link: ?request=<id> / ?section9=<id> from a notification — the tab is chosen now, the
-    // scroll and highlight follow the first load (runDeepLink).
-    deepLinkRequestId = $page.url.searchParams.get("request");
-    if (deepLinkRequestId) view = "approvals";
-    deepLinkSection9Id = $page.url.searchParams.get("section9");
-    if (deepLinkSection9Id) view = "approvals";
+    // Issue #840 (D-840-03): the legacy links (`?view=`, `?section9=`, a bare `?request=`) are
+    // mapped to their new home by `+page.ts` before this page renders; what is left to read here
+    // is the highlight target and the create link, both applied after the first load.
+    deepLinkRequestId = urlState.requestId;
 
     // Deep-link: ?create=1 (Issue #587) — validated now, applied after the first load.
     deepLinkCreate = parseLeaveCreateDeepLink($page.url.searchParams);
   });
 
-  // Issue #558: this effect owns the loads of the three lists. It is declared after onMount so
+  onMount(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(max-width: 767px)");
+    isMobile = query.matches;
+    const onChange = (event: MediaQueryListEvent) => (isMobile = event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  });
+
+  // Issue #558: this effect owns the load of the request lists. It is declared after onMount so
   // the deep-link targets are registered first, waits for the salon context so the first request
-  // is already filtered, and reruns when the header salon changes.
+  // is already filtered, and reruns when the header salon or the list year changes.
   $effect(() => {
     if (!contextLoaded) return;
     void pageSalonId;
+    void listYear;
     untrack(() => {
       void (async () => {
+        // Both reads start at once; the deep link below waits for both (it reads the open list too).
+        const open = loadOpenRequests();
         await loadData();
-        void loadCalendar();
-        void loadSection9Cases();
+        await open;
         if (!firstLoadDone) {
           firstLoadDone = true;
           runDeepLink();
@@ -655,12 +582,24 @@
     });
   });
 
-  // ── Review-Modal ──────────────────────────────────────────────────────────
-  // Phase 255: the shared LeaveReviewDialog component owns the overlap fetch, the Attest
-  // prefill and the mutation itself — the page only selects which request is under review.
-  function openReview(req: LeaveRequest) {
-    reviewModal = req;
-    reviewOpen = true;
+  // The Übersicht reads its own range; it reruns for a salon, a period or the tab (#558, #840).
+  const overviewKey = $derived(`${overviewPeriod.startDay}|${overviewPeriod.endDay}`);
+  $effect(() => {
+    if (!contextLoaded || activeTab !== "uebersicht") return;
+    void pageSalonId;
+    void overviewKey;
+    untrack(() => {
+      void loadOverview();
+    });
+  });
+
+  /** After a write: the request lists, and the timeline while it is the tab in view. */
+  async function reloadAll() {
+    await Promise.all([
+      loadData(),
+      loadOpenRequests(),
+      activeTab === "uebersicht" ? loadOverview() : Promise.resolve(),
+    ]);
   }
 
   // ── Korrektur-Modal (EDIT-05) ─────────────────────────────────────────────
@@ -706,6 +645,11 @@
     if (SICK_CODES.includes(correctType)) correctHalfDay = false;
   });
 
+  // Issue #836 (AC-7): the correction waiting for a limit exception reason.
+  let limitExceptionOpen = $state(false);
+  let limitExceptionText = $state("");
+  let pendingLimitCorrection: { id: string; body: Record<string, unknown> } | null = null;
+
   async function submitCorrection() {
     if (!correctModal) return;
     // Client-side pre-check (the server is authoritative): end date >= start date.
@@ -729,25 +673,54 @@
     }
     correctSaving = true;
     correctError = "";
+    const body = {
+      startDate: correctStart,
+      endDate: correctEnd,
+      halfDay: correctHalfDayEffective,
+      type: correctType,
+      note: correctNote || null,
+      reason: correctReason.trim(),
+    };
+    const requestId = correctModal.id;
     try {
-      await api.patch(`/leave/requests/${correctModal.id}/correct`, {
-        startDate: correctStart,
-        endDate: correctEnd,
-        halfDay: correctHalfDayEffective,
-        type: correctType,
-        note: correctNote || null,
-        reason: correctReason.trim(),
-      });
+      await api.patch(`/leave/requests/${requestId}/correct`, body);
       closeCorrect();
-      await Promise.all([loadData(), loadCalendar()]);
+      await reloadAll();
       toasts.success("Antrag korrigiert");
     } catch (e: unknown) {
+      // Issue #836 (AC-7): the correction would exceed a leave limit. Keep the body, close the
+      // correction Modal (one scrim at a time) and ask for the exception reason; the correction's
+      // own `reason` stays mandatory and separate.
+      if (isLeaveLimitExceptionRequired(e)) {
+        limitExceptionText =
+          exceedanceDescription(exceedancesOf(e)) || "Eine Urlaubsgrenze ist überschritten.";
+        pendingLimitCorrection = { id: requestId, body };
+        closeCorrect();
+        limitExceptionOpen = true;
+        return;
+      }
       // A delta-lock 409 ("Gesperrter Monat — Korrektur nicht möglich") or a validation 400
       // lands here and stays visible in the open modal.
       correctError = e instanceof Error ? e.message : "Fehler";
     } finally {
       correctSaving = false;
     }
+  }
+
+  // Confirm handler of the exception step: resends the same correction plus `limitException`.
+  // Throws to keep the reason dialog open (its contract) on an invalid reason or a refusal.
+  async function confirmLimitException(reason: string) {
+    const invalid = validateExceptionReason(reason);
+    if (invalid) throw new Error(invalid);
+    const pending = pendingLimitCorrection;
+    if (!pending) return;
+    await api.patch(`/leave/requests/${pending.id}/correct`, {
+      ...pending.body,
+      limitException: { reason: reason.trim() },
+    });
+    pendingLimitCorrection = null;
+    await reloadAll();
+    toasts.success("Antrag korrigiert");
   }
 
   // ── Attest-Nachtrag (Phase 201) ─────────────────────────────────────────────
@@ -792,23 +765,11 @@
     return `${d}.${m}.${y}`;
   }
 
-  function statusClass(s: Status) {
-    return s === "APPROVED"
-      ? "badge-green"
-      : s === "PENDING"
-        ? "badge-yellow"
-        : s === "REJECTED"
-          ? "badge-red"
-          : s === "CANCELLATION_REQUESTED"
-            ? "badge-orange"
-            : "badge-gray";
-  }
-
   function statusLabel(s: Status) {
     return s === "APPROVED"
       ? "Genehmigt"
       : s === "PENDING"
-        ? "Ausstehend"
+        ? "Offen"
         : s === "REJECTED"
           ? "Abgelehnt"
           : s === "CANCELLATION_REQUESTED"
@@ -816,130 +777,171 @@
             : "Zurückgezogen";
   }
 
-  // ── Mitarbeiter-Filter (global für alle Tabs) ────────────────────────────
-  let filterEmployeeId = $state<string>("");
-  let empSearch = $state("");
-  let empDropdownOpen = $state(false);
+  // ── Personen-Suche der Übersicht (Issue #853, D-853-18) ───────────────────────────────────
+  // The search narrows the Übersicht rows by name; it is page-local (not in the URL) and never
+  // touches the request lists.
+  let personQuery = $state("");
 
-  // Employee list sorted by lastName for dropdown
-  let employeeOptions = $derived(
-    employees
-      .map((e) => ({ id: e.id, name: `${e.lastName}, ${e.firstName}` }))
-      .sort((a, b) => a.name.localeCompare(b.name, "de")),
-  );
+  // Issue #840 G-1: the open count follows the header salon only, never the person filter (that
+  // filter is not even shown on Planung).
+  const openSummary = $derived(openRequestsSummary(pendingRequests));
 
-  let filteredEmpOptions = $derived(
-    employeeOptions.filter((e) => {
-      if (!empSearch.trim()) return true;
-      const q = empSearch.toLowerCase();
-      return e.name.toLowerCase().includes(q);
-    }),
-  );
-
-  function selectEmployee(emp: { id: string; name: string } | null) {
-    filterEmployeeId = emp?.id ?? "";
-    empSearch = "";
-    empDropdownOpen = false;
+  /** A click on the count: the Anträge list at „Offen“, with no type filter hiding a counted row. */
+  function openOpenRequests() {
+    filterLeaveType = "";
+    requestQuery = "";
+    void navigate({ tab: "antraege", status: "PENDING" });
   }
 
-  // Filtered views based on selected employee
-  let filteredCalEntries = $derived(
-    filterEmployeeId ? calEntries.filter((e) => e.employeeId === filterEmployeeId) : calEntries,
+  // ── Übersicht: rows, load and legend (Issue #840, E-06, D-840-10/27; #853 D-853-12) ─────────
+  // Rows: the persons of the calendar answer plus every person of the page's own (salon-filtered)
+  // list, each a row even without a bar. The default circle is the leader's reach: the caller, the
+  // roster and every person the server did not mask; „Alle Salons“ (`kreis=alle`) adds the masked
+  // rest. The search then narrows the circle by name.
+  const rosterIds = $derived(new Set(employees.map((emp) => emp.id)));
+  const circlePeople = $derived(
+    inLeaderReach(
+      overviewPersons(overviewRows, employees, {
+        ownEmployeeId: $authStore.user?.employeeId ?? null,
+      }),
+      rosterIds,
+      urlState.allSalons,
+    ),
   );
-  let filteredPendingRequests = $derived(
-    filterEmployeeId
-      ? pendingRequests.filter((r) => r.employeeId === filterEmployeeId)
-      : pendingRequests,
+  const overviewPeople = $derived(
+    circlePeople.filter((row) => matchesSearch(row.name, personQuery)),
   );
+  const circleFilters: ToolbarFilter[] = $derived([
+    {
+      key: "kreis",
+      label: "Personenkreis",
+      options: [{ value: "alle", label: "Alle Salons" }],
+      value: urlState.allSalons ? "alle" : "",
+    },
+  ]);
+  // Closed days only for ONE salon in view (D-840-14); with several the legend says why none are drawn.
+  const closedDays = $derived(closedDaysFor(overviewSalons, $salonContext));
+  // The Werktage basis is decided once (D-840-08): null = Mon-Sat when no single salon with hours is in view.
+  const werktage = $derived(werktageBasis(closedDays, overviewSalons));
+  const LOAD_HINT =
+    "Personen mit genehmigter oder beantragter Abwesenheit – Wünsche der Planung zählen nicht";
+  const CLOSED_DAYS_HINT = "Schließtage nur bei einem Salon";
 
-  // Phase 104-10: AU_PENDING (needs "AU liegt vor" / Ablehnen) and REJECTED (needs Wieder
-  // eröffnen) — a CONFIRMED case is resolved and shown via the badge on the requests table
-  // instead.
-  let filteredSection9Cases = $derived(
-    section9Cases
-      .filter((c) => c.status === "AU_PENDING" || c.status === "REJECTED")
-      .filter((c) => !filterEmployeeId || c.employeeId === filterEmployeeId),
-  );
-
-  // ── Lane assignment: stable gantt-style rows across calendar days ────────
-  // Returns a Map<absenceId, laneIndex> so that a multi-day absence always
-  // occupies the same vertical row in every day cell it spans.
-  interface LaneResult {
-    laneById: Map<string, number>;
-    totalLanes: number;
-  }
-
-  function buildLaneMap(entries: CalEntry[]): LaneResult {
-    // Only the absences that will actually be rendered (mirrors the per-cell filter)
-    const visible = entries.filter((e) => isDrawnInCalendar(e));
-
-    // Deterministic sort: startDate → lastName → firstName → id
-    const sorted = [...visible].sort((a, b) => {
-      if (a.startDate !== b.startDate) return a.startDate < b.startDate ? -1 : 1;
-      const aName = `${a.lastName ?? ""}\0${a.firstName ?? ""}`;
-      const bName = `${b.lastName ?? ""}\0${b.firstName ?? ""}`;
-      if (aName !== bName) return aName < bName ? -1 : 1;
-      return a.id < b.id ? -1 : 1;
-    });
-
-    // laneEnd[L] = the endDate of the last absence placed in lane L
-    const laneEnd: string[] = [];
-    const laneById = new Map<string, number>();
-
-    for (const e of sorted) {
-      let placed = false;
-      for (let l = 0; l < laneEnd.length; l++) {
-        // Absence fits in lane l when the lane's last endDate is strictly before this startDate
-        if (laneEnd[l] < e.startDate) {
-          laneById.set(e.id, l);
-          laneEnd[l] = e.endDate;
-          placed = true;
-          break;
-        }
-      }
-      if (!placed) {
-        const l = laneEnd.length;
-        laneById.set(e.id, l);
-        laneEnd.push(e.endDate);
-      }
+  const overviewLoad = $derived.by(() => {
+    if (overviewPeriod.zoom === "jahr") {
+      return {
+        kind: "week" as const,
+        counts: weekLoad(
+          overviewPeople,
+          overviewPeriod.year,
+          workdaySet(werktage),
+          overviewHolidays,
+        ),
+        hint: LOAD_HINT,
+      };
     }
+    const counts = calendarDayLoad(
+      overviewPeople,
+      dayColumns(overviewPeriod).map((column) => column.day),
+    );
+    const exceeded = new Map<string, string>();
+    for (const [day, over] of limitDays) exceeded.set(day, limitBadgeTitle(over));
+    return { kind: "day" as const, counts, exceeded, hint: LOAD_HINT };
+  });
 
-    return { laneById, totalLanes: laneEnd.length };
+  const overviewLegend = $derived.by(() => {
+    const base = legendFrom(overviewPeople);
+    const daily = overviewPeriod.zoom !== "jahr";
+    return {
+      typeCodes: base.typeCodes,
+      styles: base.styles,
+      markings: {
+        weekend: daily,
+        holiday: daily && overviewHolidays.length > 0,
+        closed: daily && closedDays.days.size > 0,
+        today: daily,
+        // Issue 840 G-4: „Mehrere Arten“ only in Jahr and only when such a week is in view.
+        mixed:
+          !daily &&
+          hasMixedWeek(overviewPeople, overviewPeriod.year, workdaySet(werktage), overviewHolidays),
+      },
+      closedHint: closedDays.hint ? CLOSED_DAYS_HINT : null,
+    };
+  });
+
+  // The tabs of the page head; the open requests of the salon selection badge the Anträge tab
+  // with a neutral, explained count (Issue #840 G-1).
+  const leaveTabs = $derived([
+    { value: "uebersicht", label: "Übersicht" },
+    {
+      value: "antraege",
+      label: "Anträge",
+      badge: openSummary?.count,
+      badgeLabel: openSummary?.label,
+      onBadgeSelect: openOpenRequests,
+      testId: "list",
+    },
+    { value: "planung", label: "Planung" },
+  ]);
+
+  const ZOOM_OPTIONS = [
+    { value: "jahr", label: "Jahr" },
+    { value: "quartal", label: "Quartal" },
+    { value: "monat", label: "Monat" },
+  ];
+
+  function onZoomSelected(value: string) {
+    const zoom = TIMELINE_ZOOMS.find((z) => z === value);
+    if (zoom !== undefined) void navigate({ zoom }, true);
   }
 
-  // Abgeleiteter Kalender (uses filteredCalEntries)
-  let calMap = $derived(buildCalMap(filteredCalEntries));
-  let calDays = $derived(buildCalDays(calYear, calMonth));
-  let calLanes = $derived(buildLaneMap(filteredCalEntries));
+  // ── Planung tab (D-840-15/17) ─────────────────────────────────────────────────────────────
+  // The salon is the header selection exactly as on the old planner page; `canManage` is what the
+  // panel reports (the server's value once a plan is loaded).
+  const planSalonId = $derived(teamSalonViewSalon($salonContext));
+  let canManagePlan = $state(false);
+  let manageOpen = $state(false);
+  // Issue 840 G-6: the panel reports status, deadline and the add action; the toolbar shows them.
+  // The shape is spelled the same in the panel, in LeavePlanControls and here (no type module).
+  let planControls = $state<null | {
+    statusLabel: string;
+    statusOpen: boolean;
+    deadlineText: string | null;
+    canAdd: boolean;
+    add: () => void;
+  }>(null);
+  $effect(() => {
+    if (activeTab !== "planung") planControls = null;
+  });
 
-  // ── Day detail (GitHub issue #265) ────────────────────────────────────────
-  // Below 700px the bar's type label is hidden, so the type would be carried by colour alone.
-  // Tapping a day spells the types out. The trigger is a real <button> inside the cell, so touch
-  // and keyboard (Enter/Space) both reach it, and `Modal` owns Escape.
-  let dayDetailDate = $state<string | null>(null);
-  let dayDetailOpen = $state(false);
-
-  /** The tapped day's bars — the same filter the cell's `dayAbsences` applies. */
-  let dayDetailEntries = $derived(
-    (dayDetailDate ? (calMap.get(dayDetailDate) ?? []) : []).filter((e) => isDrawnInCalendar(e)),
+  // Presentation only: the open request's action is offered to approvers (the API decides).
+  const canApproveHint = $derived(
+    hasPermission($authStore.user, "leave-request:approve:ZUGEWIESEN"),
   );
-
-  function openDayDetail(dateStr: string) {
-    dayDetailDate = dateStr;
-    dayDetailOpen = true;
-  }
 
   // ── Anträge-Filter + Pagination ───────────────────────────────────────────
-  let filterLeaveStatus = $state<Status | "">("");
+  // #840 (E-02): the status filter lives in the URL (`status`), so a deep link and the back button
+  // carry it; the type filter stays page-local.
+  const filterLeaveStatus = $derived<LeaveStatusFilter | "">(urlState.status ?? "");
   let filterLeaveType = $state<TypeCode | "">("");
+  // Issue #853: the Anträge search by person name (page-local, like the type filter).
+  let requestQuery = $state("");
   let teamReqPage = $state(1);
   let teamReqPageSize = $state(10);
 
+  // The list that feeds the Anträge tab: the year list, plus every open request of any year when
+  // the status filter asks for open ones (an open request is never hidden by the year).
+  const requestSource = $derived(
+    requestsForStatus(urlState.status, allTeamRequests, pendingRequests),
+  );
+
   let filteredTeamRequests = $derived(
-    allTeamRequests.filter((req) => {
-      if (filterEmployeeId && req.employeeId !== filterEmployeeId) return false;
-      if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
+    requestSource.filter((req) => {
+      if (!matchesStatusFilter(req.status, urlState.status)) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
+      if (!matchesSearch(`${req.employee.firstName} ${req.employee.lastName}`, requestQuery)) {
+        return false;
+      }
       return true;
     }),
   );
@@ -953,7 +955,73 @@
     teamReqPage = 1;
   });
 
+  // The Anträge table (Issue #853, D-853-18): one row per request of the page, the toolbar's
+  // Status filter is the `status` URL key, the Art filter and the search are page-local.
+  type RequestRow = { id: string; req: LeaveRequest };
+  const REQUEST_COLUMNS: DataTableColumn[] = [
+    { key: "person", label: "Person", primary: true },
+    { key: "type", label: "Art" },
+    { key: "period", label: "Zeitraum" },
+    { key: "days", label: "Umfang" },
+    { key: "status", label: "Status" },
+    { key: "note", label: "Anmerkung" },
+    { key: "actions", label: "Aktionen" },
+  ];
+  const requestRows: RequestRow[] = $derived(pagedTeamRequests.map((req) => ({ id: req.id, req })));
+  const requestRowKey = (row: RequestRow) => row.id;
+  const requestRowTestId = (row: RequestRow) => `leave-team-row-${row.id}`;
+  const requestRowTone = (row: RequestRow): DataTableRowTone | undefined =>
+    highlightRequestId === row.id ? "highlight" : undefined;
+
+  const STATUS_FILTER_OPTIONS: Array<{ value: LeaveStatusFilter; label: string }> = [
+    { value: "PENDING", label: "Offen" },
+    { value: "APPROVED", label: "Genehmigt" },
+    { value: "CANCELLATION_REQUESTED", label: "Stornierung beantragt" },
+    { value: "REJECTED", label: "Abgelehnt" },
+    { value: "CANCELLED", label: "Storniert" },
+  ];
+  const requestFilters: ToolbarFilter[] = $derived([
+    { key: "status", label: "Status", options: STATUS_FILTER_OPTIONS, value: filterLeaveStatus },
+    {
+      key: "type",
+      label: "Art",
+      options: LEAVE_TYPE_OPTIONS.map((t) => ({ value: t.code, label: t.label })),
+      value: filterLeaveType,
+    },
+  ]);
+  const requestFiltersActive = $derived(
+    requestQuery !== "" || filterLeaveStatus !== "" || filterLeaveType !== "",
+  );
+
+  function onRequestFilterChange(key: string, picked: string) {
+    if (key === "status") {
+      void navigate({ status: (picked || null) as LeaveStatusFilter | null }, true);
+    } else if (key === "type") {
+      filterLeaveType = (LEAVE_TYPE_OPTIONS.find((t) => t.code === picked)?.code ?? "") as
+        TypeCode | "";
+    }
+  }
+
+  /** Search, Status and Art back to „Alle“ in one URL write. */
+  function resetRequestFilters() {
+    requestQuery = "";
+    filterLeaveType = "";
+    void navigate({ status: null }, true);
+  }
+
+  function statusTone(s: Status): ChipTone {
+    return s === "APPROVED"
+      ? "ok"
+      : s === "PENDING" || s === "CANCELLATION_REQUESTED"
+        ? "warn"
+        : s === "REJECTED"
+          ? "bad"
+          : "neutral";
+  }
+
   // ── iCal-Download ────────────────────────────────────────────────────────
+  // „Kalender abonnieren“ opens a Dialog (Issue #853, D-853-18) in place of the old page section.
+  let icalOpen = $state(false);
   let icalDownloading = $state(false);
 
   async function downloadIcal() {
@@ -973,6 +1041,7 @@
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      icalOpen = false;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Download";
     } finally {
@@ -980,522 +1049,300 @@
     }
   }
 
+  // Issue #853 (D-853-12, S-15): a caller who may file for others is asked whom the request is for first; every
+  // other caller files their own request. Presentation only: the server's create permission and
+  // reach decide (`createLeaveRequestCore`), and the picker lists the page's reach-narrowed roster.
+  const canCreateForOthers = $derived(
+    hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN"),
+  );
+  const canCreateOwn = $derived(hasPermission($authStore.user, "leave-request:create:EIGENE"));
+  const createPersonItems = $derived(personOptions(employees));
+
   function openCreate() {
-    createEmployeeId = "";
+    createEmployeeId = canCreateForOthers ? "" : ($authStore.user?.employeeId ?? "");
     createInitialDate = new Date().toISOString().slice(0, 10);
     createModalOpen = true;
   }
 </script>
 
 <svelte:head>
-  <title>Team-Abwesenheiten – Clokr</title>
+  <title>{pageLabel("/team/leave")} – Clokr</title>
 </svelte:head>
 
 <!-- Modal primitive owns Escape handling. -->
 
-<!-- ── Header ─────────────────────────────────────────────────────────────── -->
-<PageHead eyebrow="Team" title="Team-Anträge" accent="Anträge">
+<!-- ── Header (Issue #853, D-853-18/19: no eyebrow, no accent) ─────────────────── -->
+<PageHead
+  title={pageLabel("/team/leave")}
+  sub="Sieh, wer wann fehlt, prüfe Anträge und plane den Urlaub deines Teams."
+>
   {#snippet actions()}
-    {#if hasPermission($authStore.user, "leave-request:create:ZUGEWIESEN")}
-      <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
-    {/if}
+    <!-- The two head actions are wider than a 320 px phone together: this page-local group lets the
+         second one wrap below the first (the Seitenkopf block itself stays unchanged). -->
+    <div class="lv-head-actions">
+      {#if activeTab === "planung"}
+        {#if canManagePlan}
+          <button
+            type="button"
+            class="btn btn-primary btn-sm"
+            data-testid="leave-plan-manage"
+            onclick={() => (manageOpen = true)}
+          >
+            Planung verwalten
+          </button>
+        {/if}
+      {:else if canCreateForOthers || canCreateOwn}
+        <button class="btn btn-primary btn-sm" onclick={openCreate}>Abwesenheit eintragen</button>
+      {/if}
+      <button
+        type="button"
+        class="btn btn-secondary btn-sm"
+        data-testid="leave-team-ical"
+        onclick={() => (icalOpen = true)}
+      >
+        Kalender abonnieren
+      </button>
+    </div>
   {/snippet}
 </PageHead>
-<SalonScopeLabel label={scopeLabel} rejected={salonRejected} />
 
 {#if error}
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {/if}
 
-<!-- ── Mitarbeiter-Filter ──────────────────────────────────────────────────── -->
-<div class="employee-selector card-animate">
-  <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="emp-input-wrap" onclick={() => (empDropdownOpen = !empDropdownOpen)}>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <input
-        class="emp-search-input"
-        type="text"
-        placeholder={filterEmployeeId
-          ? (employeeOptions.find((e) => e.id === filterEmployeeId)?.name ?? "Alle Mitarbeiter")
-          : "Alle Mitarbeiter"}
-        bind:value={empSearch}
-        onclick={(e) => {
-          e.stopPropagation();
-          empDropdownOpen = true;
-        }}
-        onfocus={() => (empDropdownOpen = true)}
-        oninput={() => (empDropdownOpen = true)}
-        aria-label="Mitarbeiter suchen"
-        autocomplete="off"
-      />
-      <svg
-        class="emp-chevron"
-        class:emp-chevron--up={empDropdownOpen}
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"
-        aria-hidden="true"
-      >
-        <polyline points="6 9 12 15 18 9" />
-      </svg>
-    </div>
-    {#if empDropdownOpen}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="emp-backdrop" onclick={() => (empDropdownOpen = false)}></div>
-      <ul class="emp-dropdown" role="listbox" aria-label="Mitarbeiterliste">
-        <li
-          class="emp-dropdown-item"
-          class:emp-dropdown-item--active={filterEmployeeId === ""}
-          role="option"
-          aria-selected={filterEmployeeId === ""}
-          tabindex="0"
-          onclick={() => selectEmployee(null)}
-          onkeydown={(e) => {
-            if (e.key === "Enter" || e.key === " ") selectEmployee(null);
-          }}
+<!-- Issue #836 (AC-5): non-blocking hint after a request exceeded a leave limit. -->
+<LeaveLimitNotice sentences={limitSentences} onDismiss={() => (limitSentences = [])} />
+
+<!-- Issue 840 G-6: on Planung the toolbar row holds the planner's status, deadline and add action. -->
+{#snippet plannerControls()}
+  {#if planControls}<LeavePlanControls controls={planControls} />{/if}
+{/snippet}
+
+<!-- The period control of the toolbar row: ‹ label › Heute, plus the zoom on the timeline tabs. -->
+{#snippet periodControls(withZoom: boolean)}
+  <div class="lv-period">
+    <PeriodSwitcher
+      period={toolbarPeriod}
+      onShift={(step) =>
+        void navigate({ datum: shiftPeriod(toolbarPeriod.zoom, urlState.datum, step) }, true)}
+      onToday={() => void navigate({ datum: today }, true)}
+    />
+  </div>
+  {#if withZoom}
+    <SegmentedControl
+      options={ZOOM_OPTIONS}
+      value={overviewPeriod.zoom}
+      name="leave-zoom"
+      ariaLabel="Zeitraum"
+      size="sm"
+      onchange={onZoomSelected}
+    />
+  {/if}
+{/snippet}
+
+<!-- ── The three panels (Issue #853, D-853-11): only the active one holds content ──────── -->
+{#snippet leavePanel(value: string)}
+  {#if value === activeTab}
+    {#if salonRejected && value !== "planung"}
+      <div data-testid="leave-team-salon-unavailable">
+        <Note tone="brand"
+          >Für diesen Salon liegen hier keine Daten vor. Wähle oben einen anderen Salon.</Note
         >
-          Alle Mitarbeiter
-        </li>
-        {#if filteredEmpOptions.length === 0}
-          <li class="emp-dropdown-empty">Keine Treffer</li>
+      </div>
+    {/if}
+
+    {#if value === "uebersicht"}
+      <!-- ── Übersicht (Issue #840): one row per person, one bar per absence ────────── -->
+      <div class="lv-controls">
+        {@render periodControls(true)}
+        <div class="lv-people">
+          <TableToolbar
+            bind:query={personQuery}
+            count={overviewPeople.length}
+            total={circlePeople.length}
+            filters={circleFilters}
+            onFilterChange={(_key, picked) => void navigate({ allSalons: picked === "alle" }, true)}
+            onReset={() => {
+              personQuery = "";
+              if (urlState.allSalons) void navigate({ allSalons: false }, true);
+            }}
+            searchLabel="Person suchen"
+          />
+        </div>
+      </div>
+
+      <div data-testid="leave-overview">
+        {#if overviewPeople.length === 0 && overviewLoading}
+          <Skeleton shape="block" height="240px" />
+        {:else if overviewPeople.length === 0}
+          <div data-testid="leave-overview-empty">
+            <EmptyState
+              variant={personQuery ? "noMatches" : "noData"}
+              title={personQuery
+                ? "Keine Person gefunden."
+                : "Keine Abwesenheiten in diesem Zeitraum."}
+              description={personQuery ? "Passe die Suche an." : undefined}
+            />
+          </div>
+        {:else if isMobile}
+          <AbsenceList
+            rows={overviewPeople}
+            period={overviewPeriod}
+            holidays={overviewHolidays}
+            onBarSelect={selectBar}
+          />
         {:else}
-          {#each filteredEmpOptions as emp (emp.id)}
-            <li
-              class="emp-dropdown-item"
-              class:emp-dropdown-item--active={emp.id === filterEmployeeId}
-              role="option"
-              aria-selected={emp.id === filterEmployeeId}
-              tabindex="0"
-              onclick={() => selectEmployee(emp)}
-              onkeydown={(e) => {
-                if (e.key === "Enter" || e.key === " ") selectEmployee(emp);
-              }}
+          <AbsenceTimeline
+            rows={overviewPeople}
+            period={overviewPeriod}
+            holidays={overviewHolidays}
+            closedWeekdays={werktage}
+            {today}
+            load={overviewLoad}
+            onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
+            onBarSelect={selectBar}
+          />
+        {/if}
+        <!-- One legend under the timeline: only what this view can contain (Phase 257, D-05). -->
+        <LeaveLegend
+          typeCodes={overviewLegend.typeCodes}
+          styles={overviewLegend.styles}
+          markings={overviewLegend.markings}
+          closedHint={overviewLegend.closedHint}
+        />
+      </div>
+    {:else if value === "antraege"}
+      <!-- ── Anträge (E-02): a table with toolbar; open requests are decided in the inbox ─── -->
+      <div class="lv-controls">
+        {@render periodControls(false)}
+      </div>
+
+      {#snippet requestsToolbar()}
+        <TableToolbar
+          bind:query={requestQuery}
+          count={filteredTeamRequests.length}
+          total={requestSource.length}
+          filters={requestFilters}
+          onFilterChange={onRequestFilterChange}
+          onReset={resetRequestFilters}
+          searchLabel="Person suchen"
+        />
+      {/snippet}
+
+      {#if loading}
+        <DataTable
+          caption="Anträge"
+          columns={REQUEST_COLUMNS}
+          rows={[]}
+          rowKey={requestRowKey}
+          toolbar={requestsToolbar}
+          loading
+        />
+      {:else}
+        <div data-testid="leave-team-requests">
+          {#if filteredTeamRequests.length === 0}
+            {@const empty = emptyRequestsText(urlState.status, listYear, requestSource.length)}
+            <div class="dt-toolbar-row">{@render requestsToolbar()}</div>
+            <div data-testid="leave-team-empty">
+              <EmptyState
+                variant={requestFiltersActive ? "noMatches" : "noData"}
+                icon="calendar"
+                title={empty.title}
+                description={empty.hint}
+                onaction={requestFiltersActive ? resetRequestFilters : undefined}
+              />
+            </div>
+          {:else}
+            <DataTable
+              caption="Anträge"
+              columns={REQUEST_COLUMNS}
+              rows={requestRows}
+              rowKey={requestRowKey}
+              toolbar={requestsToolbar}
+              rowTestId={requestRowTestId}
+              rowTone={requestRowTone}
             >
-              {emp.name}
-            </li>
-          {/each}
-        {/if}
-      </ul>
-    {/if}
-  </div>
-</div>
-
-<!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
-<div class="view-tabs" data-testid="leave-team-view-tabs">
-  <button
-    data-testid="leave-team-view-calendar"
-    class="view-tab"
-    class:view-tab--active={view === "calendar"}
-    onclick={() => (view = "calendar")}
-  >
-    Kalender
-  </button>
-  <button
-    data-testid="leave-team-view-list"
-    class="view-tab"
-    class:view-tab--active={view === "list"}
-    onclick={() => (view = "list")}
-  >
-    Anträge
-  </button>
-  <button
-    data-testid="leave-team-view-approvals"
-    class="view-tab"
-    class:view-tab--active={view === "approvals"}
-    onclick={() => (view = "approvals")}
-  >
-    Genehmigungen
-    {#if filteredPendingRequests.length > 0}
-      <span class="tab-badge" data-testid="leave-team-approvals-badge"
-        >{filteredPendingRequests.length}</span
-      >
-    {/if}
-  </button>
-</div>
-
-<!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
-{#if view === "calendar"}
-  <!-- Combined month bar (v1.5 — identisch zu /leave + Zeiterfassung, with picker dropdown) -->
-  <div class="card cal-monthbar card-animate">
-    <div class="cal-monthbar-nav">
-      <button
-        class="nav-btn"
-        onclick={prevMonth}
-        title="Vorheriger Monat"
-        aria-label="Vorheriger Monat"
-      >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-        >
-      </button>
-      <div class="cal-nav-center cal-monthbar-center">
-        <div class="serif-eyebrow cal-monthbar-eyebrow">Buchungsmonat</div>
-        <button
-          class="cal-monthbar-title"
-          onclick={() => {
-            pickerYear = calYear;
-            showMonthPicker = !showMonthPicker;
-          }}
-          title="Monat/Jahr wählen"
-        >
-          {MONTH_NAMES[calMonth - 1]}
-          {calYear}
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
-          >
-        </button>
-        {#if showMonthPicker}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
-          <div class="month-picker">
-            <div class="month-picker-year">
-              <button onclick={() => pickerYear--}>‹</button>
-              <span>{pickerYear}</span>
-              <button onclick={() => pickerYear++}>›</button>
-            </div>
-            <div class="month-picker-grid">
-              {#each MONTH_NAMES as name, i (i)}
-                <button
-                  class="month-picker-btn"
-                  class:active={i + 1 === calMonth && pickerYear === calYear}
-                  onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name.slice(0, 3)}</button
-                >
-              {/each}
-            </div>
-            <button class="month-picker-today" onclick={gotoToday}>Heute</button>
-          </div>
-        {/if}
-      </div>
-      <button
-        class="nav-btn"
-        onclick={nextMonth}
-        title="Nächster Monat"
-        aria-label="Nächster Monat"
-      >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-        >
-      </button>
-      <button class="btn btn-ghost btn-sm cal-monthbar-today" onclick={gotoToday}>Heute</button>
-    </div>
-  </div>
-
-  <div class="cal-section card card-animate">
-    <!-- Wochentag-Header -->
-    <div class="cal-grid cal-header-row">
-      {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
-        <div class="cal-dow">{wd}</div>
-      {/each}
-    </div>
-
-    <!-- Tage -->
-    {#if calLoading}
-      <div class="cal-grid">
-        {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
-      </div>
-    {:else}
-      <div class="cal-grid">
-        {#each calDays as day (day.dateStr)}
-          {@const entries = calMap.get(day.dateStr) ?? []}
-          {@const holidays = entries.filter((e) => e.isHoliday)}
-          {@const dayAbsences = entries.filter((e) => isDrawnInCalendar(e))}
-          {@const isHoliday = holidays.length > 0}
-          {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
-          <div
-            class="cal-cell"
-            class:cal-current={day.isCurrentMonth}
-            class:cal-other={!day.isCurrentMonth}
-            class:cal-today={day.isToday}
-            class:cal-weekend={day.isWeekend && day.isCurrentMonth}
-            class:cal-holiday={isHoliday && day.isCurrentMonth}
-          >
-            <span class="cal-day-num">{day.dayNum}</span>
-            {#if isHoliday && day.isCurrentMonth}
-              <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
-                {holidays[0].firstName}
-              </div>
-            {/if}
-            <div class="cal-chips">
-              {#each Array(calLanes.totalLanes) as _, laneIdx (laneIdx)}
-                {@const e = dayAbsences.find((a) => calLanes.laneById.get(a.id) === laneIdx)}
-                {#if e}
-                  {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
-                  {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
-                  {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
-                  {@const _vis = resolveChipVisual(e, canSeeOthersLeaveType)}
-                  <div
-                    class="cal-chip"
-                    class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
-                    class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
-                    class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
-                    class:cal-chip--pending={e.status === "PENDING" ||
-                      e.status === "CANCELLATION_REQUESTED"}
-                    class:cal-chip--own={e.isOwn}
-                    style:background={_vis.background}
-                    style:color={_vis.textColor}
-                    title="{e.firstName} {e.lastName}{_vis.typeLabel
-                      ? ' · ' + _vis.typeLabel
-                      : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
+              {#snippet cell(row, column)}
+                {@const req = row.req}
+                {#if column.key === "person"}
+                  <!-- The anchor of the notification/bar deep link (focusRequest scrolls to it). -->
+                  <span id="request-{req.id}">{req.employee.firstName} {req.employee.lastName}</span
                   >
-                    {#if _showLabel}
-                      <span class="cal-chip-name">{e.firstName}</span>
-                      <span class="cal-chip-type">{_vis.chipLabel}</span>
+                {:else if column.key === "type"}
+                  <LeaveTypeChip
+                    code={req.typeCode}
+                    label={typeName(req.typeCode)}
+                    requested={req.status === "PENDING"}
+                    data-row-status={req.status}
+                    data-testid={`leave-team-row-${req.id}-type-chip`}
+                  />
+                {:else if column.key === "period"}
+                  {fmtDate(req.startDate)} – {fmtDate(req.endDate)}
+                {:else if column.key === "days"}
+                  {leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}
+                {:else if column.key === "status"}
+                  <span class="req-status">
+                    <span data-testid={`leave-team-row-${req.id}-status-badge`}>
+                      <Chip tone={statusTone(req.status)}>{statusLabel(req.status)}</Chip>
+                    </span>
+                    {#if req.lastDaysAdjustment}
+                      {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
+                      <!-- Phase 107-07 (D-19/D-21): mirrors leave/+page.svelte's own request
+                   row exactly, so the approving manager sees the same signal on the
+                   request they approved. Persistent — not tied to notification
+                   read/dismissed state. -->
+                      <span
+                        class={adjBadge.badgeClass}
+                        data-testid={`leave-team-row-${req.id}-adjustment-badge`}
+                        title={adjBadge.tooltip}
+                      >
+                        {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
+                          ? "+"
+                          : "−"}{#if adjBadge.bold}<strong>{formatDays(adjBadge.delta)}</strong
+                          >{:else}{formatDays(adjBadge.delta)}{/if} Tag(e)
+                      </span>
                     {/if}
-                  </div>
-                {:else}
-                  <div class="cal-chip-placeholder"></div>
-                {/if}
-              {/each}
-            </div>
-            <!-- Tap target for the day-detail sheet (#265). Shown only below 700px — see
-                 `.cal-day-tap` in the style block — because that is where the bar's type label
-                 leaves the screen and where no finger can open a `title` tooltip. It covers the
-                 whole cell rather than a single 22px bar: stacked lanes sit 24px apart, so
-                 per-bar targets grown to finger size would overlap each other. -->
-            {#if dayAbsences.length > 0}
-              <button
-                type="button"
-                class="cal-day-tap"
-                data-testid="cal-day-tap"
-                aria-label="Abwesenheiten am {fmtDate(day.dateStr)} anzeigen"
-                onclick={() => openDayDetail(day.dateStr)}
-              >
-                <span class="cal-day-tap-hint" aria-hidden="true">i</span>
-              </button>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    <!-- Legend — shows only what this viewer's calendar can actually contain (Phase 257, D-05).
-         An EMPLOYEE never sees a colleague's type, so the type dots would promise colours that
-         never appear for them. -->
-    <div class="cal-legend">
-      {#if canSeeLeaveType(false, canSeeOthersLeaveType)}
-        {#each LEAVE_TYPE_OPTIONS as t (t.code)}
-          <span class="legend-item"
-            ><span class="legend-dot" style:background="var({t.colorVar})"></span>{t.label}</span
-          >
-        {/each}
-      {/if}
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-absent)"></span>Abwesend</span
-      >
-      <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
-      <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
-    </div>
-  </div>
-
-  <!-- iCal-Download -->
-  <div class="ical-section card-animate">
-    <div class="ical-header">
-      <span class="ical-icon">📥</span>
-      <div>
-        <p class="ical-title">Kalender exportieren</p>
-        <p class="ical-desc">
-          Team-Abwesenheiten als .ics-Datei herunterladen (Outlook, Google Calendar, Apple Kalender)
-        </p>
-      </div>
-    </div>
-    <div class="ical-actions">
-      <button class="btn btn-ghost btn-sm" onclick={downloadIcal} disabled={icalDownloading}>
-        {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
-      </button>
-    </div>
-  </div>
-{/if}
-
-<!-- ── Anträge-Ansicht ────────────────────────────────────────────────────── -->
-{#if view === "list"}
-  <!-- Jahr-Navigation für Listenansicht -->
-  <div class="cal-nav list-month-nav card-animate">
-    <button class="nav-btn" onclick={prevYear} title="Vorheriges Jahr" aria-label="Vorheriges Jahr">
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-      >
-    </button>
-    <div class="cal-nav-center">
-      <select
-        class="cal-year-select"
-        bind:value={calYear}
-        onchange={() => {
-          loadData();
-          loadCalendar();
-        }}
-        aria-label="Jahr wählen"
-      >
-        {#each yearOptions as y (y)}
-          <option value={y}>{y}</option>
-        {/each}
-      </select>
-    </div>
-    <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-      >
-    </button>
-  </div>
-
-  <div class="section-header card-animate">
-    <h2>Alle Anträge</h2>
-  </div>
-
-  {#if loading}
-    <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
-  {:else}
-    <div class="filter-bar card-animate">
-      <select
-        class="form-input filter-select"
-        bind:value={filterLeaveStatus}
-        aria-label="Nach Status filtern"
-      >
-        <option value="">Alle Status</option>
-        <option value="PENDING">Ausstehend</option>
-        <option value="APPROVED">Genehmigt</option>
-        <option value="REJECTED">Abgelehnt</option>
-        <option value="CANCELLED">Storniert</option>
-        <option value="CANCELLATION_REQUESTED">Stornierung beantragt</option>
-      </select>
-      <select
-        class="form-input filter-select"
-        bind:value={filterLeaveType}
-        aria-label="Nach Art filtern"
-      >
-        <option value="">Alle Arten</option>
-        {#each LEAVE_TYPE_OPTIONS as t (t.code)}
-          <option value={t.code}>{t.label}</option>
-        {/each}
-      </select>
-      <span class="filter-count">{filteredTeamRequests.length} Anträge</span>
-    </div>
-
-    {#if allTeamRequests.length === 0}
-      <div class="empty-state card card-body card-animate">
-        <span class="empty-icon">🏖️</span>
-        <h3>Keine Anträge in {calYear}.</h3>
-        <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
-      </div>
-    {:else}
-      <div class="table-wrapper card card-animate">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Mitarbeiter</th>
-              <th>Art</th>
-              <th>Von</th>
-              <th>Bis</th>
-              <th class="text-center">Umfang</th>
-              <th>Status</th>
-              <th>Anmerkung</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedTeamRequests as req (req.id)}
-              <tr
-                id="request-{req.id}"
-                data-testid={`leave-team-row-${req.id}`}
-                data-status={req.status}
-                class:highlight-row={highlightRequestId === req.id}
-              >
-                <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
-                <td>{typeName(req.typeCode)}</td>
-                <td class="font-mono">{fmtDate(req.startDate)}</td>
-                <td class="font-mono">{fmtDate(req.endDate)}</td>
-                <td class="text-center"
-                  >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</td
-                >
-                <td>
-                  <span
-                    class="badge {statusClass(req.status)}"
-                    data-testid={`leave-team-row-${req.id}-status-badge`}
-                    >{statusLabel(req.status)}</span
-                  >
-                  {#if req.lastDaysAdjustment}
-                    {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
-                    <!-- Phase 107-07 (D-19/D-21): mirrors leave/+page.svelte's own request
-                         row exactly, so the approving manager sees the same signal on the
-                         request they approved. Persistent — not tied to notification
-                         read/dismissed state. -->
-                    <span
-                      class={adjBadge.badgeClass}
-                      data-testid={`leave-team-row-${req.id}-adjustment-badge`}
-                      title={adjBadge.tooltip}
-                    >
-                      {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
-                        ? "+"
-                        : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
-                        >{:else}{adjBadge.delta}{/if} Tag(e)
-                    </span>
-                  {/if}
-                  {#if req.daysProvisional}
-                    <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
-                         provisional request is fully valid and payable today. -->
-                    <span
-                      class="badge badge-yellow"
-                      data-testid={`leave-team-row-${req.id}-provisional-badge`}
-                      title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
-                    >
-                      Vorläufig
-                    </span>
-                  {/if}
-                  {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                    <span
-                      class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
-                    >
-                      {req.attestPresent ? "Attest" : "Kein Attest"}
-                    </span>
-                  {/if}
-                </td>
-                <td class="note-cell text-muted">
+                    {#if req.daysProvisional}
+                      <!-- Phase 107-07 (D-12): warn tone, NOT bad/row-invalid — a provisional
+                   request is fully valid and payable today. -->
+                      <span data-testid={`leave-team-row-${req.id}-provisional-badge`}>
+                        <Chip
+                          tone="warn"
+                          title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
+                          >Vorläufig</Chip
+                        >
+                      </span>
+                    {/if}
+                    {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+                      <Chip tone={req.attestPresent ? "ok" : "neutral"}
+                        >{req.attestPresent ? "Attest" : "Kein Attest"}</Chip
+                      >
+                    {/if}
+                  </span>
+                {:else if column.key === "note"}
                   {#if req.status === "REJECTED" && req.reviewNote}
-                    <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
+                    <span class="req-note req-note--bad" title={req.reviewNote}
+                      >⚠ {req.reviewNote}</span
+                    >
                   {:else}
-                    {req.note ?? "—"}
+                    <span class="req-note" title={req.note ?? undefined}>{req.note ?? "—"}</span>
                   {/if}
-                </td>
-                <td class="action-cell">
+                {:else if column.key === "actions"}
                   <div class="action-cell__group">
                     {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-                      <button
-                        data-testid={req.status === "CANCELLATION_REQUESTED"
-                          ? `leave-team-row-${req.id}-review-cancel`
-                          : `leave-team-row-${req.id}-review`}
-                        class="btn btn-sm btn-ghost"
-                        onclick={() => openReview(req)}
-                      >
-                        {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
-                      </button>
+                      <!-- #840 (E-02): decisions are made in the inbox only; the action is offered
+                   to approvers (Pitfall 7: a reader sees the badge without it). -->
+                      {#if canApproveHint}
+                        <a
+                          data-testid={req.status === "CANCELLATION_REQUESTED"
+                            ? `leave-team-row-${req.id}-review-cancel`
+                            : `leave-team-row-${req.id}-review`}
+                          class="btn btn-sm btn-ghost"
+                          href={`/inbox?request=${req.id}&year=${req.startDate.slice(0, 4)}`}
+                        >
+                          Im Posteingang prüfen
+                        </a>
+                      {/if}
                     {:else if req.status === "APPROVED"}
                       <button
                         data-testid={`leave-team-row-${req.id}-correct`}
@@ -1538,140 +1385,75 @@
                       </button>
                     {/if}
                   </div>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <Pagination
-          total={filteredTeamRequests.length}
-          bind:page={teamReqPage}
-          bind:pageSize={teamReqPageSize}
-        />
+                {/if}
+              {/snippet}
+            </DataTable>
+            <Pagination
+              total={filteredTeamRequests.length}
+              bind:page={teamReqPage}
+              bind:pageSize={teamReqPageSize}
+            />
+          {/if}
+        </div>
+      {/if}
+    {:else if value === "planung"}
+      <!-- ── Planung (D-840-15/17): the #835 planner on the one timeline, team mode ─────────
+           The panel sits in no card, so a fixed dialog is not trapped (#570); its admin controls
+           live in the „Planung verwalten“ dialog, opened from this page's primary action. -->
+      <div class="lv-controls">
+        {@render periodControls(true)}
+        <div class="lv-planner">{@render plannerControls()}</div>
       </div>
+      {#if !contextLoaded}
+        <Skeleton shape="card" lines={3} />
+      {:else}
+        <LeavePlanningPanel
+          mode="team"
+          salonId={planSalonId}
+          period={overviewPeriod}
+          {today}
+          bind:manageOpen
+          onViewer={(viewer) => (canManagePlan = viewer.canManage)}
+          onControls={(controls) => (planControls = controls)}
+          onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
+        />
+      {/if}
     {/if}
   {/if}
-{/if}
+{/snippet}
 
-<!-- ── § 9 BUrlG — offene Vorgänge (Phase 104-10, R6/D-27/D-11) ──────────────── -->
-{#if view === "approvals" && filteredSection9Cases.length > 0}
-  <div class="section9-cases card card-animate" data-testid="section9-cases-list">
-    <p class="section9-cases-title">§ 9 BUrlG — offene Vorgänge</p>
-    {#each filteredSection9Cases as c (c.id)}
-      <div
-        class="section9-case-row"
-        id="section9-{c.id}"
-        class:highlight-row={highlightSection9Id === c.id}
-      >
-        <div class="pending-info">
-          <span class="pending-name">{c.employeeName}</span>
-          <span class="pending-type">
-            Urlaub {fmtDate(c.vacationRequest.startDate)}–{fmtDate(c.vacationRequest.endDate)} · Krank
-            {fmtDate(c.sickRequest.startDate)}–{fmtDate(c.sickRequest.endDate)}
-          </span>
-          {#if c.status === "REJECTED"}
-            <span class="badge badge-red" data-testid="section9-case-status">AU abgelehnt</span>
-            {#if c.reason}
-              <span class="text-muted" title={c.reason}>„{c.reason}"</span>
-            {/if}
-          {:else}
-            <span class="badge badge-yellow" data-testid="section9-case-status">AU ausstehend</span>
-          {/if}
-        </div>
-        <div class="section9-case-actions">
-          {#if c.status === "AU_PENDING"}
-            <button
-              class="btn btn-sm btn-primary"
-              data-testid={`section9-case-${c.id}-confirm`}
-              onclick={() => openSection9Confirm(c)}
-            >
-              AU liegt vor
-            </button>
-            <button
-              class="btn btn-sm btn-ghost text-red"
-              data-testid={`section9-case-${c.id}-reject`}
-              onclick={() => openSection9Reject(c)}
-            >
-              Ablehnen
-            </button>
-          {:else if c.status === "REJECTED"}
-            <button
-              class="btn btn-sm btn-ghost"
-              data-testid={`section9-case-${c.id}-reopen`}
-              onclick={() => reopenSection9Case(c)}
-            >
-              Wieder eröffnen
-            </button>
-            <p class="section9-case-hint text-muted">
-              Trifft die AU später ein, kann der Vorgang wieder eröffnet werden.
-            </p>
-          {/if}
-        </div>
-      </div>
-    {/each}
-  </div>
-{/if}
-
-<!-- ── Genehmigungen ──────────────────────────────────────────────────────── -->
-{#if view === "approvals"}
-  {#if !loading && filteredPendingRequests.length > 0}
-    <div class="pending-list">
-      {#each filteredPendingRequests as req (req.id)}
-        <div
-          class="pending-card card card-animate"
-          id="request-{req.id}"
-          class:highlight-row={highlightRequestId === req.id}
-        >
-          <div class="pending-info">
-            <span class="pending-name">{req.employee.firstName} {req.employee.lastName}</span>
-            {#if req.status === "CANCELLATION_REQUESTED"}
-              <span class="badge badge-orange" style="font-size:0.75rem">Stornierung beantragt</span
-              >
-            {:else}
-              <span class="pending-type">{typeName(req.typeCode)}</span>
-            {/if}
-            <span class="pending-dates">{fmtDate(req.startDate)} – {fmtDate(req.endDate)}</span>
-            <span class="pending-days text-muted"
-              >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</span
-            >
-            {#if req.note}
-              <span class="pending-note text-muted">„{req.note}"</span>
-            {/if}
-          </div>
-          <button class="btn btn-sm btn-ghost" onclick={() => openReview(req)}>
-            {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen →" : "Prüfen →"}
-          </button>
-        </div>
-      {/each}
-    </div>
-  {:else if !loading}
-    <div class="empty-state card card-body card-animate">
-      <span class="empty-icon">✅</span>
-      <h3>Keine offenen Anträge</h3>
-      <p class="text-muted">Alle Anträge wurden bearbeitet.</p>
-    </div>
-  {/if}
-{/if}
-
-<!-- ── Day detail (#265): the absence types of one day, in plain text ───────────
-     Opened by the `.cal-day-tap` button in the calendar cell. The role rule from #257 is
-     enforced inside the component's shared module, not here. -->
-<CalendarDayDetail
-  bind:open={dayDetailOpen}
-  dateLabel={dayDetailDate ? fmtDate(dayDetailDate) : ""}
-  entries={dayDetailEntries}
-  canSeeType={canSeeOthersLeaveType}
+<PageTabs
+  tabs={leaveTabs}
+  tab={activeTab}
+  onTabChange={selectTab}
+  panel={leavePanel}
+  tabsLabel="Abwesenheiten"
+  testIdPrefix="leave-team-view"
 />
 
-<!-- ── Review-Modal (Phase 255: the shared LeaveReviewDialog component) ──────── -->
-<LeaveReviewDialog
-  bind:open={reviewOpen}
-  request={reviewModal}
-  currentEmployeeId={$authStore.user?.employeeId ?? null}
-  onReviewed={async () => {
-    await Promise.all([loadData(), loadCalendar()]);
-  }}
-/>
+<!-- ── Kalender abonnieren: the team absences as a .ics file ─────────────────────── -->
+<Dialog bind:open={icalOpen} title="Kalender abonnieren">
+  <p>
+    Die Team-Abwesenheiten als .ics-Datei herunterladen und in Outlook, Google Kalender oder Apple
+    Kalender öffnen.
+  </p>
+  {#snippet footer()}
+    <button type="button" class="btn btn-ghost" onclick={() => (icalOpen = false)}>
+      Schließen
+    </button>
+    <button
+      type="button"
+      class="btn btn-primary"
+      data-testid="leave-team-ical-download"
+      onclick={downloadIcal}
+      disabled={icalDownloading}
+      aria-busy={icalDownloading}
+    >
+      {#if icalDownloading}<Spinner />{/if}
+      Team-Abwesenheiten herunterladen
+    </button>
+  {/snippet}
+</Dialog>
 
 <!-- ── Elternzeit-Kürzung-Modal (Issue #468, D-12/A-2) ───────────────────── -->
 <ParentalReductionDialog
@@ -1685,7 +1467,7 @@
       }
     : null}
   onChanged={async () => {
-    await Promise.all([loadData(), loadCalendar()]);
+    await reloadAll();
   }}
 />
 
@@ -1851,23 +1633,20 @@
   editingRequest={null}
   initialStartDate={createInitialDate}
   initialEndDate={createInitialDate}
-  entitlementYear={calYear}
-  onSaved={async () => {
-    await Promise.all([loadData(), loadCalendar()]);
+  entitlementYear={listYear}
+  personPicker={canCreateForOthers ? personPicker : undefined}
+  deferUntilPerson={canCreateForOthers}
+  onSaved={async (result) => {
+    // Issue #836: limit warnings of the create — shown, never blocking.
+    limitSentences = warningSentences(result?.leaveLimitWarnings ?? []);
+    await reloadAll();
   }}
->
-  {#snippet personPicker()}
-    <div class="form-group">
-      <label class="form-label" for="create-emp">Mitarbeiter</label>
-      <select id="create-emp" class="form-input" bind:value={createEmployeeId} required>
-        <option value="" disabled>— Mitarbeiter wählen —</option>
-        {#each employees as emp (emp.id)}
-          <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
-        {/each}
-      </select>
-    </div>
-  {/snippet}
-</LeaveRequestForm>
+/>
+
+<!-- The person question (Issue #853, S-15): the first field of the create dialog; nothing is preselected. -->
+{#snippet personPicker()}
+  <PersonPicker items={createPersonItems} bind:value={createEmployeeId} label="Für wen?" />
+{/snippet}
 
 <!-- ── Quick 260824-ef6: Storno-Begründung (Zurückziehen / Stornierung) ────── -->
 {#if stornoCopy}
@@ -1882,256 +1661,50 @@
   />
 {/if}
 
-<!-- ── Phase 104-10 (R6/D-27/D-26): "AU liegt vor" — Confirm-Dialog ─────────── -->
-{#if section9ConfirmCase}
-  <Modal bind:open={section9ConfirmOpen} eyebrow="§ 9 BUrlG" title="AU liegt vor">
-    <div data-testid="section9-confirm-modal" style="display: contents">
-      <div class="review-grid">
-        <div class="review-field">
-          <span class="review-label">Mitarbeiter</span>
-          <span class="review-value">{section9ConfirmCase.employeeName}</span>
-        </div>
-        <div class="review-field">
-          <span class="review-label">Überschneidung</span>
-          <span class="review-value font-mono"
-            >{fmtDate(section9ConfirmCase.overlapStart)} – {fmtDate(
-              section9ConfirmCase.overlapEnd,
-            )}</span
-          >
-        </div>
-      </div>
-
-      <div class="form-group review-section">
-        <span class="form-label">Gültigkeit der AU</span>
-        <div class="attest-dates">
-          <div class="form-group">
-            <label class="form-label" for="s9-from">Gültig von</label>
-            <input
-              id="s9-from"
-              type="date"
-              bind:value={section9AttestFrom}
-              class="form-input attest-date-input"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="s9-to">Gültig bis</label>
-            <input
-              id="s9-to"
-              type="date"
-              bind:value={section9AttestTo}
-              class="form-input attest-date-input"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div class="form-group review-section">
-        <span class="form-label">Herkunft</span>
-        <label class="toggle-label">
-          <input type="radio" name="s9-source" value="EAU" bind:group={section9AttestSource} />
-          <span>eAU abgerufen</span>
-        </label>
-        <label class="toggle-label">
-          <input type="radio" name="s9-source" value="PAPIER" bind:group={section9AttestSource} />
-          <span>Papier</span>
-        </label>
-      </div>
-
-      {#if section9AttestSource === "PAPIER"}
-        <div class="form-group review-section">
-          <label class="form-label" for="s9-file">Papier-AU (optional)</label>
-          <input
-            id="s9-file"
-            type="file"
-            accept="application/pdf,image/jpeg,image/png"
-            class="form-input"
-            onchange={(e) => (section9File = (e.target as HTMLInputElement).files?.[0] ?? null)}
-          />
-          <p class="text-muted section9-hint">PDF, JPG oder PNG, max. 10 MB.</p>
-        </div>
-      {/if}
-
-      <div class="form-group review-section">
-        <label class="form-label" for="s9-reason">Begründung</label>
-        <textarea
-          id="s9-reason"
-          class="form-input"
-          rows="2"
-          bind:value={section9Reason}
-          placeholder="Verwaltungsvermerk zur Nachvollziehbarkeit"
-        ></textarea>
-        <p class="text-muted section9-hint">
-          Verwaltungsvermerk zur Nachvollziehbarkeit — bitte keine Diagnose oder Arztangaben
-          eintragen.
-        </p>
-      </div>
-
-      {#if section9Error}
-        <div class="alert alert-error review-error" role="alert">
-          <span>⚠</span><span>{section9Error}</span>
-        </div>
-      {/if}
-    </div>
-
-    {#snippet footer()}
-      <button class="btn btn-ghost" onclick={closeSection9Confirm} disabled={section9Saving}>
-        Abbrechen
-      </button>
-      <button
-        class="btn btn-primary"
-        data-testid="section9-confirm-submit"
-        onclick={submitSection9Confirm}
-        disabled={section9Saving || !section9Reason.trim()}
-      >
-        {section9Saving ? "…" : "Bestätigen"}
-      </button>
-    {/snippet}
-  </Modal>
-{/if}
-
-<!-- ── Phase 104-10 (D-11): "AU liegt vor" — Ablehnen-Begründung ─────────────── -->
-{#if section9RejectCase}
+<!-- ── Issue #836 (AC-7): Ausnahme von der Urlaubsgrenze bei einer Korrektur ───── -->
+{#if limitExceptionText}
   <ReasonDialog
-    bind:open={section9RejectOpen}
-    title="AU ablehnen"
-    description="Trifft die AU später ein, kann der Vorgang wieder eröffnet werden."
-    confirmLabel="Ablehnen"
-    danger
-    onConfirm={confirmSection9Reject}
-    onCancel={() => (section9RejectCase = null)}
+    bind:open={limitExceptionOpen}
+    title="Ausnahme von der Urlaubsgrenze"
+    description={`Mit dieser Korrektur wird eine Urlaubsgrenze überschritten:\n${limitExceptionText}`}
+    label="Begründung der Ausnahme"
+    confirmLabel="Trotzdem korrigieren"
+    onConfirm={confirmLimitException}
+    onCancel={() => (pendingLimitCorrection = null)}
   />
 {/if}
 
 <style>
-  /* ── Employee selector / combobox ──────────────────────────────────── */
-  .employee-selector {
-    margin-bottom: 1rem;
-    position: relative;
-    z-index: 200; /* must beat sibling .cal-section.card-animate stacking context */
-  }
-
-  .emp-combobox {
-    position: relative;
-    max-width: 360px;
-    z-index: 100;
-  }
-
-  .emp-input-wrap {
+  /* ── Toolbar row under the tabs (Issue #853, D-853-18): period, zoom, search/planner ──── */
+  .lv-controls {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.875rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-md);
-    cursor: pointer;
-    min-height: 2.5rem;
+    gap: var(--s-2) var(--s-4);
+    margin-bottom: var(--s-3);
   }
 
-  .emp-combobox--open .emp-input-wrap {
-    border-color: var(--brand);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 20%, transparent);
+  /* The period keeps its label and arrows (block); only its page-sized padding goes, so the row
+     starts at the page edge like the prototype's .period. */
+  .lv-controls :global(.month-bar) {
+    padding: 0;
   }
 
-  .emp-search-input {
-    flex: 1;
-    border: none;
-    outline: none;
-    background: transparent;
-    font-size: 0.9375rem;
-    color: var(--text);
+  .lv-period {
+    flex: 0 1 auto;
     min-width: 0;
   }
 
-  .emp-search-input::placeholder {
-    color: var(--text-muted);
+  .lv-people,
+  .lv-planner {
+    flex: 1 1 18rem;
+    min-width: 0;
   }
 
-  .emp-chevron {
-    flex-shrink: 0;
-    color: var(--text-muted);
-    transition: transform 0.15s;
-  }
-
-  .emp-chevron--up {
-    transform: rotate(180deg);
-  }
-
-  .emp-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 40;
-  }
-
-  .emp-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    box-shadow: var(--shadow-lg);
-    list-style: none;
-    margin: 0;
-    padding: 0.25rem 0;
-    max-height: 280px;
-    overflow-y: auto;
-    z-index: 50;
-  }
-
-  .emp-dropdown-item {
-    padding: 0.5rem 0.875rem;
-    font-size: 0.9375rem;
-    color: var(--text);
-    cursor: pointer;
-    transition: background 0.1s;
-  }
-
-  .emp-dropdown-item:hover,
-  .emp-dropdown-item:focus {
-    background: var(--bg-subtle);
-    outline: none;
-  }
-
-  .emp-dropdown-item--active {
-    color: var(--brand);
-    font-weight: 600;
-  }
-
-  .emp-dropdown-empty {
-    padding: 0.75rem 0.875rem;
-    font-size: 0.875rem;
-    color: var(--text-muted);
-  }
-
-  /* ── Highlight from notification deep-link ────────────────────────── */
-  @keyframes highlight-fade {
-    0% {
-      background-color: var(--brand-soft);
+  @media (max-width: 640px) {
+    .lv-period {
+      flex: 1 1 100%;
     }
-    100% {
-      background-color: transparent;
-    }
-  }
-  .highlight-row {
-    animation: highlight-fade 3s var(--ease-out) both;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    margin-bottom: 0.875rem;
-  }
-  .section-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 0;
   }
 
   /* ── Attest ───────────────────────────────────────────────────────── */
@@ -2150,105 +1723,14 @@
   }
 
   /* ── Pending Cards ────────────────────────────────────────────────── */
-  .pending-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-  .pending-card {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.875rem 1.25rem;
-  }
-  .pending-info {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-    flex: 1;
-    min-width: 0;
-  }
-  .pending-name {
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .pending-type {
-    color: var(--brand);
-    font-weight: 500;
-  }
-  .pending-dates {
-    font-family: var(--font-mono);
-    font-size: 0.9375rem;
-    white-space: nowrap;
-  }
-  .pending-days {
-    font-size: 0.875rem;
-  }
-  .pending-note {
-    font-size: 0.875rem;
-    font-style: italic;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* ── § 9 BUrlG offene Vorgänge (Phase 104-10) ────────────────────────── */
-  .section9-cases {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 1rem 1.25rem;
-    margin-bottom: 1rem;
-  }
-  .section9-cases-title {
-    font-weight: 600;
-    margin: 0 0 0.25rem;
-  }
-  .section9-case-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-    padding: 0.625rem 0;
-    border-top: 1px solid var(--border);
-  }
-  .section9-case-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .section9-case-hint {
-    font-size: 0.8125rem;
-    margin: 0;
-  }
-  .section9-hint {
-    font-size: 0.8125rem;
-    margin: 0.25rem 0 0;
-  }
 
   /* ── Table ────────────────────────────────────────────────────────── */
-  .text-center {
-    text-align: center;
-  }
   .btn-sm {
     padding: 0.25rem 0.625rem;
     font-size: 0.8125rem;
   }
   .text-red {
     color: var(--bad);
-  }
-  .note-cell {
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .action-cell {
-    white-space: nowrap;
   }
   /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
      keeps display: table-cell and lines up with the rest of the row even when empty. */
@@ -2259,20 +1741,30 @@
     flex-wrap: wrap;
   }
 
-  /* ── Empty ────────────────────────────────────────────────────────── */
-  .empty-state {
-    text-align: center;
-    padding: 3rem 2rem;
-    display: flex;
-    flex-direction: column;
+  /* Status cell: the chip, then the persistent request flags beside it. */
+  .req-status {
+    display: inline-flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.625rem;
+    gap: var(--s-1) var(--s-2);
   }
-  .empty-icon {
-    font-size: 2.5rem;
+
+  /* The note stays one line; the full text is in the title. */
+  .req-note {
+    display: inline-block;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    color: var(--text-2);
   }
-  .empty-state h3 {
-    font-size: 1rem;
+  .req-note--bad {
+    color: var(--bad);
+  }
+
+  /* The toolbar above the empty state of the table (the table itself carries it otherwise). */
+  .dt-toolbar-row {
+    margin-bottom: var(--s-3);
   }
 
   /* ── Modal body helpers (Modal primitive owns chrome) ────────────── */
@@ -2302,19 +1794,19 @@
     padding: 0.5rem 0.75rem;
     background: var(--bad-soft);
     border: 1px solid var(--bad);
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     color: var(--bad);
     font-size: 0.8125rem;
   }
   .form-hint {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0;
   }
   .attest-date-input {
     max-width: 160px;
   }
-  /* Shared with the § 9 confirm modal, the correction modal and the standalone Attest modal —
+  /* Shared with the correction modal and the standalone Attest modal (the § 9 modal moved to the inbox, #840) —
      NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-error {
     margin-top: 0.75rem;
@@ -2327,15 +1819,15 @@
   }
 
   /* ── Review Grid ──────────────────────────────────────────────────── */
-  /* Shared with the § 9 confirm modal, the correction modal and the standalone Attest modal —
+  /* Shared with the correction modal and the standalone Attest modal (the § 9 modal moved to the inbox, #840) —
      NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem 1.5rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 1rem 1.25rem;
   }
   .review-field {
@@ -2348,7 +1840,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .review-value {
     font-size: 0.9375rem;
@@ -2361,274 +1853,26 @@
   /* ── View Tabs ────────────────────────────────────────────────────── */
   /* view-tabs, view-tab, tab-badge → global in app.css */
 
-  /* ── Kalender ─────────────────────────────────────────────────────── */
-  .list-month-nav {
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    margin-bottom: 1rem;
-  }
-  .cal-year-select {
-    font-size: 1.125rem;
-    font-weight: 700;
-    color: var(--text);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    padding: 0.25rem 1.75rem 0.25rem 0.5rem;
-    border-radius: var(--r-sm);
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 0.5rem center;
-  }
-  .cal-year-select:hover,
-  .cal-year-select:focus-visible {
-    background-color: var(--brand-soft);
-    outline: none;
-  }
+  /* ── Anträge list (Issue #840, E-02) ─────────────────────────────────── */
+  /* The type chip is LeaveTypeChip (Issue 840 G-3): colour from the one mapping, a pending request
+     dashed; the „Offen“ badge in the status cell says it in words. */
 
-  /* .cal-grid + .cal-cell base recipe inherited from app.css (v1.5 canonical).
-     See CLAUDE.md UI Consistency Rules: per-page overrides forbidden. */
-
-  .cal-grid {
-    user-select: none;
-  }
-
-  .cal-cell.cal-current {
-    cursor: default;
-  }
-
-  .cal-day-num {
-    z-index: 1;
-  }
-
-  .cal-chips {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 2px;
-    flex: 1;
-    min-height: 0;
-    overflow: visible;
-    margin: 0 -0.4rem;
-  }
-  /* Empty lane placeholder — reserves the row height so occupied lanes above/below
-     keep their stable vertical position across adjacent day cells. */
-  .cal-chip-placeholder {
-    height: 22px;
-    flex-shrink: 0;
-  }
-  .cal-chip {
-    display: flex;
-    align-items: center;
-    gap: 0.2rem;
-    padding: 2px 0.4rem;
-    border-radius: 4px;
-    /* Fallback only. The live value arrives per bar via style:color={_vis.textColor},
-       which resolves a --leave-type-*-text token (Phase 257, D-12). */
-    color: #ffffff;
-    font-size: 0.75rem;
-    line-height: 1.4;
-    overflow: hidden;
-    cursor: default;
-    min-height: 18px;
-  }
-  .cal-chip--bar-start {
-    border-radius: 4px 0 0 4px;
-    margin-right: -1.5px;
-    height: 22px;
-  }
-  .cal-chip--bar-end {
-    border-radius: 0 4px 4px 0;
-    margin-left: -1.5px;
-    height: 22px;
-  }
-  .cal-chip--bar-middle {
-    border-radius: 0;
-    margin-left: -1.5px;
-    margin-right: -1.5px;
-    height: 22px;
-  }
-  .cal-chip--pending {
-    outline: 1.5px dashed currentColor;
-    outline-offset: -2px;
-  }
-  .cal-chip-name {
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 60px;
-  }
-  .cal-chip-type {
-    font-size: 0.6875rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* ── Day-detail trigger (#265) ─────────────────────────────────────────
-     Above the breakpoint the bar prints the type itself and a pointer can open the `title`
-     tooltip, so the button does not exist there — `display: none` also keeps it out of the tab
-     order, which is why its visibility and its reachability cannot drift apart. The media block
-     at the bottom of this file turns it on for exactly the widths that hide `.cal-chip-type`. */
-  .cal-day-tap {
-    display: none;
-  }
-
-  /* Legende */
-  .cal-legend {
-    display: flex;
-    gap: 1rem;
-    padding: 0.875rem 1.25rem;
-    flex-wrap: wrap;
-  }
-  .legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
-  .badge-attest {
-    margin-left: 0.25rem;
-    font-size: 0.75rem;
-  }
-  /* Shared with the § 9 confirm modal, the correction modal and the standalone Attest modal —
+  /* #840 D-840-10: the legend is LeaveLegend.svelte. */
+  /* Shared with the correction modal and the standalone Attest modal (the § 9 modal moved to the inbox, #840) —
      NOT exclusive to the review dialog, which moved to LeaveReviewDialog.svelte (Phase 255). */
   .review-section {
     margin-top: 1.25rem;
   }
-  .legend-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    flex-shrink: 0;
-    display: inline-block;
-  }
-  .legend-holiday-dot {
-    width: 10px;
-    height: 10px;
-    background: var(--brand-soft);
-    border: 1.5px solid var(--brand);
-    border-radius: 2px;
-    flex-shrink: 0;
-    display: inline-block;
-  }
-  .legend-pending {
-    font-style: italic;
-  }
-
-  /* ── iCal ────────────────────────────────────────────────────────── */
-  .ical-section {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    padding: 0.875rem 1.25rem;
-    margin-bottom: 1.25rem;
-    flex-wrap: wrap;
-  }
-  .ical-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex: 1;
-    min-width: 0;
-  }
-  .ical-icon {
-    font-size: 1.25rem;
-    flex-shrink: 0;
-  }
-  .ical-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    margin: 0;
-    color: var(--text);
-  }
-  .ical-desc {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    margin: 0;
-  }
-  /* Wraps and may shrink to its widest button: at 320 px the two buttons side by side were
-     wider than the page (Issue #564). */
-  .ical-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    min-width: 0;
-  }
-
   /* ── Responsive ───────────────────────────────────────────────────── */
   @media (max-width: 700px) {
     .review-grid {
       grid-template-columns: 1fr;
     }
-    .pending-info {
-      gap: 0.5rem;
-    }
-    /* The bar is too narrow here for "Überstundenausgleich", so the label leaves the EYES — but
-       not the accessibility tree. This is app.css's `.sr-only` recipe, inlined because a class
-       cannot be added by viewport width; `display: none` (what stood here before #265) took the
-       type away from screen readers too. What replaces it visually is `.cal-day-tap` below. */
-    .cal-chip-type {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      padding: 0;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border-width: 0;
-    }
-    .cal-day-tap {
-      display: flex;
-      position: absolute;
-      inset: 0;
-      z-index: 2;
-      /* Top-right: the day number occupies the top-left and the bars start below it, so this is
-         the one corner of the cell that never has a bar under it. */
-      align-items: flex-start;
-      justify-content: flex-end;
-      /* The target is the whole cell: at least 86px tall (the `.cal-cell` recipe in app.css) and
-         one full calendar column wide — ≥ 44px down to a 360px viewport. Narrower than that, the
-         seven-column grid is the essential layout and bounds the width. */
-      min-height: 44px;
-      padding: 4px;
-      background: transparent;
-      border: 0;
-      border-radius: var(--r-md);
-      cursor: pointer;
-      appearance: none;
-    }
-    .cal-day-tap:focus-visible {
-      outline: 2px solid var(--brand);
-      outline-offset: -2px;
-    }
-    /* The affordance. A bar nobody knows is tappable is no remedy at all, and a touch device
-       offers no hover or cursor to hint with — so the hint is drawn. It says "there is more
-       here", not WHICH type: one glyph for every day, never a per-type symbol set (the symbol
-       option was weighed and rejected in #265). */
-    .cal-day-tap-hint {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 15px;
-      height: 15px;
-      border-radius: 50%;
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 0.625rem;
-      font-weight: 700;
-      line-height: 1;
-    }
+  }
+  .lv-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    min-width: 0;
   }
 </style>

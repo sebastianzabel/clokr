@@ -1,9 +1,8 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
+  // The old admin landing page: since #844 its URL redirects to Verwalten › Übersicht in routes/(app)/+layout.ts;
+  // this stub only covers a client navigation that reaches the file without passing that load.
   import { onMount } from "svelte";
-  import { authStore } from "$stores/auth";
-  import { firstAccessibleAdminHref } from "$lib/nav/admin-route-permissions";
-  onMount(() =>
-    goto(firstAccessibleAdminHref($authStore.user) ?? "/dashboard", { replaceState: true }),
-  );
+  import { goto } from "$app/navigation";
+
+  onMount(() => goto("/verwalten", { replaceState: true }));
 </script>

@@ -55,7 +55,7 @@
  * true for this function too — no second import path to the same function survives in the tree.
  */
 export { hasApprovedLeaveOnDate } from "./leave-check";
-export { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses"; // Issue #446 (D-01)
+export { EFFECTIVE_LEAVE_STATUSES, isEffectiveLeaveStatus } from "./effective-leave-statuses"; // Issue #446 (D-01)
 export type { EffectiveLeaveStatus } from "./effective-leave-statuses";
 // Issue #558 (D-02/D-08) — Stammsalon per day, the one salon attribution of absences
 export { filterLeaveRowsToHomeSalon, isHomedInSalonOnAnyDay } from "./salon-leave-attribution";
@@ -77,6 +77,7 @@ export {
   getPendingLeaveForShiftProtection,
   anonymizeLeaveRequestsForEmployee,
   hardDeleteLeaveRequestsForEmployee,
+  hardDeleteLeavePlanWishesForEmployee,
   archiveLeaveRequestsBefore,
 } from "./facade/leave-requests";
 // Issue #93 (D-05): operator support month view — allow-list read
@@ -176,8 +177,11 @@ export {
 // widened onto this surface so no production file outside `contexts/absence` reaches into a
 // leaf module directly any more, except the two permanent register sites (E-4, E-8; see
 // `apps/api/scripts/context-boundary-import-exceptions.json`).
-export { loadBsSlotOverrides } from "./load-bs-slot-overrides";
-export { DISPLAY_NAME, isSickLeaveTypeCode } from "./leave-type";
+export { loadBsSlotOverrides, loadBsSlotOverridesForMany } from "./load-bs-slot-overrides"; // Issue #696 — bulk variant
+export { DISPLAY_NAME, isSickLeaveTypeCode, withHalfDayMarker } from "./leave-type";
+// Issue #597: the one ICS writer, read by the composition-layer calendar feed („Mein Dienstplan“).
+export { generateICal, addOneDay, type ICalEvent } from "./ical";
+// Issue #746 — withHalfDayMarker: the one half-day wording (reports day rows + iCal feeds)
 // Issue #84 (D-14) — the one sick-day counting rule; consumed by composition/reports.ts and composition/dashboard.ts
 export { sickLeaveDayCounts } from "./sick-leave-days";
 export type { SickLeaveDayRow, SickLeaveDayCounts, SickDaysByCode } from "./sick-leave-days";

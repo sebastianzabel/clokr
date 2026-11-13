@@ -58,7 +58,7 @@ export async function listPresenceDevices(
 ) {
   return db.presenceDevice.findMany({
     where: { employeeId, tenantId },
-    select: { id: true, mac: true, label: true, addedAt: true },
+    select: { id: true, mac: true, label: true, addedAt: true, pairedVia: true, lastSeenAt: true }, // Issue #610 (D-07)
     orderBy: { addedAt: "asc" },
   });
 }
@@ -92,7 +92,7 @@ export async function createPresenceDevice(
 ) {
   return db.presenceDevice.create({
     data,
-    select: { id: true, mac: true, label: true, addedAt: true },
+    select: { id: true, mac: true, label: true, addedAt: true, pairedVia: true, lastSeenAt: true }, // Issue #610 (D-07)
   });
 }
 
@@ -135,4 +135,28 @@ export async function deletePresenceDevicesOfEmployee(
 ): Promise<number> {
   const { count } = await db.presenceDevice.deleteMany({ where: { employeeId, tenantId } });
   return count;
+}
+
+/**
+ * Issue #610 (D-08, P-610-10): consent withdrawal removes EVERY presence device of `employeeId`
+ * (QR and MANUAL) inside the withdrawal transaction. Returns the removed rows' `{ id, mac, label,
+ * pairedVia }` so the caller writes one audit row per device. Tenant-scoped; the caller holds the
+ * owner lock (`lockPresenceOwner`) so a concurrent QR confirm cannot add a device in between.
+ */
+export async function deletePresenceDevicesForWithdrawal(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<{ id: string; mac: string; label: string | null; pairedVia: "MANUAL" | "QR" }[]> {
+  const devices = await db.presenceDevice.findMany({
+    where: { employeeId, tenantId },
+    select: { id: true, mac: true, label: true, pairedVia: true },
+    orderBy: [{ addedAt: "asc" }, { id: "asc" }],
+  });
+  if (devices.length > 0) {
+    await db.presenceDevice.deleteMany({
+      where: { employeeId, tenantId, id: { in: devices.map((d) => d.id) } },
+    });
+  }
+  return devices;
 }

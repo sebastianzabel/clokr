@@ -43,8 +43,15 @@ export type ClockEvent = {
   note?: string;
   actor: Actor;
   interactive?: boolean;
-  // Issue #87 (D-01/D-07): an explicitly chosen salon for a NEW entry. Set ONLY by the `/clock-in`
-  // adapter (the web clock-in); NFC, WIFI and clock-out never set it, so their START keeps the
+  // Issue #818: set by an adapter whose event is a PASSIVE presence signal (no human act, e.g. the
+  // router's WIFI event). On an open entry another source opened, such an AUTO event only
+  // confirms the presence (CONFIRM); without the flag the event is a human act and closes the
+  // entry (STOP). Optional for the same reason as `interactive`: a missing value is the
+  // conservative, never-500 branch, and future-source.test.ts builds a literal without it.
+  presenceOnly?: boolean;
+  // Issue #87 (D-01/D-07), #541: an explicitly chosen salon for a NEW entry. Set by the `/clock-in`
+  // adapter (the web choice) and, since Issue #541, by the `/nfc-punch` adapter when the terminal
+  // key is bound to an active salon; WIFI and clock-out never set it, so their START keeps the
   // pattern derivation. Optional for the same reason as `interactive`: future-source.test.ts
   // builds a ClockEvent literal without it.
   salonId?: string;
@@ -73,7 +80,11 @@ export type ConflictReason =
   // Issue #70 (D-10/D-11): the instant of a START lies inside or before a closed entry of the
   // employee, a re-open would end after the event instant, or the database refused an overlap
   // (exclusion constraint). Nothing is written. Resolver-produced, never by `decide()`.
-  | "ENTRY_OVERLAP";
+  | "ENTRY_OVERLAP"
+  // Issue #596: the break state of an open entry
+  | "ALREADY_ON_BREAK"
+  | "NOT_ON_BREAK"
+  | "ACTIVITY_SHARES_EXCEED";
 
 export type ClockState =
   | { kind: "NO_OPEN_ENTRY" }
@@ -93,4 +104,35 @@ export type ClockResolution =
   | { kind: "CONSOLIDATED"; entry: TimeEntry; breakId: string; audit: { id: string } }
   | { kind: "CONFIRMED"; entryId: string; audit: { id: string } }
   | { kind: "DEBOUNCE_NOOP" } // D-02: 60s double-tap guard — STOP within 60s of START is a NO-OP
+  | { kind: "CONFLICT"; reason: ConflictReason };
+
+// ── Issue #596 (#845): the running break as a server state ────────────────────────────────────────
+
+/** Start or end the running break of the caller's open entry. */
+export type BreakAction = "START" | "END";
+
+export type BreakEvent = {
+  tenantId: string;
+  employeeId: string;
+  entryId: string;
+  action: BreakAction;
+  timestamp: Date;
+  actor: Actor;
+};
+
+/** The facts of an entry the break decision reads. */
+export type BreakEntryState = {
+  endTime: Date | null;
+  breakStartedAt: Date | null;
+  isLocked: boolean;
+};
+
+export type BreakDecision =
+  | { kind: "BREAK_START" }
+  | { kind: "BREAK_END"; startedAt: Date }
+  | { kind: "CONFLICT"; reason: ConflictReason };
+
+export type BreakResolution =
+  | { kind: "BREAK_STARTED"; entry: TimeEntry; audit: { id: string } }
+  | { kind: "BREAK_ENDED"; entry: TimeEntry; breakId: string | null; audit: { id: string } }
   | { kind: "CONFLICT"; reason: ConflictReason };

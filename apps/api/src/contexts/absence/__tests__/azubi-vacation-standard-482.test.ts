@@ -41,7 +41,6 @@ describe("Azubi-Standard as a calculation input (Issue #482)", () => {
       data: {
         email: `az482-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

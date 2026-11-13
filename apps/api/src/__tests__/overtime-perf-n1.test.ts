@@ -32,7 +32,6 @@ async function createExtraEmployee(app: FastifyInstance, tenantId: string, idx: 
     data: {
       email: `pn1-${s}@test.de`,
       passwordHash: "x",
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

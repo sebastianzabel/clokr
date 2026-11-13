@@ -104,7 +104,7 @@ describe("POST /leave/requests OVERTIME_COMP + GET /leave/overtime-balance — m
 
     const passwordHash = await bcrypt.hash("test1234", 10);
     const user = await prisma.user.create({
-      data: { email: `tol-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `tol-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const emp = await prisma.employee.create({
       data: {
@@ -386,7 +386,6 @@ describe("POST /leave/requests OVERTIME_COMP + GET /leave/overtime-balance — m
         data: {
           email: `${suffix2}@test.de`,
           passwordHash: passwordHash2,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

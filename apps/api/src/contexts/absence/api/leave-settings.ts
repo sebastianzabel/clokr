@@ -5,6 +5,7 @@
 // concern — but a URL prefix is a UI grouping, not a context boundary. The prefix is unchanged;
 // only the file (and the context that owns it) moves. See GitHub issue #243.
 
+import { changedFieldsAudit } from "../../../utils/audit-diff";
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -536,13 +537,15 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
       if (!result) return reply.code(404).send({ error: "Abwesenheitstyp nicht gefunden" });
       const { existing, updated } = result;
 
+      const diff = changedFieldsAudit(existing, body);
       await app.audit({
         userId: req.user.sub,
         action: "UPDATE",
         entity: "LeaveType",
         entityId: id,
-        oldValue: { allowHalfDay: existing.allowHalfDay, maxDaysPerYear: existing.maxDaysPerYear },
-        newValue: body,
+        // Issue #287: every field the request writes, changed ones only, with before and after.
+        oldValue: diff.oldValue,
+        newValue: diff.newValue,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 

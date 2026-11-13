@@ -31,6 +31,7 @@ import {
   effectiveCarryOverDays,
   exitVacationOverUseWarning,
   exitYearReductionDays,
+  planExitYearVacationEntitlement,
 } from "../leave-days";
 import { getVacationEntitlement } from "./entitlements";
 import { dateStrInTz, dayRangeUtc } from "../../working-time-account"; // Issue #617 — tenant-local split day
@@ -116,6 +117,12 @@ export async function vacationBalanceForRow(
      * in-app meaning ("up to yesterday"). The Monatsexport passes its Stichtag.
      */
     asOf?: string;
+    /**
+     * Issue #615 (D-18) — a HYPOTHETICAL exit date that replaces the stored `Employee.exitDate` in
+     * the exit-year reduction and the over-use warning (absent = the stored one). Read-only: the
+     * deactivate preview prices a chosen last working day through the same rules without a write.
+     */
+    exitDate?: Date | null;
   } = {},
 ): Promise<VacationBalance> {
   const hinweisIssued =
@@ -133,7 +140,14 @@ export async function vacationBalanceForRow(
   );
   const carriedOverExpiredDays = Math.max(0, round2(carriedOverDays - carriedOverEffectiveDays));
 
-  const exitReductionDays = await exitYearReductionDays(db, row.employeeId, tenantId, row.year);
+  const exitOverride = opts.exitDate !== undefined ? { exitDate: opts.exitDate } : undefined;
+  const exitReductionDays = await exitYearReductionDays(
+    db,
+    row.employeeId,
+    tenantId,
+    row.year,
+    exitOverride,
+  );
   const atRiskDays = await carryOverAtRiskDays(db, row, tenantId, now);
 
   const entitlementDays = Number(row.totalDays);
@@ -214,7 +228,7 @@ export async function vacationBalanceForRow(
 
   const exitOverUseWarning = exitVacationOverUseWarning({
     employeeName: `${employee.firstName} ${employee.lastName}`,
-    exitDate: employee.exitDate,
+    exitDate: exitOverride ? exitOverride.exitDate : employee.exitDate,
     row,
   });
 
@@ -256,4 +270,82 @@ export async function getVacationBalance(
   const lookup = await getVacationEntitlement(db, employeeId, tenantId, year);
   if (!lookup?.entitlement) return null;
   return vacationBalanceForRow(db, lookup.entitlement, tenantId, now);
+}
+
+/**
+ * Issue #615 (D-11/D-18) — the exit-year Resturlaub as it WILL be after a deactivation on
+ * `exitDay`, without writing anything.
+ *
+ * Legal reading: the entitlement is the § 5 Abs. 1 Buchst. c BUrlG Teilurlaub of the exit year
+ * (the value the #447 sync then stores, taken from the SAME planner
+ * {@link planExitYearVacationEntitlement}, so there is no second § 5 computation and a past year or
+ * a human-written row keeps its stored value exactly as the sync keeps it). The Stichtag is the last
+ * working day: `asOf` is the exit day and `now` the end of it in the tenant time zone, so a carry-over
+ * still valid on the last working day counts, and what is untaken then is the claim that turns into
+ * an Abgeltung at the end of the employment (§ 7 Abs. 4 BUrlG). Every approved day after the exit is
+ * ended by the exit rule, so after the deactivation `usedDays` equals `takenDays` and
+ * `remainingAtExitDays = availableDays − takenDays` is what `GET /leave/entitlements` shows.
+ *
+ * Read-only: never writes, never heals `usedDays`. `null` when the tenant has no VACATION type or
+ * the exit year has no VACATION row (a read never creates one).
+ */
+export interface ExitVacationBalance {
+  year: number;
+  /** The exit-year entitlement after the deactivation (planned § 5 value, else the stored one). */
+  entitlementDays: number;
+  /** The stored `totalDays` of the row before the deactivation. */
+  storedEntitlementDays: number;
+  /** True when the deactivation would change the stored value (the sync's plan has a target). */
+  entitlementRecomputed: boolean;
+  carriedOverEffectiveDays: number;
+  /** entitlementDays + carriedOverEffectiveDays. */
+  availableDays: number;
+  /** Counted VACATION days from 1 January up to and including the exit day. */
+  takenDays: number;
+  /** availableDays − takenDays, not clamped (a negative value is an over-use). */
+  remainingAtExitDays: number;
+  /** The exit day (YYYY-MM-DD) the figures are judged at. */
+  asOf: string;
+}
+
+export async function exitVacationBalance(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+  tenantId: string,
+  exitDay: string,
+): Promise<ExitVacationBalance | null> {
+  const year = Number(exitDay.slice(0, 4));
+  const lookup = await getVacationEntitlement(db, employeeId, tenantId, year);
+  const row = lookup?.entitlement;
+  if (!row) return null;
+
+  const exitDate = utcDayOf(exitDay);
+  const plan = await planExitYearVacationEntitlement(db, employeeId, tenantId, year, { exitDate });
+  const storedEntitlementDays = Number(row.totalDays);
+  const entitlementDays = plan.targetDays ?? storedEntitlementDays;
+
+  const tenantConfigRow = await db.tenantConfig.findUnique({
+    where: { tenantId },
+    select: { timezone: true },
+  });
+  const tz = tenantConfigRow?.timezone ?? DEFAULT_TZ;
+  const balance = await vacationBalanceForRow(
+    db,
+    { ...row, totalDays: entitlementDays as unknown as typeof row.totalDays },
+    tenantId,
+    dayRangeUtc(exitDay, tz).end,
+    { asOf: exitDay, exitDate },
+  );
+
+  return {
+    year,
+    entitlementDays,
+    storedEntitlementDays,
+    entitlementRecomputed: plan.targetDays !== null,
+    carriedOverEffectiveDays: balance.carriedOverEffectiveDays,
+    availableDays: balance.availableDays,
+    takenDays: balance.takenDays,
+    remainingAtExitDays: round2(balance.availableDays - balance.takenDays),
+    asOf: exitDay,
+  };
 }

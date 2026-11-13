@@ -135,7 +135,6 @@ async function addEmployee(
     data: {
       email: `op90-${tag}@example.invalid`,
       passwordHash: "x".repeat(40),
-      role: "EMPLOYEE",
       isActive: true,
       lastLoginAt: opts.lastLoginAt ?? null,
     },

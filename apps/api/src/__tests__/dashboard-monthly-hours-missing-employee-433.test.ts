@@ -43,7 +43,7 @@ describe("Issue #433 review (WR-01) — dashboard MONTHLY_HOURS Soll with a vani
     const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const email = `wr01-433-${suffix}@test.de`;
     const user = await app.prisma.user.create({
-      data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

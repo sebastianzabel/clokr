@@ -1,0 +1,9 @@
+# Edge of the simulation instance (Issue #715). Plain HTTP on :8080 behind the host firewall, or put
+# the host's own TLS terminator in front. Everything needs the Basic-Auth credential; there is no
+# unauthenticated path, not even /health.
+:8080 {
+	basic_auth {
+		{$SIM_EDGE_USER} {$SIM_EDGE_HASH}
+	}
+	reverse_proxy web:3000
+}

@@ -50,12 +50,12 @@ function effectContaining(marker: string): string {
 
 const SPREAD = "...(pageSalonId !== null ? { salonId: pageSalonId } : {})";
 const BULK_NOTE =
-  "Diese Aktion gilt für alle Salons Ihrer Reichweite, nicht nur für den gewählten Salon.";
+  "Diese Aktion gilt für alle Salons deiner Reichweite, nicht nur für den gewählten Salon.";
 
 describe("Issue #558 — the shift planner follows the header salon", () => {
   it("[vacuity gate] the page source is loaded and still is the shift planner", () => {
     expect(PAGE.length).toBeGreaterThan(60_000);
-    expect(PAGE).toContain("Woche generieren");
+    expect(PAGE).toContain("Muster auf die Woche anwenden");
   });
 
   it("[filter] the week read is built by withSalonId from the page filter; an older response is dropped", () => {
@@ -135,7 +135,7 @@ describe("Issue #558 — the shift planner follows the header salon", () => {
 
   it("[bulk] both bulk dialogs state their whole-reach scope only while a salon is selected", () => {
     const gen = PAGE.slice(
-      PAGE.indexOf('title="Woche generieren"'),
+      PAGE.indexOf('title="Muster auf die Woche anwenden"'),
       PAGE.indexOf('title="Woche kopieren"'),
     );
     const copy = PAGE.slice(PAGE.indexOf('title="Woche kopieren"'));

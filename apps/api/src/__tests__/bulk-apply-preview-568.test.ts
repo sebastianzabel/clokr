@@ -78,7 +78,6 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
       data: {
         email: `bulk568-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -234,7 +233,13 @@ describe("Issue #568 — bulk apply preview and guarded apply", () => {
     it("P2: writes no TenantConfig, WorkSchedule or AuditLog row (D-09 g)", async () => {
       const before = await stateOf(data);
       expect(
-        (await rawPreview(data.adminToken, { ...DEFAULTS_40, defaultWeeklyHours: 36 })).statusCode,
+        (
+          await rawPreview(data.adminToken, {
+            ...DEFAULTS_40,
+            defaultWeeklyHours: 36,
+            defaultFridayHours: 4,
+          })
+        ).statusCode,
       ).toBe(200);
       expect((await rawPreview(data.adminToken, DEFAULTS_40)).statusCode).toBe(200);
       expect(await stateOf(data)).toEqual(before);

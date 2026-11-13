@@ -1,6 +1,6 @@
 /**
  * Phase 325 Plan 02 (issue #325), D-10/D-11/D-13 — the shift store-hours check's parity table,
- * recorded against the PRE-#325 `TenantConfig.storeHours` reader, and the AC-4 two-salon
+ * recorded against the PRE-#325 tenant-level opening-hours reader, and the AC-4 two-salon
  * characterization for the check AFTER it switches to reading the shift's own `Salon.openingHours`.
  *
  * The "D-11 parity" describe block below was recorded against the OLD reader and MUST stay
@@ -213,7 +213,7 @@ describe("shift store-hours check — D-11 parity (Phase 325 Plan 02, issue #325
     await makeShiftEligible(app, seed.employee.id);
 
     // The salon's DEFAULT hours already close Sunday (DEFAULT_SALON_OPENING_HOURS, day 6). With
-    // NO TenantConfig row at all, the OLD reader's combined `!cfg?.storeHours` check returns null
+    // NO TenantConfig row at all, the OLD reader's combined tenant-hours check returns null
     // (no check) — recorded here as the ground truth this describe's sibling test must reproduce
     // unchanged after the switch to the salon reader.
     await app.prisma.tenantConfig.delete({ where: { tenantId: seed.tenant.id } });

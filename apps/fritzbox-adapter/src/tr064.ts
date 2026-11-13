@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "crypto";
+import { isIP } from "node:net";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export interface FritzDevice {
@@ -6,6 +7,64 @@ export interface FritzDevice {
   hostname: string;
   active: boolean;
   ip: string;
+}
+
+/** One device answered by the by-IP host lookup (Issue #610). */
+export interface HostEntry {
+  mac: string;
+  hostname: string;
+  active: boolean;
+  /** "802.11" for a Wi-Fi client, null when the box did not say. */
+  interfaceType: string | null;
+}
+
+const XML_ENTITIES: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" };
+
+/** Decode the five predefined XML entities and numeric references, in one pass (no double decoding). */
+export function decodeXmlEntities(text: string): string {
+  return text.replace(
+    /&(?:#x([0-9a-f]+)|#(\d+)|(lt|gt|amp|quot|apos));/gi,
+    (whole, hex, dec, name) => {
+      if (name) return XML_ENTITIES[name.toLowerCase()];
+      const code = hex !== undefined ? parseInt(hex, 16) : parseInt(dec, 10);
+      return Number.isInteger(code) && code > 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : whole;
+    },
+  );
+}
+
+/**
+ * Read the `<NewX>text</NewX>` leaf elements of a SOAP answer one element at a time. Each value is
+ * the text between exactly its own tags (no `<` inside, entities decoded), so the order of the
+ * elements and a device-chosen hostname cannot move one field into another. Returns null when an
+ * element name occurs more than once: that is what a hostname carrying a closing tag and a fake
+ * `<NewMACAddress>` would look like.
+ */
+export function parseHostEntryFields(xml: string): Record<string, string> | null {
+  const fields: Record<string, string> = {};
+  for (const match of xml.matchAll(/<(New[A-Za-z0-9]+)>([^<]*)<\/\1>/g)) {
+    if (match[1] in fields) return null;
+    fields[match[1]] = decodeXmlEntities(match[2]);
+  }
+  return fields;
+}
+
+/**
+ * A TR-064 request the box answered with an unusable HTTP status. `message` is built exactly as
+ * before (status and the first 200 characters), `body` keeps the full text so a caller can read
+ * a SOAP fault code instead of parsing the truncated message.
+ */
+export class Tr064HttpError extends Error {
+  readonly status: number;
+  readonly body: string;
+
+  constructor(message: string, status: number, body: string) {
+    super(message);
+    this.name = "Tr064HttpError";
+    this.status = status;
+    this.body = body;
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -71,7 +130,12 @@ export class Tr064Client {
    * 2. If 401 + WWW-Authenticate: Digest → compute MD5 response and retry.
    * 3. If still non-200 → throw Error.
    */
-  private async digestFetch(path: string, body: string, soapAction: string): Promise<string> {
+  private async digestFetch(
+    path: string,
+    body: string,
+    soapAction: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
     const endpoint = this.url + path;
     const headers: Record<string, string> = {
       "Content-Type": "text/xml; charset=utf-8",
@@ -79,15 +143,20 @@ export class Tr064Client {
     };
 
     // ── First attempt (unauthenticated) ──────────────────────────────────────
-    let res = await fetch(endpoint, { method: "POST", headers, body });
+    let res = await fetch(endpoint, { method: "POST", headers, body, signal });
 
     if (res.status === 200) {
       return res.text();
     }
 
     if (res.status !== 401) {
-      const snippet = (await res.text()).slice(0, 200);
-      throw new Error(`TR-064 request failed (${res.status}): ${snippet}`);
+      const text = await res.text();
+      const snippet = text.slice(0, 200);
+      throw new Tr064HttpError(
+        `TR-064 request failed (${res.status}): ${snippet}`,
+        res.status,
+        text,
+      );
     }
 
     // ── Digest challenge ──────────────────────────────────────────────────────
@@ -126,14 +195,84 @@ export class Tr064Client {
       method: "POST",
       headers: { ...headers, Authorization: authHeader },
       body,
+      signal,
     });
 
     if (res.status === 200) {
       return res.text();
     }
 
-    const snippet = (await res.text()).slice(0, 200);
-    throw new Error(`TR-064 auth failed (${res.status}): ${snippet}`);
+    const text = await res.text();
+    const snippet = text.slice(0, 200);
+    throw new Tr064HttpError(`TR-064 auth failed (${res.status}): ${snippet}`, res.status, text);
+  }
+
+  /**
+   * Ask the box which device currently holds an IP address (Issue #610, pairing).
+   *
+   * Uses X_AVM-DE_GetSpecificHostEntryByIP on the same control path the poll uses. The call is
+   * bounded by a timeout (a stuck box must not hang a phone's page); SOAP fault 714 (no such
+   * entry) answers null, every other failure throws a Tr064HttpError or the fetch error.
+   * `onRawResponse` receives the raw XML of a 200 answer (the real-box probe prints its element
+   * names).
+   */
+  async getHostByIp(
+    ip: string,
+    options: { timeoutMs?: number; onRawResponse?: (xml: string) => void } = {},
+  ): Promise<HostEntry | null> {
+    // The IP enters an XML envelope: only a real address literal may get there.
+    if (isIP(ip) === 0) {
+      throw new Error("getHostByIp: invalid IP address");
+    }
+
+    const serviceUrn = "urn:dslforum-org:service:Hosts:1";
+    const envelope = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
+            s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:X_AVM-DE_GetSpecificHostEntryByIP xmlns:u="${serviceUrn}">
+      <NewIPAddress>${ip}</NewIPAddress>
+    </u:X_AVM-DE_GetSpecificHostEntryByIP>
+  </s:Body>
+</s:Envelope>`;
+
+    let xml: string;
+    try {
+      xml = await this.digestFetch(
+        "/upnp/control/Hosts",
+        envelope,
+        `${serviceUrn}#X_AVM-DE_GetSpecificHostEntryByIP`,
+        AbortSignal.timeout(options.timeoutMs ?? 5_000),
+      );
+    } catch (err) {
+      if (
+        err instanceof Tr064HttpError &&
+        err.status === 500 &&
+        /<errorCode>\s*714\s*<\/errorCode>/i.test(err.body)
+      ) {
+        return null;
+      }
+      throw err;
+    }
+
+    options.onRawResponse?.(xml);
+
+    const fields = parseHostEntryFields(xml);
+    if (!fields) {
+      // An element name that occurs twice cannot be told apart from a hostname that carries markup.
+      console.warn("[tr064] getHostByIp: answer has a repeated element, ignored");
+      return null;
+    }
+    const mac = fields.NewMACAddress ? normalizeMac(fields.NewMACAddress) : "";
+    if (!mac) {
+      return null;
+    }
+    return {
+      mac,
+      hostname: fields.NewHostName ?? "",
+      active: (fields.NewActive ?? "0") === "1",
+      interfaceType: fields.NewInterfaceType || null,
+    };
   }
 
   /**

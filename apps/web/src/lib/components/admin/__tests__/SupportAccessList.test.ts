@@ -1,7 +1,8 @@
-// Issue #93 (Phase 93b-10) — the tenant's list of support accesses, mounted. `lint:ui-classes` does
-// not scan this directory, so the mount test is the component's gate: rows, tenant-zone instants,
-// states (loading / error / empty), escaping of the operator's free-text reason and the absence of a
-// console link in the tenant app.
+// Issue #93 (Phase 93b-10), rebuilt on the DataTable in #854 (plan 854-25) — the tenant's list of
+// support accesses, mounted. `lint:ui-classes` does not scan this directory, so the mount test is the
+// component's gate: rows, tenant-zone instants, states (loading / error / empty), escaping of the
+// operator's free-text reason, the absence of a console link in the tenant app and that only the
+// operator's display name is shown (T-854-64).
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/svelte";
 
@@ -33,26 +34,35 @@ function props(overrides: Record<string, unknown> = {}) {
     loadError: "",
     page: 1,
     pageSize: 25,
+    onOpen: vi.fn(),
     onPageChange: vi.fn(),
     onRetry: vi.fn(),
     ...overrides,
   };
 }
 
+/** The table row of one access (the DataTable gives every row a stable test id). */
+function rowOf(id = "sa-1"): HTMLElement {
+  return screen.getByTestId(`support-access-row-${id}`);
+}
+
 describe("SupportAccessList", () => {
-  it("explains the page in the Sie form", () => {
+  it("explains the page in the du form (Issue #574)", () => {
     renderWithTheme(SupportAccessList, props());
     expect(
       screen.getByText(
-        "Hier sehen Sie, wann der Betreiber im Rahmen des Supports auf Ihre Daten zugegriffen hat, mit welcher Begründung und welche Daten abgerufen wurden. Einen laufenden Zugriff können Sie jederzeit beenden.",
+        "Hier siehst du, wann der Betreiber im Rahmen des Supports auf die Daten deines Unternehmens zugegriffen hat, mit welcher Begründung und welche Daten abgerufen wurden. Einen laufenden Zugriff kannst du jederzeit beenden.",
       ),
     ).toBeTruthy();
   });
 
-  it("shows operator, reason, window, status and read count of a row and links to the detail", () => {
-    renderWithTheme(SupportAccessList, props());
-    const link = screen.getByRole("link", { name: /Support-Team/ });
-    expect(link.getAttribute("href")).toBe("/admin/support-access/sa-1");
+  it("shows operator, reason, window, status and read count of a row and opens the detail", async () => {
+    const p = props();
+    renderWithTheme(SupportAccessList, p);
+    const link = rowOf();
+    await fireEvent.click(screen.getByRole("button", { name: "Support-Team" }));
+    expect(p.onOpen).toHaveBeenCalledTimes(1);
+    expect((p.onOpen as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({ id: "sa-1" });
     expect(link.textContent).toContain("Ticket 4711: Saldo eines Monats prüfen");
     expect(link.textContent).toContain("Aktiv");
     expect(link.textContent).toContain("3 Abrufe");
@@ -63,10 +73,10 @@ describe("SupportAccessList", () => {
 
   it("writes the instants in the tenant zone from the API, not the browser's", () => {
     const { unmount } = renderWithTheme(SupportAccessList, props());
-    const berlin = screen.getByRole("link", { name: /Support-Team/ }).textContent;
+    const berlin = rowOf().textContent;
     unmount();
     renderWithTheme(SupportAccessList, props({ timezone: "America/New_York" }));
-    const newYork = screen.getByRole("link", { name: /Support-Team/ }).textContent;
+    const newYork = rowOf().textContent;
     expect(berlin).not.toBe(newYork);
     expect(newYork).toContain("01.07.2026, 18:30");
   });
@@ -86,9 +96,9 @@ describe("SupportAccessList", () => {
         ],
       }),
     );
-    const link = screen.getByRole("link", { name: /Support-Team/ });
+    const link = rowOf("sa-2");
     expect(link.textContent).toContain("Beendet");
-    expect(link.textContent).toContain("durch Ihre Verwaltung");
+    expect(link.textContent).toContain("durch deine Verwaltung");
     expect(link.textContent).toContain("1 Abruf");
     expect(link.textContent).not.toContain("1 Abrufe");
     // the end of an ended access is the instant it was ended, not the planned expiry
@@ -98,7 +108,7 @@ describe("SupportAccessList", () => {
 
   it("shows an expired access without an ended-by note", () => {
     renderWithTheme(SupportAccessList, props({ items: [item({ id: "sa-3", status: "EXPIRED" })] }));
-    const link = screen.getByRole("link", { name: /Support-Team/ });
+    const link = rowOf("sa-3");
     expect(link.textContent).toContain("Abgelaufen");
     expect(link.textContent).not.toContain("durch ");
   });
@@ -116,17 +126,22 @@ describe("SupportAccessList", () => {
   it("shows the empty state when nobody has accessed the data", () => {
     renderWithTheme(SupportAccessList, props({ items: [], total: 0 }));
     expect(
-      screen.getByText("Bisher hat der Betreiber nicht auf Ihre Daten zugegriffen."),
+      screen.getByText(
+        "Bisher hat der Betreiber nicht auf die Daten deines Unternehmens zugegriffen.",
+      ),
     ).toBeTruthy();
-    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
   });
 
   it("does not claim emptiness while loading", () => {
     renderWithTheme(SupportAccessList, props({ items: [], total: 0, loading: true }));
     expect(
-      screen.queryByText("Bisher hat der Betreiber nicht auf Ihre Daten zugegriffen."),
+      screen.queryByText(
+        "Bisher hat der Betreiber nicht auf die Daten deines Unternehmens zugegriffen.",
+      ),
     ).toBeNull();
-    expect(screen.getByRole("status", { name: "Support-Zugriffe werden geladen" })).toBeTruthy();
+    // #843 D-843-07: the loading state is the shared Skeleton status
+    expect(screen.getByRole("status", { name: "Wird geladen" })).toBeTruthy();
   });
 
   it("shows a load error with a retry that calls onRetry", async () => {
@@ -136,7 +151,9 @@ describe("SupportAccessList", () => {
       "Fehler beim Laden der Support-Zugriffe.",
     );
     expect(
-      screen.queryByText("Bisher hat der Betreiber nicht auf Ihre Daten zugegriffen."),
+      screen.queryByText(
+        "Bisher hat der Betreiber nicht auf die Daten deines Unternehmens zugegriffen.",
+      ),
     ).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Erneut laden" }));
     expect(p.onRetry).toHaveBeenCalledTimes(1);
@@ -148,6 +165,12 @@ describe("SupportAccessList", () => {
     unmount();
     renderWithTheme(SupportAccessList, props({ total: 60 }));
     expect(screen.getByRole("navigation", { name: "Seitennavigation" })).toBeTruthy();
+  });
+
+  it("shows the operator by display name only, never an e-mail or an IP (T-854-64)", () => {
+    const { container } = renderWithTheme(SupportAccessList, props());
+    expect(container.textContent).toContain("Support-Team");
+    expect(container.textContent).not.toMatch(/@|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
   });
 
   it("contains no link into the operator console (AC-93-9)", () => {

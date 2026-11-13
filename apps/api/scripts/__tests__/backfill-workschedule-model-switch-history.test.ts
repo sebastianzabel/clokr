@@ -76,7 +76,6 @@ describe("backfill-workschedule-model-switch-history (Phase 76.24 Plan 03)", () 
       data: {
         email: `admin-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -98,7 +97,6 @@ describe("backfill-workschedule-model-switch-history (Phase 76.24 Plan 03)", () 
       data: {
         email: `emp-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

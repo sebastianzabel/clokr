@@ -48,7 +48,6 @@ describe("Issue #448 — Berufsschultag kostet keinen Urlaubstag", () => {
       data: {
         email: `bs448-sb-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

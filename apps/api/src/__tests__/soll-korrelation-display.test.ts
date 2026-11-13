@@ -150,7 +150,6 @@ describe("Phase 76.32 — SOLL-KORRELATION display correctness (BS single-count 
       data: {
         email: `admin-${suffix}@test.de`,
         passwordHash: adminPasswordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -195,7 +194,6 @@ describe("Phase 76.32 — SOLL-KORRELATION display correctness (BS single-count 
       data: {
         email: `azubi-${suffix}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -447,7 +445,6 @@ describe("WR-02 RED→GREEN: leave inside Feiertag week — leave credit must ex
       data: {
         email: `admin-${suffix}@wr02.test`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -490,7 +487,6 @@ describe("WR-02 RED→GREEN: leave inside Feiertag week — leave credit must ex
       data: {
         email: `azubi-${suffix}@wr02.test`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -659,7 +655,6 @@ describe("WR-01 RED→GREEN: manual PublicHoliday applies by the employee's work
       data: {
         email: `admin-${suffix}@wr01.test`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -702,7 +697,6 @@ describe("WR-01 RED→GREEN: manual PublicHoliday applies by the employee's work
       data: {
         email: `ni-${suffix}@wr01.test`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -757,7 +751,6 @@ describe("WR-01 RED→GREEN: manual PublicHoliday applies by the employee's work
       data: {
         email: `by-${suffix}@wr01.test`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

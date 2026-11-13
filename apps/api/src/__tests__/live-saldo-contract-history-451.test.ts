@@ -54,7 +54,7 @@ async function createEmployeeWithSchedules(
   const passwordHash = await bcrypt.hash("test1234", 10);
   const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const user = await app.prisma.user.create({
-    data: { email: `${label}-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+    data: { email: `${label}-${suffix}@test.de`, passwordHash, isActive: true },
   });
   const employee = await app.prisma.employee.create({
     data: {

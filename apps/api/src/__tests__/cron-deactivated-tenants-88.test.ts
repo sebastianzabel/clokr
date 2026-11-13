@@ -65,6 +65,9 @@ describe("Phase 88 tracer — auto-close-month and the attendance checker skip d
     "tryMissingEntriesCheck",
     "tryPendingLeaveReminder",
     "tryBreakFindingCheck",
+    "tryShiftReminders", // Issue #609
+    "tryClockOutReminder", // Issue #609 (D-06): the 10-hour reminder now has a test entry point
+    "tryWifiDeviceNotSeen", // Issue #610 (Feature 11)
   ] as const;
 
   for (const name of attendanceRunners) {
@@ -239,8 +242,8 @@ describe("Phase 88 — source scan: every tenant loop is filtered or on the name
         "the metrics facade keys one row per tenant including deactivated ones, so the dashboard can show them (Issue #90)",
     },
   };
-  /** Floor of filtered calls at the time of writing: 10 attendance loops + 6 other jobs. */
-  const FILTERED_FLOOR = 16;
+  /** Floor of filtered calls at the time of writing: 11 attendance loops + 6 other jobs (Issue #609 added the shift-reminder loop, Issue #610 the WLAN re-couple hint). */
+  const FILTERED_FLOOR = 17;
   const CALL = /\.(tenant|tenantConfig)\.findMany\(/g;
 
   function walk(dir: string): string[] {

@@ -192,7 +192,6 @@ describe("dry-run-429-leave-contract-days (Phase 429 Plan 04)", () => {
       data: {
         email: `sb-${slug}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

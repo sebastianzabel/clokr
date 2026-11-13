@@ -66,7 +66,7 @@ describe("Überstundenausgleich booking + recompute atomicity (issue #294)", () 
     const n = ++fixtureCounter;
     const s = `${Date.now().toString(36)}-atom${n}`;
     const user = await app.prisma.user.create({
-      data: { email: `otc-atom-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `otc-atom-${s}@test.de`, passwordHash: "x", isActive: true },
     });
     const hire = new Date(DAY + "T00:00:00Z");
     hire.setUTCDate(1);

@@ -583,7 +583,6 @@ describe("Issue #612 — the period report follows the chosen salon (#542 rules)
       data: {
         email: `rps612-${suffix}@example.invalid`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

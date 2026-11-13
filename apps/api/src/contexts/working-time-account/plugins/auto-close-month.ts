@@ -1,3 +1,4 @@
+import { getBookedMonthCorrections } from "../booked-month-corrections"; // Issue #599
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../timezone";
@@ -9,8 +10,24 @@ import {
   ACTIVE_TENANT_WHERE, // Phase 88 (D-05a) — deactivated tenants are skipped
 } from "../../platform";
 import { periodStartWindow } from "../snapshot-period";
+import {
+  expectedCloseMonthsOfYear,
+  assignYearMonthSnapshots,
+  resolveYearCarryOver,
+  exitedInYear,
+} from "../expected-close-months"; // Issue #753
+import {
+  monthClosePopulationWhere,
+  isInMonthClosePopulation,
+  isExitDateMissing,
+  decideGapMonth,
+} from "../month-close-population"; // Issue #668
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../../../utils/with-advisory-lock";
-import { closeEmployeeMonth, toCloseMonthApprovedLeave } from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
+import {
+  closeEmployeeMonth,
+  toCloseMonthApprovedLeave,
+  resolveMonthContract,
+} from "../close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { detectMonthGaps } from "../month-gap-check"; // Phase 292 (#292) — the shared gap definition
 import {
   MONTH_CLOSE_DEFERRAL_RELATED_TYPE,
@@ -32,7 +49,6 @@ import {
   getValidWorkedEntriesInRange,
   getWorkedEntriesInRange, // Phase 71b (issue #71) — T2, fed into the holiday resolver
   lockEntriesForMonth,
-  getEffectiveSchedule,
   findUnconfirmedBreakDays, // Phase 92 Plan 04 — BREAK-05 single source of truth
   findUnacknowledgedBreakFindingDaysForEmployee, // Issue #511 (D-12) — break-finding defer
 } from "../../time-tracking"; // Phase 100B Plan 08 — T1/T7; Phase 101B wave 8 merged in
@@ -114,11 +130,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
         const { start: prevMonthStart, end: prevMonthEnd } = monthRangeUtc(prevYear, prevMonth, tz);
 
-        // Get all active employees
+        // Everyone employed at some point up to the ceiling month (Issue #668): selected by
+        // EMPLOYMENT, never by login state. The month loop below closes only the months the person
+        // was actually employed in (`isInMonthClosePopulation`).
         const employees = await app.prisma.employee.findMany({
           where: {
             tenantId: tenant.id,
-            user: { isActive: true },
+            AND: [monthClosePopulationWhere(new Date(0), prevMonthEnd)],
             isTimeTrackingExempt: false, // D-02: §18 ArbZG-exempt employees are not snapshotted (parity with manual close)
           },
           include: {
@@ -154,6 +172,8 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           missingDates: string[];
           month: number;
           year: number;
+          /** Issue #668: set when the person has a deactivated login but no exit date. */
+          reason?: "EXIT_DATE_MISSING";
         }[] = [];
 
         // ── SNAP-02 / Phase 76.27: Bounded backward backfill loop ─────────────────
@@ -231,8 +251,9 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 continue;
               }
 
-              // Skip months that started after the employee's hire date check
-              if (emp.hireDate > monthEnd) continue;
+              // Issue #668: a month the person was not employed in gets no snapshot (hired after
+              // it, left before it). Existing snapshots were handled above and are never touched.
+              if (!isInMonthClosePopulation(emp, monthStart, monthEnd)) continue;
 
               // ── Per-month gap readiness check ──────────────────────────────────
               // Phase 292 (GitHub issue #292): the fetch + findMissingWorkdays body moved to
@@ -247,6 +268,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   tenantId: tenant.id,
                   employeeId: emp.id,
                   hireDate: emp.hireDate,
+                  exitDate: emp.exitDate, // Issue #668: no gap after the exit day (CLOSE-04)
                   schedule: scheduleForMonth as unknown as Record<string, unknown>,
                   month: monthKey,
                   tz,
@@ -271,7 +293,15 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                       now,
                     );
 
-                    if (!pastWindow) {
+                    // Issue #668: one decision for the cron and the pre-deploy dry run.
+                    const decision = decideGapMonth({
+                      gapCount: missingDates.length,
+                      pastWindow,
+                      closeAllowed,
+                      exitDateMissing: isExitDateMissing(emp),
+                    });
+
+                    if (decision === "DEFER_IN_WINDOW") {
                       // Within the retro self-service window (today < day N of M+1).
                       // Defer: BREAK + notify. Do NOT close later months on stale carryOver.
                       app.log.warn(
@@ -287,7 +317,25 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                       break; // F-02: defer while in-window
                     }
 
-                    if (!closeAllowed) {
+                    if (decision === "DEFER_EXIT_DATE_MISSING") {
+                      // Issue #668: a deactivated login without an exit date - the gap days may be
+                      // days after an unrecorded exit, so they are never force-closed at 0 h. An
+                      // admin sets the exit date or records the time; months without gaps closed above.
+                      app.log.warn(
+                        { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
+                        "Auto-Monatsabschluss: Lücken, Login deaktiviert und kein Austrittsdatum — verschoben (manuell)",
+                      );
+                      missing.push({
+                        employee: emp,
+                        missingDates,
+                        month: monthKey.month,
+                        year: monthKey.year,
+                        reason: "EXIT_DATE_MISSING",
+                      });
+                      break; // never close later months on a stale carryOver
+                    }
+
+                    if (decision === "DEFER_MANUAL") {
                       // Past window but flag=false → defer forever (manual-only, never auto-finalize).
                       app.log.warn(
                         { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
@@ -403,7 +451,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
               // ── Schedule valid FOR this month (historical schedule awareness) ──
               const midMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
-              const schedule = await getEffectiveSchedule(app, emp.id, midMonth);
+              const schedule = await resolveMonthContract(app, emp.id, monthEnd, midMonth);
 
               // Build holiday set for this month
               const empHireDateNorm = emp.hireDate
@@ -513,6 +561,14 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
                 })),
                 holidayDateStrings: closeHolidayDateStrings,
+                // Issue #599 — booked corrections of closed months, an account movement.
+                accountCorrections: await getBookedMonthCorrections(
+                  app.prisma,
+                  emp.id,
+                  tenant.id,
+                  monthFirstDay,
+                  monthLastDay,
+                ),
                 tenantConfig: tenant.config
                   ? {
                       defaultBreakOver6h: tenant.config.defaultBreakOver6h,
@@ -692,27 +748,39 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               // COMP-V1814-08: mid-year hires only need their share of months.
               // A July hire has 6 months in the year (Jul-Dec); requiring 12 would
               // prevent their yearly carry-over from ever running.
-              const hireYear = emp.hireDate ? new Date(emp.hireDate).getFullYear() : null;
-              const hireMonth = emp.hireDate ? new Date(emp.hireDate).getMonth() + 1 : 1; // 1-12
-              const firstMonth = hireYear === prevYear ? hireMonth : 1;
-              const expectedMonths = 12 - firstMonth + 1;
-              if (monthSnapshots.length < expectedMonths) continue; // Not all expected months closed yet
+              // Issue #277 (finding 1): the hire month is read in the TENANT time zone, never in
+              // the zone of the Node process.
+              // Issue #753: the expected span (hire month .. exit month, tenant zone) comes from the
+              // one function the manual close-year route shares; a person who left in an earlier
+              // year has no month in this one and gets no yearly snapshot.
+              const expectedMonths = expectedCloseMonthsOfYear({
+                year: prevYear,
+                tz,
+                hireDate: emp.hireDate,
+                exitDate: emp.exitDate,
+              });
+              if (expectedMonths.length < 1) continue;
+              // One snapshot per expected month (#595 rules, shared with the route): a duplicate
+              // pair counts once and cannot mask a month without a row.
+              const { assigned: yearMonthSnapshots, missing: missingYearMonths } =
+                assignYearMonthSnapshots(monthSnapshots, expectedMonths, prevYear, tz);
+              if (missingYearMonths.length > 0) continue; // Not all expected months closed yet
 
-              const yearWorked = monthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
-              const yearExpected = monthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
-              const yearBalance = monthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
-              const decSnapshot = monthSnapshots[monthSnapshots.length - 1];
-              const finalCarryOver = decSnapshot.carryOver;
+              const yearWorked = yearMonthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
+              const yearExpected = yearMonthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
+              const yearBalance = yearMonthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
+              const lastSnapshot = yearMonthSnapshots[yearMonthSnapshots.length - 1];
+              const finalCarryOver = lastSnapshot.carryOver;
 
-              // Apply carry-over rules
+              // Apply carry-over rules (not for a year of exit, owner decision 26.10.2026)
               const mode = tenant.config?.overtimeCarryOverMode ?? "FULL";
               const cap = tenant.config?.overtimeCarryOverCap;
-              let appliedCarryOver = finalCarryOver;
-              if (mode === "RESET") {
-                appliedCarryOver = 0;
-              } else if (mode === "CAPPED" && cap != null && finalCarryOver > cap) {
-                appliedCarryOver = cap;
-              }
+              const { appliedCarryOver, ruleApplied, exitKept } = resolveYearCarryOver({
+                finalCarryOver,
+                mode,
+                cap,
+                leftInYear: exitedInYear(emp.exitDate, prevYear, tz),
+              });
 
               // PERF-V1814-02: saldoSnapshot.create + overtimeAccount.upsert in ONE $transaction.
               // A crash between snapshot commit and balance upsert can no longer leave stale data
@@ -730,10 +798,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     carryOver: appliedCarryOver,
                     closedAt: new Date(),
                     closedBy: null,
-                    note:
-                      mode === "RESET"
+                    note: exitKept
+                      ? `Automatischer Jahresübertrag: Endsaldo des Austrittsmonats ${Math.round(appliedCarryOver / 60)}h (Austritt, Übertragsregel nicht angewendet)`
+                      : ruleApplied === "RESET"
                         ? "Automatischer Jahresübertrag: Reset auf 0"
-                        : mode === "CAPPED" && cap != null && finalCarryOver > cap
+                        : ruleApplied === "CAPPED" && cap != null
                           ? `Automatischer Jahresübertrag: gedeckelt auf ${Math.round(cap / 60)}h`
                           : `Automatischer Jahresübertrag: ${Math.round(appliedCarryOver / 60)}h`,
                   },
@@ -759,6 +828,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   mode,
                   originalCarryOver: finalCarryOver,
                   appliedCarryOver,
+                  exitKept,
                   auto: true,
                 },
               });
@@ -784,6 +854,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 }),
               )
               .join(", ");
+            // Issue #668: a deactivated login without an exit date is named as such, not as a gap list.
+            if (m.reason === "EXIT_DATE_MISSING") {
+              return `${name} (${m.month}/${m.year}): Austrittsdatum fehlt – bitte prüfen (Lücken: ${dates})`;
+            }
             return `${name} (${m.month}/${m.year}): ${dates}`;
           });
 

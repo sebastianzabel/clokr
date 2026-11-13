@@ -6,7 +6,7 @@
 
 1. **Admin → Mitarbeiter → + Mitarbeiter anlegen**
 2. Pflichtfelder: Vorname, Nachname, E-Mail, Rolle, Eintrittsdatum
-3. Optional: Personalnummer, Bundesland (für Feiertage), Arbeitszeitmodell
+3. Optional: Personalnummer, Arbeitszeitmodell
 4. Nach dem Speichern wird automatisch eine Einladungs-E-Mail versandt
 
 ### Arbeitszeitmodelle
@@ -82,6 +82,37 @@ Ausstehende Urlaubsanträge erscheinen im Posteingang unter **Team → Anträge*
 
 ---
 
+## Schicht-Erinnerungen
+
+**Admin → Urlaubsverwaltung → Tab „Erinnerungen" → Abschnitt „Schicht-Erinnerungen"** — Clokr kann Personen mit einer geplanten Schicht
+an das Stempeln erinnern. Alle drei Erinnerungen sind **standardmäßig aus** und gelten für den ganzen Mandanten; sie werden mit dem
+**Speichern**-Button des Tabs übernommen.
+
+- **Bei Schichtbeginn erinnern, wenn noch nicht eingestempelt** — „Erinnern nach" Minuten nach dem Schichtbeginn.
+- **Bei Schichtende erinnern, wenn noch eingestempelt** — „Erinnern nach" Minuten nach dem Schichtende.
+- **Abends erinnern, wenn an einem Schichttag keine Zeit erfasst ist** — zur eingestellten **Uhrzeit der Abend-Erinnerung** (Standard 20:00).
+- **Erinnern nach** — 5 bis 120 Minuten (Standard 15), gilt für Schichtbeginn und Schichtende.
+
+Was du wissen solltest:
+
+- Erinnert werden **nur Personen mit einer geplanten Schicht**. Wer keine Schicht hat (zum Beispiel feste Arbeitszeiten ohne
+  Schichtplan), bekommt nichts.
+- **Keine Erinnerung** gibt es an Tagen mit Urlaub, Krankheit (auch halbe Tage), Abwesenheit oder Feiertag, für Schichten mit
+  Urlaubskonflikt, für ausgeschiedene Personen und für Personen, die die Erinnerung selbst abgeschaltet haben. Führungskräfte werden
+  nie stellvertretend erinnert.
+- Schichten, die **nach der Abend-Uhrzeit enden**, lösen an diesem Tag keine Abend-Erinnerung aus. Wähle die Uhrzeit deshalb nach
+  eurem spätesten Schichtende. Wer abends noch eingestempelt ist, bekommt ebenfalls keine Abend-Erinnerung.
+- Jede Erinnerung kommt **höchstens einmal** je Person und Schicht (der Abend: einmal je Person und Tag). Die bestehende Erinnerung
+  nach zehn Stunden und die Meldung um 09:00 am nächsten Morgen bleiben; die Zehn-Stunden-Erinnerung entfällt, wenn schon die
+  Schichtende-Erinnerung für denselben offenen Eintrag kam (wer danach erneut einstempelt und wieder vergisst, wird nach zehn
+  Stunden trotzdem erinnert). Ein Ein- oder Ausstempeln erledigt die offene Beginn- bzw. Ende-Mitteilung in der Glocke.
+- Die Erinnerung erscheint in der Glocke und, wenn die Person Push auf dem Handy eingerichtet hat, auf dem Sperrbildschirm mit einem
+  neutralen Text ohne Uhrzeit und Namen. **E-Mails gibt es dafür nicht.**
+- **Clokr stempelt nie automatisch.** Ein Tipp auf die Erinnerung öffnet die Startseite mit einer Rückfrage („Jetzt einstempeln?"
+  bzw. „Jetzt ausstempeln?"); gestempelt wird erst nach der Bestätigung, mit der aktuellen Uhrzeit.
+
+---
+
 ## Sonderurlaub
 
 **Admin → Urlaubsverwaltung → Tab „Sonderurlaub"** — Konfiguration der Sonderurlaubstypen:
@@ -117,7 +148,7 @@ Der Monatsabschluss friert den Überstunden-Saldo eines Monats ein:
 
 **Admin → CSV Import** — Massendaten importieren per CSV:
 
-- **Mitarbeiter-Import**: Name, E-Mail, Rolle, Eintrittsdatum, Arbeitsstunden
+- **Mitarbeiter-Import**: Name, E-Mail, Rolle, Eintrittsdatum, Arbeitsstunden, Stammsalon (Spalte `salonId`, Salon-ID; bei mehreren aktiven Salons in jeder Zeile nötig, bei genau einem darf sie leer bleiben)
 - **Zeiteintrags-Import**: Mitarbeiternummer, Datum, Beginn, Ende, Pausen
 
 CSV-Vorlagen stehen zum Download bereit.
@@ -185,12 +216,19 @@ Ansicht öffnet.
 Die beiden PDF-Dokumente und die Datei für DATEV (Issue #617):
 
 - **Monatsexport** — ein PDF für alle Mitarbeitenden eines Monats, die lesbare Fassung des DATEV-Exports:
-  dieselben Personen und dieselben Abwesenheitstage wie in der DATEV-Datei, dazu Soll, Ist, Saldo, Status und
+  dieselben Abwesenheitstage wie in der DATEV-Datei und dieselbe Personengruppe (auch Personen ohne Buchung), dazu Soll, Ist, Saldo, Status und
   Gesamtsaldo aus dem Arbeitszeitkonto und ein Abschnitt „Urlaubsjahr" mit dem Stand zum Monatsende (im
   laufenden Monat bis gestern). „DATEV-Std." sind die Normalstunden der DATEV-Datei; sie können vom Ist
   abweichen (Beschäftigungszeitraum, Berufsschul-Anrechnung, nur Einträge der Art Arbeit, gespeicherter
   Stand abgeschlossener Monate) — die Legende im Dokument nennt die Gründe. Das Dokument enthält Krankheitstage,
   weil es der Vorbereitung der Lohnabrechnung dient; es setzt wie DATEV die Berechtigung „Berichte exportieren" voraus.
+- **DATEV-Datei (LODAS)** — baut auf der amtlichen Feldliste der Importschnittstelle auf (Issue #304): zwei Satztypen in einer
+  Datei, `u_lod_bwd_buchung_stunden` für Stunden und `u_lod_bwd_buchung_tage` für Tage, die Lohnart steht in
+  `la_eigene#bwd`, der Abrechnungszeitraum (erster Tag des Monats, `TTMMJJJJ`) in jeder Datenzeile. Es gibt keine Zeile
+  mit Menge 0: wer in dem Monat nichts zu buchen hat, steht nicht in der Datei (das Monatsexport-PDF führt ihn trotzdem
+  auf). Die Personalnummer muss rein numerisch sein; sonst bricht der Export mit einer Meldung ab, die die betroffenen
+  Mitarbeiternummern nennt, statt jemanden stillschweigend wegzulassen. Die Datei wurde noch nicht in einer LODAS-Umgebung
+  importiert; belegt ist sie durch einen Feldabgleich gegen die Feldliste (`datev-lodas-feldliste-304.test.ts`).
 - **Stundennachweis** — das PDF einer Person mit allen Einträgen des Monats sowie Abwesenheits- und Feiertagszeilen.
   Er ist das einzige Dokument mit einer Tagesliste.
 - Die früheren PDFs Firmenweiter Monatsbericht, Urlaubsliste, Urlaubsbericht und Urlaubsübersicht gibt es nicht mehr;
@@ -246,13 +284,14 @@ Details zu rechtlichen Aufbewahrungsfristen, Anonymisierungs-Verhalten, ArbZG-Pr
 
 **Admin → Allgemein**:
 
-| Einstellung     | Beschreibung                                      |
-| --------------- | ------------------------------------------------- |
-| Theme           | Erscheinungsbild (Pflaume, Nacht, Wald, Schiefer) |
-| Bundesland      | Bestimmt gesetzliche Feiertage                    |
-| Zeitzone        | Zuordnung von Zeitstempeln                        |
-| 2FA             | E-Mail-OTP bei Login aktivieren                   |
-| Session-Timeout | Automatische Abmeldung nach Inaktivität           |
-| Account-Lockout | Sperrung nach X Fehlversuchen                     |
-| SMTP            | E-Mail-Versand konfigurieren                      |
-| API-Schlüssel   | Programmatischer Zugriff für externe Tools        |
+| Einstellung     | Beschreibung                                                                                                                                                                                                                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Theme           | Erscheinungsbild (Pflaume, Salz, Petrol – jeweils hell oder dunkel)                                                                                                                                                                                                                                                            |
+| Bundesland      | Vorgabe für neu angelegte Salons (Feiertage richten sich nach dem Bundesland des Salons)                                                                                                                                                                                                                                       |
+| Zeitzone        | Zuordnung von Zeitstempeln                                                                                                                                                                                                                                                                                                     |
+| 2FA             | E-Mail-OTP bei Login aktivieren                                                                                                                                                                                                                                                                                                |
+| Session-Timeout | Automatische Abmeldung nach Inaktivität                                                                                                                                                                                                                                                                                        |
+| Account-Lockout | Sperrung nach X Fehlversuchen                                                                                                                                                                                                                                                                                                  |
+| SMTP            | E-Mail-Versand konfigurieren                                                                                                                                                                                                                                                                                                   |
+| API-Schlüssel   | Programmatischer Zugriff für externe Tools                                                                                                                                                                                                                                                                                     |
+| NFC-Terminals   | Terminal-Schlüssel für stationäre Geräte (Tab „Integration“). Bei mehreren Salons optional an einen Salon gebunden: ein Stempel an diesem Terminal landet in diesem Salon, ohne Bindung gilt der Salon aus dem Wochenmuster. Ein deaktivierter Salon wird in der Liste markiert, gestempelt wird dann nach der üblichen Regel. |

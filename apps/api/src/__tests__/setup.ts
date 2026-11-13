@@ -19,6 +19,7 @@ import { leaveTypeFields } from "../contexts/absence/leave-type";
 import {
   DEFAULT_SALON_OPENING_HOURS,
   findDefaultSalon,
+  isAnonymizedEmployee,
   SYSTEM_ROLE_IDS,
   type SalonOpeningHours,
 } from "../contexts/platform";
@@ -367,6 +368,34 @@ export async function grantSystemRole(
 }
 
 /**
+ * Release B (#641, D-16): reproduces the eligibility of the 75b data migration
+ * (`..._system_roles_and_legacy_role_assignments`) for exactly the listed fixture users, with the
+ * role the fixture DECLARES (the value it used to write into the dropped role column), so the
+ * neutrality fixtures no longer execute SQL that reads that column. A listed user receives one
+ * stored TENANT assignment only when it has an Employee, that Employee is not DSGVO-anonymized
+ * and the user holds no assignment row at all - rule by rule what the migration's INSERT selected.
+ * Unlike the migration it writes no SYSTEM audit row: no neutrality recording names one
+ * (measured). Returns the ids of the rows it created, in the order of `users`.
+ */
+export async function grantLegacyMigrationRoles(
+  prisma: Prisma.TransactionClient,
+  users: readonly { userId: string; role: LegacySystemRoleName }[],
+): Promise<string[]> {
+  const created: string[] = [];
+  for (const { userId, role } of users) {
+    const employee = await prisma.employee.findUnique({
+      where: { userId },
+      select: { tenantId: true, firstName: true, lastName: true },
+    });
+    if (employee === null || isAnonymizedEmployee(employee)) continue;
+    const existing = await prisma.roleAssignment.count({ where: { userId } });
+    if (existing > 0) continue;
+    created.push(await grantSystemRole(prisma, { tenantId: employee.tenantId, userId, role }));
+  }
+  return created;
+}
+
+/**
  * Issue #539 (D-14): a token for a user who can no longer SIGN IN. An active account whose effective
  * permission set is empty (no stored role assignment, or only a role that grants nothing at the
  * chosen scope) is refused at login with 403 `NO_ROLE_ASSIGNED`, but several tests exist precisely
@@ -450,6 +479,9 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
   const s =
     (suffix ? suffix + "-" : "") + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const prisma = testApp.prisma;
+  // Issue #304: the DATEV export refuses non-numeric personnel numbers (LODAS pnr is numeric), and
+  // these fixtures feed it, so their numbers are numeric (unique per tenant: two consecutive values).
+  const numberBase = Math.floor(Math.random() * 40_000_000) * 2 + 10_000_000;
 
   // Create tenant + tenant config through the one provisioning rule (Phase 88, D-04a). Only L1:
   // the default salon is NOT created here, it comes afterwards from the withDefaultSalon wrapper
@@ -477,7 +509,6 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
     data: {
       email: `admin-${s}@test.de`,
       passwordHash: adminPasswordHash,
-      role: "ADMIN",
       isActive: true,
     },
   });
@@ -487,7 +518,7 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
     data: {
       tenantId: tenant.id,
       userId: adminUser.id,
-      employeeNumber: `A-${s}`,
+      employeeNumber: String(numberBase),
       firstName: "Admin",
       lastName: "Test",
       hireDate: new Date("2024-01-01"),
@@ -522,7 +553,6 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
     data: {
       email: `emp-${s}@test.de`,
       passwordHash: empPasswordHash,
-      role: "EMPLOYEE",
       isActive: true,
     },
   });
@@ -531,7 +561,7 @@ async function seedTenantFixture(testApp: FastifyInstance, suffix = "") {
     data: {
       tenantId: tenant.id,
       userId: empUser.id,
-      employeeNumber: `E-${s}`,
+      employeeNumber: String(numberBase + 1),
       firstName: "Max",
       lastName: "Test",
       hireDate: new Date("2024-01-01"),
@@ -674,6 +704,14 @@ export async function seedGrundversionTenant(testApp: FastifyInstance, suffix = 
  * guard impossible to test. Every fixture that wants a SUCCESSFUL export therefore says
  * so explicitly, through this helper.
  */
+/**
+ * Issue #304: a numeric, practically unique employee number for fixtures whose person is part of
+ * a DATEV export (LODAS `pnr#bwd` is numeric; the export refuses anything else with a 422).
+ */
+export function numericEmployeeNumber(): string {
+  return String(10_000_000 + Math.floor(Math.random() * 900_000_000));
+}
+
 export async function configureDatevKanzlei(
   testApp: FastifyInstance,
   tenantId: string,
@@ -776,10 +814,18 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // fails silently (afterAll only console.error's cleanup failures) and leaks fixture rows
   // into clokr_test, breaking the next run's unique-constraint assumptions (see 104-04-SUMMARY.md).
   await prisma.section9Credit.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Issue #835: LeavePlanWish -> Tenant, LeavePlan, Employee AND LeaveRequest are all
+  // onDelete: Restrict, and LeavePlan -> Tenant and Salon too. The wishes and then the plans must go
+  // before leaveRequest.deleteMany (and the employee, salon and tenant deletes below), or the delete
+  // fails and leaks fixture rows into the shared test database.
+  await prisma.leavePlanWish.deleteMany({ where: { tenantId } });
+  await prisma.leavePlan.deleteMany({ where: { tenantId } });
   await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.leaveEntitlement.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.timeEntry.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Issue #599 — the request references its journal row (Restrict) and the employee (Restrict).
+  await prisma.monthCorrectionRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.overtimeTransaction.deleteMany({
     where: { overtimeAccount: { employeeId: { in: employeeIds } } },
   });
@@ -802,12 +848,20 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   // leaks fixture rows into the shared test database.
   await prisma.employeeSalonAssignment.deleteMany({ where: { tenantId } });
   await prisma.employee.deleteMany({ where: { tenantId } });
+  // Issue #608: PushSubscription.tenant is onDelete: Restrict - the rows must go before the user and
+  // tenant deletes below, or a fixture tenant with a device cannot be removed.
+  await prisma.pushSubscription.deleteMany({ where: { tenantId } });
+  await prisma.calendarFeedToken.deleteMany({ where: { tenantId } }); // Issue #597
   await prisma.refreshToken.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.otpToken.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   await prisma.leaveType.deleteMany({ where: { tenantId } });
   await prisma.publicHoliday.deleteMany({ where: { tenantId } });
   await prisma.coverageRule.deleteMany({ where: { tenantId } });
+  // Issue #836: LeaveLimitRule -> Tenant, Salon and AccessRole are all onDelete: Restrict, so the
+  // rules must go before the salon, access-role and tenant deletes below, or the delete fails and
+  // leaks fixture rows into the shared test database.
+  await prisma.leaveLimitRule.deleteMany({ where: { tenantId } });
   await prisma.shiftTemplate.deleteMany({ where: { tenantId } });
   await prisma.companyShutdown.deleteMany({ where: { tenantId } });
   await prisma.terminalApiKey.deleteMany({ where: { tenantId } });

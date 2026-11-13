@@ -81,7 +81,6 @@ describe("Monatsabschluss gap definition by work location (Phase 71b Plan 05, is
         data: {
           email: `hwlcm-${label}-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -194,6 +193,7 @@ describe("Monatsabschluss gap definition by work location (Phase 71b Plan 05, is
       tenantId,
       employeeId: depId,
       hireDate: new Date("2026-06-01"),
+      exitDate: null,
       schedule,
       month: JUNE_2026,
       tz: "Europe/Berlin",
@@ -207,6 +207,7 @@ describe("Monatsabschluss gap definition by work location (Phase 71b Plan 05, is
       tenantId,
       employeeId: ctlId,
       hireDate: new Date("2026-06-01"),
+      exitDate: null,
       schedule,
       month: JUNE_2026,
       tz: "Europe/Berlin",
@@ -220,6 +221,7 @@ describe("Monatsabschluss gap definition by work location (Phase 71b Plan 05, is
       tenantId,
       employeeId: depEntryId,
       hireDate: new Date("2026-06-01"),
+      exitDate: null,
       schedule,
       month: JUNE_2026,
       tz: "Europe/Berlin",
@@ -236,6 +238,7 @@ describe("Monatsabschluss gap definition by work location (Phase 71b Plan 05, is
       tenantId,
       employeeId: depEntryId,
       hireDate: new Date("2026-06-01"),
+      exitDate: null,
       schedule,
       month: JUNE_2026,
       tz: "Europe/Berlin",
@@ -333,7 +336,6 @@ describe("Monatsabschluss close paths by work location (Phase 71b Plan 05 Task 3
         data: {
           email: `hwlcm3-${label}-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

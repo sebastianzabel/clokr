@@ -34,7 +34,6 @@ describe("PUT /api/v1/settings/work/:employeeId — Vertragswechsel recompute gu
       data: {
         email: `cc450g-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -72,7 +71,6 @@ describe("PUT /api/v1/settings/work/:employeeId — Vertragswechsel recompute gu
       data: {
         email: `cc450g-b-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

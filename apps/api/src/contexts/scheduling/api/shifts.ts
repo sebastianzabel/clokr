@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
 import { isAvailabilityEnabled } from "../tenant-availability";
+import { coverageSalonInView, pickCoverageRule } from "../coverage-rule"; // Issue #647 (D-04/D-05) — the one place a day's coverage rule is chosen
 import { getEffectiveBreakDuration, getWorkedEntriesInRange } from "../../time-tracking"; // Phase 101B (Issue #101, wave 8); getWorkedEntriesInRange (T2) added Phase 71b (issue #71, D-07)
 import { classifyLeaveTypeCode, type AvailabilityBucket } from "../shift-availability"; // Phase 98 (T3, plan 03) — the two classifiers' new home
 import {
@@ -12,6 +13,7 @@ import {
   findDefaultSalon, // Phase 325 (issue #325), D-04/D-05
   findSalon, // Phase 325 (issue #325) Plan 02, D-06 (explicit salonId resolution)
   listSalons, // Phase 325 (issue #325), D-08 (copy-week fallback)
+  hasPermission,
   permissionReach,
   requirePermission,
   salonForDay, // Phase 344 (issue #344) — the employee's actual per-day salon assignment
@@ -32,6 +34,7 @@ import {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   dateStrInTz,
+  dayRangeUtc,
   monthRangeUtc,
   updateOvertimeAccount,
 } from "../../working-time-account"; // Phase 101B
@@ -54,6 +57,12 @@ import {
 } from "../../absence"; // Phase 101B (Issue #101, wave 7) — merged from three deep imports
 import { getShiftsInRange } from "../facade/shifts"; // Phase 430 (D-12) — planning-overview's "geplant" column
 import { flagShiftIfConflictsWithApprovedLeave } from "../shift-leave-check"; // Phase 430 (D-03/D-04, moved 430-06 to avoid widening the boundary-import cycle) — S4, the inverse Type-1 direction
+import {
+  halfDayLeaveHint,
+  leaveBlocksShift,
+  splitLeaveForShift,
+  type HalfDayLeaveHint,
+} from "../shift-leave-rule"; // Issue #744 — the one half-day rule
 import { notifyShiftLeaveConflicts } from "../shift-leave-conflict-notify"; // Phase 430 (D-02)
 import {
   detectWeekCapacityConflict,
@@ -204,7 +213,36 @@ const coverageRuleSchema = z.object({
   dayOfWeek: z.number().int().min(-1).max(6),
   minStaff: z.number().min(0).max(99),
   requiresNonSupervised: z.boolean().default(false),
+  // Issue #647 (D-06): null or absent = tenant-wide. A salon is validated by resolveSalonInReach,
+  // never trusted.
+  salonId: z.string().uuid().nullable().optional(),
 });
+
+/**
+ * Issue #647 D-06/D-07 — the one admission of a salon named on a coverage-rule write: the same
+ * validator as every other salon-taking endpoint (`resolveSalonInReach`) against the caller's
+ * `shift-config:manage` reach. A foreign, unknown or inactive salon is `ok: false` (the caller
+ * answers the one `SALON_NOT_FOUND` 404 before any write). `shift-config:manage` is a MANDANT key,
+ * so a caller who reaches a coverage-rule write holds a tenant-wide reach today and the check
+ * reduces to "an active salon of the tenant"; it stays correct if the key ever changes.
+ */
+async function coverageRuleSalonAdmissible(
+  app: FastifyInstance,
+  req: FastifyRequest,
+  salonId: string,
+): Promise<{ ok: true; salonId: string } | { ok: false }> {
+  const salon = await resolveSalonInReach(
+    app.prisma,
+    req.user.tenantId,
+    await resolveAccessReach(
+      app.prisma,
+      accessContextFromRequest(req),
+      "shift-config:manage:ZUGEWIESEN",
+    ),
+    salonId,
+  );
+  return salon.ok && salon.salonId !== null ? { ok: true, salonId: salon.salonId } : { ok: false };
+}
 
 // Per-day coverage status
 type CoverageStatus = "ok" | "under" | "supervision-missing";
@@ -226,51 +264,6 @@ interface CoverageInfo {
 // home; this type just adds the two roster-state members no classifier ever produces.
 type Availability = "available" | AvailabilityBucket | "unavailable" | "preferred";
 
-/**
- * Find the most specific CoverageRule for a (template, dayOfWeek) combination.
- * Match order:
- *   1. templateId match AND dayOfWeek match
- *   2. templateId null AND dayOfWeek match
- *   3. templateId match AND dayOfWeek = -1
- *   4. templateId null AND dayOfWeek = -1
- * If no rule matches, returns default { minStaff: 2, requiresNonSupervised: false }.
- */
-function pickRule(
-  rules: Array<{
-    templateId: string | null;
-    dayOfWeek: number;
-    minStaff: number;
-    requiresNonSupervised: boolean;
-  }>,
-  templateId: string | null,
-  dayOfWeek: number,
-): { minStaff: number; requiresNonSupervised: boolean } {
-  if (templateId) {
-    const exact = rules.find((r) => r.templateId === templateId && r.dayOfWeek === dayOfWeek);
-    if (exact)
-      return { minStaff: exact.minStaff, requiresNonSupervised: exact.requiresNonSupervised };
-  }
-  const tplNullDow = rules.find((r) => r.templateId === null && r.dayOfWeek === dayOfWeek);
-  if (tplNullDow)
-    return {
-      minStaff: tplNullDow.minStaff,
-      requiresNonSupervised: tplNullDow.requiresNonSupervised,
-    };
-  if (templateId) {
-    const tplAllDays = rules.find((r) => r.templateId === templateId && r.dayOfWeek === -1);
-    if (tplAllDays)
-      return {
-        minStaff: tplAllDays.minStaff,
-        requiresNonSupervised: tplAllDays.requiresNonSupervised,
-      };
-  }
-  const fallback = rules.find((r) => r.templateId === null && r.dayOfWeek === -1);
-  if (fallback)
-    return { minStaff: fallback.minStaff, requiresNonSupervised: fallback.requiresNonSupervised };
-  // Default — matches legacy hardcoded MIN_COVERAGE = 2
-  return { minStaff: 2, requiresNonSupervised: false };
-}
-
 // Phase 43 — Conflict-check result shape used by write-path validation & generate-week
 type ConflictKind = "leave" | "absence";
 // Phase 63 D-20 — "vocational_school" added so the absence-conflict path can carry
@@ -288,28 +281,42 @@ interface ShiftConflict {
   absenceId?: string;
 }
 
+/** Result of the single-day check: a blocking conflict and/or the non-blocking half-day hint. */
+interface ShiftDayCheck {
+  conflict: ShiftConflict | null;
+  /** Issue #744 — set when the day carries a half-day leave and no full-day leave. */
+  halfDayHint: HalfDayLeaveHint | null;
+}
+
 /**
- * Check whether an employee has an APPROVED LeaveRequest or non-deleted Absence
- * covering the given date. Returns the first conflict found (leave takes precedence).
+ * Check whether an employee has an effective LeaveRequest or non-deleted Absence covering the
+ * given date. Returns the first blocking conflict found (leave takes precedence). Issue #744: a
+ * half-day leave row does not block - it yields `halfDayHint` instead; a full-day row on the same
+ * date wins (see `shift-leave-rule.ts`).
  */
 async function findShiftConflict(
   prisma: import("@clokr/db").PrismaClient,
   employeeId: string,
   access: AccessContext,
   isoDate: string,
-): Promise<ShiftConflict | null> {
+): Promise<ShiftDayCheck> {
   const day = new Date(isoDate + "T00:00:00Z");
   const scope = employeeScopeFor(access, { employeeId });
 
   // Check effective LeaveRequest first (vacation/sonder) — Phase 100B Plan 13 (A2), contexts/absence
   // facade. Since Issue #446 (D-02) this reads the effective set (APPROVED or
   // CANCELLATION_REQUESTED) — a cancellation-pending leave still blocks the day, just from === to.
-  const [leave] = await getActiveLeaveOverlapping(prisma, scope, day, day);
+  const { blocking: leave, halfDay: halfDayLeave } = splitLeaveForShift(
+    await getActiveLeaveOverlapping(prisma, scope, day, day),
+  );
   if (leave) {
     return {
-      kind: "leave",
-      conflictType: classifyLeaveTypeCode(leave.leaveType.code),
-      leaveRequestId: leave.id,
+      conflict: {
+        kind: "leave",
+        conflictType: classifyLeaveTypeCode(leave.leaveType.code),
+        leaveRequestId: leave.id,
+      },
+      halfDayHint: null,
     };
   }
 
@@ -320,13 +327,19 @@ async function findShiftConflict(
   const [absence] = await getAbsencesOverlapping(prisma, scope, day, day);
   if (absence) {
     return {
-      kind: "absence",
-      conflictType: classifyLeaveTypeCode(absence.type),
-      absenceId: absence.id,
+      conflict: {
+        kind: "absence",
+        conflictType: classifyLeaveTypeCode(absence.type),
+        absenceId: absence.id,
+      },
+      halfDayHint: null,
     };
   }
 
-  return null;
+  return {
+    conflict: null,
+    halfDayHint: halfDayLeave ? halfDayLeaveHint(halfDayLeave.id, formatDateDe(isoDate)) : null,
+  };
 }
 
 /**
@@ -634,7 +647,8 @@ async function assertEmployeeShiftEligible(
   if (sched?.type === "SHIFT_BASED") return null;
   return {
     code: "SHIFT_INVALID_EMPLOYEE_TYPE",
-    message: "Mitarbeiter ist nicht im Schichtsystem (SHIFT_BASED erforderlich).",
+    message:
+      "Mitarbeiter ist nicht im Schichtsystem (Arbeitszeitmodell „Nach Schichtplan“ erforderlich).",
   };
 }
 
@@ -669,10 +683,10 @@ function assertShiftNotPast(iso: string): { code: "SHIFT_PAST_IMMUTABLE"; messag
  * `TenantConfig` here (unchanged). The tenant-level opening-hours column is retired (#563) and
  * nothing mirrors into salons any more — hours are edited per salon only.
  * D-11 preserves every OLD null-return exactly: no TenantConfig row -> null (mirrors the old
- * combined `!cfg?.storeHours` branch — a tenant whose config row does not exist gets no check at
+ * combined tenant-hours branch — a tenant whose config row does not exist gets no check at
  * all, regardless of what its salon's hours say); mode OFF -> null; hours not a real array -> null
  * (the old missing-value branch, now guarding a malformed/absent `openingHours` value instead of a
- * missing `storeHours` one); weekday entry missing -> null; closed-day and STRICT comparisons
+ * missing tenant-level one); weekday entry missing -> null; closed-day and STRICT comparisons
  * unchanged.
  * Returns null if inside or no config; otherwise a 409 payload for soft-warn override.
  * Cross-midnight shifts (end < start) are NOT supported by this check — they always
@@ -939,8 +953,8 @@ async function notifyLeaveDaysAdjusted(
     const bis = formatDateDe(adj.endDate.toISOString().slice(0, 10));
     const message =
       adj.direction === "down"
-        ? `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage — der Schichtplan für diesen Zeitraum steht.`
-        : `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage. Grund: der Schichtplan für diesen Zeitraum steht.`;
+        ? `Dein Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage — der Schichtplan für diesen Zeitraum steht.`
+        : `Dein Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage. Grund: der Schichtplan für diesen Zeitraum steht.`;
 
     const recipients: Array<{ userId: string; link: string }> = [
       { userId: adj.employeeUserId, link: "/leave" },
@@ -1091,9 +1105,31 @@ export async function shiftRoutes(app: FastifyInstance) {
   app.get("/coverage-rules", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
     handler: async (req) => {
-      return app.prisma.coverageRule.findMany({
-        where: { tenantId: req.user.tenantId },
-        orderBy: [{ templateId: "asc" }, { dayOfWeek: "asc" }],
+      // Issue #647 WR-01 — the salon's display fields (name, active flag, inactive salons included)
+      // are salon master data. The endpoint's own guard stays `requireAuth` only (neutrality), so the
+      // fields are attached only for callers who may read salons (`salon:read`) or manage the rules
+      // (`shift-config:manage`, the one consumer is /admin/shifts); everybody else gets `null`.
+      const showSalonFields =
+        (await hasPermission(req, "shift-config:manage:ZUGEWIESEN")) ||
+        (await hasPermission(req, "salon:read:ZUGEWIESEN"));
+      const [rules, salons] = await Promise.all([
+        app.prisma.coverageRule.findMany({
+          where: { tenantId: req.user.tenantId },
+          orderBy: [{ templateId: "asc" }, { dayOfWeek: "asc" }],
+        }),
+        showSalonFields
+          ? listSalons(app.prisma, req.user.tenantId, { includeInactive: true })
+          : Promise.resolve([]),
+      ]);
+      // Issue #647 D-09 — display fields only; the control value is `salonId`, never the name.
+      const salonById = new Map(salons.map((salon) => [salon.id, salon]));
+      return rules.map((rule) => {
+        const salon = rule.salonId === null ? undefined : salonById.get(rule.salonId);
+        return {
+          ...rule,
+          salonName: salon?.name ?? null,
+          salonActive: salon?.isActive ?? null,
+        };
       });
     },
   });
@@ -1111,10 +1147,19 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
         if (!tpl) return reply.code(404).send({ error: "Vorlage nicht gefunden" });
       }
+      // Issue #647 D-06/D-07 — one validator, one 404 for a foreign, unknown or inactive salon;
+      // tenant-wide rules (no salonId) keep today's permission behaviour.
+      let ruleSalonId: string | null = null;
+      if (typeof body.salonId === "string") {
+        const salon = await coverageRuleSalonAdmissible(app, req, body.salonId);
+        if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
+        ruleSalonId = salon.salonId;
+      }
       const rule = await app.prisma.coverageRule.create({
         data: {
           tenantId: req.user.tenantId,
           templateId: body.templateId ?? null,
+          salonId: ruleSalonId,
           dayOfWeek: body.dayOfWeek,
           minStaff: body.minStaff,
           requiresNonSupervised: body.requiresNonSupervised,
@@ -1144,10 +1189,27 @@ export async function shiftRoutes(app: FastifyInstance) {
       });
       if (!existing) return reply.code(404).send({ error: "Bedarfsregel nicht gefunden" });
 
+      // Issue #647 D-13 — a CHANGED template is checked against the tenant like on create: closes a
+      // cross-tenant reference and a foreign-vs-unknown oracle (the T-100-09 gate sees path
+      // parameters only).
+      if (typeof body.templateId === "string" && body.templateId !== existing.templateId) {
+        const tpl = await app.prisma.shiftTemplate.findFirst({
+          where: { id: body.templateId, tenantId: req.user.tenantId },
+        });
+        if (!tpl) return reply.code(404).send({ error: "Vorlage nicht gefunden" });
+      }
+      // Issue #647 D-06 — only a CHANGED salon is validated, so a rule of a salon deactivated later
+      // stays editable while a new assignment must name an active salon.
+      if (typeof body.salonId === "string" && body.salonId !== existing.salonId) {
+        const salon = await coverageRuleSalonAdmissible(app, req, body.salonId);
+        if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
+      }
+
       const updated = await app.prisma.coverageRule.update({
         where: { id },
         data: {
           ...(body.templateId !== undefined ? { templateId: body.templateId ?? null } : {}),
+          ...(body.salonId !== undefined ? { salonId: body.salonId } : {}),
           ...(body.dayOfWeek !== undefined ? { dayOfWeek: body.dayOfWeek } : {}),
           ...(body.minStaff !== undefined ? { minStaff: body.minStaff } : {}),
           ...(body.requiresNonSupervised !== undefined
@@ -1290,11 +1352,19 @@ export async function shiftRoutes(app: FastifyInstance) {
       // Issue #563 (D-15): display data for the week view's closed-day dimming — the ACTIVE salons in
       // the same `shift:read` reach as the shifts. The authoritative check stays
       // `assertWithinStoreHours()` on POST/PUT.
-      const salonOpeningHours = (await listSalons(app.prisma, tenantId, { includeInactive: false }))
+      const activeSalons = await listSalons(app.prisma, tenantId, { includeInactive: false });
+      const salonOpeningHours = activeSalons
         .filter(
           (s) => weekScopeReach.kind === "wholeTenant" || weekScopeReach.salonIds.includes(s.id),
         )
         .map((s) => ({ salonId: s.id, name: s.name, openingHours: s.openingHours }));
+      // Issue #647 (D-03/D-03a): the salon whose coverage rules act on this week, decided in one
+      // place from the same active-salon list (no extra read).
+      const coverageSalonId = coverageSalonInView({
+        chosenSalonId,
+        activeSalonIds: activeSalons.map((s) => s.id),
+        reach: weekScopeReach,
+      });
 
       // Phase 47.3 — Verfügbarkeits-System toggle. When false, the EmployeeAvailability
       // merge passes are skipped (Leave + Absence still apply).
@@ -1381,9 +1451,14 @@ export async function shiftRoutes(app: FastifyInstance) {
             breakOver6hOverride: true,
             breakOver9hOverride: true,
             workSchedules: {
-              where: { validFrom: { lte: new Date() } },
+              // Issue #389: the contract is decided by the DISPLAYED week, not by today. Every
+              // row that started on or before the week's end is loaded (newest first); the
+              // per-day resolution below picks the one valid on each day. Contract changes are
+              // month-first only, so a week holds at most one change; `take: 8` is headroom for
+              // legacy non-month-first rows.
+              where: { validFrom: { lte: sundayForSoll } },
               orderBy: { validFrom: "desc" as const },
-              take: 1,
+              take: 8,
               // Phase 76.11 — per-day hours + monthlyHours included so
               // `calcExpectedMinutesTz` can compute leave/absence minutes for
               // FIXED_WEEKLY / FLEXTIME / MONTHLY_HOURS schedules too. SHIFT_BASED
@@ -1391,6 +1466,7 @@ export async function shiftRoutes(app: FastifyInstance) {
               // every employee (planner UI currently consumes the map only for
               // SHIFT_BASED rows, but downstream consumers may want the rest).
               select: {
+                validFrom: true,
                 type: true,
                 weeklyHours: true,
                 monthlyHours: true,
@@ -1400,6 +1476,8 @@ export async function shiftRoutes(app: FastifyInstance) {
                 // back to the (possibly stale, for pre-Phase-61 rows) {day}Hours
                 // divisor. See debug session soll-ignores-workdays-on-legacy-schedules.md.
                 workDays: true,
+                // Issue #323: the SHIFT_BASED Ø-day divisor of avgWorkMinutesCore.
+                contractWorkDaysPerWeek: true,
                 mondayHours: true,
                 tuesdayHours: true,
                 wednesdayHours: true,
@@ -1433,7 +1511,11 @@ export async function shiftRoutes(app: FastifyInstance) {
         ),
         app.prisma.coverageRule.findMany({
           where: { tenantId },
+          // Issue #647 IN-02 — duplicates of one rung are not rejected on write, so the pick must be
+          // deterministic: the first-created rule wins (id breaks a createdAt tie).
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           select: {
+            salonId: true,
             templateId: true,
             dayOfWeek: true,
             minStaff: true,
@@ -1546,6 +1628,7 @@ export async function shiftRoutes(app: FastifyInstance) {
 
       // Normalize rules to plain numbers (Decimal → number)
       const rules = rulesRaw.map((r) => ({
+        salonId: r.salonId,
         templateId: r.templateId,
         dayOfWeek: r.dayOfWeek,
         minStaff: Number(r.minStaff),
@@ -1565,6 +1648,32 @@ export async function shiftRoutes(app: FastifyInstance) {
       for (let i = 0; i < 7; i++) {
         weekDays.push(cur.toISOString().split("T")[0]);
         cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+
+      // Issue #389 - per person and displayed week, the contract VALID ON EACH DAY decides that
+      // day (validFrom compared by its tenant-local calendar day). A person belongs to the
+      // SHIFT_BASED grid when the contract is SHIFT_BASED on at least one day of the week; the
+      // single `workSchedules[0]` the response carries is then that SHIFT_BASED contract
+      // (otherwise the contract of the last day). `schedulesByDay` keeps the per-day truth for
+      // the Soll computation below.
+      type DaySchedule = (Record<string, unknown> & { validFrom: Date; type: string }) | undefined;
+      const schedulesByDay = new Map<string, DaySchedule[]>();
+      for (const emp of employees) {
+        const all = emp.workSchedules as unknown as Array<NonNullable<DaySchedule>>;
+        const perDay: DaySchedule[] = weekDays.map((iso) =>
+          all.find((ws) => dateStrInTz(ws.validFrom, tenantTz) <= iso),
+        );
+        schedulesByDay.set(emp.id, perDay);
+        const rep =
+          [...perDay].reverse().find((ws) => ws?.type === "SHIFT_BASED") ??
+          [...perDay].reverse().find((ws) => ws !== undefined);
+        (emp as { workSchedules: unknown[] }).workSchedules = rep ? [rep] : [];
+      }
+      // True when the week spans two different contracts for this person (rare: a month-first change).
+      function hasMixedContracts(employeeId: string): boolean {
+        return (
+          new Set(schedulesByDay.get(employeeId)?.map((ws) => ws?.validFrom.getTime())).size > 1
+        );
       }
 
       // Helper: does a [start..end] range cover the given iso day?
@@ -1652,8 +1761,10 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Issue #558 (D-02): under a salon filter the coverage is computed from the filtered shifts and
-      // people. `CoverageRule` has no salon, so its tenant-wide minima are applied per salon view;
-      // per-salon rules are a follow-up (schema change, not part of this phase).
+      // people. Issue #647 (D-03/D-04/D-05): the salon in view is decided by `coverageSalonInView`
+      // (the filter, else the caller's single person-free reach salon (D-03a), else the tenant's only
+      // active salon, else none); the candidate rules are that salon's rules plus the tenant-wide
+      // ones; the ladder is unchanged, a salon rule wins only within a rung. See coverage-rule.ts.
       // Compute coverage per day
       // weekday lookup: iso → 0..6 (Mo=0..So=6) — note JS getUTCDay returns 0=Sun..6=Sat
       function isoToDow(iso: string): number {
@@ -1678,7 +1789,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           new Set(dayShifts.map((s) => s.templateId).filter((t): t is string => !!t)),
         );
         const ruleScopeTemplateId = templateIds.length === 1 ? templateIds[0] : null;
-        const rule = pickRule(rules, ruleScopeTemplateId, dow);
+        const rule = pickCoverageRule(rules, coverageSalonId, ruleScopeTemplateId, dow);
 
         let effectiveStaff = 0;
         let hasSupervisor = false;
@@ -1911,6 +2022,30 @@ export async function shiftRoutes(app: FastifyInstance) {
         );
       }
 
+      // Issue #389: for a person whose week spans two contracts, each day is priced under the
+      // contract valid on it (and claimed, so an overlapping request deducts the day once).
+      function perDayLeaveMinutes(
+        employeeId: string,
+        clip: { start: Date; end: Date },
+        halfDay: boolean,
+      ): number {
+        const from = clip.start.toISOString().slice(0, 10);
+        const to = clip.end.toISOString().slice(0, 10);
+        let total = 0;
+        weekDays.forEach((iso, i) => {
+          if (iso < from || iso > to) return;
+          const daySched = schedulesByDay.get(employeeId)?.[i];
+          if (!daySched) return;
+          const { start, end } = dayRangeUtc(iso, tenantTz);
+          total += calcLeaveAbsenceMinutesTz(daySched, start, end, tenantTz, {
+            halfDay,
+            excludeHolidays: claimSetFor(employeeId),
+          });
+          claimWeekDays(employeeId, start, start);
+        });
+        return total;
+      }
+
       const leaveMinutesByEmp: Record<string, number> = {};
       const absenceMinutesByEmp: Record<string, number> = {};
 
@@ -1927,11 +2062,13 @@ export async function shiftRoutes(app: FastifyInstance) {
         // Phase 104 (D-15): claimSetFor() extends that same excludeHolidays Set with
         // days already claimed by an earlier-processed (sortForSollDedup order)
         // overlapping request, so an overlapping day is deducted exactly once.
-        const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
-          halfDay: Boolean(lr.halfDay),
-          excludeHolidays: claimSetFor(lr.employeeId),
-        });
-        claimWeekDays(lr.employeeId, clip.start, clip.end);
+        const minutes = hasMixedContracts(lr.employeeId)
+          ? perDayLeaveMinutes(lr.employeeId, clip, Boolean(lr.halfDay))
+          : calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
+              halfDay: Boolean(lr.halfDay),
+              excludeHolidays: claimSetFor(lr.employeeId),
+            });
+        if (!hasMixedContracts(lr.employeeId)) claimWeekDays(lr.employeeId, clip.start, clip.end);
         if (minutes <= 0) continue;
         leaveMinutesByEmp[lr.employeeId] = (leaveMinutesByEmp[lr.employeeId] ?? 0) + minutes;
       }
@@ -1949,11 +2086,13 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (!clip) continue;
         // Phase 76.12 — Ø-Methode. Phase 76.32.1 (Wave 4): halfDay threaded through.
         // WR-02 fix: pass excludeHolidays for the same reason as the leave loop above.
-        const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
-          halfDay: Boolean(ab.halfDay),
-          excludeHolidays: claimSetFor(ab.employeeId),
-        });
-        claimWeekDays(ab.employeeId, clip.start, clip.end);
+        const minutes = hasMixedContracts(ab.employeeId)
+          ? perDayLeaveMinutes(ab.employeeId, clip, Boolean(ab.halfDay))
+          : calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
+              halfDay: Boolean(ab.halfDay),
+              excludeHolidays: claimSetFor(ab.employeeId),
+            });
+        if (!hasMixedContracts(ab.employeeId)) claimWeekDays(ab.employeeId, clip.start, clip.end);
         if (minutes <= 0) continue;
         absenceMinutesByEmp[ab.employeeId] = (absenceMinutesByEmp[ab.employeeId] ?? 0) + minutes;
       }
@@ -1985,13 +2124,16 @@ export async function shiftRoutes(app: FastifyInstance) {
         // instead of raw UTC sunday to prevent iterateDaysInTz from counting 8
         // days in UTC+ timezones (Europe/Berlin CEST inflated 40h→48h).
         // D-08: pass empHolidaySet so Feiertage are excluded from workdaysInRange.
-        const baseSoll = calcExpectedMinutesTz(
-          sched,
-          monday,
-          sundayForSoll,
-          tenantTz,
-          empHolidaySet,
-        );
+        // Issue #389: a week spanning two contracts sums the Soll of each day under the contract
+        // valid on it; the same Arbeitszeitkonto function prices every day.
+        const baseSoll = hasMixedContracts(emp.id)
+          ? weekDays.reduce((sum, iso, i) => {
+              const daySched = schedulesByDay.get(emp.id)?.[i];
+              if (!daySched) return sum;
+              const { start, end } = dayRangeUtc(iso, tenantTz);
+              return sum + calcExpectedMinutesTz(daySched, start, end, tenantTz, empHolidaySet);
+            }, 0)
+          : calcExpectedMinutesTz(sched, monday, sundayForSoll, tenantTz, empHolidaySet);
         const leaveMin = leaveMinutesByEmp[emp.id] ?? 0;
         const absenceMin = absenceMinutesByEmp[emp.id] ?? 0;
         // D-01: vocSchoolMin removed — bsH is already on assignedH (Ist) side in the frontend.
@@ -2070,29 +2212,38 @@ export async function shiftRoutes(app: FastifyInstance) {
         return reply.code(410).send({ error: "Kein Mitarbeiter-Profil verknüpft" });
       }
 
-      // Verify caller is SHIFT_BASED (latest active WorkSchedule)
+      // Week math — mirror GET /week
+      const { date } = req.query as { date?: string };
+      const refDate = date ? new Date(date + "T00:00:00Z") : new Date();
+
+      // Verify caller is SHIFT_BASED on at least one day of the DISPLAYED week (Issue #389; the
+      // contract valid on each day decides, validFrom judged by its tenant-local calendar day).
+      const myTz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const myWeek = weekRangeUtc(refDate, myTz);
       const me = await app.prisma.employee.findFirst({
         where: { id: employeeId, tenantId: req.user.tenantId },
         select: {
           id: true,
           workSchedules: {
-            where: { validFrom: { lte: new Date() } },
+            where: { validFrom: { lte: myWeek.end } },
             orderBy: { validFrom: "desc" as const },
-            take: 1,
-            select: { type: true },
+            take: 8, // month-first changes: at most one per week, headroom for legacy rows
+            select: { type: true, validFrom: true },
           },
         },
       });
       if (!me) {
         return reply.code(410).send({ error: "Mitarbeiter nicht gefunden" });
       }
-      if (me.workSchedules[0]?.type !== "SHIFT_BASED") {
+      const shiftBasedInWeek = myWeek.days.some(
+        (iso) =>
+          me.workSchedules.find((ws) => dateStrInTz(ws.validFrom, myTz) <= iso)?.type ===
+          "SHIFT_BASED",
+      );
+      if (!shiftBasedInWeek) {
         return reply.code(410).send({ error: "Nicht im Schichtsystem" });
       }
 
-      // Week math — mirror GET /week
-      const { date } = req.query as { date?: string };
-      const refDate = date ? new Date(date + "T00:00:00Z") : new Date();
       const dow = refDate.getUTCDay();
       const mondayOffset = dow === 0 ? -6 : 1 - dow;
       const monday = new Date(refDate);
@@ -2248,7 +2399,10 @@ export async function shiftRoutes(app: FastifyInstance) {
           // narrowing, byte-identical to today.
           ...(shiftRangeScopeReach ? shiftScopeWhere(shiftRangeScopeReach) : {}),
         },
-        select: { date: true, startTime: true, endTime: true },
+        // Issue #597 (Phase 851): the salon of each shift for „Mein Dienstplan“ (additive field; the
+        // shift's own salon, never the Stammsalon - a Springer sees where each shift takes place). The
+        // web names it from the caller's own salon context (GET /me/context).
+        select: { date: true, startTime: true, endTime: true, salonId: true },
         orderBy: [{ date: "asc" }, { startTime: "asc" }],
       });
 
@@ -2272,6 +2426,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           endTime: s.endTime,
           durationMin: brutto, // unchanged — brutto for TeamCalendar weekly-overview consumers
           durationMinNetto: Math.max(0, brutto - breakMin), // v1.8.9: netto for saldo Soll comparison
+          salonId: s.salonId,
         };
       });
     },
@@ -2434,7 +2589,12 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Conflict-check unless force=true
-      const conflict = await findShiftConflict(app.prisma, body.employeeId, access, body.date);
+      const { conflict, halfDayHint } = await findShiftConflict(
+        app.prisma,
+        body.employeeId,
+        access,
+        body.date,
+      );
       if (conflict && !force) {
         const isLeave = conflict.kind === "leave";
         return reply.code(409).send({
@@ -2634,7 +2794,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         salon.id,
       );
 
-      return reply.code(201).send(shift);
+      return reply.code(201).send(halfDayHint ? { ...shift, hint: halfDayHint } : shift);
     },
   });
 
@@ -2830,7 +2990,12 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
-      const conflict = await findShiftConflict(app.prisma, effEmployeeId, access, effDateIso);
+      const { conflict, halfDayHint } = await findShiftConflict(
+        app.prisma,
+        effEmployeeId,
+        access,
+        effDateIso,
+      );
       if (conflict && !force) {
         const isLeave = conflict.kind === "leave";
         return reply.code(409).send({
@@ -3045,7 +3210,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         Array.from(affectedPairs.values()).map((pair) => ({ ...pair, salonId: updated.salonId })),
       );
 
-      return updated;
+      return halfDayHint ? { ...updated, hint: halfDayHint } : updated;
     },
   });
 
@@ -3280,7 +3445,10 @@ export async function shiftRoutes(app: FastifyInstance) {
 
           // Leave on this day?
           const hasLeave = leaveRequests.some(
-            (lr) => lr.employeeId === emp.id && rangeCovers(lr.startDate, lr.endDate, iso),
+            (lr) =>
+              leaveBlocksShift(lr) && // Issue #744 — a half-day row leaves the other half plannable
+              lr.employeeId === emp.id &&
+              rangeCovers(lr.startDate, lr.endDate, iso),
           );
           if (hasLeave) {
             skip.push({ employeeId: emp.id, date: iso, reason: "leave" });
@@ -3682,7 +3850,9 @@ export async function shiftRoutes(app: FastifyInstance) {
         // Leave on target date?
         const hasLeave = leaveRequests.some(
           (lr) =>
-            lr.employeeId === src.employeeId && rangeCovers(lr.startDate, lr.endDate, targetIso),
+            leaveBlocksShift(lr) && // Issue #744 — a half-day row leaves the other half plannable
+            lr.employeeId === src.employeeId &&
+            rangeCovers(lr.startDate, lr.endDate, targetIso),
         );
         if (hasLeave) {
           skip.push({ employeeId: src.employeeId, date: targetIso, reason: "leave" });

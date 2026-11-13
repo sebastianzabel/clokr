@@ -85,7 +85,7 @@ async function createMonthlyHoursEmployee(
   const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const email = `${label}-${suffix}@test.de`;
   const user = await app.prisma.user.create({
-    data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+    data: { email, passwordHash, isActive: true },
   });
   const employee = await app.prisma.employee.create({
     data: {
@@ -137,7 +137,7 @@ async function createFixedEmployee(
   const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const email = `${label}-${suffix}@test.de`;
   const user = await app.prisma.user.create({
-    data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+    data: { email, passwordHash, isActive: true },
   });
   const employee = await app.prisma.employee.create({
     data: {

@@ -115,7 +115,6 @@ describe("seed role assignments (#539, D-09)", () => {
         data: {
           email: `seed539-${label}-${s}@example.invalid`,
           passwordHash: "x",
-          role,
           isActive: true,
         },
       });

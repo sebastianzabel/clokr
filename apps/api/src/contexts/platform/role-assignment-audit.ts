@@ -9,14 +9,12 @@
  * the remaining routes that audit `req.user.sub` directly are tracked in #333.
  *
  * `auditRoleAssignmentChange` (Phase 75b Plan 11) writes the rows of one assignment change in
- * order and puts the compat-column change on the last of them (D-29); the entry builders give the
- * taken-over legacy role (the takeover script of #539), a created and a removed row their exact
- * values.
+ * order, nothing else (Issue #641: the stored assignments are the only place a role lives); the
+ * entry builders give a created and a removed row their exact values.
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { accessContextFromRequest } from "./access-context";
-import { requestAuditFields } from "./request-audit-fields";
 import type { NormalizedRoleAssignmentScope } from "./role-assignment";
 
 /** The fields of a stored role assignment that its audit value records. */
@@ -78,14 +76,7 @@ export async function auditRoleAssignment(
   });
 }
 
-// ── Assignment changes with a compat-role write-back (Phase 75b Plan 11, D-26/D-29) ────────────
-
-/**
- * The `reason` of the CREATE audit row of a legacy-role assignment stored on behalf of a user (the
- * text the 75b data migration wrote). Since #539 the only writer is the takeover script
- * `scripts/backfill-539-role-assignments.ts`; no request path stores a role implicitly any more.
- */
-export const LEGACY_ROLE_MATERIALIZATION_REASON = "Übernahme der Alt-Rolle (#75)";
+// ── Assignment changes (Phase 75b Plan 11, D-26) ────────────────────────────────────────────────
 
 /** One pending RoleAssignment audit row of an assignment change, not yet written. */
 export interface RoleAssignmentAuditEntry {
@@ -95,32 +86,8 @@ export interface RoleAssignmentAuditEntry {
   newValue?: object;
 }
 
-/** A stored assignment as a write-half function of `compat-role.ts` returns it. */
+/** A stored assignment as a write-half function of `system-role-assignment.ts` returns it. */
 type WrittenAssignment = RoleAssignmentAuditSource & { id: string; roleName: string };
-
-/**
- * The CREATE row of a legacy role stored by the takeover script `scripts/backfill-539-role-
- * assignments.ts` (#539) — the D-12 value plus `origin: "SYSTEM"` (the row was not requested, the
- * operator stored what the `User.role` column named), the reason and the legacy role it came from,
- * the same one RoleAssignment audit shape the 75b data migration records (D-05). The name is kept
- * from #75 D-26, whose request-path caller was deleted by #539 D-11.
- */
-export function materializedAssignmentAuditEntry(materialized: {
-  assignment: WrittenAssignment;
-  legacyRole: string;
-}): RoleAssignmentAuditEntry {
-  const { assignment, legacyRole } = materialized;
-  return {
-    action: "CREATE",
-    entityId: assignment.id,
-    newValue: {
-      ...roleAssignmentAuditValue(assignment, assignment.roleName),
-      origin: "SYSTEM",
-      reason: LEGACY_ROLE_MATERIALIZATION_REASON,
-      legacyRole,
-    },
-  };
-}
 
 /** The CREATE row of a created assignment, in the D-12 shape. */
 export function createdAssignmentAuditEntry(row: WrittenAssignment): RoleAssignmentAuditEntry {
@@ -141,12 +108,9 @@ export function removedAssignmentAuditEntry(row: WrittenAssignment): RoleAssignm
 }
 
 /**
- * Writes the audit rows of one assignment change of `userId`, in order, on `tx` — and records the
- * compat-column change the change caused (D-29): `compatRole: { from, to }` is merged into the
- * `newValue` of the LAST row, so the column is never rewritten without an audit trace and without
- * a second row for the same change. When the change wrote no assignment row but still rewrote the
- * column (a column that disagreed with its stored rows, e.g. after a 74b-era assignment write that
- * did not sync it), one UPDATE row on entity `User` records `{ compatRole }` instead.
+ * Writes the audit rows of one assignment change of `userId`, in order, on `tx`. The rows are the
+ * whole trace of the change: the stored assignments are the only place a role lives, so no
+ * derived value rides on them and no row is written for any other entity.
  */
 export async function auditRoleAssignmentChange(
   app: FastifyInstance,
@@ -155,29 +119,14 @@ export async function auditRoleAssignmentChange(
   change: {
     userId: string;
     entries: RoleAssignmentAuditEntry[];
-    compatRole: { from: string; to: string } | null;
   },
 ): Promise<void> {
-  const { entries, compatRole } = change;
-  if (compatRole !== null && entries.length === 0) {
-    await app.audit({
-      action: "UPDATE",
-      entity: "User",
-      entityId: change.userId,
-      ...requestAuditFields(req, { compatRole }),
-      tx,
-    });
-    return;
-  }
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    const isLast = i === entries.length - 1;
+  for (const entry of change.entries) {
     await auditRoleAssignment(app, req, {
       action: entry.action,
       entityId: entry.entityId,
       oldValue: entry.oldValue,
-      newValue:
-        isLast && compatRole !== null ? { ...(entry.newValue ?? {}), compatRole } : entry.newValue,
+      newValue: entry.newValue,
       tx,
     });
   }

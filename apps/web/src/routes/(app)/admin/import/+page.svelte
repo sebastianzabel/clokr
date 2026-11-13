@@ -1,16 +1,33 @@
+<!--
+  Verwalten › Daten › CSV-Import (Issue #854, D-854-10): an operation page, not a settings page. The mode
+  choice (Personen · Zeiten) offers each mode only with its own import permission; the file or the pasted
+  text goes to POST /imports/employees or /imports/time-entries unchanged. The result is a KpiStrip plus a
+  DataTable of the refused rows. Every cell of the preview and of the result is rendered as TEXT only
+  (no `{@html}`, T-854-65): a hostile CSV cell never becomes markup.
+-->
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
-  import ToolPage from "$lib/components/admin/ToolPage.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import { authStore } from "$stores/auth";
+  import { toasts } from "$stores/toast";
+  import { hasPermission } from "$lib/permissions";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import KpiStrip from "$components/ui/KpiStrip.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
 
   type ImportMode = "employees" | "time-entries";
 
-  interface ImportResult {
+  // A type alias (not an interface) so a result row satisfies the DataTable's Record row type.
+  type ImportResult = {
     row: number;
     status: "ok" | "error";
     email?: string;
     error?: string;
-  }
+  };
 
   interface ImportResponse {
     total: number;
@@ -22,25 +39,41 @@
     details: ImportResult[];
   }
 
-  let mode: ImportMode = $state("employees");
+  /** The preview shows this many rows at most; the import itself always takes the whole text. */
+  const PREVIEW_LIMIT = 50;
+
+  const canEmployees = $derived(hasPermission($authStore.user, "employee:import:ZUGEWIESEN"));
+  const canTimeEntries = $derived(hasPermission($authStore.user, "time-entry:import:ZUGEWIESEN"));
+  const modeOptions = $derived([
+    ...(canEmployees ? [{ value: "employees", label: "Personen" }] : []),
+    ...(canTimeEntries ? [{ value: "time-entries", label: "Zeiten" }] : []),
+  ]);
+
+  let chosenMode: ImportMode = $state("employees");
+  // The chosen mode, or the first one the user may use when the choice is not (or no longer) offered.
+  const mode = $derived<ImportMode>(
+    modeOptions.some((o) => o.value === chosenMode)
+      ? chosenMode
+      : ((modeOptions[0]?.value as ImportMode | undefined) ?? chosenMode),
+  );
+
   let csvText = $state("");
   let loading = $state(false);
-  let importError = $state("");
-  let importResponse: ImportResponse | null = $state(null);
+  let csvError = $state("");
+  let importResponse = $state<ImportResponse | null>(null);
   let preview: Record<string, string>[] = $state([]);
   let showPreview = $state(false);
+  let fileInput: HTMLInputElement | undefined = $state();
 
-  const exampleEmployees = `email;firstName;lastName;employeeNumber;hireDate;role;weeklyHours;password
-max@firma.de;Max;Mustermann;1001;01.01.2024;EMPLOYEE;40;Passwort1!
-anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
+  const exampleEmployees = `email;firstName;lastName;employeeNumber;hireDate;role;weeklyHours;password;salonId
+max@firma.de;Max;Mustermann;1001;01.01.2024;EMPLOYEE;40;Passwort1!;<Salon-ID>
+anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;;<Salon-ID>`;
 
   const exampleTimeEntries = `employeeNumber;date;startTime;endTime;breakMinutes;note
 1001;01.03.2024;08:00;16:30;30;Normaler Arbeitstag
 1001;02.03.2024;09:00;17:00;45;Meeting-Tag`;
 
-  let exampleText = $derived(mode === "employees" ? exampleEmployees : exampleTimeEntries);
-
-  const importStep = $derived(importResponse ? 2 : showPreview ? 1 : 0);
+  const exampleText = $derived(mode === "employees" ? exampleEmployees : exampleTimeEntries);
 
   function parseCsvLocal(text: string): Record<string, string>[] {
     const lines = text.trim().split(/\r?\n/);
@@ -61,15 +94,15 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
   }
 
   function handlePreview() {
-    importError = "";
+    csvError = "";
     importResponse = null;
     if (!csvText.trim()) {
-      importError = "Bitte CSV-Daten eingeben oder eine Datei hochladen.";
+      csvError = "Bitte CSV-Daten eingeben oder eine Datei laden.";
       return;
     }
     const rows = parseCsvLocal(csvText);
     if (rows.length === 0) {
-      importError = "Keine Datenzeilen gefunden. Mindestens Header + 1 Zeile erforderlich.";
+      csvError = "Keine Datenzeilen gefunden. Mindestens Kopfzeile und eine Zeile sind nötig.";
       return;
     }
     preview = rows;
@@ -77,15 +110,28 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
   }
 
   async function handleImport() {
-    importError = "";
+    csvError = "";
     importResponse = null;
+    if (!csvText.trim()) {
+      csvError = "Bitte CSV-Daten eingeben oder eine Datei laden.";
+      return;
+    }
     loading = true;
     try {
       const res = await api.post<ImportResponse>(`/imports/${mode}`, { csv: csvText });
       importResponse = res;
       showPreview = false;
+      if (res.imported === 0) {
+        toasts.error("Es wurde keine Zeile übernommen. Prüfe die abgelehnten Zeilen unten.");
+      } else if (res.errors > 0) {
+        toasts.success(
+          `${res.imported} von ${res.total} Zeilen übernommen, ${res.errors} abgelehnt.`,
+        );
+      } else {
+        toasts.success(`${res.imported} Zeilen übernommen.`);
+      }
     } catch (e: unknown) {
-      importError = e instanceof Error ? e.message : "Fehler beim Import";
+      toasts.error(e instanceof Error ? e.message : "Der Import ist fehlgeschlagen.");
     } finally {
       loading = false;
     }
@@ -100,9 +146,11 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
       csvText = reader.result as string;
       showPreview = false;
       importResponse = null;
-      importError = "";
+      csvError = "";
     };
     reader.readAsText(file);
+    // Allow loading the same file twice in a row.
+    input.value = "";
   }
 
   function reset() {
@@ -110,294 +158,257 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
     preview = [];
     showPreview = false;
     importResponse = null;
-    importError = "";
+    csvError = "";
   }
 
-  function switchMode(newMode: ImportMode) {
-    mode = newMode;
+  function switchMode(value: string) {
+    chosenMode = value as ImportMode;
     reset();
   }
+
+  const previewColumns = $derived<DataTableColumn[]>([
+    { key: "__row", label: "Zeile", primary: true },
+    ...Object.keys(preview[0] ?? {}).map((key) => ({ key, label: key })),
+  ]);
+  const previewRows = $derived(
+    preview.slice(0, PREVIEW_LIMIT).map((row, i) => ({ ...row, __row: String(i + 1) })),
+  );
+
+  const refusedRows = $derived(importResponse?.details.filter((d) => d.status === "error") ?? []);
+  const resultColumns = $derived<DataTableColumn[]>([
+    { key: "row", label: "Zeile", primary: true, width: "6rem" },
+    ...(mode === "employees" ? [{ key: "email", label: "E-Mail" }] : []),
+    { key: "error", label: "Grund" },
+  ]);
+  const resultItems = $derived([
+    { label: "Zeilen gesamt", value: importResponse?.total ?? 0 },
+    { label: "Übernommen", value: importResponse?.imported ?? 0 },
+    { label: "Abgelehnt", value: importResponse?.errors ?? 0 },
+  ]);
 </script>
 
 <svelte:head>
-  <title>CSV Import – Clokr</title>
+  <title>{pageLabel("/admin/import")} – Clokr</title>
 </svelte:head>
 
-<ToolPage
-  eyebrow="Daten"
-  title="CSV Import"
-  sub="Mitarbeiter und Zeiteinträge importieren"
-  steps={["Datei wählen", "Vorschau", "Übernehmen"]}
-  currentStep={importStep}
-  animate
->
-  {#snippet form()}
-    <!-- Mode Toggle -->
-    <div class="view-tabs mode-tabs">
+<div data-testid="admin-import-page" style="display: contents;">
+  <PageHead
+    title={pageLabel("/admin/import")}
+    sub="Hier übernimmst du Personen oder Zeiten aus einer CSV-Datei."
+  />
+
+  {#if modeOptions.length > 1}
+    <div class="import-mode">
+      <span class="import-mode-label">Was importierst du?</span>
+      <SegmentedControl
+        options={modeOptions}
+        value={mode}
+        name="import-mode"
+        ariaLabel="Was importierst du?"
+        onchange={switchMode}
+      />
+    </div>
+  {/if}
+
+  <section class="settings-group" aria-labelledby="import-csv-title">
+    <h2 class="settings-group-title" id="import-csv-title">CSV-Daten</h2>
+    <p class="settings-group-desc">Wähle eine Datei oder füge den Inhalt unten ein.</p>
+
+    <div class="import-actions">
       <button
-        class="view-tab"
-        class:view-tab--active={mode === "employees"}
-        onclick={() => switchMode("employees")}
+        type="button"
+        class="btn btn-outline"
+        onclick={() => fileInput?.click()}
+        disabled={loading}
       >
-        Mitarbeiter
+        CSV-Datei laden
       </button>
-      <button
-        class="view-tab"
-        class:view-tab--active={mode === "time-entries"}
-        onclick={() => switchMode("time-entries")}
-      >
-        Zeiteinträge
-      </button>
+      <input
+        bind:this={fileInput}
+        type="file"
+        accept=".csv,.txt"
+        onchange={handleFileUpload}
+        hidden
+        tabindex="-1"
+        data-testid="import-file"
+      />
+      {#if csvText}
+        <button type="button" class="btn btn-ghost" onclick={reset} disabled={loading}>
+          Leeren
+        </button>
+      {/if}
     </div>
 
-    {#if importError}
-      <div class="alert alert-error error-banner" role="alert">
-        <span>&#x26A0;</span><span>{importError}</span>
-      </div>
-    {/if}
-
-    <!-- CSV Input -->
-    <Section title="CSV-Daten" sub="Datei laden oder Inhalt einfügen">
-      {#snippet actions()}
-        <label class="btn btn-ghost sm file-label">
-          Datei laden
-          <input
-            type="file"
-            accept=".csv,.txt"
-            onchange={handleFileUpload}
-            class="file-input-hidden"
-          />
-        </label>
-        {#if csvText}
-          <button class="btn btn-ghost sm" onclick={reset}>Leeren</button>
-        {/if}
-      {/snippet}
-
-      <div class="form-group">
-        <label for="csv-input" class="form-label">CSV-Inhalt</label>
+    <FormField label="CSV-Inhalt" required error={csvError}>
+      {#snippet field({ id, describedBy, invalid })}
         <textarea
-          id="csv-input"
+          {id}
           class="form-input csv-textarea"
           bind:value={csvText}
-          placeholder="CSV hier einfügen oder Datei hochladen..."
+          placeholder="CSV hier einfügen oder Datei laden…"
           rows="10"
+          aria-describedby={describedBy}
+          aria-invalid={invalid ? "true" : undefined}
         ></textarea>
-      </div>
-
-      <details class="example-hint">
-        <summary class="example-summary"> Beispielformat anzeigen </summary>
-        <pre class="example-pre">{exampleText}</pre>
-      </details>
-
-      {#snippet footer()}
-        <span class="foot-meta">
-          {csvText.trim() ? "Bereit für Vorschau oder Import." : "Noch keine Daten geladen."}
-        </span>
-        <span class="spacer"></span>
-        <button
-          class="btn btn-outline sm"
-          onclick={handlePreview}
-          disabled={!csvText.trim() || loading}
-        >
-          Vorschau
-        </button>
-        <button
-          class="btn btn-primary sm"
-          onclick={handleImport}
-          disabled={!csvText.trim() || loading}
-        >
-          {#if loading}
-            Importiere…
-          {:else}
-            Importieren
-          {/if}
-        </button>
       {/snippet}
-    </Section>
+    </FormField>
 
-    <!-- Preview Table -->
-    {#if showPreview && preview.length > 0}
-      <Section
-        title="Vorschau"
-        sub={`${preview.length} Zeile${preview.length === 1 ? "" : "n"} erkannt`}
+    <details class="example-hint">
+      <summary class="example-summary">Beispielformat anzeigen</summary>
+      <pre class="example-pre">{exampleText}</pre>
+      {#if mode === "employees"}
+        <p class="example-note">
+          Die Spalte „salonId“ (Stammsalon) enthält die ID des Salons. Bei mehreren aktiven Salons
+          ist sie in jeder Zeile nötig; bei genau einem aktiven Salon darf sie leer bleiben.
+        </p>
+      {/if}
+    </details>
+
+    <div class="import-actions">
+      <button
+        type="button"
+        class="btn btn-outline"
+        onclick={handlePreview}
+        disabled={!csvText.trim() || loading}
       >
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                {#each Object.keys(preview[0]) as col (col)}
-                  <th>{col}</th>
-                {/each}
-              </tr>
-            </thead>
-            <tbody>
-              {#each preview as row, i (i)}
-                <tr>
-                  <td class="row-num">{i + 1}</td>
-                  {#each Object.values(row) as val, j (j)}
-                    <td class="cell-data">{val}</td>
-                  {/each}
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </Section>
-    {/if}
-  {/snippet}
+        Vorschau
+      </button>
+      <button
+        type="button"
+        class="btn btn-primary"
+        onclick={handleImport}
+        disabled={!csvText.trim() || loading}
+        data-testid="import-submit"
+      >
+        {#if loading}<Spinner size={14} label="Import läuft" />{/if}
+        Importieren
+      </button>
+    </div>
+  </section>
 
-  {#snippet result()}
-    {#if importResponse}
-      <Section title="Import-Ergebnis" sub="Zeilenweise Auswertung">
-        <div class="result-summary">
-          <span class="badge badge-gray">{importResponse.total} Gesamt</span>
-          <span class="badge badge-green">{importResponse.imported} Importiert</span>
-          {#if importResponse.errors > 0}
-            <span class="badge badge-red">{importResponse.errors} Fehler</span>
-          {/if}
-        </div>
+  {#if showPreview && preview.length > 0}
+    <section class="settings-group" aria-labelledby="import-preview-title">
+      <h2 class="settings-group-title" id="import-preview-title">Vorschau</h2>
+      <p class="settings-group-desc">
+        {preview.length}
+        {preview.length === 1 ? "Zeile" : "Zeilen"} erkannt. Noch ist nichts übernommen.
+      </p>
+      {#if preview.length > PREVIEW_LIMIT}
+        <Note tone="info">
+          Die Vorschau zeigt die ersten {PREVIEW_LIMIT} Zeilen. Beim Import werden alle Zeilen übernommen.
+        </Note>
+      {/if}
+      <DataTable
+        columns={previewColumns}
+        rows={previewRows}
+        rowKey={(row) => row.__row}
+        caption="Vorschau der erkannten CSV-Zeilen"
+      />
+    </section>
+  {/if}
 
-        {#if importResponse.warnings && importResponse.warnings.length > 0}
-          <div class="callout warnings-callout" role="status">
-            <span class="ico">&#x26A0;</span>
-            <div>
-              {#each importResponse.warnings as warning (warning)}
-                <p>{warning}</p>
-              {/each}
-            </div>
-          </div>
-        {/if}
+  {#if importResponse}
+    <section
+      class="settings-group"
+      aria-labelledby="import-result-title"
+      data-testid="import-result"
+    >
+      <h2 class="settings-group-title" id="import-result-title">Ergebnis</h2>
+      <KpiStrip items={resultItems} ariaLabel="Ergebnis des Imports" />
 
-        {#if importResponse.details.length > 0}
-          <div class="table-wrapper result-table">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Zeile</th>
-                  <th>Status</th>
-                  {#if mode === "employees"}
-                    <th>E-Mail</th>
-                  {/if}
-                  <th>Details</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each importResponse.details as detail (detail.row)}
-                  <tr>
-                    <td class="cell-data">{detail.row}</td>
-                    <td>
-                      <span class="badge {detail.status === 'ok' ? 'badge-green' : 'badge-red'}">
-                        {detail.status === "ok" ? "OK" : "Fehler"}
-                      </span>
-                    </td>
-                    {#if mode === "employees"}
-                      <td class="cell-data">{detail.email ?? "–"}</td>
-                    {/if}
-                    <td class="cell-detail">
-                      {detail.error ?? "–"}
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
-      </Section>
-    {/if}
-  {/snippet}
-</ToolPage>
+      {#if importResponse.warnings && importResponse.warnings.length > 0}
+        <Note tone="warn">
+          {#each importResponse.warnings as warning (warning)}
+            <span class="import-warning">{warning}</span>
+          {/each}
+        </Note>
+      {/if}
+
+      {#if refusedRows.length > 0}
+        <DataTable
+          columns={resultColumns}
+          rows={refusedRows}
+          rowKey={(row) => row.row}
+          caption="Abgelehnte Zeilen mit dem Grund"
+        >
+          {#snippet cell(row, column)}
+            {#if column.key === "row"}
+              {row.row}
+            {:else if column.key === "email"}
+              {row.email ?? "–"}
+            {:else}
+              <span class="import-reason">{row.error ?? "–"}</span>
+            {/if}
+          {/snippet}
+        </DataTable>
+      {:else}
+        <Note tone="ok">Alle Zeilen wurden übernommen.</Note>
+      {/if}
+    </section>
+  {/if}
+</div>
 
 <style>
-  .mode-tabs {
-    margin-bottom: 1.5rem;
+  .import-mode {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s-1);
+    margin-bottom: var(--s-6);
   }
 
-  .error-banner {
-    margin-bottom: 1rem;
+  .import-mode-label {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text-2);
   }
 
-  .file-label {
-    cursor: pointer;
-  }
-
-  .file-input-hidden {
-    display: none;
-  }
-
-  .example-hint {
-    margin-top: 0.75rem;
+  .import-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
   }
 
   .csv-textarea {
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
+    font-family: var(--font-code);
+    font-size: var(--fs-sm);
     resize: vertical;
     min-height: 120px;
+    width: 100%;
   }
 
   .example-summary {
-    color: var(--text-muted);
-    font-size: 0.8125rem;
+    color: var(--text-2);
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
 
+  .example-note {
+    margin: var(--s-2) 0 0;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+
   .example-pre {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    background-color: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 0.75rem;
+    font-family: var(--font-code);
+    font-size: var(--fs-sm);
+    background-color: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    padding: var(--s-3);
     overflow-x: auto;
     white-space: pre;
-    margin-top: 0.5rem;
-    color: var(--text-muted);
+    margin: var(--s-2) 0 0;
+    color: var(--text-2);
   }
 
-  .foot-meta {
-    color: var(--text-muted);
-    font-size: 12.5px;
+  .import-warning {
+    display: block;
   }
 
-  .spacer {
-    flex: 1;
-  }
-
-  .result-summary {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .result-table {
-    margin-top: 1rem;
-  }
-
-  .warnings-callout {
-    margin-top: 0.75rem;
-  }
-
-  .warnings-callout p {
-    margin: 0;
-  }
-
-  .warnings-callout p + p {
-    margin-top: 0.25rem;
-  }
-
-  .row-num {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-  }
-
-  .cell-data {
-    font-size: 0.875rem;
-    color: var(--text);
-  }
-
-  .cell-detail {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
+  /* A refusal reason can be long; in the table it wraps instead of widening the scroll area. */
+  .import-reason {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 </style>

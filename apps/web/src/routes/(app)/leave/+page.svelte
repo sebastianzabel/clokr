@@ -1,16 +1,33 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import { onMount, tick, untrack } from "svelte";
   import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
+  import { salonContext } from "$stores/salon-context";
   import Pagination from "$components/ui/Pagination.svelte";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
+  import { isEffectiveLeaveStatus } from "$lib/leave/effective-leave-statuses";
   import Card from "$components/ui/Card.svelte";
-  import KPIStat from "$components/ui/KPIStat.svelte";
-  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-06
+  import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import { matchesSearch } from "$lib/table/search";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
+  import LeaveLimitNotice from "$lib/components/leave/LeaveLimitNotice.svelte";
+  import LeaveLegend from "$lib/components/leave/LeaveLegend.svelte"; // Issue #840 (D-840-10)
+  import LeaveToolbar from "$lib/components/leave/LeaveToolbar.svelte"; // Issue #840 (D-840-13, E-01)
+  import LeavePlanningPanel from "$lib/components/leave/LeavePlanningPanel.svelte"; // Issue #840 (D-840-16)
+  import LeavePlanControls from "$lib/components/leave/LeavePlanControls.svelte"; // Issue #840 (G-6)
+  import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte"; // Issue #840 (E-05)
+  import AbsenceList from "$lib/components/leave/timeline/AbsenceList.svelte"; // Issue #840 (D-840-11)
+  import { CALENDAR_LEGEND_STYLES, legendFrom } from "$lib/leave/leave-colors";
+  import { warningSentences } from "$lib/leave-limits/sentences";
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // Phase 303-03 (#265's pattern)
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
   // modal, its balance/preview/overlap fetches, and its collision-confirm flow.
@@ -37,6 +54,44 @@
   } from "$lib/leave/vacation-summary";
   import { resolveChipVisual, isDrawnInCalendar } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303, Issue #446 (D-04)
   import { leaveDaysLabel, calendarDaysUnit } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19: day figures with a decimal comma, never a raw float
+  import {
+    calendarDayLoad,
+    calendarRangeQuery,
+    calendarToTimeline,
+    dayColumns,
+    hasMixedWeek,
+    periodOf,
+    shiftPeriod,
+    weekLoad,
+    workdaySet,
+    werktageBasis,
+    type CalendarRangeAnswer,
+    type CalendarSalon,
+    type TimelinePerson,
+    type Zoom,
+  } from "$lib/leave/timeline-model"; // Issue #840 (D-840-07)
+  import {
+    myLeaveSearch,
+    parseMyLeaveState,
+    type MyLeaveState,
+    type MyLeaveTab,
+  } from "$lib/leave/area-tabs"; // Issue #840 (D-840-01/02)
+  import { pageOfRequest } from "$lib/leave/team-leave-model"; // Issue #840 (E-06)
+  import { closedDaysFor } from "$lib/shifts/closed-days"; // Issue #563 (D-03), #840 (D-840-14)
+  import { teamSalonViewSalon } from "$lib/dashboard/team-view"; // Issue #82/#558, #840 (D-840-16)
+  import { deepLinkSalon } from "$lib/leave-plan/deep-link"; // Issue #835 (WR-07)
+
+  // The types the own calendar can paint, in legend order (#840, D-840-10). The legend names only
+  // the ones present in the month in view (`calLegend` below).
+  const CALENDAR_LEGEND_TYPE_CODES = [
+    "VACATION",
+    "OVERTIME_COMP",
+    "SICK",
+    "SICK_CHILD",
+    "SPECIAL",
+    "EDUCATION",
+  ];
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -106,24 +161,29 @@
   // into the shared `LeaveRequestForm.svelte`. The page keeps only what opens it and what
   // reloads after it saves.
   let showForm = $state(false);
+  // Issue #836: sentences of the limit warnings returned by the last create (empty = no notice).
+  let limitSentences: string[] = $state([]);
   let editingRequest: LeaveRequest | null = $state(null); // gesetztes Objekt = Bearbeitungsmodus
   // Seeds the dialog's date fields on a fresh CREATE open (calendar drag-select / day click /
   // Enter-Space). Reset to "" by the plain "+ Neue Abwesenheit" button.
   let pendingInitialStart = $state("");
-  let pendingInitialEnd = $state("");
+  // Phase 851: „Krank melden“ opens the dialog on SICK, „Urlaub beantragen“ on VACATION.
+  let pendingInitialType = $state<"VACATION" | "SICK">("VACATION");
 
-  // Überstunden- / Urlaubskontostand
-  let overtimeBalance: number | null = $state(null);
-  // Phase 97-06 (SALDO-DISP-01/04) — split fields from GET /leave/overtime-balance,
-  // alongside the pre-existing lifetime `overtimeBalance`. Default `undefined` (not
-  // null) so "not yet loaded" and "older cached response without the split fields"
-  // both read as `confirmedMinutes === undefined` — the same fallback-to-legacy
-  // check the dashboard's SaldoAnzeige tile already uses (97-04).
-  let confirmedMinutes: number | undefined = $state(undefined);
-  let openMonthMinutes: number | null | undefined = $state(undefined);
-  let hasClosedMonth = $state(false);
-  let unconfirmedMonths: number | null | undefined = $state(undefined);
-  let rosterIncomplete: boolean | undefined = $state(undefined);
+  function openNewRequest(type: "VACATION" | "SICK") {
+    editingRequest = null;
+    pendingInitialStart = "";
+    pendingInitialEnd = "";
+    pendingInitialType = type;
+    showForm = true;
+  }
+  let pendingInitialEnd = $state("");
+  // Issue #845: a start-page link opens the form directly (?antrag=urlaub|krank), then drops the param
+  $effect(() => {
+    // every other way into the form starts as before: a closed form forgets the preset
+    if (!showForm) pendingInitialType = "VACATION";
+  });
+
   // Phase 104-10 (D-31): one movement per CONFIRMED § 9 credit in this entitlement year —
   // rendered verbatim (server-authored label), never re-derived on the client.
   // Types + the mapper live in $lib/leave/vacation-balance.ts (dev-pass fix, see that
@@ -186,8 +246,8 @@
   const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
 
   // ── Kalender ──────────────────────────────────────────────────────────────
-  // Phase 104-10 (D-28/D-29): the § 9 marker the server computes per request — masked
-  // exactly like typeCode/typeName (null for a colleague without detail visibility).
+  // Phase 104-10 (D-28/D-29): the § 9 marker the server computes per request. The calendar read
+  // is own-only since #840, so the marker always belongs to the caller's own request.
   type Section9Marker = "AU_PENDING" | "CONFIRMED" | "SUPERSEDED" | null;
 
   interface CalEntry {
@@ -207,16 +267,6 @@
     section9Days?: string[];
   }
 
-  type View = "calendar" | "list";
-  let view: View = $state("calendar");
-
-  // Phase 378 (#378): the one place this page decides whether a colleague's absence TYPE may be
-  // named (DSGVO Art. 9, #257/#303/D-10) — permission-based, not role-based. See the identical
-  // comment on team/leave/+page.svelte for why.
-  const canSeeOthersLeaveType = $derived(
-    hasPermission($authStore.user, "leave-request:read:ZUGEWIESEN"),
-  );
-
   /** Format a local Date to YYYY-MM-DD without UTC shift */
   function toLocalDateStr(d: Date): string {
     const y = d.getFullYear();
@@ -225,9 +275,69 @@
     return `${y}-${m}-${day}`;
   }
 
-  const now = new Date();
-  let calYear = $state(now.getFullYear());
-  let calMonth = $state(now.getMonth() + 1); // 1-12
+  // ── URL state: tab, zoom and anchor day (Issue #840, E-01, D-840-01/02/13) ────────────────────
+  // Tab, zoom and anchor come only from `parseMyLeaveState`; a change writes the URL through
+  // `navigate` (the back button walks the tabs, a zoom or period change replaces the entry). The
+  // viewed year and month are the anchor day's, so every year-bound read follows the URL.
+  const today = toLocalDateStr(new Date());
+  const urlState: MyLeaveState = $derived(parseMyLeaveState($page.url.searchParams, today));
+  // A notification link names a request and no tab: it opens Meine Anträge at that row.
+  const activeTab: MyLeaveTab = $derived(
+    !urlState.explicitTab && urlState.requestId !== null ? "antraege" : urlState.tab,
+  );
+  const TAB_IDS: readonly MyLeaveTab[] = ["kalender", "antraege", "team", "planung"];
+  // The tabs of the one toolbar; `testId` keeps the names the e2e specs know.
+  let openRequestCount = $derived(
+    myRequests.filter((r) => r.status === "PENDING" || r.status === "CANCELLATION_REQUESTED")
+      .length,
+  );
+
+  const toolbarTabs = $derived([
+    { id: "kalender", label: "Kalender", testId: "calendar" },
+    {
+      id: "antraege",
+      label: "Anträge",
+      testId: "list",
+      // Phase 851 (prototype): the own requests still waiting for a decision.
+      ...(openRequestCount > 0
+        ? {
+            badge: openRequestCount,
+            badgeLabel: `${openRequestCount} ${openRequestCount === 1 ? "Antrag wartet" : "Anträge warten"} auf eine Entscheidung`,
+          }
+        : {}),
+    },
+    { id: "team", label: "Team" },
+    { id: "planung", label: "Planung" },
+  ]);
+  const TIMELINE_ZOOMS: Zoom[] = ["jahr", "quartal", "monat"];
+
+  /** The zoom a tab opens with; read from the one parser, so the defaults live only in `area-tabs`. */
+  function defaultZoomOf(tab: MyLeaveTab): Zoom {
+    return parseMyLeaveState(new URLSearchParams({ tab }), today).zoom;
+  }
+
+  // The month grid is a month, the request list a year; Team and Planung follow the zoom control.
+  const activeZoom: Zoom = $derived(
+    activeTab === "kalender" ? "monat" : activeTab === "antraege" ? "jahr" : urlState.zoom,
+  );
+  const activePeriod = $derived(periodOf(activeZoom, urlState.datum));
+  const calYear = $derived(Number(urlState.datum.slice(0, 4)));
+  const calMonth = $derived(Number(urlState.datum.slice(5, 7))); // 1-12
+
+  function navigate(
+    patch: Partial<Pick<MyLeaveState, "tab" | "zoom" | "datum">> & { requestId?: string | null },
+    replaceState = false,
+  ): Promise<void> {
+    // A highlighted request belongs to one navigation; it never rides along.
+    const next: MyLeaveState = { ...urlState, tab: activeTab, ...patch, requestId: null };
+    return goto(`?${myLeaveSearch(next)}`, { replaceState, keepFocus: true, noScroll: true });
+  }
+
+  function selectTab(id: string) {
+    const tab = TAB_IDS.find((t) => t === id);
+    // A tab opens with its own default zoom; the anchor day carries over.
+    if (tab !== undefined && tab !== activeTab) void navigate({ tab, zoom: defaultZoomOf(tab) });
+  }
 
   let calEntries: CalEntry[] = $state([]);
   let calLoading = $state(false);
@@ -297,125 +407,274 @@
     };
   }
 
+  // ── Kalender (Issue #840, E-03, D-840-24): the caller's OWN absences and the holidays ────────
+  // The read carries `scope=own`, so the server returns no colleague row at all; nothing is
+  // filtered on the client (T-840-35).
+  let calGeneration = 0;
+
   async function loadCalendar() {
+    const generation = ++calGeneration;
     calLoading = true;
     try {
-      calEntries = await api.get<CalEntry[]>(`/leave/calendar?year=${calYear}&month=${calMonth}`);
+      const rows = await api.get<CalEntry[]>(
+        `/leave/calendar?year=${calYear}&month=${calMonth}&scope=own`,
+      );
+      if (generation !== calGeneration) return;
+      calEntries = rows;
     } catch {
+      if (generation !== calGeneration) return;
       calEntries = [];
     } finally {
-      calLoading = false;
+      if (generation === calGeneration) calLoading = false;
     }
   }
 
-  let showMonthPicker = $state(false);
-  let pickerYear = $state(new Date().getFullYear());
+  // The legend names only what the month in view contains: the types of the own bars and, when a
+  // request is still open, the dashed style (E-03: no colleague is drawn here).
+  const calLegend = $derived.by(() => {
+    const drawn = calEntries.filter((e) => isDrawnInCalendar(e));
+    const present = new Set(drawn.flatMap((e) => (e.typeCode ? [e.typeCode as string] : [])));
+    const known = CALENDAR_LEGEND_TYPE_CODES.filter((code) => present.has(code));
+    const other = [...present].filter((code) => !CALENDAR_LEGEND_TYPE_CODES.includes(code)).sort();
+    const open = drawn.some((e) => e.status === "PENDING" || e.status === "CANCELLATION_REQUESTED");
+    return {
+      typeCodes: [...known, ...other],
+      styles: open ? CALENDAR_LEGEND_STYLES.filter((style) => style === "beantragt") : [],
+    };
+  });
 
-  function prevMonth() {
-    const prevYear = calYear;
-    if (calMonth === 1) {
-      calMonth = 12;
-      calYear--;
-    } else calMonth--;
-    loadCalendar();
-    if (calYear !== prevYear) {
-      loadData();
-      loadVacationSummary(calYear);
+  // ── Team (Issue #840, E-03, E-05, D-840-16): neutral and read-only ────────────────────────────
+  // `scope=team` makes the server mask every foreign absence to name and period (the neutral
+  // word); the page never sends a salon, the server uses the caller's own Stammsalon. A bar here
+  // opens nothing: the timeline gets no select or drag callback.
+  let teamRows: TimelinePerson[] = $state([]);
+  let teamHolidays: Array<{ day: string; name: string }> = $state([]);
+  let teamSalons: CalendarSalon[] = $state([]);
+  let teamLoading = $state(false);
+  let teamGeneration = 0;
+
+  async function loadTeam() {
+    const generation = ++teamGeneration;
+    teamLoading = true;
+    try {
+      const answer = await api.get<CalendarRangeAnswer>(
+        `/leave/calendar?${calendarRangeQuery(activePeriod)}&scope=team`,
+      );
+      if (generation !== teamGeneration) return;
+      const timeline = calendarToTimeline(answer.entries);
+      teamRows = timeline.rows;
+      teamHolidays = timeline.holidays;
+      teamSalons = answer.salons ?? [];
+    } catch {
+      // A failed read is an empty view, no alert: the tab is context, not a task.
+      if (generation !== teamGeneration) return;
+      teamRows = [];
+      teamHolidays = [];
+      teamSalons = [];
+    } finally {
+      if (generation === teamGeneration) teamLoading = false;
     }
-  }
-  function nextMonth() {
-    const prevYear = calYear;
-    if (calMonth === 12) {
-      calMonth = 1;
-      calYear++;
-    } else calMonth++;
-    loadCalendar();
-    if (calYear !== prevYear) {
-      loadData();
-      loadVacationSummary(calYear);
-    }
-  }
-  function gotoMonthYear(m: number, y: number) {
-    const prevYear = calYear;
-    calMonth = m;
-    calYear = y;
-    showMonthPicker = false;
-    loadCalendar();
-    if (calYear !== prevYear) {
-      loadData();
-      loadVacationSummary(calYear);
-    }
-  }
-  function gotoToday() {
-    const now = new Date();
-    const prevYear = calYear;
-    calMonth = now.getMonth() + 1;
-    calYear = now.getFullYear();
-    showMonthPicker = false;
-    loadCalendar();
-    if (calYear !== prevYear) {
-      loadData();
-      loadVacationSummary(calYear);
-    }
-  }
-  function prevYear() {
-    calYear--;
-    loadCalendar();
-    loadData();
-    loadVacationSummary(calYear);
-  }
-  function nextYear() {
-    calYear++;
-    loadCalendar();
-    loadData();
-    loadVacationSummary(calYear);
   }
 
-  // Year dropdown options for the list-view filter (current ± 2).
-  const _currentYear = new Date().getFullYear();
-  const yearOptions = [_currentYear - 2, _currentYear - 1, _currentYear, _currentYear + 1];
+  /** Below 768 px the list replaces the timeline (D-840-11). */
+  let isMobile = $state(false);
 
-  const MONTH_NAMES = [
-    "Januar",
-    "Februar",
-    "März",
-    "April",
-    "Mai",
-    "Juni",
-    "Juli",
-    "August",
-    "September",
-    "Oktober",
-    "November",
-    "Dezember",
-  ];
+  // Closed days only for ONE salon in view (D-840-14); with several the legend says why none are drawn.
+  const teamClosedDays = $derived(closedDaysFor(teamSalons, $salonContext));
+  // The Werktage basis is decided once (D-840-08): null = Mon-Sat when no single salon with hours is in view.
+  const teamWerktage = $derived(werktageBasis(teamClosedDays, teamSalons));
+  const LOAD_HINT =
+    "Personen mit genehmigter oder beantragter Abwesenheit – Wünsche der Planung zählen nicht";
+  const CLOSED_DAYS_HINT = "Schließtage nur bei einem Salon";
+
+  const teamLoad = $derived.by(() => {
+    if (activePeriod.zoom === "jahr") {
+      return {
+        kind: "week" as const,
+        counts: weekLoad(teamRows, activePeriod.year, workdaySet(teamWerktage), teamHolidays),
+        hint: LOAD_HINT,
+      };
+    }
+    return {
+      kind: "day" as const,
+      counts: calendarDayLoad(
+        teamRows,
+        dayColumns(activePeriod).map((column) => column.day),
+      ),
+      hint: LOAD_HINT,
+    };
+  });
+
+  const teamLegend = $derived.by(() => {
+    const base = legendFrom(teamRows);
+    const daily = activePeriod.zoom !== "jahr";
+    return {
+      typeCodes: base.typeCodes,
+      styles: base.styles,
+      markings: {
+        weekend: daily,
+        holiday: daily && teamHolidays.length > 0,
+        closed: daily && teamClosedDays.days.size > 0,
+        today: daily,
+        // Issue 840 G-4: „Mehrere Arten“ only in Jahr and only when such a week is in view.
+        mixed:
+          !daily &&
+          hasMixedWeek(teamRows, activePeriod.year, workdaySet(teamWerktage), teamHolidays),
+      },
+      closedHint: teamClosedDays.hint ? CLOSED_DAYS_HINT : null,
+    };
+  });
+
+  // ── Planung (Issue #840, E-03, D-840-16/23) ───────────────────────────────────────────────────
+  // The own plan wishes next to the team, on the same timeline: the panel runs in `own` mode (the
+  // neutral reading, no person choice, no manage controls). The salon is the header selection
+  // exactly as on the team page; without exactly one salon the panel shows its empty state.
+  const contextLoaded = $derived($salonContext.loaded);
+  const planSalonId = $derived(teamSalonViewSalon($salonContext));
+  // Issue 840 G-6: the panel reports status, deadline and the add action; the toolbar shows them.
+  // The shape is spelled the same in the panel, in LeavePlanControls and here (no type module).
+  let planControls = $state<null | {
+    statusLabel: string;
+    statusOpen: boolean;
+    deadlineText: string | null;
+    canAdd: boolean;
+    add: () => void;
+  }>(null);
+  $effect(() => {
+    if (activeTab !== "planung") planControls = null;
+  });
+
+  // Deep link (WR-07): the LEAVE_PLAN_OPENED notice links with `?salonId=…`. Once the salon context
+  // is loaded, a salon the caller reaches is preselected in the header selection, then the
+  // parameter is dropped from the URL; an unreachable id is ignored (the API validates anyway).
+  let salonDeepLinkHandled = false;
+  $effect(() => {
+    if (!contextLoaded || salonDeepLinkHandled) return;
+    const param = $page.url.searchParams.get("salonId");
+    untrack(() => {
+      salonDeepLinkHandled = true;
+      if (param === null) return;
+      const linked = deepLinkSalon(param, $salonContext);
+      if (linked !== null) salonContext.setSelection(linked);
+      const url = new URL($page.url);
+      url.searchParams.delete("salonId");
+      void goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+    });
+  });
 
   // ── Laden ─────────────────────────────────────────────────────────────────
-  onMount(async () => {
-    await loadData();
-    loadCalendar();
-    loadVacationSummary(calYear);
-    loadOvertimeBalance();
-    loadKarenzOverrun();
+  // The deep-link target is read once on mount; the scroll and highlight run after the first
+  // completed load, because the rows do not exist before it.
+  let deepLinkRequestId: string | null = null;
+  let firstLoadDone = false;
 
-    // Deep-link: highlight a specific request from notification
-    const requestId = $page.url.searchParams.get("request");
-    if (requestId) {
-      highlightRequestId = requestId;
-      view = "list";
-      // Scroll to highlighted request after DOM update
+  onMount(() => {
+    const antrag = $page.url.searchParams.get("antrag");
+    if (antrag === "urlaub" || antrag === "krank") {
+      pendingInitialType = antrag === "krank" ? "SICK" : "VACATION";
+      editingRequest = null;
+      showForm = true;
+      const url = new URL($page.url);
+      url.searchParams.delete("antrag");
+      void goto(`${url.pathname}${url.search}`, {
+        replaceState: true,
+        noScroll: true,
+        keepFocus: true,
+      });
+    }
+  });
+
+  onMount(() => {
+    deepLinkRequestId = urlState.requestId;
+    loadKarenzOverrun();
+  });
+
+  onMount(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(max-width: 767px)");
+    isMobile = query.matches;
+    const onChange = (event: MediaQueryListEvent) => (isMobile = event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  });
+
+  // The year-bound reads (the request list, the sick days, the entitlement figures) follow the
+  // anchor day's year, whatever moved it: the toolbar, the back button or a deep link. This effect
+  // is the one place that reacts to a year change (D-02, issue #122; the superseded-response
+  // guards live in the loaders).
+  $effect(() => {
+    void calYear;
+    untrack(() => {
+      void (async () => {
+        await loadData();
+        if (!firstLoadDone) {
+          firstLoadDone = true;
+          runDeepLink();
+        }
+      })();
+      void loadVacationSummary(calYear);
+    });
+  });
+
+  const calKey = $derived(`${calYear}-${calMonth}`);
+  $effect(() => {
+    if (activeTab !== "kalender") return;
+    void calKey;
+    untrack(() => {
+      void loadCalendar();
+    });
+  });
+
+  const teamKey = $derived(`${activePeriod.startDay}|${activePeriod.endDay}`);
+  $effect(() => {
+    if (activeTab !== "team") return;
+    void teamKey;
+    untrack(() => {
+      void loadTeam();
+    });
+  });
+
+  /** After a write: the year-bound reads, the calendar, and the team view while it is in view. */
+  async function reloadAll() {
+    await Promise.all([
+      loadData(),
+      loadCalendar(),
+      loadVacationSummary(calYear),
+      activeTab === "team" ? loadTeam() : Promise.resolve(),
+    ]);
+  }
+
+  /** Pages to, marks and scrolls to one request of the Meine-Anträge list; never navigates. */
+  function focusRequest(requestId: string) {
+    const at = pageOfRequest(
+      filteredMyRequests.map((req) => req.id),
+      requestId,
+      myReqPageSize,
+    );
+    if (at !== null) myReqPage = at;
+    highlightRequestId = requestId;
+    void tick().then(() => {
       requestAnimationFrame(() => {
         const el = document.getElementById(`request-${requestId}`);
         if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
       });
-      // Clear highlight after 3 seconds
-      setTimeout(() => {
-        highlightRequestId = null;
-      }, 3000);
-    }
-  });
+    });
+    // Clear highlight after 3 seconds
+    setTimeout(() => {
+      highlightRequestId = null;
+    }, 3000);
+  }
+
+  function runDeepLink() {
+    // Deep-link: highlight a specific request from a notification (Meine Anträge only).
+    const requestId = deepLinkRequestId;
+    if (requestId && activeTab === "antraege") focusRequest(requestId);
+  }
+
+  let dataGeneration = 0;
 
   async function loadData() {
+    const generation = ++dataGeneration;
     loading = true;
     error = "";
     try {
@@ -423,12 +682,14 @@
       const mine = await api.get<LeaveRequest[]>(
         `/leave/requests?year=${calYear}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
       );
+      if (generation !== dataGeneration) return;
       myRequests = mine;
       void loadSickDaysYear(calYear);
     } catch (e: unknown) {
+      if (generation !== dataGeneration) return;
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
-      loading = false;
+      if (generation === dataGeneration) loading = false;
     }
   }
 
@@ -488,47 +749,11 @@
     }
   }
 
-  // Phase 97-06 — response shape widened additively; balanceHours keeps its
-  // existing meaning (lifetime total) for any consumer that still needs it.
-  interface OvertimeBalanceResponse {
-    balanceHours: number;
-    confirmedMinutes?: number;
-    openMonthMinutes?: number | null;
-    hasClosedMonth?: boolean;
-    // Issue #588 (P-14): how many calendar months the forecast spans; null = unknown.
-    unconfirmedMonths?: number | null;
-    rosterIncomplete?: boolean;
-    // Phase 100 (OTC-03/OTC-05) — resolved negative-balance tolerance, alongside
-    // the Phase-97 split fields above. Optional so an older cached response
-    // degrades to "unconfigured" (no Toleranz row, no warn hint).
-    maxNegativeBalanceMinutes?: number | null;
-    isNegativeLimitExceeded?: boolean;
-  }
-
-  async function loadOvertimeBalance() {
-    try {
-      const r = await api.get<OvertimeBalanceResponse>("/leave/overtime-balance");
-      overtimeBalance = r.balanceHours;
-      confirmedMinutes = r.confirmedMinutes;
-      openMonthMinutes = r.openMonthMinutes;
-      hasClosedMonth = r.hasClosedMonth ?? false;
-      unconfirmedMonths = r.unconfirmedMonths ?? null;
-      rosterIncomplete = r.rosterIncomplete;
-    } catch {
-      overtimeBalance = null;
-      confirmedMinutes = undefined;
-      openMonthMinutes = undefined;
-      hasClosedMonth = false;
-      unconfirmedMonths = undefined;
-      rosterIncomplete = undefined;
-    }
-  }
-
   // ── Antrag zurückziehen / Stornierung beantragen ──────────────────────────
   // Quick 260824-cjd: Storno now requires a Begründung — routed through a
   // ReasonDialog rather than fired directly from the row buttons.
   let cancelDialogOpen = $state(false);
-  let cancelDialogRequest: LeaveRequest | null = $state(null);
+  let cancelDialogRequest = $state<LeaveRequest | null>(null);
   let cancelDialogTitle = $derived(
     cancelDialogRequest?.status === "APPROVED" ? "Stornierung beantragen?" : "Antrag zurückziehen?",
   );
@@ -540,7 +765,7 @@
 
   async function cancelRequest(id: string, reason: string) {
     await api.delete(`/leave/requests/${id}`, { reason });
-    await Promise.all([loadData(), loadCalendar(), loadVacationSummary(calYear)]);
+    await reloadAll();
   }
 
   async function confirmCancelDialog(reason: string) {
@@ -694,6 +919,7 @@
   let vacSummaryPlanned = $derived(vacSummary.planned);
   let vacSummaryCarryOverRemaining = $derived(vacSummary.carryOverRemaining);
   let vacSummaryLeft = $derived(vacSummary.left);
+
   let showVacSummary = $state(true);
   // Phase 114: `vacSummary.remaining` is `number | null` — the null branch is what makes the
   // Urlaubskonto-Karte render "–" instead of a fake "0". Do NOT add `?? 0`. Declared here
@@ -702,6 +928,71 @@
   // gate: `$derived` is lazily evaluated at runtime regardless of script position, but the
   // static checker still flags a forward reference as "used before declaration".
   let vacRemaining = $derived(vacSummary.remaining);
+
+  // Issue #851 (D-851-04): the figures of the Kennzahlenleiste - the same values and wording the former
+  // three cards showed (vacationCardLabel / vacationCardDelta, calendarDaysUnit for sick days, #595).
+  // Phase 851 (prototype): the next own approved vacation, for the „Genommen“ cell.
+  let nextVacation = $derived(
+    myRequests
+      .filter(
+        (r) =>
+          r.typeCode === "VACATION" &&
+          isEffectiveLeaveStatus(r.status) &&
+          r.startDate.slice(0, 10) >= today,
+      )
+      .sort((x, y) => x.startDate.localeCompare(y.startDate))[0] ?? null,
+  );
+  // A carry-over deadline is only news while it lies ahead.
+  let carryDeadlineAhead = $derived(
+    vacationBalance?.carryOverDeadline && vacationBalance.carryOverDeadline.slice(0, 10) >= today
+      ? vacationBalance.carryOverDeadline.slice(0, 10)
+      : null,
+  );
+  function shortDate(iso: string): string {
+    const [, m, d] = iso.slice(0, 10).split("-");
+    return `${Number(d)}.${Number(m)}.`;
+  }
+
+  // Issue #851 (D-851-04, prototype): the four figures of the Kennzahlenleiste. Resturlaub keeps the
+  // tested wording (vacationCardLabel / vacationCardDelta), the others read the same summary
+  // (deriveVacationSummary) and the sick-day kernel (#595) - nothing is recomputed here.
+  let balanceItems = $derived<KpiItem[]>([
+    {
+      label: vacationCardLabel(vacSummaryPlanned),
+      value: vacRemaining === null ? "–" : vacRemaining,
+      format: formatDays,
+      unit: (vacRemaining ?? 0) === 1 ? "Tag" : "Tage",
+      delta: vacationBalance
+        ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
+        : undefined,
+    },
+    {
+      // `used` counts approved days still ahead as well, so the label says so.
+      label: "Genommen & genehmigt",
+      value: vacationBalance ? vacSummaryUsed : "–",
+      format: formatDays,
+      unit: vacSummaryUsed === 1 ? "Tag" : "Tage",
+      explanation: nextVacation
+        ? `nächster: ${shortDate(nextVacation.startDate)}–${shortDate(nextVacation.endDate)}`
+        : "kein Urlaub geplant",
+    },
+    {
+      label: "Verfällt",
+      value: !vacationBalance ? "–" : carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0,
+      format: formatDays,
+      unit: (carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0) === 1 ? "Tag" : "Tage",
+      explanation: carryDeadlineAhead
+        ? `Übertrag verfällt am ${shortDate(carryDeadlineAhead)}${carryDeadlineAhead.slice(0, 4)}`
+        : "kein Übertrag offen",
+    },
+    {
+      label: "Krankheitstage",
+      value: sickDaysYear === null ? "–" : sickDaysYear,
+      format: formatDays,
+      unit: calendarDaysUnit(sickDaysYear ?? 0),
+      explanation: `in ${calYear}`,
+    },
+  ]);
 
   // ── iCal-Download ────────────────────────────────────────────────────────
   let icalDownloading = $state(false);
@@ -738,13 +1029,61 @@
   let myReqPage = $state(1);
   let myReqPageSize = $state(10);
 
+  // Issue #851 (D-851-04): the search of the table toolbar (type, period, note).
+  let myReqQuery = $state("");
+
   let filteredMyRequests = $derived(
     myRequests.filter((req) => {
       if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
-      return true;
+      const haystack = [
+        typeName(req.typeCode),
+        fmtDate(req.startDate),
+        fmtDate(req.endDate),
+        statusLabel(req.status),
+        req.note ?? "",
+      ].join(" ");
+      return matchesSearch(haystack, myReqQuery);
     }),
   );
+
+  const MY_REQ_STATUS_OPTIONS: { value: Status; label: string }[] = [
+    { value: "PENDING", label: "Ausstehend" },
+    { value: "APPROVED", label: "Genehmigt" },
+    { value: "REJECTED", label: "Abgelehnt" },
+    { value: "CANCELLED", label: "Storniert" },
+    { value: "CANCELLATION_REQUESTED", label: "Stornierung beantragt" },
+  ];
+
+  let myReqFilters = $derived<ToolbarFilter[]>([
+    { key: "status", label: "Status", options: MY_REQ_STATUS_OPTIONS, value: filterLeaveStatus },
+    {
+      key: "type",
+      label: "Art",
+      options: TYPE_OPTIONS.map((t) => ({ value: t.code, label: t.label })),
+      value: filterLeaveType,
+    },
+  ]);
+
+  function onMyReqFilter(key: string, value: string) {
+    if (key === "status") filterLeaveStatus = value as Status | "";
+    if (key === "type") filterLeaveType = value as TypeCode | "";
+  }
+
+  function resetMyReqFilters() {
+    myReqQuery = "";
+    filterLeaveStatus = "";
+    filterLeaveType = "";
+  }
+
+  const MY_REQ_COLUMNS: DataTableColumn[] = [
+    { key: "type", label: "Art", primary: true },
+    { key: "period", label: "Zeitraum" },
+    { key: "days", label: "Tage", align: "end" },
+    { key: "status", label: "Status" },
+    { key: "note", label: "Anmerkung" },
+    { key: "actions", label: "Aktionen", align: "end" },
+  ];
 
   let pagedMyRequests = $derived(
     filteredMyRequests.slice((myReqPage - 1) * myReqPageSize, myReqPage * myReqPageSize),
@@ -757,7 +1096,7 @@
 </script>
 
 <svelte:head>
-  <title>Abwesenheiten – Clokr</title>
+  <title>{pageLabel("/leave")} – Clokr</title>
 </svelte:head>
 
 <svelte:window onmouseup={handleDayMouseUp} />
@@ -767,23 +1106,26 @@
      but Playwright (and future visual-regression specs) can address the page
      root without keying off CSS class hashes. -->
 <div data-testid="leave-page" style="display: contents">
-  <!-- ── Header ─────────────────────────────────────────────────────────────── -->
-  <PageHead eyebrow="Mein Bereich" title="Urlaub & Abwesenheit" accent="Abwesenheit">
+  <!-- ── Header — Phase 851 (prototype „Ich › Abwesenheiten“): the two things a person files ─── -->
+  <PageHeader
+    title={pageLabel("/leave")}
+    subtitle="Urlaub, Krankmeldungen und deine Wünsche für die Urlaubsplanung"
+  >
     {#snippet actions()}
       {#if !showForm}
         <button
+          data-testid="leave-report-sick"
+          class="btn btn-secondary btn-sm"
+          onclick={() => openNewRequest("SICK")}>Krank melden</button
+        >
+        <button
           data-testid="leave-new-request"
           class="btn btn-primary btn-sm"
-          onclick={() => {
-            editingRequest = null;
-            pendingInitialStart = "";
-            pendingInitialEnd = "";
-            showForm = true;
-          }}>+ Neue Abwesenheit</button
+          onclick={() => openNewRequest("VACATION")}>Urlaub beantragen</button
         >
       {/if}
     {/snippet}
-  </PageHead>
+  </PageHeader>
 
   {#if error}
     <div class="alert alert-error" role="alert" data-testid="leave-page-error">
@@ -791,93 +1133,34 @@
     </div>
   {/if}
 
-  <!-- ── KPI-Zeile (Resturlaub, Überstundenkonto, Krankheitstage) ───────────── -->
-  <div class="kpi-row" data-testid="leave-balance">
-    <Card animate class="kpi-card">
-      <!-- Phase 114 (RU-01/02/04): `Resturlaub` = der verfügbare Saldo, genau diese eine
-           Bedeutung auf /leave. Der Vorjahresübertrag heißt „Übertrag Vorjahr" (Strip +
-           Delta-Zeile), nie mehr „Resturlaub". Das „(ohne beantragte)" im Label ist
-           ABSICHTLICH bedingt — bei 0 beantragten Tagen zeigen Karte und Leiste dieselbe
-           Zahl und der Zusatz würde einen Unterschied behaupten, den es nicht gibt (gleiche
-           Begründung wie Phase 107 G-03 im Panel unten). Die Entscheidung liegt in
-           vacationCardLabel(), damit sie getestet ist. -->
-      <KPIStat
-        label={vacationCardLabel(vacSummaryPlanned)}
-        value={vacRemaining === null ? "–" : String(vacRemaining)}
-        unit={(vacRemaining ?? 0) === 1 ? "Tag" : "Tage"}
-        delta={vacationBalance
-          ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
-          : undefined}
-      />
-    </Card>
-
-    <Card animate class="kpi-card">
-      <!-- Phase 97-06 (SALDO-DISP-02/05) — the split primitive replaces the inline
-           KPIStat markup outright (not wrapped), same as the dashboard tile:
-           KPIStat's pure-props string contract cannot express a two-figure tile.
-           Leads with "Bestätigt", subordinates the forecast, worded from the data by
-           forecastLabel() (Issue #588). -->
-      <!-- IN-01 (code review) — `loading` (declared above) now reaches the primitive. Note:
-           this KPI's own data arrives via loadOvertimeBalance(), fired (not awaited) AFTER
-           `loading` already flips false in onMount — so this only narrows the "Kein
-           Stundenplan" flash window (covers loadData()'s own fetch), it does not close it
-           completely. A fully precise fix would need a dedicated loading flag for
-           loadOvertimeBalance() itself; not added here to keep this change minimal. `error` is
-           deliberately NOT wired — this page's `error` string is reused for unrelated
-           mutations (delete/iCal-download/etc.), so surfacing it here would mislabel an
-           unrelated failure as "saldo failed to load". -->
-      {#if confirmedMinutes !== undefined}
-        <SaldoAnzeige
-          variant="expanded"
-          label="Überstundenkonto"
-          confirmedMinutes={confirmedMinutes ?? 0}
-          openMonthMinutes={openMonthMinutes ?? null}
-          hasClosedMonth={hasClosedMonth ?? false}
-          {unconfirmedMonths}
-          {rosterIncomplete}
-          {loading}
-        />
-      {:else}
-        <!-- Fallback: an older cached response without the split fields — degrade
-             to the primitive's single-value rendering instead of blanking. -->
-        <SaldoAnzeige
-          variant="expanded"
-          label="Überstundenkonto"
-          saldoMinutes={overtimeBalance !== null ? Math.round(overtimeBalance * 60) : null}
-          {loading}
-        />
-      {/if}
-    </Card>
-
-    <Card animate class="kpi-card">
-      <KPIStat
-        label="Krankheitstage"
-        value={sickDaysYear === null ? "–" : String(sickDaysYear)}
-        unit={calendarDaysUnit(sickDaysYear ?? 0)}
-        delta={`in ${calYear}`}
-      />
-    </Card>
+  <!-- ── Kennzahlen — Phase 851 (prototype): Resturlaub, Genommen, Verfällt, Krankheitstage. The
+       hours account lives in Ich › Konto now (#594), so this page shows no saldo. `Resturlaub` keeps its
+       one meaning (Phase 114, RU-01/02/04): label from vacationCardLabel(). -->
+  <div data-testid="leave-balance">
+    <KpiStrip ariaLabel="Urlaub und Krankheitstage" items={balanceItems} />
   </div>
 
-  <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
-  <div class="view-tabs" data-testid="leave-view-tabs">
-    <button
-      data-testid="leave-view-calendar"
-      class="view-tab"
-      class:view-tab--active={view === "calendar"}
-      onclick={() => (view = "calendar")}
-    >
-      Kalender
-    </button>
-    <button
-      data-testid="leave-view-list"
-      class="view-tab"
-      class:view-tab--active={view === "list"}
-      onclick={() => (view = "list")}
-    >
-      Meine Anträge
-    </button>
-  </div>
+  <!-- ── The one toolbar: tabs, period, zoom (Issue #840, E-01, D-840-13) ─────────────────── -->
+  <!-- The KPI cards above stay on every tab. The tab ids are the URL's (`tab=`); the test ids keep
+       the names the e2e specs know (`leave-view-calendar`, `leave-view-list`). -->
+  {#snippet plannerControls()}
+    {#if planControls}<LeavePlanControls controls={planControls} />{/if}
+  {/snippet}
+  <LeaveToolbar
+    ariaLabel="Abwesenheiten"
+    tabs={toolbarTabs}
+    {activeTab}
+    onTabChange={selectTab}
+    period={activePeriod}
+    zooms={activeTab === "team" || activeTab === "planung" ? TIMELINE_ZOOMS : []}
+    zoom={activeZoom}
+    onZoomChange={(zoom) => void navigate({ zoom }, true)}
+    onShift={(step) =>
+      void navigate({ datum: shiftPeriod(activeZoom, urlState.datum, step) }, true)}
+    onToday={() => void navigate({ datum: today }, true)}
+    filters={activeTab === "planung" ? plannerControls : undefined}
+    testIdPrefix="leave-view"
+  />
 
   <!-- ── Neuer Antrag (Modal) ─────────────────────────────────────────────────── -->
   <!-- Phase 415 (#415): the shared create/edit dialog. `employeeId` is always the caller's own
@@ -891,9 +1174,12 @@
     {editingRequest}
     initialStartDate={pendingInitialStart}
     initialEndDate={pendingInitialEnd}
+    initialTypeCode={pendingInitialType}
     entitlementYear={calYear}
-    onSaved={async () => {
-      await Promise.all([loadData(), loadCalendar(), loadVacationSummary(calYear)]);
+    onSaved={async (result) => {
+      // Issue #836: limit warnings of the create — shown, never blocking.
+      limitSentences = warningSentences(result?.leaveLimitWarnings ?? []);
+      await reloadAll();
     }}
   />
 
@@ -910,263 +1196,131 @@
        to. Above BOTH views: the page is reachable from the nav and from the calendar, and
        the explanation is equally relevant there. Renders nothing when there is no overrun. -->
   <KarenzAttestPanel label={karenzSummary.label} days={karenzDays} />
+  <!-- Issue #836 (AC-5): non-blocking hint after a request exceeded a leave limit. -->
+  <LeaveLimitNotice sentences={limitSentences} onDismiss={() => (limitSentences = [])} />
   <!-- Phase 117 (issue #122, D-03) — while the entitlement figures for the selected year are in
        flight, the strip shows a skeleton, never the numbers of the year we just left. Same rule
        and same recipe as Phase 116's /time-entries list skeleton: the global `.skeleton` shimmer
        from app.css, aria-hidden, only the geometry is page-scoped. Four tiles is the strip's
        usual width; the two Übertrag tiles are conditional, so the placeholder count is
        deliberately approximate — it is a shimmer, not a claim. -->
-  {#snippet vacStatsSkeleton()}
-    <div class="vac-summary-skeleton" data-testid="vac-summary-skeleton" aria-hidden="true">
-      {#each Array(4) as _, i (i)}<div class="skeleton vac-summary-skel-tile"></div>{/each}
-    </div>
-  {/snippet}
-  {#snippet vacStats()}
-    <div class="vac-stats">
-      <div class="vac-stat">
-        <div class="vac-stat-label">Anspruch</div>
-        <div class="vac-stat-value">{vacSummaryTotal}<span class="vac-stat-unit">T</span></div>
-      </div>
-      {#if vacSummaryCarryOver > 0}
-        <!-- Phase 114 (RU-01/RU-03): zwei Kacheln statt einer. Der BRUTTO-Übertrag war bisher
-             nirgends als Zahl sichtbar — nur eingerechnet — weshalb „Genommen 31 bei Anspruch 24"
-             unerklärt blieb. Die zweite Kachel ist die frühere Kachel „Resturlaub": sie meint
-             ausschließlich den ungenutzten REST des Übertrags. Beide stehen bewusst
-             nebeneinander; getrennt wäre „(Rest) 0" wieder eine verwaiste Zahl. Kein Jahr im
-             Label — die Entitlement-Zahlen kommen immer aus dem laufenden Jahr, unabhängig vom
-             angezeigten calYear (siehe deferred-items.md). -->
-        <div class="vac-stat" data-testid="vac-stat-carryover">
-          <div class="vac-stat-label">Übertrag Vorjahr</div>
-          <div class="vac-stat-value vac-stat-carry">
-            +{vacSummaryCarryOver}<span class="vac-stat-unit">T</span>
-          </div>
-        </div>
-        <div class="vac-stat" data-testid="vac-stat-carryover-rest">
-          <div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>
-          <div class="vac-stat-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-stat-carry'}">
-            {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining}<span
-              class="vac-stat-unit">T</span
-            >
-          </div>
-        </div>
-      {/if}
-      <div class="vac-stat">
-        <div class="vac-stat-label">Genommen</div>
-        <div class="vac-stat-value">{vacSummaryUsed}<span class="vac-stat-unit">T</span></div>
-      </div>
-      {#if vacSummaryPlanned > 0}
-        <div class="vac-stat">
-          <div class="vac-stat-label">Beantragt</div>
-          <div class="vac-stat-value vac-stat-planned">
-            {vacSummaryPlanned}<span class="vac-stat-unit">T</span>
-          </div>
-        </div>
-      {/if}
-      <div class="vac-stat vac-stat--highlight">
-        <div class="vac-stat-label">Verbleibend</div>
-        <div class="vac-stat-value {vacSummaryLeft < 0 ? 'neg' : 'pos'}">
-          {vacSummaryLeft}<span class="vac-stat-unit">T</span>
-        </div>
-      </div>
-    </div>
-  {/snippet}
 
-  <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
-  {#if view === "calendar"}
-    <!-- Combined month bar (v1.5 — identisch zu Zeiterfassung, with picker dropdown) -->
-    <div class="card cal-monthbar card-animate">
-      <div class="cal-monthbar-nav">
-        <button
-          class="nav-btn"
-          onclick={prevMonth}
-          title="Vorheriger Monat"
-          aria-label="Vorheriger Monat"
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-          >
-        </button>
-        <div class="cal-nav-center cal-monthbar-center">
-          <div class="serif-eyebrow cal-monthbar-eyebrow">Buchungsmonat</div>
-          <button
-            class="cal-monthbar-title"
-            onclick={() => {
-              pickerYear = calYear;
-              showMonthPicker = !showMonthPicker;
-            }}
-            title="Monat/Jahr wählen"
-          >
-            {MONTH_NAMES[calMonth - 1]}
-            {calYear}
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
-            >
-          </button>
-          {#if showMonthPicker}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
-            <div class="month-picker">
-              <div class="month-picker-year">
-                <button onclick={() => pickerYear--}>‹</button>
-                <span>{pickerYear}</span>
-                <button onclick={() => pickerYear++}>›</button>
-              </div>
-              <div class="month-picker-grid">
-                {#each MONTH_NAMES as name, i (i)}
-                  <button
-                    class="month-picker-btn"
-                    class:active={i + 1 === calMonth && pickerYear === calYear}
-                    onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name.slice(0, 3)}</button
-                  >
-                {/each}
-              </div>
-              <button class="month-picker-today" onclick={gotoToday}>Heute</button>
-            </div>
-          {/if}
+  <!-- ── Kalender (Issue #840, E-03): the caller's own absences and the holidays ────────────── -->
+  {#if activeTab === "kalender"}
+    <div role="tabpanel" id="leave-panel-kalender" aria-labelledby="leave-tab-kalender">
+      <!-- The entitlement figures of the viewed year; a year switch shows the skeleton, never the
+           numbers of the year just left (issue #122). -->
+
+      <div class="cal-section card card-animate">
+        <!-- Wochentag-Header -->
+        <div class="cal-grid cal-header-row">
+          {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
+            <div class="cal-dow">{wd}</div>
+          {/each}
         </div>
-        <button
-          class="nav-btn"
-          onclick={nextMonth}
-          title="Nächster Monat"
-          aria-label="Nächster Monat"
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-          >
-        </button>
-        <button class="btn btn-ghost btn-sm cal-monthbar-today" onclick={gotoToday}>Heute</button>
-      </div>
-      {#if showVacSummary}
-        {#if vacSummaryLoading}
-          {@render vacStatsSkeleton()}
+
+        <!-- Tage -->
+        {#if calLoading}
+          <div class="cal-grid">
+            {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+          </div>
         {:else}
-          {@render vacStats()}
-        {/if}
-      {/if}
-    </div>
-
-    <div class="cal-section card card-animate">
-      <!-- Wochentag-Header -->
-      <div class="cal-grid cal-header-row">
-        {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
-          <div class="cal-dow">{wd}</div>
-        {/each}
-      </div>
-
-      <!-- Tage -->
-      {#if calLoading}
-        <div class="cal-grid">
-          {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
-        </div>
-      {:else}
-        <div class="cal-grid">
-          {#each calDays as day (day.dateStr)}
-            {@const entries = calMap.get(day.dateStr) ?? []}
-            {@const holidays = entries.filter((e) => e.isHoliday)}
-            {@const dayAbsences = entries.filter((e) => isDrawnInCalendar(e))}
-            {@const isHoliday = holidays.length > 0}
-            {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
-            <div
-              class="cal-cell"
-              class:cal-current={day.isCurrentMonth}
-              class:cal-other={!day.isCurrentMonth}
-              class:cal-today={day.isToday}
-              class:cal-weekend={day.isWeekend && day.isCurrentMonth}
-              class:cal-holiday={isHoliday && day.isCurrentMonth}
-              class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
-              role={day.isCurrentMonth ? "button" : undefined}
-              tabindex={day.isCurrentMonth ? 0 : undefined}
-              onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
-              onmouseenter={() => handleDayMouseEnter(day.dateStr)}
-              onkeydown={(e) => {
-                if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
-                  e.preventDefault();
-                  pendingInitialStart = day.dateStr;
-                  pendingInitialEnd = day.dateStr;
-                  editingRequest = null;
-                  showForm = true;
-                }
-              }}
-            >
-              <span class="cal-day-num">{day.dayNum}</span>
-              {#if isHoliday && day.isCurrentMonth}
-                <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
-                  {holidays[0].firstName}
-                </div>
-              {/if}
-              <div class="cal-chips">
-                {#each Array(calLanes.totalLanes) as _, laneIdx (laneIdx)}
-                  {@const e = dayAbsences.find((a) => calLanes.laneById.get(a.id) === laneIdx)}
-                  {#if e}
-                    {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
-                    {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
-                    {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
-                    {@const _vis = resolveChipVisual(e, canSeeOthersLeaveType)}
-                    <!-- Phase 104-10 (D-28/D-29): the § 9 marker only applies to the SPECIFIC
+          <div class="cal-grid">
+            {#each calDays as day (day.dateStr)}
+              {@const entries = calMap.get(day.dateStr) ?? []}
+              {@const holidays = entries.filter((e) => e.isHoliday)}
+              {@const dayAbsences = entries.filter((e) => isDrawnInCalendar(e))}
+              {@const isHoliday = holidays.length > 0}
+              {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
+              <div
+                class="cal-cell"
+                class:cal-current={day.isCurrentMonth}
+                class:cal-other={!day.isCurrentMonth}
+                class:cal-today={day.isToday}
+                class:cal-weekend={day.isWeekend && day.isCurrentMonth}
+                class:cal-holiday={isHoliday && day.isCurrentMonth}
+                class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
+                role={day.isCurrentMonth ? "button" : undefined}
+                tabindex={day.isCurrentMonth ? 0 : undefined}
+                onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
+                onmouseenter={() => handleDayMouseEnter(day.dateStr)}
+                onkeydown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
+                    e.preventDefault();
+                    pendingInitialStart = day.dateStr;
+                    pendingInitialEnd = day.dateStr;
+                    editingRequest = null;
+                    showForm = true;
+                  }
+                }}
+              >
+                <span class="cal-day-num">{day.dayNum}</span>
+                {#if isHoliday && day.isCurrentMonth}
+                  <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
+                    {holidays[0].firstName}
+                  </div>
+                {/if}
+                <div class="cal-chips">
+                  {#each Array(calLanes.totalLanes) as _, laneIdx (laneIdx)}
+                    {@const e = dayAbsences.find((a) => calLanes.laneById.get(a.id) === laneIdx)}
+                    {#if e}
+                      {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
+                      {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
+                      {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                      <!-- #840 (E-03): every bar here is the caller's own (`scope=own`), so the type is always theirs
+                         to see; the flag is false on purpose, which makes a row that is not theirs
+                         (it cannot arrive) render neutral instead of naming a type. -->
+                      {@const _vis = resolveChipVisual(e, false)}
+                      <!-- Phase 104-10 (D-28/D-29): the § 9 marker only applies to the SPECIFIC
                          days the server named in section9Days — a multi-day bar can be
                          partially marked. -->
-                    {@const _section9OnDay = !!(
-                      e.section9 && e.section9Days?.includes(day.dateStr)
-                    )}
-                    <div
-                      class="cal-chip"
-                      class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
-                      class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
-                      class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
-                      class:cal-chip--pending={e.status === "PENDING" ||
-                        e.status === "CANCELLATION_REQUESTED"}
-                      class:cal-chip--own={e.isOwn}
-                      class:cal-chip--section9-superseded={_section9OnDay &&
-                        e.section9 === "SUPERSEDED"}
-                      style:background={_vis.background}
-                      style:color={_vis.textColor}
-                      title="{e.firstName} {e.lastName}{_vis.typeLabel
-                        ? ' · ' + _vis.typeLabel
-                        : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
-                    >
-                      {#if _showLabel}
-                        <span class="cal-chip-name">{e.firstName}</span>
-                        <span class="cal-chip-type">{_vis.chipLabel}</span>
-                      {/if}
-                      {#if _section9OnDay && (e.section9 === "CONFIRMED" || e.section9 === "AU_PENDING")}
-                        {@const _isConfirmedSection9 = e.section9 === "CONFIRMED"}
-                        <span
-                          class="section9-chip-badge"
-                          class:section9-chip-badge--pending={!_isConfirmedSection9}
-                          data-testid="section9-cell-badge"
-                          title={_isConfirmedSection9
-                            ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet"
-                            : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet"}
-                        >
-                          <span class="sr-only"
-                            >{_isConfirmedSection9
-                              ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet: "
-                              : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet: "}</span
-                          >{_isConfirmedSection9 ? "§ 9" : "AU"}
-                        </span>
-                      {/if}
-                    </div>
-                  {:else}
-                    <div class="cal-chip-placeholder"></div>
-                  {/if}
-                {/each}
-              </div>
-              <!-- Tap target for the day-detail sheet (#303, D-09). Shown only below 700px —
+                      {@const _section9OnDay = !!(
+                        e.section9 && e.section9Days?.includes(day.dateStr)
+                      )}
+                      <div
+                        class="cal-chip"
+                        class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
+                        class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
+                        class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
+                        class:cal-chip--pending={e.status === "PENDING" ||
+                          e.status === "CANCELLATION_REQUESTED"}
+                        class:cal-chip--own={e.isOwn}
+                        class:cal-chip--section9-superseded={_section9OnDay &&
+                          e.section9 === "SUPERSEDED"}
+                        style:background={_vis.background}
+                        style:color={_vis.textColor}
+                        title="{e.firstName} {e.lastName}{_vis.typeLabel
+                          ? ' · ' + _vis.typeLabel
+                          : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
+                      >
+                        {#if _showLabel}
+                          <span class="cal-chip-name">{e.firstName}</span>
+                          <span class="cal-chip-type">{_vis.chipLabel}</span>
+                        {/if}
+                        {#if _section9OnDay && (e.section9 === "CONFIRMED" || e.section9 === "AU_PENDING")}
+                          {@const _isConfirmedSection9 = e.section9 === "CONFIRMED"}
+                          <span
+                            class="section9-chip-badge"
+                            class:section9-chip-badge--pending={!_isConfirmedSection9}
+                            data-testid="section9-cell-badge"
+                            title={_isConfirmedSection9
+                              ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet"
+                              : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet"}
+                          >
+                            <span class="sr-only"
+                              >{_isConfirmedSection9
+                                ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet: "
+                                : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet: "}</span
+                            >{_isConfirmedSection9 ? "§ 9" : "AU"}
+                          </span>
+                        {/if}
+                      </div>
+                    {:else}
+                      <div class="cal-chip-placeholder"></div>
+                    {/if}
+                  {/each}
+                </div>
+                <!-- Tap target for the day-detail sheet (#303, D-09). Shown only below 700px —
                    see `.cal-day-tap` in the style block — because that is where the bar's type
                    label leaves the screen and where no finger can open a `title` tooltip.
                    UNLIKE #265's whole-cell trigger on /team/leave, this is a CORNER target
@@ -1176,311 +1330,276 @@
                    of that primary action and — because mousedown still bubbles — fire both the
                    sheet and the new-request modal. Propagation is stopped below on both
                    mousedown and keydown so this trigger cannot co-fire either handler. -->
-              {#if dayAbsences.length > 0}
-                <button
-                  type="button"
-                  class="cal-day-tap"
-                  data-testid="leave-cal-day-tap"
-                  aria-label="Abwesenheiten am {fmtDate(day.dateStr)} anzeigen"
-                  onclick={() => openDayDetail(day.dateStr)}
-                  onmousedown={(e) => e.stopPropagation()}
-                  onkeydown={(e) => e.stopPropagation()}
-                >
-                  <span class="cal-day-tap-hint" aria-hidden="true">i</span>
-                </button>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
+                {#if dayAbsences.length > 0}
+                  <button
+                    type="button"
+                    class="cal-day-tap"
+                    data-testid="leave-cal-day-tap"
+                    aria-label="Abwesenheiten am {fmtDate(day.dateStr)} anzeigen"
+                    onclick={() => openDayDetail(day.dateStr)}
+                    onmousedown={(e) => e.stopPropagation()}
+                    onkeydown={(e) => e.stopPropagation()}
+                  >
+                    <span class="cal-day-tap-hint" aria-hidden="true">i</span>
+                  </button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
 
-      <!-- Legende -->
-      <div class="cal-legend">
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-vacation)"
-          ></span>Urlaub</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-overtime)"
-          ></span>ÜSt-Ausgleich</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-sick)"></span>Krank</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-sick-child)"
-          ></span>Kinderkrank</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-special)"
-          ></span>Sonderurlaub</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-education)"
-          ></span>Bildungsurlaub</span
-        >
-        <span class="legend-item"
-          ><span class="legend-dot" style:background="var(--leave-type-absent)"
-          ></span>Abwesend</span
-        >
-        <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
-        <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
+        <!-- Legend: the one component; the types are the ones this calendar paints (#840, D-840-10). -->
+        <LeaveLegend
+          typeCodes={calLegend.typeCodes}
+          styles={calLegend.styles}
+          markings={{ holiday: true }}
+          holidayLook="calendar"
+        />
       </div>
-    </div>
 
-    <!-- iCal-Download -->
-    <div class="ical-section">
-      <div class="ical-header">
-        <span class="ical-icon">📥</span>
-        <div>
-          <p class="ical-title">Kalender exportieren</p>
-          <p class="ical-desc">
-            Abwesenheiten als .ics-Datei herunterladen (Outlook, Google Calendar, Apple Kalender)
-          </p>
+      <!-- iCal-Download -->
+      <div class="ical-section">
+        <div class="ical-header">
+          <span class="ical-icon">📥</span>
+          <div>
+            <p class="ical-title">Kalender exportieren</p>
+            <p class="ical-desc">
+              Abwesenheiten als .ics-Datei herunterladen (Outlook, Google Calendar, Apple Kalender)
+            </p>
+          </div>
         </div>
-      </div>
-      <div class="ical-actions">
-        <button
-          class="btn btn-ghost btn-sm"
-          onclick={() => downloadIcal("personal")}
-          disabled={icalDownloading}
-        >
-          {icalDownloading ? "Laden…" : "Meine Abwesenheiten"}
-        </button>
-        <button
-          class="btn btn-ghost btn-sm"
-          onclick={() => downloadIcal("team")}
-          disabled={icalDownloading}
-        >
-          {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
-        </button>
+        <div class="ical-actions">
+          <button
+            class="btn btn-ghost btn-sm"
+            onclick={() => downloadIcal("personal")}
+            disabled={icalDownloading}
+            aria-busy={icalDownloading}
+          >
+            {#if icalDownloading}<Spinner />{/if}
+            Meine Abwesenheiten
+          </button>
+          <button
+            class="btn btn-ghost btn-sm"
+            onclick={() => downloadIcal("team")}
+            disabled={icalDownloading}
+            aria-busy={icalDownloading}
+          >
+            {#if icalDownloading}<Spinner />{/if}
+            Team-Abwesenheiten
+          </button>
+        </div>
       </div>
     </div>
   {/if}
 
-  <!-- ── Listen-Ansicht ────────────────────────────────────────────────────── -->
-  {#if view === "list"}
-    <!-- Combined year-bar (v1.5 — identisch zu Zeiterfassung, static year title) -->
-    <div class="card cal-monthbar card-animate">
-      <div class="cal-monthbar-nav">
-        <button
-          class="nav-btn"
-          onclick={prevYear}
-          title="Vorheriges Jahr"
-          aria-label="Vorheriges Jahr"
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-          >
-        </button>
-        <div class="cal-nav-center cal-monthbar-center">
-          <div class="serif-eyebrow cal-monthbar-eyebrow">Urlaubsjahr</div>
-          <div class="cal-monthbar-title cal-monthbar-title--static">{calYear}</div>
-        </div>
-        <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-          >
-        </button>
-      </div>
-      {#if showVacSummary}
-        {#if vacSummaryLoading}
-          {@render vacStatsSkeleton()}
-        {:else}
-          {@render vacStats()}
-        {/if}
-      {/if}
-    </div>
+  <!-- ── Meine Anträge: the year's own requests (Issue #840) ─────────────────────────────────── -->
+  {#if activeTab === "antraege"}
+    <div role="tabpanel" id="leave-panel-antraege" aria-labelledby="leave-tab-antraege">
+      <!-- ── Anträge-Tabelle — Issue #851 (D-851-04): toolbar and table from the blocks ──────── -->
+      <h2 class="leave-section-title card-animate">Meine Anträge</h2>
 
-    <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
-    <div class="section-header card-animate">
-      <h2>Meine Anträge</h2>
-    </div>
-
-    {#if loading}
-      <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
-    {:else}
-      <div class="filter-bar card-animate">
-        <select
-          data-testid="leave-filter-status"
-          class="form-input filter-select"
-          bind:value={filterLeaveStatus}
-          aria-label="Nach Status filtern"
-        >
-          <option value="" data-testid="leave-filter-open">Alle Status</option>
-          <option value="PENDING">Ausstehend</option>
-          <option value="APPROVED" data-testid="leave-filter-approved">Genehmigt</option>
-          <option value="REJECTED">Abgelehnt</option>
-          <option value="CANCELLED">Storniert</option>
-          <option value="CANCELLATION_REQUESTED" data-testid="leave-filter-cancellation"
-            >Stornierung beantragt</option
-          >
-        </select>
-        <select
-          data-testid="leave-filter-type"
-          class="form-input filter-select"
-          bind:value={filterLeaveType}
-          aria-label="Nach Art filtern"
-        >
-          <option value="">Alle Arten</option>
-          {#each TYPE_OPTIONS as t (t.code)}
-            <option value={t.code}>{t.label}</option>
-          {/each}
-        </select>
-        <span class="filter-count">{filteredMyRequests.length} im Jahr {calYear}</span>
-      </div>
-
-      {#if myRequests.length === 0}
-        <div class="empty-state card card-body" data-testid="leave-empty-state">
-          <span class="empty-icon">🏖️</span>
-          <h3>Keine Anträge in {calYear}</h3>
-          <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
-        </div>
+      {#if loading}
+        <Skeleton shape="card" lines={3} />
       {:else}
-        <div class="table-wrapper">
-          <table class="data-table" data-testid="leave-mine-table">
-            <thead>
-              <tr>
-                <th>Art</th>
-                <th>Von</th>
-                <th>Bis</th>
-                <th class="text-center">Umfang</th>
-                <th>Status</th>
-                <th>Anmerkung</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedMyRequests as req (req.id)}
+        <div class="card-animate" data-testid="leave-filters">
+          <TableToolbar
+            bind:query={myReqQuery}
+            count={filteredMyRequests.length}
+            total={myRequests.length}
+            filters={myReqFilters}
+            onFilterChange={onMyReqFilter}
+            onReset={resetMyReqFilters}
+            searchLabel="Anträge durchsuchen"
+          />
+        </div>
+
+        {#if myRequests.length === 0}
+          <div data-testid="leave-empty-state">
+            <EmptyState
+              icon="calendar"
+              title="Keine Anträge in {calYear}"
+              description="Wähle ein anderes Jahr oder lege einen neuen Antrag an."
+            />
+          </div>
+        {:else}
+          <div data-testid="leave-mine-table">
+            <DataTable
+              caption="Meine Anträge {calYear}"
+              columns={MY_REQ_COLUMNS}
+              rows={pagedMyRequests}
+              rowKey={(req) => req.id}
+              rowTestId={(req) => `leave-mine-row-${req.id}`}
+              rowId={(req) => `request-${req.id}`}
+              rowHighlight={(req) => highlightRequestId === req.id}
+              filtered={filteredMyRequests.length === 0}
+              onResetFilters={resetMyReqFilters}
+            >
+              {#snippet cell(req, column)}
                 {@const isOwn = req.employeeId === $authStore.user?.employeeId}
-                <tr
-                  id="request-{req.id}"
-                  data-testid={`leave-mine-row-${req.id}`}
-                  data-status={req.status}
-                  class:highlight-row={highlightRequestId === req.id}
-                >
-                  <td>{typeName(req.typeCode)}</td>
-                  <td class="font-mono">{fmtDate(req.startDate)}</td>
-                  <td class="font-mono">{fmtDate(req.endDate)}</td>
-                  <td class="text-center"
-                    >{leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}</td
+                {#if column.key === "type"}
+                  {typeName(req.typeCode)}
+                {:else if column.key === "period"}
+                  {req.startDate === req.endDate
+                    ? fmtDate(req.startDate)
+                    : `${fmtDate(req.startDate)} – ${fmtDate(req.endDate)}`}
+                {:else if column.key === "days"}
+                  {leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}
+                {:else if column.key === "status"}
+                  <span
+                    class="badge {statusClass(req.status)}"
+                    data-testid={`leave-mine-row-${req.id}-status-badge`}
+                    >{statusLabel(req.status)}</span
                   >
-                  <td>
-                    <span
-                      class="badge {statusClass(req.status)}"
-                      data-testid={`leave-mine-row-${req.id}-status-badge`}
-                      >{statusLabel(req.status)}</span
-                    >
-                    {#if req.lastDaysAdjustment}
-                      {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
-                      <!-- Phase 107-07 (D-19/D-21): persistent — NOT tied to the triggering
+                  {#if req.lastDaysAdjustment}
+                    {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
+                    <!-- Phase 107-07 (D-19/D-21): persistent — NOT tied to the triggering
                            bell-notification's read/dismissed state, always the latest
                            adjustment only. Reading order: status, then this, then Vorläufig
                            (UI-SPEC §Visual Hierarchy — this reports something that
                            happened, Vorläufig only a standing condition). -->
-                      <span
-                        class={adjBadge.badgeClass}
-                        data-testid={`leave-mine-row-${req.id}-adjustment-badge`}
-                        title={adjBadge.tooltip}
-                      >
-                        {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
-                          ? "+"
-                          : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
-                          >{:else}{adjBadge.delta}{/if} Tag(e)
-                      </span>
-                    {/if}
-                    {#if req.daysProvisional}
-                      <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
+                    <span
+                      class={adjBadge.badgeClass}
+                      data-testid={`leave-mine-row-${req.id}-adjustment-badge`}
+                      title={adjBadge.tooltip}
+                    >
+                      {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
+                        ? "+"
+                        : "−"}{#if adjBadge.bold}<strong>{formatDays(adjBadge.delta)}</strong
+                        >{:else}{formatDays(adjBadge.delta)}{/if} Tag(e)
+                    </span>
+                  {/if}
+                  {#if req.daysProvisional}
+                    <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
                            provisional request is fully valid and payable today. -->
-                      <span
-                        class="badge badge-yellow"
-                        data-testid={`leave-mine-row-${req.id}-provisional-badge`}
-                        title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
-                      >
-                        Vorläufig
-                      </span>
-                    {/if}
-                    {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                      <span
-                        class="badge badge-attest {req.attestPresent
-                          ? 'badge-green'
-                          : 'badge-gray'}"
-                        title={req.attestPresent ? "Attest liegt vor." : KARENZ_BADGE_TOOLTIP}
-                      >
-                        {req.attestPresent ? "Attest" : "Kein Attest"}
-                      </span>
-                    {/if}
-                    <!-- Phase 104-10 (D-29): § 9 status alongside the existing SICK badge —
+                    <span
+                      class="badge badge-yellow"
+                      data-testid={`leave-mine-row-${req.id}-provisional-badge`}
+                      title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
+                    >
+                      Vorläufig
+                    </span>
+                  {/if}
+                  {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+                    <span
+                      class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
+                      title={req.attestPresent ? "Attest liegt vor." : KARENZ_BADGE_TOOLTIP}
+                    >
+                      {req.attestPresent ? "Attest" : "Kein Attest"}
+                    </span>
+                  {/if}
+                  <!-- Phase 104-10 (D-29): § 9 status alongside the existing SICK badge —
                          also shown on the overlapping VACATION row so a manager can see the
                          case from either side. Text label carries the meaning, not colour
                          alone (Phase-97 UAT lesson). -->
-                    {#if req.section9Status === "AU_PENDING"}
-                      <span class="badge badge-yellow" data-testid="section9-list-badge">
-                        AU ausstehend
-                      </span>
-                    {:else if req.section9Status === "CONFIRMED"}
-                      <span class="badge badge-gray" data-testid="section9-list-badge">
-                        § 9 gutgeschrieben
-                      </span>
-                    {:else if req.section9Status === "REJECTED"}
-                      <span class="badge badge-gray" data-testid="section9-list-badge">
-                        AU abgelehnt
-                      </span>
-                    {/if}
-                  </td>
-                  <td class="note-cell text-muted">
+                  {#if req.section9Status === "AU_PENDING"}
+                    <span class="badge badge-yellow" data-testid="section9-list-badge">
+                      AU ausstehend
+                    </span>
+                  {:else if req.section9Status === "CONFIRMED"}
+                    <span class="badge badge-gray" data-testid="section9-list-badge">
+                      § 9 gutgeschrieben
+                    </span>
+                  {:else if req.section9Status === "REJECTED"}
+                    <span class="badge badge-gray" data-testid="section9-list-badge">
+                      AU abgelehnt
+                    </span>
+                  {/if}
+                {:else if column.key === "note"}
+                  <span class="note-cell text-muted">
                     {#if req.status === "REJECTED" && req.reviewNote}
                       <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
                     {:else}
                       {req.note ?? "—"}
                     {/if}
-                  </td>
-                  <td class="action-cell">
-                    <div class="action-cell__group">
-                      {#if isOwn && req.status === "PENDING"}
-                        <button
-                          data-testid={`leave-mine-row-${req.id}-edit`}
-                          class="btn btn-sm btn-ghost"
-                          onclick={() => openEditForm(req)}>Bearbeiten</button
-                        >
-                        <button
-                          data-testid={`leave-mine-row-${req.id}-withdraw`}
-                          class="btn btn-sm btn-ghost text-red"
-                          onclick={() => openCancelDialog(req)}>Zurückziehen</button
-                        >
-                      {/if}
-                      {#if isOwn && req.status === "APPROVED"}
-                        <button
-                          data-testid={`leave-mine-row-${req.id}-cancel`}
-                          class="btn btn-sm btn-ghost text-red"
-                          onclick={() => openCancelDialog(req)}>Stornieren</button
-                        >
-                      {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-          <Pagination
-            total={filteredMyRequests.length}
-            bind:page={myReqPage}
-            bind:pageSize={myReqPageSize}
-          />
-        </div>
+                  </span>
+                {:else}
+                  <div class="action-cell__group">
+                    {#if isOwn && req.status === "PENDING"}
+                      <button
+                        data-testid={`leave-mine-row-${req.id}-edit`}
+                        class="btn btn-sm btn-ghost"
+                        onclick={() => openEditForm(req)}>Bearbeiten</button
+                      >
+                      <button
+                        data-testid={`leave-mine-row-${req.id}-withdraw`}
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => openCancelDialog(req)}>Zurückziehen</button
+                      >
+                    {/if}
+                    {#if isOwn && req.status === "APPROVED"}
+                      <button
+                        data-testid={`leave-mine-row-${req.id}-cancel`}
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => openCancelDialog(req)}>Stornieren</button
+                      >
+                    {/if}
+                  </div>
+                {/if}
+              {/snippet}
+            </DataTable>
+            <Pagination
+              total={filteredMyRequests.length}
+              bind:page={myReqPage}
+              bind:pageSize={myReqPageSize}
+            />
+          </div>
+        {/if}
       {/if}
-    {/if}
+    </div>
   {/if}<!-- Ende Liste -->
+
+  <!-- ── Team (Issue #840, E-03/E-05): who of my salon is away, never why ────────────────────── -->
+  {#if activeTab === "team"}
+    <div role="tabpanel" id="leave-panel-team" aria-labelledby="leave-tab-team">
+      <div class="card card-animate overview-card" data-testid="leave-team-overview">
+        <LeaveLegend
+          typeCodes={teamLegend.typeCodes}
+          styles={teamLegend.styles}
+          markings={teamLegend.markings}
+          closedHint={teamLegend.closedHint}
+        />
+        {#if teamRows.length === 0 && teamLoading}
+          <Skeleton shape="block" height="240px" />
+        {:else if teamRows.length === 0}
+          <p class="overview-empty" data-testid="leave-team-empty">
+            Keine Abwesenheiten in diesem Zeitraum.
+          </p>
+        {:else if isMobile}
+          <AbsenceList rows={teamRows} period={activePeriod} holidays={teamHolidays} />
+        {:else}
+          <AbsenceTimeline
+            rows={teamRows}
+            period={activePeriod}
+            holidays={teamHolidays}
+            closedWeekdays={teamWerktage}
+            {today}
+            load={teamLoad}
+            onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
+          />
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  <!-- ── Planung (Issue #840, E-03, D-840-16/23): the own wishes next to the team ──────────────
+       The panel is mounted OUTSIDE every animated block (#570); `mode="own"` is the neutral
+       reading: own wishes editable, colleagues neutral, no person choice, no manage controls. -->
+  {#if activeTab === "planung"}
+    <div role="tabpanel" id="leave-panel-planung" aria-labelledby="leave-tab-planung">
+      {#if !contextLoaded}
+        <Skeleton shape="card" lines={3} />
+      {:else}
+        <LeavePlanningPanel
+          mode="own"
+          salonId={planSalonId}
+          period={activePeriod}
+          {today}
+          onControls={(controls) => (planControls = controls)}
+          onWeekSelect={(monday) => void navigate({ zoom: "quartal", datum: monday }, true)}
+        />
+      {/if}
+    </div>
+  {/if}
 
   <!-- ── Quick 260824-cjd: Storno-Begründung (Zurückziehen / Stornierung) ────── -->
   <ReasonDialog
@@ -1498,62 +1617,13 @@
     bind:open={dayDetailOpen}
     dateLabel={dayDetailDate ? fmtDate(dayDetailDate) : ""}
     entries={dayDetailEntries}
-    canSeeType={canSeeOthersLeaveType}
+    canSeeType={false}
   />
 </div>
 
 <!-- /leave-page -->
 
 <style>
-  /* ── KPI Row (v1.5 design system) ─────────────────────────────────── */
-  .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-bottom: 16px;
-  }
-  .kpi-card {
-    /* .card recipe in app.css provides bg, border, radius, padding */
-    min-height: 96px;
-  }
-  @media (max-width: 768px) {
-    /* minmax(0, 1fr): a bare 1fr track is minmax(auto, 1fr) and grew with the widest nowrap
-       content of the Überstundenkonto card, pushing the page past a 320 px viewport (Issue #564,
-       seen on CI with wider fallback fonts). */
-    .kpi-row {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 12px;
-    }
-  }
-
-  /* ── Highlight from notification deep-link ────────────────────────── */
-  @keyframes highlight-fade {
-    0% {
-      background-color: var(--brand-soft);
-    }
-    100% {
-      background-color: transparent;
-    }
-  }
-  .highlight-row {
-    animation: highlight-fade 3s var(--ease-out) both;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    margin-bottom: 0.875rem;
-  }
-  .section-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 0;
-  }
-
   /* ── Form (inside Modal primitive) ──────────────────────────────── */
   .form-grid {
     display: grid;
@@ -1587,8 +1657,8 @@
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 0.875rem 1rem;
   }
@@ -1597,7 +1667,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0 0 0.5rem;
   }
   .overlap-empty {
@@ -1620,11 +1690,11 @@
     font-weight: 600;
   }
   .overlap-type {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
   .overlap-dates {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 0.875rem;
     margin-left: auto;
   }
@@ -1641,14 +1711,13 @@
     color: var(--bad);
   }
   .note-cell {
+    display: inline-block;
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .action-cell {
-    white-space: nowrap;
-  }
+
   /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
      keeps display: table-cell and lines up with the rest of the row even when empty. */
   .action-cell__group {
@@ -1658,26 +1727,10 @@
     flex-wrap: wrap;
   }
 
-  /* ── Empty ────────────────────────────────────────────────────────── */
-  .empty-state {
-    text-align: center;
-    padding: 3rem 2rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.625rem;
-  }
-  .empty-icon {
-    font-size: 2.5rem;
-  }
-  .empty-state h3 {
-    font-size: 1rem;
-  }
-
   /* ── Buttons ──────────────────────────────────────────────────────── */
   .btn-danger {
     background: var(--bad);
-    color: white;
+    color: var(--card);
     border: none;
     border-radius: 8px;
     padding: 0.5rem 1.25rem;
@@ -1697,13 +1750,13 @@
     padding: 0.25rem;
     border-radius: 4px;
     font-size: 1rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* ── Balance Box ──────────────────────────────────────────────────── */
   .balance-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 8px;
     padding: 0.875rem 1rem;
     display: flex;
@@ -1718,27 +1771,27 @@
     font-size: 0.9375rem;
   }
   .balance-label {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-value {
     font-weight: 600;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
   }
   .balance-meta {
     font-size: 0.8125rem;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin-left: 0.25rem;
   }
   .balance-deduct {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-warn {
     color: var(--bad);
   }
   .balance-divider {
     height: 1px;
-    background: var(--border);
+    background: var(--line);
     margin: 0.125rem 0;
   }
   .balance-hint-warn {
@@ -1756,96 +1809,42 @@
     margin: 0.25rem 0 0;
   }
   /* Phase 97-06 (SALDO-DISP-04) — the forecast row: muted like
-     the forecast everywhere else in the app (never --good/--bad/--warn — colour
+     the forecast everywhere else in the app (never --ok/--bad/--warn — colour
      must never imply a certainty this figure doesn't have). */
   .balance-value--muted {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .balance-hint-muted {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0.25rem 0 0;
   }
 
   /* ── View Tabs ────────────────────────────────────────────────────── */
   /* view-tabs, view-tab, tab-badge → global in app.css */
 
-  /* ── Combined Calendar Month-Bar ─────────────────────────────────────
-     .cal-monthbar* recipe lives in app.css (v1.5 canonical, shared with
-     /team/leave). Per-page overrides are forbidden. */
+  /* ── Period control ───────────────────────────────────────────────────
+     The period switcher is the one LeaveToolbar (#840); the page has no month bar of its own. */
 
-  .vac-stats {
-    display: flex;
-    align-items: flex-end;
-    gap: 28px;
-    flex-wrap: wrap;
-  }
-
-  /* Phase 117 (issue #122, D-03) — Ladezustand der Kachelleiste. Reuses the global .skeleton
-     shimmer (app.css:883); only the geometry is page-scoped, same split as Phase 116's
-     .list-skeleton on /time-entries. Mirrors .vac-stats' own flex row + 28px gap so the strip
-     does not jump when the numbers arrive. */
-  .vac-summary-skeleton {
-    display: flex;
-    align-items: flex-end;
-    gap: 28px;
-    flex-wrap: wrap;
-  }
-  .vac-summary-skel-tile {
-    width: 72px;
-    height: 38px;
-    border-radius: var(--r-sm);
-  }
-
-  .vac-stat {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .vac-stat-label {
-    font-size: 10.5px;
+  /* The entitlement strip of the viewed year (Kalender and Meine Anträge). */
+  .leave-section-title {
+    font-size: var(--fs-h2);
     font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-  }
-
-  .vac-stat-value {
-    font-family: var(--font-serif);
-    font-variant-numeric: tabular-nums;
-    font-size: 22px;
-    font-weight: 400;
     color: var(--text);
-    line-height: 1;
-    display: inline-flex;
-    align-items: baseline;
-    gap: 4px;
-  }
-  .vac-stat-value.pos {
-    color: var(--good);
-  }
-  .vac-stat-value.neg {
-    color: var(--bad);
-  }
-  .vac-stat-carry {
-    color: var(--brand);
-  }
-  .vac-stat-planned {
-    color: var(--warn);
+    margin: 0;
   }
 
-  .vac-stat-unit {
-    font-family: var(--font-sans);
-    font-variant-numeric: normal;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-muted);
+  /* The Team tab's card around the legend and the read-only timeline (same recipe as the team area). */
+  .overview-card {
+    padding: 0.75rem;
+    margin-bottom: 1rem;
   }
-
-  .vac-stat--highlight .vac-stat-label {
-    color: var(--text);
+  .overview-empty {
+    margin: 0;
+    padding: 1.5rem 1rem;
+    text-align: center;
+    color: var(--text-2);
+    font-size: 0.875rem;
   }
 
   /* ── Days-Info Bar ────────────────────────────────────────────────── */
@@ -1869,7 +1868,7 @@
     margin-left: 0.25rem;
   }
   .days-info-loading {
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.875rem;
   }
 
@@ -1921,7 +1920,8 @@
     gap: 0.2rem;
     padding: 2px 0.4rem;
     border-radius: 4px;
-    color: white;
+    /* Fallback only: the chip sets the fill's own text partner inline (#842, D-842-08). */
+    color: var(--card);
     font-size: 0.75rem;
     line-height: 1.4;
     overflow: hidden;
@@ -1945,7 +1945,7 @@
     height: 22px;
   }
   .cal-chip--pending {
-    outline: 1.5px dashed rgba(255, 255, 255, 0.7);
+    outline: 1.5px dashed color-mix(in srgb, var(--card) 70%, transparent);
     outline-offset: -2px;
     opacity: 0.9;
   }
@@ -1995,7 +1995,7 @@
     font-size: 0.5625rem;
     font-weight: 700;
     line-height: 1.3;
-    background: rgba(255, 255, 255, 0.35);
+    background: color-mix(in srgb, var(--card) 35%, transparent);
   }
   .section9-chip-badge--pending {
     background: var(--warn-soft);
@@ -2016,55 +2016,23 @@
   }
   .section9-movement {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   /* Legende */
-  .cal-legend {
-    display: flex;
-    gap: 1rem;
-    padding: 0.875rem 1.25rem;
-    flex-wrap: wrap;
-  }
-  .legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
+  /* #840 D-840-10: the legend is LeaveLegend.svelte. */
   .badge-attest {
     margin-left: 0.25rem;
     font-size: 0.75rem;
   }
-  .legend-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    flex-shrink: 0;
-    display: inline-block;
-  }
-  .legend-holiday-dot {
-    width: 10px;
-    height: 10px;
-    background: var(--brand-soft);
-    border: 1.5px solid var(--brand);
-    border-radius: 2px;
-    flex-shrink: 0;
-    display: inline-block;
-  }
-  .legend-pending {
-    font-style: italic;
-  }
-
   /* ── iCal ────────────────────────────────────────────────────────── */
   .ical-section {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
+    background: var(--sunk);
+    border: 1px solid var(--line);
     border-radius: 10px;
     padding: 0.875rem 1.25rem;
     margin-bottom: 1.25rem;
@@ -2089,7 +2057,7 @@
   }
   .ical-desc {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 0;
   }
   /* Wraps and may shrink to its widest button: at 320 px the two buttons side by side were
@@ -2148,7 +2116,7 @@
       padding: 4px;
       background: transparent;
       border: 0;
-      border-radius: var(--r-md);
+      border-radius: var(--r-control);
       cursor: pointer;
       appearance: none;
     }
@@ -2167,11 +2135,10 @@
       width: 15px;
       height: 15px;
       border-radius: 50%;
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-      font-family: var(--font-serif);
-      font-style: italic;
+      background: var(--card);
+      border: 1px solid var(--line);
+      color: var(--text-2);
+      font-family: var(--font-ui);
       font-size: 0.625rem;
       font-weight: 700;
       line-height: 1;

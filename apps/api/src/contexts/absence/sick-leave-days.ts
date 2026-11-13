@@ -36,7 +36,7 @@
  */
 import type { LeaveRequestStatus, LeaveTypeCode } from "@clokr/db";
 import { isSickLeaveTypeCode } from "./leave-type";
-import { EFFECTIVE_LEAVE_STATUSES } from "./effective-leave-statuses";
+import { isEffectiveLeaveStatus } from "./effective-leave-statuses";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -104,7 +104,7 @@ export function sickLeaveDayCounts(
 
   for (const lr of rows) {
     if (!isSickLeaveTypeCode(lr.leaveType.code)) continue;
-    if (!(EFFECTIVE_LEAVE_STATUSES as readonly LeaveRequestStatus[]).includes(lr.status)) continue;
+    if (!isEffectiveLeaveStatus(lr.status)) continue;
 
     const factor = lr.halfDay ? 0.5 : 1;
     // Issue #713 (D-02): the split sits on the very value below; the guard above leaves two codes.

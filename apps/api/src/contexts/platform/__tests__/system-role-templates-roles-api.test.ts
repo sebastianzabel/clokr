@@ -16,7 +16,7 @@ import { SYSTEM_ROLE_IDS, SYSTEM_ROLE_NAMES, SYSTEM_ROLE_PERMISSIONS } from ".."
 import type { FastifyInstance } from "fastify";
 
 const ROLE_SYSTEM_UPDATE_MESSAGE =
-  "Systemrollen können nicht geändert werden. Kopieren Sie die Rolle, um sie anzupassen.";
+  "Systemrollen können nicht geändert werden. Kopier die Rolle, um sie anzupassen.";
 const ROLE_SYSTEM_DELETE_MESSAGE = "Systemrollen können nicht gelöscht werden.";
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
 

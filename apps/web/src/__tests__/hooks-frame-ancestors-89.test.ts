@@ -43,6 +43,8 @@ function pinnedTenantCsp(nonce: string): string {
     "font-src 'self'",
     "img-src 'self' data: blob:",
     "connect-src 'self'",
+    // Issue #608 (D-12): the one deliberate change of this pin.
+    "worker-src 'self'",
     "frame-src 'none'",
     "object-src 'none'",
     "base-uri 'self'",
@@ -105,6 +107,22 @@ describe("tenant pages keep their headers unchanged", () => {
       const { response, nonce } = await run(pathname);
       expect(response.headers.get("Content-Security-Policy")).toBe(pinnedTenantCsp(nonce));
       expect(response.headers.get("X-Frame-Options")).toBeNull();
+    },
+  );
+});
+
+// Issue #608 (D-12): naming the worker source must not loosen script execution.
+describe("the worker source is named without touching script-src", () => {
+  it.each(["/dashboard", "/betreiber/anmelden"])(
+    "%s keeps script-src byte-identical and names worker-src once",
+    async (pathname) => {
+      const { response, nonce } = await run(pathname);
+      const csp = response.headers.get("Content-Security-Policy") ?? "";
+      const directives = csp.split("; ");
+      expect(directives.filter((d) => d.startsWith("script-src "))).toEqual([
+        `script-src 'self' 'nonce-${nonce}'`,
+      ]);
+      expect(directives.filter((d) => d === "worker-src 'self'")).toHaveLength(1);
     },
   );
 });

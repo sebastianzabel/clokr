@@ -60,7 +60,7 @@ describe("Issue #86 (Phase 86b Plan 06) — Personalabteilung acceptance on the 
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@example.invalid`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@example.invalid`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -235,6 +235,7 @@ describe("Issue #86 (Phase 86b Plan 06) — Personalabteilung acceptance on the 
       const res = await asHr("PUT", `/settings/work/${y.employee.id}`, {
         type: "FIXED_SCHEDULE",
         weeklyHours: 38,
+        fridayHours: 6, // Issue #848: weekly = Σ day hours (Mo–Do 8 h + Fr 6 h)
         validFrom: nextMonthFirst(),
       });
       expect(res.statusCode, res.body).toBe(200);

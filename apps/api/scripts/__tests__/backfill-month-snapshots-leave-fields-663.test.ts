@@ -58,7 +58,6 @@ describe("backfill-month-snapshots stores the regular close's snapshot (Issue #6
       data: {
         email: `p663-${suffix}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -157,7 +156,6 @@ describe("backfill-month-snapshots stores the regular close's snapshot (Issue #6
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });

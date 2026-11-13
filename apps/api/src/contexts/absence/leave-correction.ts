@@ -26,6 +26,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
+import { EFFECTIVE_LEAVE_STATUSES, isEffectiveLeaveStatus } from "./effective-leave-statuses"; // Issue #478
 import { computeAffectedMonths, monthsInRange } from "./correction-lock";
 import {
   resolveLeaveDays,
@@ -51,6 +52,8 @@ import {
 } from "../working-time-account";
 import { revalidateLeaveCancellationEntries } from "../time-tracking";
 import { Section9ConcurrentCorrectionError, supersedeSection9Credit } from "./section9-supersede";
+import { lockEmployeeForLeavePricing } from "./employee-leave-lock";
+import { repriceLaterVacationRequests } from "./later-request-reprice";
 
 export { Section9ConcurrentCorrectionError };
 
@@ -69,6 +72,31 @@ export interface LeaveCorrectionInput {
   /** The mandatory Korrektur-Begründung; carried into the § 9 audit rows. */
   reason: string;
   tenantId: string;
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The calendar-day ranges inside `[newStart, newEnd]` that are NOT inside `[oldStart, oldEnd]`
+ * (at most two: before the old start, after the old end). All four are `@db.Date` values
+ * (UTC midnight), so day arithmetic on epoch milliseconds is exact.
+ */
+export function addedDayRanges(
+  oldStart: Date,
+  oldEnd: Date,
+  newStart: Date,
+  newEnd: Date,
+): Array<{ start: Date; end: Date }> {
+  const out: Array<{ start: Date; end: Date }> = [];
+  if (newStart < oldStart) {
+    const dayBeforeOld = new Date(oldStart.getTime() - ONE_DAY_MS);
+    out.push({ start: newStart, end: newEnd < dayBeforeOld ? newEnd : dayBeforeOld });
+  }
+  if (newEnd > oldEnd) {
+    const dayAfterOld = new Date(oldEnd.getTime() + ONE_DAY_MS);
+    out.push({ start: newStart > dayAfterOld ? newStart : dayAfterOld, end: newEnd });
+  }
+  return out;
 }
 
 /** Internal machine marker of a refusal; the route sends `statusCode` + `body` only. */
@@ -248,19 +276,19 @@ export async function prepareLeaveCorrection(
   }
 
   // ── Step 7b: overlap guard (pre-write) for a CHANGED date range. Excludes
-  //    the request itself (id:{not}). An identical-range correction (type/
-  //    halfDay-only) introduces no new collision, so it is not re-checked.
-  const dateChanged =
-    start.getTime() !== existing.startDate.getTime() ||
-    end.getTime() !== existing.endDate.getTime();
-  if (dateChanged) {
+  //    the request itself (id:{not}). Issue #478: only the days the correction ADDS (new range
+  //    minus old range) are checked — the days the request already held cannot newly collide,
+  //    so a pure shortening (also the employment-exit shortening) never trips over a double
+  //    booking that already existed. An identical-range correction (type/halfDay-only) adds no
+  //    day at all and is not re-checked.
+  const addedDays = addedDayRanges(existing.startDate, existing.endDate, start, end);
+  if (addedDays.length > 0) {
     const overlaps = await app.prisma.leaveRequest.findMany({
       where: {
         employeeId: existing.employeeId,
         deletedAt: null,
-        status: { in: ["PENDING", "APPROVED"] },
-        startDate: { lte: end },
-        endDate: { gte: start },
+        status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] }, // Issue #478: same set as POST
+        OR: addedDays.map((r) => ({ startDate: { lte: r.end }, endDate: { gte: r.start } })),
         id: { not: existing.id },
       },
       include: { leaveType: true },
@@ -275,7 +303,8 @@ export async function prepareLeaveCorrection(
     // phase. Mirrored bidirectionally: /correct can be called on either side of the pair.
     const correctedIsSick = isSickLeaveTypeCode(newType);
     const blockingOverlap = overlaps.find((o) => {
-      if (o.status !== "APPROVED") return true; // § 9 exception never applies vs PENDING
+      // § 9 exception never applies vs PENDING (Issue #478: CANCELLATION_REQUESTED counts as active)
+      if (!isEffectiveLeaveStatus(o.status)) return true;
       const otherIsSick = isSickLeaveTypeCode(o.leaveType.code);
       if (correctedIsSick !== otherIsSick) return false; // § 9 case — permitted either way
       return true; // same-kind overlap (vacation/vacation, sick/sick) — still blocked
@@ -577,6 +606,10 @@ export async function applyLeaveCorrection(
   } = plan;
   const body = { halfDay: plan.halfDay, note: plan.note, reason: plan.reason };
 
+  // Issue #467: serialise with every other writer that prices this employee's vacation requests
+  // (POST /requests), FIRST statement of the transaction — see employee-leave-lock.ts.
+  await lockEmployeeForLeavePricing(tx, tenantId, existing.employeeId);
+
   // ── Step 8: REVERSE the OLD booking (dispatch on the OLD typeCode) ──────
   if (oldTypeCode === "VACATION") {
     await reverseVacationDays(
@@ -682,6 +715,20 @@ export async function applyLeaveCorrection(
   }
   // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
   // entitlement-neutral on the apply side (light).
+
+  // ── Step 10a (Issue #467): requests created LATER than this one were priced while it did not
+  //    yet cover their ISO weeks; re-price them (only ever cheaper, audited, closed months
+  //    untouched) so a week is never deducted twice.
+  if (newType === "VACATION") {
+    await repriceLaterVacationRequests(tx, {
+      employeeId: existing.employeeId,
+      tenantId,
+      correctedRequest: { id: existing.id, createdAt: existing.createdAt },
+      start,
+      end,
+      audit: port.audit,
+    });
+  }
 
   // ── Step 10b: RE-CREDIT the clipped part of a partially-superseded CONFIRMED credit
   //    (Issue #468, D-04/A-3) — a new revision+1 correction credit for exactly the part

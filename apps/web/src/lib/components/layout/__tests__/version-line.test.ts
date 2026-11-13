@@ -36,7 +36,12 @@ import { screen } from "@testing-library/svelte";
 // the whole module before its own `$app/environment` import is ever transformed, which
 // unblocks mounting without touching vitest.config.ts or any production file — nothing
 // in this test cares about auth state.
-vi.mock("$stores/auth", () => ({ authStore: { subscribe: () => () => {} } }));
+// Issue #576: the release-notes store derives the reader's view from the auth store, so the mock
+// must emit a value (a writable with no user — a non-admin reader).
+vi.mock("$stores/auth", async () => {
+  const { writable } = await import("svelte/store");
+  return { authStore: writable({ user: null }) };
+});
 
 import { renderWithTheme } from "$tests/test-utils";
 import { versionStore } from "$stores/version";
@@ -143,4 +148,20 @@ describe("MobileMoreSheet version line — mounted pin", () => {
 
     expect(container.querySelector('[aria-label="Anwendungsversion"]')).toBeNull();
   });
+});
+
+describe("the version entry — badge instead of auto-open (Issue #576)", () => {
+  for (const [name, src] of [
+    ["Sidebar", SIDEBAR],
+    ["MobileMoreSheet", MOBILE_MORE_SHEET],
+  ] as const) {
+    it(`${name}: label from whatsNewEntryLabel, the „Neu“ badge only while unread, opens on click`, () => {
+      expect(src).toContain("whatsNewEntryLabel($versionStore, $hasUnreadReleaseNotes)");
+      expect(src).toContain("onclick={openWhatsNew}");
+      const block = src.slice(src.indexOf("{#if $hasUnreadReleaseNotes}"));
+      expect(block.slice(0, block.indexOf("{/if}"))).toMatch(
+        /<span class="badge badge-purple [\w-]+" aria-hidden="true">Neu<\/span>/,
+      );
+    });
+  }
 });

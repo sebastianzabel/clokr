@@ -98,7 +98,7 @@ describe("recalculate-shift-based-leave-days — --status/--request-id filters (
     async function makeUser(label: string, role: "EMPLOYEE" | "ADMIN") {
       const email = `rsbld-${label}-${suffix}@test.de`;
       const user = await prisma.user.create({
-        data: { email, passwordHash, role, isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       const employee = await prisma.employee.create({
         data: {
@@ -283,7 +283,7 @@ describe("recalculate-shift-based-leave-days — Bestand list (Issue #436, D-04/
     const passwordHash = await bcrypt.hash("test1234", 10);
     const email = `u436b-emp-${suffix}@test.de`;
     const user = await prisma.user.create({
-      data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     const employee = await prisma.employee.create({
       data: {

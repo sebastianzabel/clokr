@@ -453,6 +453,10 @@ bei einer `TENANT`-Zuweisung auf die Admin-Systemrolle, sonst Manager bei mindes
 ZUGEWIESEN-Permission, sonst Mitarbeiter), weicht von `User.role` ab. Nutzer ohne Zuweisung
 fehlen darin absichtlich — für sie gilt `User.role` unverändert.
 
+> **Historisch — nach „Phase 641“ nicht mehr ausführbar.** Die Abfrage unten liest die Spalte `User.role`, die Release B
+> (#641) entfernt hat; gegen eine Datenbank ab v1.18.0 bricht sie mit „column u.role does not exist“ ab. Sie gilt nur noch
+> für Datenbanken im Stand vor v1.18.0 (siehe „Phase 641“).
+
 <!-- 75b-consistency-select:begin -->
 
 ```sql
@@ -744,6 +748,10 @@ SELECT tgname FROM pg_trigger WHERE tgrelid = '"SupportAccess"'::regclass AND NO
 Mandanten-Auffrischung int: siehe `docs/data-refresh-process.md` (`SupportAccess` bleibt unverändert erhalten).
 
 ## Phase 539 — Altrollen-Rückfall entfernt (Release A, Issue #539)
+
+**Status: erledigt.** Release B (#641) hat die Spalte `User.role` und den Enum `Role` entfernt (Migration
+`*_drop_user_role`), und das Übernahmeskript `backfill-539-role-assignments.ts` gibt es nicht mehr — siehe „Phase 641“.
+Der Abschnitt bleibt als Verlauf stehen; die Schritte darin sind für neue Rollouts nicht mehr auszuführen.
 
 **Hinweis für die Release Notes.** Dieser Abschnitt ist der Release-Hinweis zu Release A von #539. Das Skript liest
 `Tenant.deactivatedAt`, und diese Spalte legt erst die Migration von #88 im selben Release an. Gegen eine Datenbank im
@@ -1202,6 +1210,59 @@ Monats ist eine bewusste Korrekturbuchung.
 
 **3. Rollback.** Es gibt nichts zurückzunehmen; das vorige Image enthält nur das alte Skript.
 
+## Phase 668 — Monatsabschluss wählt nach Beschäftigung statt nach Login (Issue #668)
+
+**Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. Der automatische Monatsabschluss (Cron) und der
+verzögerte Abschluss wählen Personen nach **Beschäftigung im Monat** (`monthClosePopulationWhere`,
+`contexts/working-time-account/month-close-population.ts`), nicht mehr nach `user.isActive`. Neu abgeschlossen werden also
+beschäftigte Personen mit abgeschaltetem Login, auch deren Austrittsmonat (§ 41 EStG); ein Monat ohne Beschäftigung
+(Austritt davor, Eintritt danach) bekommt keinen Abschluss mehr. Eine anonymisierte Person wird bis zu ihrem Austrittstag
+abgeschlossen; eine anonymisierte Altzeile **ohne** Austrittsdatum nie (Bestand siehe „Phase 666“). Bereits abgeschlossene
+Monate und Eröffnungs-/Null-Snapshots werden nie angefasst (Idempotenzprüfung des Crons).
+
+**1. Vor dem Deploy prüfen (lesend, auf int UND prod).** `apps/api/scripts/audit-613-month-close-population.ts` schreibt nichts
+und listet je Mandant und Monat (Standard: Vormonat) jede Person, die die alte (Login) und die neue Auswahl (Beschäftigung)
+unterschiedlich behandeln, mit `monthClosed=yes|no`. `EMPLOYED_LOGIN_INACTIVE` mit `monthClosed=no` sind die Personen, die der
+nächste Lauf zusätzlich abschließt.
+
+```bash
+DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-613-month-close-population.ts [--tenant-id <uuid>] [--year <YYYY> --month <M>]
+```
+
+Exit-Code `0`: gleiche Auswahl und keine neu einbezogene Person; `2`: Liste gedruckt; `1`: Aufruf- oder Verbindungsfehler.
+
+**2. Auswerten.** Jede `EMPLOYED_LOGIN_INACTIVE`-Zeile ist eine Person, für die der Cron nach dem Deploy die offenen Monate bis
+zum Austritt schließt; `NOT_EMPLOYED_LOGIN_ACTIVE` sind Personen, für die er keinen weiteren Monat mehr schließt.
+
+Der Cron schließt nicht nur den Vormonat, sondern **jeden offenen Monat** ab dem Folgemonat des letzten Abschlusses (oder dem
+Eintrittsmonat) bis zum Vormonat, höchstens bis zum Austrittsmonat. Deshalb druckt der Probelauf zusätzlich je Mandant einen
+Block „Backfill“ für jede neu einbezogene Person (Login aus, im Cron-Zeitraum beschäftigt) mit den Monaten, die der nächste Lauf
+schreiben würde. Er benutzt dafür denselben Monatsbereich und dieselbe Lückenentscheidung wie der Cron (`decideGapMonth`,
+`detectMonthGaps`); Zeilen nur mit Ids und Zahlen:
+
+```
+tenant=<id> backfill employee=<id> reason=<CODE> openMonths=<n> wouldClose=<n> wouldDefer=<0|1> deferredAt=<YYYY-MM|none>
+tenant=<id> backfill newlyIncluded=<n> wouldClose=<n> wouldDefer=<n> exitDateMissing=<n>
+Totals: tenants=<n> differences=<n> newlyIncluded=<n> wouldClose=<n> wouldDefer=<n> exitDateMissing=<n>
+```
+
+- `wouldClose`: Monate, die der nächste Lauf als Snapshot schreibt (der Cron bricht beim ersten verschobenen Monat ab).
+- `wouldDefer=1`: der Cron verschiebt einen Monat mit Lückentagen (Selbstbearbeitungsfenster oder `closeMonthWithGapsAllowed=false`);
+  Verschiebungen durch unbestätigte Pausen oder § 4-ArbZG-Befunde (Mandanten-Opt-in) werden nicht vorhergesagt.
+- `reason=EXIT_DATE_MISSING`: Login abgeschaltet **und kein Austrittsdatum** (alte Abmeldung ohne Datum). Der Cron schließt für
+  diese Personen **nie** einen Monat mit Lückentagen mit 0 h; Monate ohne Lücken schließen normal. Die Person erscheint im
+  verzögerten Abschluss mit dem Grund „Austrittsdatum fehlt – bitte prüfen“ und in der Manager-Benachrichtigung. Vor dem Deploy
+  für jede dieser Personen das Austrittsdatum setzen oder die Zeiten nachtragen. Sie werden getrennt gezählt (`exitDateMissing`).
+
+**Weitere Folgen derselben Regel.** Lücken zählen nur bis zum Austrittstag (Cron, verzögerter Abschluss, Status). Der
+Jahresabschluss erwartet bei einer Person mit Austritt vor Dezember nur die Monate bis zum Austrittsmonat und schreibt dann den
+Jahres-Snapshot samt Übertrag; wer in einem früheren Jahr ausgetreten ist, bekommt für dieses Jahr keinen. Die Monatsabschluss-
+Übersicht (`GET /overtime/close-month/status`, `/year-status`) zeigt genau die Personen von Cron und verzögertem Abschluss, auch
+eine nach dem Austritt anonymisierte Person, damit jeder überfällige Monat in der Oberfläche geöffnet und geschlossen werden kann.
+
+**3. Rollback.** Das vorige Image wählt wieder nach Login. Bereits geschriebene Abschlüsse bleiben (revisionssicher, nie
+neu berechnet).
+
 ## Phase 682 — Live-Saldo mit Eröffnungssaldo ohne abgeschlossenen Monat (Issue #682)
 
 **Was sich ändert.** Es gibt **keine Migration und keinen Schemawechsel**. Der Live-Saldo (Dashboard, `GET /overtime/:id`,
@@ -1231,6 +1292,76 @@ einem Abschluss stecken (unverändert).
 
 **3. Rollback.** Das vorige Image zeigt wieder den Saldo ohne Eröffnungssaldo; ein inzwischen gespeicherter Wert wird bei der
 nächsten Änderung der Person wieder ohne ihn geschrieben. Keine Daten zurückzunehmen.
+
+## Phase 799 — Auto-Pause bei jedem Stempel-Auslöser (Issue #799)
+
+Kein Schema-Change, keine Migration. Das Ausstempeln über eine WLAN-Präsenzquelle setzt jetzt wie Web und NFC-Terminal die
+automatische Pause (`TenantConfig.autoBreakEnabled`), über denselben Schritt `applyAutoBreakAfterClockStop`. Neu geschlossene
+WLAN-Einträge haben dadurch weniger Ist (um die Pause) als bisher; bereits gespeicherte Einträge ändern sich **nicht** und
+werden **nie** nachträglich korrigiert (kein Backfill).
+
+**Migration.** Additiv: `Break.isAuto Boolean NOT NULL DEFAULT false` (`*_break_is_auto`, erzeugt per Shadow-DB und `migrate diff`, nicht per `migrate dev`). Nur Zeilen, die `autoInsertBreak` schreibt, tragen `true`; bestehende Pausen bleiben `false` und werden vom Ersetzen beim Wiedereröffnen nie entfernt. Nach `migrate deploy` ist `prisma generate` nötig.
+
+**Vor dem Deploy prüfen (lesend, int UND prod).** `apps/api/scripts/audit-799-clock-entries-without-auto-break.ts` schreibt
+nichts (`--apply`/`--confirm` werden abgelehnt) und nennt nur Mandanten-Id, Eintrags-Id und Quelle der geschlossenen NFC-/WLAN-Einträge
+ohne Pause (länger als 6 h, Monat nicht abgeschlossen, Mandant mit aktiver Auto-Pause). Exit-Code `0`: nichts gefunden; `2`: Liste
+gedruckt; `1`: Aufruf- oder Verbindungsfehler.
+
+```bash
+DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-799-clock-entries-without-auto-break.ts --all-tenants | tee "799-bestand-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Die Liste ist Information für die Freigabe; ein einzelner Eintrag wird bei Bedarf durch die Führungskraft als normale Korrektur
+mit Begründung erfasst. **Rollback:** das vorige Image; bereits geschriebene Auto-Pausen bleiben als Pausen-Zeilen erhalten.
+
+## Phase 718 — Anonymisierung leert weitere Freitexte (Issue #718)
+
+Kein Schema-Change, keine Migration. Neue Anonymisierungen leeren zusätzlich `LeaveRequest.reviewNote`,
+`RetroEntryRequest.reviewNote` und `OvertimePlan`/`Shift`/`EmployeeAvailability`-`note`; `RetroEntryRequest.reason` (Pflichtfeld)
+wird durch „Gelöscht (Anonymisierung)“ ersetzt. `SaldoSnapshot.note` und die `OpeningBalance`-Texte bleiben bewusst stehen (§ 147 AO).
+Bereits anonymisierte Personen (Bestand) bleiben unverändert; sichtbar macht sie das schreibfreie
+`audit-388-anonymized-leftovers.ts` (neue Kategorien `LEAVE_REVIEW_NOTE`, `RETRO_REASON`, `RETRO_REVIEW_NOTE`,
+`OVERTIME_PLAN_NOTE`, `SHIFT_NOTE`, `AVAILABILITY_NOTE`; nur IDs und Zahlen). Ein Backfill ist ein eigenes Folge-Issue.
+
+## Phase 774 — Bestandskorrektur: Freitexte anonymisierter Personen (Issue #774)
+
+**Hinweis für die Release Notes.** Es gibt **keine Migration und keinen Schemawechsel.** Folge von Phase 718: Personen, die **vor**
+#718 anonymisiert wurden, tragen noch `LeaveRequest.reviewNote`, `RetroEntryRequest.reason`/`reviewNote`, `OvertimePlan.note`,
+`Shift.note` und `EmployeeAvailability.note`. Das Skript `apps/api/scripts/backfill-774-anonymized-freetext.ts` leert sie mit
+**denselben Funktionen** wie die Anonymisierung (keine zweite Regel; `RetroEntryRequest.reason` wird zu „Gelöscht (Anonymisierung)“).
+`SaldoSnapshot`- und `OpeningBalance`-Texte bleiben bewusst stehen (§ 147 AO). Mandanten mit Deaktivierung sind eingeschlossen.
+
+Der **Probelauf** (Voreinstellung) führt die Funktionen in einer Transaktion aus und rollt sie zurück: die Zahlen sind genau die des
+Schreiblaufs, es bleibt **nichts** geschrieben. `--confirm` schreibt, eine Transaktion je Person, dazu eine Audit-Zeile je Person mit
+Fund (`UPDATE` auf `Employee`, ohne Benutzer = System, `newValue = { clearedFreeText: {Zahlen}, trigger: "BACKFILL_774",
+auditReason: "Bestandskorrektur #774" }`, kein Text). Idempotent: ein zweiter Lauf findet nichts und schreibt nichts. Scheitert eine
+Person, wird sie gemeldet (`result=failed:<CODE>`, Exit-Code `1`), die übrigen laufen weiter.
+
+**Reihenfolge.** Dieses Skript setzt #718 voraus (Release mit #718 muss deployt sein).
+
+**Ablauf (Owner, auf int UND prod; vorher `pg_dump`).**
+
+```bash
+# 0. Bestandsbild vorher (lesend), Ausgabe aufbewahren
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/audit-388-anonymized-leftovers.ts" \
+  | tee "774-audit388-vorher-<umgebung>-$(date +%Y%m%d).txt"
+
+# 1. Probelauf (Voreinstellung, schreibt NICHTS) - mit dem Bestandsbild vergleichen
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-774-anonymized-freetext.ts" \
+  | tee "774-probelauf-<umgebung>-$(date +%Y%m%d).txt"
+
+# 2. Schreiben (optional --tenant <id>)
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-774-anonymized-freetext.ts --confirm" \
+  | tee "774-lauf-<umgebung>-$(date +%Y%m%d).txt"
+
+# 3. Bestandsbild nachher (lesend): keine Funde der Kategorien LEAVE_REVIEW_NOTE, RETRO_REASON, RETRO_REVIEW_NOTE,
+#    OVERTIME_PLAN_NOTE, SHIFT_NOTE, AVAILABILITY_NOTE mehr
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/audit-388-anonymized-leftovers.ts" \
+  | tee "774-audit388-nachher-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Eine Zeile je Person: `tenant=<id> employee=<id> leaveReviewNotes=<n> retroReasons=<n> retroReviewNotes=<n> overtimePlanNotes=<n>
+shiftNotes=<n> availabilityNotes=<n> result=<planned|written|unchanged|failed:CODE>`, dann eine `Totals:`-Zeile. Nur Ids und Zahlen.
 
 ## Phase 388 — Anonymisierung löscht WLAN-Kennungen und Pausen-Verzicht-Freitext (Issues #388, #508)
 
@@ -1312,3 +1443,507 @@ Exit-Code `0`: kein Befund; `2`: mindestens ein Befund (Liste in der Ausgabe); `
 Release korrigiert keine Bestandszeile:** Die Befunde vor dem Deploy sind das Bestandsbild, nach dem Deploy darf die Liste nur
 noch um nichts wachsen. Eine bestätigte Gutschrift hat eine Kontowirkung, deren Rücknahme eine eigene, auditierte Korrekturbuchung
 wäre — Entscheidung beim Betreiber, nichts still korrigieren.
+
+## Phase 470 — Spalte `TenantConfig.monthlyHoursHolidayDeduction` entfällt (Issue #470)
+
+**Hinweis für die Release Notes.** Eine Migration, `*_drop_monthly_hours_holiday_deduction`: genau ein
+`ALTER TABLE "TenantConfig" DROP COLUMN "monthlyHoursHolidayDeduction"`. Die Spalte war seit v1.14.0 (#433) stillgelegt; kein Code liest oder
+schreibt sie. Es gibt keinen Datenverlust im fachlichen Sinn (der Wert war wirkungslos). **Rollback:** Ein Image-Rollback auf eine Version, deren
+Prisma-Client die Spalte kennt (v1.16.1 und älter), ist nach der Migration NICHT möglich, weil der Client jede Spalte beim Lesen von
+`TenantConfig` explizit anfordert; die Migration vorher zurückzusetzen heißt, die Spalte mit `ADD COLUMN ... BOOLEAN NOT NULL DEFAULT false` neu anzulegen.
+Der Standard-Einstiegspunkt führt `prisma migrate deploy` selbst aus, es ist kein manueller Schritt nötig.
+
+## Phase 638 — Spalte `TenantConfig.storeHours` entfällt (Issue #638)
+
+**Hinweis für die Release Notes.** Eine Migration, `*_drop_store_hours`: genau ein
+`ALTER TABLE "TenantConfig" DROP COLUMN "storeHours"`. Seit #563 (v1.16.0) liest und schreibt kein Code die Spalte; die Öffnungszeiten
+gehören dem Salon (`Salon.openingHours`). Kein fachlicher Datenverlust. **Rollback:** Ein Image-Rollback auf eine Version, deren Prisma-Client die
+Spalte kennt (v1.16.x und älter), ist nach der Migration NICHT möglich, weil der Client jede Spalte beim Lesen von `TenantConfig` explizit anfordert; die
+Migration vorher zurückzusetzen heißt, die Spalte mit dem alten Standardwert (Mo–Sa 08:00–20:00, So geschlossen, als JSON) neu anzulegen. Der
+Standard-Einstiegspunkt führt `prisma migrate deploy` selbst aus, es ist kein manueller Schritt nötig.
+
+## Phase 512 — Bestandskorrektur: Freitext im AuditLog anonymisierter Personen (Issue #512)
+
+**Hinweis für die Release Notes.** Es gibt **keine Migration und keinen Schemawechsel.** Seit #512 ersetzt die Anonymisierung
+den frei formulierten Text in den Audit-Werten der Person typbasiert durch „[ausgeblendet]“ (Zahlen, Ids, Daten, Kennwerte,
+Uhrzeiten und der Akteur-Stempel bleiben; Zeilen werden nie gelöscht). Das Skript
+`apps/api/scripts/backfill-512-anonymized-audit-freetext.ts` wendet **dieselbe Funktion** auf Personen an, die **vorher**
+anonymisiert wurden. Grenze: Zeilen, die die Person selbst verfasst hat, sind dort nicht mehr auffindbar (`userId` war null);
+erreicht werden Audit-Zeilen, deren Wert die `employeeId` nennt. Mandanten mit Deaktivierung sind eingeschlossen.
+
+Probelauf (Voreinstellung) rollt zurück, schreibt **nichts**; `--confirm` schreibt eine Transaktion je Person plus eine
+Audit-Zeile je Person mit Fund (`UPDATE` auf `Employee`, `newValue = { auditRowsRedacted: <n>, trigger: "BACKFILL_512",
+auditReason: "Bestandskorrektur #512" }`). Idempotent. Die Zeilen des AuditLog werden verändert: vorher `pg_dump`.
+
+```bash
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-512-anonymized-audit-freetext.ts" \
+  | tee "512-probelauf-<umgebung>-$(date +%Y%m%d).txt"
+docker exec clokr-api sh -lc "cd /app && ./node_modules/.bin/tsx apps/api/scripts/backfill-512-anonymized-audit-freetext.ts --confirm" \
+  | tee "512-lauf-<umgebung>-$(date +%Y%m%d).txt"
+```
+
+Eine Zeile je Person: `tenant=<id> employee=<id> auditRowsScanned=<n> auditRowsRedacted=<n> result=<planned|written|unchanged|failed:CODE>`,
+dann `Totals:`. Nur Ids und Zahlen.
+
+## Phase 641 — Spalte `User.role` und Enum `Role` entfallen (Release B, Issue #641)
+
+**Hinweis für die Release Notes.** Release B von #539. Eine Migration, `*_drop_user_role`, mit genau zwei Anweisungen, in
+dieser Reihenfolge: `ALTER TABLE "User" DROP COLUMN "role";` und `DROP TYPE "Role";`. Sie wurde gegen eine Wegwerf-Shadow-
+Datenbank erzeugt und gelesen; nichts anderes hängt vom Typ `"Role"` ab. Die Rolle einer Person steht seit Release A
+(#539) nur noch in den gespeicherten Zuweisungen (`RoleAssignment`); die Spalte war nur noch eine abgeleitete Rückfallebene
+für ein Image-Rollback. Der Standard-Einstiegspunkt führt `prisma migrate deploy` selbst aus, es ist kein manueller Schritt
+nötig.
+
+**Die Migration ist ohne Datenverlust umkehrbar.** Es gibt keine Rückwärtsmigration im Verzeichnis, aber eine
+dokumentierte, datenerhaltende Umkehr (Schritt 5): Typ und Spalte werden neu angelegt, die Spalte bekommt den Standardwert
+`EMPLOYEE`. Die alten Werte der Spalte gehen verloren, fachlich ohne Folgen: Seit Release A (#539) liest kein Codepfad
+von v1.16.x/v1.17.0 den Wert der Spalte für eine Entscheidung (Beleg in Schritt 5), die Zuweisungen bleiben unverändert.
+Ein Image-Rollback auf v1.17.x oder älter braucht deshalb **keine** Wiederherstellung der Datenbank; das ältere Image
+fordert die Spalte nur bei jedem Lesen von `User` explizit an, sie muss also existieren.
+
+**1. Vor dem Deploy — Sicherung (Pflicht).** `pg_dump` der Datenbank der Stage (auf prod und auf int). Sie ist der
+Rückfall, falls die datenerhaltende Umkehr aus Schritt 5 selbst scheitert; sie ist nicht der empfohlene Weg zurück, weil
+eine Wiederherstellung alles verwirft, was seit dem Deploy geschrieben wurde (Zeiteinträge, Korrekturen, Urlaubsanträge,
+`AuditLog`).
+
+**2. Vor dem Deploy — lesende Vorab-Prüfung (auf int UND prod).** Aktive, nicht anonymisierte Personen mit
+Mitarbeiterdatensatz, die in ihrem Mandanten **gar keine** Rollenzuweisung haben. Erwartet: **0**. Eine Zahl größer 0 nennt
+Personen, die sich seit v1.16.0 nicht mehr anmelden können (403 `NO_ROLE_ASSIGNED`). Die Zahl ist eine Untergrenze: wer nur
+Zuweisungen hat, die zusammen keine Berechtigung ergeben (leere Berechtigungsmenge oder fehlerhafter Geltungsbereich), wird
+beim Anmelden ebenfalls abgewiesen, aber hier nicht gezählt. Es ist eine Information über den Bestand, die Migration ändert
+für diese Personen nichts, und die Prüfung schreibt und blockiert nichts. Die Zahl wird notiert.
+
+```sql
+select count(*) from "User" u join "Employee" e on e."userId"=u.id where u."isActive" and not (e."firstName" = U&'Gel\00F6scht' and e."lastName" like U&'GEL\00D6SCHT-%') and not exists (select 1 from "RoleAssignment" ra where ra."userId"=u.id and ra."tenantId"=e."tenantId");
+```
+
+(Dieselbe Zeile steht als `pre|0|role-gap-sql-641|sql|…` in `docs/release-notes/v1.18.0.steps`.)
+
+**3. Deploy.** `prisma migrate deploy` im Entrypoint des neuen Containers.
+
+**Fehlerfenster beim Rolling Update.** Der Entrypoint des NEUEN Pods migriert, während der ALTE Pod noch Anfragen
+bedient. Das alte Image liest die Spalte bei jedem Zugriff auf `User` (Login, Token-Prüfung, Mitarbeiterliste), deshalb
+schlagen zwischen dem Ende der Migration und dem Ende des alten Pods dessen Anfragen fehl. Bei `replicas: 1`
+(`charts/clokr-app/values.yaml`) sind das Sekunden. Es wird nichts falsch geschrieben: die Anfragen scheitern, sie
+schreiben keine halben Daten.
+
+**4. Nach dem Deploy — Katalogprüfung (lesend).** Beide Zahlen müssen **0** sein:
+
+```sql
+select count(*) from information_schema.columns where table_schema='public' and table_name='User' and column_name='role';
+select count(*) from pg_type t join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname='Role';
+```
+
+**5. Rollback (datenerhaltend, empfohlen).** Kein `pg_dump`-Restore nötig, es geht nichts verloren, was nach dem Deploy
+geschrieben wurde. Erst die Datenbank auf den Stand von v1.17.x bringen, dann das vorherige Image ausrollen:
+
+```sql
+-- Rollback auf ein Image unter v1.18.0, OHNE ein Dump einzuspielen (eine Transaktion)
+BEGIN;
+CREATE TYPE "Role" AS ENUM ('ADMIN', 'MANAGER', 'EMPLOYEE');
+ALTER TABLE "User" ADD COLUMN "role" "Role" NOT NULL DEFAULT 'EMPLOYEE';
+DELETE FROM "_prisma_migrations" WHERE migration_name = '20261103000000_drop_user_role';
+COMMIT;
+```
+
+Die Zeile in `_prisma_migrations` muss weg, damit ein späteres erneutes `migrate deploy` von v1.18.0 die Migration wieder
+ausführt, statt sie als erledigt zu überspringen und die Spalte stehen zu lassen. Die Spalte hat danach bei allen
+Personen den Wert `EMPLOYEE`. Das ist unschädlich, weil der Wert nur eine Rückfallebene für genau diesen Rollback war und
+nirgends entscheidet; er läuft bei der nächsten Zuweisungsänderung der Person von allein wieder auf den abgeleiteten Wert
+(`syncCompatRoleColumn` vergleicht und schreibt zurück), und das Mitarbeiterformular leitet die Rolle ohnehin aus den
+Zuweisungen ab. Danach das Image von v1.17.x deployen. Das Übernahmeskript `backfill-539-role-assignments.ts` dort nicht
+erneut ausführen: es würde Personen ohne Zuweisung anhand des Standardwerts `EMPLOYEE` übernehmen statt anhand ihres alten
+Spaltenwerts.
+
+_Beleg, dass das ältere Image den Spaltenwert nicht für Entscheidungen liest_ (Quelltext des Tags `v1.17.0`, `git grep` auf
+`role` in `apps/api/src`, `apps/api/scripts` und `packages/db/src`, ohne Tests): Lesezugriffe auf `User.role` gibt es nur in
+`legacyRoleColumn()` in `contexts/platform/compat-role.ts` (aufgerufen allein von `syncCompatRoleColumn()`, das den Wert mit
+dem aus den Zuweisungen abgeleiteten vergleicht und zurückschreibt) und im Übernahmeskript `backfill-539-role-assignments.ts`
+(nur vom Betreiber von Hand gestartet). `compatRoleUserWhere()` ist exportiert, hat aber keinen Aufrufer. Alles andere
+schreibt die Spalte nur (Anlegen von Benutzern in `employee-creation.ts`, `imports.ts`, Seeds). Berechtigungen kommen
+ausschließlich aus `RoleAssignment`, Token tragen keinen `role`-Claim.
+
+_Geprobt am 02.11.2026_ auf einer Wegwerf-Datenbank, geklont aus dem Testtemplate dieses Zweigs (nach `test:setup`, also mit
+angewendeter Migration `20261103000000_drop_user_role`, 62 Einträge in `_prisma_migrations`). Eine Benutzerzeile angelegt, die
+Umkehr oben ausgeführt, dann gegen Schema und Migrationen von `v1.17.0` geprüft (`git archive v1.17.0 packages/db/prisma
+packages/db/prisma.config.ts` in ein temporäres Verzeichnis, `--config` darauf):
+
+```text
+$ docker exec clokr-postgres-1 psql -U clokr -d postgres -c 'CREATE DATABASE clokr_test_rb641 TEMPLATE clokr_test_549b37e6'
+$ docker exec -i clokr-postgres-1 psql -U clokr -d clokr_test_rb641 -v ON_ERROR_STOP=1    # die vier Anweisungen von oben
+BEGIN / CREATE TYPE / ALTER TABLE / DELETE 1 / COMMIT
+$ psql … -c 'select id, role from "User"'
+ rb641-user-1 | EMPLOYEE                                  (Zeile erhalten, Standardwert)
+$ DATABASE_URL=…/clokr_test_rb641 prisma migrate status --config <v1.17.0>/prisma.config.ts
+61 migrations found in prisma/migrations
+Database schema is up to date!
+$ DATABASE_URL=…/clokr_test_rb641 prisma migrate diff --config <v1.17.0>/prisma.config.ts \
+    --from-config-datasource --to-schema <v1.17.0>/prisma/schema.prisma --exit-code
+No difference detected.
+```
+
+Gegenprobe: dieselbe `migrate diff`-Abfrage gegen die Datenbank OHNE Umkehr erzeugt als Skript genau `CREATE TYPE "Role" …`
+und `ALTER TABLE "User" ADD COLUMN "role" "Role" NOT NULL DEFAULT 'EMPLOYEE';`, also die Umkehr oben. Vorwärts führte ein
+erneutes `prisma migrate deploy` (Stand dieses Zweigs) `20261103000000_drop_user_role` wieder aus; die Benutzerzeile blieb,
+Spalte und Typ waren danach wieder weg. Die Wegwerf-Datenbank wurde anschließend gelöscht.
+
+_Rückfall:_ scheitert die Umkehr (etwa weil jemand den Typ `"Role"` von Hand angelegt hat), bleibt die Wiederherstellung des
+`pg_dump` aus Schritt 1 zusammen mit dem vorherigen Image; sie verwirft alle Schreibvorgänge seit dem Dump.
+
+**dev.** Die lokale Entwicklungsdatenbank bekommt die Migration mit dem nächsten Neubau nach dem Merge
+(`docker compose up --build -d`); in diesem Phase-Lauf wurde sie nicht migriert.
+
+**Daten und Protokoll.** Keine Übernahme nötig, die Zuweisungen bestehen seit #539 und #707. Das Protokoll (`AuditLog`)
+bleibt unverändert: alte Zeilen behalten ihre Felder `compatRole`, `legacyRole` und `actorRole`; neue Zeilen zu
+Rollenzuweisungen tragen kein `compatRole` mehr. Das Skript `backfill-539-role-assignments.ts` entfällt.
+
+## Phase 541 — Terminal an Salon binden (Issue #541)
+
+**Hinweis für die Release Notes.** NFC-Terminals lassen sich in Mandanten mit mehreren Salons optional einem Salon zuordnen
+(Admin → System → Integration → NFC-Terminals, Spalte „Salon“). Ein Stempel an einem gebundenen Terminal landet in diesem
+Salon, auch wenn das Wochenmuster der Person einen anderen nennt (wichtig für Springer). Ohne Zuordnung bleibt alles wie
+bisher. Ist der Salon später deaktiviert, wird das in der Liste markiert und gestempelt wird nach der üblichen Regel; kein
+Stempel geht verloren. WLAN ist nicht betroffen. Mandanten mit einem Salon sehen nichts Neues.
+
+**Was die Migration tut.** Ein Verzeichnis in `packages/db/prisma/migrations/`, rein additiv, keine Zeile wird geschrieben
+oder geändert (vom Generator erzeugt, drei Anweisungen):
+
+- `20261102003032_terminal_api_key_salon` — die Spalte `TerminalApiKey.salonId` (`TEXT`, nullable, ohne Vorgabe), der Index
+  `TerminalApiKey_salonId_idx` und der Fremdschlüssel `TerminalApiKey_salonId_fkey` auf `Salon` mit `ON DELETE RESTRICT`
+  (neue Abhängigkeit auf den Unterbau, genehmigt mit Issue #541 in `Ready`; ADR `docs/adr/0001-abweichungen.md`, Eintrag AA,
+  Nachtrag Phase 541). Bestehende Terminals lesen `NULL` und bleiben ungebunden; es gibt keinen Backfill und keine geratene
+  Bindung. Ein Test spielt die Anweisungen nach und prüft Katalog, `NULL`-Bestand und die Sperre (`terminal-salon-migration-541.test.ts`).
+
+**1. Vor dem Deploy.** Keine Datenprüfung nötig: jede vorhandene Zeile erfüllt die neue Spalte (nullable). Die CI-Driftprüfung
+(`prisma migrate diff --from-migrations … --to-schema … --exit-code`) bleibt leer, gemessen.
+
+**2. Deploy.** Der Einstiegspunkt des API-Containers führt `prisma migrate deploy` aus; ein zusätzlicher Schritt in der
+`.steps`-Datei des Release ist nicht nötig.
+
+**3. Rollback.** Ein Image-Rollback ist ohne Zurücksetzen der Migration möglich: das Schema von `origin/main` vor #541 kennt
+`salonId` an `TerminalApiKey` nicht, und der Prisma-Client wählt nur modellierte Spalten, liest und schreibt die Spalte also
+nicht. Gespeicherte Bindungen bleiben dabei liegen und wirken erst wieder mit dem neuen Image. Die Migration selbst
+zurückzunehmen heißt `ALTER TABLE "TerminalApiKey" DROP CONSTRAINT "TerminalApiKey_salonId_fkey"`,
+`DROP INDEX "TerminalApiKey_salonId_idx"` und `ALTER TABLE "TerminalApiKey" DROP COLUMN "salonId"` — das verliert jede
+gespeicherte Bindung (die Terminals stempeln danach nach dem Wochenmuster). Solange eine Bindung besteht, lässt sich der
+gebundene Salon nicht löschen (`RESTRICT`); Salons werden ohnehin nie gelöscht.
+
+## Phase 647 — Mindestbesetzung je Salon (Issue #647)
+
+**Hinweis für die Release Notes.** In Mandanten mit mehreren Salons lässt sich eine Besetzungsregel einem Salon zuordnen
+(Admin → Schichtplan → „Vorlagen & Bedarf“). Zeigt die Wochenansicht der Schichtplanung genau einen Salon (Wahl in der Kopfleiste,
+die einzige Salon-Reichweite einer Person oder der einzige aktive Salon des Mandanten), misst sie die Besetzung an den
+Regeln dieses Salons und den Regeln für alle Salons; auf derselben Stufe gewinnt die Salonregel. In der Ansicht „Alle
+Salons“ gelten nur die Regeln für alle Salons.
+Bestehende Regeln gelten weiter für alle Salons. Mandanten mit einem Salon sehen nichts Neues.
+
+**Was die Migration tut.** Ein Verzeichnis in `packages/db/prisma/migrations/`, rein additiv, keine Zeile wird geschrieben
+oder geändert (vom Generator erzeugt, drei Anweisungen):
+
+- `20261105075545_coverage_rule_salon` — die Spalte `CoverageRule.salonId` (`TEXT`, nullable, ohne Vorgabe), der Index
+  `CoverageRule_salonId_idx` und der Fremdschlüssel `CoverageRule_salonId_fkey` auf `Salon` mit `ON DELETE RESTRICT` (neue
+  Abhängigkeit auf den Unterbau, genehmigt mit Issue #647 in `Ready`; ADR `docs/adr/0001-abweichungen.md`, Abschnitt P,
+  Nachtrag Phase 647). Bestehende Regeln lesen `NULL` und gelten mandantenweit; es gibt keinen Backfill und keine geratene
+  Zuordnung. Ein Test spielt die Anweisungen nach und prüft Katalog, `NULL`-Bestand und die Sperre
+  (`coverage-rule-salon-migration-647.test.ts`).
+
+**1. Vor dem Deploy.** Keine Datenprüfung nötig: jede vorhandene Zeile erfüllt die neue Spalte (nullable). Die CI-Driftprüfung
+(`prisma migrate diff --from-migrations … --to-schema … --exit-code`) bleibt leer, gemessen.
+
+**2. Deploy.** Der Einstiegspunkt des API-Containers führt `prisma migrate deploy` aus; ein zusätzlicher Schritt in der
+`.steps`-Datei des Release ist nicht nötig.
+
+**3. Rollback.** Ein Image-Rollback ist ohne Zurücksetzen der Migration möglich: der Prisma-Client des vorherigen Images
+kennt `salonId` an `CoverageRule` nicht und wählt die Spalte nicht. Gespeicherte Salonregeln wirken dann wie Regeln für alle
+Salons; die in der Wochenansicht gezeigte Mindestbesetzung kann dadurch höher oder niedriger ausfallen, bis das neue Image
+wieder läuft. Die Migration selbst zurückzunehmen heißt `ALTER TABLE "CoverageRule" DROP CONSTRAINT
+"CoverageRule_salonId_fkey"`, `DROP INDEX "CoverageRule_salonId_idx"` und `ALTER TABLE "CoverageRule" DROP COLUMN "salonId"`
+— das verliert jede Salonzuordnung einer Regel. Solange eine Regel einen Salon nennt, lässt sich dieser Salon nicht löschen
+(`RESTRICT`); Salons werden ohnehin nie gelöscht.
+
+## Phase 836 — Urlaubsgrenzen und Urlaubssperren je Salon (Issue #836)
+
+**Hinweis für die Release Notes.** Führungskräfte mit dem Recht „Urlaubsgrenzen verwalten“ legen unter Admin → „Urlaubsgrenzen &
+Sperren“ je Salon (oder für alle Salons) fest, wie viele Personen einer Gruppe gleichzeitig im Urlaub sein dürfen, optional in
+einem Zeitfenster; eine Urlaubssperre ist eine Grenze von null Personen. Ein Antrag über der Grenze wird angelegt und warnt;
+die Genehmigung und die Korrektur verlangen eine begründete Ausnahme, die im Prüfprotokoll steht. Bereits genehmigter Urlaub
+ändert sich nie. Ohne Regel ändert sich nichts.
+
+**Was die Migrationen tun.** Zwei Verzeichnisse in `packages/db/prisma/migrations/`, rein additiv: eine neue, leere Tabelle, keine
+bestehende Zeile wird gelesen, geschrieben oder geändert.
+
+- `20261106131444_leave_limit_rule` — vom Generator erzeugt (acht Anweisungen): der Typ `LeaveLimitGroupKind`
+  (`ALL`, `CLASSIFICATION`, `ACCESS_ROLE`), die Tabelle `LeaveLimitRule`, drei Indizes und drei Fremdschlüssel mit
+  `ON DELETE RESTRICT` auf `Tenant`, `Salon` und `AccessRole` (zwei neue Abhängigkeiten auf den Unterbau, genehmigt mit Issue
+  #836 in `Ready`; ADR `docs/adr/0001-abweichungen.md`, Eintrag AG).
+- `20261106132018_leave_limit_rule_checks` — von Hand geschrieben, weil Prisma keine CHECK-Bedingungen modelliert:
+  `LeaveLimitRule_maxPersons_check`, `LeaveLimitRule_window_check`, `LeaveLimitRule_group_shape_check`. Ein Test spielt sie nach
+  (`leave-limits-migration-836.test.ts`).
+
+**1. Vor dem Deploy.** Keine Datenprüfung nötig: die Tabelle ist neu und leer, kein Backfill, kein schreibendes Skript, und es
+gibt keine Zeile, die ein Prüfskript lesen könnte (kein bestehender Bestand ändert sich). Die CI-Driftprüfung
+(`prisma migrate diff --from-migrations … --to-schema … --exit-code`) bleibt leer, gemessen.
+
+**2. Deploy.** Der Einstiegspunkt des API-Containers führt `prisma migrate deploy` aus; ein zusätzlicher Schritt in der
+`.steps`-Datei des Release ist nicht nötig.
+
+**3. Rollback.** Ein Image-Rollback ist ohne Zurücksetzen der Migrationen möglich: der Prisma-Client des vorherigen Images kennt
+die Tabelle nicht und liest sie nicht; gespeicherte Regeln wirken dann nicht. Die Migrationen selbst werden **nie** nachträglich
+bearbeitet (sie sind angewendet). Zurücknehmen heißt eine neue Migration, die `DROP TABLE "LeaveLimitRule"` und
+`DROP TYPE "LeaveLimitGroupKind"` ausführt — das verliert alle gespeicherten Regeln. Solange eine Regel einen Salon oder eine
+Rolle nennt, lassen sich diese nicht löschen (`RESTRICT`); Salons werden ohnehin nie gelöscht, und `DELETE /roles/:id` antwortet
+dann mit einem verständlichen 409.
+
+### Systemrollen-Templates: `leave-limit:manage:ZUGEWIESEN` (Plan 836-08)
+
+**Release-Hinweis.** Die Migration `20261106143731_leave_limit_template_grant` gilt sofort für **alle** Konten mit der Systemrolle
+Admin, Inhaber oder Salonmanager (Semantikänderung des Unterbaus): Sie erhalten `leave-limit:manage:ZUGEWIESEN` und dürfen damit
+Urlaubsgrenzen und Urlaubssperren ihrer Salons pflegen (Salonmanager) beziehungsweise des Mandanten (Admin, Inhaber). Die
+Rollenmenge hat der Owner am 06.11.2026 bestätigt (Issue #836). Kundenkopien der Templates
+(mandanteneigene Rollen) bleiben unverändert.
+
+**Was die Migration tut.** Reine Datenmigration: keine Tabelle, Spalte, Index, Typ oder Bedingung wird angelegt, geändert oder gelöscht
+(`prisma migrate diff` bleibt leer). Sie aktualisiert genau drei Zeilen (`…a001` Admin 87 → 88, `…a004` Inhaber 87 → 88, `…a005`
+Salonmanager 24 → 25 Permissions, jeweils `tenantId` NULL). Der `IS DISTINCT FROM`-Schutz macht einen zweiten Lauf zu einem No-op, der
+weder eine Zeile noch einen Zeitstempel ändert. Niemandem wird etwas zugewiesen, es entsteht kein Audit-Eintrag.
+
+**1. Vor `migrate deploy` — wer die Rechte erhält (lesend).**
+
+```sql
+-- Assignments of the three global templates per tenant and scope: these accounts gain the key.
+SELECT "accessRoleId", "tenantId", "scopeType", count(*) AS assignments
+FROM "RoleAssignment"
+WHERE "accessRoleId" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+GROUP BY "accessRoleId", "tenantId", "scopeType"
+ORDER BY "accessRoleId", "tenantId", "scopeType";
+
+-- Before state of the three rows. Expected: 87 / 87 / 24 permissions, none holding the key.
+SELECT "id", "name", cardinality("permissions") AS permissions,
+       'leave-limit:manage:ZUGEWIESEN' = ANY("permissions") AS has_key
+FROM "AccessRole"
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+ORDER BY "id";
+```
+
+**2. Nach `migrate deploy` — Kontrolle (lesend).**
+
+```sql
+-- Expected: 3 rows, 88 / 88 / 25 permissions, has_key true, tenantId NULL; the other four global rows
+-- (a002, a003, a006, a007) are unchanged at 63 / 22 / 15 / 5.
+SELECT "id", "name", cardinality("permissions") AS permissions,
+       'leave-limit:manage:ZUGEWIESEN' = ANY("permissions") AS has_key, "tenantId"
+FROM "AccessRole"
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a002',
+  '00000000-0000-4000-8000-00000000a003',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005',
+  '00000000-0000-4000-8000-00000000a006',
+  '00000000-0000-4000-8000-00000000a007'
+)
+ORDER BY "id";
+```
+
+**3. Rollback.** Eine **neue** Migration, die den Schlüssel wieder entfernt (die angewendete Migration wird nie bearbeitet; Form wie
+Phase 86b). Ein Image-Rollback allein genügt nicht: das vorige Image liest die drei Zeilen aus der Datenbank, der Schlüssel bliebe dort
+stehen, wirkt unter dem alten Code aber nirgends (er kennt `/leave/limits` nicht). Für einen längeren Rollback das Gegen-UPDATE
+ausführen und im Audit-Pfad des Releases vermerken. Keine Schemaänderung, in beiden Richtungen kein Datenverlust.
+
+```sql
+-- Reverse of the Phase 836 template migration: removes the key from the three global rows.
+UPDATE "AccessRole"
+SET "permissions" = array_remove("permissions", 'leave-limit:manage:ZUGEWIESEN'),
+    "updatedAt" = NOW()
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+  AND "tenantId" IS NULL
+  AND 'leave-limit:manage:ZUGEWIESEN' = ANY("permissions");
+```
+
+## Phase 835 — Urlaubsplaner (Issue #835)
+
+**Hinweis für die Release Notes.** Führungskräfte mit dem Recht „Urlaubsplanung“ eröffnen je Salon und Jahr eine nicht bindende
+Urlaubsplanung; Mitarbeitende des Salons tragen ihre Urlaubswünsche ein, und ein Klick auf „Übernehmen“ macht aus den Wünschen
+echte Urlaubsanträge durch dieselbe Prüfung wie ein normaler Antrag. Ein Wunsch zählt nirgends, bis er ein Antrag ist. Ohne
+Planung ändert sich nichts.
+
+**Was die Migrationen tun.** Drei Verzeichnisse in `packages/db/prisma/migrations/`:
+
+- `20261106200013_leave_plan` — vom Generator erzeugt: der Typ `LeavePlanStatus` (`OPEN`, `TAKEN_OVER`), die Tabellen
+  `LeavePlan` und `LeavePlanWish`, vier Indizes (darunter der eindeutige Index auf `LeavePlanWish.leaveRequestId`), sechs
+  Fremdschlüssel mit `ON DELETE RESTRICT` (auf `Tenant`, `Salon`, `Employee`, `LeavePlan` und `LeaveRequest`) und die Spalte
+  `TenantConfig.leavePlanDeadlineLocksWishes BOOLEAN NOT NULL DEFAULT false`. Rein additiv: keine bestehende Zeile wird gelesen,
+  geschrieben oder geändert. Neue Abhängigkeiten auf den Unterbau (Salon, Employee, TenantConfig) sind mit Issue #835 in `Ready`
+  genehmigt.
+- `20261106203800_leave_plan_checks` — von Hand geschrieben (Prisma modelliert weder CHECKs noch Teil-Indizes noch Ausschluss-
+  Constraints): `CREATE EXTENSION IF NOT EXISTS btree_gist` (wie Phase 70b), der Teil-Unique-Index `LeavePlan_open_unique`
+  (`("salonId","year") WHERE status = 'OPEN'`: höchstens eine offene Planung je Salon und Jahr), die CHECKs
+  `LeavePlan_year_check`, `LeavePlan_taken_over_shape_check`, `LeavePlanWish_range_check`, `_half_day_check`,
+  `_refusal_shape_check`, `_link_shape_check`, `_removal_shape_check` und der Ausschluss-Constraint
+  `LeavePlanWish_no_overlap_active` (`gist ("employeeId" WITH =, daterange("startDate","endDate",'[]') WITH &&)` für aktive,
+  nicht übernommene Wünsche). Die Tabellen sind leer; kein Backfill. Die CI-Driftprüfung bleibt leer, weil Prisma diese Objekte
+  nicht kennt.
+- `20261106201828_leave_plan_template_grant` — reine Datenmigration, siehe unten.
+
+**1. Vor dem Deploy.** Keine Datenprüfung nötig: die Tabellen sind neu und leer, kein Backfill, kein schreibendes Skript. Die
+CI-Driftprüfung bleibt leer.
+
+**2. Deploy.** `prisma migrate deploy` im Einstiegspunkt des API-Containers, kein zusätzlicher Schritt.
+
+**3. Rollback.** Ein Image-Rollback ist ohne Zurücksetzen der Migrationen möglich: der Prisma-Client des vorherigen Images kennt die
+Tabellen nicht und liest sie nicht. Die angewendeten Migrationen werden nie bearbeitet. Zurücknehmen heißt eine neue Migration, die
+`LeavePlanWish`, `LeavePlan`, den Typ `LeavePlanStatus` und die Spalte entfernt — das verliert alle Pläne und Wünsche.
+
+**4. Hartes Löschen von Wünschen.** Wünsche werden im Betrieb nur weich entfernt (`deletedAt`). Hart gelöscht werden sie
+ausschließlich vom bestehenden Hard-Delete-Pfad für Mitarbeitende, und zwar **vor** den Urlaubsanträgen der Person
+(`hardDeleteLeavePlanWishesForEmployee` direkt vor `hardDeleteLeaveRequestsForEmployee`): Wunsch → Antrag und Wunsch → Person
+sind `Restrict`-Fremdschlüssel, die umgekehrte Reihenfolge würde mit einer Fremdschlüsselverletzung scheitern. Derselbe Aufruf
+steht im Test-Teardown (`DELETE /api/v1/test/tenant/:id`: Wünsche vor Plänen vor Anträgen). Ein Pfad, der Anträge einer
+Person hart löscht und Wünsche vergisst, bricht daran.
+
+**5. Übernahme und Überstundenstand.** Die Übernahme einer Planung genehmigt Anträge ohne die Live-Saldo-Berechnung je Antrag
+und aktualisiert den gespeicherten Überstundenstand danach einmal je genehmigter Person mit einem Wunsch, der vor dem heutigen
+Kalendertag des Mandanten beginnt. Das ist kein Migrationsschritt; es erklärt, warum nach einer Übernahme `OvertimeAccount`
+einmal je Person geschrieben wird (Fehler werden nur protokolliert).
+
+### Systemrollen-Templates: `leave-plan:manage:ZUGEWIESEN` (Plan 835-03)
+
+**Release-Hinweis.** Die Migration `20261106201828_leave_plan_template_grant` gilt sofort für **alle** Konten mit der Systemrolle
+Admin, Inhaber oder Salonmanager (Semantikänderung des Unterbaus): Sie erhalten `leave-plan:manage:ZUGEWIESEN` und dürfen damit
+Urlaubsplanungen ihrer Salons eröffnen, bearbeiten und übernehmen. Die Rollenmenge hat der Owner am 06.11.2026 entschieden
+(Issue #835, D-835-20). Manager (Legacy) und Personalabteilung erhalten den Schlüssel nicht. Kundenkopien der Templates
+(mandanteneigene Rollen) bleiben unverändert.
+
+**Was die Migration tut.** Reine Datenmigration, keine DDL. Sie aktualisiert genau drei Zeilen (`…a001` Admin 88 → 89, `…a004`
+Inhaber 88 → 89, `…a005` Salonmanager 25 → 26 Permissions, jeweils `tenantId` NULL). Der `IS DISTINCT FROM`-Schutz macht einen
+zweiten Lauf zu einem No-op. Niemandem wird etwas zugewiesen, es entsteht kein Audit-Eintrag.
+
+**1. Vor `migrate deploy` (lesend).**
+
+```sql
+-- Expected: 88 / 88 / 25 permissions, none holding the key.
+SELECT "id", "name", cardinality("permissions") AS permissions,
+       'leave-plan:manage:ZUGEWIESEN' = ANY("permissions") AS has_key
+FROM "AccessRole"
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+ORDER BY "id";
+```
+
+**2. Nach `migrate deploy` (lesend).** Dieselbe Abfrage; erwartet: 89 / 89 / 26 Permissions, `has_key` true. Die vier anderen
+globalen Zeilen (`…a002`, `…a003`, `…a006`, `…a007`) bleiben unverändert bei 63 / 22 / 15 / 5.
+
+**3. Rollback.** Eine **neue** Migration, die den Schlüssel wieder entfernt (die angewendete Migration wird nie bearbeitet; Form wie
+Phase 836). Ein Image-Rollback allein genügt nicht: die drei Zeilen stehen in der Datenbank, der Schlüssel wirkt unter dem alten Code
+aber nirgends (er kennt `/leave/plans` nicht). Keine Schemaänderung, in beiden Richtungen kein Datenverlust.
+
+```sql
+-- Reverse of the Phase 835 template migration: removes the key from the three global rows.
+UPDATE "AccessRole"
+SET "permissions" = array_remove("permissions", 'leave-plan:manage:ZUGEWIESEN'),
+    "updatedAt" = NOW()
+WHERE "id" IN (
+  '00000000-0000-4000-8000-00000000a001',
+  '00000000-0000-4000-8000-00000000a004',
+  '00000000-0000-4000-8000-00000000a005'
+)
+  AND "tenantId" IS NULL
+  AND 'leave-plan:manage:ZUGEWIESEN' = ANY("permissions");
+```
+
+## Phase 842 — Designsystem: Themes und Präferenzen (Issue #842)
+
+**Hinweis für die Release Notes.** Das Oberflächendesign hat jetzt drei Themes (Pflaume, Salz, Petrol), jeweils hell und dunkel.
+Die Auswahl „Skin“ und „Dichte“ entfällt. Gespeicherte Einstellungen werden automatisch übertragen; niemand landet ohne Theme.
+
+**Was die Migration tut.** Ein Verzeichnis in `packages/db/prisma/migrations/`: `20261109120000_ui_preferences_v2_themes`, von Hand
+geschrieben und **rein datenbezogen** (keine Tabelle, Spalte, Index oder Constraint wird angelegt, geändert oder gelöscht; die
+CI-Driftprüfung bleibt leer). Ein einziges `UPDATE "User"` über `"uiPreferences"`:
+
+- `nacht` und `schiefer` werden zu `salz`, `wald` wird zu `petrol`; `pflaume` bleibt.
+- Die Schlüssel `skin` und `density` werden entfernt; alle anderen Schlüssel (`mode`, `language`) bleiben.
+- Nur Zeilen, deren `uiPreferences` ein JSON-Objekt ist und `skin`, `density` oder eine alte Theme-Id enthält, werden angefasst.
+  SQL-NULL, JSON-null, Arrays, Skalare und ein unbekannter Theme-Wert bleiben unverändert (die API liefert dann beim Lesen
+  `pflaume`). `updatedAt` wird nicht verändert.
+
+**Wiederholbar.** Nach dem ersten Lauf trifft kein Datensatz mehr das Prädikat; ein zweiter Lauf ändert keine Zeile.
+`prisma migrate deploy` wendet die Migration auf jeder Stufe (dev, int, prod) an; es gibt kein Skript und keinen manuellen Schritt.
+Bewiesen durch `apps/api/src/__tests__/ui-preferences-migration-842.test.ts` (führt die eingecheckte SQL-Datei in einer immer
+zurückgerollten Transaktion aus, zweimal).
+
+**Kein Audit-Eintrag.** Eine UI-Präferenz ist weder Arbeitszeit-, Urlaubs- noch Lohndatum; wie `PUT /api/v1/me/preferences` schreibt
+die Migration keine `AuditLog`-Zeile.
+
+**API.** `PUT /api/v1/me/preferences` akzeptiert `pflaume`, `salz`, `petrol` sowie die alten Ids (`nacht`/`schiefer` werden als
+`salz`, `wald` als `petrol` gespeichert und geliefert); eine unbekannte Id (z. B. `lila`) bleibt 400. Die entfernten Schlüssel `skin`
+und `density` eines veralteten Browser-Tabs werden ignoriert (200, nicht gespeichert). Die Abbildung steht nur in
+`apps/api/src/contexts/platform/ui-theme.ts`; `GET` normalisiert zusätzlich, falls eine Zeile noch eine alte Id trägt.
+
+**Rollback.** Ein Image-Rollback genügt nicht für die Daten: die Zeilen tragen dann `salz`/`petrol`, die der alte Code beim Lesen auf
+`pflaume` zurückfallen lässt (kein Fehler, keine Sperre). Der Verlust ist rein kosmetisch (die Wahl der Person muss neu getroffen
+werden); eine Rückabbildung ist nicht möglich, weil `nacht` und `schiefer` auf `salz` zusammenfallen.
+
+## Phase 597 — Kalender-Abo „Mein Dienstplan“ (Issue #597)
+
+**Was die Migration tut.** `20261109201652_calendar_feed_token` (mit `prisma migrate diff` gegen eine Schatten-DB erzeugt, rein
+additiv): neue Tabelle `CalendarFeedToken` (FK auf `Tenant` RESTRICT, auf `User` CASCADE, eindeutig je Nutzer und je Token-Hash).
+Keine bestehende Tabelle oder Zeile wird verändert; `prisma migrate deploy` wendet sie auf jeder Stufe an, ohne manuellen Schritt.
+
+**Int-Refresh.** `pseudonymize-dump.ts` löscht alle `CalendarFeedToken`-Zeilen, damit kein Abo-Link von prod auf int funktioniert.
+
+**Rollback.** Ein Image-Rollback lässt die Tabelle stehen; der alte Code kennt die Route nicht, die Links liefern dann 404. Keine
+Datenkorrektur nötig.
+
+## Phase 599 — Korrekturanfrage für abgeschlossene Monate (Issue #599)
+
+**Was die Migrationen tun.** Zwei Verzeichnisse in `packages/db/prisma/migrations/`:
+
+- `20261109170042_month_correction_request` (erzeugt mit `prisma migrate diff` gegen eine Schatten-DB, rein additiv): neuer Enum
+  `MonthCorrectionRequestStatus`, neue Tabelle `MonthCorrectionRequest` mit zwei Fremdschlüsseln (`Employee`, `OvertimeTransaction`,
+  beide `ON DELETE RESTRICT`) und dem von Hand geschriebenen CHECK `MonthCorrectionRequest_booking_shape_check` (eine genehmigte
+  Anfrage trägt immer Minuten, Buchungstag und Journalzeile, keine andere; nie 0 Minuten). Keine bestehende Tabelle, Spalte oder Zeile
+  wird verändert; die CI-Driftprüfung bleibt leer.
+- `20261109180000_month_correction_template_grant` (rein datenbezogen, wiederholbar über `IS DISTINCT FROM`): die globalen
+  Systemvorlagen Admin, Manager, Mitarbeiter, Inhaber und Salonmanager erhalten die `month-correction:*`-Rechte spiegelbildlich zu
+  ihren Zeitnachtrag-Rechten (`docs/permissions.md`, „Seit #599“). Personalabteilung und Ausbilder bleiben unverändert;
+  Kundenkopien der Vorlagen bleiben unverändert; niemandem wird eine Rolle zugewiesen. Bewiesen durch
+  `apps/api/src/__tests__/month-correction-template-migration-599.test.ts`. Owner-Entscheidung 12.11.2026 (Kommentar auf #599,
+  Unterbau-Semantikänderung): die Änderung wirkt sofort auf alle bestehenden Konten der fünf Rollen.
+
+**Prüfung nach dem Deploy (je Stufe, nur lesend).** Die fünf globalen Vorlagen tragen die neuen Schlüssel, Personalabteilung und
+Ausbilder keinen:
+
+```sql
+SELECT "name", array_length("permissions", 1) AS anzahl,
+       ARRAY(SELECT k FROM unnest("permissions") k WHERE k LIKE 'month-correction:%') AS neu
+FROM "AccessRole" WHERE "tenantId" IS NULL ORDER BY "name";
+```
+
+Erwartet: Admin 94 / Inhaber = Katalog (94) / Manager 68 / Mitarbeiter 24 / Salonmanager 29 Rechte, mit den Schlüsseln aus
+ADR Eintrag AJ, Nachtrag Phase 599; Personalabteilung 15 und Ausbilder 5 unverändert.
+
+`prisma migrate deploy` wendet beide auf jeder Stufe an; kein Skript, kein manueller Schritt, keine Bestandsdaten zu korrigieren
+(die Tabelle ist neu und leer).
+
+**Wirkung auf den Saldo.** Erst eine Genehmigung bucht: Journalzeile `OvertimeTransaction` (Typ CORRECTION) plus Minuten und
+Buchungstag an der Anfrage; der Saldo-Kern `closeEmployeeMonth()` zieht die Minuten als Kontobewegung am Buchungstag ein. Ohne
+genehmigte Anfrage ändert sich kein Saldo, kein Snapshot und kein abgeschlossener Monat.
+
+**Rollback.** Ein Image-Rollback auf eine Version ohne #599 lässt die Tabelle stehen; der alte Code liest sie nicht, gebuchte
+Korrekturen fallen dann aus dem Live-Saldo heraus (die Journalzeile bleibt). Nach einem Rollback mit bereits genehmigten Anfragen
+deshalb wieder vorwärts gehen, nicht die Tabelle löschen (Revisionssicherheit).

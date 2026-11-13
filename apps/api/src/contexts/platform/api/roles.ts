@@ -13,6 +13,7 @@ import {
 import { ROLE_LOCKOUT_MESSAGE, RoleLockoutError } from "../role-assignment";
 import { withRoleLockoutGuard } from "../facade/role-assignments";
 import { foreignKeyConstraintOf } from "../prisma-foreign-key";
+import { assertModuleBooked } from "../tenant-packages";
 import { requestAuditFields } from "../request-audit-fields";
 import {
   createsFourEyesCombination,
@@ -24,17 +25,25 @@ import {
 const ROLE_NAME_CONFLICT_MESSAGE = "Eine Rolle mit diesem Namen existiert bereits.";
 const ROLE_NOT_FOUND_MESSAGE = "Rolle nicht gefunden";
 const ROLE_SYSTEM_UPDATE_MESSAGE =
-  "Systemrollen können nicht geändert werden. Kopieren Sie die Rolle, um sie anzupassen.";
+  "Systemrollen können nicht geändert werden. Kopier die Rolle, um sie anzupassen.";
 const ROLE_SYSTEM_DELETE_MESSAGE = "Systemrollen können nicht gelöscht werden.";
 const ROLE_ASSIGNED_DELETE_MESSAGE =
   "Die Rolle ist noch Nutzern zugewiesen und kann nicht gelöscht werden.";
 /** The `onDelete: Restrict` backstop of D-21 (migration 20260924145050_role_assignment). */
 const ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY = "RoleAssignment_accessRoleId_fkey";
+/**
+ * Issue #836: a leave-limit rule may name a role; the `onDelete: Restrict` key of
+ * `LeaveLimitRule.accessRoleId` refuses the delete. Detected by constraint name only - the Unterbau
+ * never reads the absence table.
+ */
+const LEAVE_LIMIT_RULE_ROLE_FOREIGN_KEY = "LeaveLimitRule_accessRoleId_fkey";
+const ROLE_LEAVE_LIMIT_DELETE_MESSAGE =
+  "Die Rolle wird von einer Urlaubsgrenze verwendet (auch von entfernten Regeln) und kann daher nicht gelöscht werden.";
 // Issue #354 (pre-merge security review of #75): a `role:manage` holder who also currently holds
 // the target role via an assignment could otherwise add rights to it and grant itself more —
 // self-service escalation. Rejected unless the caller additionally holds role-assignment:manage.
 const ROLE_SELF_HELD_UPDATE_MESSAGE =
-  "Eine Ihnen selbst zugewiesene Rolle können Sie ohne die Berechtigung role-assignment:manage nicht ändern.";
+  "Eine dir selbst zugewiesene Rolle kannst du ohne die Berechtigung „Rollen an Personen zuweisen und entziehen“ nicht ändern.";
 // Phase 78b (issue #78, D-05): the fixed 409 reply for a save that would newly create the
 // four-eyes combination without confirm: true — same `{ error, code }` shape as
 // SALON_ALREADY_COUPLED_REPLY (contexts/scheduling/api/integrations.ts).
@@ -195,6 +204,11 @@ export async function roleRoutes(app: FastifyInstance) {
 
       try {
         const created = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          // Issue #624: a NEW customer role is a Ketten-Paket feature. Decided FIRST, before the
+          // name check and the four-eyes check: whether the action exists for this tenant does not
+          // depend on the input, and a refusal must not leak name conflicts or permission hints.
+          // Editing and deleting existing roles stay free (never retroactive, #566 D-06).
+          await assertModuleBooked(tx, tenantId, "CHAIN");
           if (await nameTaken(tx, tenantId, nameKey, null)) {
             return null;
           }
@@ -475,6 +489,9 @@ export async function roleRoutes(app: FastifyInstance) {
         if (foreignKeyConstraintOf(err) === ROLE_ASSIGNMENT_ROLE_FOREIGN_KEY) {
           return reply.code(409).send({ error: ROLE_ASSIGNED_DELETE_MESSAGE });
         }
+        if (foreignKeyConstraintOf(err) === LEAVE_LIMIT_RULE_ROLE_FOREIGN_KEY) {
+          return reply.code(409).send({ error: ROLE_LEAVE_LIMIT_DELETE_MESSAGE });
+        }
         if (isPrismaErrorCode(err, "P2025")) {
           return reply.code(404).send({ error: ROLE_NOT_FOUND_MESSAGE });
         }
@@ -523,6 +540,9 @@ export async function roleRoutes(app: FastifyInstance) {
 
       try {
         const created = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          // Issue #624: a copy is a new customer role — same gate and order as the create route
+          // (after the 404 source lookup above, so the T-100-09 body is unchanged).
+          await assertModuleBooked(tx, tenantId, "CHAIN");
           let name: string;
           let nameKey: string;
 

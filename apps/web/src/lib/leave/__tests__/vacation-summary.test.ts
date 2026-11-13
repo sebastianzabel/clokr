@@ -306,9 +306,15 @@ describe("vacationCardDelta", () => {
     expect(vacationCardDelta(24, 0)).toBe("von 24 gesamt");
   });
 
-  it("renders half-days as plain JS numbers (no formatter is introduced)", () => {
+  it("renders half-days with the German decimal comma (Issue #853-19: the one day number format)", () => {
     expect(vacationCardDelta(25.5, 2.5)).toBe(
-      "von 28 gesamt (25.5 Anspruch + 2.5 Übertrag Vorjahr)",
+      "von 28 gesamt (25,5 Anspruch + 2,5 Übertrag Vorjahr)",
+    );
+  });
+
+  it("rounds a float sum instead of printing it (0.1 + 0.2 carry-over)", () => {
+    expect(vacationCardDelta(24, 0.1 + 0.2)).toBe(
+      "von 24,3 gesamt (24 Anspruch + 0,3 Übertrag Vorjahr)",
     );
   });
 
@@ -382,38 +388,59 @@ describe("loadVacationSummary fetches the SELECTED year (issue #122)", () => {
 });
 
 describe("every year-changing path reloads the figures (D-02, issue #122)", () => {
-  // The issue text names only prevYear/nextYear. These six are ALL the sites that assign
-  // `calYear`; fixing two of them would leave the identical defect on the rarer four.
-  const YEAR_CHANGING = [
-    "function prevMonth(",
-    "function nextMonth(",
-    "function gotoMonthYear(",
-    "function gotoToday(",
-    "function prevYear(",
-    "function nextYear(",
-  ];
+  // #840 (D-840-13, E-01): the six navigation functions this block used to pin (`prevMonth`,
+  // `nextMonth`, `gotoMonthYear`, `gotoToday`, `prevYear`, `nextYear`) went with the page's own
+  // month and year bars: the one toolbar writes the URL, and the viewed year is the year of the
+  // URL's anchor day. The invariant is the same - NO path changes the year without reloading the
+  // figures - and is now held structurally: `calYear` cannot be assigned (it is derived), and the
+  // one effect that reacts to it reloads the list, the sick days and the entitlement tiles.
+  it("calYear is derived from the URL anchor day and never assigned", () => {
+    expect(PAGE).toContain("const calYear = $derived(Number(urlState.datum.slice(0, 4)));");
+    expect(PAGE).not.toMatch(/(^|[^\w$.])calYear\s*(\+\+|--|\+=|-=)/m);
+    expect(PAGE).not.toMatch(/^\s*calYear\s*=[^=]/m);
+    // The old assigning navigation is gone.
+    for (const gone of ["function prevMonth(", "function nextYear(", "function gotoMonthYear("]) {
+      expect(PAGE).not.toContain(gone);
+    }
+  });
 
-  it.each(YEAR_CHANGING)("%s reloads the vacation summary for the new year", (marker) => {
-    expect(fnBody(marker)).toContain("loadVacationSummary(calYear)");
+  it("the one effect on calYear reloads the request list and the entitlement tiles", () => {
+    const at = PAGE.indexOf("void calYear;");
+    expect(at).toBeGreaterThan(-1);
+    const effect = PAGE.slice(at, PAGE.indexOf("\n  });", at));
+    expect(effect).toContain("await loadData();");
+    expect(effect).toContain("loadVacationSummary(calYear)");
+    // loadData() starts the sick-day read for the same year.
+    expect(fnBody("async function loadData(")).toContain("loadSickDaysYear(calYear)");
   });
 
   it("has no zero-argument call left anywhere on the page", () => {
     expect(PAGE).not.toContain("loadVacationSummary()");
   });
 
-  it("passes calYear at all nine call sites (six navigation + onMount + two reload paths)", () => {
-    expect((PAGE.match(/loadVacationSummary\(calYear\)/g) ?? []).length).toBe(9);
+  it("passes calYear at both call sites (the year effect and the post-write reload)", () => {
+    expect((PAGE.match(/loadVacationSummary\(calYear\)/g) ?? []).length).toBe(2);
+    expect(fnBody("async function reloadAll(")).toContain("loadVacationSummary(calYear)");
   });
 
   it("shows a loading state instead of the previous year's numbers while refetching (D-03)", () => {
     expect(PAGE).toContain("let vacSummaryLoading = $state(true)");
-    // Whitespace-robust on purpose: prettier owns the line breaks around the {#if}.
-    const sites = [...PAGE.matchAll(/\{@render vacStats\(\)\}/g)];
-    expect(sites.length).toBe(2);
-    for (const site of sites) {
-      expect(PAGE.slice(Math.max(0, site.index - 160), site.index)).toContain("vacSummaryLoading");
-    }
-    expect((PAGE.match(/\{@render vacStatsSkeleton\(\)\}/g) ?? []).length).toBe(2);
+    // #851: the figures live in the Kennzahlenleiste; while the year's balance is being fetched
+    // (`vacationBalance = null` first), every vacation cell reads „–“, never the left year's value.
+    expect(fnBody("async function loadVacationSummary(")).toContain("vacationBalance = null;");
+    const items = PAGE.slice(PAGE.indexOf("let balanceItems = $derived<KpiItem[]>(["));
+    // #853-19: the day figures go through formatDays (decimal comma), never a raw float.
+    // Since the count-up (13.11.2026) the cell takes the NUMBER plus `format: formatDays`, so the
+    // text is the same decimal-comma string at rest while the figure can count up.
+    expect(items).toContain(
+      'value: vacRemaining === null ? "–" : vacRemaining,\n      format: formatDays,',
+    );
+    expect(items).toContain(
+      'value: vacationBalance ? vacSummaryUsed : "–",\n      format: formatDays,',
+    );
+    expect(items).toMatch(
+      /value: !vacationBalance \? "–" : carryDeadlineAhead \? vacSummaryCarryOverRemaining : 0,\s+format: formatDays,/,
+    );
   });
 });
 

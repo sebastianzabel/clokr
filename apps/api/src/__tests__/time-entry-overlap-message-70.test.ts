@@ -65,7 +65,6 @@ describe("Issue #70 — overlap answers are a clean 409 whose wording follows th
       data: {
         email: `${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

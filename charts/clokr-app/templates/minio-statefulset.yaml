@@ -1,0 +1,98 @@
+{{- if .Values.minio.enabled }}
+# Issue #184: object store for documents and avatars. Credentials come from a secret that is NOT
+# rendered by this chart (minio.secretName), so they never live in a values file and ArgoCD does
+# not prune keys added by hand. That secret holds MINIO_ROOT_USER / MINIO_ROOT_PASSWORD for this
+# pod and MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY for the API (api.extraSecretName).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clokr-app.labels" . | nindent 4 }}
+    app: clokr-minio
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clokr-minio
+  template:
+    metadata:
+      labels:
+        app: clokr-minio
+        {{- include "clokr-app.labels" . | nindent 8 }}
+    spec:
+      # This pod never calls the Kubernetes API, so the service-account token would be pure
+      # attack surface.
+      automountServiceAccountToken: false
+      containers:
+      - name: minio
+        # Same pinned image as docker-compose.prod.yml and the CI MinIO step.
+        image: {{ .Values.minio.image | quote }}
+        args: ["server", "/data", "--console-address", ":9001"]
+        securityContext:
+          # The Chainguard image runs as uid 65532; a fresh local-path volume is root-owned.
+          runAsUser: 0
+        env:
+        - name: MINIO_ROOT_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.minio.secretName }}
+              key: MINIO_ROOT_USER
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.minio.secretName }}
+              key: MINIO_ROOT_PASSWORD
+        ports:
+        - containerPort: 9000
+          name: s3
+        volumeMounts:
+        - name: minio-data
+          mountPath: /data
+        resources:
+          {{- toYaml .Values.minio.resources | nindent 10 }}
+        readinessProbe:
+          httpGet:
+            path: /minio/health/ready
+            port: 9000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+  volumeClaimTemplates:
+  - metadata:
+      name: minio-data
+      annotations:
+        # Same as postgres: ArgoCD prune must never take the stored documents with it.
+        helm.sh/resource-policy: keep
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      {{- if .Values.minio.storageClass }}
+      storageClassName: {{ .Values.minio.storageClass | quote }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.minio.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # The name is the host the API reaches (MINIO_ENDPOINT=minio).
+  name: minio
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clokr-app.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: clokr-minio
+  ports:
+  - name: s3
+    port: 9000
+    targetPort: 9000
+{{- end }}

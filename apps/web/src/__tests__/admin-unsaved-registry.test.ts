@@ -47,8 +47,8 @@ const REGISTERED: Record<string, string> = {
 // noise, and a guard on an action page teaches the operator to click through the dialog.
 const EXCLUDED: Record<string, string> = {
   "employees/+page.svelte":
-    "the only editable form is the invite <Modal> with its own Abbrechen; a modal draft is a modal-dismissal concern that beforeNavigate never sees",
-  "shutdowns/+page.svelte": "same — the only form is the create <Modal>",
+    "the only form is the guided create Dialog (CreatePersonDialog) with its own Abbrechen; nothing is created before the last step, and a dialog draft is a dialog-dismissal concern that beforeNavigate never sees",
+  "shutdowns/+page.svelte": "redirect stub (#854) to Abwesenheiten › Betriebsurlaub",
   "month-close/+page.svelte":
     "selectedYear/statusFilter are filters; unlockReason/gapAcknowledged are one-shot confirmations inside modals; the writes are operations, not form state",
   "import/+page.svelte":
@@ -56,14 +56,14 @@ const EXCLUDED: Record<string, string> = {
   "integrations/+page.svelte":
     "no update endpoint exists; the single write creates a NEW API key and the two inputs clear afterwards",
   "themes/+page.svelte": "no write path and no bound form state",
+  "bausteine/+page.svelte":
+    "example page of the building blocks (#843): demo data only, no write path",
   "availability/+page.svelte": "list view — no write path",
   "salons/+page.svelte": "list view — no form state; writes happen on the detail page",
   "audit/[id]/+page.svelte": "detail view — no write path",
   "support-access/+page.svelte": "list view — no write path, no form state",
   "support-access/[id]/+page.svelte":
     "detail view — the only write is the end action behind a ConfirmDialog (an operation, no form state)",
-  "special-leave/+page.svelte": "redirect stub — no UI, no form state",
-  "special-leave/[id]/+page.svelte": "redirect stub — no UI, no form state",
   "+page.svelte": "redirect stub — no UI, no form state",
 };
 
@@ -207,6 +207,88 @@ describe("excluded pages register nothing", () => {
         20,
       );
     }
+  });
+});
+
+// ── The Verwalten routes (Issue #854, D-854-28) ────────────────────────────────────────────
+// The admin pages are being rebuilt under `routes/(app)/verwalten`; the same ledger rules apply
+// there, with their own ledgers keyed relative to that root. A page holding form state registers
+// exactly one id via `markUnsaved`; any other page is excluded with a reason. Later plans add
+// their pages here.
+const VERWALTEN_ROOT = resolve(process.cwd(), "src/routes/(app)/verwalten");
+
+const VERWALTEN_REGISTERED: Record<string, string> = {
+  "regeln/arbeitszeit/+page.svelte": "regeln-arbeitszeit",
+  "regeln/monatsabschluss/+page.svelte": "regeln-monatsabschluss",
+  "regeln/benachrichtigungen/+page.svelte": "regeln-benachrichtigungen",
+};
+
+const VERWALTEN_EXCLUDED: Record<string, string> = {
+  "+page.svelte": "hub page, no form state",
+  "regeln/+page.svelte": "hub page, no form state",
+  "daten/+page.svelte": "hub page, no form state",
+  "system/+page.svelte": "hub page, no form state",
+};
+
+const VERWALTEN_PAGES = adminPages(VERWALTEN_ROOT);
+const VERWALTEN_KEYS = VERWALTEN_PAGES.map((abs) =>
+  relative(VERWALTEN_ROOT, abs).split(sep).join("/"),
+);
+
+describe("every Verwalten page is accounted for", () => {
+  it("scanned at least 4 Verwalten pages", () => {
+    expect(
+      VERWALTEN_PAGES.length,
+      "fewer than 4 Verwalten pages scanned — src/routes/(app)/verwalten moved or emptied",
+    ).toBeGreaterThanOrEqual(4);
+  });
+
+  it("no Verwalten page is missing from the ledger", () => {
+    const missing = VERWALTEN_KEYS.filter(
+      (k) => !(k in VERWALTEN_REGISTERED) && !(k in VERWALTEN_EXCLUDED),
+    );
+    expect(
+      missing,
+      `The following Verwalten pages are in neither VERWALTEN_REGISTERED nor VERWALTEN_EXCLUDED: ${missing.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("no ledger entry points at a file that no longer exists", () => {
+    const ledgerKeys = [...Object.keys(VERWALTEN_REGISTERED), ...Object.keys(VERWALTEN_EXCLUDED)];
+    const stale = ledgerKeys.filter((k) => !VERWALTEN_KEYS.includes(k));
+    expect(stale, `Ledger entries with no matching +page.svelte: ${stale.join(", ")}`).toEqual([]);
+  });
+
+  it("no page is in both lists", () => {
+    expect(Object.keys(VERWALTEN_REGISTERED).filter((k) => k in VERWALTEN_EXCLUDED)).toEqual([]);
+  });
+
+  it("registered Verwalten pages carry the full idiom and exactly one id", () => {
+    for (const [relPath, id] of Object.entries(VERWALTEN_REGISTERED)) {
+      const src = readFileSync(join(VERWALTEN_ROOT, relPath), "utf8");
+      expect(src).toContain(`markUnsaved("${id}"`);
+      expect(src).toContain(`return () => markUnsaved("${id}", false)`);
+      expect(registrationIsGated(src, id), `${relPath} gates ${id} on snapshotsReady`).toBe(true);
+      expect(registeredIdsIn(src), `${relPath} should register exactly one id`).toEqual([id]);
+    }
+  });
+
+  it("excluded Verwalten pages register nothing and carry a reason", () => {
+    for (const [relPath, reason] of Object.entries(VERWALTEN_EXCLUDED)) {
+      const src = readFileSync(join(VERWALTEN_ROOT, relPath), "utf8");
+      expect(src, `${relPath} contains markUnsaved(`).not.toContain("markUnsaved(");
+      expect(reason.length, `${relPath}'s exclusion reason is empty`).toBeGreaterThan(0);
+    }
+  });
+
+  it("no id is registered by an admin page and a Verwalten page at once", () => {
+    const adminIds = new Set(
+      ALL_PAGES.flatMap((abs) => registeredIdsIn(readFileSync(abs, "utf8"))),
+    );
+    const clashes = VERWALTEN_PAGES.flatMap((abs) =>
+      registeredIdsIn(readFileSync(abs, "utf8")).filter((id) => adminIds.has(id)),
+    );
+    expect(clashes).toEqual([]);
   });
 });
 

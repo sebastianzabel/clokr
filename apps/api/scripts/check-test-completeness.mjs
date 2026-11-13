@@ -955,7 +955,102 @@ import { readFileSync } from "node:fs";
 // (7), period-absences-csv-713 (16); extended: sick-leave-days (+8 cases), reports-hr-86 (+1), reports-period-salon-612, reports-period-vacation-612,
 // reports-period-home-salon-714 (assertions only); nothing removed, skipped or loosened. MIN_FILES 713 -> 716, never lowered.
 // Issue #728: one new file (half-day-leave-recording-728.test.ts) on top of #713: MIN_FILES 716 -> 717.
-const MIN_FILES = 717;
+// Issue #668: one new file (month-close-employment-668.test.ts) -> MIN_FILES 717 -> 718, measured with a full run on
+// `fix/668-close-by-employment` (origin/main @ d1ec1f04 + #668): 718 test files, 10880 tests.
+// Issue #668 review fixes: one more file (month-close-review-668.test.ts) -> 719; measured full run on the same branch @ 8f8e5295:
+// 719 test files, 10903 tests (10900 passed, 3 skipped).
+// Issue #745/#746 (half day, class of #728): +1 file (leave-ical-half-day-746) and +9 tests, measured 718 files / 10880 tests (10877 passed + 3 skipped).
+// #668 (+2 files) and #745/#746 (+1 file) on the common base 717: MIN_FILES 720 (lower-bound sum).
+// Issue #478: +1 file (leave-overlap-cancellation-478.test.ts, +6 tests) and +1 file (leave-edit-guards-478.test.ts, +8 tests); measured 720 files / 10894 tests (incl. 3 skipped).
+// Issue #744 on top of #745/#746: +2 files (shift-half-day-leave-744, shift-leave-rule-744): MIN_FILES 718 -> 720.
+// Issue #743: re-measured with the full run (719 files, 10888 tests incl. 3 skipped).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #753: +1 file (close-year-exit-753), measured full run 729 files, 10991 tests incl. 3 skipped.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #467: +1 file (shift-leave-race-467.test.ts, 1 case); full run measured 732 files, 11004 tests.
+// Issue #277: +1 file (year-close-277), +5 gate cases; measured full run 732 files, 11016 tests incl. 3 skipped.
+// Issue #718: +1 file (anonymization-freetext-718), measured full run 733 files, 11019 tests incl. 3 skipped.
+// Issue #774: +1 file (backfill-774-anonymized-freetext), +3 cases; measured full run 734 files, 11023 tests collected.
+// Issue #473: +1 file (close-employee-month-monthly-hours-bs-473), +6 cases; measured full run 733 files, 11022 tests.
+// Issue #696: +1 file (open-month-carry-bulk-696, 3 cases); measured full run 733 files, 11019 tests.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #512: +2 files (anonymization-audit-freetext-512, backfill-512-anonymized-audit-freetext), +6 cases; counted from source.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #304: re-measured with the full run — 749 files, 11077 tests (adds datev-lodas-feldliste-304.test.ts, 7 cases).
+// Issue #787: +1 file (monthly-hours-bs-daily-soll-787.test.ts).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #715: +1 file (sim-invariants-715.test.ts, 8 cases), source-counted on the base 736/11029.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #541: +5 files (nfc-punch-salon-binding-541, terminal-salon-migration-541, terminal-salon, nfc-punch-salon-race-541, terminals-salon-541), +48 cases; measured full run 759 files, 11149 tests (includes the merged origin/main test minio-query-string-override).
+
+// Phase 608 (2026-11-02): measured with a full run on `feat/608-web-push` @ 67f489eb — 765 test files, 11279 tests; new
+// files me-push-608, push-config-608, push-surface-off-608, push-endpoint-guard-608, push-device-label-608,
+// push-reassign-608, anonymization-push-608, notification-push-policy-608, notification-push-dispatch-608 and
+// generate-vapid-keys-608; extended: notification-email-policy (+1). Nothing removed, skipped or loosened. MIN_FILES 750 -> 765, never lowered.
+// Merge of #608 onto main after #541/#638: full run measured 772 files / 11393 tests (incl. 3 skipped).
+// Phase 610 (2026-11-02): measured with a full run on `feat/610-wlan-qr-kopplung` @ ac4cbde4 (stacked on
+// `feat/608-web-push`) — 777 test files, 11455 tests (11452 passed, 3 skipped, 0 failed); new files
+// presence-pairing-610 (1 case), presence-pairing-contract-610 (28), presence-pairing-replace-610 (7),
+// presence-pairing-race-610 (3), presence-withdrawal-610 (7), presence-last-seen-610 (6), pairing-no-client-mac-610 (13),
+// presence-pairing-lifecycle-610 (6), wifi-device-not-seen-610 (16), wifi-device-not-seen-job-610 (15); extended:
+// notification-push-policy-608, cron-deactivated-tenants-88, with-advisory-lock; nothing removed, skipped or loosened.
+// MIN_FILES 765 -> 777, never lowered. #541, #608 and #641 also raise these floors: whoever merges later re-measures.
+// 2026-11-02 (#610 review fixes): +2 API test files, measured full run 779 files / 11465 tests.
+// Merge of #610 onto main after #608: full run measured 784 files / 11508 tests (incl. 3 skipped).
+// Phase 609 (2026-11-02): measured with a full API run on `feat/609-erinnerungen` @ 54644ca0 (stacked on `feat/608-web-push`; later commits touch web tests only) -
+// 780 test files, 11605 tests (11602 passed, 3 skipped, 0 failed). The phase adds 13 API test files (shift-reminders-kernel-609,
+// shift-reminders-start-609, shift-reminders-end-609, shift-reminders-day-close-609, shift-reminders-exclusions-609,
+// shift-reminders-same-instant-609, shift-reminders-recipients-609, shift-reminders-no-stamp-609, shift-reminders-perf-609,
+// clock-out-reminder-coordination-609, settings-reminders-609, me-reminders-609, employee-reminder-columns-hidden-609) and
+// extends facade-shifts, the push-policy, advisory-lock, cron-88 and employee-creation tests; the rest of the rise over the
+// previous floor comes from the stacked base (608 plus main merged into it). Nothing removed, skipped or loosened. MIN_FILES
+// 765 -> 780, never lowered. The open PRs for #541, #610 and #641 (and #608 itself) raise the same floors: whoever merges
+// later re-measures with a full run (lower-bound convention, never a sum).
+// 2026-11-02 (#609 review fixes): measured full run 781 files / 11636 tests.
+// Merge of #609 onto main after #610: full run measured 798 files / 11793 tests (incl. 3 skipped).
+// Issue #820 (+3 files, +13 cases) merged onto main after #818: full run measured 801 files / 11810 tests (incl. 3 skipped).
+// Issue #641 (Release B, 2026-11-02): floors set to the measured full run on the final tree — 755 files, 11078 tests
+// (incl. 3 skipped). Files: +1 drop-user-role-641.test.ts, -1 backfill-539-role-assignments.test.ts (script retired); the
+// base was already 755 files, so 750 had become a loose lower bound. The deleted cases are named at MIN_TESTS.
+// Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped).
+// Issue #624: +1 file (role-chain-package-624.test.ts), full run measured 802 files / 11803 tests (PATCH gate adds 2 cases + 1 site) (incl. 3 skipped).
+// Phase 647 (2026-11-05): measured with a full API run on `feat/647-coverage-per-salon` @ eeee287a (after merging #829) -
+// 805 test files, 11834 tests (11831 passed, 3 skipped, 0 failed); new files `coverage-rule` (12 cases),
+// `coverage-rule-salon-647` (13), `coverage-rule-write-salon-647` (12), `coverage-rule-salon-migration-647` (4); nothing
+// removed, skipped or loosened; never lowered. The open PRs of the same release (#531, #624, #657, ...) raise the same
+// floors - whoever merges later re-measures with a full run (lower-bound convention, never a sum).
+// Merge of #647 onto main after #624: CI measured 806 files / 11851 tests.
+// Phase 657 Plan 01 (Issue #657): two new test files (retro-request-overlap.test.ts, retro-request-per-interval-657.test.ts),
+// verified with `pnpm exec vitest run <file>`: 4 + 17 = 21 cases. MIN_FILES 801 -> 803; the file count is a lower bound on
+// the merge base, whoever merges later re-measures with a full run.
+// Phase 657 Plan 02 (Issue #657): one new test file (retro-pending-clock-657.test.ts): MIN_FILES 803 -> 804 (lower bound).
+// Phase 657 Plan 03 (Issue #657): one new test file (retro-two-approvals-657.test.ts): MIN_FILES 804 -> 805, the measured
+// total of the full API run (805 files).
+// Merge of #657 onto main after #647: 806 + 4 new files.
+// Issue #615 (2026-11-05, deactivate with last working day; +5 API files: deactivate-exit-day-615,
+// employment-exit-preview-615, exit-vacation-balance-615, deactivate-preview-615,
+// deactivate-preview-rights-615): full run on the tree merged with origin/main (84b184d6) measured
+// 806 files / 11836 tests (incl. 3 skipped).
+// Merge of #615 onto main after #657: 810 + 5 new files.
+// Phase 660 (Issue #660, 2026-11-05): full API run on `feat/660-gap-as-travel` @ cb44ef17 measured 813 files / 11941 tests
+// (incl. 3 skipped); new files day-break-travel-offer-660 (6), day-break-travel-offer-rules-660 (17),
+// travel-offer-one-rule-660 (6); nothing removed, skipped or loosened; MIN_FILES 810 -> 813
+// Merge of #660 onto main after #615: 815 + 3 new files.
+// Phase 836 (Issue #836): 16 new test files (leave-limits-* x10 incl. leave-limits-template-migration-836,
+// roles-delete-leave-limit-836, contract-segments-for-many-836, access-role-ids-836 and the kernel/exception/redact
+// files under contexts/); counted from `git diff --diff-filter=A origin/main`, verified with a full API run
+// (834 files); nothing removed, skipped or loosened; MIN_FILES 818 -> 834
+// Phase 835 (Issue #835): 22 new test files (the 19 `leave-plan-*-835` / `leave-days-extra-siblings-835` files in
+// src/__tests__, `leave-decision-core-835` and `leave-request-create-core-835` under contexts/absence/__tests__,
+// `employee-ids-homed-in-salon-835` under contexts/platform/__tests__), counted from `git diff --diff-filter=A` against
+// the merge base and verified with a full API run (856 files); nothing removed, skipped or loosened; MIN_FILES 834 -> 856
+// Phase 840 (Issue #840): 5 new test files (leave-calendar-masking-840, leave-calendar-scope-840, leave-plan-masking-840,
+// leave-requests-pending-all-years-840 under src/__tests__ and the kernel test contexts/absence/__tests__/leave-calendar-masking),
+// counted from `git diff --diff-filter=A` against the merge base and verified with a full API run (863 files); nothing
+// removed, skipped or loosened; MIN_FILES 856 -> 861
+const MIN_FILES = 861;
 // Issue #619 (2026-10-16): `operator-auth-88` gains one case (the explicit TOTP step-boundary case), counted from
 // the source (+1, lower-bound convention as above, no full run): MIN_TESTS 9649 -> 9650, MIN_FILES unchanged.
 // Issue #654: +2 cases in import-reach-654.test.ts (source-counted): MIN_TESTS 9794 -> 9796.
@@ -1023,7 +1118,100 @@ const MIN_FILES = 717;
 // skipped): +41 cases in the three new files, +8 in sick-leave-days, +1 in reports-hr-86. Never lowered.
 // Issue #728: +8 cases (3 in leave-check.test.ts, 5 in half-day-leave-recording-728.test.ts) on top of #713 (source-counted,
 // lower-bound convention): MIN_TESTS 10862 -> 10870.
-const MIN_TESTS = 10870;
+// Issue #396: +1 file, +3 cases (post-commit-refetch-396.test.ts); measured full run 719 files, 10883 tests (10880 passed, 3 skipped). Never lowered.
+// Issue #668: MIN_TESTS 10870 -> 10880, the measured total of the full run named at MIN_FILES (10872 passed, 5 then-red cases
+// since fixed, 3 skipped); the new file holds 9 cases. Never lowered.
+// Issue #668 review fixes: MIN_TESTS 10880 -> 10903, the measured total of the full run named at MIN_FILES. Never lowered.
+// #668 (+33 tests) and #745/#746 (+10 tests) on the common base 10870: measured 10912 in the CI run of PR #751 (the sum 10913 counted one case twice). Never lowered below a measurement.
+// Issue #745/#746: MIN_TESTS 10870 -> 10880 (measured). Issue #744 (2026-10-25): +14 cases measured on its own base
+// (10870 -> 10884); both together: measured 10893 in the CI run of PR #749 (the sum 10894 counted one case twice). Never lowered below a measurement.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #215: +1 file (absence-type-fields-215.test.ts, 6 cases); full run measured 722 files / 10907 tests. Never lowered.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #459: +1 file (recalculate-snapshots-start-month-459.test.ts, 7 cases); floors set to the measured full run after merging main: 729 files, 10968 tests (incl. 3 skipped).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #718: +4 cases (anonymization-freetext-718); expected full run 11020 tests incl. 3 skipped.
+// Issue #774: +3 cases (backfill-774-anonymized-freetext); measured 11023 collected.
+// Issue #467: +1 test (shift-leave-race-467); lower-bound floor, full run measured 11004 tests.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #696: +3 cases (open-month-carry-bulk-696); measured full run 11019 tests.
+// Issue #771: +1 file, +4 tests (yesterday-dst-771.test.ts) on the base 11021.
+// Issue #512: +6 cases (4 + 2).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #787: +2 cases (same file) on the base 11025.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #715: +8 cases (sim-invariants-715.test.ts) on the base 11029.
+// Merge of parallel PRs: the higher of both measured floors (lower-bound convention, never a sum).
+// Issue #541: +48 cases (13 + 4 + 12 + 2 + 17); measured full run 11149 tests collected (11146 passed, 3 skipped).
+// Issue #638: tests removed with the dropped storeHours column (salon-migration -2, operator-salons-89 -1,
+// settings-store-hours-retired-563 -4).
+// Merge of #541 onto main after #638: full run measured 760 files / 11147 tests (incl. 3 skipped).
+
+// Phase 608 (2026-11-02): measured with a full run on `feat/608-web-push` @ 67f489eb (merged onto origin/main @ c1228258,
+// #807 included) — 765 test files, 11279 tests (11276 passed, 3 skipped, 0 failed). The phase adds 10 files with 174
+// cases (me-push-608 12, push-config-608 15, push-surface-off-608 4, push-endpoint-guard-608 22, push-device-label-608 15,
+// push-reassign-608 7, anonymization-push-608 5, notification-push-policy-608 65, notification-push-dispatch-608 15,
+// generate-vapid-keys-608 14) and one case in notification-email-policy; nothing removed, skipped or loosened.
+// MIN_TESTS 11081 -> 11279, never lowered. Another open PR (#812, Issue #541) raises the same floors: whoever merges second
+// re-measures with a full run (lower-bound convention, never a sum).
+// Merge of #608 onto main after #541/#638: full run measured 772 files / 11393 tests (incl. 3 skipped).
+// Phase 610 (2026-11-02): MIN_TESTS 11279 -> 11455, the measured total of the full run named at MIN_FILES (the ten
+// new files add 102 cases). Never lowered.
+// Merge of #610 onto main after #608: full run measured 784 files / 11508 tests (incl. 3 skipped).
+// Phase 609 (2026-11-02): MIN_TESTS 11279 -> 11605, the measured total of the full run named at MIN_FILES. Never lowered.
+// Merge of #609 onto main after #610: full run measured 798 files / 11793 tests (incl. 3 skipped).
+// Issue #818: +3 cases (state-machine.test.ts +2, nfc-punch.test.ts +1) on the merged base 11793.
+// Issue #819: +2 cases (terminals-salon-541.test.ts) on the merged base 11796.
+// Issue #820 (+3 files, +13 cases): measured 801 files / 11810 tests on main after #818; #819 adds 2 cases -> 11812.
+// Issue #641 (Release B, 2026-11-02): MIN_TESTS 11081 -> 11078, the measured total of the full run on the final tree. The
+// 3 fewer cases are deliberate: the column User.role and the enum Role are gone, so their tests went with them.
+// Deleted (source-counted on the merge base): the whole backfill-539-role-assignments.test.ts (23 cases; the takeover
+// script it covered is retired), 11 of the 12 cases of system-roles-migration.test.ts (each executed the #75b migration
+// SQL that reads the dropped column; the drift case stays), the column write-back cases of compat-role.test.ts (now
+// system-role-assignment.test.ts) and the stale-entry loop of legacy-role-reads-539.test.ts (an empty allowlist is one
+// asserted case). Added: drop-user-role-641.test.ts (11 cases: tracer, migration file, live catalog, admin sign-in).
+// The replay helper legacy-role-migration-sql.ts was no test file; its users (the three neutrality suites and
+// employee-role-bridge) kept every case.
+// Merge of #641 onto main after #820: full run measured 801 files / 11788 tests (incl. 3 skipped); the drop from 11812 is
+// exactly the deliberately deleted #539/#75b role-column cases named in the #641 comment above.
+// Phase 657 Plan 01 (Issue #657): +21 cases (two new files, 4 + 17, measured with their own vitest output): 11788 -> 11809.
+// Phase 657 Plan 02 (Issue #657): +20 cases (one new file, measured with its own vitest output): 11809 -> 11829.
+// Phase 657 Plan 03 (Issue #657): +3 cases (retro-two-approvals-657.test.ts); MIN_TESTS 11829 -> 11833, the measured total of
+// the full API run (11830 passed + 3 skipped = 11833 collected). Never lowered.
+// Issue #531: imports.test.ts -1 (whole-import refusal replaced) +5 (Stammsalon per row); full run measured 801 files / 11793 tests (incl. 3 skipped).
+// Issue #624: +15 cases on its own base (11788 -> 11803); merged onto main after #531: CI measured 802 files / 11807 tests.
+// Phase 647 (2026-11-05): 11793 -> 11834, measured by the full run named at MIN_FILES (the four new files add 41 cases).
+// Phase 647 review fix WR-01: 11834 -> 11835 (+1 case in coverage-rule-write-salon-647.test.ts).
+// Phase 647 review fix IN-02: 11835 -> 11837 (+2 cases in coverage-rule-salon-647.test.ts).
+// Merge of #647 onto main after #624: CI measured 806 files / 11851 tests.
+// Merge of #657 onto main after #531: 11833 measured on its base 11788 (+45) plus #531 (+5) -> 11838.
+// Review fixes of #657 (CR-01..WR-03, IN-01): full API run on the final tree measured 805 files / 11853 tests
+// (incl. 3 skipped). The coordinator's 11838 carried a +5 for #531 that is +4; the figure is the measured total.
+// Merge of #657 onto main after #647: 11851 + 60 (CI measured 11867 on the base 11807).
+// Issue #615 (2026-11-05): MIN_TESTS 11793 -> 11836, the measured total of the full run named at MIN_FILES
+// (the five new API files above plus the cases other merged PRs added since the previous entry). Never lowered.
+// Issue #615 review fixes (2026-11-05): full run on the branch measured 807 files / 11861 tests (incl. 3 skipped);
+// +10 cases over the previous 11851 (CR-01/CR-02/WR-01/WR-02/WR-03/WR-06 in the API files above). Never lowered.
+// Merge of #615 onto main after #657: 11911 + 54 (measured 11861 on the base 11807).
+// Phase 660 (Issue #660, 2026-11-05): full API run on `feat/660-gap-as-travel` @ cb44ef17 measured 813 files / 11941 tests
+// (incl. 3 skipped); the three new files carry 29 cases, the measured total is 30 above the previous floor (the previous
+// floor was a lower bound); nothing removed, skipped or loosened; MIN_TESTS 11911 -> 11941
+// Merge of #660 onto main after #615: 11965 + 29 (the three new files above).
+// Phase 836 (Issue #836): the 16 new files carry 179 cases (per-file counts of the full run's default reporter);
+// the full run measured 12176 tests (incl. 3 skipped), so the floor stays a lower bound; nothing removed, skipped or
+// loosened; MIN_TESTS 11994 -> 12173
+// Phase 835 (Issue #835): the 22 new files carry 180 cases (per-file counts of the full run's default reporter); the full run
+// measured 12366 tests (12363 passed, 3 skipped), so the floor stays a lower bound (the other 13 come from existing files this
+// phase extended additively); nothing removed, skipped or loosened; MIN_TESTS 12173 -> 12353
+// Phase 840 (Issue #840): the 5 new files carry 73 cases (25 + 18 + 9 + 2 + 19, per-file counts of the full run's JSON
+// report) and `neutrality-amendments-from-run.test.ts` gains 3 (the `--retired` cases, 18 -> 21); every other API test
+// file the phase touched keeps its case count. The full run measured 12460 tests (12457 passed, 3 skipped), so the floor
+// stays a lower bound; nothing removed, skipped or loosened; MIN_TESTS 12353 -> 12429
+const MIN_TESTS = 12429;
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;

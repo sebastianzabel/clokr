@@ -12,6 +12,7 @@ import {
   mayFileRetroRequest,
   reportRights,
   salonAdminRights,
+  salonHolidayRights,
 } from "$lib/page-rights";
 import personas from "$lib/nav/__tests__/fixtures/system-role-permissions.json";
 
@@ -36,7 +37,7 @@ describe("reportRights (/reports)", () => {
         canRecordTeamAbsence: true,
         // Issue #612: the day list right and the tabs of the period area.
         canTimeEntryRead: true,
-        periodTabs: ["zeiten", "urlaub", "heute"],
+        periodTabs: ["zeiten", "urlaub", "heute", "verlaeufe"],
       });
     }
   });
@@ -99,11 +100,11 @@ describe("reportRights (/reports)", () => {
 describe("reportRights - period tabs and day list right (Issue #612)", () => {
   it("persona table of the tabs and canTimeEntryRead", () => {
     const table: Record<string, { tabs: string[]; timeEntryRead: boolean }> = {
-      ADMIN: { tabs: ["zeiten", "urlaub", "heute"], timeEntryRead: true },
-      OWNER: { tabs: ["zeiten", "urlaub", "heute"], timeEntryRead: true },
-      MANAGER: { tabs: ["zeiten", "urlaub", "heute"], timeEntryRead: true },
+      ADMIN: { tabs: ["zeiten", "urlaub", "heute", "verlaeufe"], timeEntryRead: true },
+      OWNER: { tabs: ["zeiten", "urlaub", "heute", "verlaeufe"], timeEntryRead: true },
+      MANAGER: { tabs: ["zeiten", "urlaub", "heute", "verlaeufe"], timeEntryRead: true },
       // The Salonleitung holds team-overview:read but neither report:read nor overtime:read.
-      SALON_MANAGER: { tabs: ["heute"], timeEntryRead: true },
+      SALON_MANAGER: { tabs: ["heute", "verlaeufe"], timeEntryRead: true },
       // HR: report:read + overtime:read, no team overview, no time-entry read.
       HR: { tabs: ["zeiten", "urlaub"], timeEntryRead: false },
       // The Ausbilder reads time entries of the apprentices but holds no report right.
@@ -125,19 +126,19 @@ describe("reportRights - period tabs and day list right (Issue #612)", () => {
     expect(r.canTeamAttendance).toBe(false);
   });
 
-  it("the tab order is zeiten, urlaub, heute and each tab needs its own permission", () => {
+  it("the tab order is zeiten, urlaub, heute, verlaeufe and each tab needs its own permission", () => {
     expect([...reportRights({ permissions: ["report:read:ZUGEWIESEN"] }).periodTabs]).toEqual([
       "zeiten",
       "urlaub",
     ]);
     expect([
       ...reportRights({ permissions: ["team-overview:read:ZUGEWIESEN"] }).periodTabs,
-    ]).toEqual(["heute"]);
+    ]).toEqual(["heute", "verlaeufe"]);
     expect([
       ...reportRights({
         permissions: ["team-overview:read:ZUGEWIESEN", "report:read:ZUGEWIESEN"],
       }).periodTabs,
-    ]).toEqual(["zeiten", "urlaub", "heute"]);
+    ]).toEqual(["zeiten", "urlaub", "heute", "verlaeufe"]);
   });
 
   it("a custom role with only report:export gets no period tab (export is a dialog of the bar)", () => {
@@ -235,12 +236,15 @@ describe("reports attendance list - action links (Issue #587, source pin)", () =
     "../../routes/(app)/reports/+page.svelte",
     "src/routes/(app)/reports/+page.svelte",
   );
-  const tableStart = REPORTS.indexOf('<table class="attendance-table">');
-  const table = REPORTS.slice(tableStart, REPORTS.indexOf("</table>", tableStart));
+  // Issue #854: the list is a DataTable; the action cell is the `attendanceCell` snippet.
+  const tableStart = REPORTS.indexOf("<DataTable");
+  const cellStart = REPORTS.indexOf("{#snippet attendanceCell(");
+  const table = REPORTS.slice(cellStart, REPORTS.indexOf("{/snippet}", cellStart));
 
   it("anchors are present (non-vacuous)", () => {
     expect(tableStart).toBeGreaterThan(-1);
-    expect(table).toContain("pagedTodayRows");
+    expect(cellStart).toBeGreaterThan(-1);
+    expect(REPORTS).toContain("rows={pagedTodayRows}");
   });
 
   it("offers the two links only on a missing row, each behind its flag", () => {
@@ -416,23 +420,26 @@ describe("the pages read the rights module and no role", () => {
   }
 });
 
-describe("the employee list shows roles only from roleNames (Issue #538)", () => {
+describe("the employee list shows roles only from the stored assignments (Issue #538, #580)", () => {
   const src = readFileSync(
     resolve(process.cwd(), "src/routes/(app)/admin/employees/+page.svelte"),
     "utf8",
   );
-  it("never reads the compat role of a listed person, and offers chip, filter and count only when names arrive", () => {
+  it("never reads the compat role of a listed person; the role names come from the stored assignments", () => {
     expect(src.length).toBeGreaterThan(10_000);
     expect(src).not.toMatch(/\buser\??\.role\b/);
-    expect(src).toContain("/role-assignments/role-names");
-    expect(src).toContain("let showRoles = $derived(roleNamesByUser !== null);");
+    // #854 (owner review): the Rollen column of the shared table names the stored roles the server
+    // serves (`include=directory`, #853); the assignments themselves are read only by a holder of
+    // role-assignment:manage, for the bulk role change's skip rule.
+    expect(src).toContain("/employees?include=directory");
+    expect(src).toContain("listRoleAssignments(");
     expect(src).toContain("if (!canAssignRoles)");
-    expect(src).toContain("{#if showRoles}");
   });
 
-  it("the team calendar no longer renders a role under a name", () => {
+  it("the team absence page (formerly the team calendar) no longer renders a role under a name", () => {
+    // #840 (E-01): the team calendar page left; its timeline is the Übersicht tab of /team/leave.
     const cal = readFileSync(
-      resolve(process.cwd(), "src/routes/(app)/teamcal/+page.svelte"),
+      resolve(process.cwd(), "src/routes/(app)/team/leave/+page.svelte"),
       "utf8",
     );
     expect(cal.length).toBeGreaterThan(5_000);
@@ -501,5 +508,21 @@ describe("mayReadTeamSaldo (Issue #588)", () => {
     for (const key of ["SALON_MANAGER", "EMPLOYEE", "TRAINER"]) {
       expect(mayReadTeamSaldo({ permissions: p[key] }), key).toBe(false);
     }
+  });
+});
+
+describe("salonHolidayRights (/admin/salons/:id, section Feiertage, Issue #579)", () => {
+  it("follows the holiday:manage keys of the persona fixture", () => {
+    for (const [key, permissions] of Object.entries(p)) {
+      expect(salonHolidayRights({ permissions }).canManage, key).toBe(
+        permissions.includes("holiday:manage:ZUGEWIESEN"),
+      );
+    }
+    expect(salonHolidayRights({ permissions: p.ADMIN }).canManage).toBe(true);
+  });
+
+  it("holds nothing without a permission list, whatever the compat role says", () => {
+    expect(salonHolidayRights(adminRoleNoPermissions).canManage).toBe(false);
+    expect(salonHolidayRights(noList).canManage).toBe(false);
   });
 });

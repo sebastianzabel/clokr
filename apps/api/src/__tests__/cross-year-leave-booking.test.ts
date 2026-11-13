@@ -28,7 +28,6 @@ describe("Issue #445 findings 3 — chronological cross-year attribution (D-08/D
       data: {
         email: `cylb-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

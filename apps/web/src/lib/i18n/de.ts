@@ -13,8 +13,6 @@ export const de = {
   nav_reports: "Berichte",
   nav_my: "Mein Bereich",
   nav_team: "Team",
-  nav_inbox: "Anträge",
-  nav_team_cal: "Team-Kalender",
   nav_shifts: "Schichtplanung",
   nav_admin: "Administration",
   nav_employees: "Mitarbeitende",

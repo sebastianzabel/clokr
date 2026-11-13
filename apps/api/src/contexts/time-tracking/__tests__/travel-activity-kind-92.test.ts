@@ -62,7 +62,7 @@ describe("validateActivityState refuses a TRAVEL share (D-06)", () => {
     const result = validateActivityState(state({ shares: [{ kind: "TRAVEL", minutes: 10 }] }), ctx);
     expect(result).toEqual({ ok: false, status: 400, body: TRAVEL_SHARE_BODY });
     expect(TRAVEL_SHARE_BODY.error).toBe(
-      "Fahrzeit ist kein Tätigkeitsanteil. Sie wird als eigener Eintrag zwischen zwei Salons erfasst.",
+      "Fahrzeit ist kein Tätigkeitsanteil. Eine Fahrzeit wird als eigener Eintrag zwischen zwei Salons erfasst.",
     );
   });
 

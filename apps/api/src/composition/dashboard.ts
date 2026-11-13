@@ -7,6 +7,7 @@ import {
   accessContextFromRequest,
   employeeScopeFor,
   reportPopulationWhere, // Issue #613 — the one period-population rule
+  hasWorkScheduleInPeriodWhere, // Issue #576 — team week and attendance need a contract
   isEmployedInPeriod, // Issue #613 — the one period-population rule (in-memory twin)
   type WorkLocationEntry,
   type HolidaysByEmployee,
@@ -58,6 +59,7 @@ import {
   weekRangeUtc,
   monthRangeUtc,
   dayRangeUtc, // Issue #613 — tenant-local day as UTC instants
+  addDaysUtc, // Issue #172
   monthDayBounds,
   weekDateRange, // Issue #493 (D-10)
   monthDateRange, // Issue #493 (D-10)
@@ -248,6 +250,7 @@ function presenceLeaveOf(leave: CalendarLeaveRow | undefined): PresenceLeave | n
     ? {
         status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING",
         leaveTypeName: leave.leaveType.name,
+        halfDay: leave.halfDay,
       }
     : null;
 }
@@ -401,6 +404,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // ── Soll-Stunden ──────────────────────────────────────────────────
 
       let weekSollMinutes = 0;
+      let todaySollMinutes: number | null = null;
       let monthSollMinutes = 0;
       // Issue #451 (D-06) — the to-date Soll/Ist pair (through yesterday, issue #438); stays
       // undefined (never a fabricated 0) for MONTHLY_HOURS and for a null computeWeekProgress
@@ -473,6 +477,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const weekProgress = await computeWeekProgress(app, employeeId, now);
         if (weekProgress) {
           weekSollMinutes = weekProgress.weekSollMinutes;
+          todaySollMinutes = weekProgress.todaySollMinutes;
           weekWorkedToDateHours = round(weekProgress.toDateWorkedMinutes / 60);
           weekTargetToDateHours = round(weekProgress.toDateSollMinutes / 60);
         }
@@ -566,7 +571,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // ── Resturlaub ────────────────────────────────────────────────────
       // WR-01: computed only when the caller holds leave-entitlement:read:EIGENE — Ausbilder
       // (D-08) holds no leave-entitlement permission at all.
-      let vacationResult: { remaining: number; total: number; used: number } | null = null;
+      let vacationResult: {
+        remaining: number;
+        total: number;
+        used: number;
+        pending?: number;
+      } | null = null;
 
       if (canReadOwnVacation) {
         // Issue #451 (D-07) — the ONE Resturlaub facade in contexts/absence/facade/vacation-balance.ts,
@@ -582,12 +592,20 @@ export async function dashboardRoutes(app: FastifyInstance) {
               remaining: balance.remainingDays,
               total: balance.entitlementDays + balance.carriedOverEffectiveDays,
               used: balance.usedDays,
+              // Issue #845: requested, not yet decided days of the year (same facade, additive)
+              pending: balance.pendingDays,
             }
-          : { remaining: 0, total: 0, used: 0 };
+          : { remaining: 0, total: 0, used: 0, pending: 0 };
       }
 
       return {
-        today: { workedHours: round(todayMinutes / 60), entries: todayEntries.length },
+        // Issue #596 (#845): `sollMinutes` = today's Soll from the account core (the clock's day
+        // goal); null where the account answers no day question (MONTHLY_HOURS, exempt)
+        today: {
+          workedHours: round(todayMinutes / 60),
+          entries: todayEntries.length,
+          sollMinutes: todaySollMinutes,
+        },
         week: {
           workedHours: round(weekMinutes / 60),
           targetHours: round(weekSollMinutes / 60),
@@ -701,6 +719,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
           tenantId,
           AND: [
             reportPopulationWhere(weekStart, weekEnd),
+            // Issue #576 (D-576-07/08): and a work contract in the week — for the whole
+            // population, Stammsalon persons and persons listed through an in-scope entry alike.
+            hasWorkScheduleInPeriodWhere(weekStart, weekEnd),
             ...(populationIds !== "all" ? [{ id: { in: populationIds } }] : []),
           ],
         },
@@ -1063,6 +1084,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
           tenantId,
           AND: [
             reportPopulationWhere(attendanceDay.start, attendanceDay.end),
+            // Issue #576 (D-576-07/08): and a work contract on the day, for the whole population.
+            hasWorkScheduleInPeriodWhere(attendanceDay.start, attendanceDay.end),
             ...(attendancePopulationIds !== "all" ? [{ id: { in: attendancePopulationIds } }] : []),
           ],
         },
@@ -1644,6 +1667,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
             hasRecordedTime: withRecordedTime.has(a.employeeId),
             // Issue #588 (D-588-2 a, D-588-4): additive; null when the live saldo is unavailable.
             trackOnly: breakdown === null ? null : breakdown.trackOnly,
+            // Issue #911: additive; null when the live saldo is unavailable. No saldo figure changes.
+            noContract: breakdown === null ? null : breakdown.noContract,
             unconfirmedMonths: breakdown === null ? null : breakdown.unconfirmedMonths,
             // Issue #595 (D-03/P-01): one item per month (the record the account reads), each
             // named by the server - `month` ("YYYY-MM", null when unnameable) is what the page
@@ -1872,13 +1897,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
         select: { missingEntriesDays: true, enforceBreakConfirmation: true },
       });
       const missingEntriesDays = resolveMissingEntriesDays(openItemsConfig);
-      const windowStart = new Date(today);
-      windowStart.setDate(windowStart.getDate() - missingEntriesDays);
+      const windowStart = addDaysUtc(today, -missingEntriesDays);
       // findMissingWorkdays' effectiveEnd is INCLUSIVE; the replaced loop ran `cursor < today`,
       // so the last day of the window is yesterday. The window's SIZE is now configured
       // (missingEntriesDays); its bounds (windowStart..yesterday, inclusive) are unchanged.
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterday = addDaysUtc(today, -1);
       // The last instant of yesterday (tenant-local): contracts valid up to then apply to the
       // window's days.
       const yesterdayEnd = dayRangeUtc(yesterday.toISOString().slice(0, 10), tz).end;

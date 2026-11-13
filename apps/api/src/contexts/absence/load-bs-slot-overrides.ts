@@ -88,3 +88,79 @@ export async function loadBsSlotOverrides(
     patternUnterrichtsMinutenByDow: unterrichtsMinutenByDow ?? null,
   };
 }
+
+/**
+ * Issue #696 — `loadBsSlotOverrides` for MANY employees with two queries in total. Returns, per
+ * employee, a resolver `(referenceDate) => BsSlotOverrides` that answers exactly what the single
+ * loader answers for that date: the Employee row's slots, and the FIRST active pattern covering the
+ * date in `BS_PATTERN_ORDER_BY` (the same total order, so the same winner). Nothing is written.
+ */
+export async function loadBsSlotOverridesForMany(
+  prisma: Pick<PrismaClient, "employee" | "employeeVocationalSchoolPattern">,
+  employeeIds: readonly string[],
+): Promise<Map<string, (referenceDate: Date) => BsSlotOverrides>> {
+  const result = new Map<string, (referenceDate: Date) => BsSlotOverrides>();
+  if (employeeIds.length === 0) return result;
+  const [employees, patterns] = await Promise.all([
+    prisma.employee.findMany({
+      where: { id: { in: [...employeeIds] } },
+      select: {
+        id: true,
+        bsSlotFirstLongDayMinutes: true,
+        bsSlotSecondLongDayMinutes: true,
+        bsSlotShortDayMinutes: true,
+        bsSlotBlockWeekMinutes: true,
+      },
+    }),
+    prisma.employeeVocationalSchoolPattern.findMany({
+      where: { employeeId: { in: [...employeeIds] }, isActive: true },
+      orderBy: BS_PATTERN_ORDER_BY,
+      select: {
+        employeeId: true,
+        validFrom: true,
+        validUntil: true,
+        bsSlotFirstLongDayMinutes: true,
+        bsSlotSecondLongDayMinutes: true,
+        bsSlotShortDayMinutes: true,
+        bsSlotBlockWeekMinutes: true,
+        unterrichtsMinutenByDow: true,
+      },
+    }),
+  ]);
+  const patternsByEmployee = new Map<string, typeof patterns>();
+  for (const p of patterns) {
+    const list = patternsByEmployee.get(p.employeeId) ?? [];
+    list.push(p);
+    patternsByEmployee.set(p.employeeId, list);
+  }
+  for (const e of employees) {
+    const { id: _id, ...employeeSlots } = e;
+    void _id;
+    const list = patternsByEmployee.get(e.id) ?? [];
+    result.set(e.id, (referenceDate) => {
+      const hit = list.find(
+        (p) =>
+          p.validFrom <= referenceDate && (p.validUntil === null || p.validUntil >= referenceDate),
+      );
+      if (!hit) {
+        return { employeeSlots, patternSlots: null, patternUnterrichtsMinutenByDow: null };
+      }
+      const {
+        unterrichtsMinutenByDow,
+        employeeId: _e,
+        validFrom: _f,
+        validUntil: _u,
+        ...slots
+      } = hit;
+      void _e;
+      void _f;
+      void _u;
+      return {
+        employeeSlots,
+        patternSlots: slots as BsSlotOverride,
+        patternUnterrichtsMinutenByDow: unterrichtsMinutenByDow ?? null,
+      };
+    });
+  }
+  return result;
+}

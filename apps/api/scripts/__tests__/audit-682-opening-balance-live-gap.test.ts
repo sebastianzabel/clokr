@@ -54,7 +54,6 @@ describe("audit-682-opening-balance-live-gap (Issue #682)", () => {
       data: {
         email: `a682-${key}-${unique}@example.invalid`,
         passwordHash: await bcrypt.hash("test1234", 4),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -42,7 +42,6 @@ describe("Issue #538 - GET /role-assignments/role-names", () => {
       data: {
         email: `${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -55,7 +55,9 @@ describe("Issue #617 - /reports offers the Monatsexport to export holders only",
     // the block opened by the gate closes before the next component begins
     expect(closing).toBeGreaterThan(dialog);
     expect(closing).toBeLessThan(next);
-    expect(PAGE).toContain("canExport={canReportExport}");
+    // The bar's button moved into the page head (Issue #854); it is gated by the same right.
+    expect(PAGE).toContain("showTeamArea && canReportExport");
+    expect(PAGE).toContain('data-testid="reports-period-export"');
     expect(PAGE).toContain("onMonthlyExport={downloadMonthlyExport}");
   });
 

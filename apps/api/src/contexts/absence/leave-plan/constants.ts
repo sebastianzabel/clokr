@@ -1,0 +1,135 @@
+/**
+ * Issue #835 (D-835-06/07/08) — the control codes, German texts and the audit marker of the leave
+ * planner (Urlaubsplaner). Pure: a type-only import and no runtime import, so the cycle gate sees a
+ * leaf.
+ *
+ * A code is the control value of a refusal, the German text is display only (CLAUDE.md "Never use
+ * a new display string as a control value"). The web branches on `code`, never on the message.
+ *
+ * Deliberately NOT re-exported from `contexts/absence/index.ts` (import-cycle cap 22); importer:
+ * `contexts/absence/api/leave-plans.ts` and the sibling files of this directory.
+ */
+import type { Prisma } from "@clokr/db";
+
+/** Value of `newValue.trigger` on the CREATE audit of a request created by the takeover. */
+export const LEAVE_PLAN_TRIGGER = "LEAVE_PLAN";
+
+/** The plan is TAKEN_OVER: every write is refused (409). */
+export const LEAVE_PLAN_CLOSED = "LEAVE_PLAN_CLOSED";
+/** An OPEN plan of the salon and year exists already (409). */
+export const LEAVE_PLAN_ALREADY_OPEN = "LEAVE_PLAN_ALREADY_OPEN";
+/** The wish overlaps a blocking request or another wish of the person (409). */
+export const LEAVE_PLAN_WISH_OVERLAP = "LEAVE_PLAN_WISH_OVERLAP";
+/** The wish does not lie completely inside the plan year (400). */
+export const LEAVE_PLAN_WISH_OUTSIDE_YEAR = "LEAVE_PLAN_WISH_OUTSIDE_YEAR";
+/** A half day is only valid for a single day (400). */
+export const LEAVE_PLAN_WISH_HALF_DAY_RANGE = "LEAVE_PLAN_WISH_HALF_DAY_RANGE";
+/** The end of the wish lies before its start (400). */
+export const LEAVE_PLAN_WISH_RANGE = "LEAVE_PLAN_WISH_RANGE";
+/** The person is homed in the plan's salon on no day of the wish (400). */
+export const LEAVE_PLAN_WISH_NOT_HOMED = "LEAVE_PLAN_WISH_NOT_HOMED";
+/** The wish does not lie completely inside the person's employment (400). */
+export const LEAVE_PLAN_WISH_NOT_EMPLOYED = "LEAVE_PLAN_WISH_NOT_EMPLOYED";
+/** A takeover refusal stored on the wish: no day of the wish is in the plan's salon any more. */
+export const LEAVE_PLAN_WISH_NOT_IN_SALON = "LEAVE_PLAN_WISH_NOT_IN_SALON";
+/**
+ * A takeover refusal stored on the wish (D-835-45): the taker holds no `leave-request:create` reach
+ * over the person (`ZUGEWIESEN`, or `EIGENE` for the taker's own wish). Terminal for THIS taker, not
+ * for the plan: the wish keeps the plan open until a taker with the reach takes it over.
+ */
+export const LEAVE_PLAN_WISH_NO_CREATE_REACH = "LEAVE_PLAN_WISH_NO_CREATE_REACH";
+/** The wish is taken over already (409). */
+export const LEAVE_PLAN_WISH_TAKEN_OVER = "LEAVE_PLAN_WISH_TAKEN_OVER";
+/** The tenant locks own changes after the deadline and the deadline has passed (409). */
+export const LEAVE_PLAN_DEADLINE_PASSED = "LEAVE_PLAN_DEADLINE_PASSED";
+
+/**
+ * IN-05: a plan is opened only for the tenant-local current year or one of the next
+ * `PLAN_YEARS_AHEAD` years (400). A past year could only produce refusals at takeover (lead time,
+ * closed months); a year far ahead has no contracts or entitlements to plan against yet.
+ */
+export const LEAVE_PLAN_YEAR_OUT_OF_RANGE = "LEAVE_PLAN_YEAR_OUT_OF_RANGE";
+export const PLAN_YEARS_AHEAD = 2;
+/**
+ * IN-05: the deadline lies on or before the last day of the plan year (400). Not "before the year
+ * starts": a plan for the running year (a late hire, D-835-01) and a deadline in January of the plan
+ * year are both ordinary; a deadline after the year has nothing left to plan.
+ */
+export const LEAVE_PLAN_DEADLINE_OUT_OF_RANGE = "LEAVE_PLAN_DEADLINE_OUT_OF_RANGE";
+
+/** Another takeover of the same plan is running right now (409, D-835-41). */
+export const LEAVE_PLAN_TAKEOVER_RUNNING = "LEAVE_PLAN_TAKEOVER_RUNNING";
+
+/**
+ * The name the per-plan takeover lock is derived from (`hashtextextended(name, 0)`, D-835-41). One
+ * spelling, so a test can hold the same lock.
+ */
+export function takeoverLockName(planId: string): string {
+  return `leave-plan-takeover:${planId}`;
+}
+
+/** A stored approval-step refusal of a wish is `APPROVAL_<DecisionRefusalReason>`. */
+export const APPROVAL_REFUSAL_PREFIX = "APPROVAL_";
+
+/**
+ * D-835-38 (WR-01): the takeover refusals that are terminal for the PLAN. The person is no longer
+ * employed on the wish's days, or no longer homed in the plan's salon on any of them — no later run
+ * and no manager can turn such a wish into a request of this plan, and the planner may not even show
+ * it (the person left the population). Such a wish stays as a record with its refusal but never keeps
+ * the plan open.
+ */
+export const TERMINAL_WISH_REFUSAL_CODES: readonly string[] = [
+  LEAVE_PLAN_WISH_NOT_EMPLOYED,
+  LEAVE_PLAN_WISH_NOT_IN_SALON,
+];
+
+/**
+ * D-835-38 (WR-01): the ONE rule of "this active wish keeps the plan open", shared by the takeover's
+ * close and the count the planner serves for the takeover button: a wish without a request that
+ * carries no terminal refusal, or a linked wish whose approval was refused (`APPROVAL_…`, its request
+ * still PENDING for a taker who may approve it — the takeover clears the refusal otherwise). The
+ * caller adds `planId`, `tenantId` and `deletedAt: null`.
+ */
+export const BLOCKS_PLAN_CLOSE = {
+  OR: [
+    {
+      leaveRequestId: null,
+      OR: [{ refusalCode: null }, { refusalCode: { notIn: [...TERMINAL_WISH_REFUSAL_CODES] } }],
+    },
+    { refusalCode: { startsWith: APPROVAL_REFUSAL_PREFIX } },
+  ],
+} satisfies Prisma.LeavePlanWishWhereInput;
+
+/** German display texts (du-form) per code. An overlap with a request uses `LEAVE_OVERLAP_ERROR`. */
+export const LEAVE_PLAN_MESSAGES: Record<string, string> = {
+  [LEAVE_PLAN_CLOSED]: "Die Urlaubsplanung ist abgeschlossen und kann nicht mehr geändert werden.",
+  [LEAVE_PLAN_ALREADY_OPEN]:
+    "Für diesen Salon und dieses Jahr ist bereits eine Urlaubsplanung offen.",
+  [LEAVE_PLAN_WISH_OUTSIDE_YEAR]: "Der Wunsch muss vollständig im Planungsjahr liegen.",
+  [LEAVE_PLAN_WISH_HALF_DAY_RANGE]: "Ein halber Tag geht nur bei einem einzelnen Tag.",
+  [LEAVE_PLAN_WISH_RANGE]: "Das Enddatum darf nicht vor dem Startdatum liegen.",
+  [LEAVE_PLAN_WISH_NOT_HOMED]: "Die Person gehört an keinem Tag des Wunsches zu diesem Salon.",
+  [LEAVE_PLAN_WISH_NOT_EMPLOYED]: "Der Wunsch liegt nicht vollständig in der Beschäftigungszeit.",
+  [LEAVE_PLAN_WISH_NOT_IN_SALON]:
+    "Die Person gehört an keinem Tag des Wunsches mehr zu diesem Salon.",
+  [LEAVE_PLAN_WISH_NO_CREATE_REACH]:
+    "Du darfst für diese Person keinen Urlaubsantrag stellen. Eine berechtigte Person muss den Wunsch übernehmen.",
+  [LEAVE_PLAN_WISH_TAKEN_OVER]: "Dieser Wunsch ist bereits übernommen.",
+  [LEAVE_PLAN_DEADLINE_PASSED]: "Die Frist für eigene Änderungen ist abgelaufen.",
+  [LEAVE_PLAN_YEAR_OUT_OF_RANGE]:
+    "Eine Urlaubsplanung kannst du nur für das laufende Jahr und die zwei folgenden Jahre eröffnen.",
+  [LEAVE_PLAN_DEADLINE_OUT_OF_RANGE]:
+    "Die Frist muss spätestens am 31.12. des Planungsjahres liegen.",
+  [LEAVE_PLAN_TAKEOVER_RUNNING]:
+    "Diese Urlaubsplanung wird gerade übernommen. Warte kurz und lade die Seite dann neu.",
+};
+
+/** Text of an overlap with another wish of the same person (an overlap with a request: `LEAVE_OVERLAP_ERROR`). */
+export const LEAVE_PLAN_WISH_OVERLAP_WISH_MESSAGE =
+  "Überschneidung mit einem anderen Urlaubswunsch";
+
+/** The one 404 text of an unknown, foreign, removed or unreadable plan (the route freezes the body). */
+export const PLAN_NOT_FOUND_ERROR = "Urlaubsplanung nicht gefunden";
+
+/** The one 404 text of an unknown, foreign, removed or out-of-reach wish (the route freezes the body). */
+export const WISH_NOT_FOUND_ERROR = "Wunsch nicht gefunden";

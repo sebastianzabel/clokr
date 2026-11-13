@@ -27,6 +27,22 @@ describe("GET /api/v1/release-notes", () => {
     expect(Array.isArray(body.releases)).toBe(true);
   });
 
+  it("every section carries heading, audience and bullets; the corpus has both audiences (Issue #576)", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/v1/release-notes" });
+    const releases = JSON.parse(res.body).releases as {
+      sections: { heading: string; audience: string; bullets: unknown[] }[];
+    }[];
+    const audiences = new Set<string>();
+    for (const release of releases) {
+      for (const section of release.sections) {
+        expect(Object.keys(section).sort()).toEqual(["audience", "bullets", "heading"]);
+        expect(["all", "admin"]).toContain(section.audience);
+        audiences.add(section.audience);
+      }
+    }
+    expect([...audiences].sort()).toEqual(["admin", "all"]);
+  });
+
   it("contains >= 22 entries in this working tree, newest first", async () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/release-notes" });
     const body = JSON.parse(res.body);

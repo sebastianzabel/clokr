@@ -53,7 +53,8 @@ async function main() {
   const emp = await prisma.employee.findUnique({
     where: { id: employeeId },
     include: {
-      tenant: { select: { id: true, name: true, timezone: true } },
+      // `timezone` lives on TenantConfig, not on Tenant (Issue #804: the old select named a field Tenant lacks).
+      tenant: { select: { id: true, name: true, config: { select: { timezone: true } } } },
       workSchedules: { orderBy: { validFrom: "desc" } },
     },
   });
@@ -65,7 +66,7 @@ async function main() {
   console.log("\n=== EMPLOYEE ===");
   console.log(`id=${emp.id}`);
   console.log(`hireDate=${fmt(emp.hireDate)}  exitDate=${fmt(emp.exitDate)}`);
-  console.log(`tenant=${emp.tenant.name} tz=${emp.tenant.timezone ?? TZ}`);
+  console.log(`tenant=${emp.tenant.name} tz=${emp.tenant.config?.timezone ?? TZ}`);
 
   console.log("\n=== WORK SCHEDULES (most recent first) ===");
   for (const s of emp.workSchedules) {

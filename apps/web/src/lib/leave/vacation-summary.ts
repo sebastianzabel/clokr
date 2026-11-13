@@ -27,6 +27,7 @@
 //     what the user sees and would break RU-05.
 
 import type { VacationBalance } from "./vacation-balance";
+import { formatDays } from "./review-facts";
 
 export interface VacationSummary {
   /** Jahresanspruch. */
@@ -103,7 +104,7 @@ export function vacationCardLabel(planned: number): string {
  *  viewed `calYear`, so a year in this string would be a false statement. */
 export function vacationCardDelta(total: number, carryOver: number): string {
   if (carryOver > 0) {
-    return `von ${total + carryOver} gesamt (${total} Anspruch + ${carryOver} Übertrag Vorjahr)`;
+    return `von ${formatDays(total + carryOver)} gesamt (${formatDays(total)} Anspruch + ${formatDays(carryOver)} Übertrag Vorjahr)`;
   }
-  return `von ${total} gesamt`;
+  return `von ${formatDays(total)} gesamt`;
 }

@@ -242,6 +242,59 @@ export type LoadedContractSegment = VacationContractSegment & {
  * ({@link apportionAcrossContractSegments} in `vacation-calc.ts`) picks the LAST sorted segment
  * for any month at or after that `from` — i.e. the later of the two tied rows wins.
  */
+const CONTRACT_SEGMENT_SELECT = {
+  id: true,
+  employeeId: true,
+  validFrom: true,
+  contractWorkDaysPerWeek: true,
+  workDays: true,
+  // Issue #481 (R1/R2) — additive widening: type dispatches the per-segment pricing
+  // kernel; usualWorkDays is the SHIFT_BASED Angabe; the seven {day}Hours feed
+  // workDaysSetFrom() for the FIXED_SCHEDULE per-row derivation.
+  type: true,
+  usualWorkDays: true,
+  mondayHours: true,
+  tuesdayHours: true,
+  wednesdayHours: true,
+  thursdayHours: true,
+  fridayHours: true,
+  saturdayHours: true,
+  sundayHours: true,
+} as const;
+
+/**
+ * Issue #836 — the row -> segment mapping of {@link loadVacationContractSegments}, extracted so the
+ * batched {@link loadVacationContractSegmentsForMany} produces byte-identical segments. `rows` are
+ * one employee's `WorkSchedule` rows ordered by `validFrom`, `createdAt` ascending.
+ */
+function buildContractSegments(
+  rows: ReadonlyArray<Prisma.WorkScheduleGetPayload<{ select: typeof CONTRACT_SEGMENT_SELECT }>>,
+  tenantDefaultWorkDays: number[] | null | undefined,
+): LoadedContractSegment[] {
+  if (rows.length === 0) {
+    return [
+      {
+        from: new Date(0),
+        workDaysPerWeek: contractWorkDaysPerWeekFrom(null, tenantDefaultWorkDays),
+        workScheduleId: null,
+        validFrom: null,
+        type: null,
+        usualWorkDays: [],
+        resolvedWorkDays: workDaysSetFrom(null, tenantDefaultWorkDays),
+      },
+    ];
+  }
+  return rows.map((row, index) => ({
+    from: index === 0 ? row.validFrom : snapToMonthFirstUtc(row.validFrom, "up"),
+    workDaysPerWeek: contractWorkDaysPerWeekFrom(row, tenantDefaultWorkDays),
+    workScheduleId: row.id,
+    validFrom: row.validFrom,
+    type: row.type,
+    usualWorkDays: usualWorkDaysFrom(row),
+    resolvedWorkDays: workDaysSetFrom(row, tenantDefaultWorkDays),
+  }));
+}
+
 export async function loadVacationContractSegments(
   db: DbClient,
   employeeId: string,
@@ -251,52 +304,51 @@ export async function loadVacationContractSegments(
     db.workSchedule.findMany({
       where: { employeeId, employee: { tenantId } },
       orderBy: [{ validFrom: "asc" }, { createdAt: "asc" }],
-      select: {
-        id: true,
-        validFrom: true,
-        contractWorkDaysPerWeek: true,
-        workDays: true,
-        // Issue #481 (R1/R2) — additive widening: type dispatches the per-segment pricing
-        // kernel; usualWorkDays is the SHIFT_BASED Angabe; the seven {day}Hours feed
-        // workDaysSetFrom() for the FIXED_SCHEDULE per-row derivation.
-        type: true,
-        usualWorkDays: true,
-        mondayHours: true,
-        tuesdayHours: true,
-        wednesdayHours: true,
-        thursdayHours: true,
-        fridayHours: true,
-        saturdayHours: true,
-        sundayHours: true,
-      },
+      select: CONTRACT_SEGMENT_SELECT,
     }),
     db.tenantConfig.findUnique({
       where: { tenantId },
       select: { defaultWorkDays: true },
     }),
   ]);
-  if (rows.length === 0) {
-    return [
-      {
-        from: new Date(0),
-        workDaysPerWeek: contractWorkDaysPerWeekFrom(null, cfg?.defaultWorkDays),
-        workScheduleId: null,
-        validFrom: null,
-        type: null,
-        usualWorkDays: [],
-        resolvedWorkDays: workDaysSetFrom(null, cfg?.defaultWorkDays),
-      },
-    ];
+  return buildContractSegments(rows, cfg?.defaultWorkDays);
+}
+
+/**
+ * Issue #836 — {@link loadVacationContractSegments} for many employees in two queries in total
+ * (every `WorkSchedule` row of the ids, one `TenantConfig`), so the leave-limit loader reads a
+ * constant number of rows' worth of queries however many persons the window holds (precedent:
+ * `loadBsSlotOverridesForMany`, #696). Every requested id has an entry, equal to what the
+ * single-person loader returns for it.
+ */
+export async function loadVacationContractSegmentsForMany(
+  db: DbClient,
+  tenantId: string,
+  employeeIds: readonly string[],
+): Promise<Map<string, LoadedContractSegment[]>> {
+  const result = new Map<string, LoadedContractSegment[]>();
+  if (employeeIds.length === 0) return result;
+  const [rows, cfg] = await Promise.all([
+    db.workSchedule.findMany({
+      where: { employeeId: { in: [...employeeIds] }, employee: { tenantId } },
+      orderBy: [{ validFrom: "asc" }, { createdAt: "asc" }],
+      select: CONTRACT_SEGMENT_SELECT,
+    }),
+    db.tenantConfig.findUnique({
+      where: { tenantId },
+      select: { defaultWorkDays: true },
+    }),
+  ]);
+  const rowsByEmployee = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = rowsByEmployee.get(row.employeeId) ?? [];
+    list.push(row);
+    rowsByEmployee.set(row.employeeId, list);
   }
-  return rows.map((row, index) => ({
-    from: index === 0 ? row.validFrom : snapToMonthFirstUtc(row.validFrom, "up"),
-    workDaysPerWeek: contractWorkDaysPerWeekFrom(row, cfg?.defaultWorkDays),
-    workScheduleId: row.id,
-    validFrom: row.validFrom,
-    type: row.type,
-    usualWorkDays: usualWorkDaysFrom(row),
-    resolvedWorkDays: workDaysSetFrom(row, cfg?.defaultWorkDays),
-  }));
+  for (const id of employeeIds) {
+    result.set(id, buildContractSegments(rowsByEmployee.get(id) ?? [], cfg?.defaultWorkDays));
+  }
+  return result;
 }
 
 // German 2-letter weekday abbreviation, indexed by `Date.getUTCDay()` (0=So..6=Sa). Phase 436
@@ -716,9 +768,20 @@ export async function reverseVacationDays(
  * REQUIRED (not optional) on `resolveLeaveDays()` on purpose (Pitfall 1, 436-04-PLAN.md): making
  * it optional would let a new call site silently fall back to some default and skip this
  * decision entirely. The compiler enumerates every call site instead.
+ *
+ * Issue #835 (D-835-25): `extraSiblings` lets the leave planner price wishes as if filed one after
+ * another. The rows are appended to the stored siblings and treated as created EARLIER than the
+ * priced request (they are hypothetical, so the creation-order rule of `excludeRequestId` does not
+ * apply to them). Without it nothing changes.
  */
 export type LeaveDaysPricing =
-  { mode: "request"; leaveTypeCode: string; excludeRequestId?: string } | { mode: "isolated" };
+  | {
+      mode: "request";
+      leaveTypeCode: string;
+      excludeRequestId?: string;
+      extraSiblings?: ReadonlyArray<{ startDate: Date; endDate: Date; halfDay: boolean }>;
+    }
+  | { mode: "isolated" };
 
 /**
  * Issue #436, D-04/D-09 — loads the "other counted VACATION requests" for the week-union
@@ -893,14 +956,17 @@ export async function resolveLeaveDays(
       const activeSegment = contractSegmentAt(segments, start);
       if (activeSegment.type === "SHIFT_BASED") {
         if (pricing.mode === "request" && pricing.leaveTypeCode === "VACATION") {
-          const others = await countedVacationSiblingRequests(
-            prisma,
-            employeeId,
-            tenantId,
-            start,
-            end,
-            pricing.excludeRequestId,
-          );
+          const others = [
+            ...(await countedVacationSiblingRequests(
+              prisma,
+              employeeId,
+              tenantId,
+              start,
+              end,
+              pricing.excludeRequestId,
+            )),
+            ...(pricing.extraSiblings ?? []),
+          ];
           const days = marginalShiftBasedLeaveDaysBySegments(
             { startDate: start, endDate: end, halfDay },
             others,
@@ -949,14 +1015,17 @@ export async function resolveLeaveDays(
       if (siblings === null) {
         siblings =
           pricing.mode === "request" && pricing.leaveTypeCode === "VACATION"
-            ? await countedVacationSiblingRequests(
-                prisma,
-                employeeId,
-                tenantId,
-                start,
-                end,
-                pricing.excludeRequestId,
-              )
+            ? [
+                ...(await countedVacationSiblingRequests(
+                  prisma,
+                  employeeId,
+                  tenantId,
+                  start,
+                  end,
+                  pricing.excludeRequestId,
+                )),
+                ...(pricing.extraSiblings ?? []),
+              ]
             : [];
       }
       return siblings;
@@ -1137,6 +1206,16 @@ export async function resolveVacationBaseDays(
 }
 
 /**
+ * Issue #615 (D-18) — an optional exit date that REPLACES the stored `Employee.exitDate` in the § 5
+ * BUrlG entitlement inputs, so a preview can price a hypothetical last working day through the one
+ * existing rule without writing. Absent = today's behaviour (the stored exit date); present with
+ * `exitDate: null` = "as if the employee had not exited".
+ */
+export interface ExitDateOverride {
+  exitDate: Date | null;
+}
+
+/**
  * Issue #445 — internal: the shared inputs {@link resolveRegularVacationDays} and
  * {@link ensureRegularVacationEntitlement} both need to compute a regular entitlement for
  * `employeeId`/`year` (D-02, D-03). Not exported — every external caller goes through one of
@@ -1147,6 +1226,7 @@ async function loadRegularVacationInputs(
   employeeId: string,
   tenantId: string,
   year: number,
+  opts?: ExitDateOverride,
 ): Promise<{
   hireDate: Date;
   birthDate: Date | null;
@@ -1169,9 +1249,11 @@ async function loadRegularVacationInputs(
   // D-03/P-02: employed in `year` means hired on or before its start AND, if the employee has
   // since exited, that the exit happened in `year` or later — both compared on UTC calendar
   // years so the check is independent of server timezone.
+  // Issue #615 (D-18): a caller may price a HYPOTHETICAL exit date; absent = the stored one.
+  const exitDate = opts ? opts.exitDate : employee.exitDate;
   const employedInYear =
     employee.hireDate.getUTCFullYear() <= year &&
-    (employee.exitDate === null || employee.exitDate.getUTCFullYear() >= year);
+    (exitDate === null || exitDate.getUTCFullYear() >= year);
 
   const segments = await loadVacationContractSegments(db, employeeId, tenantId);
   const baseDays = employedInYear ? await resolveVacationBaseDays(db, employeeId, tenantId) : 0;
@@ -1181,7 +1263,7 @@ async function loadRegularVacationInputs(
     birthDate: employee.birthDate,
     // Issue #447 (D-05): threaded into the regular formula so it follows § 5 BUrlG's exit-year
     // Teilurlaub rule, not just the hire-year rule.
-    exitDate: employee.exitDate,
+    exitDate,
     segments,
     baseDays,
   };
@@ -1198,12 +1280,14 @@ export async function resolveRegularVacationDays(
   employeeId: string,
   tenantId: string,
   year: number,
+  opts?: ExitDateOverride,
 ): Promise<number> {
   const { hireDate, birthDate, exitDate, segments, baseDays } = await loadRegularVacationInputs(
     db,
     employeeId,
     tenantId,
     year,
+    opts,
   );
   return computeRegularVacationDaysBySegments({
     year,
@@ -1261,6 +1345,34 @@ export async function isZeroVacationPlaceholder(
 }
 
 /**
+ * Issue #615 (D-18) — the read-only half of {@link syncExitYearVacationEntitlement}: the three gates
+ * (no row, past year, human write) and the `daysDiffer` comparison, with the § 5 target from
+ * {@link resolveRegularVacationDays}. `targetDays` is the value the sync would store, or `null`
+ * when the sync leaves the row alone. `opts.exitDate` prices a HYPOTHETICAL exit date, so a preview
+ * (the deactivate dialog) reads the Resturlaub the deactivation will leave through the SAME rule
+ * that then writes it — never a second computation. Writes nothing.
+ */
+export async function planExitYearVacationEntitlement(
+  db: DbClient,
+  employeeId: string,
+  tenantId: string,
+  year: number,
+  opts?: ExitDateOverride,
+): Promise<{ existing: LeaveEntitlement | null; targetDays: number | null }> {
+  const lookup = await getVacationEntitlement(db, employeeId, tenantId, year);
+  const existing = lookup?.entitlement ?? null;
+  if (!existing) return { existing: null, targetDays: null };
+  // D-07: never changes a past year's persisted value.
+  if (year < new Date().getUTCFullYear()) return { existing, targetDays: null };
+  // D-14: a human write (even behind a stale isAutoCalculated=true column) is never overwritten.
+  if (await hasHumanVacationWrite(db, existing.id)) return { existing, targetDays: null };
+
+  const target = await resolveRegularVacationDays(db, employeeId, tenantId, year, opts);
+  if (!daysDiffer(Number(existing.totalDays), target)) return { existing, targetDays: null };
+  return { existing, targetDays: target };
+}
+
+/**
  * Issue #447 (D-07/D-14) — recomputes the exit-year VACATION `LeaveEntitlement` row for
  * `employeeId`/`year` to its § 5 BUrlG value, unless a human ever wrote `totalDays` on it
  * ({@link hasHumanVacationWrite}) or `year` is before the current calendar year (persisted
@@ -1280,18 +1392,15 @@ export async function syncExitYearVacationEntitlement(
   audit: (entry: EntitlementAuditEntry) => Promise<void> = (entry) =>
     writeEntitlementAudit(db, entry),
 ): Promise<{ changed: boolean; entitlement: LeaveEntitlement | null }> {
-  const lookup = await getVacationEntitlement(db, employeeId, tenantId, year);
-  const existing = lookup?.entitlement ?? null;
+  // Issue #615 (D-18): the gates and the target live in the read-only planner; this is plan + write.
+  const { existing, targetDays: target } = await planExitYearVacationEntitlement(
+    db,
+    employeeId,
+    tenantId,
+    year,
+  );
   if (!existing) return { changed: false, entitlement: null };
-  // D-07: never changes a past year's persisted value.
-  if (year < new Date().getUTCFullYear()) return { changed: false, entitlement: existing };
-  // D-14: a human write (even behind a stale isAutoCalculated=true column) is never overwritten.
-  if (await hasHumanVacationWrite(db, existing.id))
-    return { changed: false, entitlement: existing };
-
-  const target = await resolveRegularVacationDays(db, employeeId, tenantId, year);
-  if (!daysDiffer(Number(existing.totalDays), target))
-    return { changed: false, entitlement: existing };
+  if (target === null) return { changed: false, entitlement: existing };
 
   const oldTotalDays = Number(existing.totalDays);
   const { count } = await db.leaveEntitlement.updateMany({
@@ -2156,14 +2265,17 @@ export async function exitYearReductionDays(
   employeeId: string,
   tenantId: string,
   year: number,
+  opts?: ExitDateOverride,
 ): Promise<number> {
   const employee = await db.employee.findFirst({
     where: { id: employeeId, tenantId },
     select: { exitDate: true },
   });
-  if (!employee?.exitDate || employee.exitDate.getUTCFullYear() !== year) return 0;
+  // Issue #615 (D-18): a hypothetical exit date replaces the stored one (absent = unchanged).
+  const exitDate = opts ? opts.exitDate : (employee?.exitDate ?? null);
+  if (!exitDate || exitDate.getUTCFullYear() !== year) return 0;
 
-  const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year);
+  const inputs = await loadRegularVacationInputs(db, employeeId, tenantId, year, opts);
   const withoutExit = computeRegularVacationDaysBySegments({
     year,
     hireDate: inputs.hireDate,
@@ -2176,7 +2288,7 @@ export async function exitYearReductionDays(
     year,
     hireDate: inputs.hireDate,
     birthDate: inputs.birthDate,
-    exitDate: employee.exitDate,
+    exitDate,
     segments: inputs.segments,
     baseDays: inputs.baseDays,
   });

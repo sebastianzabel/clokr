@@ -58,7 +58,7 @@ describe("v1.8.26 — future-in-month approved leave: header == month-saldo (SHI
     const passwordHash = await bcrypt.hash("test1234", 10);
 
     const adminUser = await prisma.user.create({
-      data: { email: `fimladmin-${suffix}@test.de`, passwordHash, role: "ADMIN", isActive: true },
+      data: { email: `fimladmin-${suffix}@test.de`, passwordHash, isActive: true },
     });
     await prisma.employee.create({
       data: {
@@ -73,7 +73,7 @@ describe("v1.8.26 — future-in-month approved leave: header == month-saldo (SHI
     await grantSystemRole(prisma, { tenantId, userId: adminUser.id, role: "ADMIN" });
 
     const user = await prisma.user.create({
-      data: { email: `fiml-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `fiml-${suffix}@test.de`, passwordHash, isActive: true },
     });
     const emp = await prisma.employee.create({
       data: {

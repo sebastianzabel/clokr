@@ -88,6 +88,8 @@ describe("PUT /api/v1/settings/work/:employeeId — maxNegativeBalanceMinutes pa
       payload: {
         type: "FIXED_SCHEDULE",
         weeklyHours: 42, // the "unrelated change"
+        // Issue #848: a FIXED_SCHEDULE contract is consistent (weekly = Σ day hours).
+        fridayHours: 10,
         validFrom,
         // maxNegativeBalanceMinutes intentionally omitted
       },
@@ -160,7 +162,6 @@ describe("PUT .../:employeeId cancelOrphanShifts write site — maxNegativeBalan
       data: {
         email: `swpu-osh-emp-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

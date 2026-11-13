@@ -28,7 +28,6 @@ describe("Shift Planning API", () => {
       data: {
         email: `mgr-sh-${Date.now()}@test.de`,
         passwordHash: mgrPasswordHash,
-        role: "MANAGER",
         isActive: true,
       },
     });
@@ -2089,7 +2088,6 @@ describe("Shift Planning API", () => {
           data: {
             email: `elig-${suffix}-${ts}@test.de`,
             passwordHash,
-            role: "EMPLOYEE",
             isActive: true,
           },
         });
@@ -2224,7 +2222,6 @@ describe("Shift Planning API", () => {
         data: {
           email: `p48-shift-${Date.now()}@test.de`,
           passwordHash: shiftUserPwd,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -2261,7 +2258,6 @@ describe("Shift Planning API", () => {
         data: {
           email: `p48-fixed-${Date.now()}@test.de`,
           passwordHash: fixedUserPwd,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -2325,7 +2321,6 @@ describe("Shift Planning API", () => {
         data: {
           email: `p48-other-${Date.now()}@test.de`,
           passwordHash: fixedUserPwd,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

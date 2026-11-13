@@ -96,8 +96,7 @@ import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { getTestApp, cleanupTestData } from "./setup";
-import { executeLegacyRoleMigration } from "./legacy-role-migration-sql";
+import { getTestApp, cleanupTestData, grantLegacyMigrationRoles } from "./setup";
 import { SYSTEM_ROLE_IDS } from "../contexts/platform";
 import { deriveMatrixRoutes } from "./neutrality/route-derivation";
 import {
@@ -301,10 +300,14 @@ describe("permission neutrality matrix (Issue #75)", () => {
     for (const actor of ACTOR_ORDER.filter((a) => !FALLBACK_ACTORS.has(a))) {
       fixtures.set(actor, await buildActorTenant(app, actor));
     }
-    // D-25: the checked-in migration SQL runs on the fixture before any cell, in both modes.
-    await executeLegacyRoleMigration(app.prisma);
+    // D-25 (revised, #641 D-16): the main actors receive the stored rows the 75b migration used to
+    // give them, derived from the roles their fixtures declare, before any cell in both modes. The
+    // migration SQL itself is no longer executed because it reads a column Release B drops.
+    for (const fixture of fixtures.values()) {
+      await grantLegacyMigrationRoles(app.prisma, fixture.declaredRoles);
+    }
     for (const fixture of fixtures.values()) await registerMigrationRows(fixture);
-    // D-21: the fallback actors exist only after the migration, so they hold no assignment (since #539
+    // D-21: the fallback actors exist only after the rows were granted, so they hold no assignment (since #539
     // that means they hold nothing).
     for (const actor of ACTOR_ORDER.filter((a) => FALLBACK_ACTORS.has(a))) {
       fixtures.set(actor, await buildActorTenant(app, actor));

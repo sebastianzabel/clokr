@@ -42,7 +42,6 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
       data: {
         email: `mgr-ob06-${Date.now().toString(36)}@test.de`,
         passwordHash,
-        role: "MANAGER",
         isActive: true,
       },
     });
@@ -91,7 +90,6 @@ describe("POST /overtime/opening-balance (OB-03)", () => {
       data: {
         email: `ob06-${suffix}-${Date.now().toString(36)}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

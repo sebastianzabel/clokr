@@ -34,7 +34,6 @@ describe("PATCH /settings/work/:employeeId/usual-work-days — Nachtrag on an ex
       data: {
         email,
         passwordHash: await (await import("bcryptjs")).default.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -207,7 +206,6 @@ describe("PATCH /settings/work/:employeeId/usual-work-days — validation, oracl
       data: {
         email: `uwb481v-${tag}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

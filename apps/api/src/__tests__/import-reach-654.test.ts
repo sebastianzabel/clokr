@@ -40,7 +40,6 @@ describe("Issue #654 — time-entry import is narrowed to the import reach", () 
       data: {
         email,
         passwordHash: await bcrypt.hash(PASSWORD, 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

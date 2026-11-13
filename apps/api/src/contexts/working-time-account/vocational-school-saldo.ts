@@ -23,6 +23,7 @@ import {
   buildSlotOverrideHierarchy,
   resolveBsTagSlot,
 } from "../absence"; // Phase 101B (Issue #101, wave 7) — merged from two deep imports
+import { calcMonthlyHoursDayMinutesTz, getTenantTimezone } from "./timezone";
 
 /**
  * Tenant-config fields this helper reads. Both are optional/nullable to fail-open
@@ -79,6 +80,34 @@ export function computeDailySollMinutes(schedule: ScheduleForDailySoll): number 
   const workDaysPerWeek = days.filter((d) => Number(schedule[d] ?? 0) > 0).length;
   if (workDaysPerWeek === 0) return 0; // 0-guard (RESEARCH line 37)
   return Math.round((Number(schedule.weeklyHours ?? 0) * 60) / workDaysPerWeek);
+}
+
+/**
+ * Issue #787: the individual daily Soll a Berufsschule day is classified and credited
+ * against. `computeDailySollMinutes()` is weeklyHours-based and returns 0 for MONTHLY_HOURS
+ * (weeklyHours is 0 there), so for that type the Ø-day of `calcMonthlyHoursDayMinutesTz()`
+ * (#473, the value a leave day is priced at) is used instead - no formula of its own. Other
+ * schedule types are unchanged. `date` is the calendar day (UTC midnight of a @db.Date value).
+ * Reads TenantConfig (tenant-scoped) only for MONTHLY_HOURS.
+ */
+export async function resolveBsDailySollMinutes(
+  prisma: PrismaClient,
+  tenantId: string,
+  schedule: (ScheduleForDailySoll & { type?: unknown }) & Record<string, unknown>,
+  scheduleType: ScheduleType | string | null | undefined,
+  date: Date,
+): Promise<number> {
+  if ((scheduleType ?? schedule.type) !== "MONTHLY_HOURS") return computeDailySollMinutes(schedule);
+  const [tz, cfg] = await Promise.all([
+    getTenantTimezone(prisma as never, tenantId),
+    prisma.tenantConfig.findUnique({ where: { tenantId }, select: { defaultWorkDays: true } }),
+  ]);
+  return calcMonthlyHoursDayMinutesTz(
+    schedule,
+    date.toISOString().slice(0, 10),
+    tz,
+    cfg?.defaultWorkDays,
+  );
 }
 
 /**
@@ -230,7 +259,13 @@ export async function getVocationalSchoolMinutesForDate(
   );
 
   const dailySollMinutes = opts?.schedule
-    ? computeDailySollMinutes(opts.schedule)
+    ? await resolveBsDailySollMinutes(
+        prisma,
+        employeeSlots?.tenantId ?? "",
+        opts.schedule as ScheduleForDailySoll & Record<string, unknown>,
+        opts.scheduleType,
+        date,
+      )
     : BS_DAILY_DEFAULT_MIN;
 
   const hierarchy = buildSlotOverrideHierarchy({

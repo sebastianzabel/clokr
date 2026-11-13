@@ -260,9 +260,7 @@ describe("validateSalonForm", () => {
   it("flags a bad opening-hours row under openingHours", () => {
     const form = valid();
     form.openingHours[0].open = "21:00";
-    expect(validateSalonForm(form, "create").openingHours).toBe(
-      "Bitte prüfen Sie die markierten Tage.",
-    );
+    expect(validateSalonForm(form, "create").openingHours).toBe("Bitte prüf die markierten Tage.");
   });
 });
 

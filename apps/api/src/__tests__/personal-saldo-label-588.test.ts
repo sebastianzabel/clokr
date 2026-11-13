@@ -212,7 +212,6 @@ describe("Issue #588 - personal saldo endpoints say how many months are unclosed
         data: {
           email: `588-noemp-${Date.now().toString(36)}@example.invalid`,
           passwordHash: "x",
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

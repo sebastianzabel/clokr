@@ -29,6 +29,7 @@ import {
   TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE,
   TEAM_SOLL_PARTIAL_SCOPE_NOTE,
   isTeamSalonRejected,
+  overtimeTrendHours,
   teamSalonFilter,
   teamSalonViewSalon,
   teamTrendView,
@@ -172,7 +173,7 @@ describe("teamTrendView — SCOPE_ENTRIES (Issue #85 D-06)", () => {
   it("names the basis: recorded working time in the caller's reach, no Soll, no note", () => {
     const view = scoped("NO_PERMISSION");
     expect(view.workedSeriesLabel).toBe("Erfasste Arbeitszeit (h)");
-    expect(view.chartSub).toBe("Erfasste Arbeitszeit in Ihrer Reichweite · Letzte 6 Monate");
+    expect(view.chartSub).toBe("Erfasste Arbeitszeit in deiner Reichweite · Letzte 6 Monate");
     expect(view.workedHours).toEqual([1.5]);
     expect(view.shouldHours).toBeNull();
     expect(view.sollNote).toBeNull();
@@ -184,7 +185,7 @@ describe("teamTrendView — SCOPE_ENTRIES (Issue #85 D-06)", () => {
     expect(view.shouldHours).toBeNull();
     expect(view.sollNote).toBe(TEAM_SOLL_PARTIAL_SCOPE_NOTE);
     expect(view.sollNote).toBe(
-      "Das Soll fehlt, weil ein Teil der Arbeitszeit in Salons außerhalb Ihrer Reichweite erfasst ist.",
+      "Das Soll fehlt, weil ein Teil der Arbeitszeit in Salons außerhalb deiner Reichweite erfasst ist.",
     );
     expect(view.trendNote).toBeNull();
     expect(view.workedSeriesLabel).toBe("Erfasste Arbeitszeit (h)");
@@ -274,7 +275,7 @@ describe("isTeamSalonRejected — D-16: only a 404 is the calm empty state", () 
 
   it("the empty-state text is the agreed German sentence", () => {
     expect(TEAM_SALON_UNAVAILABLE_TEXT).toBe(
-      "Für diesen Salon liegt keine Teamansicht vor. Wählen Sie in der Kopfleiste „Alle Salons“ oder einen anderen Salon.",
+      "Für diesen Salon liegt keine Teamansicht vor. Wähl in der Kopfleiste „Alle Salons“ oder einen anderen Salon.",
     );
   });
 });
@@ -308,5 +309,30 @@ describe("upcomingFromResponse", () => {
 
   it("an empty list stays empty", () => {
     expect(upcomingFromResponse([])).toEqual([]);
+  });
+});
+
+describe("overtimeTrendHours — the saldo line of the Verläufe tab (Issue #895)", () => {
+  const months = ["2026-06", "2026-07", "2026-08", "2026-09"].map((month) => ({ month }));
+
+  it("uses the snapshot of a closed month, fills a gap forward and ends on the live balance", () => {
+    const hours = overtimeTrendHours(months, {
+      snapshots: [
+        { month: "2026-06-01", teamCarryOverMinutes: 600 },
+        { month: "2026-08-01", teamCarryOverMinutes: -90 },
+      ],
+      currentTeamBalanceMinutes: 150,
+    });
+    // June 10 h, July repeats June, August -1.5 h, September is the live 2.5 h.
+    expect(hours).toEqual([10, 10, -1.5, 2.5]);
+  });
+
+  it("starts at 0 when the leading months have no snapshot, and rounds to one decimal", () => {
+    const hours = overtimeTrendHours(months, { snapshots: [], currentTeamBalanceMinutes: 100 });
+    expect(hours).toEqual([0, 0, 0, 1.7]);
+  });
+
+  it("an empty window gives an empty series", () => {
+    expect(overtimeTrendHours([], { snapshots: [], currentTeamBalanceMinutes: 5 })).toEqual([]);
   });
 });

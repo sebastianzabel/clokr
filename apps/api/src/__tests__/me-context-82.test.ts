@@ -70,7 +70,7 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
     const s = uniqueSuffix(label);
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash, role, isActive: true },
+      data: { email: `${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -364,7 +364,7 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "Benutzer nicht gefunden" });
   });
 
-  it("a valid JWT of an existing user with an unknown tenant answers 404 Mandant nicht gefunden", async () => {
+  it("a valid JWT of an existing user with an unknown tenant answers 404 Unternehmen nicht gefunden", async () => {
     const payload: JwtPayload = {
       sub: data.empUser.id,
       tenantId: randomUUID(),
@@ -372,7 +372,7 @@ describe("Issue #82 — GET /api/v1/me/context", () => {
     };
     const res = await context(`Bearer ${app.jwt.sign(payload)}`);
     expect(res.statusCode).toBe(404);
-    expect(JSON.parse(res.body)).toEqual({ error: "Mandant nicht gefunden" });
+    expect(JSON.parse(res.body)).toEqual({ error: "Unternehmen nicht gefunden" });
   });
 
   it("an API key answers 400 and no token answers 401", async () => {

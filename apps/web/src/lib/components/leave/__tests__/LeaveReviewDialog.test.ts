@@ -29,10 +29,12 @@ vi.mock("$api/client", () => ({
   },
 }));
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import LeaveReviewDialog from "../LeaveReviewDialog.svelte";
+import { toasts } from "$stores/toast";
+import { salonContext } from "$stores/salon-context";
 import { showsBurlgSection7Notice, type LeaveReviewRequest } from "$lib/leave/leave-review";
 import { LEAVE_TYPES, NEUTRAL_CHIP_LABEL, SICK_CODES } from "$lib/leave/team-calendar-visibility";
 
@@ -176,6 +178,10 @@ describe("LeaveReviewDialog", () => {
   // call-count assertion below still pins that /attest is the SECOND and ONLY other PATCH call.
   it("reject on a SICK request still calls PATCH /attest — the deliberately-untouched toggle (D-02)", async () => {
     const { onReviewed } = renderDialog({ typeCode: "SICK" });
+    // Issue #853 (D-853-09): a rejection needs a reason, so one is typed first.
+    await fireEvent.input(screen.getByTestId("leave-approval-modal-reason"), {
+      target: { value: "Zeitraum nicht besetzbar" },
+    });
     await fireEvent.click(screen.getByTestId("leave-approval-modal-reject"));
     await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
     expect(apiPatch).toHaveBeenCalledTimes(2);
@@ -226,5 +232,508 @@ describe("LeaveReviewDialog", () => {
     await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
     await waitFor(() => expect(screen.getByText("Serverseitige deutsche Meldung")).toBeTruthy());
     expect(screen.queryByText("Bad Request")).toBeNull();
+  });
+});
+
+// Issue #836 (plan 07) — the limit-exception step: 409 -> reason -> resend, or back out.
+describe("LeaveReviewDialog — leave limit exception step (#836)", () => {
+  const exceedance = {
+    ruleId: "r1",
+    ruleName: null,
+    groupKind: "CLASSIFICATION",
+    classification: "AZUBI",
+    accessRoleId: null,
+    accessRoleName: null,
+    salonId: "s1",
+    maxPersons: 2,
+    validFrom: null,
+    validUntil: null,
+    days: [
+      { day: "2026-09-02", count: 3, max: 2 },
+      { day: "2026-09-03", count: 3, max: 2 },
+    ],
+  };
+
+  function limitError() {
+    // Shape of the web ApiError (status + data); the helper reads the shape, not the class.
+    return Object.assign(new Error("Die Urlaubsgrenze ist überschritten."), {
+      status: 409,
+      data: { code: "LEAVE_LIMIT_EXCEPTION_REQUIRED", exceedances: [exceedance] },
+    });
+  }
+
+  async function approveUntilExceptionStep(typed = "Bitte dieses Mal durchlassen") {
+    const view = renderDialog({ typeCode: "VACATION" });
+    await fireEvent.input(screen.getByTestId("leave-approval-modal-reason"), {
+      target: { value: "Ok so" },
+    });
+    apiPatch.mockRejectedValueOnce(limitError());
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(document.getElementById("reason-dialog-textarea")).toBeTruthy());
+    const area = document.getElementById("reason-dialog-textarea") as HTMLTextAreaElement;
+    await fireEvent.input(area, { target: { value: typed } });
+    return { ...view, area };
+  }
+
+  it("a 409 closes the review modal and opens the reason dialog with the rule and the days", async () => {
+    await approveUntilExceptionStep();
+    expect(screen.queryByTestId("leave-approval-modal")).toBeNull();
+    expect(screen.getByText("Ausnahme von der Urlaubsgrenze")).toBeTruthy();
+    const description = document.querySelector(".confirm-description")?.textContent ?? "";
+    expect(description).toContain("Azubis");
+    expect(description).toContain("höchstens 2");
+    expect(description).toContain("02.09. (3)");
+    expect(document.querySelectorAll(".scrim").length).toBeLessThanOrEqual(1);
+  });
+
+  it("confirming resends the approval with the same note and a trimmed limitException", async () => {
+    const { onReviewed } = await approveUntilExceptionStep("   Bitte dieses Mal durchlassen   ");
+    await fireEvent.click(screen.getByText("Trotzdem genehmigen"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(apiPatch).toHaveBeenCalledTimes(2);
+    expect(apiPatch.mock.calls[0][1]).toEqual({ status: "APPROVED", reviewNote: "Ok so" });
+    expect(apiPatch.mock.calls[1][0]).toMatch(/\/review$/);
+    expect(apiPatch.mock.calls[1][1]).toEqual({
+      status: "APPROVED",
+      reviewNote: "Ok so",
+      limitException: { reason: "Bitte dieses Mal durchlassen" },
+    });
+  });
+
+  it("a reason below 10 characters keeps the dialog open with the German message and sends nothing", async () => {
+    const { onReviewed } = await approveUntilExceptionStep("kurz");
+    await fireEvent.click(screen.getByText("Trotzdem genehmigen"));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain("10 bis 500 Zeichen"),
+    );
+    expect(apiPatch).toHaveBeenCalledTimes(1);
+    expect(onReviewed).not.toHaveBeenCalled();
+    expect(document.getElementById("reason-dialog-textarea")).toBeTruthy();
+  });
+
+  it("cancelling sends nothing more and does not call onReviewed", async () => {
+    const { onReviewed } = await approveUntilExceptionStep();
+    await fireEvent.click(screen.getByText("Abbrechen"));
+    await waitFor(() => expect(document.getElementById("reason-dialog-textarea")).toBeNull());
+    expect(apiPatch).toHaveBeenCalledTimes(1);
+    expect(onReviewed).not.toHaveBeenCalled();
+  });
+
+  it("a REJECTED review never shows the step, even when the server answers the code", async () => {
+    renderDialog({ typeCode: "VACATION" });
+    // Issue #853 (D-853-09): the reason is typed first, the rejection stays as strict as before.
+    await fireEvent.input(screen.getByTestId("leave-approval-modal-reason"), {
+      target: { value: "Zeitraum nicht besetzbar" },
+    });
+    apiPatch.mockRejectedValueOnce(limitError());
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-reject"));
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1));
+    expect(document.getElementById("reason-dialog-textarea")).toBeNull();
+  });
+});
+
+// Issue #853 (AC-2, D-853-09) - Ablehnen needs a reason; the API call is the unchanged one.
+describe("LeaveReviewDialog - a rejection needs a reason (#853)", () => {
+  const REASON_TEXT = "Bitte nenne einen Grund.";
+
+  function rejectButton(cancellation: boolean): HTMLButtonElement {
+    return screen.getByTestId(
+      cancellation ? "leave-cancel-approval-modal-reject" : "leave-approval-modal-reject",
+    ) as HTMLButtonElement;
+  }
+  function reasonField(cancellation: boolean): HTMLInputElement {
+    return screen.getByTestId(
+      cancellation ? "leave-cancel-approval-modal-reason" : "leave-approval-modal-reason",
+    ) as HTMLInputElement;
+  }
+
+  it("PENDING: Ablehnen is disabled with an empty reason", () => {
+    renderDialog({ status: "PENDING" });
+    expect(rejectButton(false).disabled).toBe(true);
+  });
+
+  it("PENDING: Ablehnen stays disabled for a whitespace-only reason", async () => {
+    renderDialog({ status: "PENDING" });
+    await fireEvent.input(reasonField(false), { target: { value: "   " } });
+    expect(rejectButton(false).disabled).toBe(true);
+  });
+
+  it("PENDING: Ablehnen is enabled after typing a reason and sends it unchanged", async () => {
+    const { onReviewed } = renderDialog({ status: "PENDING" });
+    await fireEvent.input(reasonField(false), { target: { value: "Team ist knapp besetzt" } });
+    expect(rejectButton(false).disabled).toBe(false);
+    await fireEvent.click(rejectButton(false));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(apiPatch).toHaveBeenCalledTimes(1);
+    expect(apiPatch.mock.calls[0][0]).toBe("/leave/requests/req-1/review");
+    expect(apiPatch.mock.calls[0][1]).toEqual({
+      status: "REJECTED",
+      reviewNote: "Team ist knapp besetzt",
+    });
+  });
+
+  it("CANCELLATION_REQUESTED: Stornierung ablehnen is disabled with an empty and a blank reason", async () => {
+    renderDialog({ status: "CANCELLATION_REQUESTED" });
+    expect(rejectButton(true).disabled).toBe(true);
+    await fireEvent.input(reasonField(true), { target: { value: "  \t " } });
+    expect(rejectButton(true).disabled).toBe(true);
+  });
+
+  it("CANCELLATION_REQUESTED: Stornierung ablehnen is enabled after typing a reason", async () => {
+    renderDialog({ status: "CANCELLATION_REQUESTED" });
+    await fireEvent.input(reasonField(true), { target: { value: "Termin steht fest" } });
+    expect(rejectButton(true).disabled).toBe(false);
+  });
+
+  it("Genehmigen needs no reason", () => {
+    renderDialog({ status: "PENDING" });
+    expect((screen.getByTestId("leave-approval-modal-approve") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("Stornierung genehmigen needs no reason", () => {
+    renderDialog({ status: "CANCELLATION_REQUESTED" });
+    expect(
+      (screen.getByTestId("leave-cancel-approval-modal-approve") as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it.each([
+    [false, "PENDING"],
+    [true, "CANCELLATION_REQUESTED"],
+  ] as const)(
+    "the hint is shown and referenced by aria-describedby (cancellation: %s)",
+    async (cancellation, status) => {
+      renderDialog({ status });
+      const hint = screen.getByText(REASON_TEXT);
+      expect(hint.id).toBe("review-reason-hint");
+      expect(rejectButton(cancellation).getAttribute("aria-describedby")).toBe(hint.id);
+      // The hint goes away together with the missing reason.
+      await fireEvent.input(reasonField(cancellation), { target: { value: "Grund" } });
+      expect(screen.queryByText(REASON_TEXT)).toBeNull();
+      expect(rejectButton(cancellation).getAttribute("aria-describedby")).toBeNull();
+    },
+  );
+
+  it("the field is labelled Begründung with the help Pflicht beim Ablehnen", () => {
+    renderDialog();
+    expect(screen.getByLabelText("Begründung")).toBe(reasonField(false));
+    expect(screen.getByText("Pflicht beim Ablehnen")).toBeTruthy();
+    expect(screen.queryByText("Anmerkung (optional)")).toBeNull();
+  });
+
+  it("approving without a reason still sends reviewNote null (API contract unchanged)", async () => {
+    const { onReviewed } = renderDialog({ typeCode: "VACATION" });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(apiPatch.mock.calls[0][1]).toEqual({ status: "APPROVED", reviewNote: null });
+  });
+});
+
+// Issue #853 (S-29) + #846 (D-03) - ONE result toast: person, decision and period, never the leave type.
+describe("LeaveReviewDialog - result toast (#853)", () => {
+  let success: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    success = vi.spyOn(toasts, "success");
+  });
+  afterEach(() => {
+    success.mockRestore();
+  });
+
+  it("approve: Antrag von <Name> genehmigt · <Zeitraum>", async () => {
+    const { onReviewed } = renderDialog({ typeCode: "VACATION" });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(success).toHaveBeenCalledTimes(1);
+    expect(success).toHaveBeenCalledWith("Antrag von Alex Muster genehmigt · 01.09.–05.09.2026");
+  });
+
+  it("reject: Antrag von <Name> abgelehnt · <Zeitraum>", async () => {
+    const { onReviewed } = renderDialog({ typeCode: "VACATION" });
+    await fireEvent.input(screen.getByTestId("leave-approval-modal-reason"), {
+      target: { value: "Grund" },
+    });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-reject"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(success).toHaveBeenCalledWith("Antrag von Alex Muster abgelehnt · 01.09.–05.09.2026");
+  });
+
+  it("a cancellation decision says Stornierung", async () => {
+    const { onReviewed } = renderDialog({ status: "CANCELLATION_REQUESTED" });
+    await fireEvent.click(screen.getByTestId("leave-cancel-approval-modal-approve"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    expect(success).toHaveBeenCalledWith(
+      "Stornierung von Alex Muster genehmigt · 01.09.–05.09.2026",
+    );
+  });
+
+  it("a sick-leave decision never names the type", async () => {
+    const { onReviewed } = renderDialog({ typeCode: "SICK" });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(onReviewed).toHaveBeenCalledTimes(1));
+    const text = String(success.mock.calls[0][0]);
+    expect(text).toBe("Antrag von Alex Muster genehmigt · 01.09.–05.09.2026");
+    expect(text).not.toMatch(/krank|sick/i);
+  });
+
+  it("no success toast when the server refuses", async () => {
+    apiPatch.mockRejectedValueOnce({ data: { error: "Nein" }, message: "Bad Request" });
+    renderDialog({ typeCode: "VACATION" });
+    await fireEvent.click(screen.getByTestId("leave-approval-modal-approve"));
+    await waitFor(() => expect(screen.getByText("Nein")).toBeTruthy());
+    expect(success).not.toHaveBeenCalled();
+  });
+});
+
+// Issue #853 (D-853-08) - the optional decision facts: shown only behind their prop AND the API's
+// answer, absent without a request when the prop is false, silent when the read is refused.
+describe("LeaveReviewDialog - decision facts (#853)", () => {
+  const ENTITLEMENTS = [
+    {
+      typeCode: "VACATION",
+      leaveType: { name: "Urlaub" },
+      totalDays: 28,
+      usedDays: 10,
+      carriedOverDays: 4,
+      effectiveCarryOverDays: 4,
+    },
+  ];
+  const ASSIGNMENTS = {
+    assignments: [
+      {
+        id: "a1",
+        employeeId: "emp-1",
+        salonId: "salon-nord",
+        kind: "HOME",
+        validFrom: "2026-01-01",
+        validUntil: null,
+        weekdays: [],
+      },
+    ],
+  };
+  const CONTEXT = {
+    isMultiSalon: true,
+    salons: [
+      { id: "salon-nord", name: "Salon Nord" },
+      { id: "salon-ost", name: "Salon Ost" },
+    ],
+  };
+  const SHIFTS = [
+    { date: "2026-09-02", startTime: "10:00", endTime: "18:30" },
+    { date: "2026-09-01", startTime: "09:00", endTime: "17:00" },
+  ];
+
+  type Answers = Record<string, unknown | (() => Promise<unknown>)>;
+
+  /** Answers by path prefix; an unlisted path resolves like the default mock. */
+  function answerWith(answers: Answers) {
+    apiGet.mockImplementation((path: string) => {
+      for (const [prefix, answer] of Object.entries(answers)) {
+        if (path.startsWith(prefix)) {
+          return typeof answer === "function"
+            ? (answer as () => Promise<unknown>)()
+            : Promise.resolve(answer);
+        }
+      }
+      return Promise.resolve([]);
+    });
+  }
+
+  function renderFacts(
+    flags: { canReadEntitlement?: boolean; canReadShifts?: boolean; canReadEmployee?: boolean },
+    overrides: Partial<LeaveReviewRequest> = {},
+  ) {
+    return renderWithTheme(LeaveReviewDialog, {
+      open: true,
+      request: baseRequest(overrides),
+      currentEmployeeId: "manager-1",
+      onReviewed: vi.fn(),
+      ...flags,
+    });
+  }
+
+  const paths = () => apiGet.mock.calls.map((c) => String(c[0]));
+
+  beforeEach(() => {
+    salonContext.reset();
+  });
+
+  it("with all three props false only /leave/overlap is read and no fact line renders", async () => {
+    answerWith({});
+    renderFacts({});
+    await waitFor(() => expect(paths().some((p) => p.startsWith("/leave/overlap"))).toBe(true));
+    expect(paths().every((p) => p.startsWith("/leave/overlap"))).toBe(true);
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+    expect(screen.queryByTestId("review-fact-vacation")).toBeNull();
+    expect(screen.queryByTestId("review-fact-shifts")).toBeNull();
+  });
+
+  /** The salon names come from the salon context store, the only module reading /me/context. */
+  async function loadSalonContext(context: { isMultiSalon: boolean; salons: unknown[] }) {
+    apiGet.mockResolvedValueOnce({
+      tenant: { id: "t1", name: "Test" },
+      homeSalonId: null,
+      ...context,
+    });
+    await salonContext.load("u1", { force: true });
+    apiGet.mockClear();
+  }
+
+  it("Stammsalon: shown with canReadEmployee when the name resolves in a multi-salon tenant", async () => {
+    await loadSalonContext(CONTEXT);
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
+    renderFacts({ canReadEmployee: true });
+    const line = await screen.findByTestId("review-fact-home-salon");
+    expect(line.textContent).toContain("Stammsalon");
+    expect(line.textContent).toContain("Salon Nord");
+    // The dialog itself never reads /me/context.
+    expect(paths()).not.toContain("/me/context");
+  });
+
+  it("Stammsalon: absent in a single-salon tenant", async () => {
+    await loadSalonContext({ ...CONTEXT, isMultiSalon: false });
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+  });
+
+  it("Stammsalon: absent when the caller reaches only one salon (no choice, nothing to tell apart)", async () => {
+    await loadSalonContext({ ...CONTEXT, salons: [{ id: "salon-nord", name: "Salon Nord" }] });
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+  });
+
+  it("Stammsalon: absent when the salon is outside the caller's reachable list", async () => {
+    await loadSalonContext({ ...CONTEXT, salons: [{ id: "salon-ost", name: "Salon Ost" }] });
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+  });
+
+  it("Stammsalon: absent while the salon context is not loaded", async () => {
+    answerWith({ "/employees/emp-1/salon-assignments": ASSIGNMENTS });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+  });
+
+  it("Stammsalon: absent after a 404 answer, and no error text appears", async () => {
+    await loadSalonContext(CONTEXT);
+    answerWith({ "/employees/emp-1/salon-assignments": () => Promise.reject({ status: 404 }) });
+    renderFacts({ canReadEmployee: true });
+    await waitFor(() => expect(paths()).toContain("/employees/emp-1/salon-assignments"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-home-salon")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("Resturlaub: PENDING vacation inside one year shows before -> after, from the entitlement of the start year", async () => {
+    answerWith({ "/leave/entitlements/emp-1": ENTITLEMENTS });
+    renderFacts({ canReadEntitlement: true });
+    const line = await screen.findByTestId("review-fact-vacation");
+    // 28 + 4 - 10 = 22 remaining; the request costs 5 days.
+    expect(line.textContent).toContain("Resturlaub 2026");
+    expect(line.textContent).toContain("22 → 17 Tage");
+    expect(paths()).toContain("/leave/entitlements/emp-1?year=2026");
+  });
+
+  it("Resturlaub: a request across the turn of the year shows the current figure only", async () => {
+    answerWith({ "/leave/entitlements/emp-1": ENTITLEMENTS });
+    renderFacts({ canReadEntitlement: true }, { startDate: "2026-12-29", endDate: "2027-01-02" });
+    const line = await screen.findByTestId("review-fact-vacation");
+    expect(line.textContent).toContain("22 Tage");
+    expect(line.textContent).not.toContain("→");
+  });
+
+  it("Resturlaub: a cancellation request shows the current figure only", async () => {
+    answerWith({ "/leave/entitlements/emp-1": ENTITLEMENTS });
+    renderFacts({ canReadEntitlement: true }, { status: "CANCELLATION_REQUESTED" });
+    const line = await screen.findByTestId("review-fact-vacation");
+    expect(line.textContent).not.toContain("→");
+  });
+
+  it("Resturlaub: no read and no line for a sick-leave request", async () => {
+    answerWith({ "/leave/entitlements/emp-1": ENTITLEMENTS });
+    renderFacts({ canReadEntitlement: true }, { typeCode: "SICK" });
+    await waitFor(() => expect(paths().some((p) => p.startsWith("/leave/overlap"))).toBe(true));
+    expect(paths().some((p) => p.startsWith("/leave/entitlements"))).toBe(false);
+    expect(screen.queryByTestId("review-fact-vacation")).toBeNull();
+  });
+
+  it("Resturlaub: absent after a 403 answer", async () => {
+    answerWith({ "/leave/entitlements/emp-1": () => Promise.reject({ status: 403 }) });
+    renderFacts({ canReadEntitlement: true });
+    await waitFor(() =>
+      expect(paths().some((p) => p.startsWith("/leave/entitlements"))).toBe(true),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-vacation")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("Schichten: lists the shifts in date order and asks with the employee id", async () => {
+    answerWith({ "/shifts/range": SHIFTS });
+    renderFacts({ canReadShifts: true });
+    const block = await screen.findByTestId("review-fact-shifts");
+    const items = Array.from(block.querySelectorAll("li")).map((li) => li.textContent);
+    expect(items).toEqual(["Di 01.09. · 09:00–17:00", "Mi 02.09. · 10:00–18:30"]);
+    expect(paths()).toContain("/shifts/range?from=2026-09-01&to=2026-09-05&employeeId=emp-1");
+  });
+
+  it("Schichten: an empty answer reads as the neutral sentence", async () => {
+    answerWith({ "/shifts/range": [] });
+    renderFacts({ canReadShifts: true });
+    const block = await screen.findByTestId("review-fact-shifts");
+    expect(block.textContent).toContain("Keine geplanten Schichten sichtbar");
+    expect(block.querySelectorAll("li").length).toBe(0);
+  });
+
+  it("Schichten: absent after a 403 answer", async () => {
+    answerWith({ "/shifts/range": () => Promise.reject({ status: 403 }) });
+    renderFacts({ canReadShifts: true });
+    await waitFor(() => expect(paths().some((p) => p.startsWith("/shifts/range"))).toBe(true));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("review-fact-shifts")).toBeNull();
+  });
+
+  it("a late answer for a previous request is discarded (T-853-15)", async () => {
+    let releaseFirst: (rows: unknown) => void = () => {};
+    const first = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/shifts/range") && path.includes("employeeId=emp-1")) return first;
+      if (path.startsWith("/shifts/range")) {
+        return Promise.resolve([{ date: "2026-10-05", startTime: "08:00", endTime: "12:00" }]);
+      }
+      return Promise.resolve([]);
+    });
+    const view = renderFacts({ canReadShifts: true });
+    await waitFor(() => expect(paths().some((p) => p.includes("employeeId=emp-1"))).toBe(true));
+    await view.rerender({
+      request: baseRequest({
+        id: "req-2",
+        employeeId: "emp-2",
+        startDate: "2026-10-05",
+        endDate: "2026-10-09",
+      }),
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("review-fact-shifts").textContent).toContain("Mo 05.10."),
+    );
+    releaseFirst([{ date: "2026-09-01", startTime: "09:00", endTime: "17:00" }]);
+    await new Promise((r) => setTimeout(r, 0));
+    const text = screen.getByTestId("review-fact-shifts").textContent ?? "";
+    expect(text).toContain("Mo 05.10.");
+    expect(text).not.toContain("01.09.");
   });
 });

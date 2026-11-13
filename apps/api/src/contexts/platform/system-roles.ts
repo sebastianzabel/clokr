@@ -86,6 +86,8 @@ const EMPLOYEE_PERMISSION_KEYS = [
   "leave-entitlement:read:EIGENE",
   "vocational-school:read:EIGENE",
   "overtime:read:EIGENE",
+  "month-correction:read:EIGENE",
+  "month-correction:create:EIGENE",
   "shift:read:EIGENE",
   "shift-pattern:read:EIGENE",
   "availability:read:EIGENE",
@@ -143,6 +145,11 @@ const MANAGER_PERMISSION_KEYS = [
   "overtime:settle:ZUGEWIESEN",
   "month-close:read:ZUGEWIESEN",
   "month-close:close:ZUGEWIESEN",
+  "month-correction:read:EIGENE",
+  "month-correction:read:ZUGEWIESEN",
+  "month-correction:create:EIGENE",
+  "month-correction:create:ZUGEWIESEN",
+  "month-correction:approve:ZUGEWIESEN",
   "shift:read:EIGENE",
   "shift:read:ZUGEWIESEN",
   "shift:plan:ZUGEWIESEN",
@@ -220,6 +227,8 @@ const ADMIN_PERMISSION_KEYS = [
   "leave-entitlement:update:ZUGEWIESEN",
   "leave-config:read:ZUGEWIESEN",
   "leave-config:manage:ZUGEWIESEN",
+  "leave-limit:manage:ZUGEWIESEN",
+  "leave-plan:manage:ZUGEWIESEN", // Issue #835, owner decision 06.11.2026
   "company-shutdown:manage:ZUGEWIESEN",
   "vocational-school:read:EIGENE",
   "vocational-school:read:ZUGEWIESEN",
@@ -232,6 +241,11 @@ const ADMIN_PERMISSION_KEYS = [
   "month-close:close:ZUGEWIESEN",
   "month-close:unlock:ZUGEWIESEN",
   "month-close:close-year:ZUGEWIESEN",
+  "month-correction:read:EIGENE",
+  "month-correction:read:ZUGEWIESEN",
+  "month-correction:create:EIGENE",
+  "month-correction:create:ZUGEWIESEN",
+  "month-correction:approve:ZUGEWIESEN",
   "shift:read:EIGENE",
   "shift:read:ZUGEWIESEN",
   "shift:plan:ZUGEWIESEN",
@@ -318,6 +332,8 @@ const OWNER_PERMISSION_KEYS = [
   "leave-entitlement:update:ZUGEWIESEN",
   "leave-config:read:ZUGEWIESEN",
   "leave-config:manage:ZUGEWIESEN",
+  "leave-limit:manage:ZUGEWIESEN",
+  "leave-plan:manage:ZUGEWIESEN", // Issue #835, owner decision 06.11.2026
   "company-shutdown:manage:ZUGEWIESEN",
   "vocational-school:read:EIGENE",
   "vocational-school:read:ZUGEWIESEN",
@@ -330,6 +346,11 @@ const OWNER_PERMISSION_KEYS = [
   "month-close:close:ZUGEWIESEN",
   "month-close:unlock:ZUGEWIESEN",
   "month-close:close-year:ZUGEWIESEN",
+  "month-correction:read:EIGENE",
+  "month-correction:read:ZUGEWIESEN",
+  "month-correction:create:EIGENE",
+  "month-correction:create:ZUGEWIESEN",
+  "month-correction:approve:ZUGEWIESEN",
   "shift:read:EIGENE",
   "shift:read:ZUGEWIESEN",
   "shift:plan:ZUGEWIESEN",
@@ -357,6 +378,15 @@ const OWNER_PERMISSION_KEYS = [
  * only take effect at TENANT scope), `shift-pattern:update`/`availability:update`
  * (contract-adjacent — planning uses `shift:plan`), `vocational-school:manage` and
  * `leave-entitlement:update`.
+ *
+ * Issue #836: holds `leave-limit:manage` so each salon maintains its own leave limits and
+ * blackouts (reach SALONS: only the salons of the assignment; a rule for all salons needs
+ * whole-tenant reach). Owner decision 06.11.2026. Shipped by
+ * the data-only migration `20261106143731_leave_limit_template_grant`.
+ *
+ * Issue #835: holds `leave-plan:manage` so each salon opens its own leave plan and takes the wishes
+ * over (reach SALONS: only the salons of the assignment). Owner decision 06.11.2026. Shipped by
+ * the data-only migration `20261106201828_leave_plan_template_grant`.
  */
 const SALON_MANAGER_PERMISSION_KEYS = [
   "employee:read:ZUGEWIESEN",
@@ -377,7 +407,12 @@ const SALON_MANAGER_PERMISSION_KEYS = [
   "section9:upload:ZUGEWIESEN",
   "section9:decide:ZUGEWIESEN",
   "leave-entitlement:read:ZUGEWIESEN",
+  "leave-limit:manage:ZUGEWIESEN",
+  "leave-plan:manage:ZUGEWIESEN", // Issue #835, owner decision 06.11.2026
   "vocational-school:read:ZUGEWIESEN",
+  "month-correction:read:ZUGEWIESEN",
+  "month-correction:create:ZUGEWIESEN",
+  "month-correction:approve:ZUGEWIESEN",
   "shift:read:ZUGEWIESEN",
   "shift:plan:ZUGEWIESEN",
   "shift-pattern:read:ZUGEWIESEN",

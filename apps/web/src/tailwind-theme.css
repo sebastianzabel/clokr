@@ -1,0 +1,79 @@
+/* Tailwind 4 as a token pipeline only (Issue #843, D-843-02 / D-843-13; owner decision #842 D-07).
+
+   This is the ONE Tailwind file of the web app. It maps the colour roles and radii of tokens.css
+   to Tailwind's namespaces, so a utility class inside lib/components/ui can read a real token.
+   It declares no value of its own: every entry points at a role tokens.css declares, which stays
+   the only file that owns a design value (D-842-01).
+
+   Why it is the one carve-out of lint:tokens: the namespace prefixes Tailwind needs are
+   retired names everywhere else (the v1.2 colour and radius prefixes). scripts/lint-tokens.mjs
+   exempts exactly this path from exactly those two prefix rules (TAILWIND_THEME_FILE); every other
+   rule still applies to it. tailwind-pipeline-843.test.ts pins the shape of this file.
+
+   Rules of the file:
+   - utilities only: no preflight, no default theme, no base layer. The utilities import carries
+     source(none), so Tailwind scans no route file; the single @source below is the only place it
+     looks for class names. Blocks are written in scoped CSS; a utility is possible there, not
+     required (D-843-02), and a route file may not use one (no-route-utilities-843.test.ts).
+   - never map a key onto a variable of its own name. A font, shadow or spacing key would emit a
+     self-reference that invalidates the real token, so none of them is mapped.
+   - the layer order puts utilities last, yet they are layered: any unlayered rule of app.css or
+     of a scoped component style wins over them. That is intended.
+
+   Imported by routes/+layout.svelte directly after app.css. */
+
+@layer theme, base, components, utilities;
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "./lib/components/ui";
+
+@theme inline {
+  /* The Tailwind defaults are reset; only the roles below exist as utilities. */
+  --color-*: initial;
+  --radius-*: initial;
+
+  /* Surfaces and lines */
+  --color-bg: var(--bg);
+  --color-card: var(--card);
+  --color-rail: var(--rail);
+  --color-sunk: var(--sunk);
+  --color-hover: var(--hover);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+
+  /* Text */
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+
+  /* Brand and accent */
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-tint: var(--brand-tint);
+  --color-brand-ink: var(--brand-ink);
+  --color-accent: var(--accent);
+
+  /* Status */
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  /* Chart and category colours */
+  --color-a1: var(--a1);
+  --color-a2: var(--a2);
+  --color-a3: var(--a3);
+  --color-a4: var(--a4);
+  --color-a5: var(--a5);
+  --color-a6: var(--a6);
+
+  /* Radii */
+  --radius-card: var(--r-card);
+  --radius-control: var(--r-control);
+  --radius-stage: var(--r-stage);
+  --radius-pill: var(--r-pill);
+}

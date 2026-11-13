@@ -20,7 +20,7 @@ import type { FastifyInstance } from "fastify";
  * store-hours check reads the SHIFT'S OWN salon's opening hours, and `seedTestData()`'s default
  * salon uses `DEFAULT_SALON_OPENING_HOURS` (`apps/api/src/contexts/platform/facade/salons.ts`),
  * which has Sunday CLOSED (day 6 of the 0=Mo..6=So array) — the same rule the deprecated
- * `TenantConfig.storeHours` default used to carry. `POST`/`PUT /api/v1/shifts` answers 409
+ * tenant-level opening hours default used to carry. `POST`/`PUT /api/v1/shifts` answers 409
  * "Schicht ... ausserhalb der Oeffnungszeiten - Geschaeft geschlossen" for a closed day. So these
  * tests failed every Saturday and passed on the other six days, which is why CI went red while
  * every local re-run looked fine.

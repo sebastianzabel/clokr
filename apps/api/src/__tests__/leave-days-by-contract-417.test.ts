@@ -86,7 +86,7 @@ describe("Issue #417 — SHIFT_BASED leave days counted by contract, not roster"
     async function makeUser(label: string, role: "EMPLOYEE" | "ADMIN") {
       const email = `i417-${label}-${suffix}@test.de`;
       const user = await prisma.user.create({
-        data: { email, passwordHash, role, isActive: true },
+        data: { email, passwordHash, isActive: true },
       });
       const employee = await prisma.employee.create({
         data: {

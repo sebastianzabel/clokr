@@ -94,7 +94,6 @@ beforeAll(async () => {
     data: {
       email,
       passwordHash: await bcrypt.hash(PASSWORD, 4),
-      role: "ADMIN",
       isActive: true,
     },
   });

@@ -97,6 +97,7 @@
  */
 import type { Prisma } from "@clokr/db";
 import { type EmployeeScope, employeeScopeWhere } from "../../platform";
+import { leaveBlocksShift, type ShiftLeaveRow } from "../shift-leave-rule"; // Issue #744
 
 /**
  * S1 — the one date-range read for `Shift`, covering all three `EmployeeScope` variants in ONE
@@ -125,6 +126,8 @@ export async function getShiftsInRange(
       startTime: true,
       endTime: true,
       label: true,
+      // Issue #609 (D-05): the shift-reminder job skips a flagged shift. Additive; every caller maps explicit fields.
+      conflictsWithLeave: true,
       template: { select: { name: true, color: true } },
     },
   });
@@ -142,7 +145,10 @@ export async function flagShiftsConflictingWithLeave(
   tenantId: string,
   from: Date,
   to: Date,
+  // Issue #744: a half-day request leaves the other half plannable, so it flags nothing.
+  leave: ShiftLeaveRow,
 ) {
+  if (!leaveBlocksShift(leave)) return [];
   const conflictingShifts = await db.shift.findMany({
     where: {
       employeeId,
@@ -179,4 +185,27 @@ export async function cancelOrphanShifts(
   shiftIds: string[],
 ) {
   return db.shift.deleteMany({ where: { id: { in: shiftIds }, employee: { tenantId } } });
+}
+
+/**
+ * Issue #718 (DSGVO Art. 17): nulls the free-text `note` of every `Shift` and every
+ * `EmployeeAvailability` row of `employeeId`; the rows stay (roster history, availability audit
+ * trail). No `deletedAt` guard: a soft-deleted shift keeps its text and is reached too. Deliberately
+ * NO tenant parameter (named F3 exception): the sole caller is `platform/anonymize.ts`'s
+ * `anonymizeEmployeeData()`, reached only after the route validated the id against the caller's
+ * tenant. Returns row counts only (for the ANONYMIZE audit), never text.
+ */
+export async function clearSchedulingNotesForEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+): Promise<{ shiftNotes: number; availabilityNotes: number }> {
+  const shifts = await db.shift.updateMany({
+    where: { employeeId, note: { not: null } },
+    data: { note: null },
+  });
+  const availability = await db.employeeAvailability.updateMany({
+    where: { employeeId, note: { not: null } },
+    data: { note: null },
+  });
+  return { shiftNotes: shifts.count, availabilityNotes: availability.count };
 }

@@ -185,8 +185,8 @@ async function notifyLeaveDaysAdjustedOnce(
     const bis = formatDateDe(adj.endDate.toISOString().slice(0, 10));
     const message =
       adj.direction === "down"
-        ? `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage — der Schichtplan für diesen Zeitraum steht.`
-        : `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage. Grund: der Schichtplan für diesen Zeitraum steht.`;
+        ? `Dein Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage — der Schichtplan für diesen Zeitraum steht.`
+        : `Dein Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage. Grund: der Schichtplan für diesen Zeitraum steht.`;
 
     const recipients: Array<{ userId: string; link: string }> = [
       { userId: adj.employeeUserId, link: "/leave" },

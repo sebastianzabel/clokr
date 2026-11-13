@@ -83,7 +83,7 @@ const SALONS = [
   { id: "s1", name: "Salon Nord" },
   { id: "s2", name: "Salon Süd" },
 ];
-const MANDANT_HINT = /nur bei einer Zuweisung für den ganzen Mandanten wirken/;
+const MANDANT_HINT = /nur bei einer Zuweisung für das ganze Unternehmen wirken/;
 
 let assignments: unknown[] = [];
 
@@ -121,9 +121,7 @@ async function mount(canReadRoles = true, salonsLoaded = true) {
 }
 
 function personBlock(name: string): HTMLElement {
-  return screen
-    .getByText(name, { selector: ".assignments-name" })
-    .closest(".assignments-person") as HTMLElement;
+  return screen.getByText(name, { selector: ".assignments-name" }).closest("tr") as HTMLElement;
 }
 
 async function openGrant(name = "Probe Eins") {
@@ -138,9 +136,9 @@ async function chooseRole(dialog: HTMLElement, roleId: string) {
 describe("AssignmentsTab (Issue #83)", () => {
   it("tracer: grant a role for the whole tenant", async () => {
     await mount();
-    expect(screen.getAllByText("Keine gespeicherte Zuweisung")).toHaveLength(2);
+    expect(screen.getAllByText("Keine Rolle zugewiesen")).toHaveLength(2);
     const dialog = await openGrant();
-    expect(within(dialog).getByRole("radio", { name: "Ganzer Mandant" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: "Ganzes Unternehmen" })).toBeChecked();
     await chooseRole(dialog, "r-probe");
     apiPost.mockImplementationOnce(() => {
       assignments = [assignment("a1", "u1", PROBE, { type: "TENANT" })];
@@ -156,7 +154,7 @@ describe("AssignmentsTab (Issue #83)", () => {
     );
     expect(apiPost).toHaveBeenCalledTimes(1);
     await waitFor(() =>
-      expect(within(personBlock("Probe Eins")).getByText("Ganzer Mandant")).toBeInTheDocument(),
+      expect(within(personBlock("Probe Eins")).getByText("Ganzes Unternehmen")).toBeInTheDocument(),
     );
   });
 
@@ -231,7 +229,8 @@ describe("AssignmentsTab (Issue #83)", () => {
     );
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).queryByText("Salon nicht mehr aktiv")).toBeNull();
-    expect(within(dialog).getByText("Salons werden geladen …")).toBeInTheDocument();
+    // #843 D-843-07: the salon list loading state is the Skeleton status, not a text
+    expect(within(dialog).getByRole("status", { name: "Wird geladen" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Speichern" })).toBeDisabled();
   });
 
@@ -286,9 +285,7 @@ describe("AssignmentsTab (Issue #83)", () => {
       within(screen.getByRole("dialog")).getByRole("button", { name: "Entziehen" }),
     );
     await waitFor(() => expect(apiDelete).toHaveBeenLastCalledWith("/role-assignments/a1"));
-    await waitFor(() =>
-      expect(screen.getAllByText("Keine gespeicherte Zuweisung")).toHaveLength(2),
-    );
+    await waitFor(() => expect(screen.getAllByText("Keine Rolle zugewiesen")).toHaveLength(2));
   });
 
   it("summaries name people, missing people and users without a profile", async () => {
@@ -321,7 +318,7 @@ describe("AssignmentsTab (Issue #83)", () => {
     expect(paths).not.toContain("/roles");
     expect(paths).not.toContain("/roles/permission-catalog");
     expect(
-      screen.getByText(/brauchen Sie zusätzlich das Recht, Rollen zu lesen/),
+      screen.getByText(/brauchst du zusätzlich das Recht, Rollen zu lesen/),
     ).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", { name: "Rolle zuweisen" })) {
       expect(button).toBeDisabled();
@@ -334,5 +331,15 @@ describe("AssignmentsTab (Issue #83)", () => {
     await mount();
     await openGrant();
     expect(document.body.textContent ?? "").not.toMatch(/:(EIGENE|ZUGEWIESEN)/);
+  });
+
+  it("renders one PersonRoleAssignments per person and owns no dialog itself (Issue #580)", async () => {
+    const source = (await import("../AssignmentsTab.svelte?raw")).default as string;
+    expect(source).toContain("<PersonRoleAssignments");
+    expect(source).not.toContain("<AssignmentDialog");
+    expect(source).not.toContain("<ConfirmDialog");
+    // Issue #854: one DataTable row per person, no hand-built table.
+    expect(source).toContain("<DataTable");
+    expect(source).not.toContain('class="data-table"');
   });
 });

@@ -67,7 +67,7 @@ describe("Issue #558 — GET /employees?salonId narrows the people list", () => 
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const email = `${s}@example.invalid`;
     const user = await app.prisma.user.create({
-      data: { email, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -222,6 +222,67 @@ describe("Issue #558 — GET /employees?salonId narrows the people list", () => 
         data.employee.id,
       ]),
     );
+  });
+
+  // Issue #853 (opt-in `include=directory`, Team › Personen). The default list stays the frozen one
+  // of #85/#547: neither field appears without the parameter.
+  describe("include=directory", () => {
+    async function list(token: string, query = "") {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/employees${query}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json() as { id: string; homeSalonId?: string | null; roleNames?: string[] }[];
+    }
+
+    it("without the parameter no row carries homeSalonId or roleNames", async () => {
+      for (const row of await list(data.adminToken)) {
+        expect(Object.keys(row)).not.toContain("homeSalonId");
+        expect(Object.keys(row)).not.toContain("roleNames");
+      }
+    });
+
+    it("names the Stammsalon of today; a deployment is not a Stammsalon, no HOME row is null", async () => {
+      const home = new Map(
+        (await list(data.adminToken, "?include=directory")).map((e) => [e.id, e.homeSalonId]),
+      );
+      expect(home.get(people.pA.id)).toBe(salonA.id);
+      expect(home.get(people.pB.id)).toBe(salonB.id);
+      expect(home.get(people.springer.id)).toBe(salonB.id);
+      expect(home.get(data.employee.id)).toBeNull();
+    });
+
+    it("names the stored roles by name only", async () => {
+      const rows = await list(data.adminToken, "?include=directory");
+      expect(rows.find((e) => e.id === people.manager.id)?.roleNames?.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(Array.isArray(row.roleNames)).toBe(true);
+        for (const name of row.roleNames ?? []) expect(typeof name).toBe("string");
+      }
+    });
+
+    it("a Salonmanager of A gets the fields only for the persons of her reach, nobody else", async () => {
+      const rows = await list(managerToken, "?include=directory");
+      const plain = await list(managerToken);
+      // Exactly the rows of her plain list - the parameter widens nothing.
+      expect(rows.map((e) => e.id).sort()).toEqual(plain.map((e) => e.id).sort());
+      expect(rows.map((e) => e.id)).not.toContain(people.pB.id);
+      // The Stammsalon of every listed person is in her reach (A) or the Springer's own (B) - the
+      // person is listed, so naming the person's own Stammsalon names nothing outside her reach.
+      for (const row of rows) expect(row).toHaveProperty("homeSalonId");
+      expect(rows.find((e) => e.id === people.pA.id)?.homeSalonId).toBe(salonA.id);
+    });
+
+    it("a malformed include value answers 400, never a list", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/employees?include=everything",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(400);
+    });
   });
 
   it("a foreign tenant's salon, an unknown id and an inactive salon answer the same 404 body (T-100-09)", async () => {

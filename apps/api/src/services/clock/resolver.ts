@@ -5,11 +5,16 @@
 // Calls state-machine to decide, audit-actor to emit AuditLog (closes #215 / sub-req A),
 // consolidate to merge cross-source same-day entries (sub-req B / TIME-V19-04).
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { ClockEvent, ClockResolution, ClockState } from "./types";
-import { decide } from "./state-machine";
+import type { ClockEvent, ClockResolution, ClockState, BreakEvent, BreakResolution } from "./types";
+import { decide, decideBreak } from "./state-machine";
 import { emitClockAudit } from "./audit-actor";
+import { removeAutoBreaksOfEntry, auditRemovedAutoBreaks } from "./auto-break-replace"; // Issue #799
 import { consolidateSameDayEntries, calcBreakMinutesLocal } from "./consolidate";
-import { DOUBLE_TAP_DEBOUNCE_MS, CROSS_DAY_OPEN_ENTRY_FALLBACK_HOURS } from "./thresholds";
+import {
+  DOUBLE_TAP_DEBOUNCE_MS,
+  CROSS_DAY_OPEN_ENTRY_FALLBACK_HOURS,
+  MIN_RUNNING_BREAK_MS,
+} from "./thresholds";
 import { hasApprovedLeaveOnDate } from "../../contexts/absence"; // Phase 100b Plan 14 (AC-1) — index is the public surface
 import {
   invalidReasonFields,
@@ -19,6 +24,7 @@ import {
   findEntriesOfDay,
   openEntryOf,
   latestEndingClosed,
+  isPendingRetroRow,
 } from "../../contexts/time-tracking/day-entries"; // Phase 69b, Issue #70 (selectors)
 import { lockEmployeeForEntryWrite } from "../../contexts/time-tracking/entry-write-lock"; // Issue #70
 import { checkOverlap } from "../../contexts/time-tracking/entry-invariants"; // Issue #70
@@ -35,6 +41,7 @@ import { resolveEntrySalon } from "../../contexts/time-tracking/entry-salon"; //
 import {
   materializeRemainder,
   activitySharesReplace,
+  validateActivityState,
 } from "../../contexts/time-tracking/activity-shares"; // Issue #81
 import { loadSharesOfEntry } from "../../contexts/time-tracking/activity-store"; // Issue #81
 
@@ -148,19 +155,45 @@ export async function resolveClockEvent(
       // after the Nachtrag guard. The choice of `L` lives in `latestEndingClosed`.
       const closedEntry = !openEntry ? latestEndingClosed(dayEntries) : null;
 
-      // Phase 118 (D-02/D-03): a row coupled to a still-PENDING Zeitnachtrag
-      // (Phase 96, `TimeEntry.retroRequestId @unique`) is a REQUEST, not a punch.
-      // It is closed (startTime+endTime come from the request) and would be read
-      // above as CLOSED_SAME_DAY_ENTRY — a tap would REOPEN it to `endTime: null`
-      // and the approval flow would then release a corrupted entry. This is
-      // genuinely reachable: `createRetroRequestSchema` (retro-entry-requests.ts:20-42)
-      // has no past-date limit, `targetDate = today` is accepted.
+      // Phase 118 (D-02/D-03), Issue #657 (D-07/D-14): a row coupled to a still-PENDING Zeitnachtrag
+      // (Phase 96, `TimeEntry.retroRequestId @unique`) is a REQUEST, not a punch. It is closed
+      // (startTime+endTime come from the request), so a tap that re-opened it to `endTime: null`
+      // would let the approval flow release a corrupted entry.
+      //
+      // Since #657 the shared selectors (`openEntryOf` / `latestEndingClosed`) never hand out a row
+      // carrying the pending marker (`isPendingRetroRow`), so a pending Nachtrag no longer blocks the
+      // clock: the clock starts a new entry next to it. This database lookup stays as the BACKSTOP
+      // for a coupled row whose request is PENDING but whose marker is gone —
+      // `PATCH /time-entries/:id/revalidate` clears the marker without deciding the request — and for
+      // rows written before the marker existed.
       //
       // Qualified on "request still PENDING": the approve branch
-      // (retro-entry-requests.ts:363-365) sets `isInvalid` to `false` but leaves
-      // `retroRequestId` set — an approved Nachtrag row is a perfectly ordinary
-      // closed entry and must remain usable via REOPEN. The reject branch (:466-473)
-      // soft-deletes the row; it already falls out via `deletedAt: null`.
+      // (retro-entry-requests.ts) sets `isInvalid` to `false` but leaves `retroRequestId` set — an
+      // approved Nachtrag row is a perfectly ordinary closed entry and must remain usable via
+      // REOPEN. The reject branch soft-deletes the row; it already falls out via `deletedAt: null`.
+      // Issue #657 (D-14): an OUT cannot stop an open row that is a pending Zeitnachtrag request —
+      // `openEntryOf` does not hand it out, so the day would read as "not clocked in" and answer a
+      // misleading "already clocked out". Nothing closes a request; the honest answer stays
+      // RETRO_PENDING. IN and AUTO need no rule of their own: with no candidate they START, and the
+      // overlap check below refuses an instant inside or before the requested interval.
+      if (!openEntry && event.intent === "OUT") {
+        const openPending = dayEntries.find((e) => e.endTime === null && isPendingRetroRow(e));
+        if (openPending) {
+          app.log.warn(
+            {
+              employeeId: event.employeeId,
+              source: event.source,
+              intent: event.intent,
+              entryId: openPending.id,
+              retroRequestId: openPending.retroRequestId,
+              reason: "RETRO_PENDING",
+            },
+            "clock_event_conflict",
+          );
+          return { kind: "CONFLICT", reason: "RETRO_PENDING" } as const;
+        }
+      }
+
       const retroCandidate = openEntry ?? closedEntry;
       if (retroCandidate?.retroRequestId) {
         const pendingRetro = await tx.retroEntryRequest.findFirst({
@@ -187,9 +220,9 @@ export async function resolveClockEvent(
       // the salon is validated FIRST — a foreign and an unknown id answer the identical 404 and an
       // inactive one 400 (T-100-09), before any state decision and before the locked guard — and a
       // validated salon that differs from `L`'s starts a NEW entry in that salon instead of
-      // re-opening `L` (the former differing-salon 409 no longer exists). Without a salon (NFC,
-      // WIFI, web without a choice) or with `L`'s own salon the latest entry is re-opened as
-      // before. The state machine stays pure: "start in another salon" is simply presented to
+      // re-opening `L` (the former differing-salon 409 no longer exists). Without a salon (WIFI, an
+      // unbound NFC terminal #541, web without a choice) or with `L`'s own salon the latest entry is
+      // re-opened as before. The state machine stays pure: "start in another salon" is simply presented to
       // `decide()` as a day without a re-openable entry. With an OPEN entry the answer stays
       // ALREADY_CLOCKED_IN whatever salon is named (identical for foreign and unknown ids).
       let startInOtherSalon = false;
@@ -226,15 +259,16 @@ export async function resolveClockEvent(
             }
           : { kind: "NO_OPEN_ENTRY" };
 
-      const decision = decide(state, event.intent, event.source);
+      const decision = decide(state, event.intent, event.source, event.presenceOnly);
 
       switch (decision.kind) {
         case "START": {
           // Phase 68b (issue #68, D-08/D-09): the salon of a NEW entry is resolved here, inside
           // the transaction, from the punch INSTANT (never `event.date`). The explicit salon of the
           // web clock-in (Issue #87, D-01) is validated by the same rule; without one the pattern
-          // -> default salon chain applies (D-07: NFC and WIFI never send one). REOPEN, STOP,
-          // CONFIRM and consolidation never re-derive the salon of an existing entry.
+          // -> default salon chain applies (NFC sends one only from a bound terminal key, #541;
+          // WIFI never does). REOPEN, STOP, CONFIRM and consolidation never re-derive the salon of
+          // an existing entry.
           const salon = await resolveEntrySalon(tx, {
             tenantId: event.tenantId,
             employeeId: event.employeeId,
@@ -376,6 +410,14 @@ export async function resolveClockEvent(
             endTime: closedEntry!.endTime,
             breakMinutes: closedEntry!.breakMinutes,
           });
+          // 0. Issue #799: a recorded gap replaces the automatic break of the earlier stop.
+          const removedAuto = await removeAutoBreaksOfEntry(tx, closedEntry!);
+          await auditRemovedAutoBreaks(tx, {
+            entryId: decision.entryId,
+            removed: removedAuto,
+            actor: event.actor,
+            req,
+          });
           // 1. Create Break for the gap (old endTime → new START timestamp)
           const breakRow = await tx.break.create({
             data: {
@@ -392,6 +434,7 @@ export async function resolveClockEvent(
             data: {
               endTime: null,
               breakMinutes: totalBreakMins,
+              ...(removedAuto.length > 0 && { breakStatus: "CONFIRMED" as const }),
               ...(materialized && {
                 activityKind: materialized.kind,
                 activityShares: activitySharesReplace(materialized.shares),
@@ -475,9 +518,19 @@ export async function resolveClockEvent(
             return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
           }
 
+          // Issue #596: a running break ends with the clock-out — it becomes a Break row first, so
+          // the closed entry carries every break as before and no break state is left behind.
+          const closedBreak = target.breakStartedAt
+            ? await closeRunningBreak(tx, target.id, target.breakStartedAt, event.timestamp)
+            : null;
           const updated = await tx.timeEntry.update({
             where: { id: decision.entryId },
-            data: { endTime: event.timestamp },
+            data: {
+              endTime: event.timestamp,
+              ...(closedBreak
+                ? { breakStartedAt: null, breakMinutes: closedBreak.breakMinutes }
+                : {}),
+            },
           });
 
           // Cross-source consolidation (sub-req B). Read tenant-specific gap window.
@@ -501,6 +554,12 @@ export async function resolveClockEvent(
               entityId: merge.targetEntryId,
               oldValue: merge.before,
               newValue: merge.after,
+              actor: event.actor,
+              req,
+            });
+            await auditRemovedAutoBreaks(tx, {
+              entryId: merge.targetEntryId,
+              removed: merge.removedAutoBreaks,
               actor: event.actor,
               req,
             });
@@ -620,4 +679,131 @@ export async function resolveClockEvent(
     }
     throw err;
   }
+}
+
+type BreakTx = Parameters<Parameters<FastifyInstance["prisma"]["$transaction"]>[0]>[0];
+
+/**
+ * Issue #596 — turns the running break [startedAt, endedAt] into a Break row and returns the
+ * entry's recomputed break minutes (all Break rows, the sum the append route stores). A break
+ * shorter than a minute leaves no row (a double tap is no Ruhepause).
+ */
+async function closeRunningBreak(
+  tx: BreakTx,
+  entryId: string,
+  startedAt: Date,
+  endedAt: Date,
+): Promise<{ breakId: string | null; breakMinutes: number }> {
+  let breakId: string | null = null;
+  if (endedAt.getTime() - startedAt.getTime() >= MIN_RUNNING_BREAK_MS) {
+    const created = await tx.break.create({
+      data: { timeEntryId: entryId, startTime: startedAt, endTime: endedAt },
+    });
+    breakId = created.id;
+  }
+  const all = await tx.break.findMany({
+    where: { timeEntryId: entryId },
+    select: { startTime: true, endTime: true },
+  });
+  return { breakId, breakMinutes: Math.round(calcBreakMinutesLocal(all)) };
+}
+
+/**
+ * Issue #596 (#845) — the ONE place the running break of an open entry starts and ends, so a break
+ * started on one device (web, phone, terminal) is seen and ended on every other. Same transaction
+ * shape as `resolveClockEvent`: the Employee row lock first, then the entry, then the pure decision.
+ * A finished break is an ordinary Break row (saldo and § 4 evaluation unchanged); the running one
+ * lives only in `TimeEntry.breakStartedAt`. Audited as BREAK_START / BREAK_APPEND.
+ */
+export async function resolveBreakEvent(
+  app: FastifyInstance,
+  event: BreakEvent,
+  req?: FastifyRequest,
+): Promise<BreakResolution> {
+  return app.prisma.$transaction(async (tx) => {
+    await lockEmployeeForEntryWrite(tx, event.tenantId, event.employeeId);
+    const entry = await tx.timeEntry.findFirst({
+      where: {
+        id: event.entryId,
+        employeeId: event.employeeId,
+        employee: { tenantId: event.tenantId },
+        deletedAt: null,
+      },
+    });
+    if (!entry) return { kind: "CONFLICT", reason: "NOT_CLOCKED_IN" } as const;
+    const decision = decideBreak(entry, event.action);
+    if (decision.kind === "CONFLICT") {
+      app.log.warn(
+        { employeeId: event.employeeId, entryId: entry.id, reason: decision.reason },
+        "break_event_conflict",
+      );
+      return decision;
+    }
+    if (decision.kind === "BREAK_START") {
+      const updated = await tx.timeEntry.update({
+        where: { id: entry.id },
+        data: { breakStartedAt: event.timestamp },
+      });
+      const audit = await emitClockAudit(tx, {
+        action: "BREAK_START",
+        entity: "TimeEntry",
+        entityId: entry.id,
+        oldValue: { breakStartedAt: null },
+        newValue: { breakStartedAt: event.timestamp },
+        actor: event.actor,
+        req,
+      });
+      return { kind: "BREAK_STARTED", entry: updated, audit } as const;
+    }
+    // Issue #81 (D-05): a break shrinks the working time — the allocation must still fit
+    const shares = await loadSharesOfEntry(tx, event.tenantId, entry.id);
+    if (shares.length > 0) {
+      const known = await tx.break.findMany({
+        where: { timeEntryId: entry.id },
+        select: { startTime: true, endTime: true },
+      });
+      const check = validateActivityState(
+        {
+          kind: entry.activityKind,
+          shares,
+          startTime: entry.startTime,
+          endTime: entry.endTime,
+          breakMinutes: Math.round(
+            calcBreakMinutesLocal([
+              ...known,
+              { startTime: decision.startedAt, endTime: event.timestamp },
+            ]),
+          ),
+        },
+        { sharesWritten: false, wasClosed: false },
+      );
+      if (!check.ok) return { kind: "CONFLICT", reason: "ACTIVITY_SHARES_EXCEED" } as const;
+    }
+    const closed = await closeRunningBreak(tx, entry.id, decision.startedAt, event.timestamp);
+    const updated = await tx.timeEntry.update({
+      where: { id: entry.id },
+      // a human ended the break -> CONFIRMED, as the append route does (Phase 91, BREAK-01)
+      data: { breakStartedAt: null, breakMinutes: closed.breakMinutes, breakStatus: "CONFIRMED" },
+    });
+    const audit = await emitClockAudit(tx, {
+      action: "BREAK_APPEND",
+      entity: "TimeEntry",
+      entityId: entry.id,
+      oldValue: {
+        breakStartedAt: decision.startedAt,
+        breakMinutes: entry.breakMinutes,
+        breakStatus: entry.breakStatus,
+      },
+      newValue: {
+        breakId: closed.breakId,
+        startTime: decision.startedAt,
+        endTime: event.timestamp,
+        breakMinutes: closed.breakMinutes,
+        breakStatus: "CONFIRMED",
+      },
+      actor: event.actor,
+      req,
+    });
+    return { kind: "BREAK_ENDED", entry: updated, breakId: closed.breakId, audit } as const;
+  });
 }

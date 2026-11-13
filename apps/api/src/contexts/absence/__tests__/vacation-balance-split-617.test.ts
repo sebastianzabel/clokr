@@ -38,7 +38,6 @@ describe("Issue #617 (D-617-2) — the Resturlaub facade splits taken and approv
       data: {
         email: `vbs617-${label}-${uid}@example.invalid`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -12,6 +12,7 @@ Verbindliche Vorlage für alle GitHub-Releases von Clokr. **Immer** dieses Forma
 - **Migrations-/Deploy-Hinweis** immer angeben: entweder „Keine Schema-Migration." oder die nötigen Schritte.
 - **Audit-Hinweis** bei saldo-/lohn-/abwesenheits-/compliance-relevanten Änderungen (Revisionssicherheit) ans Ende.
 - Ton: knapp, sachlich, fette **Schlüsselbegriffe** für Scanbarkeit. Keine Emojis.
+- **Zielgruppe (#576):** Der „Was ist neu“-Dialog zeigt „Sicherheit“ und „Betrieb & Migration“ nur Personen, die Systemeinstellungen ändern dürfen. Skriptnamen, GHSA-IDs, Deploy-Schritte und Backfills gehören deshalb dorthin; alle anderen Abschnitte sieht jede Person. Die Überschriften der Struktur nicht umbenennen — der Parser ordnet sie danach ein.
 
 ## Struktur
 
@@ -68,7 +69,8 @@ _<optionaler Audit-/Revisionssicherheits-Hinweis>_
    Job erneut laufen lassen.
 
 Die Datei wird zusätzlich ins API-Abbild gebacken (`apps/api/Dockerfile`) und im
-What's-New-Dialog angezeigt — derselbe Text, eine Wahrheit.
+What's-New-Dialog angezeigt — derselbe Text, eine Wahrheit. Dort sehen „Sicherheit“ und
+„Betrieb & Migration“ nur Personen, die Systemeinstellungen ändern dürfen.
 
 ## Referenz-Beispiel (Auszug v1.8.25)
 

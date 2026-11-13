@@ -2,8 +2,7 @@
 //
 // apps/web/vitest.config.ts deliberately declares no `$app` alias (see that file's own
 // comment) to avoid pulling in SvelteKit's full server/router pipeline for component tests.
-// This file is the ONE narrow exception: several stores (auth.ts, theme.ts, mode.ts,
-// density.ts, skin.ts) import only `browser` from `$app/environment`, and a real (unmocked)
+// This file is the ONE narrow exception: several stores (auth.ts, theme.ts, mode.ts) import only `browser` from `$app/environment`, and a real (unmocked)
 // module-boot test needs that resolved to something. `browser: true` matches the vitest
 // config's own `resolve.conditions: ["browser"]` choice — this suite already treats jsdom as
 // the browser build target.

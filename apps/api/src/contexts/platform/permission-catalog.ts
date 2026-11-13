@@ -87,11 +87,20 @@ export const PERMISSION_RESOURCES = {
   section9: { context: "absence", relation: "PERSON" },
   "leave-entitlement": { context: "absence", relation: "PERSON" },
   "leave-config": { context: "absence", relation: "MANDANT" },
+  // Issue #836: relation PERSON because a leave-limit rule is data of a salon and a SALONS-scoped
+  // Salonmanager must be able to hold the key; the all-salons rule is gated by whole-tenant reach in
+  // the route, not by the relation.
+  "leave-limit": { context: "absence", relation: "PERSON" },
+  // Issue #835: relation PERSON for the same reason as leave-limit - a leave plan belongs to a salon
+  // and a SALONS-scoped Salonmanager must be able to hold the key.
+  "leave-plan": { context: "absence", relation: "PERSON" },
   "company-shutdown": { context: "absence", relation: "MANDANT" },
   "vocational-school": { context: "absence", relation: "PERSON" },
   // ── Arbeitszeitkonto ──
   overtime: { context: "working-time-account", relation: "PERSON" },
   "month-close": { context: "working-time-account", relation: "PERSON" },
+  // Issue #599: a correction request for a day of a closed month, booked in the running month.
+  "month-correction": { context: "working-time-account", relation: "PERSON" },
   // ── Scheduling ──
   shift: { context: "scheduling", relation: "PERSON" },
   "shift-config": { context: "scheduling", relation: "MANDANT" },
@@ -178,6 +187,8 @@ export const PERMISSIONS: readonly Permission[] = [
   { resource: "leave-entitlement", action: "update", reach: "ZUGEWIESEN" },
   { resource: "leave-config", action: "read", reach: "ZUGEWIESEN" },
   { resource: "leave-config", action: "manage", reach: "ZUGEWIESEN" },
+  { resource: "leave-limit", action: "manage", reach: "ZUGEWIESEN" },
+  { resource: "leave-plan", action: "manage", reach: "ZUGEWIESEN" },
   { resource: "company-shutdown", action: "manage", reach: "ZUGEWIESEN" },
   { resource: "vocational-school", action: "read", reach: "EIGENE" },
   { resource: "vocational-school", action: "read", reach: "ZUGEWIESEN" },
@@ -191,6 +202,11 @@ export const PERMISSIONS: readonly Permission[] = [
   { resource: "month-close", action: "close", reach: "ZUGEWIESEN" },
   { resource: "month-close", action: "unlock", reach: "ZUGEWIESEN" },
   { resource: "month-close", action: "close-year", reach: "ZUGEWIESEN" },
+  { resource: "month-correction", action: "read", reach: "EIGENE" },
+  { resource: "month-correction", action: "read", reach: "ZUGEWIESEN" },
+  { resource: "month-correction", action: "create", reach: "EIGENE" },
+  { resource: "month-correction", action: "create", reach: "ZUGEWIESEN" },
+  { resource: "month-correction", action: "approve", reach: "ZUGEWIESEN" },
   // ── Scheduling ──
   { resource: "shift", action: "read", reach: "EIGENE" },
   { resource: "shift", action: "read", reach: "ZUGEWIESEN" },

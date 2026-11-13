@@ -128,7 +128,16 @@ export async function getValidWorkedEntriesInRange(
       type: "WORK",
       isInvalid: false,
     },
-    select: { id: true, date: true, startTime: true, endTime: true, breakMinutes: true },
+    // Issue #696: `employeeId` is selected additively so a bulk read over several persons can be
+    // split per person; every single-person reader ignores it.
+    select: {
+      id: true,
+      employeeId: true,
+      date: true,
+      startTime: true,
+      endTime: true,
+      breakMinutes: true,
+    },
   });
 }
 
@@ -381,14 +390,54 @@ export async function getInvalidEntries(
   });
 }
 
+// ── Issue #853 (D-853-21a/22) — open entries of past days (missing clock-outs) ───────────────
+
+/**
+ * Issue #853 (D-853-21a) — the tenant's `WORK` entries that were never clocked out: no `endTime`,
+ * non-deleted, dated on a calendar day in `[since, before)`. `before` is the tenant-local today as
+ * a UTC-midnight day, so today's running entry is never a candidate; an entry that the nightly
+ * check already marked invalid (`MISSING_CLOCK_OUT`) is still open and still listed. Both bounds
+ * are calendar days for the `@db.Date` column (Issue #493), never instants.
+ *
+ * Read-only and reach-blind on purpose: the composition caller narrows the rows to the caller's
+ * reach with the Unterbau's `scopedTimeEntryIds` (the one per-entry rule, Issue #85) and never
+ * shows a row that rule did not name. The tenant binds through the employee, so another tenant's
+ * entry is never returned. Oldest day first.
+ */
+export async function findMissingClockOutEntries(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  range: { before: Date; since: Date },
+) {
+  return db.timeEntry.findMany({
+    where: {
+      employee: { tenantId },
+      deletedAt: null,
+      type: "WORK",
+      endTime: null,
+      date: { gte: range.since, lt: range.before },
+    },
+    select: {
+      id: true,
+      employeeId: true,
+      salonId: true,
+      date: true,
+      startTime: true,
+      isInvalid: true,
+      employee: { select: { firstName: true, lastName: true } },
+    },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }, { id: "asc" }],
+  });
+}
+
 // ── T5 — the "own activity" feed, ordered by createdAt (not date) ───────────────────────────
 
 /**
  * T5 — the most recent `TimeEntry` rows for `employeeId` created since `since`, newest first,
  * capped at `limit`. Sole caller: `platform/api/activity.ts`'s "Aktivität" widget. Ordered by
  * `createdAt` — an essential difference from every other function in this file, which order (or
- * filter) by `date`: this feed renders "Einstempeln um HH:mm" / "Ausstempeln um HH:mm" as they
- * were RECORDED, not as they occurred.
+ * filter) by `date`: this feed lists entries as they were RECORDED, not as they occurred (the
+ * sentences themselves come from `composition/activity-sentences.ts`, Issue #849).
  */
 export async function getEntryActivityFeed(
   db: Prisma.TransactionClient,
@@ -654,10 +703,16 @@ export async function archiveDayBreakDataBefore(
  * `ANONYMIZE` audit that same transaction writes; a nulled note carries nothing left worth
  * logging per row.
  */
+/**
+ * Neutral replacement for the required `RetroEntryRequest.reason` of an anonymized person
+ * (Issue #718). A fixed text, never derived from the original, so nothing of it survives.
+ */
+export const RETRO_REASON_ANONYMIZED = "Gelöscht (Anonymisierung)";
+
 export async function clearEntryNotesForEmployee(
   db: Prisma.TransactionClient,
   employeeId: string,
-): Promise<void> {
+): Promise<{ retroReasons: number; retroReviewNotes: number }> {
   await db.timeEntry.updateMany({
     where: { employeeId, note: { not: null } },
     data: { note: null },
@@ -672,6 +727,20 @@ export async function clearEntryNotesForEmployee(
     where: { employeeId, reason: { not: null } },
     data: { reason: null },
   });
+  // Issue #718: a Zeitnachtrag carries the employee's own justification (`reason`, required) and
+  // the approver's free-text review note. Both are person-authored free text. The row stays (it is
+  // the Nachweis of the retro grant, status/times/reviewer untouched); the required column gets a
+  // neutral text instead of null. Soft-deleted rows are reached too.
+  const reasons = await db.retroEntryRequest.updateMany({
+    where: { employeeId, reason: { not: RETRO_REASON_ANONYMIZED } },
+    data: { reason: RETRO_REASON_ANONYMIZED },
+  });
+  const reviewNotes = await db.retroEntryRequest.updateMany({
+    where: { employeeId, reviewNote: { not: null } },
+    data: { reviewNote: null },
+  });
+  // Row counts for the ANONYMIZE audit (Issue #718) - never text.
+  return { retroReasons: reasons.count, retroReviewNotes: reviewNotes.count };
 }
 
 // ── T11 — hard delete: Break before TimeEntry, the ORDER is the invariant ────────────────────
@@ -910,4 +979,21 @@ export async function getDayBreaksForSupportMonth(
     orderBy: [{ date: "asc" }, { startTime: "asc" }, { id: "asc" }],
     select: { id: true, date: true, startTime: true, endTime: true },
   });
+}
+
+/**
+ * Issue #820: ids of every TimeEntry of the employee, soft-deleted rows included. The anonymization
+ * uses them to find the audit rows that are written with `entityId` = entry (the WLAN presence
+ * confirmation carries the observed MAC). Ids only; tenant-scoped through the employee relation.
+ */
+export async function timeEntryIdsOfEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<string[]> {
+  const rows = await db.timeEntry.findMany({
+    where: { employeeId, employee: { tenantId } },
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
 }

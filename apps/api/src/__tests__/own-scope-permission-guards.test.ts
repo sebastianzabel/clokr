@@ -51,7 +51,7 @@ describe("Issues #346/#358/#359 — eigene-Reichweite guards", () => {
     const s = `${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`;
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const user = await app.prisma.user.create({
-      data: { email: `esr-${s}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      data: { email: `esr-${s}@test.de`, passwordHash, isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {

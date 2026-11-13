@@ -47,7 +47,7 @@ describe("migrate-opening-balances narrowed track-only skip (Issue #494, D-11)",
   }): Promise<string> {
     const s = `${spec.key}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
     const user = await app.prisma.user.create({
-      data: { email: `${s}@mob494.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@mob494.test`, passwordHash: "x", isActive: true },
     });
     const emp = await app.prisma.employee.create({
       data: {

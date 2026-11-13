@@ -287,5 +287,56 @@ export async function hardDeleteOvertimeDataForEmployee(
   db: Prisma.TransactionClient,
   employeeId: string,
 ): Promise<void> {
+  // Issue #599 — a correction request references its journal row (Restrict): it goes first.
+  await db.monthCorrectionRequest.deleteMany({ where: { employeeId } });
   await db.overtimeAccount.deleteMany({ where: { employeeId } });
+}
+
+/**
+ * Neutral replacement for the required `MonthCorrectionRequest.reason` of an anonymized person
+ * (Issue #599, same rule as the Zeitnachtrag of Issue #718). A fixed text, never derived from the
+ * original.
+ */
+export const MONTH_CORRECTION_REASON_ANONYMIZED = "Gelöscht (Anonymisierung)";
+
+/**
+ * Issue #599 (DSGVO Art. 17): the person-authored free text of the person's month-correction
+ * requests — the required `reason` becomes the neutral text, the decider's `reviewNote` null. Rows,
+ * statuses, minutes, booking day and journal link stay (§ 147 AO). Deliberately NO tenant
+ * parameter (named F3 exception, like `clearOvertimePlanNotesForEmployee`): its sole caller is
+ * `platform/anonymize.ts`, reached only after the route validated the id against the tenant.
+ * Returns row counts for the ANONYMIZE audit, never text.
+ */
+export async function clearMonthCorrectionTextsForEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+): Promise<{ monthCorrectionReasons: number; monthCorrectionReviewNotes: number }> {
+  const reasons = await db.monthCorrectionRequest.updateMany({
+    where: { employeeId, reason: { not: MONTH_CORRECTION_REASON_ANONYMIZED } },
+    data: { reason: MONTH_CORRECTION_REASON_ANONYMIZED },
+  });
+  const notes = await db.monthCorrectionRequest.updateMany({
+    where: { employeeId, reviewNote: { not: null } },
+    data: { reviewNote: null },
+  });
+  return { monthCorrectionReasons: reasons.count, monthCorrectionReviewNotes: notes.count };
+}
+
+/**
+ * Issue #718 (DSGVO Art. 17): nulls the free-text `OvertimePlan.note` of every plan of
+ * `employeeId`; the plan rows stay. Deliberately NO tenant parameter (named F3 exception): its sole
+ * caller is `platform/anonymize.ts`'s `anonymizeEmployeeData()`, reached only after the route
+ * validated the id against the caller's tenant. `SaldoSnapshot.note` and the `OpeningBalance`
+ * texts are NOT touched here on purpose: the business writes them to document a booking
+ * (§ 147 AO), they are not person-authored.
+ */
+export async function clearOvertimePlanNotesForEmployee(
+  db: Prisma.TransactionClient,
+  employeeId: string,
+): Promise<number> {
+  const cleared = await db.overtimePlan.updateMany({
+    where: { employeeId, note: { not: null } },
+    data: { note: null },
+  });
+  return cleared.count;
 }

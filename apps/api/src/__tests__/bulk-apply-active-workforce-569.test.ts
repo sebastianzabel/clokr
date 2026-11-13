@@ -52,7 +52,6 @@ describe("Issue #569 — bulk apply reaches only the active workforce", () => {
       data: {
         email: `bulk569-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

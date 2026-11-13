@@ -86,13 +86,25 @@
 </div>
 
 <style>
+  /* Issue #843 (D-843-01 block 7 "Segment"): pill track on --sunk, the selected option lifts onto
+     --card. The track owns the control height; the buttons fill it. */
   .seg-control {
     display: inline-flex;
+    align-items: stretch;
+    box-sizing: border-box;
     padding: 2px;
     gap: 0;
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+
+  .seg-control--md {
+    min-height: var(--h-control);
+  }
+
+  .seg-control--sm {
+    min-height: var(--h-control-sm);
   }
 
   .seg-control--disabled {
@@ -101,10 +113,14 @@
   }
 
   .seg-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: transparent;
-    color: var(--text-muted);
+    color: var(--text-2);
     border: 0;
-    border-radius: calc(var(--r-md) - 2px);
+    border-radius: var(--r-pill);
+    font-family: inherit;
     font-weight: 500;
     cursor: pointer;
     transition:
@@ -114,19 +130,19 @@
   }
 
   .seg-control--sm .seg-btn {
-    padding: 6px 12px;
-    font-size: 0.8125rem;
+    padding: 0 12px;
+    font-size: var(--fs-sm);
   }
 
   .seg-control--md .seg-btn {
-    padding: 8px 16px;
-    font-size: 0.875rem;
+    padding: 0 16px;
+    font-size: var(--fs-base);
   }
 
   .seg-btn[aria-checked="true"] {
-    background: var(--bg-card);
+    background: var(--card);
     color: var(--text);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow);
     font-weight: 600;
   }
 
@@ -144,7 +160,7 @@
     font-style: normal;
   }
 
-  /* WCAG 2.5.5 — 44px min hit target on touch devices */
+  /* WCAG 2.5.5 - 44px min hit target on touch devices */
   @media (pointer: coarse) {
     .seg-btn {
       min-height: 44px;

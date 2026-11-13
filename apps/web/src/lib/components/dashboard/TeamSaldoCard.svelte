@@ -75,12 +75,13 @@
   });
 </script>
 
-<Card animate class="team-saldo-card" style={`--card-idx: ${cardIdx};`}>
+<!-- #854: no entrance animation on Berichte › Verläufe; a fading card fails the contrast check while it fades. -->
+<Card class="team-saldo-card" style={`--card-idx: ${cardIdx};`}>
   <CardHeader title="Salden" />
   {#if loading}
     <div class="saldo-skeleton" aria-hidden="true"></div>
   {:else if !hasAnyone}
-    <p class="saldo-empty">Keine Salden in Ihrer Reichweite</p>
+    <p class="saldo-empty">Keine Salden in deiner Reichweite</p>
   {:else}
     <div data-testid="team-saldo-values">
       <p class="saldo-median" data-testid="team-saldo-median">
@@ -149,7 +150,7 @@
   .saldo-median {
     margin: 0 0 0.75rem;
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .saldo-median strong {
@@ -184,7 +185,7 @@
     gap: 0.75rem;
     padding: 0.25rem 0;
     font-size: 0.875rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .saldo-item:last-child {
@@ -211,23 +212,23 @@
   }
 
   .saldo-value.pos {
-    color: var(--good-text);
+    color: var(--ok);
   }
 
   .saldo-value.neg {
-    color: var(--bad-text);
+    color: var(--bad);
   }
 
   .saldo-empty {
     margin: 0.25rem 0 0.5rem;
     font-size: 0.875rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .saldo-excluded {
     margin-top: 1rem;
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .saldo-excluded-title {
@@ -251,13 +252,8 @@
   .saldo-skeleton {
     width: 100%;
     height: 200px;
-    border-radius: var(--r-sm);
-    background: linear-gradient(
-      90deg,
-      var(--bg-subtle) 25%,
-      var(--bg-alt) 50%,
-      var(--bg-subtle) 75%
-    );
+    border-radius: var(--r-control);
+    background: linear-gradient(90deg, var(--sunk) 25%, var(--rail) 50%, var(--sunk) 75%);
     background-size: 200% 100%;
     animation: saldo-shimmer 1.4s ease-in-out infinite;
   }

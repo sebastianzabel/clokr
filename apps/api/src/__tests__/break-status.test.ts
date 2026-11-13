@@ -312,7 +312,6 @@ describe("PATCH /:id/break-status", () => {
         email: `other-${s}@test.de`,
         passwordHash: (await app.prisma.user.findUnique({ where: { id: data.empUser.id } }))!
           .passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

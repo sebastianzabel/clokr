@@ -65,7 +65,6 @@ describe("day-break-store (Issue #80)", () => {
       data: {
         email: `second-${randomUUID()}@example.test`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

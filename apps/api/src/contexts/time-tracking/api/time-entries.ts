@@ -22,10 +22,17 @@ import type { PermissionKey } from "../../platform";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../arbzg";
 import { warningsVisibleToCaller } from "../warning-visibility"; // Issue #85 (D-12) — ArbZG warnings only as far as the caller's reach covers them
-import { planAutoBreak, autoBreakAppliesOnCreate, type AutoBreakPlan } from "../auto-break-plan"; // Issue #511 (AK-4, D-17/D-20) — the one automatic-break decision, also used by the preview
+import { planAutoBreak, autoBreakAppliesOnCreate, type AutoBreakPlan } from "../auto-break-plan";
+import {
+  autoInsertBreak,
+  applyAutoBreakAfterClockStop,
+  type StoredBreak,
+} from "../auto-break-write"; // Issue #799 // Issue #511 (AK-4, D-17/D-20) — the one automatic-break decision, also used by the preview
 import { invalidReasonFields, CLEARED_INVALID_REASON } from "../invalid-reason";
 import { buildClockOutDebounceMessage } from "../clock-out-debounce-message"; // Phase 307 Plan 02 (D-03/D-05)
 import { resolveEntrySalon, SALON_NOT_FOUND_BODY, SALON_INACTIVE_BODY } from "../entry-salon"; // Phase 68b (issue #68), D-08/D-10
+import { dismissShiftReminderNotices } from "../shift-reminder-dismiss"; // Issue #609 (IN-03)
+import { resolveTerminalPunch, terminalPunchSalon } from "../terminal-salon"; // Issue #541 (D-05) — the terminal's bound salon
 import { clockSalonChoice } from "../clock-salon-choice"; // Issue #87 (Phase 87b-03), D-02/D-11 — the one clock-salon decision
 import { entryDurations } from "../entry-durations"; // Phase 79 (Issue #79), D-06/D-14 — per-entry presence/working time
 import { activityKindSchema, activitySharesSchema } from "../activity-kind"; // Issue #81 (D-06)
@@ -39,7 +46,7 @@ import {
   activitySharesCreate,
 } from "../activity-shares"; // Issue #81 (D-05/D-06/D-20) — the one share validator and the nested-write builders
 import { getValidWorkedEntriesInRange } from "../facade/time-entries"; // Phase 79 (#79), D-07 — T1, the saldo's own entry set
-import { resolveClockEvent } from "../../../services/clock/resolver";
+import { resolveClockEvent, resolveBreakEvent } from "../../../services/clock/resolver";
 import { resolveActor } from "../../../services/clock/audit-actor";
 import type { ClockEvent } from "../../../services/clock/types";
 import {
@@ -55,6 +62,7 @@ import {
 import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../../platform"; // Quick 260824-cjd
 import {
   getOvertimeAccount, // Phase 100B Plan 06 — W8/W14; Plan 07 — W3 merge, W1
+  addDaysUtc, // Issue #172
   getTenantTimezone,
   todayInTz,
   dateStrInTz,
@@ -78,6 +86,13 @@ import {
   getEffectiveSchedule,
 } from "../entry-invariants";
 import { lockEmployeeForEntryWrite } from "../entry-write-lock"; // Issue #70 (D-10)
+import {
+  findOverlappingRetroRequest,
+  RetroRequestOverlapError,
+  RETRO_REQUEST_OVERLAP_CODE,
+  RETRO_REQUEST_OVERLAP_MESSAGE,
+  wholeTenantDay,
+} from "../retro-request-overlap"; // Issue #657 (D-01/D-03/D-13)
 import {
   checkTravelNeighbours,
   classifyTravelWrite,
@@ -116,32 +131,32 @@ export { updateOvertimeAccount, computeOvertimeBalanceBreakdown, computeOvertime
 export type { OvertimeBalanceBreakdown };
 
 /**
- * Issue #511 (AK-4, D-17): the ONE write of an automatic break, shared by the NFC clock-out, the
- * regular clock-out and the manual POST. WHICH break (regime, amount, tenant-zone placement
- * conformant to § 4 Satz 2/3 ArbZG or § 11 JArbSchG) is decided by `planAutoBreak`, the same
- * function the entry-form preview simulates it with. Break rows and the entry's summary fields are
- * written together or not at all. Returns the minutes written.
+ * Issue #396: the response re-read AFTER a committed write. A failing read (a connection blip)
+ * must never turn a persisted write into a 500 - the client would retry a request that already
+ * took effect. On failure the problem is logged (warn) and the response is assembled from what
+ * the handler already holds.
  */
-async function autoInsertBreak(
+async function readAfterCommit<T>(
   app: FastifyInstance,
-  params: { entryId: string; plan: AutoBreakPlan },
-): Promise<number> {
-  const { entryId, plan } = params;
-  await app.prisma.$transaction([
-    app.prisma.break.createMany({
-      data: plan.segments.map((s) => ({
-        timeEntryId: entryId,
-        startTime: s.startTime,
-        endTime: s.endTime,
-      })),
-    }),
-    // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
-    app.prisma.timeEntry.update({
-      where: { id: entryId },
-      data: { breakMinutes: plan.amountMin, breakStatus: "AUTO" },
-    }),
-  ]);
-  return plan.amountMin;
+  context: { entryId: string; route: string },
+  read: () => Promise<T | null>,
+  fallback: () => Promise<T> | T,
+): Promise<T> {
+  try {
+    const row = await read();
+    if (row) return row;
+  } catch (err) {
+    app.log.warn(
+      { err, timeEntryId: context.entryId, route: context.route },
+      "post-commit re-fetch failed; answering from the written entry",
+    );
+    return await fallback();
+  }
+  app.log.warn(
+    { timeEntryId: context.entryId, route: context.route },
+    "post-commit re-fetch found no row; answering from the written entry",
+  );
+  return await fallback();
 }
 
 const nfcPunchSchema = z.object({
@@ -460,6 +475,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // always derived from the server clock (todayInTz(tz) below), not from request body.
       const now = new Date();
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+      // Issue #541 (D-05): the active bound salon of this key, {} when unbound or unusable — an unbound key builds today's event exactly
+      const terminalSalon = await terminalPunchSalon(app.prisma, app.log, apiKey);
       const event: ClockEvent = {
         employeeId: employee.id,
         tenantId: employee.tenantId,
@@ -474,9 +491,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // protection is this route's whole reason to exist and stays (CONTEXT.md phase
         // boundary: "der NFC-Doppeltipp-Schutz selbst" is out of scope).
         interactive: false,
+        ...terminalSalon,
       };
 
-      const resolution = await resolveClockEvent(app, event, req);
+      const resolution = await resolveTerminalPunch(
+        event,
+        (e) => resolveClockEvent(app, e, req),
+        app.log,
+        apiKey.id,
+      );
 
       if (resolution.kind === "CONFLICT") {
         if (resolution.reason === "LEAVE_APPROVED") {
@@ -532,6 +555,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       };
 
       if (resolution.kind === "CLOCKED_IN") {
+        await dismissShiftReminderNotices(app, employee.userId, "IN"); // Issue #609 (IN-03)
         const balanceHours = await getBalance();
         return reply.code(200).send({
           action: "IN" as const,
@@ -546,8 +570,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Phase 307 Plan 02: deliberately UNCHANGED by the DEBOUNCE_NOOP -> 409 flip on
       // `/:id/clock-out` below. A terminal double-tap is not a user error and must not surface
       // one; this route is the one genuinely non-interactive caller of `resolveClockEvent`
-      // (Phase 307 Plan 01 Task 1 proved no NFC-terminal path reaches `/:id/clock-out` at all).
-      if (resolution.kind === "DEBOUNCE_NOOP") {
+      // (Phase 307 Plan 01 Task 1 proved no NFC-terminal path reaches `/:id/clock-out` at all). Issue #818: CONFIRMED (passive presence, never produced here) answers the same, no 500.
+      if (resolution.kind === "DEBOUNCE_NOOP" || resolution.kind === "CONFIRMED") {
         return reply.code(200).send({
           action: "NOOP" as const,
           employee: employeeBlock,
@@ -561,47 +585,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(500).send({ error: "Interner Serverfehler" });
       }
 
-      // CLOCKED_OUT or CONSOLIDATED — post-resolution side effects (auto-break — Phase 64 preserved)
-      const clockedOutEntryId = resolution.entry.id;
-      // D-01 Pitfall 1 guard (aligned with clock-out route): skip auto-break when Break records
-      // already exist. A reopened entry carries a gap Break — auto-break must not overwrite it.
-      // Use count (not findMany+sum) to match the clock-out route guard at line ~635.
-      const existingBreakCount = await app.prisma.break.count({
-        where: { timeEntryId: clockedOutEntryId },
+      // CLOCKED_OUT or CONSOLIDATED — the shared post-STOP auto-break step (Issue #799).
+      await applyAutoBreakAfterClockStop(app, {
+        entryId: resolution.entry.id,
+        employeeId: employee.id,
+        tz,
       });
-      if (existingBreakCount === 0) {
-        const tenantConfig = await app.prisma.tenantConfig.findUnique({
-          where: { tenantId: employee.tenantId },
-        });
-        if (tenantConfig?.autoBreakEnabled) {
-          const entryForBreak = await app.prisma.timeEntry.findUnique({
-            where: { id: clockedOutEntryId },
-          });
-          if (entryForBreak?.startTime && entryForBreak?.endTime) {
-            const employeeBreakFields = await app.prisma.employee.findUnique({
-              where: { id: entryForBreak.employeeId },
-              select: { breakOver6hOverride: true, breakOver9hOverride: true, birthDate: true },
-            });
-            // Issue #511 (D-20): a minor gets at least the § 11 JArbSchG amount, decided on the
-            // work date of the entry; adults keep the configured amount unchanged (D-17).
-            const plan = planAutoBreak({
-              employee: employeeBreakFields ?? {
-                breakOver6hOverride: null,
-                breakOver9hOverride: null,
-                birthDate: null,
-              },
-              tenantConfig,
-              start: entryForBreak.startTime,
-              end: entryForBreak.endTime,
-              entryDate: entryForBreak.date,
-              tz,
-            });
-            if (plan) await autoInsertBreak(app, { entryId: clockedOutEntryId, plan });
-          }
-        }
-      }
 
       await updateOvertimeAccount(app, employee.id);
+      await dismissShiftReminderNotices(app, employee.userId, "OUT"); // Issue #609 (IN-03)
       const balanceHours = await getBalance();
       return reply.code(200).send({
         action: "OUT" as const,
@@ -708,6 +700,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       };
       const resolution = await resolveClockEvent(app, event, req);
       if (resolution.kind === "CLOCKED_IN") {
+        // Issue #609 (IN-03): the open "Schicht begonnen" notice of this person is answered.
+        await dismissShiftReminderNotices(app, employeeRecord.userId, "IN");
         return reply.code(200).send({ resolution, audit: resolution.audit });
       }
       if (resolution.kind === "CONFLICT") {
@@ -866,7 +860,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // `manualEntrySchema.endTime` is nullable, so the entry-first Nachtrag
         // path (Phase 96) can leave a pending row open. This branch is therefore
         // genuinely reachable, and it keeps the honest message from being
-        // swallowed by the generic "Konflikt" fallback below.
+        // swallowed by the generic "Konflikt" fallback below. Issue #657 (D-14): it is reached by
+        // the resolver's OUT rule for an open row that is a pending Zeitnachtrag (the selectors no
+        // longer hand such a row out) and by its database backstop for a coupled row whose request
+        // is still PENDING but which carries no marker (`PATCH /:id/revalidate` refuses such a row
+        // since WR-03, so only data written otherwise can reach this).
         if (resolution.reason === "RETRO_PENDING") {
           return reply.code(409).send({
             error: "Für diesen Tag liegt ein offener Zeitnachtrag zur Genehmigung vor.",
@@ -929,39 +927,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         });
       }
 
-      // Auto-break (Phase 64 contract — preserved verbatim; Phase 129 removed the `else` wrapper
-      // that used to guard it, but changed nothing inside it).
-      const targetEmployee = await app.prisma.employee.findUnique({
-        where: { id: entry.employeeId },
-      });
-      const tenantConfig = targetEmployee
-        ? await app.prisma.tenantConfig.findUnique({
-            where: { tenantId: targetEmployee.tenantId },
-          })
-        : null;
-
-      // D-01 Pitfall 1 guard: skip auto-break when Break records already exist on this entry.
-      // A reopened entry carries a gap Break — auto-break must not overwrite its breakMinutes.
-      const existingBreakCount = await app.prisma.break.count({
-        where: { timeEntryId: closedEntryId },
-      });
-      if (tenantConfig?.autoBreakEnabled && targetEmployee && existingBreakCount === 0) {
-        const closedEntry = await app.prisma.timeEntry.findUnique({
-          where: { id: closedEntryId },
+      // Auto-break (Phase 64 contract; Issue #799: the same shared step NFC and WIFI run).
+      const { breaks: clockOutAutoBreaks, minutes: clockOutAutoMinutes } =
+        await applyAutoBreakAfterClockStop(app, {
+          entryId: closedEntryId,
+          employeeId: entry.employeeId,
+          tz,
         });
-        if (closedEntry?.startTime && closedEntry?.endTime) {
-          // Issue #511 (D-20): minors get at least the § 11 JArbSchG amount; adults unchanged.
-          const plan = planAutoBreak({
-            employee: targetEmployee,
-            tenantConfig,
-            start: closedEntry.startTime,
-            end: closedEntry.endTime,
-            entryDate: closedEntry.date,
-            tz,
-          });
-          if (plan) await autoInsertBreak(app, { entryId: closedEntryId, plan });
-        }
-      }
 
       await updateOvertimeAccount(app, entry.employeeId);
 
@@ -984,12 +956,42 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           "Failed to auto-dismiss CLOCK_OUT_REMINDER on clock-out",
         );
       }
+      // Issue #609 (IN-03): the open "Schichtende" notice of this person is answered.
+      await dismissShiftReminderNotices(app, entry.employee.userId, "OUT");
 
-      // Re-fetch with breaks for response (auto-break may have added one).
-      const entryWithBreaks = await app.prisma.timeEntry.findUnique({
-        where: { id: closedEntryId },
-        include: { breaks: { orderBy: { startTime: "asc" } } },
-      });
+      // Re-fetch with breaks for response (auto-break may have added one). Issue #396: the write is
+      // committed here, so a failing read answers from the resolver's entry, never with a 500.
+      const entryWithBreaks = await readAfterCommit(
+        app,
+        { entryId: closedEntryId, route: "clock-out" },
+        () =>
+          app.prisma.timeEntry.findUnique({
+            where: { id: closedEntryId },
+            include: { breaks: { orderBy: { startTime: "asc" } } },
+          }),
+        async () => {
+          let breaks: StoredBreak[] = clockOutAutoBreaks;
+          if (breaks.length === 0) {
+            // Best effort: a reopened entry carries break rows of its own.
+            try {
+              breaks = await app.prisma.break.findMany({
+                where: { timeEntryId: closedEntryId },
+                orderBy: { startTime: "asc" },
+              });
+            } catch {
+              breaks = [];
+            }
+          }
+          return {
+            ...resolution.entry,
+            ...(body.note !== undefined ? { note: body.note } : {}),
+            ...(clockOutAutoBreaks.length > 0
+              ? { breakMinutes: clockOutAutoMinutes, breakStatus: "AUTO" as const }
+              : {}),
+            breaks,
+          } as never;
+        },
+      );
 
       return reply
         .code(200)
@@ -1008,6 +1010,88 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     startTime: z.string().datetime(),
     endTime: z.string().datetime(),
   });
+  /**
+   * The write guard of a break on an entry — the ONE place for POST /:id/breaks and (Issue #596)
+   * POST /:id/break: the identical 404 for an unknown or foreign id (T-100-09, with the nested
+   * CROSS_TENANT_ACCESS_DENIED audit), owner or `time-entry:update:ZUGEWIESEN` with its scope, no
+   * locked entry, no travel entry. Sends the refusal itself and answers null.
+   */
+  async function loadEntryForBreakWrite(req: FastifyRequest, reply: FastifyReply, id: string) {
+    const user = req.user;
+    const entry = await app.prisma.timeEntry.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        employee: { select: { tenantId: true } },
+        // Issue #81 (D-05): the stored breaks and shares, for the check before the append.
+        breaks: { select: { startTime: true, endTime: true } },
+        activityShares: { select: { kind: true, minutes: true } },
+      },
+    });
+    // T-100-09 cross-tenant existence oracle (Issue #310): folded into one condition so an
+    // unknown id and a real id in a foreign tenant answer with the identical 404 — the previous
+    // two-branch shape (404 for unknown, 403 "Kein Zugriff" for foreign-tenant) let any
+    // authenticated user of any tenant probe whether an arbitrary id exists anywhere. The audit
+    // is nested so it fires ONLY when the row exists: an unknown id must write no AuditLog row,
+    // or the row count itself would reopen the oracle this guard just closed. This is a write
+    // route, and #310 names the missing audit as part of the finding — sibling `/break-status`
+    // already audits this same defect class, `PUT /:id` does not (mixed precedent in this file);
+    // structure copied from `avatars.ts`'s folded-condition + nested-audit pattern.
+    if (!entry || entry.employee.tenantId !== user.tenantId) {
+      if (entry) {
+        await app.audit({
+          userId: user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "TimeEntry",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+      }
+      void reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      return null;
+    }
+
+    // Only the entry's owner or a caller holding time-entry:update:ZUGEWIESEN may append breaks.
+    const breaksUpdateReach = await permissionReach(req, "time-entry:update");
+    if (breaksUpdateReach !== "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+      void reply.code(403).send({ error: "Kein Zugriff" });
+      return null;
+    }
+    if (breaksUpdateReach === null) {
+      void reply.code(403).send({ error: "Kein Zugriff" });
+      return null;
+    }
+    // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
+    // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
+    // entry already fetched above.
+    if (breaksUpdateReach === "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
+      if (
+        !(await enforceTimeEntryScope(
+          app,
+          req,
+          reply,
+          entry,
+          "time-entry:update:ZUGEWIESEN",
+          "Eintrag nicht gefunden",
+        ))
+      ) {
+        return null;
+      }
+    }
+
+    // Locked months are immutable (audit-proof, see CLAUDE.md).
+    if (entry.isLocked) {
+      void reply.code(409).send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      return null;
+    }
+
+    // Issue #92 (D-06): a travel entry has no break.
+    if (entry.activityKind === "TRAVEL") {
+      void reply.code(400).send({ error: TRAVEL_SHAPE_MESSAGE, code: TRAVEL_SHAPE_CODE });
+      return null;
+    }
+    return entry;
+  }
+
   app.post("/:id/breaks", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
@@ -1016,74 +1100,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const body = appendBreakSchema.parse(req.body);
       const user = req.user;
 
-      const entry = await app.prisma.timeEntry.findFirst({
-        where: { id, deletedAt: null },
-        include: {
-          employee: { select: { tenantId: true } },
-          // Issue #81 (D-05): the stored breaks and shares, for the check before the append.
-          breaks: { select: { startTime: true, endTime: true } },
-          activityShares: { select: { kind: true, minutes: true } },
-        },
-      });
-      // T-100-09 cross-tenant existence oracle (Issue #310): folded into one condition so an
-      // unknown id and a real id in a foreign tenant answer with the identical 404 — the previous
-      // two-branch shape (404 for unknown, 403 "Kein Zugriff" for foreign-tenant) let any
-      // authenticated user of any tenant probe whether an arbitrary id exists anywhere. The audit
-      // is nested so it fires ONLY when the row exists: an unknown id must write no AuditLog row,
-      // or the row count itself would reopen the oracle this guard just closed. This is a write
-      // route, and #310 names the missing audit as part of the finding — sibling `/break-status`
-      // already audits this same defect class, `PUT /:id` does not (mixed precedent in this file);
-      // structure copied from `avatars.ts`'s folded-condition + nested-audit pattern.
-      if (!entry || entry.employee.tenantId !== user.tenantId) {
-        if (entry) {
-          await app.audit({
-            userId: user.sub,
-            action: "CROSS_TENANT_ACCESS_DENIED",
-            entity: "TimeEntry",
-            entityId: id,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
-        }
-        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
-      }
-
-      // Only the entry's owner or a caller holding time-entry:update:ZUGEWIESEN may append breaks.
-      const breaksUpdateReach = await permissionReach(req, "time-entry:update");
-      if (breaksUpdateReach !== "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
-        return reply.code(403).send({ error: "Kein Zugriff" });
-      }
-      if (breaksUpdateReach === null) {
-        return reply.code(403).send({ error: "Kein Zugriff" });
-      }
-      // Phase 91b Plan 03 (#91), D-09/D-14: a ZUGEWIESEN reach acting on someone else's entry may
-      // still be scoped to salons/persons — enforce it, same 404 as a non-existent id, on the
-      // entry already fetched above.
-      if (breaksUpdateReach === "ZUGEWIESEN" && entry.employeeId !== user.employeeId) {
-        if (
-          !(await enforceTimeEntryScope(
-            app,
-            req,
-            reply,
-            entry,
-            "time-entry:update:ZUGEWIESEN",
-            "Eintrag nicht gefunden",
-          ))
-        ) {
-          return;
-        }
-      }
-
-      // Locked months are immutable (audit-proof, see CLAUDE.md).
-      if (entry.isLocked) {
-        return reply
-          .code(409)
-          .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
-      }
-
-      // Issue #92 (D-06): a travel entry has no break.
-      if (entry.activityKind === "TRAVEL") {
-        return reply.code(400).send({ error: TRAVEL_SHAPE_MESSAGE, code: TRAVEL_SHAPE_CODE });
-      }
+      const entry = await loadEntryForBreakWrite(req, reply, id);
+      if (!entry) return;
 
       // Phase 380 (issue #380), owner decision Variante (b), 2026-09-28: an entry that already
       // carries a positive breakMinutes SUM but has no individual Break rows (legacy data or a
@@ -1156,7 +1174,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const allBreaks = await app.prisma.break.findMany({ where: { timeEntryId: id } });
       const totalBreakMin = Math.round(calcBreakMinutes(allBreaks));
       await app.prisma.timeEntry.update({
-        where: { id },
+        // tenant-scoped inline: the guard's fetch-then-compare lives in loadEntryForBreakWrite (#596)
+        where: { id, employee: { tenantId: user.tenantId } },
         // Phase 91 (BREAK-01): human appended a break -> CONFIRMED (runs after the isLocked
         // gate above, so locked entries never reach this point).
         data: { breakMinutes: totalBreakMin, breakStatus: "CONFIRMED" },
@@ -1188,6 +1207,55 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       });
 
       return { success: true, break: created, breakMinutes: totalBreakMin };
+    },
+  });
+
+  // POST /api/v1/time-entries/:id/break — Issue #596 (#845): start or end the RUNNING break of an
+  // open entry. The state lives on the server (`TimeEntry.breakStartedAt`), so a break started on
+  // one device is seen and ended on every other; the decision is the clock resolver's
+  // (`resolveBreakEvent`), the guard the one of POST /:id/breaks. The ended break is a Break row.
+  const breakActionSchema = z.object({ action: z.enum(["start", "end"]) });
+  const BREAK_CONFLICT_MESSAGES: Record<string, string> = {
+    NOT_CLOCKED_IN: "Für eine Pause musst du eingestempelt sein.",
+    ALREADY_ON_BREAK: "Die Pause läuft bereits.",
+    NOT_ON_BREAK: "Es läuft keine Pause.",
+    MONTH_LOCKED: "Eintrag ist gesperrt und kann nicht bearbeitet werden",
+    ACTIVITY_SHARES_EXCEED:
+      "Die Pause passt nicht zur Aufteilung der Tätigkeiten. Bitte den Eintrag bearbeiten.",
+  };
+  app.post("/:id/break", {
+    schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = breakActionSchema.parse(req.body);
+      const entry = await loadEntryForBreakWrite(req, reply, id);
+      if (!entry) return;
+      const resolution = await resolveBreakEvent(
+        app,
+        {
+          tenantId: req.user.tenantId,
+          employeeId: entry.employeeId,
+          entryId: entry.id,
+          action: body.action === "start" ? "START" : "END",
+          timestamp: new Date(),
+          actor: { type: "USER", userId: req.user.sub },
+        },
+        req,
+      );
+      if (resolution.kind === "CONFLICT") {
+        return reply.code(409).send({
+          error:
+            BREAK_CONFLICT_MESSAGES[resolution.reason] ??
+            "Die Pause konnte nicht gespeichert werden.",
+          code: resolution.reason,
+        });
+      }
+      return {
+        breakStartedAt: resolution.entry.breakStartedAt,
+        breakMinutes: resolution.entry.breakMinutes,
+        ...(resolution.kind === "BREAK_ENDED" ? { breakId: resolution.breakId } : {}),
+      };
     },
   });
 
@@ -1301,13 +1369,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             : (user.employeeId ?? undefined);
 
       // PERF-V1814-03: cap + defaulted 90d window (non-breaking; web callers always pass bounds)
-      const defaultFrom = from
-        ? new Date(from)
-        : (() => {
-            const d = new Date();
-            d.setDate(d.getDate() - 90);
-            return d;
-          })();
+      const defaultFrom = from ? new Date(from) : addDaysUtc(new Date(), -90);
       const defaultTo = to ? new Date(to) : new Date();
 
       // Phase 91b Plan 03 (#91), D-09: a manager's reach narrows the list to in-scope entries
@@ -1539,6 +1601,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             targetDate: new Date(body.date),
             status: "APPROVED",
             deletedAt: null,
+            // Issue #657 (CR-02): a grant was never coupled to an entry. An approved entry-first
+            // Nachtrag stays APPROVED and is coupled, so it must not be redeemable as a grant (it
+            // would let the employee write arbitrary times with no approval: four-eyes bypass).
+            timeEntry: { is: null },
           },
           select: { id: true },
         });
@@ -1590,9 +1656,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
           const retroReason = body.reason?.trim();
           if (retroReason && !resolvedGrantId) {
-            // Issue #92: one Zeitnachtrag per day (70b D-13) and a day with travel already holds
-            // two entries, so travel is never filed as a request — a manager books it as a
-            // correction, which the retro window exempts.
+            // Issue #92: travel is never filed as a request. A trip filed here would be created
+            // as an ordinary pending entry, and a pending row never anchors a trip, so the
+            // neighbour rule could not hold. Issue #657 keeps the refusal (D-15) — a manager books
+            // a trip as a correction, which the retro window exempts.
             if (travelToSalonId !== undefined) {
               return reply.code(409).send({
                 error: TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE,
@@ -1809,7 +1876,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             // same-grant writes — otherwise the loser could fail on the overlap check (409) before
             // the grant guard ever gets a chance to reject it with 403.
             const consumed = await tx.retroEntryRequest.updateMany({
-              where: { id: grantIdForTx, status: "APPROVED" },
+              where: { id: grantIdForTx, status: "APPROVED", timeEntry: { is: null } },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {
@@ -1891,6 +1958,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               callerEmployeeId: user.employeeId ?? null,
               access: accessContextFromRequest(req),
             });
+            // Issue #657 (D-01/D-13): the entry re-check above runs FIRST, so an overlap with a
+            // recorded or pending entry keeps its wording by the caller's reach; only a live
+            // request that no entry stands for (an uncoupled proposal or grant) answers the
+            // request code here.
+            const requestClash = await findOverlappingRetroRequest(tx, {
+              tenantId: user.tenantId,
+              employeeId,
+              targetDate: new Date(body.date),
+              interval: { start: newStart, end: newEnd ?? wholeTenantDay(body.date, tz).end },
+              tz,
+            });
+            if (requestClash) throw new RetroRequestOverlapError();
             await assertTravelEntry(tx, "RETRO_APPROVAL_PENDING");
             const request = await tx.retroEntryRequest.create({
               data: {
@@ -1980,6 +2059,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         if (err instanceof TravelRefusalError) {
           return reply.code(err.refusal.status).send(err.refusal.body);
         }
+        // Issue #657: the Nachtrag overlaps a pending Zeitnachtrag request of the same day (neutral
+        // text: no date, time or person, so no reach decision is needed).
+        if (err instanceof RetroRequestOverlapError) {
+          return reply
+            .code(409)
+            .send({ error: RETRO_REQUEST_OVERLAP_MESSAGE, code: RETRO_REQUEST_OVERLAP_CODE });
+        }
         // Overlap re-checked inside the transaction (grant branch after the flip, Nachtrag and
         // plain branch under the Employee row lock), worded by the caller's reach → 409.
         if (err instanceof EntryConflictError) {
@@ -1999,8 +2085,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // Create break slot records
+      let createdBreaks: StoredBreak[] = [];
       if (breakSlots.length > 0) {
-        await app.prisma.break.createMany({
+        createdBreaks = await app.prisma.break.createManyAndReturn({
           data: breakSlots.map((b) => ({
             timeEntryId: entry.id,
             startTime: b.startTime,
@@ -2013,8 +2100,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           entryId: entry.id,
           plan: autoBreakPlanOnCreate,
         });
+        createdBreaks = written.breaks;
         // Update entry object for response
-        entry.breakMinutes = written;
+        entry.breakMinutes = written.minutes;
         entry.breakStatus = "AUTO";
       }
 
@@ -2044,15 +2132,32 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         });
       }
 
-      // Re-fetch entry with breaks for response
-      const entryWithBreaks = await app.prisma.timeEntry.findUnique({
-        where: { id: entry.id },
-        include: {
-          breaks: { orderBy: { startTime: "asc" } },
-          // Issue #81 (D-06): the response and the CREATE audit carry the allocation.
-          activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
-        },
-      });
+      // Re-fetch entry with breaks for response. Issue #396: the entry is committed, so a failing
+      // read answers from the created entry + its breaks (same shape), never with a 500 - a retry
+      // would meet the overlap 409 and the client would think the write failed.
+      const entryWithBreaks = await readAfterCommit(
+        app,
+        { entryId: entry.id, route: "create" },
+        () =>
+          app.prisma.timeEntry.findUnique({
+            where: { id: entry.id },
+            include: {
+              breaks: { orderBy: { startTime: "asc" } },
+              // Issue #81 (D-06): the response and the CREATE audit carry the allocation.
+              activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
+            },
+          }),
+        () =>
+          ({
+            ...entry,
+            breaks: [...createdBreaks].sort(
+              (x, y) => x.startTime.getTime() - y.startTime.getTime(),
+            ),
+            activityShares: (body.activityShares ?? [])
+              .map(({ kind, minutes }) => ({ kind, minutes }))
+              .sort((x, y) => (x.kind < y.kind ? -1 : x.kind > y.kind ? 1 : 0)),
+          }) as never,
+      );
 
       await app.audit({
         userId: user.sub,
@@ -2311,6 +2416,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         existing.retroRequest?.status === "PENDING" &&
         existing.employeeId === user.employeeId;
 
+      // Issue #657 (WR-02): the request's date is the contract of a pending Nachtrag. Its entry may
+      // be re-timed within the day, never moved to another day — the request overlap rule (and the
+      // approval) judge the request's own `targetDate`, so a moved row would leave the request on
+      // one day and the entry on another. Refused before any other guard (409, nothing written).
+      if (isOwnPendingNachtragEdit && overlapDate.getTime() !== existing.date.getTime()) {
+        return reply.code(409).send({
+          error:
+            "Der Zeitnachtrag gilt für den beantragten Tag. Das Datum kann nicht verschoben werden.",
+          code: "RETRO_REQUEST_DATE_FIXED",
+        });
+      }
+
       // Phase 76.29.1 Plan 02 — PUT grant pre-validation (mirrors POST ~:1001–1017).
       // If the caller supplies a grantId, verify an APPROVED RetroEntryRequest exists for
       // (existing.employeeId, effective targetDate) — keyed to the ENTRY's employee, not the
@@ -2327,6 +2444,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             targetDate: overlapDate,
             status: "APPROVED",
             deletedAt: null,
+            // Issue #657 (CR-02): a grant was never coupled to an entry. An approved entry-first
+            // Nachtrag stays APPROVED and is coupled, so it must not be redeemable as a grant (it
+            // would let the employee write arbitrary times with no approval: four-eyes bypass).
+            timeEntry: { is: null },
           },
           select: { id: true },
         });
@@ -2556,12 +2677,32 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             // Conditional flip FIRST after the lock: only succeeds if still APPROVED (single-use
             // guard), so a losing same-grant request is rejected with 403 before any conflict check.
             const consumed = await tx.retroEntryRequest.updateMany({
-              where: { id: putResolvedGrantId, status: "APPROVED" },
+              where: { id: putResolvedGrantId, status: "APPROVED", timeEntry: { is: null } },
               data: { status: "USED" },
             });
             if (consumed.count !== 1) {
               throw new GrantAlreadyUsedError();
             }
+          }
+
+          // Issue #657 (WR-02): re-timing the entry of the employee's own pending Nachtrag re-times
+          // the request (an entry-coupled request is judged by its entry), so the other pending
+          // requests of the day are checked against the new interval, under the lock just taken.
+          if (isOwnPendingNachtragEdit && existing.retroRequestId) {
+            const requestClash = await findOverlappingRetroRequest(tx, {
+              tenantId: user.tenantId,
+              employeeId: existing.employeeId,
+              targetDate: existing.date,
+              interval: {
+                start: updatedStart,
+                end:
+                  updatedEnd ??
+                  wholeTenantDay(existing.date.toISOString().split("T")[0], overlapTz).end,
+              },
+              tz: overlapTz,
+              excludeRequestId: existing.retroRequestId,
+            });
+            if (requestClash) throw new RetroRequestOverlapError();
           }
 
           await recheckOverlapInTx(tx, {
@@ -2682,6 +2823,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // Issue #92: the travel write rule or the neighbour check refused inside the transaction.
         if (err instanceof TravelRefusalError) {
           return reply.code(err.refusal.status).send(err.refusal.body);
+        }
+        if (err instanceof RetroRequestOverlapError) {
+          return reply
+            .code(409)
+            .send({ error: RETRO_REQUEST_OVERLAP_MESSAGE, code: RETRO_REQUEST_OVERLAP_CODE });
         }
         if (err instanceof EntryConflictError) {
           return reply.code(409).send({ error: err.userMessage });
@@ -2828,6 +2974,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         where: { id },
         include: {
           employee: { select: { tenantId: true } },
+          // Issue #657 (WR-03): the coupled request's status, to refuse releasing a pending Nachtrag.
+          retroRequest: { select: { status: true } },
           // Issue #81 (D-05): the stored allocation, for the check on a correction and the audit.
           activityShares: { select: { kind: true, minutes: true }, orderBy: { kind: "asc" } },
         },
@@ -2863,6 +3011,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply
           .code(403)
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      // Issue #657 (WR-03): a row coupled to a still PENDING Zeitnachtrag is released only by the
+      // request's decision (approval clears the marker, rejection or withdrawal deletes the row).
+      // Revalidating it here would let the row count as working time without the four-eyes
+      // approval while the request stays decidable.
+      if (existing.retroRequestId && existing.retroRequest?.status === "PENDING") {
+        return reply.code(409).send({
+          error: "Der Zeitnachtrag zu diesem Eintrag muss zuerst entschieden werden.",
+          code: "RETRO_REQUEST_PENDING",
+        });
       }
 
       // Build update data: always revalidate, optionally correct times
@@ -3048,7 +3207,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         action: hasCorrection ? "MANAGER_CORRECTION" : "REVALIDATE",
         entity: "TimeEntry",
         entityId: id,
-        oldValue: existing,
+        // The included request status is read-only context for the WR-03 refusal; the audit shape
+        // stays what it was.
+        oldValue: { ...existing, retroRequest: undefined },
         newValue: updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });

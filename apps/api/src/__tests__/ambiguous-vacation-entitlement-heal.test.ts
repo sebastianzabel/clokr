@@ -33,7 +33,6 @@ describe("Issue #445 — ambiguous zero-placeholder heal is gated (coordinator d
       data: {
         email: `avh-${label}-${uid}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

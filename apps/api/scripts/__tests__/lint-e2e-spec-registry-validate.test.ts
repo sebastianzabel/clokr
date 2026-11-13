@@ -186,10 +186,15 @@ describe("extractE2eCiTestMatch", () => {
         ],
         use: { foo: true },
       },
+      {
+        name: "screenshots",
+        testMatch: /screenshots-854\\.spec\\.ts/,
+        use: { foo: true },
+      },
     ],
   `;
 
-  it("returns the union of basenames from the e2e-ci, axe-scan and visual project blocks", () => {
+  it("returns the union of basenames from the e2e-ci, axe-scan, visual and screenshots project blocks", () => {
     const result = extractE2eCiTestMatch(validConfigText);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -199,6 +204,7 @@ describe("extractE2eCiTestMatch", () => {
           "bs-pattern-retroactive.spec.ts",
           "functional.spec.ts",
           "leave-flow.spec.ts",
+          "screenshots-854.spec.ts",
           "visual.spec.ts",
         ].sort(),
       );

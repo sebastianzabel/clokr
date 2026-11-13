@@ -118,7 +118,6 @@ describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
       data: {
         email: `mgr-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "MANAGER",
         isActive: true,
       },
     });
@@ -150,7 +149,6 @@ describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
       data: {
         email: `emp2-${e2}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

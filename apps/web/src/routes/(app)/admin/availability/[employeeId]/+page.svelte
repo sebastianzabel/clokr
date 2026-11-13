@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   // Phase 260523-0qf, Task 3 — per-employee availability detail page.
   // Accessed via /admin/availability/[employeeId].
   //
@@ -16,6 +17,7 @@
   import { markUnsaved } from "$stores/unsaved";
   import ListDetail from "$lib/components/admin/ListDetail.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import AvailabilityWeekGrid, {
     type RecurringEntry,
   } from "$lib/components/availability/AvailabilityWeekGrid.svelte";
@@ -199,7 +201,7 @@
   title={employee ? `${employee.firstName} ${employee.lastName}` : "Verfügbarkeit"}
   sub="Wann kann dieser Mitarbeiter arbeiten? Urlaub und Abwesenheit werden automatisch berücksichtigt."
   crumbs={[
-    { label: "Verfügbarkeit", href: "/admin/availability" },
+    { label: pageLabel("/admin/availability"), href: "/admin/availability" },
     { label: employee ? `${employee.firstName} ${employee.lastName}` : "Detail" },
   ]}
 >
@@ -221,9 +223,7 @@
   {/snippet}
   {#snippet tabContent(_tab)}
     {#if loading}
-      <div class="av-loading" role="status" aria-label="Laden…">
-        <span class="av-loading-dot"></span>
-      </div>
+      <Skeleton shape="card" lines={3} />
     {:else if loadError}
       <Section>
         <div class="av-load-error">
@@ -236,7 +236,7 @@
         <div class="av-feature-disabled-icon" aria-hidden="true">⚙️</div>
         <h2 class="av-feature-disabled-title">Verfügbarkeits-System deaktiviert</h2>
         <p class="av-feature-disabled-body">
-          Diese Funktion ist für deinen Tenant deaktiviert. Aktiviere sie in den
+          Diese Funktion ist für dein Unternehmen ausgeschaltet. Aktiviere sie in den
           System-Einstellungen unter <strong>Features</strong>.
         </p>
         <a class="btn btn-primary" href="/admin/system#features">Zu den Features</a>
@@ -262,27 +262,6 @@
 </ListDetail>
 
 <style>
-  .av-loading {
-    display: flex;
-    justify-content: center;
-    padding: var(--s-8) 0;
-  }
-
-  .av-loading-dot {
-    width: 32px;
-    height: 32px;
-    border: 3px solid var(--border);
-    border-top-color: var(--brand);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
   .av-load-error {
     display: flex;
     flex-direction: column;
@@ -304,9 +283,9 @@
     text-align: center;
     gap: var(--s-3);
     padding: var(--s-8) var(--s-4);
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
     color: var(--text);
   }
 
@@ -316,7 +295,7 @@
   }
 
   .av-feature-disabled-title {
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-weight: 400;
     font-size: 24px;
     margin: 0;
@@ -326,7 +305,7 @@
   .av-feature-disabled-body {
     margin: 0;
     max-width: 480px;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.9375rem;
     line-height: 1.55;
   }

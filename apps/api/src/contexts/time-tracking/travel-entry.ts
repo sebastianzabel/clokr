@@ -25,7 +25,7 @@
  */
 import type { Prisma, TimeEntry } from "@clokr/db";
 import { resolveAccessReach, type AccessContext } from "../platform";
-import { findEntriesOfDay } from "./day-entries";
+import { findEntriesOfDay, hasPendingRetroMarker } from "./day-entries";
 import { dayCoverage } from "./day-scope";
 import { resolveEntrySalon } from "./entry-salon";
 
@@ -46,17 +46,17 @@ export const TRAVEL_NOT_BETWEEN_SALON_ENTRIES_MESSAGE =
   "Fahrzeit kann nur zwischen einem Eintrag im Abfahrtssalon und einem Eintrag im Zielsalon desselben Tages erfasst werden. Der Weg von zu Hause oder nach Hause ist keine Arbeitszeit.";
 export const TRAVEL_NOT_AS_RETRO_REQUEST_CODE = "TRAVEL_NOT_AS_RETRO_REQUEST";
 export const TRAVEL_NOT_AS_RETRO_REQUEST_MESSAGE =
-  "Fahrzeit kann nicht als Zeitnachtrag beantragt werden. Bitte wenden Sie sich an Ihre Führungskraft.";
+  "Fahrzeit kann nicht als Zeitnachtrag beantragt werden. Bitte wende dich an deine Führungskraft.";
 
 export const TRAVEL_OVERLAPS_DAY_BREAK_CODE = "TRAVEL_OVERLAPS_DAY_BREAK";
 export const TRAVEL_OVERLAPS_DAY_BREAK_MESSAGE =
   "Die Fahrzeit überschneidet sich mit einer erfassten Pause dieses Tages.";
 export const TRAVEL_KIND_IMMUTABLE_CODE = "TRAVEL_KIND_IMMUTABLE";
 export const TRAVEL_KIND_IMMUTABLE_MESSAGE =
-  "Ein Eintrag kann nachträglich weder in eine Fahrzeit noch aus einer Fahrzeit umgewandelt werden. Bitte löschen Sie den Eintrag und legen Sie ihn neu an.";
+  "Ein Eintrag kann nachträglich weder in eine Fahrzeit noch aus einer Fahrzeit umgewandelt werden. Bitte lösch den Eintrag und leg ihn neu an.";
 export const TRAVEL_NEEDS_NEIGHBOUR_CODE = "TRAVEL_NEEDS_NEIGHBOUR";
 export const TRAVEL_NEEDS_NEIGHBOUR_MESSAGE =
-  "Dieser Eintrag ist Abfahrts- oder Ankunftseintrag einer Fahrzeit. Bitte ändern oder löschen Sie zuerst die Fahrzeit.";
+  "Dieser Eintrag ist Abfahrts- oder Ankunftseintrag einer Fahrzeit. Bitte änder oder lösch zuerst die Fahrzeit.";
 
 /** A refusal with the exact status and body the route answers. */
 export type TravelRefusal = {
@@ -164,7 +164,7 @@ function anchorRows(dayRows: readonly TravelDayRow[], excludeId?: string): Trave
     (r) =>
       r.type === "WORK" &&
       r.activityKind !== "TRAVEL" &&
-      r.invalidReasonCode !== "RETRO_APPROVAL_PENDING" &&
+      !hasPendingRetroMarker(r) &&
       r.id !== excludeId,
   );
 }
@@ -253,7 +253,7 @@ export function travelRowsOrphanedBy(rows: readonly TravelDayRow[]): string[] {
       row.activityKind !== "TRAVEL" ||
       row.travelToSalonId === null ||
       row.endTime === null ||
-      row.invalidReasonCode === "RETRO_APPROVAL_PENDING"
+      hasPendingRetroMarker(row)
     ) {
       continue;
     }
@@ -445,6 +445,35 @@ export type ValidateTravelEntryInput = {
 };
 
 /**
+ * The ONE reach rule of a travel write (Issue #660, D-04): the person themself may always tie
+ * their own day together; anyone else needs a reach for `permission` that covers EVERY non-deleted
+ * entry of the day (`dayCoverage` = "all"). The write ({@link validateTravelEntry}) and the day
+ * check's travel offer (`travel-offer.ts`) both ask this function, so who sees an offer and who may
+ * write the trip can never drift apart.
+ */
+export async function travelWriteCoversDay(
+  db: Prisma.TransactionClient,
+  input: {
+    tenantId: string;
+    employeeId: string;
+    access: AccessContext;
+    callerEmployeeId: string | null;
+    permission: TravelWritePermission;
+    dayRows: readonly Pick<TimeEntry, "salonId" | "employeeId" | "date">[];
+  },
+): Promise<boolean> {
+  if (input.employeeId === input.callerEmployeeId) return true;
+  const reach = await resolveAccessReach(db, input.access, input.permission);
+  const coverage = await dayCoverage(
+    db,
+    input.tenantId,
+    reach,
+    input.dayRows.map((r) => ({ salonId: r.salonId, employeeId: r.employeeId, date: r.date })),
+  );
+  return coverage === "all";
+}
+
+/**
  * The write rule of a travel entry, run inside the writer transaction after the Employee row lock
  * and the overlap re-check. In this order, so an out-of-reach caller never learns anything about
  * the day:
@@ -484,17 +513,17 @@ export async function validateTravelEntry(
     date: input.date,
   });
 
-  if (input.employeeId !== input.callerEmployeeId) {
-    const reach = await resolveAccessReach(db, input.access, input.permission);
-    const coverage = await dayCoverage(
-      db,
-      input.tenantId,
-      reach,
-      dayRows.map((r) => ({ salonId: r.salonId, employeeId: r.employeeId, date: r.date })),
-    );
-    if (coverage !== "all") {
-      return { ok: false, status: 404, body: { error: input.outOfReachMessage } };
-    }
+  if (
+    !(await travelWriteCoversDay(db, {
+      tenantId: input.tenantId,
+      employeeId: input.employeeId,
+      access: input.access,
+      callerEmployeeId: input.callerEmployeeId,
+      permission: input.permission,
+      dayRows,
+    }))
+  ) {
+    return { ok: false, status: 404, body: { error: input.outOfReachMessage } };
   }
 
   const anchored = validateTravelAnchors(dayRows, {

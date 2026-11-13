@@ -105,6 +105,8 @@ Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `doc
 - UI labels and user-facing text: **German**
 - Code, comments, commit messages, docs: **English**
 - API descriptions (Swagger): English
+- User-facing texts address the reader with **du**; the binding vocabulary is `docs/glossar.md`, checked by
+  `pnpm --filter @clokr/web lint:ui-terms` (Issue #574)
 
 ## Context Boundaries (ADR 0001, ADR 0002)
 
@@ -117,7 +119,7 @@ Clokr has **four business contexts**, a shared substrate (**Unterbau**, the Shar
 - **Abwesenheiten** (`contexts/absence/`) — request, approval, entitlement, carry-over. A workflow with status, not a recording. Date ranges in days.
 - **Schichtplanung** (`contexts/scheduling/` + `services/phorest/`) — shifts, templates, coverage, availability, Phorest sync. Plans the future. Since Phase 107 it feeds Arbeitszeitkonto (SHIFT_BASED Soll) and Abwesenheiten (SHIFT_BASED leave-day count).
 - **Arbeitszeitkonto** (`contexts/working-time-account/`) — Soll vs. Ist, saldo, Monatsabschluss. Reads from the others. Owns the once-per-day rule.
-- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 20 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, OperatorAccount, OperatorAuditLog, SupportAccess, …) and permissions. Salon (#64), RoleAssignment (#74) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
+- **Unterbau** (Shared Kernel, `contexts/platform/`) — the 21 `platform` models of `MODEL_OWNER` in `apps/api/scripts/measure-foreign-context-access.ts` (Tenant, TenantConfig, Employee, User, WorkSchedule, OperatorAccount, OperatorAuditLog, SupportAccess, PushSubscription, …) and permissions. Salon (#64), RoleAssignment (#74) and Salonzuordnung (#67) land here; Beschäftigung (#66) is backlog and has no entity.
 - **Composition layer** (`apps/api/src/composition/` + composition root `apps/api/src/app.ts`) — owns no model, carries no business rule, reads contexts only through their `index.ts`, and no context imports from `composition/`. A business rule found there moves into the owning context (ADR 0002, Entscheidung 9).
 
 Rules — these are directives, not preferences:
@@ -170,6 +172,14 @@ Clokr MUST be audit-proof (revisionssicher). All data relevant to working time, 
   taken out again), so no day is credited twice (Issue #662; `scripts/audit-662-cancelled-leave-section9.ts` lists
   Bestand, read-only).
 
+- **Correction of a closed month = account movement in the running month (Issue #599, ADR Eintrag AJ).**
+  `MonthCorrectionRequest` (Arbeitszeitkonto, `/api/v1/month-corrections`) never touches the closed month, its entries or its
+  snapshot. An approval (four eyes: neither the requester nor the person concerned) books the journal row `OvertimeTransaction`
+  (CORRECTION) and `correctionMinutes` + `bookingDate` (tenant-local approval day) on the request in one transaction; the saldo
+  core folds them in through `closeEmployeeMonth`'s `accountCorrections`, read only via `booked-month-corrections.ts`. Every
+  production caller passes it (`month-correction-saldo-callers-599.test.ts`). No booking into a closed running month (409
+  `MONTH_LOCKED`) or for a person without a saldo today (409 `CORRECTION_NO_SALDO`). Open months keep the Zeitnachtrag.
+
 - **Operator audit is append-only (Phase 88, Issue #88, D-07a).** Every action of the operator
   principal is written to `OperatorAuditLog` through `recordOperatorAudit()`
   (`contexts/platform/operator-audit.ts`, the only file naming the delegate), never to the tenant
@@ -190,14 +200,21 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **Employee**: firstName → "Gelöscht", lastName → "GELÖSCHT-<employee number or id prefix>", nfcCardId → null. `employeeNumber` is **KEPT** (owner decision 16.10.2026, Issue #614 D-03; § 41 EStG / § 147 AO, Art. 17 Abs. 3 lit. b DSGVO — the payroll office assigns corrections of old months by the DATEV `pnr`); it stays reserved in the tenant, so creating or changing an employee onto it answers 409, never an internal error.
 - **User**: email → anonymized, passwordHash → "ANONYMIZED", isActive → false
 - **Notes**: All notes in TimeEntries, LeaveRequests, Absences are set to null, and the reason of day-break acknowledgements (`DayBreakAck.reason`; rows kept)
+- **Further person-authored free text (Issue #718)**: `LeaveRequest.reviewNote`, `RetroEntryRequest.reviewNote`, `OvertimePlan.note`, `Shift.note` and `EmployeeAvailability.note` → null; the required `RetroEntryRequest.reason` → the neutral text `RETRO_REASON_ANONYMIZED` ("Gelöscht (Anonymisierung)"). Rows, statuses, reviewers and times stay; soft-deleted rows are reached; the ANONYMIZE audit carries counts only. **Deliberately kept** (not person-authored, they document a booking, § 147 AO / GoBD / Art. 17 Abs. 3 lit. b DSGVO): `SaldoSnapshot.note` / `supersededReason` and `OpeningBalance.reason` / `evidenceRef` / `supersededReason`. `AuditLog` free texts are a separate open question (#512). Bestand: `scripts/audit-388-anonymized-leftovers.ts` lists the new fields (ids and counts only).
+- **Month corrections (Issue #599)**: `MonthCorrectionRequest.reason` → the neutral text `MONTH_CORRECTION_REASON_ANONYMIZED`, `reviewNote` → null (`clearMonthCorrectionTextsForEmployee`); rows, statuses, minutes and bookings stay.
 - **Break-waiver text** (Issue #508): `TimeEntry.breakWaivedReason` is set to null (soft-deleted entries too; `breakStatus` and the entry stay)
 - **WLAN identifiers** (Issue #388): `Employee.wifiMacs` → `[]`, `wifiPresenceEnabled` → false, `wifiOptInAt` → null; `PresenceDevice` rows (MAC + label) are hard-deleted. The `ANONYMIZE` audit carries counts only (`clearedDeviceIdentifiers`); Bestand is listed read-only by `scripts/audit-388-anonymized-leftovers.ts` (`docs/migrations.md` „Phase 388“)
 - **Documents**: Absence documentPath → null
 - **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
-- **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
-- **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). `User.role` IS rewritten to EMPLOYEE in the same update as `isActive: false` (Issue #357 sub-fix C, revises Phase 75b D-14, #75) and stays so while the column exists: it used to be the legacy-role fallback a still-valid access token resolved through, which handed a self-anonymizing MANAGER/ADMIN's live token full rights for the rest of its lifetime — the exact gap #357's security review reported. Since #539 (Release A) a user without a stored assignment holds nothing anyway, so the rewrite is defence in depth for a rollback to the previous image. Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
+- **Auth tokens**: Invitations, OTP, RefreshTokens, push subscriptions (Issue #608), calendar-feed tokens (Issue #597) and WLAN pairing codes (`PresencePairingCode`, Issue #610 - the rows naming the person through `consumedByUserId` go with the anonymization, stale ones with the daily token cleanup) are hard-deleted (not retention-relevant)
+- **Role assignments** (Phase 74b, #74): the user's `RoleAssignment` rows are hard-deleted inside the anonymization transaction, each with a `DELETE` audit entry (`newValue.reason` "Anonymisierung"); person-scope lists that contain the employee's id stay unchanged (ids only — the resolution ignores anonymized targets). Since Release B (#641) there is no `User.role` column to rewrite: the person holds nothing after anonymization because the `RoleAssignment` rows are gone (hard-deleted in the anonymization transaction, each with a `DELETE` audit) and `isActive` is `false` (the #357 sub-fix C rewrite of the column to EMPLOYEE went with the column). Two neutrality cells changed on purpose (`DELETE /api/v1/employees/:id | foreign` for ADMIN and FALLBACK_ADMIN, 204→403) and are recorded as an amendment (`contexts/platform/anonymize.ts`, `apps/api/src/__tests__/neutrality/recorded/matrix-amendments.json`, ADR 0001-abweichungen Eintrag N).
+- **Device MAC addresses in audit rows** (Issue #820, Art. 4 Nr. 1 / Art. 17 DSGVO): `audit-mac-redaction.ts` (`contexts/platform/`, the only place; runs first in `anonymizeEmployeeData`) replaces every MAC in the old/new values of the person's rows with "[ausgeblendet]" — by KEY (every string under a key whose tokens contain `mac`/`macs`/`macAddress`) and by SHAPE (MAC-shaped substrings, e.g. inside a note), never by an action list. The person's rows: authored by the user, naming the employee (`employeeId`), `PresenceEvent` with `entityId` = employee, `PresenceDevice` rows of the live devices and of every device id an audit row with the employee names (label redacted by type too), `TimeEntry` rows of the person's entries (`timeEntryIdsOfEmployee()`), and any row whose `mac` equals one of the person's MACs (unknown-MAC events). Rows stay; counts only (`macAuditRedaction`, ANONYMIZE audit `auditRowsMacRedacted`). The `PresenceDevice` rows themselves were already hard-deleted (#388). A new audit writer must put a MAC under a `mac`-token key and be registered in `audit-mac-writers-820.test.ts`, which fails otherwise. Bestand: `scripts/audit-820-anonymized-audit-macs.ts` (read-only, ids and counts).
+- **Leave plan wishes (Issue #835)**: `LeavePlanWish` has no free-text column (data minimisation), so the anonymization has nothing to clear; a wish of an anonymized or exited person is refused at takeover with `LEAVE_PLAN_WISH_NOT_EMPLOYED` and never counts anywhere. Rows are hard-deleted only by the employee hard-delete path.
 - **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount, `ParentalLeaveReduction` rows (no free text, nothing to anonymize — Issue #468) (for retention compliance)
 - **Employment ends (Issue #614)**: `exitDate` ← the tenant-local day of the anonymization when it was empty (an existing one, past or future, stays) plus the #447 exit-year entitlement sync. Absences after the exit day: requests starting after it are cancelled with the reversals of a cancellation approval, requests spanning it are shortened to it through the `/correct` core (`contexts/absence/leave-correction.ts`), pending ones are re-priced, Berufsschule rows are soft-deleted. Closed months, active § 17 BEEG reductions, active § 9 credits and corrections the core refuses are skipped and listed (ids and codes) in the ANONYMIZE audit. The rule lives only in `contexts/absence/employment-exit.ts`, reached through the `app.absenceExit` decoration; per-row audits carry `auditReason` "Anonymisierung", `trigger: "ANONYMIZATION"` and no free text. "Bevorstehende Urlaube" never lists an anonymized person. Persons anonymized before #614 are listed by `scripts/audit-614-anonymized-employment.ts` (read-only, ids only) and corrected by `scripts/backfill-666-anonymized-employment.ts` (Issue #666, owner decision 17.10.2026: dry run by default, `--confirm` writes; sets the missing exit date from the tenant-local day of the ANONYMIZE audit, runs the same `app.absenceExit` rule with the marker `trigger: "BACKFILL_666"` / `auditReason` „Bestandskorrektur #666“, restores the employee number from the audit `oldValue` unless it is missing or taken by another employee — those are only reported; runbook `docs/migrations.md` „Phase 666“).
+  **Deactivation is the second caller (Issue #615):** `PATCH /employees/:id/deactivate` takes a last working day as a tenant-local calendar day (default today; a future day is 400 `EXIT_DATE_IN_FUTURE`, a day before the hire date 400 `EXIT_DATE_BEFORE_HIRE`, a closed month anywhere between the earlier of the stored exit day and the chosen day and the current month 409 `MONTH_LOCKED`, while choosing the stored day itself moves nothing and passes; the checks run again inside the transaction under an Employee row lock, so a lost race is 409; a person whose hire day lies after today has no exit day and is deactivated login-only, audit `exitDateUnchanged: "HIRE_IN_FUTURE"`) and runs the same rule in its own transaction with the marker `trigger: "DEACTIVATION"` / `auditReason` „Deaktivierung“. The `UPDATE Employee` audit carries old and new exit date and `exitSkipped`; reactivating restores nothing the rule ended. The read-only `POST /employees/:id/deactivate/preview` shows the plan's absences (type and dates only with `leave-request:read` over the person, else counts per action), the current live saldo through yesterday (only with `overtime:read`; not the end saldo, which the exit month's close fixes) and the exit-year Resturlaub (only with `leave-entitlement:read`); the stored overtime balance is refreshed after every deactivation; Arbeitszeitkonto answers reach the Unterbau through `composition/employee-exit-ports.ts`, Abwesenheiten answers through `app.absenceExit` / `app.exitVacationBalance`.
+- **Free texts of persons anonymized before #718 (Issue #774)**: `scripts/backfill-774-anonymized-freetext.ts` clears them with the same helpers `anonymizeEmployeeData()` uses (dry run by default = the helpers rolled back, `--confirm` writes; one audit row per person, counts only, `trigger: "BACKFILL_774"` / `auditReason` „Bestandskorrektur #774“; runbook `docs/migrations.md` „Phase 774“).
+- **AuditLog free text (Issue #512, decision delegated by the owner 27.10.2026)**: `anonymizeEmployeeData()` redacts, in its own transaction, the person-authored free text inside the `AuditLog` old/new values of the person (rows authored by the user, and rows whose payload names the `employeeId`) by TYPE through `redactAuditFreeTextOfPerson()` (`contexts/platform/audit-freetext-redaction.ts`, reusing `redactSupportAuditValue()` with `keepTimeOfDay`): numbers, ids, dates, UPPER_SNAKE codes, "HH:MM" and the `actor` stamp stay, any other string becomes "[ausgeblendet]". Who/when/what stay complete (§ 147 AO, GoBD, § 16 Abs. 2 ArbZG, Art. 17 Abs. 3 lit. b DSGVO cover no free text); the rest is Art. 5 Abs. 1 lit. c/e. Rows are never deleted; the ANONYMIZE audit carries `auditRowsRedacted` (count). Never a key-name deny-list. Bestand: `scripts/backfill-512-anonymized-audit-freetext.ts` (dry run by default, `--confirm` writes, `trigger: "BACKFILL_512"`; runbook `docs/migrations.md` „Phase 512“). ADR `docs/adr/0001-abweichungen.md` Eintrag AC.
 - **AuditLog**: userId → null (anonymized, not deleted)
 
 ## Data Retention (Aufbewahrungsfristen)
@@ -236,9 +253,9 @@ Current: recalculated from hire date on every request (does not scale). Target a
   `apps/web/src/lib/reports/team-saldo.ts` is the ONLY place the team median, the Top 5 plus/minus and the outlier
   rule live: a person counts only if employed today with a live saldo, a contract that is not track-only (#494) and
   recorded time since hire; the others are listed as „ohne Erfassung“ / „nur Zeiterfassung“ / „Saldo nicht
-  verfügbar“, never dropped silently, and exited persons keep their own section (#613). `/reports` and the dashboard
-  card „Salden“ read it behind the same two gates as `GET /dashboard/overtime-overview` (`team-overview:read` AND
-  `overtime:read`). `apps/web/src/lib/saldo/forecast-label.ts` is the ONLY place the forecast wording is chosen, from
+  verfügbar“, never dropped silently, and exited persons keep their own section (#613). `/reports` and the card
+  „Salden“ (`TeamSaldoCard`; off the start page since #846 D-04, its new place under Berichte is #895) read it behind
+  the same two gates as `GET /dashboard/overtime-overview` (`team-overview:read` AND `overtime:read`). `apps/web/src/lib/saldo/forecast-label.ts` is the ONLY place the forecast wording is chosen, from
   `unconfirmedMonths` and `hasClosedMonth` (computed in `computeOvertimeBalanceBreakdown`, which computes no figure
   differently; additive on the `/dashboard/overtime-overview` rows, `GET /dashboard`, `GET /overtime/:employeeId` and
   the visible branches of `GET /leave/overtime-balance`): „Laufender Monat“ only for exactly one unclosed month. Every
@@ -250,7 +267,12 @@ Current: recalculated from hire date on every request (does not scale). Target a
   `GET /overtime/month-saldo`) starts at `openMonthCarryInMinutes()` (`contexts/working-time-account/overtime-balance.ts`):
   the last close before the month plus every unclosed month since then (track-only resets, #494), from the
   same chain the live saldo runs, so both agree at the same Stichtag; a month that is track-only on its own
-  contract shows 0. No reader adds a carry of its own; closed months are only read. Known gap: without any
+  contract shows 0. No reader adds a carry of its own; closed months are only read. Many persons at once (Issue #696): `openMonthCarryInMinutesForMany` and
+  `computeMonthReportFiguresForMany` run the SAME chain and month core, only their inputs come from
+  `contexts/working-time-account/overtime-balance.ts` (`ChainSource`: `querySource` for one person, `loadChainSources`
+  with every collection read once for many) - a bulk answer is never a second computation, and
+  `open-month-carry-bulk-696.test.ts` pins it equal to the per-person function. A `@db.Date` bound inside a
+  `ChainSource` filter is cast to its UTC date part (`dayOf`), exactly as Prisma casts it. Known gap: without any
   closed month the live saldo ignores the OpeningBalance (#682).
 - **Sick days are counted in one place (Issue #84, D-14).** `sickLeaveDayCounts()`
   (`contexts/absence/sick-leave-days.ts`, exported via `contexts/absence/index.ts`) is the ONLY
@@ -277,7 +299,10 @@ Current: recalculated from hire date on every request (does not scale). Target a
   Stundennachweis, the leave overview (JSON; one population, one order: last name, first name,
   id), the Monatsabschluss status and year status, the
   Saldo-Übersicht (facade W9 with a required period), today's attendance, the team week, the team
-  trend and the overtime trend. DATEV and the Monatsexport read the employment core `employedInPeriodWhere` WITHOUT the
+  trend and the overtime trend. The team week and today's attendance additionally list only persons holding a
+  contract valid by the period end (`hasWorkScheduleInPeriodWhere`, same module, Issue #576; its two callers are pinned by
+  `contract-population-readers-576.test.ts`) - an account without any WorkSchedule row is no team member, while the
+  period reports keep it. DATEV and the Monatsexport read the employment core `employedInPeriodWhere` WITHOUT the
   anonymisation clause (§ 41 EStG: the Lohnkonto of a month of employment stays complete). The
   carry-over warning list and its cron keep their BUrlG `exitDate: null` rule and only exclude
   anonymised persons. `user.isActive` is a LOGIN state and never selects persons:
@@ -385,6 +410,13 @@ Refreshing int from prod data requires `apps/api/scripts/pseudonymize-dump.ts` �
 prod dump to int. The refresh also neutralises every `OperatorAccount` (email, password hash, TOTP
 secret — Phase 88, D-11), so no operator credential of prod survives on int.
 
+## Simulation instance (Issue #715)
+
+A separate, non-public server runs the current release with synthetic tenants, seeded bots and a nightly
+read-only invariant checker (`apps/sim`, never in a release image). **Read `docs/simulation.md` before
+touching it.** It holds no real personal data; the bots use only real interfaces (no database access);
+a finding becomes a `simulation` issue with ids only.
+
 ## CVE / Security Vulnerability Handling
 
 Trivy/Dependabot process (update direct/transitive/base-image, justify exceptions in `.trivyignore`, never lower severity, document in commit) → see `docs/cve-handling.md`.
@@ -393,9 +425,10 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
 
 - **Several entries per day** per employee, never overlapping (Issue #70): each entry carries its own salon; multiple breaks are allowed within an entry
 - Break model: `Break[]` records with startTime/endTime (legacy: `breakMinutes` integer)
+- **The running break is a server state (Issue #596, #845).** `TimeEntry.breakStartedAt` marks the break of an OPEN entry and is set and cleared ONLY by `resolveBreakEvent()` (`services/clock/resolver.ts`, decision `decideBreak()` in `state-machine.ts`), reached through `POST /time-entries/:id/break` (`{ action: start|end }`, the guard of `POST /:id/breaks`); ending it writes an ordinary `Break` row, and the resolver's STOP closes a running break first, so a closed entry never carries one. Saldo, § 4 evaluation and reports never read the column. The day goal of the clock is `GET /dashboard` `today.sollMinutes` (today's Soll from the account core, `computeWeekProgress`), never a fixed 8 h.
 - `openAdd()` on frontend: with salon options (`showSalonOptions`, multi-salon tenants) it opens a NEW entry whose start is preset to the day's latest end; without them it still opens the day's existing entry for editing. A calendar cell with one entry opens that entry, a cell with several switches to the list focused on the day
 - API POST and PUT answer 409 when the interval overlaps another non-deleted entry of the employee (worded by the caller's reach, see "Several entries per day") or when a second OPEN entry would start the same day; a locked day or closed month stays 403
-- **Every entry carries a required `salonId`** (FK onto `Salon`, `onDelete: Restrict`, Phase 68b / issue #68), decided by `resolveEntrySalon()` in `apps/api/src/contexts/time-tracking/entry-salon.ts` — the only place this rule lives: an explicit, active salon of the same tenant on manual entries, corrections, Zeitnachträge and the CSV import (400 `SALON_INACTIVE` when deactivated, 404 indistinguishable for a foreign or unknown id); otherwise `salonForDay()`, then the tenant's default salon, 409 `NO_ACTIVE_SALON` if none exists. Since Issue #87 the web clock-in (`POST /time-entries/clock-in`, optional `salonId`, never null) passes an explicit salon to `resolveEntrySalon()` (same 400/404 rules), while NFC and WIFI take no salon input (terminal binding: #541). The preselection and whether a choice is offered come only from `clockSalonChoice()` (`apps/api/src/contexts/time-tracking/clock-salon-choice.ts`, served by `GET /time-entries/clock-salon`): a booked day names its salon (a finished day additionally offers the other active salons); at most one active salon, or exactly one current/future assignment salon (`currentAndFutureAssignmentSalonIds()`, Unterbau) equal to today's pattern salon, offers no choice; otherwise a choice preselected with `salonForDay()`. A deviation is never an error, and the #82 salon context never decides the clock salon. Re-clocking without a salon, or in the salon of the day's latest-ending entry, reopens that entry and never changes its salon; an explicitly different active salon starts a NEW entry (Issue #70) unless the day or month is locked (`MONTH_LOCKED`) or the instant lies inside or before another closed entry of the day (409 `ENTRY_OVERLAP`). `PUT` may change the salon (never on a locked entry, never re-derived from a changed date). The salon hangs on the entry, not the day.
+- **Every entry carries a required `salonId`** (FK onto `Salon`, `onDelete: Restrict`, Phase 68b / issue #68), decided by `resolveEntrySalon()` in `apps/api/src/contexts/time-tracking/entry-salon.ts` — the only place this rule lives: an explicit, active salon of the same tenant on manual entries, corrections, Zeitnachträge and the CSV import (400 `SALON_INACTIVE` when deactivated, 404 indistinguishable for a foreign or unknown id); otherwise `salonForDay()`, then the tenant's default salon, 409 `NO_ACTIVE_SALON` if none exists. Since Issue #87 the web clock-in (`POST /time-entries/clock-in`, optional `salonId`, never null) passes an explicit salon to `resolveEntrySalon()` (same 400/404 rules), while WIFI takes no salon input. **An NFC terminal key may be bound to one salon of its tenant (Issue #541)**: `TerminalApiKey.salonId` (nullable, FK onto the Unterbau `Salon`, `onDelete: Restrict`, an approved Shared-Kernel Erweiterung). The `/nfc-punch` adapter passes the bound salon as the explicit salon only while it is active, so the #70 resolver rules apply unchanged (a finished day in another salon starts a NEW entry, the same salon re-opens, an open entry is closed); an unbound key, a binding to a since-deactivated salon and WIFI take no salon input (today's rule, one warn log, never a refusal), and a deactivation race (resolver answers `SALON_INACTIVE`) retries ONCE without the salon so a punch is never lost (§ 16 Abs. 2 ArbZG). The rule lives only in `apps/api/src/contexts/time-tracking/terminal-salon.ts` (`terminalPunchSalon`, `resolveTerminalPunch`, `validateTerminalSalon`); the resolver never reads the binding and the terminal body carries no salon. The binding is set on `POST /terminals` and changed or removed by `PATCH /terminals/:id` (`terminal:manage`, audited with old/new `salonId`, foreign and unknown salon the identical 404, inactive salon 400 `SALON_INACTIVE`, a revoked key 409 `KEY_REVOKED`, an unchanged value 200 without audit, never gated by `HARDWARE_CLOCK`); deactivating a salon neither unbinds nor is blocked by a binding (`GET /terminals` shows `salonActive: false`). Proofs: `nfc-punch-salon-binding-541`, `nfc-punch-salon-race-541`, `terminals-salon-541`, `terminal-salon-migration-541`; ADR `docs/adr/0001-abweichungen.md` Eintrag AA, Nachtrag Phase 541. The preselection and whether a choice is offered come only from `clockSalonChoice()` (`apps/api/src/contexts/time-tracking/clock-salon-choice.ts`, served by `GET /time-entries/clock-salon`): a booked day names its salon (a finished day additionally offers the other active salons); at most one active salon, or exactly one current/future assignment salon (`currentAndFutureAssignmentSalonIds()`, Unterbau) equal to today's pattern salon, offers no choice; otherwise a choice preselected with `salonForDay()`. A deviation is never an error, and the #82 salon context never decides the clock salon. Re-clocking without a salon, or in the salon of the day's latest-ending entry, reopens that entry and never changes its salon; an explicitly different active salon starts a NEW entry (Issue #70) unless the day or month is locked (`MONTH_LOCKED`) or the instant lies inside or before another closed entry of the day (409 `ENTRY_OVERLAP`). `PUT` may change the salon (never on a locked entry, never re-derived from a changed date). The salon hangs on the entry, not the day.
 - **Several entries per day (Issue #70, `docs/adr/0001-abweichungen.md` entry AA).** The database guarantees it:
   exclusion constraint `TimeEntry_no_overlap_closed` (closed, non-deleted entries of one employee never overlap;
   `btree_gist`, half-open `tstzrange`) and partial unique index `TimeEntry_employeeId_date_open_unique` (at most one
@@ -408,10 +441,15 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   text for everyone else (a database refusal is always neutral). Database refusals are recognised structurally
   (`P2039` + `23P01`, `P2002` + index name), never by message; an inverted row (SQLSTATE `22000`) is deliberately not
   mapped to an overlap. `openEntryOf()` / `latestEndingClosed()` (`contexts/time-tracking/day-entries.ts`) are the ONE
-  choice of "the entry of the day" a clock acts on (both skip a TRAVEL row, Issue #92); consolidation never merges across
-  salons and never across a travel entry. Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
+  choice of "the entry of the day" a clock acts on (both skip a TRAVEL row, Issue #92, and a row coupled to a pending Zeitnachtrag, Issue #657 — such a row also
+  shadows every row ending before it, so the clock starts a new entry); consolidation never merges across
+  salons, never across a travel entry and never across a row coupled to a Zeitnachtrag (guard `retro_row`, Issue #657). Run `apps/api/scripts/audit-70-entry-overlaps.ts` (read-only) before deploying
   (`docs/migrations.md`, "Phase 70b"). Never re-create a one-entry-per-day rule — not as an index, a check or a
-  comment. Zeitnachtrag stays one request per employee and day for now.
+  comment. A Zeitnachtrag is per interval (Issue #657): `findOverlappingRetroRequest()`
+  (`contexts/time-tracking/retro-request-overlap.ts`) is the ONE place that decides whether a new request overlaps a pending
+  request of the same day (only PENDING ones count: a decided request is no open question, and a real collision with a recorded time is the entry overlap rule's job; half-open; a request without times covers the whole day; 409 `RETRO_REQUEST_OVERLAP`), run
+  under `lockEmployeeForEntryWrite()` on both creation paths; the entry-first path keeps its entry re-check, the
+  correction proposal (`POST /retro-entry-requests`) has none because it overlaps the entry it corrects.
 - **Presence and working time come from one function (Issue #79).** `entryDurations()` and its
   fold step `addWorkingMinutes()` (`apps/api/src/contexts/time-tracking/entry-durations.ts`,
   exported via `contexts/time-tracking/index.ts`) are the ONLY place presence time (end − start)
@@ -486,7 +524,8 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   entries (409 `TRAVEL_NEEDS_NEIGHBOUR`). The CHECK `TimeEntry_travel_shape_check` (hand-written; Prisma models none)
   is the database backstop of the shape. `latestEndingClosed()` skips TRAVEL (defence in depth: the write rules make a
   trip the latest-ending row impossible), consolidation never merges into or across a trip, `resolveDayState()` in the
-  web mirrors the skip. A trip is never recordable as a Zeitnachtrag (409 `TRAVEL_NOT_AS_RETRO_REQUEST`, #657), by CSV
+  web mirrors the skip. A trip is never recordable as a Zeitnachtrag (409 `TRAVEL_NOT_AS_RETRO_REQUEST`; #657 made the
+  Zeitnachtrag per interval and kept this refusal), by CSV
   or by a clock event. Evaluation is separate and only through `activityMinutes.TRAVEL` of `GET /time-entries/summary`
   (module `ANALYTICS`, departure-salon attribution; recording is NEVER gated by a package and is exempt from the #529
   tenant switch); reports, PDFs and DATEV show a trip as ordinary working time. Recording a trip changes the day's
@@ -495,8 +534,18 @@ Trivy/Dependabot process (update direct/transitive/base-image, justify exception
   `travel-saldo-isolation-92.test.ts` (AST, sibling of the #81 guard: no saldo, kernel, composition or holiday file may
   name a travel field or `travel-entry`; the T1/T2 facade `facade/time-entries.ts` has exactly ONE allowed import,
   `checkTravelNeighbours` + `TravelRefusalError`, for the CSV import writer) and `travel-saldo-equality-92.test.ts`
-  (a trip equals an ordinary entry of the same times on every figure surface). UI only for tenants with salon choice
-  (#64 gate). Never add a second travel validator, a travel field to a figure file or a travel share.
+  (a trip equals an ordinary entry of the same times on every figure surface). Since #660 `GET /day-breaks/checks`
+  offers each cross-salon gap of a day with an UNCLEAR finding as a trip (`travelOffers`: the exact gap, departure =
+  salon of the entry before, arrival = salon of the entry after), built only in
+  `contexts/time-tracking/travel-offer.ts` from the kernel's own gaps and the write rule's own anchor check, never on a
+  redacted or locked day, never on a gap touching a trip or a pending Zeitnachtrag row, on the person's own day only
+  inside the retro window; who sees it is decided by `travelWriteCoversDay()`, the ONE reach rule
+  `validateTravelEntry()` also calls, and the action is the unchanged `POST /time-entries`. The web re-loads the day
+  check of that person and day right before writing and posts only if an offer with the identical interval and salon
+  pair is still served (`postOfferIfStillServed()`, else a toast and a reload); the remaining race and any other
+  refusal are the write rule's answer, which checks anchors, overlap and day breaks but does not bind the interval to
+  the offered gap. UI only for tenants with salon choice (#64 gate). Never add a second travel validator, a second reach
+  rule for the offer, a travel field to a figure file or a travel share.
 - **Breaks are checked per day, across salons (Issue #80).** `evaluateDayBreaks()`
   (`apps/api/src/contexts/time-tracking/day-break-rule.ts`) is the ONLY place the day-level § 4
   rule and the § 3 day sum over several entries live — `checkArbZG`, the day-break routes
@@ -659,6 +708,8 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   the only place that computes it; every reader (Dashboard, Urlaubsübersicht, the Monatsexport's „Urlaubsjahr“ section, the
   carry-over expiry cron, `GET /leave/entitlements`, the admin Urlaubsverwaltung) reads this
   facade instead of re-deriving the arithmetic.
+  The deactivate preview (Issue #615) reads it through `exitVacationBalance`: a hypothetical exit day goes through the
+  #447 sync's own read-only planner, so there is no second § 5 computation.
 - **The regular yearly base value comes from one function (Issue #482).**
   `resolveVacationBaseDays()` (`contexts/absence/leave-days.ts`) is the only place the chain
   lives — `Employee.annualVacationDays`, then for an AZUBI
@@ -666,6 +717,72 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   the statutory floor is applied afterwards by the regular-entitlement formula. A settings or
   classification change writes no row by itself; new years, the #445 zero heal and the audited
   #447/#450 recomputes read the current value. No reader rebuilds the chain.
+- **Parallel leave per salon is counted in one place (Issue #836).** `parallelLeaveLoad()` (the pure
+  kernel) and `evaluateLeaveLimits()` (the checker) in `contexts/absence/leave-limits/` — deliberately NOT
+  re-exported from `contexts/absence/index.ts` (import-cycle cap 22), callers in Abwesenheiten import the
+  module by relative path — are the only place "how many persons of a group are on leave in a salon on a day"
+  is computed. A person counts once per salon, group and day: the Stammsalon of that day, only the person's own
+  workdays, only the allow-list `LEAVE_LIMIT_COUNTED_CODES` (never derived by excluding sick codes), PENDING
+  included. A `LeaveLimitRule` (all salons or one salon, group `ALL` / `CLASSIFICATION` / `ACCESS_ROLE`, a blackout
+  is `ALL` with `maxPersons` 0) gives a warning on request creation (`leaveLimitWarnings`, fail-open), and an
+  approval or a `/correct` over a limit is a 409 `LEAVE_LIMIT_EXCEPTION_REQUIRED` until the approver sends
+  `limitException: { reason }` (10-500 characters, audited with rule ids and counts, never another person's id;
+  fail-closed). Names of other persons appear only within the reader's `leave-request:read:ZUGEWIESEN` reach
+  (`redact.ts`), everyone else gets `hiddenCount`; the load read is `GET /leave/limits/load`. Never
+  retroactive: leave approved before a rule is only marked (`approvedBeforeRule`). A second count anywhere
+  turns `leave-limits-one-place-836.test.ts` red. Details and the documented limits (no classification/role
+  history, `reviewedAt` as the approval stamp, concurrent approvals): `docs/adr/0001-abweichungen.md`, Eintrag AG.
+- **The leave planner lives in one place (Issue #835).** `contexts/absence/leave-plan/` (deliberately NOT re-exported from
+  `contexts/absence/index.ts`, import-cycle cap 22; routes `api/leave-plans.ts`, `/api/v1/leave/plans`) is a non-binding yearly
+  plan per salon and year: `LeavePlan` (`OPEN` / `TAKEN_OVER`, never deleted) and `LeavePlanWish` (always `VACATION`, soft
+  removal, no free text). **A wish counts nowhere** - no saldo, report, DATEV, roster, pricing, month close, leave limit or
+  composition file may name `LeavePlan` / `LeavePlanWish` (`leave-plan-isolation-835.test.ts`, AST with a walked-set floor).
+  The rules, each in one place: the day figure comes only from `leaveLimitLoadView` with wishes passed as `candidates`
+  (#836 kernel, never a second count); a wish's price only from `resolveLeaveDays` with `extraSiblings` (parity with filing the
+  requests one by one, `leave-plan-takeover-parity-835`); **the takeover creates and approves requests only through
+  `createLeaveRequestCore` (`leave-request-create.ts`) and `approveLeaveRequestCore` (`leave-decision.ts`)** - the same cores
+  behind `POST /leave/requests` and `PATCH /leave/requests/:id/review`, never a second validator, a direct `leaveRequest` write
+  or a copy of their checks; the taker's own wish and wishes outside the taker's approve reach stay `PENDING` (four-eyes); the
+  employment window and the Stammsalon are re-checked at takeover (`LEAVE_PLAN_WISH_NOT_EMPLOYED`, `LEAVE_PLAN_WISH_NOT_IN_SALON`)
+  and the #836 limit pre-check runs only for wishes approved at once; a request is linked to a wish only if the wish still has
+  the stored dates (`FOR UPDATE` link hook; a wish moved mid-run re-runs the whole per-wish pipeline); a wish is taken over
+  only under the taker's `leave-request:create` reach over the person (`LEAVE_PLAN_WISH_NO_CREATE_REACH` otherwise -
+  `leave-plan:manage` never goes around the create rule); every takeover write on a wish (link, refusal, `takenOverAt`) is
+  audited, codes only; a request that ends `PENDING` notifies its approvers like any request, never silently. The two refusals
+  `LEAVE_PLAN_WISH_NOT_EMPLOYED` / `LEAVE_PLAN_WISH_NOT_IN_SALON` are terminal and never block the close; an `APPROVAL_…`
+  refusal blocks it only while the request is `PENDING` and the taker may approve it (else the refusal is cleared and the
+  request stays for a regular approver); the plan closes only when nothing else is open, so a plan never gets stuck OPEN.
+  **One takeover run per plan at a time** (advisory lock held for the run on one connection, `utils/with-advisory-lock.ts`
+  pattern; a second run is 409 `LEAVE_PLAN_TAKEOVER_RUNNING`), and the decision core writes a decision only on a `PENDING`
+  row, so no request is approved and deducted twice - for the regular review route too. A refusal reason of another person's
+  wish is shown only within the reader's `leave-request:read` reach. **The
+  database is the last wall:** one OPEN plan per salon and year (`LeavePlan_open_unique`, partial unique), no two active
+  wishes of a person overlap (`LeavePlanWish_no_overlap_active`, exclusion constraint) - both recognised structurally
+  (`P2002` + index name, `P2039` + `23P01`), never by message. **Permission:** `leave-plan:manage:ZUGEWIESEN` (open, set the
+  deadline, edit other persons' wishes in reach, take over; Admin, Inhaber and Salonmanager templates, owner decision
+  06.11.2026); own wishes need only `leave-request:create:EIGENE`; readers are `leave-request:read` in reach OR the person's own
+  Stammsalon, every other cause is the one identical 404. **The deadline** (`TenantConfig.leavePlanDeadlineLocksWishes`,
+  default off) locks only a person's OWN edits after the tenant-local deadline day, never a manager in reach; a taken-over plan
+  is read-only (409 `LEAVE_PLAN_CLOSED`). **Notification:** the type `LEAVE_PLAN_OPENED` has its push text ("Die
+  Urlaubsplanung ist eröffnet.") and e-mail policy in the registries (#608). **Takeover cost:** the decision core's
+  `deferOvertimeRecompute` skips only the live-saldo recompute and the takeover refreshes the stored overtime balance once per
+  approved person whose wish starts on or before the end of the tenant-local current month - SHIFT_BASED reads the
+  running month's approved leave (reactive; measured 253 -> 93 SQL statements and 3.8 s -> 1.5 s per 40 wishes, about
+  4 s per 100); batching with a cursor (D-835-36) was deliberately not built. Wishes are hard-deleted only by the employee
+  hard-delete path (`hardDeleteLeavePlanWishesForEmployee` before `hardDeleteLeaveRequestsForEmployee`, `Restrict` FKs). ADR
+  `docs/adr/0001-abweichungen.md`, Eintrag AH.
+
+- **The leave area has one timeline and one approval place (Issue #840).** `AbsenceTimeline` is the only
+  person-by-day absence grid (`leave-one-timeline-840.test.ts`) and `apps/web/src/lib/leave/leave-colors.ts` the only
+  leave colour source (`leave-colors-one-place-840.test.ts`). `GET /leave/calendar` decides the detail level per person
+  through the #836 visibility rule (`maskCalendarRows`): a foreign row outside the reader's reach has no id, status,
+  halfDay, type or § 9, a foreign PENDING row is dropped, adjacent masked ranges of a person are merged (`mergeDayRanges`);
+  `from`/`to` (at most 366 days) answers `{ entries, salons }`, and `scope=own|team` serve Mein Bereich and mask every
+  foreign row whatever the caller's reach (`GET /leave/plans/:id?view=own` does the same for the planner read and gives a
+  foreign wish the period only). Masked ranges are clipped to the requested window before the merge, and a caller with an
+  empty `leave-request:read` reach who sends no `scope` is answered as `scope=team`. Leave
+  decisions, § 9 cases included, wait only in `/inbox`; old leave URLs are mapped only by `lib/leave/area-tabs.ts`.
+  ADR `docs/adr/0001-abweichungen.md`, Eintrag AI.
 
 ## Overtime Saldo Calculation (current)
 
@@ -700,7 +817,7 @@ FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()
   - A VOCATIONAL_SCHOOL (Berufsschule) day is credited to worked minutes only, never also a Soll
     reduction (one day reduces Soll exactly once).
   - `TenantConfig.monthlyHoursHolidayDeduction` is retired — no code reads or writes it; the column
-    is dropped in a follow-up release (GitHub #470).
+    was dropped by the migration `*_drop_monthly_hours_holiday_deduction` (GitHub #470).
   - Closed months are never recalculated — `scripts/dry-run-433-monthly-hours-soll.ts` lists the
     affected stored months read-only; any correction is a deliberate correction booking.
 - `WorkSchedule.validFrom` MUST be the 1st of a calendar month for every contract CHANGE (PUT `/api/v1/settings/work/:employeeId` and tenant-config bulk apply). Non-1st dates are rejected with HTTP 400 + German message `"Vertragswechsel sind nur zum Monats-1. erlaubt."` (see `apps/api/src/contexts/platform/month-first-date.ts` for the canonical constant `MONTH_FIRST_ERROR`). The initial schedule on employee creation (POST `/api/v1/employees`) is exempt — `validFrom = hireDate` may be any day, because contract START is not a contract CHANGE. Existing non-1st rows (pre-Phase-60) are preserved for audit-trail purposes; surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workschedule-non-month1.ts`. See GitHub issue #220.
@@ -727,6 +844,15 @@ FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()
   through it at all. The audit that established the normalisation was Phase 61; its artefacts were
   archived with the milestone and are not in the repo.
 
+- **FIXED_SCHEDULE: `weeklyHours` = Σ `{day}Hours` on every write (Issue #848).**
+  `contexts/platform/fixed-schedule-hours.ts` is the ONE place: `POST /employees` (which takes no
+  day hours) derives them from `weeklyHours` over the resolved `workDays` (hundredths, remainder on
+  the last workday of the week; no `weeklyHours` = 8 h per workday, the old default), and so does
+  the CSV import (over the column-default Mo–Fr);
+  `PUT /settings/work/:employeeId` (an omitted `weeklyHours` takes the day sum) and the bulk apply
+  (preview and apply) refuse a mismatch with 400 `WEEKLY_HOURS_MISMATCH` before any write. A
+  write-path guard only — no reader changes, other types are never compared, and divergent rows
+  are listed by `scripts/audit-848-weekly-vs-day-hours.ts` (read-only, ids only), never corrected.
 - **Divergent legacy rows MUST NOT be "corrected" (Phase 95b, D-01).** Surface them with
   `pnpm --filter @clokr/api exec tsx scripts/audit-workdays-vs-day-hours.ts` — then leave them
   alone. `workDays` is the source of truth for leave consumption (`calculateWorkDays`) and pro-rata
@@ -825,29 +951,62 @@ FULL calendar month)` (Ø-Methode; a half day reduces by half; one `Math.round()
 Read these before modifying any page in `apps/web` — they are checked in, unlike anything under
 `.planning/`, which is gitignored and therefore unreadable for anyone else:
 
-| Source                                 | What it governs                                                                                                                                   |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web/src/tokens.css`              | The canonical v1.5 token set — every colour, radius and surface variable                                                                          |
-| `apps/web/.lintrc-tokens.txt`          | The banned legacy patterns (`--color-*` / `--glass-*` / `--radius-*` / `--gray-*`) plus a replacement cheat sheet                                 |
-| `apps/web/src/app.css`                 | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
-| `apps/web/scripts/lint-ui-classes.mjs` | Which class names are allowed in the scoped primitive directories, and where that scope ends                                                      |
-| `docs/ADMIN_STRUCTURE.md §3.2.1`       | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02)                                                    |
-| `apps/web/src/lib/utils/chart-theme.ts` | The one chart style source — colours from tokens, tension 0, unit axis titles, zero line, chart kinds and their aria-labels (Issue #591) |
+| Source                                  | What it governs                                                                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/tokens.css`               | The one token source — the D-05 colour roles and the non-colour tokens for pflaume\|salz\|petrol × light\|dark (`data-theme` × `data-mode` on any element), the Figtree and JetBrains Mono `@font-face`, the leave-type aliases |
+| `apps/web/.lintrc-tokens.txt`           | The deny list `scripts/lint-tokens.mjs` parses (retired names, old fonts, the retired axes) plus the old → new cheat sheet                        |
+| `apps/web/scripts/lint-tokens.mjs`      | `lint:tokens`: fails on a retired name (referenced or declared) and on any `var(--x)` nothing in `src` declares; aborts on zero files or an empty deny list (Issue #842) |
+| `apps/web/src/__tests__/token-contrast-842.test.ts` + `token-cascade.ts` | Every role pair ≥ 4.5:1 in all six combinations, parsed from the real `tokens.css`; `token-cascade.ts` is the one cascade resolver of the CSS proofs |
+| `apps/web/src/app.css`                  | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
+| `apps/web/scripts/lint-ui-classes.mjs`  | Which class names are allowed in the scoped primitive directories, and where that scope ends                                                      |
+| `docs/ADMIN_STRUCTURE.md §3.2.1`        | When a control saves instantly and when it waits for the section button (Phase 109, D-01/D-02)                                                    |
+| `apps/web/src/lib/utils/chart-theme.ts` | The one chart style source — colours from tokens, tension 0, unit axis titles, zero line, chart kinds and their aria-labels (Issue #591)          |
+| `docs/glossar.md` | The binding vocabulary and the address form „du“ for every web-app text (Issue #574) |
+| `apps/web/src/lib/nav/routes.ts` | The one route table (Issue #844): every page's URL, area Ich · Team · Verwalten, name (= menu = H1 = crumb), width, permissions and route file; `src/hooks.ts` reroutes new URLs to the files, old URLs redirect; read through `page-labels.ts` (Issue #574) |
+| `apps/web/src/lib/components/ui/README.md` | The twelve building blocks of Issue #843 — one entry component each, their sub-parts, legacy delegates (`PageHead`, `MonthBar`, `PeriodSwitcher`, `KPIStat`, `Modal`, `ConfirmDialog`, `ReasonDialog`) and the block rules |
+| `apps/web/src/tailwind-theme.css` | Tailwind 4 as token pipeline only — the roles of `tokens.css` mapped as `var(--<role>)`; the ONE named `lint:tokens` carve-out for the `--color-` / `--radius-` prefixes (D-843-13) |
+| `apps/web/scripts/lint-ui-classes-route-ratchet.json` | Page-own patterns (filter bar, period control, KPI card, data table) in routes and area components: falling-only, every entry with its page ticket (#845–#854), null only with a written reason (Issue #843) |
+| `apps/web/scripts/lint-no-alert.mjs` | `lint:no-alert`: no `alert(` / `confirm(` / `prompt(` in `apps/web/src` outside tests (Issue #843) |
+| `apps/web/src/lib/settings/settings-pages.ts` | The one place a tenant setting is assigned to a Verwalten page and section — keys, endpoint, rendering file and permission alternatives per section (Issue #854); proof `settings-pages-854.test.ts`, which also carries the #878 own-fields rule |
+| `packages/types/audit-labels.json` | The one audit vocabulary (German action and entity labels) shared by the web list and the API CSV export (Issue #854); proof `labels-854.test.ts` |
 
 Reuse an existing recipe from `app.css` before inventing a class or a token.
+
+Design system v2 (Issue #842), as built: `tokens.css` is the only file that declares a colour role
+(`design-guards-842.test.ts` fails on a second declaration site). Type is Figtree (UI, tabular numerals
+global) and JetBrains Mono for code and raw data only, both self-hosted; there are no italics, and the
+shared `app.css` label recipes carry no uppercase or letter-spacing. `--accent` is a fill, never a text
+colour (guarded). Text on a solid status fill uses `--card`, on a brand fill `--brand-ink` (guarded). The
+retired v1.5/v1.2 names, the old font families and the former skin and density axes are denied by
+`lint:tokens`, `fonts-842` and `no-skin-density-842`. No per-route old/new token flag exists.
+
+Design system v2 building blocks (Issue #843), as built: the twelve blocks live once in
+`apps/web/src/lib/components/ui` on bits-ui (the only primitive library, exact pin), documented in
+`ui/README.md`. Tailwind 4 is wired as a token pipeline only (`@tailwindcss/vite`, `tailwind-theme.css`,
+no preflight): utilities are allowed inside `lib/components/ui`, a route with a utility class fails a guard,
+and the blocks themselves are scoped CSS on the `tokens.css` roles. The example page `/admin/bausteine`
+renders every block in the six theme × mode frames. `Skeleton` is the only loading state (no visible
+„Laden…“ text anywhere, guarded by a source scan) and `Spinner` lives only inside buttons; every write of a
+start page acknowledges its result through `toasts`. Dialogs portal to `body` above the topbar and make the
+rest of the page `inert`. The blocks are responsive only through container queries at 760 / 1100 px
+(`ui/breakpoints.ts`); the one named exception is `PeriodPicker`, which keeps the viewport rules of the old
+`MonthBar` (D-843-21). A page-own pattern that a block replaces is registered in the ratchet above until its
+page ticket migrates it; a new one fails `lint:ui-classes`.
 
 `ConfirmDialog` swallows a refused `onConfirm` (Phase 89): the dialog stays open, the button is
 re-enabled and nothing is rethrown, so a refusal is no unhandled rejection and needs no
 `process.on("unhandledRejection")` allow-list in a test. `ReasonDialog` still throws to its
 `ConfirmDialog` to keep its inline error.
 
-Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern`. Note
-that `lint:ui-classes` only scans `lib/components/ui/` and `lib/components/layout/` — components
-elsewhere (`lib/components/saldo/`, `calendar/`, `breaks/`, …) are outside that gate and need their
-own mounted test instead.
+Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes` + `lint:save-pattern` +
+`lint:ui-terms` (forbidden terms in shown text, `docs/glossar.md`, Issue #574) + `lint:no-alert` (Issue #843);
+`lint:ui-classes`, `lint:tokens`, `lint:ui-terms` and `lint:no-alert` also run in the pre-commit hook. `lint:ui-classes` checks the
+class names of `lib/components/ui/` and `lib/components/layout/` and, since #843, scans every `.svelte` file under
+`src/routes` and the area components under `lib/components` for page-own filter bars, period controls, KPI cards and
+data tables against the ratchet register (raw `.scrim` / `.modal` markup has no register and always fails).
 
 - **Charts are built in one way (Issue #591).** Every chart.js chart is created as `new Chart(<canvas>,
-  <builder>(…))` with a builder of `apps/web/src/lib/dashboard/team-charts.ts`. A builder draws from a
+<builder>(…))` with a builder of `apps/web/src/lib/dashboard/team-charts.ts`. A builder draws from a
   descriptor (kind, unit, subject) that also yields the canvas aria-label through `chartAriaLabel()`, so
   the label names the drawn type and unit. Counts are columns, a signed series is a line with tension 0
   and an emphasised zero line, Soll/Ist are grouped columns. Every value axis carries `CHART_UNIT_TITLE`
@@ -1059,6 +1218,14 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 ## Error Handling
 
 - Global error handler in `apps/api/src/app.ts` catches ZodErrors and converts them to `{ error: string, message: string, details: [] }` with HTTP 400
+- **Validation and duplicate answers are German, centrally (Issue #573).** Zod's DEFAULT texts come only from
+  `apps/api/src/utils/zod-german.ts` (`z.config({ customError })`, registered in `buildApp`; a schema's own message keeps
+  precedence). A 400 carries `details[]` = `{ path, field, code, message }` and a `message` summary that names fields by
+  German label (`FIELD_LABELS`) and NEVER by key; the keys go to `details[].path` and the info log. An unhandled Prisma
+  `P2002` answers 409 `{ error, code: "DUPLICATE" }` with the text of `DUPLICATE_MESSAGES`
+  (`apps/api/src/utils/duplicate-conflict.ts`, keyed by the unique index, never echoing a value), a `P2034` 409
+  `WRITE_CONFLICT`. A new unique index needs its entry (`duplicate-conflict-573.test.ts` fails otherwise); a response
+  with an English Zod default fails `api-error-messages-573.test.ts`. Never add a per-route Zod text mapping.
 - All other errors return `{ error: string }` with appropriate status code
 - German error messages for user-facing responses: `"Validierungsfehler"`, `"Interner Serverfehler"`
 - Return early with `reply.code(XXX).send({ error: "German message" })` — no `throw`
@@ -1111,10 +1278,10 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - Direct `api.get()` / `api.post()` calls inside `onMount` or event handlers
 - `@tanstack/svelte-query` is listed as a dependency but not currently used in routes (direct fetch pattern prevalent)
 - Loading/error state managed locally per page
-- Scoped `<style>` blocks in each component — no Tailwind utility classes in markup (Tailwind v4 installed but CSS is primarily custom)
-- CSS custom properties for theming (v1.5): `var(--brand)`, `var(--text)`, `var(--bg-card)` — defined in `apps/web/src/tokens.css`. Legacy `--color-*` / `--glass-*` / `--radius-*` / `--gray-*` are banned (see UI Consistency Rules).
-- Global styles in `apps/web/src/app.css` (~1476 lines) with theme system (`data-theme` attribute)
-- Four themes: `pflaume` (default), `nacht`, `wald`, `schiefer`
+- Scoped `<style>` blocks in each component — no Tailwind utility classes in route markup (Tailwind v4 is wired as a token pipeline only, #843; utilities are permitted only inside `lib/components/ui`)
+- CSS custom properties for theming (v2): `var(--brand)`, `var(--text)`, `var(--card)` — defined only in `apps/web/src/tokens.css`. Retired v1.5/v1.2 names are denied by `lint:tokens` (see UI Consistency Rules).
+- Global styles in `apps/web/src/app.css` (~2800 lines) over the token layer (`data-theme` × `data-mode` attributes)
+- Three themes: `pflaume` (default), `salz`, `petrol`, each in `data-mode` light|dark. A personal preference (`/admin/themes`, saved through `PUT /me/preferences`); no skin axis, no density axis, no tenant default
 - BEM-like class naming: `.admin-tab`, `.admin-tab--active`, `.toast-container`, `.empty-state-title`
 - Responsive via `@media` queries in component styles
 
@@ -1125,7 +1292,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - Plugin files: single named export — `export const fooPlugin = fp(async (app) => { ... })`
 - Store files: single named export — `export const authStore = createAuthStore()`
 - `@clokr/db`: Prisma client + generated types — imported as `import { PrismaClient } from "@clokr/db"`
-- `@clokr/types`: Shared TypeScript interfaces — imported as `import { Role } from "@clokr/types"`
+- `@clokr/types`: Shared TypeScript interfaces — imported as `import type { FederalState } from "@clokr/types"`
 
 ## Configuration Pattern
 
@@ -1169,8 +1336,8 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   tenant-side salon admin (`/admin/salons`, Issue #563) calls `salonContext.load(…, { force: true })`
   after every successful create, edit, deactivate and activate.
 - **Opening hours live only on the salon (Issue #563).** `Salon.openingHours` is the only source.
-  `TenantConfig.storeHours` is retired (strip on write, omit on read via `RETIRED_TENANT_CONFIG_COLUMNS`
-  in `contexts/platform/api/settings.ts`; the column is dropped by #638) and the mirror
+  the tenant-level column `TenantConfig.storeHours` was dropped by the migration `*_drop_store_hours`
+  (#638; `RETIRED_TENANT_CONFIG_COLUMNS` in `contexts/platform/api/settings.ts` is empty) and the mirror
   `syncSoleActiveSalonOpeningHours()` is gone. `admin/system` keeps only `shiftStoreHoursMode` (a tenant
   policy, minimal payload `{ shiftStoreHoursMode }`). `/admin/salons` (list and detail, create at
   `/admin/salons/neu` with an explicit Bundesland) uses the tenant API `/api/v1/salons` and the facade
@@ -1250,8 +1417,20 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
   `/shifts/conflicts` (#645 — the filter is not its fix), month close, audit log, configuration pages
   and their pickers, `/admin/salons`, personal pages; on `/reports` the DATEV card, the per-person documents,
   the Urlaubsübersicht and the Verfall-Warnungen (block table in the same test). `GET /leave/section9` has been
-  reach-scoped since #644 (PR #646) and the salon filter intersects with that reach; per-salon
-  minimum staffing is #647.
+  reach-scoped since #644 (PR #646) and the salon filter intersects with that reach; coverage rules per
+  salon: next bullet (#647).
+- **Coverage rules can name a salon (Issue #647).** `CoverageRule.salonId` is a nullable FK onto `Salon`
+  (`onDelete: Restrict`, a Shared-Kernel dependency named on #647); NULL = tenant-wide, which every pre-#647
+  rule is (no backfill). `contexts/scheduling/coverage-rule.ts` is the ONE place of the evaluation:
+  `coverageSalonInView()` picks the salon whose rules act on `GET /shifts/week` (the validated `salonId` filter,
+  else the caller's single person-free `shift:read` reach salon (D-03a), else the tenant's only active salon,
+  else none) and `pickCoverageRule()` chooses the day's rule (candidates = that salon's rules plus the
+  tenant-wide ones; the specificity ladder is unchanged; within a rung a salon rule beats a tenant-wide one).
+  `POST`/`PUT /shifts/coverage-rules` validate a named salon only through `resolveSalonInReach` (one 404), a
+  rule of a later deactivated salon stays and is marked (`PUT` re-checks only a changed salon), and `PUT`
+  checks a changed `templateId` against the tenant. The `/week` response gains no key; `/admin/shifts` offers
+  the salon only under `showSalonOptions()` and stays exempt from the header filter. Details: ADR
+  `docs/adr/0001-abweichungen.md`, section P, Nachtrag Phase 647.
 - **The reports follow the salon context (Issue #542).** `GET /reports/monthly`,
   `GET /dashboard/today-attendance`, `GET /dashboard/overtime-overview` and
   `GET /reports/monthly-export/pdf` take an optional `salonId`, validated by `resolveSalonInReach()` against the reach of
@@ -1385,7 +1564,7 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   tenant session, client, logger or salon context. `hooks.server.ts` sets `frame-ancestors 'none'`
   and `X-Frame-Options: DENY` on `/betreiber`; the client logger drops its queue there, so operator
   errors never reach the tenant log endpoint. Nothing in the tenant app links to `/betreiber`, and
-  the console pins theme nacht / skin editorial / comfortable without writing the device's stored
+  the console pins theme salz on `<html>` (the mode follows the device) without writing the device's stored
   preferences (it restores them on leaving). Since Issue #90 the start page shows an „Übersicht“
   and the tenant list the columns Salons, Mitarbeitende and Letzte Aktivität with an „Inaktiv“
   badge, loaded with one `GET /operator/dashboard` next to the tenant list request. Logout clears the tab's session but cannot revoke the
@@ -1423,15 +1602,19 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   `packages-legal-core-isolation-566.test.ts` (AST) proves the legally required paths read no package and
   pins every gate before its create. `isMultiSalonTenant()` / `showSalonOptions()` never read packages. The
   web only displays: `GET /me/context` `packages` (`bookedModules`, `salonLimit`), `moduleBooked()` in
-  `$stores/salon-context` (unknown state hides nothing) and `ModuleHint` at exactly five set-up spots under
+  `$stores/salon-context` (unknown state hides nothing) and `ModuleHint` at exactly six set-up spots under
   `/admin` (the fifth, Issue #563: the salon create action on `/admin/salons` when `CHAIN` is not booked and
-  the active salons reach the salon limit; never in clock, calendar or dashboard; existing items stay
-  manageable). Test fixtures book
+  the active salons reach the salon limit; the sixth, Issue #624: the „Neue Rolle“ action of `/admin/roles`
+  when `CHAIN` is not booked; never in clock, calendar or dashboard; existing items stay manageable). Test fixtures book
   everything (`FIXTURE_PACKAGES`, so recorded neutrality cells stay unchanged); package tests build their
   tenant with `seedGrundversionTenant`. Existing tenants keep what they use (migration
   `*_tenant_packages`, Bestandsschutz); run the read-only dry run `scripts/audit-566-package-backfill.ts`
-  on int and prod BEFORE the deploy (`docs/migrations.md`, „Phase 566“). Extended roles are not gated yet
-  (#624). ADR: `docs/adr/0001-abweichungen.md` Eintrag Z.
+  on int and prod BEFORE the deploy (`docs/migrations.md`, „Phase 566“). Since Issue #624 extended roles belong
+  to `CHAIN`, for NEW creations only: `POST /roles`, `POST /roles/:id/copy` and `POST /role-assignments` with
+  scope SALONS or PERSONS, and a `PATCH /role-assignments/:id` that switches an assignment to a reach type it did not have, answer 409 `MODULE_NOT_BOOKED` (the gate runs first, before the name check and the
+  #78 four-eyes check; TENANT-scope assignments, PATCH and DELETE stay free; `resolveAccessReach` and
+  `request-permissions.ts` never read packages, pinned by `packages-legal-core-isolation-566.test.ts`;
+  behaviour in `role-chain-package-624.test.ts`). ADR: `docs/adr/0001-abweichungen.md` Eintrag Z.
 - **Jobs: writing jobs skip, retention never skips.** Cron jobs that write (month close, attendance
   checks, Phorest sync, reminders) skip a deactivated tenant; the data-retention purge deliberately
   runs for it, because retention is a legal duty that does not end with the contract. The source-scan
@@ -1463,6 +1646,180 @@ as built (`docs/adr/0001-abweichungen.md` Eintrag Y):
   defined in `contexts/platform/request-permissions.ts`, applied in `api/auth.ts`) when
   `effectivePermissionKeysForUser()` is empty; a wrong password keeps its 401. The code is the control
   value, the German text only display (the web shows the server's message and branches on neither).
+
+### Web-Push on devices (Issue #608)
+
+A person can opt a phone or browser in to push notifications per device; ADR `docs/adr/0001-abweichungen.md` Eintrag AD,
+operator runbook `docs/runbooks/web-push.md`. Rules, as built:
+
+- **VAPID is an optional set, like `OPERATOR_JWT_SECRET`.** `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` are all
+  set or all unset (`config.ts`, `superRefine`: the public key must belong to the private key, the subject is `mailto:` or an
+  https URL whose host is not localhost; a part-set or mismatching set fails at boot). Unset = push is off: `GET /api/v1/me/push/config` answers
+  `{ enabled: false, publicKey: null }`, the other four `/api/v1/me/push` routes do not exist (404), nothing is ever sent and
+  the profile section is not rendered (`push-surface-off-608.test.ts`). Never a default, never derived from another secret;
+  the e2e and CI stacks run without keys.
+- **A subscription is a delivery address in the Unterbau.** `PushSubscription` (`tenantId` FK `Restrict`, `userId` FK `Cascade`,
+  unique `endpoint`) is hard-deleted on revoke, on a 404/410 from the push service, on anonymization and by the int refresh
+  (`pseudonymize-dump.ts`), and removed by test cleanup. Create, update and delete are audited (`CREATE`/`UPDATE`/`DELETE`,
+  entity `PushSubscription`) without the endpoint or the keys; rows written by the system carry the stamp
+  `actor: { type: "SYSTEM", tenantId }` with the tenant of the ROW. Several devices per person (at most 10). An endpoint that
+  is registered again is updated for the same person; another person takes it over only with the same key pair (same keys prove
+  the same browser, P-608-07) — the old row is deleted and audited, never two rows per endpoint.
+- **Lock-screen text lives in ONE place.** `contexts/platform/notification-push-policy.ts` holds, per `notify()` type, one neutral
+  German du-form text or `never` — fail-closed: a type without an entry is not pushed, and `notification-push-policy-608.test.ts`
+  scans every emit site and pins the registry keys equal to the e-mail registry. An e-mail policy of `never` implies a push
+  `never` (the four `SECTION9_*` types and `SUPPORT_ACCESS_STARTED`), with one named exception: the types listed in
+  `PUSH_WITHOUT_EMAIL` of `notification-push-policy-608.test.ts`, each with a written reason (the three `REMINDER_*` types of
+  Issue #609: neutral nudge, e-mail deliberately not used; #610 adds its own entry on merge). The payload is exactly `{ title, body, url }`: title
+  „Clokr“, body from the registry, `url` the notification's own link after `safePushUrl()` (same-origin relative, else
+  `/dashboard`). The in-app title and message are NEVER sent (name, minutes, saldo, health or § 9 content would reach the lock
+  screen, Art. 5 Abs. 1 lit. c and Art. 9 DSGVO). Never add a second text source and never a per-call text.
+- **One sender, one allow-list.** `push-sender.ts` is the only file that imports `web-push`; the VAPID details are passed per
+  call and never set globally. An error object is never logged — only `{ statusCode, host }` (the endpoint path is a capability).
+  `PUSH_SERVICE_HOST_SUFFIXES` (`push-endpoint-guard.ts`) is the one endpoint allow-list (SSRF: https only, host equal to or a
+  subdomain of one of four push-service families; anything else answers 400 `PUSH_ENDPOINT_NOT_ALLOWED` before any write).
+  Never add a second allow-list or a host without a reason in the ADR.
+- **`notify()` dispatches fire-and-forget for EVERY call**, after the in-app row, with the tenant taken from the subscription
+  row (several emit sites pass no `tenantId`); a deactivated tenant (`ACTIVE_TENANT_WHERE`) and an inactive user receive
+  nothing. A push failure never fails `notify()`; `app.settlePushDispatch()` drains the in-flight sends (shutdown, tests).
+- **The service worker (`apps/web/src/service-worker.ts`) is push-only.** It registers `push`, `notificationclick` and the
+  lifecycle events; it has no network-request handler and no cache, so the app can never serve a stale bundle, and it ALWAYS
+  shows a notification (an unreadable payload shows a fallback; silent pushes get a subscription revoked on iOS). A tap
+  focuses an open Clokr window and posts it the target (`clokr:navigate`; the `(app)` layout validates it and calls `goto()`, so
+  the unsaved-changes guard applies - the worker never navigates a window itself) or opens a new one, never an operator or
+  signed-out auth window; a tap while signed out lands on its page after sign-in
+  (`safeAppNext()`, `?next=`). The CSP names `worker-src 'self'`; the manifest declares only icon sizes that exist.
+- **Explicit logout removes this device's registration first** (Sidebar and Topbar, deadline 3 s). The inactivity timeout and a
+  forced 401 logout cannot (no valid token): the device stays registered until the next explicit logout or a manual removal.
+- **Known limit (D-16).** Direct `notification.create` sites that bypass `notify()` never push (`bs-leave-correction.ts`,
+  `vocational-school-generator.ts`). Moving them onto `notify()` is a deliberate follow-up, not a fix to slip into another change.
+- A new notification type needs its push entry in the same commit (the scan fails otherwise); a new `notify()` call site needs
+  none beyond that. Rotating the VAPID pair invalidates every subscription (each device enables push again).
+
+### Calendar feed „Mein Dienstplan“ (Issue #597)
+
+A person subscribes to their own shifts, effective leave and work-location holidays as ICS; ADR `docs/adr/0001-abweichungen.md`
+Eintrag AK. The secret travels in the link (`/api/v1/calendar-feed/dienstplan.ics?token=…`, calendar apps send no header):
+`CalendarFeedToken` (Unterbau) stores only the SHA-256, one row per user, rotate replaces it, revoke deletes it
+(`/api/v1/me/calendar-feed`, audited without the token). `resolveCalendarFeedToken()` (`contexts/platform/calendar-feed-token.ts`)
+is the ONE validity rule, on every poll: active user, active tenant, not anonymized, and the own-read permissions the feed shows
+(`shift:read:EIGENE`, `leave-request:read:EIGENE`); every invalid state is one identical 404. The feed (`composition/calendar-feed.ts`)
+is minimal: shifts as „Schicht“ with time and salon only, sick leave as „Abwesend“, no note, no label, no names. The token never
+reaches a log line (`redactCalendarFeedPath`, route log level `warn`). Anonymization and the int refresh delete the tokens.
+
+### Shift reminders (Issue #609)
+
+A tenant can switch on three reminders for persons with a PLANNED shift; ADR `docs/adr/0001-abweichungen.md` Eintrag AF. They
+ride on the Web-Push channel of #608 (above). Rules, as built:
+
+- **Only a planned shift gives a reminder.** The three occasions — start (shift start + N, no valid entry), end (shift end + N,
+  still clocked in) and day close (the tenant's evening time, a shift day without any recorded time) — are derived from `Shift`
+  rows only. A person without a shift gets nothing and no start time is invented (the same reading as #587); a fixed
+  schedule has hours, not start times.
+- **One kernel, one job.** `contexts/time-tracking/shift-reminders.ts` is the ONLY place of the windows and decisions (pure: no
+  Prisma, no clock): N is `reminderOffsetMinutes` clamped to 5–120 (default 15), the evening time `reminderDayCloseTime`
+  (default 20:00, `HH:MM`, an invalid stored value falls back); START and END are due for 60 minutes after they open, DAY_CLOSE
+  for 30, so a restart never floods; every instant is built in the tenant time zone with `fromZonedTime` (DST and overnight
+  shifts follow the zone, never a 24 h step). `shift-reminder-job.ts` (`runShiftReminders(app, now)`) is the ONE job: cron
+  `*/5 * * * *` under `ADVISORY_LOCK_KEYS.ATTENDANCE_SHIFT_REMINDER` (`1020n`), decorator `tryShiftReminders`, active tenants
+  with at least one switch on (`ACTIVE_TENANT_WHERE` inside the first query), two stages (pure candidate selection first; the
+  population, entry, leave, absence, holiday and notice reads only for candidates, so an idle tick reads nothing). It reads
+  only through the Schichtplanung (`getShiftsInRange`, with the additive `conflictsWithLeave` select), Abwesenheiten
+  (`getActiveLeaveOverlapping`, `getAbsencesOverlapping`), Zeiterfassung (`getRecordedWorkEntriesInRange`) and Unterbau
+  (`holidaysForSalon`) facades and adds no caller of the #587 day-status primitives (`day-status-one-function-587`).
+- **The never-list.** No reminder on a day of effective leave (any `EFFECTIVE_LEAVE_STATUSES` row incl. sick and half days, D-12;
+  PENDING does not count), an imposed absence, a public holiday of the shift's OWN salon, or for a shift flagged
+  `conflictsWithLeave`; never for exited, anonymised, login-deactivated or § 18-exempt persons, a person who switched that
+  occasion off, or a deactivated tenant; never to a manager in their manager role — the recipient is always `employee.userId`
+  of the shift's own person. The skip is silent: no text ever says why a reminder is missing (Art. 9 DSGVO, sick days). A
+  person still clocked in gets no evening reminder (D-13), and a shift ending after the evening time gives none that day (D-15,
+  stated in the admin hint).
+- **Dedupe on ANY existing row, dismissed or not.** START and END: `(userId, type, relatedType "Shift", shift id)`, plus one
+  notice per person, occasion and instant (two shifts at the identical start give one); DAY_CLOSE: `relatedType "EmployeeDay"`,
+  `employeeId:day` (the #80 convention). The 10-hour `CLOCK_OUT_REMINDER` skips an open entry a `REMINDER_SHIFT_END` notice
+  already covers: a notice created at or after the entry's CURRENT open period (the later of `startTime` and `updatedAt`, which
+  a re-open bumps) AND about a shift of the entry's own day (`shiftEndNoticeCoversEntry`, WR-01; a re-opened, forgotten entry
+  and a stale entry of an earlier day still get their 10-hour reminder); the 09:00 `MISSING_ENTRIES` job is unchanged.
+- **"Clocked in" for a shift (WR-03/WR-04).** Only an OPEN entry of the shift's own day (overnight: its start or end day, or
+  an early clock-in inside the 2 h look-back) silences START and triggers END; a forgotten open entry of an earlier day does
+  neither. START is also silenced by a closed entry still running at the shift start (ended after `start - 5 min`), never by an
+  earlier closed entry (a previous split shift). END stays silent when another worked shift of the person starts within 60
+  minutes after this end (a flagged or silent following shift does not count). A successful clock-in soft-dismisses the
+  person's open `REMINDER_SHIFT_START` notices, a clock-out the open `REMINDER_SHIFT_END` ones (web, NFC and WLAN paths,
+  `shift-reminder-dismiss.ts`, reactive, never fails the clock; IN-03).
+- **Channels.** The three types are e-mail `never` and push `send` with the neutral registry texts („Deine Schicht hat begonnen.
+  Jetzt einstempeln?“, „Feierabend? Jetzt ausstempeln.“, „Heute fehlt noch deine Zeit.“, no time, salon or name) and the new
+  `TTL_1H` class (a late „begonnen“ would be wrong); they are the entries of `PUSH_WITHOUT_EMAIL`. The in-app message may name
+  the shift time (own data, never on a lock screen).
+- **Settings.** Five `TenantConfig` columns (three switches default off, offset, evening time) are written through the existing
+  `PUT /settings/work` (bounded by Zod, audited by the #285 diff audit); three `Employee` opt-out columns
+  (`reminderShiftStartOff`, `reminderShiftEndOff`, `reminderDayCloseOff`) are written only by the own-data route
+  `GET`/`PATCH /api/v1/employees/me/reminders` (`.strict()` body, own Employee row only, audited with the changed keys; a
+  caller without an employee, e.g. an API key, gets 400, never 401). The opt-outs are a person's own choice: `employees.ts`
+  `omit`s them on every read or update whose row reaches a response or an audit value and `employeeCreatedAuditValue()` leaves
+  them out of the creation audit (D-16), so the employee list, the single view and the create/update audits never carry a
+  colleague's opt-outs. The ONE place they appear is the own-data change itself: its audit row (`UPDATE Employee`, the changed
+  keys with old and new value) is readable by holders of `audit-log:read` and, redacted by type, by an operator under an active
+  support access (traceability beats hiding it, WR-02); `employee-reminder-columns-hidden-609` pins both halves.
+- **A reminder never stamps (AC-4).** The start and end link is `/dashboard?clock=1`; the dashboard opens a `ConfirmDialog` that
+  names the action and the current time from the LIVE clock state and calls the unchanged `handleClock()` only after the
+  person confirms (`lib/dashboard/clock-reminder.ts`; the reminder code issues no request of its own, the param is stripped
+  with `replaceState`). The day-close link is `/time-entries?view=list&date=<day>`. Never add a second reminder job, a second
+  window rule or a per-call push text; a new occasion is a new kernel decision plus a registry row.
+- **Unterbau-Erweiterung without a list to update.** The eight columns default to off/false, so no existing reader changes; no
+  maintained list of `TenantConfig`/`Employee` columns exists in this file (the DSGVO anonymisation list names identifying data
+  only, and an opt-out boolean is not one). The ADR entry carries „Auswirkung auf die Kontexte“.
+
+### WLAN pairing by QR code (Issue #610)
+
+A person couples their phone to WLAN presence by scanning a QR code in the salon; ADR `docs/adr/0001-abweichungen.md` Eintrag AE,
+operator runbook `docs/runbooks/wlan-qr-kopplung.md`, adapter notes `apps/fritzbox-adapter/README.md`. The WLAN clock logic
+(presence event → clock event) is unchanged and stays pinned by the existing WLAN tests. Rules, as built:
+
+- **The MAC address comes only from the adapter's TCP peer, resolved through TR-064 - never from a request.** The adapter
+  (`apps/fritzbox-adapter/src/pairing.ts`) reads `req.socket.remoteAddress`, asks the box (`X_AVM-DE_GetSpecificHostEntryByIP`;
+  only the live answer counts, a stale host list is never consulted) and registers `{ mac, hostname }` at `POST /api/v1/presence/pairing-codes` (presence-source key, the
+  one shared check `authenticatePresenceSource` of the webhook and the issuer). It ignores `X-Forwarded-For`, every query and
+  every body, and refuses its own, loopback and link-local peers. No API route in the confirm flow accepts a MAC or an IP from
+  the client (`pairing-no-client-mac-610.test.ts`). The consequence is a fixed property: a forwarded link can only couple the
+  device that opened the QR page.
+- **The code has one module.** `contexts/time-tracking/pairing-code.ts` is the ONLY place of the format (32 random bytes, 64
+  lowercase hex), the 5-minute TTL (`expiresAt = now + TTL`, never longer) and the hash (SHA-256; only the hash is stored in
+  `PresencePairingCode.codeHash`). Preview and confirm are `POST`s that take the code in the JSON body, never in an API URL
+  (there is no `GET`; any query parameter answers 400 and the code stays usable); `presence-pairing-contract-610.test.ts` captures the request log (with a positive
+  control) and proves no code or hash reaches a log line. Every invalid state (unknown, expired, consumed, foreign tenant,
+  malformed) answers ONE identical 404 body (`PAIRING_CODE_INVALID_ERROR`) - no oracle.
+- **The confirm is one transaction** (`confirmPairing()` in `presence-pairing.ts`): the owner lock `lockPresenceOwner()`
+  (Employee + User, `FOR NO KEY UPDATE`, the FIRST statement of every presence-device writer), then the code row `FOR UPDATE`,
+  unconsumed and unexpired, consumed, consent set (`wifiPresenceEnabled`, `wifiOptInAt = now`, audited old/new), the device
+  attached with `pairedVia = QR`. A MAC mapped to ANOTHER person answers 409 `PRESENCE_DEVICE_TAKEN` and the code stays
+  unconsumed; a `[tenantId, mac]` unique race rolls back and answers the same 409. An inactive person is refused. The caller's
+  own MAC is refreshed (200), not duplicated.
+- **Replace, not accumulate.** A QR confirm deletes the person's other `QR` devices (audited); `MANUAL` devices stay; an admin
+  reassign through `POST /admin/presence-sources/:id/devices/:mac/assign` writes `pairedVia = MANUAL`. A concurrent second pairing
+  has exactly one winner (`presence-pairing-race-610.test.ts`).
+- **Withdrawal removes every device.** `PATCH /me/wifi { wifiPresenceEnabled: false }` deletes all of the person's
+  `PresenceDevice` rows and clears `wifiMacs` under `lockPresenceOwner()`, each deletion audited with the reason „Einwilligung
+  widerrufen“, and answers `devicesRemoved`. This changed existing behaviour (devices used to stay); persons who opted out
+  before #610 keep inert leftover rows until they act - no retroactive cleanup.
+- **`PresenceDevice.lastSeenAt` means "last presence event", not "last seen on the network".** The webhook writes
+  `min(eventTime, now)` monotonically (a guarded `updateMany`, no extra audit); the adapter posts on transitions only.
+- **The re-couple hint has one rule** (`wifi-device-not-seen.ts`, Feature 11 of the attendance checker, cron `20 9 * * *`,
+  advisory key `ATTENDANCE_WIFI_DEVICE_NOT_SEEN`): a person with consent and a `QR` device gets ONE `WIFI_DEVICE_NOT_SEEN`
+  notice (in-app plus a neutral push, e-mail `never`, only to the person themself) when the device showed no sign of life since
+  the start of their third-newest shift day with a closed non-WIFI WORK entry (look-back 28 days). A tenant without any event
+  signal in the window gets nothing (adapter-outage guard); a seen or re-coupled device dismisses the notice. The hint is the
+  ONE named exception of the #608 parity rule (`PUSH_WITHOUT_EMAIL` in `notification-push-policy-608.test.ts`: e-mail `never`
+  normally implies push `never`); a second exception needs its own entry and reason there.
+- **The adapter listener is off by default** (`PAIRING_ENABLED=true`, `CLOKR_APP_URL` an https origin) and compose publishes its
+  port on loopback unless `PAIRING_HOST_BIND` names the host's LAN address. The existing `/devices` endpoint, `getHostList()` and
+  the poll are untouched. Docker can hide the phone's source address (userland proxy, Docker Desktop, rootless, `"iptables":
+  false`): the runbook's network recipe and the adapter log's `peer=` line are the check on a real host.
+- **Pairing codes are tokens, not records.** Ephemeral and not retention-relevant: FKs `tenantId` and `presenceSourceId` are
+  `onDelete: Cascade`, `consumedByUserId` is a plain column without FK; rows older than a day are purged by the token cleanup
+  and a person's rows go with the anonymization; the int refresh deletes them all (`pseudonymize-dump.ts`).
+- The pinned WLAN tests (`presence-webhook`, `presence`, `me-wifi`, `auto-break-all-triggers-799`, `presence-resolver`, the
+  adapter's `state.test.ts`) must stay unedited and green; `610-untouched.sh` of the phase proved it.
 
 ### Tenant-scoping gate (Issue #204)
 
@@ -1530,24 +1887,27 @@ without a stored assignment holds nothing, and an active account whose effective
 empty is refused at sign-in with 403 `NO_ROLE_ASSIGNED` (login, verify-otp and refresh). No token
 carries a `role` claim any more (an old token that still has one is ignored — proven by
 `token-claims-539.test.ts`), the login body has no `user.role`, and `actorRole` is no longer written
-to new leave audit rows. `User.role` is only a **rollback-safety column derived from the user's role
-assignments** — written back by `deriveCompatRole()` in
-`apps/api/src/contexts/platform/compat-role.ts` after every assignment change (so a rollback to the
-previous image finds consistent values), and read by exactly two documented readers, pinned by
-`legacy-role-reads-539.test.ts`: the write-back comparison of
-`syncCompatRoleColumn` (D-06) and the takeover script. (The third reader, the company-PDF role
-filter D-12, is gone since #617 removed that PDF; `parseCompatRoleFilter` and `compatRoleUserWhere`
-stay exported without a caller until Release B, #641. The guard's `ALLOWED_READERS` never counted D-12, so
-its pin needed no change.) The employee form's role is derived from the
-stored assignments (`null` shows „Keine Rolle zugewiesen“). Before deploying Release A to any
-instance, run `apps/api/scripts/backfill-539-role-assignments.ts` (dry run, then `--confirm` when it
-lists users; runbook: `docs/migrations.md` „Phase 539“). Column and enum go with Release B
-(#641). A role comparison, a `requireRole(` call or a Prisma `where` on a role value in
-non-test `apps/api/src` fails CI and `.husky/pre-commit`:
+to new leave audit rows. Since Release B (#641) the column `User.role` and the Prisma enum `Role` no
+longer exist (migration `*_drop_user_role`; the rollback to an image below v1.18.0 is data-preserving and rehearsed —
+recreate type and column with the default, delete the `_prisma_migrations` row, see
+`docs/migrations.md` „Phase 641“, step 5; a `pg_dump` restore is only the fallback): the role lives only in stored role assignments. The requested role
+of `POST /employees` and the CSV import (the web form sends no role since #580; the API contract stays
+`"ADMIN" | "MANAGER" | "EMPLOYEE"`) is the type `SystemRoleName` of
+`apps/api/src/contexts/platform/system-role-assignment.ts` and only ever becomes a stored TENANT
+assignment; the employee responses serve the DERIVED `user.role` (`deriveFormRole()`, `null` without an
+assignment, shown as „Keine Rolle zugewiesen“). Nothing is written back to a column any more, so a role
+change writes its `RoleAssignment` audit rows without `compatRole` and no UPDATE row on `User`; audit
+rows written before Release B keep theirs (append-only). `legacy-role-reads-539.test.ts` keeps its
+reader allowlist asserted EMPTY. A role comparison, a `requireRole(` call or a Prisma `where` on a role
+value in non-test `apps/api/src` fails CI and `.husky/pre-commit` — in every file, with one named
+exemption for the assignment logic (`contexts/platform/system-role-assignment.ts` may compare identifiers
+typed `SystemRoleName`; it is no reader of a legacy column) and no exceptions file; a comparison of a
+request payload's role lives in a helper of that file and is classified in `docs/permissions.md`
+(„Nicht gezählte Treffer“):
 
 | Source                                                                                                | What it governs                                                                                                                                 |
 | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/scripts/lint-role-checks.ts`                                                                | The gate itself — AST scan, the single allowlisted file `contexts/platform/compat-role.ts`, no exceptions file                                  |
+| `apps/api/scripts/lint-role-checks.ts`                                                                | The gate itself — AST scan over every non-test API file, one named exemption (`SystemRoleName` in `system-role-assignment.ts`), no exceptions file                           |
 | `docs/permissions.md`                                                                                 | Every guard, handler check and recipient lookup with its permission; `permission-site-mapping.test.ts` compares counts and permissions per file |
 | `apps/api/src/__tests__/permission-neutrality-matrix.test.ts` + `neutrality/recorded/matrix.json`     | Every route × eight actors, recorded on the code BEFORE the switch                                                                              |
 | `notification-recipients-neutrality.test.ts` / `activity-auth-neutrality.test.ts` + `recorded/*.json` | The 17 recipient lookups; activity feed and login role, same rule                                                                               |
@@ -1573,6 +1933,16 @@ a hit is converted, never excepted.
 
 ### Role management UI and the admin area (Issue #83)
 
+- **Roles are assigned in one way (Issue #580).** The building block
+  `lib/components/admin/roles/PersonRoleAssignments.svelte` (role + scope, several assignments) is used by
+  `/admin/roles` „Zuweisungen“, the employee tab „Berechtigungen“ and the create dialog (draft mode). The
+  wording lives only in `apps/web/src/lib/roles/assignment-label.ts` (guard
+  `role-assignment-wording-one-place-580.test.ts`); role names come only from the stored roles (the
+  administrator role reads „Admin“ everywhere). The create dialog sends no `role` (API default „Mitarbeiter“
+  for the whole company; the API field stays for the CSV import and API clients); its drafts go through
+  `POST /role-assignments` after the 201 (`lib/roles/assignment-drafts.ts`), a refusal keeps the person and
+  opens `/admin/employees/<id>#berechtigungen`. Without `role-assignment:manage` nothing is requested (no read
+  path exists without it). Escape closes only the top-most Modal.
 - **Permission labels live once, on the server.** `contexts/platform/permission-labels.ts` holds the
   German heading per resource (the `docs/permissions.md` headings) and the German label per catalog
   key; `GET /api/v1/roles/permission-catalog` (`role:read`) serves them. `permission-labels.test.ts`
@@ -1588,7 +1958,7 @@ a hit is converted, never excepted.
   (`admin-route-permissions.test.ts` fails otherwise). Page-internal role checks that change content
   are #538; the fallback is gone since #539 Release A (owner decision, Unterbau Semantikänderung), the web session
   carries no role and the employee screen shows „Keine Rolle zugewiesen“ for a person without an assignment;
-  dropping the column and the enum is Release B (#641).
+  the column and the enum are gone (Release B, #641).
 - **System-role templates change only through a NEW data-only migration plus the constant (Issue
   #86).** Never edit the migration that created a template: add a migration (`UPDATE "AccessRole"`,
   `IS DISTINCT FROM` guard) and change `SYSTEM_ROLE_PERMISSIONS` in

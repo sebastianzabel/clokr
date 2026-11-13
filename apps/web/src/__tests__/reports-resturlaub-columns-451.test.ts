@@ -42,7 +42,7 @@ describe("Issue #451 Plan 08 (D-07, D-08) — /reports shows effective carry-ove
   });
 
   it("the table has a Verfall column and no 'Gefährdet' or 'Anspruch (T.)' header", () => {
-    expect(PAGE).toContain('<th scope="col">Verfall</th>');
+    expect(PAGE).toContain('{ key: "verfall", label: "Verfall" }');
     expect(PAGE).not.toContain("Gefährdet (T.)");
     expect(PAGE).not.toContain("Anspruch (T.)");
   });

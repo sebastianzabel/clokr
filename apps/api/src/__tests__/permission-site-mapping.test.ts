@@ -6,7 +6,7 @@
  * Since #75 every access decision asks for a permission from the catalog in
  * `contexts/platform/permission-catalog.ts`. The removed role guard is no longer this file's job —
  * `apps/api/scripts/lint-role-checks.ts` (D-19) fails on any call of it and on any role comparison
- * outside `contexts/platform/compat-role.ts`. This test keeps the checked-in mapping true against
+ * outside `contexts/platform/system-role-assignment.ts`. This test keeps the checked-in mapping true against
  * the source tree, in two ways.
  *
  * 1. Per-file COUNTS. Three detectors run over every non-test `.ts` file under `apps/api/src`

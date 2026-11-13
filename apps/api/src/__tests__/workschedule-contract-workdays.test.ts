@@ -64,7 +64,6 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
       data: {
         email: `wcwd-shift1-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -96,7 +95,6 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
       data: {
         email: `wcwd-shift2-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -266,7 +264,6 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
       data: {
         email: `wcwd-bulk-${Date.now()}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -281,7 +278,15 @@ describe("PUT /api/v1/settings/work/:employeeId — WorkSchedule.contractWorkDay
       },
     });
 
-    const defaults = { defaultWeeklyHours: 41 };
+    // Issue #848: the defaults are a consistent FIXED_SCHEDULE contract (weekly = Σ day hours).
+    const defaults = {
+      defaultWeeklyHours: 41,
+      defaultMondayHours: 8.2,
+      defaultTuesdayHours: 8.2,
+      defaultWednesdayHours: 8.2,
+      defaultThursdayHours: 8.2,
+      defaultFridayHours: 8.2,
+    };
     const preview = await previewBulkApply(app, data.adminToken, { defaults });
     const shiftGroup = preview.nonCandidates.find((g) => g.reason === "OTHER_SCHEDULE_TYPE");
     expect(shiftGroup?.employees.map((e) => e.employeeId)).toContain(shiftEmployee2.id);
@@ -336,7 +341,6 @@ describe("PUT /api/v1/settings/work/:employeeId — cross-tenant guard with cont
       data: {
         email: `wcwd-victim-${Date.now()}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

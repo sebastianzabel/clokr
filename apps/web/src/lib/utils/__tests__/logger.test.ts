@@ -307,3 +307,55 @@ describe("clientLogger — never reports from the operator console (Issue #89, T
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("clientLogger — URLs are logged without query or fragment (review WR-02, Issue #610)", () => {
+  const CODE = "ab".repeat(32);
+
+  afterEach(() => {
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("posts only the path while a one-time pairing code is in the address bar", async () => {
+    localStorage.setItem("accessToken", "token-610");
+    window.history.replaceState({}, "", `/settings/geraet-koppeln?code=${CODE}#x=${CODE}`);
+
+    clientLogger.error("boom");
+    clientLogger.warn("careful");
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+
+    const sent = JSON.stringify(fetchMock.mock.calls.map((call) => (call[1] as RequestInit).body));
+    expect(sent).not.toContain(CODE);
+    expect(sent).not.toContain("code=");
+    expect(sent).toContain("/settings/geraet-koppeln");
+  });
+
+  it("also strips the sign-in leg that carries the code in ?next=", async () => {
+    localStorage.setItem("accessToken", "token-610");
+    window.history.replaceState(
+      {},
+      "",
+      `/login?next=${encodeURIComponent(`/settings/geraet-koppeln?code=${CODE}`)}`,
+    );
+
+    clientLogger.error("boom");
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+
+    expect(String((fetchMock.mock.calls[0][1] as RequestInit).body)).not.toContain(CODE);
+    expect(bodyOf(0).url).toBe("/login");
+  });
+
+  it("strips a query or fragment a caller put into the url or filename fields", async () => {
+    localStorage.setItem("accessToken", "token-610");
+
+    clientLogger.error("boom", {
+      url: `https://clokr.example.test/settings/geraet-koppeln?code=${CODE}`,
+      filename: `https://clokr.example.test/_app/immutable/chunk.js?v=${CODE}#frag`,
+    });
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+
+    const body = bodyOf(0);
+    expect(body.url).toBe("/settings/geraet-koppeln");
+    expect(body.filename).toBe("/_app/immutable/chunk.js");
+    expect(JSON.stringify(body)).not.toContain(CODE);
+  });
+});

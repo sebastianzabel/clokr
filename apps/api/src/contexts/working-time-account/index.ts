@@ -48,6 +48,9 @@ export {
   createOvertimeAccount,
   setOvertimeAccountBalance,
   hardDeleteOvertimeDataForEmployee,
+  clearMonthCorrectionTextsForEmployee, // Issue #599 (DSGVO Art. 17)
+  MONTH_CORRECTION_REASON_ANONYMIZED, // Issue #599
+  clearOvertimePlanNotesForEmployee,
 } from "./facade/overtime-account";
 export {
   isMonthClosed,
@@ -82,6 +85,8 @@ export { DEFAULT_MISSING_ENTRIES_DAYS, resolveMissingEntriesDays } from "./missi
 export {
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
+  addDaysUtc, // Issue #172
+  calcMonthlyHoursDayMinutesTz, // Issue #473
   dateStrInTz,
   dayRangeUtc, // Issue #613
   getDayHoursFromSchedule,
@@ -91,6 +96,7 @@ export {
   monthDayBounds,
   monthDateRange, // Issue #493 (D-10)
   monthRangeUtc,
+  startOfDayUtc, // Issue #172
   timeStrInTz,
   todayInTz,
   weekRangeUtc,
@@ -102,6 +108,7 @@ export {
   computeDailySollMinutes,
   countBsDaysInIsoWeek,
   getVocationalSchoolMinutesForDate,
+  resolveBsDailySollMinutes, // Issue #787
   sortedBsDatesInIsoWeek,
 } from "./vocational-school-saldo";
 export { findMissingWorkdays } from "./find-missing-workdays";

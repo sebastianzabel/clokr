@@ -370,30 +370,35 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
       // logged but never surface to the client; the weekly cron will fill on
       // Saturday if this attempt fails.
       if (hadActivePatternsBefore === 0 && body.patterns.length > 0) {
-        const tenant = await app.prisma.tenant.findUniqueOrThrow({
-          where: { id: req.user.tenantId },
-          select: { federalState: true },
-        });
-        const needed = new Set<FederalState>([tenant.federalState]);
-        for (const p of body.patterns) {
-          if (p.federalStateOverride) needed.add(p.federalStateOverride as FederalState);
+        // Issue #397: the patterns are committed here; a failing tenant read must not make the PUT a 500.
+        try {
+          const tenant = await app.prisma.tenant.findUniqueOrThrow({
+            where: { id: req.user.tenantId },
+            select: { federalState: true },
+          });
+          const needed = new Set<FederalState>([tenant.federalState]);
+          for (const p of body.patterns) {
+            if (p.federalStateOverride) needed.add(p.federalStateOverride as FederalState);
+          }
+          const now = new Date();
+          // Fire-and-forget: don't await; log on failure.
+          // v1.8 race fix — track via the same registry as the BS-generator so tests
+          // can drain pending OpenHolidays-API work before asserting on DB state.
+          // Without this, the sync (hundreds of ms) can finish AFTER a later test's
+          // beforeEach wipes SchoolHolidayPeriod, repopulating it mid-test and
+          // triggering the generator's Ferien-aware orphan-sweep to soft-delete
+          // valid Absences (root cause of BERSCH-02 idempotency CI flake).
+          const syncRun = syncSchoolHolidaysForTenant(
+            app.prisma,
+            req.user.tenantId,
+            [...needed],
+            { from: now.getFullYear(), to: now.getFullYear() + 1 },
+            app.log,
+          ).catch((err) => app.log.warn({ err }, "on-demand school-holidays sync failed"));
+          app.trackPendingBSGeneration?.(syncRun);
+        } catch (err) {
+          app.log.warn({ err }, "on-demand school-holidays sync could not be started");
         }
-        const now = new Date();
-        // Fire-and-forget: don't await; log on failure.
-        // v1.8 race fix — track via the same registry as the BS-generator so tests
-        // can drain pending OpenHolidays-API work before asserting on DB state.
-        // Without this, the sync (hundreds of ms) can finish AFTER a later test's
-        // beforeEach wipes SchoolHolidayPeriod, repopulating it mid-test and
-        // triggering the generator's Ferien-aware orphan-sweep to soft-delete
-        // valid Absences (root cause of BERSCH-02 idempotency CI flake).
-        const syncRun = syncSchoolHolidaysForTenant(
-          app.prisma,
-          req.user.tenantId,
-          [...needed],
-          { from: now.getFullYear(), to: now.getFullYear() + 1 },
-          app.log,
-        ).catch((err) => app.log.warn({ err }, "on-demand school-holidays sync failed"));
-        app.trackPendingBSGeneration?.(syncRun);
       }
 
       // v1.7.4 hotfix — On-demand BS-Absence-Generator trigger.

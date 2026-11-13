@@ -342,6 +342,10 @@ describe("Issue #70 — migration catalog and replay neutrality", () => {
           );
           await tx.$executeRawUnsafe(`DROP INDEX "TimeEntry_employeeId_date_open_unique"`);
           await tx.$executeRawUnsafe(`DROP INDEX "TimeEntry_employeeId_date_idx"`);
+          // The later #835 exclusion constraint depends on btree_gist; this drop runs inside the rolled-back transaction.
+          await tx.$executeRawUnsafe(
+            `ALTER TABLE "LeavePlanWish" DROP CONSTRAINT "LeavePlanWish_no_overlap_active"`,
+          );
           await tx.$executeRawUnsafe(`DROP EXTENSION btree_gist`);
           await tx.$executeRawUnsafe(LEGACY_UNIQUE_INDEX_SQL);
           const legacy = await catalogCounts(tx);

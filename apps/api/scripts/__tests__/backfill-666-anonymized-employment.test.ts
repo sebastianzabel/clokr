@@ -102,7 +102,6 @@ describe("backfill-666-anonymized-employment (Issue #666)", () => {
       data: {
         email,
         passwordHash: await bcrypt.hash("test1234", 4),
-        role: "EMPLOYEE",
         isActive: false,
       },
     });
@@ -265,7 +264,6 @@ describe("backfill-666-anonymized-employment (Issue #666)", () => {
       data: {
         email: `holder666${Math.random().toString(36).slice(2, 8)}@example.invalid`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -619,7 +617,6 @@ describe("backfill-666-anonymized-employment (Issue #666)", () => {
       data: {
         email: `${label}${Math.random().toString(36).slice(2, 8)}@example.invalid`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: false,
       },
     });

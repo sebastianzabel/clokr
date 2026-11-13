@@ -20,58 +20,62 @@ const PAGE = readRouteFile(
   "../routes/(app)/admin/employees/[id]/+page.svelte",
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
+// Since Issue #854 (plan 854-20) the Zugang tab component shows the account and the hint.
+const ZUGANG = readRouteFile(
+  "../lib/components/employees/detail/ZugangTab.svelte",
+  "src/lib/components/employees/detail/ZugangTab.svelte",
+);
 const LIST = readRouteFile(
   "../routes/(app)/admin/employees/+page.svelte",
   "src/routes/(app)/admin/employees/+page.svelte",
 );
 
 describe("/admin/employees/[id] - a person without a role (Issue #539)", () => {
-  it("imports the rules from form-role.ts", () => {
-    expect(PAGE).toMatch(
-      /import \{[^}]*\b(initialFormRole|hasNoRole|roleForSave)\b[^}]*\} from "\$lib\/employees\/form-role"/,
+  // Issue #580 (D-580-04) retired the role select of this page together with its helpers
+  // (initialFormRole, roleForSave, the eRole state, the empty first option); their absence is
+  // asserted in admin-employee-role-assignments-580.test.ts. The display rules below still hold.
+  it("imports the no-role rule and hint from form-role.ts", () => {
+    expect(ZUGANG).toMatch(/import \{[^}]*\bhasNoRole\b[^}]*\} from "\$lib\/employees\/form-role"/);
+    expect(ZUGANG).toMatch(
+      /import \{[^}]*\bNO_ROLE_HINT\b[^}]*\} from "\$lib\/employees\/form-role"/,
     );
   });
 
-  it("types the employee's user role as nullable and the form state with the empty choice", () => {
+  it("types the employee's user role as nullable and derives no default role", () => {
     expect(PAGE).toMatch(/role:\s*FormRole \| null;/);
-    expect(PAGE).toMatch(/let eRole = \$state<FormRole \| "">\(""\);/);
-  });
-
-  it("initialises the form role from the server-derived role, with no default role", () => {
-    expect(PAGE).toContain("eRole = initialFormRole(employee.user?.role ?? null);");
     expect(PAGE).not.toMatch(/employee\.user\?\.role \?\? "EMPLOYEE"/);
   });
 
-  it("builds the PATCH body's role part through roleForSave", () => {
-    expect(PAGE).toContain("...roleForSave(canAssignRoles, eRole)");
-    expect(PAGE).not.toMatch(/canAssignRoles \? \{ role: eRole \} : \{\}/);
-  });
-
-  it("offers a disabled placeholder option „Keine Rolle zugewiesen“ first in the role select", () => {
-    const select = PAGE.slice(PAGE.indexOf('<select id="e-role"'));
-    const firstOption = select.slice(0, select.indexOf("</select>"));
-    expect(firstOption).toMatch(/<option value="" disabled>Keine Rolle zugewiesen<\/option>/);
-    expect(firstOption.indexOf('value=""')).toBeLessThan(firstOption.indexOf('value="EMPLOYEE"'));
-  });
-
-  it("renders the hint in the E-Mail/Status block, outside the canAssignRoles condition", () => {
-    const hintAt = PAGE.indexOf("{NO_ROLE_HINT}");
+  it("renders the hint under hasNoRole, outside the canAssignRoles condition", () => {
+    const tab = ZUGANG.slice(ZUGANG.indexOf('aria-labelledby="{uid}-roles"'));
+    const hintAt = tab.indexOf("{NO_ROLE_HINT}");
     expect(hintAt).toBeGreaterThan(-1);
-    const guard = PAGE.lastIndexOf("{#if hasNoRole(employee.user)}", hintAt);
+    const guard = tab.lastIndexOf("{#if hasNoRole(account)}", hintAt);
     expect(guard).toBeGreaterThan(-1);
     expect(hintAt - guard).toBeLessThan(300);
-    // The role select's own block ends before the hint block starts.
-    const roleBlock = PAGE.indexOf("{#if canAssignRoles}");
-    const roleBlockEnd = PAGE.indexOf("{/if}", roleBlock);
-    expect(guard).toBeGreaterThan(roleBlockEnd);
-    // Existing recipe, no invented class.
-    expect(PAGE.slice(guard, hintAt)).toContain('class="callout"');
+    // The permission block opens before the hint and is closed again before the hint's guard.
+    const permissionBlock = tab.indexOf("{#if rights.canAssignRoles}");
+    expect(permissionBlock).toBeGreaterThan(-1);
+    expect(permissionBlock).toBeLessThan(guard);
+    const between = tab.slice(permissionBlock, guard);
+    const opens = (between.match(/\{#if /g) ?? []).length;
+    const closes = (between.match(/\{\/if\}/g) ?? []).length;
+    expect(closes).toBe(opens);
+    // Existing block, no invented class: the warn Note.
+    expect(tab.slice(guard, hintAt)).toContain('<Note tone="warn">');
   });
 });
 
 describe("/admin/employees list - a person without a role (Issue #539)", () => {
-  it("reads no role from the employee row; the chip comes from the assigned role names only", () => {
+  // #854 (owner review): the list is the shared PersonenTable; its Rollen column shows the names of the
+  // person's STORED role assignments, served by GET /employees?include=directory (#853), and "–"
+  // without any. The page reads no role of its own.
+  const MODEL = readRouteFile("../lib/team/personen-model.ts", "src/lib/team/personen-model.ts");
+  it("reads no role from the employee row; the names come from the stored assignments only", () => {
     expect(LIST).not.toMatch(/\buser\??\.role\b/);
-    expect(LIST).toContain("(roleNamesOf(emp) ?? []).length > 0");
+    expect(LIST).toContain("/employees?include=directory");
+    expect(MODEL).not.toMatch(/\buser\??\.role\b/);
+    expect(MODEL).toMatch(/const roles = person\.roleNames \?\? \[\];/);
+    expect(MODEL).toMatch(/roles: roles\.length > 0 \? roles\.join\(", "\) : "–"/);
   });
 });

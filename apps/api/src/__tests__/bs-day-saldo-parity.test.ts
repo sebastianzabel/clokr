@@ -47,7 +47,7 @@ describe("BBiG §15 — Berufsschultag is balance-neutral (live == closed)", () 
   async function createAzubi(tag: string): Promise<string> {
     const s = `bs-${tag}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
     const user = await app.prisma.user.create({
-      data: { email: `${s}@bs.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@bs.test`, passwordHash: "x", isActive: true },
     });
     const emp = await app.prisma.employee.create({
       data: {

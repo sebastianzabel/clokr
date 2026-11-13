@@ -63,7 +63,7 @@ describe("scope-filter.ts — TimeEntry (Phase 91b Plan 02 Task 2, Issue #91, D-
   async function createEmployee(namePrefix: string) {
     const s = uniqueSuffix(namePrefix);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash: "x", isActive: true },
     });
     return app.prisma.employee.create({
       data: {
@@ -378,7 +378,7 @@ describe("scope-filter.ts — Stammsalon-only: leave/absence/saldo/exports (Phas
   async function createEmployee(namePrefix: string) {
     const s = uniqueSuffix(namePrefix);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash: "x", isActive: true },
     });
     return app.prisma.employee.create({
       data: {
@@ -574,7 +574,7 @@ describe("scope-filter.ts — Shift (Phase 91b Plan 02 Task 3, Issue #91, D-11)"
     const mkEmployee = async (namePrefix: string) => {
       const s = uniqueSuffix(namePrefix);
       const user = await app.prisma.user.create({
-        data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+        data: { email: `${s}@test.de`, passwordHash: "x", isActive: true },
       });
       return app.prisma.employee.create({
         data: {
@@ -696,7 +696,7 @@ describe("scope-filter.ts — Person master data (Phase 91b Plan 02 Task 3, Issu
   async function createEmployee(namePrefix: string) {
     const s = uniqueSuffix(namePrefix);
     const user = await app.prisma.user.create({
-      data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `${s}@test.de`, passwordHash: "x", isActive: true },
     });
     return app.prisma.employee.create({
       data: {

@@ -3,6 +3,7 @@ import {
   summarizeKarenzOverrun,
   karenzNudgeHref,
   KARENZ_NUDGE_EMPTY,
+  KARENZ_NUDGE_TOOLTIP,
   KARENZ_SUBMISSION_HINT,
   karenzOverrunDays,
   formatKarenzDay,
@@ -134,6 +135,24 @@ describe("Phase 113 (issue #116): the copy promises nothing the product cannot d
     expect(KARENZ_SUBMISSION_HINT).not.toContain(
       "Bitte reiche das Attest bei der Personalabteilung ein",
     );
+  });
+});
+
+describe("Issue #840: the nudge names the page by its title", () => {
+  it("Test 13b: the tooltip points at „Abwesenheiten“, the title of /leave, not the old „Urlaub & Abwesenheit“", () => {
+    expect(KARENZ_NUDGE_TOOLTIP).toContain("Unter „Abwesenheiten“ steht");
+    expect(KARENZ_NUDGE_TOOLTIP).not.toContain("Urlaub & Abwesenheit");
+  });
+
+  it("Test 13c: the link to a request opens /leave with the request id (Meine Anträge takes it from there)", () => {
+    expect(
+      karenzNudgeHref({
+        count: 1,
+        earliestDay: "2026-08-10",
+        targetRequestId: "r1",
+        label: "1 Tag ohne Attest",
+      }),
+    ).toBe("/leave?request=r1");
   });
 });
 

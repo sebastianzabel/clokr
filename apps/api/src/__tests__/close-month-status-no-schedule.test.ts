@@ -52,7 +52,6 @@ describe("close-month/status & year-status — employee with no WorkSchedule row
       data: {
         email: `admin-noschedule-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -92,7 +91,6 @@ describe("close-month/status & year-status — employee with no WorkSchedule row
       data: {
         email: `subject-noschedule-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

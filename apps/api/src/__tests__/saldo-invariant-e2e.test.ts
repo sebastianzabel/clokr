@@ -172,7 +172,7 @@ describe("saldo invariant E2E — all schedule types, Jan–Jul 2026", () => {
     async function createEmp(key: EmpKey, scheduleData: Record<string, unknown>): Promise<string> {
       const s = `${key}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
       const user = await prisma.user.create({
-        data: { email: `${s}@e2e.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+        data: { email: `${s}@e2e.test`, passwordHash: "x", isActive: true },
       });
       const emp = await prisma.employee.create({
         data: {

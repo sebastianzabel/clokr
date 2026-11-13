@@ -25,7 +25,8 @@ function createToastStore() {
 
   return {
     subscribe,
-    success: (msg: string, duration?: number) => add("success", msg, duration),
+    // #843 (D-843-01 block 9): a success is an acknowledgement, 2.6 s is enough to read it.
+    success: (msg: string, duration?: number) => add("success", msg, duration ?? 2600),
     error: (msg: string, duration?: number) => add("error", msg, duration ?? 6000),
     info: (msg: string, duration?: number) => add("info", msg, duration),
     warning: (msg: string, duration?: number) => add("warning", msg, duration ?? 5000),

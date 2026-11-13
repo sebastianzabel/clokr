@@ -30,7 +30,6 @@ describe("PERF-V1814-02 — POST /overtime/payout atomicity", () => {
       data: {
         email: `pa-emp-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

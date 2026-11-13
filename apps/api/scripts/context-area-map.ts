@@ -80,16 +80,28 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/middleware/auth.ts": "rahmen",
   "src/utils/test-database.ts": "rahmen", // sole source of the test-DB name pattern/marker/worker-count (CLAUDE.md) — test infra, not a business context
   "src/utils/with-advisory-lock.ts": "rahmen", // generic Postgres advisory-lock helper; imported by 8 plugins + integrations.ts across every context, owns no model
+  "src/utils/duplicate-conflict.ts": "rahmen", // Issue #573: unhandled P2002/P2034 -> 409 text table for the global error handler; owns no model
+  "src/utils/zod-german.ts": "rahmen", // Issue #573: German Zod error map and field labels for the global error handler; owns no model
   "src/utils/prisma-unique-violation.ts": "rahmen", // generic Prisma P2002 target reader; imported by the platform and scheduling contexts, owns no model
   "src/utils/crypto.ts": "rahmen", // generic crypto helper (hashing/encryption), no model, no single owning context
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
+  "src/utils/csv-cell.ts": "rahmen", // Issue #854 — CSV cell quoting and formula-injection guard shared by the period CSV and the audit CSV; pure, no model
+  "src/utils/audit-diff.ts": "rahmen", // generic before/after diff for settings audit rows (Issue #285); pure, no model, imported by the platform and absence settings routes
+  "src/utils/client-log-url.ts": "rahmen", // strips query/fragment from client-reported URLs before logging (Issue #610 review WR-02); pure, no model
+  "src/utils/code-unit-order.ts": "rahmen", // locale-independent code-unit comparator for stable sorts; pure, no model, imported by the platform and absence contexts
   "src/__tests__/setup.ts": "rahmen", // full-suite fixture seeding across every model; test infra
+  "src/__tests__/english-zod-fragments.ts": "rahmen", // Issue #573: test-only list of English Zod default fragments, no model
   "src/__tests__/test-dates.ts": "rahmen", // test-only date helpers, no model
   "src/__tests__/entry-lock-race-helpers.ts": "rahmen", // Issue #70 (Phase 70b-04) — test infra: holds the Employee writer lock while a request under test queues on it; no model of its own
   "src/__tests__/bulk-apply-helpers.ts": "rahmen", // Issue #568 — shared two-step bulk-apply test helper, no model
   "src/__tests__/population-fixtures-613.ts": "rahmen", // Issue #613 — shared fixture of the population tests (exited / login-deactivated / anonymised / late-hired persons); test infra, no model of its own
+  "src/__tests__/push-fixtures-608.ts": "rahmen", // Issue #608 — shared fixture of the web-push tests (test VAPID pair, push-enabled app builder, fake device subscription); test infra, no model of its own
+  "src/__tests__/presence-pairing-fixtures-610.ts": "rahmen", // Issue #610 — shared fixture of the WLAN pairing tests (presence source with a raw key, random MAC, issue/preview/confirm injectors); test infra, no model of its own
+  "src/__tests__/notify-emit-sites.ts": "rahmen", // Issue #608 — the one notify() call-site scanner shared by the e-mail and push registry tests; test infra, no model of its own
+  "src/__tests__/shift-reminder-fixtures-609.ts": "rahmen", // Issue #609 — shared fixture of the shift-reminder tests (tenant with the switches, persons, shifts, entries, tenant-local instants); test infra, no model of its own
   "src/__tests__/monthly-export-fixture-617.ts": "rahmen", // Issue #617 — shared nine-person fixture of the Monatsexport tests (closed/open months, every leave kind, § 9, exit, Azubi); test infra, no model of its own
-  "src/__tests__/legacy-role-migration-sql.ts": "rahmen", // Phase 75b (Issue #75) — test infra that runs the checked-in legacy-role data migration verbatim; no model of its own
+  "src/__tests__/template-grant-chain.ts": "rahmen", // Issue #835 — ordered chain of the data-only template-grant migrations (templateAsOf, replayChainFrom, rolled-back replay) shared by the template migration pins; test infra, no model of its own
+  "src/__tests__/datev-rows.ts": "rahmen", // Issue #304 — shared parser of the DATEV LODAS file for tests; test infra, no model of its own
   "src/__tests__/tenant-packages-migration-566-fixtures.ts": "rahmen", // Phase 566 (Issue #566) — test infra: fixture catalogue and verbatim reader of the checked-in packages backfill SQL, shared by the migration test and the dry-run parity test; no model of its own
   "src/__tests__/neutrality/route-derivation.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: parses the route set from source; test infra, no model
   "src/__tests__/neutrality/matrix-config.ts": "rahmen", // Phase 75b (Issue #75) — neutrality matrix: checked-in route specs and exclusions; test infra, no model
@@ -111,8 +123,11 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/composition/my-week-status.ts": "komposition", // Issue #670 — the documented mapping from the shared day status to the my-week vocabulary; pure, owns no model, carries no rule of its own
   "src/composition/reach-day.ts": "komposition", // Issue #679 — picks the calendar day (exit day inside the month, else the last day) a person's Stammsalon reach is judged on and delegates to the Unterbau resolution; owns no model, carries no rule of its own
   "src/composition/salon-view.ts": "komposition", // Issue #542 (P-01) — the one membership rule of a salon view (entry salon or Stammsalon on a day) and the one 404 body of the composition's salon views; pure, owns no model, carries no rule of its own
+  "src/composition/employee-exit-ports.ts": "komposition", // Issue #615 (D-15) — hands the Unterbau deactivation route the closed-month answer of Arbeitszeitkonto; owns no model, carries no rule of its own
   "src/composition/pdf.ts": "komposition", // pure PDF-layout rendering of pre-computed data; sole caller is reports.ts; no Prisma access, no Fachregel
   "src/composition/pdf-format.ts": "komposition", // Issue #617: pure German number formatting for PDF output (H:MM from minutes, decimal comma, day plurals); no Prisma, no model, no Fachregel - only pdf.ts and reports.ts import it
+  "src/composition/tasks-open.ts": "komposition", // Issue #853 (D-853-21a) — GET /tasks/open: the Aufgaben work queue joins Zeiterfassung's missing-clock-out read with the Unterbau's per-entry reach rule; read-only, owns no model, carries no Fachregel
+  "src/composition/activity-sentences.ts": "komposition", // Issue #849 (4): the wording of the "Aktivität" time-entry sentences — presentation only, owns no model, carries no Fachregel
   "src/composition/activity.ts": "komposition", // dashboard "Aktivität" widget backend; ADMIN branch reads AuditLog (platform-owned), EMPLOYEE/MANAGER branch aggregates timeEntry/leaveRequest/saldoSnapshot through facades (Phase 243 D-13, overruling this file's earlier D-17-as-enumeration argument: D-17 was an enumeration, not a criterion — the operative rule is "owns no model, carries no Fachregel", already applied to pdf.ts above; activity.ts owns no model and aggregates across three contexts' facades, so it fits the same bucket)
   "src/composition/data-retention.ts": "komposition", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears; touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge — no single business context owns a generic cross-context retention policy (Phase 243 D-01/D-13: same substance as the prior unterbau reasoning, verdict changed to komposition, which is what "no context owns it" actually describes)
 
@@ -120,6 +135,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    WorkSchedule/PublicHoliday/SchoolHolidayPeriod/AuditLog/ApiKey/Notification ────────────
   "src/contexts/platform/api/api-keys.ts": "unterbau", // writes ApiKey only
   "src/contexts/platform/api/audit-logs.ts": "unterbau", // reads AuditLog only
+  "src/contexts/platform/audit-log-read.ts": "unterbau", // Issue #854 (#583) — the filter parser and where-builder shared by GET /audit-logs and its CSV export; reads AuditLog only
+  "src/contexts/platform/audit-csv.ts": "unterbau", // Issue #854 (#583) — pure CSV formatting of AuditLog rows with the shared German labels; no Prisma, no rule
   "src/contexts/platform/api/support-accesses.ts": "unterbau", // Issue #93: tenant view of SupportAccess
   "src/contexts/platform/api/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
   "src/contexts/platform/api/avatars.ts": "unterbau", // writes Employee.avatarUrl only
@@ -129,6 +146,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/invitations.ts": "unterbau", // writes Invitation/User
   "src/contexts/platform/api/me.ts": "unterbau", // writes User only
   "src/contexts/platform/api/notifications.ts": "unterbau", // writes Notification only
+  "src/contexts/platform/api/me-push.ts": "unterbau", // Issue #608 (D-06): own-data routes for the person's push devices; PushSubscription is an Unterbau model, the route holds no Prisma call
   "src/contexts/platform/api/release-notes.ts": "unterbau", // app-wide, tenant-agnostic feature with no model; under src/routes/ so cannot be rahmen (#99: no route may be a fallthrough) — Unterbau is the closest fit as the shared, context-agnostic substrate
   "src/contexts/platform/api/role-assignments.ts": "unterbau", // Phase 74b (#74): role assignment with scope — reads/writes RoleAssignment and reads AccessRole/Salon/Employee/User, all Unterbau models
   "src/contexts/platform/api/roles.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
@@ -153,12 +171,14 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/facade/holiday-resolution.ts": "unterbau", // Phase 71b (issue #71) — builds holiday sets from Salon/PublicHoliday, Unterbau models; reads no TimeEntry
   "src/contexts/platform/salon-assignment-rules.ts": "unterbau", // Phase 67b (issue #67) — pure day/weekday/period rules for EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/salon-assignment-audit.ts": "unterbau", // Phase 67b (issue #67) — shared WR-01 audit helper for EmployeeSalonAssignment, an Unterbau model per ADR 0002
+  "src/contexts/platform/ui-theme.ts": "unterbau", // Phase 842 (Issue #842) — theme id mapping for User.uiPreferences (an Unterbau model); pure, no Prisma call
   "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/access-context.ts": "unterbau", // Phase 77b (Issue #77) — AccessContext + its two constructors + employeeScopeFor(); pure module, no Prisma call
   "src/contexts/platform/access-context-error.ts": "unterbau", // Phase 77b (Issue #77) — AccessContextError + requireTenantId(); zero-import leaf, pure module, no Prisma call
   "src/contexts/platform/anonymize.ts": "unterbau", // DSGVO Art. 17 anonymization; primary subject is Employee+User (CLAUDE.md "DSGVO Employee Deletion"), other models' notes/documents nulled as side effects
   "src/contexts/platform/audit-reason.ts": "unterbau", // shared "Begründung ist erforderlich" validation reused across every correction/storno field app-wide; audit-trail vocabulary, no model
   "src/contexts/platform/calculate-work-days.ts": "unterbau", // normalizes WorkSchedule.workDays — Unterbau's own model
+  "src/contexts/platform/fixed-schedule-hours.ts": "unterbau", // Issue #848: weeklyHours = Σ {day}Hours write guard on WorkSchedule
   "src/contexts/platform/employee-anonymization-filter.ts": "unterbau", // Phase 101B (Issue #101) — lifted out of anonymize.ts; Employee is Unterbau's own model, same as anonymize.ts above
   "src/contexts/platform/employed-in-period.ts": "unterbau", // Issue #613 — the one period population rule (Employee.hireDate/exitDate + the anonymisation sentinel); Employee is Unterbau's own model, same as employee-anonymization-filter.ts above
   "src/contexts/platform/federal-state-iso.ts": "unterbau", // FederalState enum <-> ISO-3166-2, feeds PublicHoliday lookups (Unterbau model)
@@ -167,6 +187,12 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/month-first-date.ts": "unterbau", // WorkSchedule.validFrom month-1 rule — Unterbau's own model
   "src/contexts/platform/bulk-apply-defaults.ts": "unterbau", // Issue #568 — pure bulk-apply classifier over WorkSchedule/TenantConfig/Employee, Unterbau models
   "src/contexts/platform/notification-email-policy.ts": "unterbau", // per-type email-toggle registry for Notification — Unterbau's own model
+  "src/contexts/platform/notification-push-policy.ts": "unterbau", // Issue #608 (D-08, D-10): the push payload contract and per-type registry beside notification-email-policy.ts; no Prisma call
+  "src/contexts/platform/push-device-label.ts": "unterbau", // Issue #608 (D-03): closed-vocabulary device label from the User-Agent; pure module, no model
+  "src/contexts/platform/push-dispatch.ts": "unterbau", // Issue #608 (D-10): sends a push to a person's PushSubscription rows, an Unterbau model
+  "src/contexts/platform/push-endpoint-guard.ts": "unterbau", // Issue #608 (D-17): the push-service host allow-list; pure module, no model
+  "src/contexts/platform/push-sender.ts": "unterbau", // Issue #608 (D-10): the only importer of web-push; reads config, no model
+  "src/contexts/platform/push-subscriptions.ts": "unterbau", // Issue #608 (D-03, D-04): creates/audits PushSubscription rows, an Unterbau model
   "src/contexts/platform/password-policy.ts": "unterbau", // User/auth password rules
   "src/contexts/platform/permission-catalog.ts": "unterbau", // Phase 72b (Issue #72) — the permission catalog; ADR 0001 names permissions as part of the shared substrate, and the catalog has no model of its own
   "src/contexts/platform/permission-labels.ts": "unterbau", // Phase 83 (Issue #83) — the German labels of the permission catalog, the one place a permission is named for end users; no model, no Prisma call; served only by api/roles.ts (GET /roles/permission-catalog)
@@ -176,8 +202,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/school-holidays-client.ts": "unterbau", // fetches SchoolHolidayPeriod data from the external OpenHolidays/schulferien-api
   "src/contexts/platform/system-roles.ts": "unterbau", // Phase 75b (Issue #75) — fixed ids, names and permission sets of the three global system roles (AccessRole rows, an Unterbau model); pure module, no Prisma call
   "src/contexts/platform/request-permissions.ts": "unterbau", // Phase 75b (Issue #75) — request-scoped permission resolver plus requirePermission/requireAnyPermission/hasPermission/permissionReach; reads User/RoleAssignment/AccessRole, all Unterbau models
-  "src/contexts/platform/compat-role.ts": "unterbau", // Phase 75b (Issue #75), D-14 — the one compat-role derivation (legacy User.role <-> system roles); reads RoleAssignment/AccessRole, and since Plan 11 writes RoleAssignment/User (fallback materialization, system-role replacement, column write-back) — all Unterbau models
-  "src/contexts/platform/role-assignment-audit.ts": "unterbau", // Phase 75b Plan 11 (Issue #75) — shared audit helpers for RoleAssignment writes (moved out of api/role-assignments.ts) plus the compatRole-on-last-row rule (D-29); writes AuditLog only via app.audit, Unterbau models
+  "src/contexts/platform/system-role-assignment.ts": "unterbau", // Phase 75b (Issue #75), D-14, renamed by #641 — turns a requested system role into a stored RoleAssignment and derives the employee-form role back from the stored assignments; reads RoleAssignment/AccessRole and writes RoleAssignment (system-role replacement) — all Unterbau models; no column is written any more
+  "src/contexts/platform/role-assignment-audit.ts": "unterbau", // Phase 75b Plan 11 (Issue #75) — shared audit helpers for RoleAssignment writes (moved out of api/role-assignments.ts), the D-12 audit value shape and the last-row rule (D-29; no derived role rides on the row since #641); writes AuditLog only via app.audit, Unterbau models
   "src/contexts/platform/scope-filter.ts": "unterbau", // Phase 91b (Issue #91), D-07 — the ONE shared module every context's scope check calls (TimeEntry/EmployeeSalonAssignment/Shift/Employee reads on behalf of all four contexts, per its own module docblock); same category as access-context.ts/request-permissions.ts — shared Unterbau substrate, owned by no single context, per ADR 0002
   "src/contexts/platform/usual-work-days.ts": "unterbau", // Phase 436 (Issue #436), D-01 — validateUsualWorkDays(), the one write-path validation for WorkSchedule.usualWorkDays, an Unterbau model
   "src/contexts/platform/employee-creation.ts": "unterbau", // Phase 88 plan 10 (D-04a) — the one place employee creation lives (User/Employee/WorkSchedule/OvertimeAccount/role assignment/Stammsalon/Invitation), extracted from POST /employees; Unterbau models are the primary subject, the vacation entitlement and OvertimeAccount writes go through the owning contexts' facades
@@ -197,6 +223,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/api/operator/dashboard.ts": "unterbau", // Issue #90 — operator dashboard route (aggregated tenant metrics, DASHBOARD_VIEWED audit); reads Tenant and calls the metrics facade, owns no model
   "src/contexts/platform/api/operator/salons.ts": "unterbau", // Phase 89 (#89, D-05/D-06/D-07) — operator salon routes (list now, mutations in later plans); reads Salon through the Unterbau facade and gets coupling and time-entry count through a port from the composition root
   "src/composition/operator-salon-ports.ts": "komposition", // Phase 89 (#89, D-07/D-12) — maps the time-tracking and scheduling index exports onto the operator salon port; owns no model, carries no rule
+  "src/contexts/platform/audit-mac-redaction.ts": "unterbau", // Issue #820 — the one key/shape-based redaction of device MAC addresses inside the AuditLog values of an anonymized person; AuditLog is Unterbau-owned, called only from anonymize.ts and the #820 audit script
+  "src/contexts/platform/audit-freetext-redaction.ts": "unterbau", // Issue #512 — the one type-based redaction of AuditLog free text of an anonymized person; AuditLog is Unterbau-owned, called only from anonymize.ts and the #512 backfill
   "src/contexts/platform/support-audit-redaction.ts": "unterbau", // Issue #93 (Phase 93b-05, D-17) — pure type allow-list redaction of AuditLog old/new values for the support audit-log read; no model access, no imports
   "src/contexts/platform/api/operator/support-access.ts": "unterbau", // Issue #93 (D-18) — operator support access grant request (POST); reads and writes the SupportAccess grant through the Unterbau decider and owns no model
   "src/contexts/platform/api/operator/support.ts": "unterbau", // Issue #93 (D-05/D-18/D-19/D-24) — GET-only operator support reads behind the grant decider and the audit-first transaction; tenant data comes in through the composition port, never read here
@@ -206,6 +234,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    PresenceDevice, plus services/clock/** (D-16 prefix rule) ─────────────────────────────
   "src/contexts/time-tracking/facade/time-entries.ts": "zeiterfassung", // Phase 100B Plan 08 — T1-T12, TimeEntry/Break's only external access path
   "src/contexts/time-tracking/facade/presence-devices.ts": "zeiterfassung", // Phase 100B Plan 09 (Wave 4, closing) — PresenceDevice's only external access path
+  "src/contexts/time-tracking/facade/presence-pairing.ts": "zeiterfassung", // Issue #610 (D-04) — PresencePairingCode's only external access path: the token-cleanup purge and the anonymization delete
   "src/contexts/time-tracking/api/admin-presence-sources.ts": "zeiterfassung", // writes PresenceDevice/PresenceSource
   "src/contexts/time-tracking/api/employee-wifi.ts": "zeiterfassung", // Phase 243 Plan 02 (B2) — moved from contexts/platform/api/employees.ts: PresenceDevice is a Zeiterfassung model; the /employees URL prefix is a namespace, not an owner
   "src/contexts/time-tracking/api/presence.ts": "zeiterfassung", // WiFi-presence-based clocking; reads PresenceDevice/PresenceSource, writes AuditLog as a side effect
@@ -226,6 +255,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/break-regime.ts": "zeiterfassung", // Issue #511 (D-01/D-02/D-05) — the one home of the § 4 ArbZG / § 11 JArbSchG break thresholds; pure, no model access
   "src/contexts/time-tracking/day-break-placement.ts": "zeiterfassung", // Issue #511 — pure Satz 2/3 and § 11 evaluation on the D-22 view; no model access
   "src/contexts/time-tracking/place-auto-break.ts": "zeiterfassung", // Issue #511 (AK-4, D-17/D-19/D-20) — pure placement of the automatic break; no model access
+  "src/contexts/time-tracking/auto-break-write.ts": "zeiterfassung", // Issue #799 — the one automatic-break write and the post-STOP step every clock trigger (web, NFC, WIFI) runs
   "src/contexts/time-tracking/auto-break-plan.ts": "zeiterfassung", // Issue #511 (AK-4) — the one automatic-break decision (regime, amount, placement) shared by the save paths and the entry-form preview; pure, no model access
   "src/contexts/time-tracking/day-break-store.ts": "zeiterfassung", // Issue #80 (D-03/D-06) — reads DayBreak/DayBreakAck and the day's closed WORK rows
   "src/contexts/time-tracking/api/day-breaks.ts": "zeiterfassung", // Issue #80 — writes DayBreak (and from 80-06 DayBreakAck)
@@ -241,8 +271,11 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/entry-invariants.ts": "zeiterfassung", // Phase 101B (Issue #101) — lifted out of api/time-entries.ts; overlap/month-lock/retro-window invariants + effective-schedule resolution over TimeEntry (one-per-day rule removed by Issue #70)
   "src/contexts/time-tracking/entry-write-lock.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10 — the one Employee row lock of every writer that creates or moves a TimeEntry interval
   "src/contexts/time-tracking/entry-overlap-error.ts": "zeiterfassung", // Issue #70 (Phase 70b-02), D-10/D-13 — recognises the database overlap/open-per-day refusals and words the overlap 409
+  "src/contexts/time-tracking/retro-request-overlap.ts": "zeiterfassung", // Issue #657 — the Zeitnachtrag interval rule (live requests, half-open, whole-day legacy rows); reads RetroEntryRequest only
   "src/contexts/time-tracking/entry-salon.ts": "zeiterfassung", // Phase 68b (issue #68) — resolveEntrySalon, the entry-salon rule; reads the Unterbau only through the platform index
+  "src/contexts/time-tracking/terminal-salon.ts": "zeiterfassung", // Issue #541 — the terminal→salon binding rule (punch side and write side); reads the Unterbau only through the platform index
   "src/contexts/time-tracking/travel-entry.ts": "zeiterfassung", // Issue #92 (Phase 92b-01), D-05/D-06 — the one travel-entry write rule (classify, neighbour anchors, arrival salon through resolveEntrySalon); reads only findEntriesOfDay and the entry-salon rule
+  "src/contexts/time-tracking/travel-offer.ts": "zeiterfassung", // Issue #660 — the travel offer of an unclear cross-salon gap (kernel gaps + the travel write rule's own reach predicate and anchor check); reads findEntriesOfDay, resolveEntrySalon and listSalons
   "src/contexts/time-tracking/clock-salon-choice.ts": "zeiterfassung", // Issue #87 (Phase 87b) — clockSalonChoice, the one clock-salon decision; reads the Unterbau only through the platform index
   "src/contexts/time-tracking/break-finding-days.ts": "zeiterfassung", // Issue #511 (D-12) — month-close / cron / dry-run detector over TimeEntry, Break, DayBreak and DayBreakAck
   "src/contexts/time-tracking/break-finding-notice.ts": "zeiterfassung", // Issue #80 (D-11) / #511 (D-13) — pure notification texts for break findings
@@ -251,8 +284,16 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/time-tracking/find-unconfirmed-break-days.ts": "zeiterfassung", // AUTO/CONFIRMED/WAIVED break-status query over TimeEntry
   "src/contexts/time-tracking/invalid-reason.ts": "zeiterfassung", // TimeEntry.invalidReason string registry; 4 of 6 importers are Zeiterfassung
   "src/contexts/time-tracking/normalize-mac.ts": "zeiterfassung", // PresenceDevice MAC-address normalization
+  "src/contexts/time-tracking/presence-source-auth.ts": "zeiterfassung", // Issue #610 (D-16) — the one presence-source key check shared by the webhook and the pairing-code issuer; reads PresenceSource
+  "src/contexts/time-tracking/pairing-code.ts": "zeiterfassung", // Issue #610 — pairing-code constants and pure helpers (TTL, format, hashing, hostname hygiene); no model access
+  "src/contexts/time-tracking/wifi-device-not-seen.ts": "zeiterfassung", // Issue #610 (D-10) - the daily WLAN re-couple hint: pure decision plus the job over PresenceDevice, Shift (facade) and TimeEntry; writes notices only
+  "src/contexts/time-tracking/presence-pairing.ts": "zeiterfassung", // Issue #610 — issue/preview/confirm service of the one-time WLAN pairing code; writes PresencePairingCode/PresenceDevice
   "src/contexts/time-tracking/presence.ts": "zeiterfassung", // WiFi-presence detection helper feeding routes/presence.ts and the missing-entries gap detector
   "src/contexts/time-tracking/retro-config.ts": "zeiterfassung", // RetroEntryRequest tenant-config toggle
+  "src/contexts/time-tracking/shift-reminders.ts": "zeiterfassung", // Issue #609 (D-04, D-17) — pure kernel of the shift reminders (instants, windows, start decision, dedupe keys, links); no model access, no clock read
+  "src/contexts/time-tracking/shift-reminder-job.ts": "zeiterfassung", // Issue #609 (D-03, D-17) — the 5-minute shift reminder job; reads shifts, leave and absences through their facades, writes only notices
+  "src/contexts/time-tracking/shift-reminder-dismiss.ts": "zeiterfassung", // Issue #609 review IN-03 — dismisses open start/end reminder notices after a successful clock-in/out; reactive, never fails the clock
+  "src/contexts/time-tracking/api/employee-reminders.ts": "zeiterfassung", // Issue #609 (D-02) — GET/PATCH /employees/me/reminders, the person's own reminder opt-outs; the reminders are a Zeiterfassung feature, the /employees prefix is a namespace, not an owner
 
   // ── abwesenheiten — LeaveRequest/LeaveType/LeaveEntitlement/SpecialLeaveRule/Section9Credit/
   //    Absence/EmployeeVocationalSchoolPattern/CompanyShutdown/CompanyShutdownException ───────
@@ -278,6 +319,9 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/plugins/employment-exit-decorate.ts": "abwesenheiten", // Issue #614 — composition-root decoration plugin exposing employment-exit.ts as app.absenceExit
   "src/contexts/absence/employment-exit.ts": "abwesenheiten", // Issue #614 (D-02) — the one rule that ends a person's absences after the exit day on anonymization; writes LeaveRequest/Absence/LeaveEntitlement
   "src/contexts/absence/leave-correction.ts": "abwesenheiten", // Issue #614 — correction core extracted from the /correct route (plan/apply/finish behind an audit port); writes LeaveRequest/LeaveEntitlement
+  "src/contexts/absence/leave-calendar-masking.ts": "abwesenheiten", // Issue #840 (D-840-19) - pure masking kernel of the leave calendar and the planner read (zero runtime imports); reads no model
+  "src/contexts/absence/leave-request-create.ts": "abwesenheiten", // Issue #835 (D-835-12) — create core extracted from POST /leave/requests (refusals as data, hook inside the locked create transaction); writes LeaveRequest/LeaveEntitlement
+  "src/contexts/absence/leave-decision.ts": "abwesenheiten", // Issue #835 (D-835-12) — decision core extracted from PATCH /leave/requests/:id/review (approve/reject a PENDING request); writes LeaveRequest/LeaveEntitlement/Section9Credit
   "src/contexts/absence/overtime-comp-minutes.ts": "abwesenheiten", // Issue #614 — the Überstundenausgleich amount rule moved out of the leave route; read-only over the stored minutes and the schedule
   "src/contexts/absence/ensure-leave-type.ts": "abwesenheiten", // Issue #614 — find-or-create of a LeaveType by code for the correction core; LeaveType belongs to Abwesenheiten
   "src/contexts/absence/section9-supersede.ts": "abwesenheiten", // Issue #662 — the one place a Section9Credit becomes SUPERSEDED (shared by /correct and the cancellation); writes Section9Credit, undoes the LeaveEntitlement ledger
@@ -288,6 +332,37 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/correction-lock.ts": "abwesenheiten", // Phase 94 manager LeaveRequest correction guard
   "src/contexts/absence/effective-leave-statuses.ts": "abwesenheiten", // Issue #446 (D-01) — the one definition of "leave that counts" (APPROVED + CANCELLATION_REQUESTED)
   "src/contexts/absence/salon-leave-attribution.ts": "abwesenheiten", // Issue #558 (D-02/D-08) — the one Stammsalon-per-day attribution of leave/absence rows to a salon; reads HOME assignments through the Unterbau facade only
+  "src/contexts/absence/api/leave-limits.ts": "abwesenheiten", // Issue #836 - GET/POST/PUT/DELETE of the leave limit rules and blackouts under /leave/limits; writes LeaveLimitRule
+  "src/contexts/absence/leave-limits/rule-dto.ts": "abwesenheiten", // Issue #836 - pure - the Zod body and the response DTO of a leave limit rule
+  "src/contexts/absence/leave-limits/constants.ts": "abwesenheiten", // Issue #836 - the counted leave type codes and statuses, an allow-list; zero runtime import beyond the status leaf
+  "src/contexts/absence/leave-limits/rules.ts": "abwesenheiten", // Issue #836 - pure rule helpers - which LeaveLimitRule applies on a salon and day, strictest per group
+  "src/contexts/absence/leave-limits/parallel-leave-load.ts": "abwesenheiten", // Issue #836 - the pure counting kernel, the only place parallel leave is counted
+  "src/contexts/absence/leave-limits/counted-days.ts": "abwesenheiten", // Issue #836 - pure - which days of one leave row count toward a limit
+  "src/contexts/absence/leave-limits/group-membership.ts": "abwesenheiten", // Issue #836 - pure - which groups a person belongs to on a day (seam for a later history model)
+  "src/contexts/absence/leave-limits/workdays.ts": "abwesenheiten", // Issue #836 - pure - which days of a window a person would work (contract segment, holidays, roster days, usual days)
+  "src/contexts/absence/leave-limits/load-facts.ts": "abwesenheiten", // Issue #836 - the loader - reads stored leave, employees, Stammsalon per day and contract workdays for the kernel
+  "src/contexts/absence/leave-limits/check.ts": "abwesenheiten", // Issue #836 - the checker evaluateLeaveLimits - adds candidate rows and reports exceedances; reads LeaveLimitRule
+  "src/contexts/absence/leave-limits/response.ts": "abwesenheiten", // Issue #836 - pure - serialises exceedances into leaveLimitWarnings - counts, plus names within the reader's leave reach
+  "src/contexts/absence/leave-limits/exception.ts": "abwesenheiten", // Issue #836 - pure - the exception reason schema, the 409 body, the audit snapshot and the correction delta ranges
+  "src/contexts/absence/leave-limits/load-view.ts": "abwesenheiten", // Issue #836 - the daily load per salon and group from parallelLeaveLoad, with the approved-before-rule marker; reads LeaveLimitRule
+  "src/contexts/absence/leave-limits/redact.ts": "abwesenheiten", // Issue #836 - pure - which persons a reader may be NAMED in a limit warning or the load view (leave-request:read reach)
+  "src/contexts/absence/api/leave-plans.ts": "abwesenheiten", // Issue #835 - open, read, wish and take over routes of the leave planner under /leave/plans; writes LeavePlan and LeavePlanWish
+  "src/contexts/absence/leave-plan/constants.ts": "abwesenheiten", // Issue #835 - pure - the control codes, German texts and the CREATE audit marker of the leave planner
+  "src/contexts/absence/leave-plan/wish-rules.ts": "abwesenheiten", // Issue #835 - pure - the date rules of a wish (inside the plan year, half day shape, overlap of two ranges)
+  "src/contexts/absence/leave-plan/admission.ts": "abwesenheiten", // Issue #835 - who may read a plan - reach over the salon or the own Stammsalon; reads the Stammsalon per day
+  "src/contexts/absence/leave-plan/db-refusals.ts": "abwesenheiten", // Issue #835 - pure - recognises the database refusals of a second OPEN plan and of overlapping wishes by structured error fields
+  "src/contexts/absence/leave-plan/population.ts": "abwesenheiten", // Issue #835 - planPopulation - the persons of a salon plan by Stammsalon per day, employed in the year, never anonymised; reads Employee and the assignment facade, counts nothing
+  "src/contexts/absence/leave-plan/wish-write.ts": "abwesenheiten", // Issue #835 - createWish, updateWish, removeWish - one locked transaction each, writes LeavePlanWish and its audit
+  "src/contexts/absence/leave-plan/takeover.ts": "abwesenheiten", // Issue #835 - takeOverLeavePlan - turns wishes into requests through the create and decision cores; writes LeavePlanWish and LeavePlan
+  "src/contexts/absence/leave-plan/planner-read.ts": "abwesenheiten", // Issue #835 - the live planner read (population, gesetzt/beantragt rows, wishes, conflict flag, type masking, holidays); reads LeavePlanWish and CompanyShutdown, leave and Absence rows only through the absence facades
+  "src/contexts/absence/leave-plan/day-load.ts": "abwesenheiten", // Issue #835 - plannerDayLoad - the planner's per-day count read from leaveLimitLoadView with the wishes as candidates; counts nothing itself
+  "src/contexts/absence/leave-plan/forecast.ts": "abwesenheiten", // Issue #835 - plannerForecast - the entitlement forecast of one person (remaining days minus PENDING minus the wishes priced by resolveLeaveDays); read-only, creates or heals no entitlement row
+  "src/contexts/platform/calendar-feed-token.ts": "unterbau", // Issue #597 — the calendar-feed token (generate, hash, issue/rotate, revoke, resolve); writes CalendarFeedToken
+  "src/contexts/platform/api/me-calendar-feed.ts": "unterbau", // Issue #597 — own calendar-feed token routes under /me/calendar-feed
+  "src/composition/calendar-feed.ts": "komposition", // Issue #597 — the public ICS feed of one person, reads every context through its index
+  "src/contexts/working-time-account/api/month-corrections.ts": "arbeitszeitkonto", // Issue #599 — correction requests for a day of a closed month (create, read, decide, withdraw); writes MonthCorrectionRequest and OvertimeTransaction
+  "src/contexts/working-time-account/booked-month-corrections.ts": "arbeitszeitkonto", // Issue #599 — the one read of booked month corrections for the saldo core (accountCorrections)
+  "src/contexts/absence/leave-calendar-visibility.ts": "abwesenheiten", // Issue #835 - pure - canSeeLeaveType, the calendar's one type-visibility rule (moved out of api/leave.ts, second caller is the planner read)
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)
   "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest
   "src/contexts/absence/format-hm.ts": "abwesenheiten", // hours:minutes display formatting; sole importer is routes/leave.ts
@@ -303,7 +378,10 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/parental-leave-reduction.ts": "abwesenheiten", // Issue #468 (D-08) — pure month/rounding functions + read-only preview builder for the Elternzeit-Kürzung (§ 17 Abs. 1 BEEG)
   "src/contexts/absence/section9-credit-days.ts": "abwesenheiten", // Section9Credit day counting
   "src/contexts/absence/section9-detect.ts": "abwesenheiten", // § 9 BUrlG "krank im Urlaub" detection
+  "src/contexts/absence/employee-leave-lock.ts": "abwesenheiten", // Employee row lock that serialises leave pricing writers (Issue #467); takes the Unterbau row lock inside the absence context, no cross-context import
+  "src/contexts/absence/later-request-reprice.ts": "abwesenheiten", // re-prices later VACATION requests after a /correct (Issue #467) — LeaveRequest days and entitlement ledger are Abwesenheiten's own
   "src/contexts/absence/shift-leave-recalc-resolver.ts": "abwesenheiten", // writes LeaveRequest.daysProvisional when a roster change triggers recalculation (Phase 107) — LeaveRequest is the written model even though the trigger originates in Schichtplanung
+  "src/contexts/absence/leave-overlap.ts": "abwesenheiten", // Issue #478 — create-side overlap and yearly-quota guards shared by POST, the PENDING edit and the approval; reads LeaveRequest only
   "src/contexts/absence/sick-leave-days.ts": "abwesenheiten", // Issue #84 (D-14) — the one sick-day counting rule (calendar days, half day, clip, attest split, § 9 shift), moved out of composition/reports.ts
   "src/contexts/absence/vacation-calc.ts": "abwesenheiten", // BUrlG vacation-entitlement calculation
   "src/contexts/absence/__tests__/fixtures/legacy-shift-based-kernel-pre436.ts": "abwesenheiten", // Phase 436 Plan 01 (Issue #436), D-05 — frozen verbatim pre-436 kernel copy for the equivalence proof; test infra specific to this context's own test suite, same category as services/phorest/__tests__/helpers.ts below
@@ -330,12 +408,14 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/services/phorest/sync-shifts.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
   "src/services/phorest/sync-tenant.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**) — Phase 65b (#65) orchestrator
   "src/services/phorest/types.ts": "schichtplanung", // D-16 prefix rule (services/phorest/**)
+  "src/contexts/scheduling/coverage-rule.ts": "schichtplanung", // Issue #647 — pure: the coverage rule of a day (candidate set + ladder), no model access
   "src/contexts/scheduling/get-current-shift.ts": "schichtplanung", // Shift lookup; sole importer routes/presence.ts, but the model concept is Shift itself
   "src/contexts/scheduling/shift-availability.ts": "schichtplanung", // EmployeeAvailability/Shift availability checks
   "src/contexts/scheduling/shift-cleanup.ts": "schichtplanung", // soft-deletes/flags Shift rows on VOCATIONAL_SCHOOL Absence creation — Shift is the model it manipulates
   "src/contexts/scheduling/shift-netto.ts": "schichtplanung", // net Shift-hours calculation
   "src/contexts/scheduling/shift-leave-conflict-notify.ts": "schichtplanung", // Phase 430 (D-02) — Shift is the model it flags/audits; shared by leave.ts, sync-shifts.ts and this context's own routes
   "src/contexts/scheduling/shift-week-capacity.ts": "schichtplanung", // Phase 430 (D-05..D-07) — Shift is the model it counts; shared by sync-shifts.ts and this context's own routes
+  "src/contexts/scheduling/shift-leave-rule.ts": "schichtplanung", // Issue #744 — dependency-free half-day rule, shared by the shift routes, the facade and the Phorest sync
   "src/contexts/scheduling/shift-leave-check.ts": "schichtplanung", // Phase 430-06 — Shift is the model it counts; moved out of facade/shifts.ts to avoid widening the boundary-import cycle
   "src/contexts/scheduling/tenant-availability.ts": "schichtplanung", // TenantConfig.availabilityEnabled toggle for the EmployeeAvailability feature
   "src/contexts/scheduling/time-arithmetic.ts": "schichtplanung", // Phorest Vor-/Nachbereitungszeit padding, sole consumer services/phorest/sync-shifts.ts
@@ -355,6 +435,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/facade/saldo-snapshot.ts": "arbeitszeitkonto", // Phase 100B Plan 07 — W1-W7, SaldoSnapshot's only external access path
   "src/contexts/working-time-account/find-missing-workdays.ts": "arbeitszeitkonto", // Soll-vs-Ist gap detector; 3 of 5 importers (auto-close-month/close-employee-month/overtime) are Arbeitszeitkonto's own saldo paths
   "src/contexts/working-time-account/missing-entries-window.ts": "arbeitszeitkonto", // window-size companion of find-missing-workdays.ts, same callers
+  "src/contexts/working-time-account/expected-close-months.ts": "arbeitszeitkonto", // Issue #753 — the expected months of a yearly close, shared by the cron and POST /close-year
+  "src/contexts/working-time-account/month-close-population.ts": "arbeitszeitkonto", // Issue #668 — who the Monatsabschluss closes (employment, not login), shared by the cron and the deferred close
   "src/contexts/working-time-account/month-close-window.ts": "arbeitszeitkonto", // Phase 292 (#292) — month-stepping + day-N window arithmetic of the Monatsabschluss, shared by the cron and the deferral reader
   "src/contexts/working-time-account/month-gap-check.ts": "arbeitszeitkonto", // Phase 292 (#292) — the ONE definition of "gap" for the Monatsabschluss (lifted out of auto-close-month.ts)
   "src/contexts/working-time-account/deferred-month-close.ts": "arbeitszeitkonto", // Phase 292 (#292) — a deferred Monatsabschluss as a derived, queryable state
@@ -371,6 +453,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/working-time-account/snapshot-lock.ts": "arbeitszeitkonto", // "is this month closed?" Monatsabschluss primitive, derived from TimeEntry.isLocked
   "src/contexts/working-time-account/snapshot-period.ts": "arbeitszeitkonto", // SaldoSnapshot period-boundary calculation
   "src/contexts/working-time-account/timezone.ts": "arbeitszeitkonto", // calcLeaveAbsenceMinutesTz() — CLAUDE.md: "belongs to Arbeitszeitkonto and is NOT to be split"
+  "src/contexts/working-time-account/month-contract.ts": "arbeitszeitkonto", // Issue #780 — the one rule for a month without a contract (no Soll)
   "src/contexts/working-time-account/track-only-schedule.ts": "arbeitszeitkonto", // Issue #494 — the one track-only rule (isTrackOnlySchedule), read by the close core and the live saldo
   "src/contexts/working-time-account/vocational-school-saldo.ts": "arbeitszeitkonto", // Berufsschule minute contribution to workedMinutes/expectedMinutes — feeds overtime.ts and auto-close-month.ts's saldo math
 };

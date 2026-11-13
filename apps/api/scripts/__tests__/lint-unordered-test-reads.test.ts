@@ -116,6 +116,10 @@ describe("file selection", () => {
 });
 
 describe("live tree", () => {
+  // The walk parses every API test file (~840). Standalone it takes about 2 s, but inside the
+  // parallel CI suite, sharing the runner with the database workers, it exceeded the 30 s
+  // default three times on 12./13.11.2026. An explicit budget like the other heavy script
+  // tests; the assertions are unchanged.
   it("the walk is non-empty and the real tree has no unordered audit/notification read", () => {
     const files = discoverTestFiles(REPO_ROOT);
     expect(files.length).toBeGreaterThan(100);
@@ -124,5 +128,5 @@ describe("live tree", () => {
       findUnorderedReads(f, readFileSync(join(REPO_ROOT, f), "utf8")),
     );
     expect(findings).toEqual([]);
-  });
+  }, 120_000);
 });

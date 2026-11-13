@@ -29,6 +29,21 @@ export interface DayCheckGap {
   countsAsBreak: boolean;
 }
 
+/**
+ * A server-built offer to take an unclear cross-salon gap over as a trip (Issue #660, mirror of
+ * the `travelOffers` item of `GET /day-breaks/checks`). The interval is the gap itself, as ISO
+ * instants like `DayCheckGap`; the ids are control values (sent back on the click), the names are
+ * display only. The browser derives no gap, no salon pair and no permission from it.
+ */
+export interface DayCheckTravelOffer {
+  startTime: string;
+  endTime: string;
+  departureSalonId: string;
+  arrivalSalonId: string;
+  departureSalonName: string;
+  arrivalSalonName: string;
+}
+
 /** A break recorded on the day itself (not on an entry). */
 export interface DayCheckDayBreak {
   id: string;
@@ -93,6 +108,11 @@ export interface FullDayCheck extends DayCheckBase {
   entries: DayCheckEntry[] | null;
   gaps: DayCheckGap[] | null;
   dayBreaks: DayCheckDayBreak[] | null;
+  /**
+   * Issue #660: the trips the caller may record for the day's unclear cross-salon gaps. Absent
+   * when there is no offer; never present on a withheld day.
+   */
+  travelOffers?: DayCheckTravelOffer[];
 }
 
 /**

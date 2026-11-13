@@ -12,9 +12,14 @@ import {
   snapshotMonthOf, // Issue #595 (D-03) — the one place a stored snapshot gets a calendar month
   getTenantTimezone,
   todayInTz,
-  timeStrInTz,
+  addDaysUtc, // Issue #172
 } from "../contexts/working-time-account"; // Phase 101B
 import { getEntryActivityFeed } from "../contexts/time-tracking"; // Phase 100B Plan 08 — T5
+import {
+  dedupeActivitySentences,
+  entryActivityEvents,
+  leaveActivitySentence,
+} from "./activity-sentences"; // Issue #849, #845
 import {
   getOwnLeaveActivity, // Phase 100B Plan 13 — A10a
   getReviewedLeaveActivity, // Phase 100B Plan 13 — A10b
@@ -74,8 +79,7 @@ export async function activityRoutes(app: FastifyInstance) {
       // Vorrang: audit-log:read wins; the team branch below runs only for callers
       // without it (issue #75, D-13).
       if (await hasPermission(req, "audit-log:read:ZUGEWIESEN")) {
-        const since = new Date();
-        since.setDate(since.getDate() - 7);
+        const since = addDaysUtc(new Date(), -7);
 
         // Tenant scoping for audit logs (WR-06):
         // AuditLog has no direct tenantId column, only a nullable userId.
@@ -133,8 +137,7 @@ export async function activityRoutes(app: FastifyInstance) {
 
       // Own time entries (today + last 7 days)
       if (employeeId) {
-        const since = new Date();
-        since.setDate(since.getDate() - 7);
+        const since = addDaysUtc(new Date(), -7);
         // Clock-in/out times are @db.Timestamptz (UTC). The dashboard "Aktivität"
         // widget must render them in the tenant timezone, not UTC — otherwise a
         // Europe/Berlin tenant sees times ~1-2h too early. Use timeStrInTz.
@@ -146,18 +149,31 @@ export async function activityRoutes(app: FastifyInstance) {
           since,
           fetchLimit,
         );
+        // Issue #849 (4): sentences from the one text source; an entry someone else recorded
+        // names its author's first name (same tenant only).
+        const authorIds = [
+          ...new Set(
+            entries
+              .map((e) => e.createdBy)
+              .filter((id): id is string => id !== null && id !== userId),
+          ),
+        ];
+        const authors =
+          authorIds.length > 0
+            ? await app.prisma.user.findMany({
+                where: { id: { in: authorIds }, employee: { tenantId } },
+                select: { id: true, employee: { select: { firstName: true } } },
+              })
+            : [];
+        const authorFirstName = new Map(authors.map((a) => [a.id, a.employee?.firstName ?? null]));
         for (const e of entries) {
-          const startHHMM = timeStrInTz(e.startTime, tz);
-          items.push({
-            id: `te-${e.id}`,
-            icon: "clock",
-            who: "Du",
-            what: e.endTime
-              ? `Ausstempeln um ${timeStrInTz(e.endTime, tz)}`
-              : `Einstempeln um ${startHHMM}`,
-            when: e.createdAt.toISOString(),
-            category: "time",
-          });
+          for (const event of entryActivityEvents(e, {
+            tz,
+            ownUserId: userId,
+            authorFirstName: e.createdBy ? (authorFirstName.get(e.createdBy) ?? null) : null,
+          })) {
+            items.push({ ...event, icon: "clock", category: "time" });
+          }
         }
 
         // Own leave requests (recent status changes)
@@ -165,29 +181,19 @@ export async function activityRoutes(app: FastifyInstance) {
         const myLeaves = await getOwnLeaveActivity(app.prisma, employeeId, tenantId, fetchLimit);
         for (const lr of myLeaves) {
           const typeName = lr.leaveType?.name ?? "Urlaub";
-          let what: string;
-          let icon: ActivityItem["icon"];
-          if (lr.status === "APPROVED") {
-            what = `${typeName} genehmigt`;
-            icon = "check";
-          } else if (lr.status === "REJECTED") {
-            what = `${typeName} abgelehnt`;
-            icon = "x";
-          } else if (lr.status === "CANCELLED") {
-            what = `${typeName} storniert`;
-            icon = "x";
-          } else if (lr.status === "CANCELLATION_REQUESTED") {
-            what = `Stornierung beantragt (${typeName})`;
-            icon = "inbox";
-          } else {
-            what = `${typeName} eingereicht`;
-            icon = "inbox";
-          }
+          // Issue #845 (D-05): one complete sentence from the one text source
+          const sentence = leaveActivitySentence({ ...lr, typeName });
+          const icon: ActivityItem["icon"] =
+            lr.status === "APPROVED"
+              ? "check"
+              : lr.status === "REJECTED" || lr.status === "CANCELLED"
+                ? "x"
+                : "inbox";
           items.push({
             id: `lr-${lr.id}`,
             icon,
-            who: "Du",
-            what,
+            who: sentence.who,
+            what: sentence.what,
             when: lr.updatedAt.toISOString(),
             category: "leave",
           });
@@ -292,7 +298,7 @@ export async function activityRoutes(app: FastifyInstance) {
       items.sort((a, b) => b.when.localeCompare(a.when));
       const seen = new Set<string>();
       const deduped: ActivityItem[] = [];
-      for (const it of items) {
+      for (const it of dedupeActivitySentences(items)) {
         if (seen.has(it.id)) continue;
         seen.add(it.id);
         deduped.push(it);

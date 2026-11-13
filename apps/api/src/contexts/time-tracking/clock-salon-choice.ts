@@ -25,6 +25,9 @@
  *    otherwise the pattern salon is preselected when it is an active salon, and the choice is offered
  *    unless the current and future assignments name exactly that one salon.
  * 4. The salon list is only returned when a choice is offered (Art. 5 Abs. 1 lit. c DSGVO).
+ *
+ * Issue #657: the selectors also skip a pending Zeitnachtrag row and a closed row it shadows, so a day
+ * whose latest row is such a request names no fixed salon (it reads like a day without an entry).
  */
 import type { Prisma } from "@clokr/db";
 import {

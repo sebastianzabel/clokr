@@ -65,7 +65,6 @@ async function seedApprovalTenant(app: FastifyInstance, suffix: string) {
       data: {
         email: `${role.toLowerCase()}-${idx}-${s}@rappr.test`,
         passwordHash: await bcrypt.hash("pwTest123", 4),
-        role,
         isActive: true,
       },
     });

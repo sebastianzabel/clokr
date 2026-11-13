@@ -16,6 +16,7 @@
   import { onMount } from "svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import { formatGrantRemaining, remainingMs } from "$lib/operator/countdown";
   import {
@@ -62,6 +63,13 @@
     onEnd,
     onReload,
   }: Props = $props();
+
+  const HISTORY_COLUMNS: DataTableColumn[] = [
+    { key: "startedAt", label: "Beginn" },
+    { key: "endedAt", label: "Ende" },
+    { key: "status", label: "Status" },
+    { key: "reason", label: "Grund" },
+  ];
 
   const REASON_MIN = 10;
   const REASON_MAX = 500;
@@ -340,44 +348,33 @@
       {#if supportState.history.length === 0}
         <p class="empty" data-testid="op-support-history-empty">Noch keine Support-Zugriffe.</p>
       {:else}
-        <div class="table-wrap">
-          <table class="data-table history-table">
-            <caption class="sr-only">Bisherige Support-Zugriffe</caption>
-            <thead>
-              <tr>
-                <th scope="col">Beginn</th>
-                <th scope="col">Ende</th>
-                <th scope="col">Status</th>
-                <th scope="col">Grund</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each supportState.history as access (access.id)}
-                {@const status = statusOf(access)}
-                {@const ended = endedLine(access)}
-                <tr data-testid={`op-support-history-row-${access.id}`}>
-                  <td data-label="Beginn">{formatOperatorDateTime(access.startedAt)}</td>
-                  <td data-label="Ende">
-                    {formatOperatorDateTime(access.endedAt ?? access.expiresAt)}
-                    {#if ended}<span class="ended">{ended}</span>{/if}
-                  </td>
-                  <td data-label="Status">
-                    <span
-                      class="badge"
-                      class:badge-green={status === "ACTIVE"}
-                      class:badge-gray={status !== "ACTIVE"}
-                      data-testid={`op-support-status-${access.id}`}
-                      data-state={status.toLowerCase()}>{SUPPORT_STATUS_LABELS[status]}</span
-                    >
-                  </td>
-                  <td class="cell-reason" data-label="Grund">
-                    <span class="clamp" title={access.reason}>{access.reason}</span>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          caption="Bisherige Support-Zugriffe"
+          columns={HISTORY_COLUMNS}
+          rows={supportState.history}
+          rowKey={(access) => access.id}
+          rowTestId={(access) => `op-support-history-row-${access.id}`}
+        >
+          {#snippet cell(access, column)}
+            {#if column.key === "startedAt"}
+              {formatOperatorDateTime(access.startedAt)}
+            {:else if column.key === "endedAt"}
+              {formatOperatorDateTime(access.endedAt ?? access.expiresAt)}
+              {#if endedLine(access)}<span class="ended">{endedLine(access)}</span>{/if}
+            {:else if column.key === "status"}
+              {@const status = statusOf(access)}
+              <span
+                class="badge"
+                class:badge-green={status === "ACTIVE"}
+                class:badge-gray={status !== "ACTIVE"}
+                data-testid={`op-support-status-${access.id}`}
+                data-state={status.toLowerCase()}>{SUPPORT_STATUS_LABELS[status]}</span
+              >
+            {:else}
+              <span class="clamp" title={access.reason}>{access.reason}</span>
+            {/if}
+          {/snippet}
+        </DataTable>
       {/if}
     </div>
   </div>
@@ -436,7 +433,7 @@
   .counter {
     margin: 4px 0 0;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
@@ -477,7 +474,7 @@
   .facts dt {
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .facts dd {
@@ -504,7 +501,7 @@
   }
 
   .danger {
-    color: var(--bad-text);
+    color: var(--bad);
   }
 
   .frozen-link {
@@ -521,32 +518,31 @@
     margin: 0 0 8px;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .empty {
     margin: 0;
     font-size: 16px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .ended {
     display: block;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
+  /* The DataTable cell is one line; a long reason wraps inside its own width and clamps at two lines. */
   .clamp {
     display: -webkit-box;
+    max-width: 48ch;
+    white-space: normal;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     overflow: hidden;
     overflow-wrap: anywhere;
-  }
-
-  .cell-reason {
-    min-width: 0;
   }
 
   @media (max-width: 559px) {
@@ -557,53 +553,6 @@
 
     .facts dd {
       margin-bottom: 8px;
-    }
-  }
-
-  @media (max-width: 639px) {
-    .history-table thead {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      margin: -1px;
-      padding: 0;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
-    }
-
-    .history-table,
-    .history-table tbody {
-      display: block;
-    }
-
-    .history-table tr {
-      display: block;
-      padding: 16px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .history-table tbody tr:last-child {
-      border-bottom: 0;
-    }
-
-    .history-table td {
-      display: block;
-      padding: 0;
-      border: 0;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .history-table td + td {
-      margin-top: 4px;
-    }
-
-    .history-table td::before {
-      content: attr(data-label) ": ";
-      font-weight: 600;
-      color: var(--text-muted);
     }
   }
 </style>

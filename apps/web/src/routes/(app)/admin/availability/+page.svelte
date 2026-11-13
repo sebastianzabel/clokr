@@ -1,39 +1,62 @@
 <script lang="ts">
+  import { pageLabel } from "$lib/nav/page-labels";
   // Phase 55 — Admin availability list page.
-  // Shows all employees as clickable rows linking to /admin/availability/[employeeId].
-  // ADMIN + MANAGER only (server enforces 403; client redirects EMPLOYEE to /availability).
+  // Issue #853 (D-853-13, D-853-18, S-22): the fourth roster tab. One searchable person table; a row opens
+  // /admin/availability/[employeeId]. The list is unfiltered by design (an exempt page, Issue #558): it
+  // reads `GET /employees` and the API narrows it to the caller's reach.
 
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
+  import { authStore } from "$stores/auth";
+  import { tenantFeatures } from "$stores/tenant-features";
   import { toasts } from "$stores/toast";
-  import ListDetail from "$lib/components/admin/ListDetail.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import { rosterTabs } from "$lib/nav/routes";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import DataTable, {
+    type DataTableColumn,
+    type DataTableSort,
+  } from "$components/ui/DataTable.svelte";
+  import { avatarIndex, initialsOf } from "$components/ui/ListRow.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
+  import TableToolbar from "$components/ui/TableToolbar.svelte";
+  import {
+    availabilityRows,
+    filterAvailability,
+    sortAvailability,
+    type AvailabilityEmployee,
+  } from "$lib/team/availability-list";
 
-  interface Employee {
-    id: string;
-    firstName: string;
-    lastName: string;
-    employeeNumber?: string;
-  }
-
-  let employees = $state<Employee[]>([]);
+  let employees = $state<AvailabilityEmployee[]>([]);
   let loading = $state(true);
   let search = $state("");
+  let sort = $state<DataTableSort | null>(null);
 
-  const filtered = $derived(
-    search.trim()
-      ? employees.filter(
-          (e) =>
-            `${e.firstName} ${e.lastName}`.toLowerCase().includes(search.trim().toLowerCase()) ||
-            (e.employeeNumber ?? "").toLowerCase().includes(search.trim().toLowerCase()),
-        )
-      : employees,
+  // The four roster tabs are the link tabs of the route table; a tab the caller may not open is not listed.
+  const rosterTabsList = $derived(
+    rosterTabs($authStore.user, { availabilityEnabled: $tenantFeatures.availabilityEnabled }),
   );
+
+  const allRows = $derived(availabilityRows(employees));
+  const shownRows = $derived(
+    sortAvailability(filterAvailability(allRows, search), {
+      key: "name",
+      dir: sort?.dir ?? "asc",
+    }),
+  );
+
+  const columns: DataTableColumn[] = [
+    { key: "name", label: "Name", primary: true, sortable: true },
+    { key: "open", label: "Verfügbarkeit", align: "end" },
+  ];
+
+  function detailHref(id: string): string {
+    return `/admin/availability/${id}`;
+  }
 
   async function loadEmployees(): Promise<void> {
     try {
-      const list = await api.get<Employee[]>("/employees?limit=500");
+      const list = await api.get<AvailabilityEmployee[]>("/employees?limit=500");
       employees = list ?? [];
     } catch (err) {
       const msg =
@@ -50,155 +73,109 @@
   });
 </script>
 
-<ListDetail
-  view="list"
-  eyebrow="Planung"
-  title="Verfügbarkeit"
-  sub="Wer kann wann arbeiten?"
-  animate
->
-  {#snippet list()}
-    <Section
-      title="Mitarbeiter"
-      sub="Wähle einen Mitarbeiter, um seine Verfügbarkeit zu bearbeiten."
-    >
-      <div class="av-list-toolbar">
-        <input
-          type="search"
-          class="form-input av-search"
-          placeholder="Suchen…"
-          bind:value={search}
-          aria-label="Mitarbeiter suchen"
-        />
-      </div>
+<svelte:head>
+  <title>{pageLabel("/admin/availability")} – Clokr</title>
+</svelte:head>
 
-      {#if loading}
-        <div class="av-empty-state">
-          <p class="av-empty-body">Lade Mitarbeiter…</p>
-        </div>
-      {:else if filtered.length === 0}
-        <div class="av-empty-state">
-          <h3 class="av-empty-title">Keine Mitarbeiter gefunden</h3>
-          <p class="av-empty-body">Passe die Suche an oder lege neue Mitarbeiter an.</p>
-        </div>
-      {:else}
-        <table class="av-table">
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Personalnummer</th>
-              <th scope="col" aria-label="Aktion"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each filtered as emp (emp.id)}
-              <tr
-                class="av-row"
-                role="button"
-                tabindex="0"
-                onclick={() => goto(`/admin/availability/${emp.id}`)}
-                onkeydown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    void goto(`/admin/availability/${emp.id}`);
-                  }
-                }}
-              >
-                <td class="av-cell av-cell--name">{emp.firstName} {emp.lastName}</td>
-                <td class="av-cell av-cell--number">{emp.employeeNumber ?? "—"}</td>
-                <td class="av-cell av-cell--arrow" aria-hidden="true">›</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+<PageHead
+  title={pageLabel("/admin/availability")}
+  sub="Wer kann wann arbeiten? Wähle eine Person, um ihre Verfügbarkeit zu bearbeiten."
+/>
+<PageTabs tabs={rosterTabsList} tab="/team/verfuegbarkeit" tabsLabel="Dienstplan" />
+
+<div class="page" data-testid="availability-page">
+  <DataTable
+    caption="Personen"
+    {columns}
+    rows={shownRows}
+    rowKey={(row) => row.id}
+    rowTestId={(row) => `availability-row-${row.id}`}
+    {sort}
+    onSort={(next) => (sort = next)}
+    filtered={search.trim() !== "" && allRows.length > 0}
+    onResetFilters={() => (search = "")}
+    onRowClick={(row) => void goto(detailHref(row.id))}
+    {loading}
+  >
+    {#snippet toolbar()}
+      <TableToolbar
+        bind:query={search}
+        count={shownRows.length}
+        total={allRows.length}
+        searchLabel="Name oder Nummer"
+      />
+    {/snippet}
+    {#snippet cell(row, column)}
+      {#if column.key === "name"}
+        <span class="av-name">
+          <span
+            class="av-avatar"
+            style="--av: var(--a{avatarIndex(row.name)}); --av-t: var(--a{avatarIndex(row.name)}-t)"
+            aria-hidden="true">{initialsOf(row.name)}</span
+          >
+          <span class="av-text">
+            <span class="av-title">{row.name}</span>
+            {#if row.number !== ""}<span class="av-number">{row.number}</span>{/if}
+          </span>
+        </span>
+      {:else if column.key === "open"}
+        <a
+          class="av-open"
+          href={detailHref(row.id)}
+          aria-label="Verfügbarkeit von {row.name} öffnen">Öffnen</a
+        >
       {/if}
-    </Section>
-  {/snippet}
-</ListDetail>
+    {/snippet}
+  </DataTable>
+</div>
 
 <style>
-  .av-list-toolbar {
-    padding: 0 0 var(--s-3);
+  .av-name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-width: 0;
   }
 
-  .av-search {
-    max-width: 320px;
-    width: 100%;
-  }
-
-  .av-table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  .av-table thead th {
-    font-family: var(--font-sans);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-    padding: var(--s-2) var(--s-3);
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .av-row {
-    cursor: pointer;
-    transition: background 0.1s ease;
-  }
-
-  .av-row:hover {
-    background: var(--bg-subtle);
-  }
-
-  .av-row:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: -2px;
-  }
-
-  .av-cell {
-    padding: var(--s-3);
-    border-bottom: 1px solid var(--border);
-    color: var(--text);
-    font-size: 0.9375rem;
-  }
-
-  .av-cell--name {
-    font-weight: 500;
-  }
-
-  .av-cell--number {
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-  }
-
-  .av-cell--arrow {
+  .av-avatar {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
     width: 32px;
-    text-align: right;
-    color: var(--text-muted);
-    font-size: 1.25rem;
-    line-height: 1;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--av);
+    color: var(--av-t);
+    font-size: var(--fs-xs);
+    font-weight: 600;
   }
 
-  .av-empty-state {
-    text-align: center;
-    padding: var(--s-8) var(--s-4);
+  .av-text {
+    display: inline-flex;
+    flex-direction: column;
+    min-width: 0;
+    text-align: start;
   }
 
-  .av-empty-title {
-    font-family: var(--font-serif);
-    font-size: 1.25rem;
-    font-weight: 500;
+  .av-title {
+    font-weight: 600;
     color: var(--text);
-    margin: 0 0 var(--s-2);
   }
 
-  .av-empty-body {
-    color: var(--text-muted);
-    max-width: 420px;
-    margin: 0 auto;
-    line-height: 1.5;
+  .av-number {
+    color: var(--text-3);
+    font-size: var(--fs-xs);
+    font-weight: 400;
+  }
+
+  .av-open {
+    color: var(--brand);
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .av-open:hover {
+    text-decoration: underline;
   }
 </style>

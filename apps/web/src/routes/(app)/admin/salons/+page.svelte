@@ -1,12 +1,20 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import { onMount, untrack } from "svelte";
+  import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { salonContext, moduleBooked } from "$stores/salon-context";
   import { salonAdminRights } from "$lib/page-rights";
-  import ListDetail from "$lib/components/admin/ListDetail.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
   import ModuleHint from "$lib/components/admin/ModuleHint.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import TableToolbar from "$components/ui/TableToolbar.svelte";
+  import { matchesSearch } from "$lib/table/search";
+  import { oneOf, text, urlState } from "$lib/table/url-state";
   import { federalStateLabel } from "$lib/salons/federal-states";
   import type { SalonDto } from "$lib/salons/salon-form";
 
@@ -34,6 +42,96 @@
     return parts.length > 0 ? parts.join(", ") : "—";
   }
 
+  // ── Table state in the URL (Issue #854, D-854-03): the search text and the status filter ────
+  // The schema is an allow-list: every other key of the URL (e.g. `salonId`) is left alone and a
+  // value that fails its parser is the default.
+  const listUrlSchema = {
+    q: text({ max: 80 }),
+    status: oneOf(["all", "active", "inactive"] as const, "all"),
+  };
+  const listUrl = urlState(listUrlSchema);
+  const urlQuery = $derived(listUrl.read().q);
+  const status = $derived(listUrl.read().status);
+
+  // `query` is the raw (normalised) input of the toolbar; the URL carries the parsed value. Values
+  // written to the URL whose echo has not come back yet are remembered, so a fast typist's "a",
+  // "ab" does not get "a" written back into the input by the first echo.
+  let query = $state(listUrl.read().q);
+  let pendingEchoes: string[] = [];
+  function setQuery(value: string) {
+    query = value;
+    const next = listUrlSchema.q.parse(value);
+    if (next === listUrl.read().q) return;
+    pendingEchoes = [...pendingEchoes, next];
+    listUrl.write({ q: next });
+  }
+  $effect(() => {
+    const fromUrl = urlQuery;
+    untrack(() => {
+      const index = pendingEchoes.indexOf(fromUrl);
+      if (index >= 0) {
+        pendingEchoes = pendingEchoes.slice(index + 1);
+        return;
+      }
+      // A change the page did not write itself (back/forward, a link): the input follows the URL.
+      pendingEchoes = [];
+      if (listUrlSchema.q.parse(query) !== fromUrl) query = fromUrl;
+    });
+  });
+
+  function resetFilters() {
+    query = "";
+    if (listUrl.read().q !== "") pendingEchoes = [...pendingEchoes, ""];
+    listUrl.write({ q: "", status: "all" });
+  }
+
+  type SalonRow = {
+    id: string;
+    name: string;
+    federalState: string;
+    address: string;
+    isActive: boolean;
+  };
+
+  const allRows = $derived<SalonRow[]>(
+    [...salons]
+      .sort((a, b) => a.name.localeCompare(b.name, "de"))
+      .map((salon) => ({
+        id: salon.id,
+        name: salon.name,
+        federalState: federalStateLabel(salon.federalState),
+        address: addressOf(salon),
+        isActive: salon.isActive,
+      })),
+  );
+  const rows = $derived(
+    allRows.filter(
+      (row) =>
+        (status === "all" || (status === "active") === row.isActive) &&
+        matchesSearch(`${row.name} ${row.federalState} ${row.address}`, query),
+    ),
+  );
+  const filtered = $derived(query !== "" || status !== "all");
+
+  const columns: DataTableColumn[] = [
+    { key: "name", label: "Name", primary: true },
+    { key: "federalState", label: "Bundesland" },
+    { key: "address", label: "Adresse" },
+    { key: "status", label: "Status" },
+  ];
+
+  const filters = $derived([
+    {
+      key: "status",
+      label: "Status",
+      value: status === "all" ? "" : status,
+      options: [
+        { value: "active", label: "Aktiv" },
+        { value: "inactive", label: "Inaktiv" },
+      ],
+    },
+  ]);
+
   onMount(async () => {
     try {
       const res = await api.get<{ salons: SalonDto[] }>("/salons?includeInactive=true");
@@ -50,84 +148,64 @@
   });
 </script>
 
-<ListDetail
-  eyebrow="Administration"
-  title="Salons"
-  sub="Standorte Ihres Unternehmens mit Adresse und Öffnungszeiten."
-  animate
-  view="list"
+<PageHead
+  title={pageLabel("/admin/salons")}
+  sub="Standorte deines Unternehmens mit Adresse und Öffnungszeiten."
 >
   {#snippet actions()}
     {#if rights.canManage}
       {#if chainHint}
         <ModuleHint module="CHAIN" subject="Weitere Salons" />
       {:else}
-        <a class="btn btn-primary btn-sm" href="/admin/salons/neu">Salon anlegen</a>
+        <a class="btn btn-primary" href="/admin/salons/neu">Salon anlegen</a>
       {/if}
     {/if}
   {/snippet}
+</PageHead>
 
-  {#snippet list()}
-    {#if loading}
-      <Section>
-        <p class="text-muted" role="status">Wird geladen…</p>
-      </Section>
-    {:else if forbidden}
-      <Section>
-        <p class="text-muted">Für die Salonübersicht fehlt Ihnen die Berechtigung.</p>
-      </Section>
-    {:else if loadError}
-      <div class="alert alert-error">{loadError}</div>
-    {:else if salons.length === 0}
-      <Section>
-        <p class="text-muted">Noch keine Salons angelegt.</p>
-      </Section>
-    {:else}
-      <Section title="Alle Salons" sub="Aktive und deaktivierte Standorte">
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th class="col-state">Bundesland</th>
-                <th class="col-address">Adresse</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each salons as salon (salon.id)}
-                <tr>
-                  <td><a href="/admin/salons/{salon.id}">{salon.name}</a></td>
-                  <td class="col-state">{federalStateLabel(salon.federalState)}</td>
-                  <td class="text-muted col-address">{addressOf(salon)}</td>
-                  <td>
-                    <span
-                      class="badge"
-                      class:badge-green={salon.isActive}
-                      class:badge-gray={!salon.isActive}
-                    >
-                      {salon.isActive ? "Aktiv" : "Inaktiv"}
-                    </span>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </Section>
-    {/if}
-  {/snippet}
-</ListDetail>
-
-<style>
-  /* Below the phone breakpoint the address and the Bundesland give way so the name and the status
-     badge always fit the card: with all four columns the status column was cut off inside the
-     table's own scroll box at 390 and 360 px (measured, Issue #563). Both values stay readable on
-     the salon's detail page. */
-  @media (max-width: 640px) {
-    .col-address,
-    .col-state {
-      display: none;
-    }
-  }
-</style>
+{#if forbidden}
+  <Note tone="info">Für die Salonübersicht fehlt dir die Berechtigung.</Note>
+{:else if loadError}
+  <div role="alert"><Note tone="bad">{loadError}</Note></div>
+{:else if !loading && salons.length === 0}
+  <EmptyState
+    icon="inbox"
+    title="Noch keine Salons angelegt"
+    description="Sobald ein Salon angelegt ist, erscheint er hier."
+  />
+{:else}
+  <DataTable
+    {columns}
+    {rows}
+    rowKey={(row) => row.id}
+    {loading}
+    {filtered}
+    onResetFilters={resetFilters}
+    onRowClick={(row) => goto(`/admin/salons/${row.id}`)}
+    caption="Alle Salons, aktive und deaktivierte Standorte"
+  >
+    {#snippet toolbar()}
+      <TableToolbar
+        bind:query={() => query, setQuery}
+        count={rows.length}
+        total={allRows.length}
+        {filters}
+        searchLabel="Salons suchen"
+        onFilterChange={(_key, value) =>
+          listUrl.write({ status: value === "" ? "all" : (value as "active" | "inactive") })}
+        onReset={resetFilters}
+      />
+    {/snippet}
+    {#snippet cell(row, column)}
+      {#if column.key === "status"}
+        <Chip tone={row.isActive ? "ok" : "neutral"}>{row.isActive ? "Aktiv" : "Inaktiv"}</Chip>
+      {:else if column.key === "federalState"}
+        {row.federalState}
+      {:else if column.key === "address"}
+        {row.address}
+      {:else}
+        {row.name}
+      {/if}
+    {/snippet}
+  </DataTable>
+{/if}

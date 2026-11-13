@@ -1,10 +1,19 @@
 /**
  * Audit tool - Issues #388 and #508 (DSGVO Art. 17 gaps of the employee anonymization).
  *
+ * Issue #718 adds six more free-text categories (see the list below the first three).
  * Before these issues the anonymization (DELETE /api/v1/employees/:id) left three things behind:
  *   WIFI_MACS            Employee.wifiMacs still holds MAC addresses of private devices
  *   PRESENCE_DEVICES     PresenceDevice rows (MAC + label) of the person still exist
  *   BREAK_WAIVED_REASON  TimeEntry.breakWaivedReason (free text, soft-deleted rows included) is set
+ *   LEAVE_REVIEW_NOTE    LeaveRequest.reviewNote is set (#718)
+ *   RETRO_REASON         RetroEntryRequest.reason is not the neutral replacement text (#718)
+ *   RETRO_REVIEW_NOTE    RetroEntryRequest.reviewNote is set (#718)
+ *   OVERTIME_PLAN_NOTE   OvertimePlan.note is set (#718)
+ *   SHIFT_NOTE           Shift.note is set (#718)
+ *   AVAILABILITY_NOTE    EmployeeAvailability.note is set (#718)
+ * Deliberately NOT listed (kept on purpose, § 147 AO): SaldoSnapshot.note and the OpeningBalance
+ * texts the business writes to document a booking.
  * This script lists every already-anonymized employee (sentinel `ANONYMIZED_EMPLOYEE_WHERE`) that
  * still carries one of them: tenant id, employee id, category and COUNT. A `Totals:` line follows.
  * Whether those Bestand rows are cleaned by a one-off script is an open owner decision (#388), so
@@ -28,6 +37,7 @@ import pg from "pg";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { ANONYMIZED_EMPLOYEE_WHERE } from "../src/contexts/platform/employee-anonymization-filter";
+import { RETRO_REASON_ANONYMIZED } from "../src/contexts/time-tracking";
 
 export const EXIT_OK = 0;
 export const EXIT_ERROR = 1;
@@ -39,7 +49,19 @@ export type LeftoverRow = {
   wifiMacs: number;
   presenceDevices: number;
   breakWaivedReasons: number;
+  /** Issue #718 free-text categories, counts per person (key = FREE_TEXT_CATEGORIES key). */
+  freeText: Record<FreeTextKey, number>;
 };
+
+export const FREE_TEXT_CATEGORIES = [
+  { key: "leaveReviewNotes", label: "LEAVE_REVIEW_NOTE" },
+  { key: "retroReasons", label: "RETRO_REASON" },
+  { key: "retroReviewNotes", label: "RETRO_REVIEW_NOTE" },
+  { key: "overtimePlanNotes", label: "OVERTIME_PLAN_NOTE" },
+  { key: "shiftNotes", label: "SHIFT_NOTE" },
+  { key: "availabilityNotes", label: "AVAILABILITY_NOTE" },
+] as const;
+export type FreeTextKey = (typeof FREE_TEXT_CATEGORIES)[number]["key"];
 
 type Db = Prisma.TransactionClient;
 
@@ -78,6 +100,50 @@ export async function computeAnonymizedLeftovers(
   });
   const waived = countBy(waivedRows);
 
+  // Issue #718. No `deletedAt` filter anywhere: soft-deleted rows keep their text.
+  const inScope = { employeeId: { in: ids } };
+  const [leaveReview, retroReason, retroReview, planNotes, shiftNotes, availNotes] =
+    await Promise.all([
+      db.leaveRequest.groupBy({
+        by: ["employeeId"],
+        where: { ...inScope, reviewNote: { not: null } },
+        _count: { _all: true },
+      }),
+      db.retroEntryRequest.groupBy({
+        by: ["employeeId"],
+        where: { ...inScope, reason: { not: RETRO_REASON_ANONYMIZED } },
+        _count: { _all: true },
+      }),
+      db.retroEntryRequest.groupBy({
+        by: ["employeeId"],
+        where: { ...inScope, reviewNote: { not: null } },
+        _count: { _all: true },
+      }),
+      db.overtimePlan.groupBy({
+        by: ["employeeId"],
+        where: { ...inScope, note: { not: null } },
+        _count: { _all: true },
+      }),
+      db.shift.groupBy({
+        by: ["employeeId"],
+        where: { ...inScope, note: { not: null } },
+        _count: { _all: true },
+      }),
+      db.employeeAvailability.groupBy({
+        by: ["employeeId"],
+        where: { ...inScope, note: { not: null } },
+        _count: { _all: true },
+      }),
+    ]);
+  const freeTextMaps: Record<FreeTextKey, Map<string, number>> = {
+    leaveReviewNotes: countBy(leaveReview),
+    retroReasons: countBy(retroReason),
+    retroReviewNotes: countBy(retroReview),
+    overtimePlanNotes: countBy(planNotes),
+    shiftNotes: countBy(shiftNotes),
+    availabilityNotes: countBy(availNotes),
+  };
+
   const rows: LeftoverRow[] = [];
   for (const e of employees) {
     const row: LeftoverRow = {
@@ -86,8 +152,14 @@ export async function computeAnonymizedLeftovers(
       wifiMacs: e.wifiMacs.length,
       presenceDevices: devices.get(e.id) ?? 0,
       breakWaivedReasons: waived.get(e.id) ?? 0,
+      freeText: Object.fromEntries(
+        FREE_TEXT_CATEGORIES.map((c) => [c.key, freeTextMaps[c.key].get(e.id) ?? 0]),
+      ) as Record<FreeTextKey, number>,
     };
-    if (row.wifiMacs + row.presenceDevices + row.breakWaivedReasons > 0) rows.push(row);
+    const freeTextTotal = FREE_TEXT_CATEGORIES.reduce((n, c) => n + row.freeText[c.key], 0);
+    if (row.wifiMacs + row.presenceDevices + row.breakWaivedReasons + freeTextTotal > 0) {
+      rows.push(row);
+    }
   }
   return rows.sort(
     (a, b) => compareStrings(a.tenantId, b.tenantId) || compareStrings(a.employeeId, b.employeeId),
@@ -99,11 +171,13 @@ export function formatRow(row: LeftoverRow): string {
     row.wifiMacs > 0 ? "WIFI_MACS" : null,
     row.presenceDevices > 0 ? "PRESENCE_DEVICES" : null,
     row.breakWaivedReasons > 0 ? "BREAK_WAIVED_REASON" : null,
+    ...FREE_TEXT_CATEGORIES.map((c) => (row.freeText[c.key] > 0 ? c.label : null)),
   ].filter(Boolean);
   return (
     `tenant=${row.tenantId} employee=${row.employeeId} findings=${findings.join(",")} ` +
     `wifiMacs=${row.wifiMacs} presenceDevices=${row.presenceDevices} ` +
-    `breakWaivedReasons=${row.breakWaivedReasons}`
+    `breakWaivedReasons=${row.breakWaivedReasons}` +
+    FREE_TEXT_CATEGORIES.map((c) => ` ${c.key}=${row.freeText[c.key]}`).join("")
   );
 }
 
@@ -112,7 +186,8 @@ export function formatTotals(rows: LeftoverRow[]): string {
   return (
     `Totals: employees=${rows.length} wifiMacs=${sum((r) => r.wifiMacs)} ` +
     `presenceDevices=${sum((r) => r.presenceDevices)} ` +
-    `breakWaivedReasons=${sum((r) => r.breakWaivedReasons)}`
+    `breakWaivedReasons=${sum((r) => r.breakWaivedReasons)}` +
+    FREE_TEXT_CATEGORIES.map((c) => ` ${c.key}=${sum((r) => r.freeText[c.key])}`).join("")
   );
 }
 
@@ -132,7 +207,9 @@ Usage:
   DATABASE_URL=<dsn> pnpm --filter @clokr/api exec tsx scripts/audit-388-anonymized-leftovers.ts [--tenant <id>] [--help]
 
 READ-ONLY - lists already-anonymized employees that still carry WLAN MAC addresses
-(Employee.wifiMacs, PresenceDevice) or a TimeEntry.breakWaivedReason. Ids and counts only.
+(Employee.wifiMacs, PresenceDevice), a TimeEntry.breakWaivedReason or one of the person-authored
+free texts of #718 (review notes, Zeitnachtrag reason, overtime plan / shift / availability notes).
+Ids and counts only.
 
 Exit codes: 0 no finding, 2 at least one finding, 1 error.
 `;

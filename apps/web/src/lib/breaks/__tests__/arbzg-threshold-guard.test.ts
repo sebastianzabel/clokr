@@ -70,14 +70,6 @@ const EXCEPTIONS: Record<string, ThresholdException> = {
       "finding; moving it needs a server endpoint for the suggestion.",
     issue: 525,
   },
-  "routes/(app)/dashboard/+page.svelte": {
-    hits: 3,
-    reason:
-      "arbzgCallout shows a live hint for the running day (workedHours < 6, entryBreakMin < 30, " +
-      "workedHours > 9 && entryBreakMin < 45) before any closed entry exists for the server to " +
-      "evaluate; moving it needs a server-side live check.",
-    issue: 525,
-  },
 };
 
 function walkSources(absDir: string, out: string[] = []): string[] {
@@ -124,7 +116,7 @@ describe("no client-side § 4 / § 11 threshold arithmetic (Issue #511 D-18, D-2
   it("walks a non-empty source set (anti-vacuity)", () => {
     // The literal is the floor (the vacuity gate only reads a numeric literal as proof).
     expect(FILES.length).toBeGreaterThanOrEqual(150);
-    // The two exception files and a known page must be inside the walked set, else the exact
+    // The exception file(s) and a known page must be inside the walked set, else the exact
     // counts below would pass on a tree that the walk no longer reaches.
     const walked = new Set(FILES.map(srcRel));
     for (const file of Object.keys(EXCEPTIONS)) expect(walked.has(file)).toBe(true);

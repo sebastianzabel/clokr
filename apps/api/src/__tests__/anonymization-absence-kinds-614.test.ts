@@ -74,7 +74,6 @@ describe("Issue #614 — anonymization ends every absence after the exit", () =>
       data: {
         email: `${label}-${suffix}@example.invalid`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

@@ -174,7 +174,6 @@ describe("Issue #80 — next-day cross-salon § 4 notification (Feature 10)", ()
       data: {
         email: `csbn-${s}@test.de`,
         passwordHash: await bcrypt.hash(PASSWORD, 4),
-        role,
         isActive: true,
       },
     });

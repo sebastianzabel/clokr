@@ -99,7 +99,6 @@ describe("Phase 76.11 — /shifts/week emits leaveMinutesByEmp + absenceMinutesB
       data: {
         email: `admin-${suiteSuffix}@test.de`,
         passwordHash: adminPasswordHash,
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -153,7 +152,6 @@ describe("Phase 76.11 — /shifts/week emits leaveMinutesByEmp + absenceMinutesB
       data: {
         email: `emp-${label}-${suiteSuffix}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

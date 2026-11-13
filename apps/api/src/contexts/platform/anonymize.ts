@@ -28,18 +28,27 @@
  *   - User.email               → "deleted-{id-prefix}@anonymized.local"
  *   - User.passwordHash        → "ANONYMIZED"
  *   - User.isActive            → false
- *   - User.role                → EMPLOYEE (Issue #357 sub-fix C, revises Phase 75b D-14 — see
- *     below and CLAUDE.md "DSGVO Employee Deletion = Anonymization")
  *   - TimeEntry.note           → null (for that employee)
  *   - TimeEntry.breakWaivedReason → null (Issue #508; breakStatus and the entry stay)
  *   - LeaveRequest.note        → null (for that employee)
+ *   - LeaveRequest.reviewNote  → null (Issue #718; status, reviewer and timestamp stay)
+ *   - RetroEntryRequest.reason → "Gelöscht (Anonymisierung)" (required column, neutral text) AND
+ *     RetroEntryRequest.reviewNote → null (Issue #718; the row, its status and times stay)
+ *   - OvertimePlan.note, Shift.note, EmployeeAvailability.note → null (Issue #718)
  *   - Absence.note             → null AND Absence.documentPath → null
  *   - Section9Credit.documentPath → null AND Section9Credit.reason → null (Phase 104,
  *     D-26 — Art. 9 DSGVO health datum + free text; rows preserved, see below)
  *   - Invitation, OtpToken, RefreshToken: hard-deleted (not retention-relevant)
+ *   - PresencePairingCode (Issue #610, D-04): the codes the user consumed are hard-deleted (a code
+ *     names a device address; not retention-relevant), through the time-tracking facade
  *   - AuditLog.userId          → null (for rows owned by that user)
  *   - AuditLog.oldValue/newValue → redacted for Employee + User audit rows
  *     (prevents name/email from surviving in historical JSON — COMP-V1814-01)
+ *   - AuditLog old/new value free text → "[ausgeblendet]" by TYPE for rows authored by the user or
+ *     naming the employee (Issue #512, `audit-freetext-redaction.ts`; who/when/what and every
+ *     figure stay, rows are never deleted)
+ *   - AuditLog old/new value device MAC addresses → "[ausgeblendet]" for the person's rows (Issue #820,
+ *     `audit-mac-redaction.ts`, by key/shape, rows stay)
  *   - Notification.title/message → "ANONYMIZED" (for the user's own notifications)
  *   - RoleAssignment: every row of the user is hard-deleted (Phase 74b, D-22 — an anonymized
  *     person must not hold rights, and a leftover row would block deleting its role). The
@@ -52,6 +61,11 @@
  * Preserved (for retention compliance §147 AO / §257 HGB / § 16 ArbZG):
  *   TimeEntry, LeaveRequest, Absence, Schedule, OvertimeAccount row counts
  *   stay unchanged — rows are mutated in place, never deleted.
+ *   Deliberately KEPT free texts (Issue #718, owner decision delegated 26.10.2026): the texts the
+ *   business itself writes to document a booking - SaldoSnapshot.note / supersededReason and
+ *   OpeningBalance.reason / evidenceRef / supersededReason. They are not person-authored, they are
+ *   Buchungsbeleg material (§ 147 AO, GoBD, Art. 17 Abs. 3 lit. b DSGVO). AuditLog free texts
+ *   are redacted by type, see the AuditLog bullet above (#512).
  *   OpeningBalance (Phase 99, OB-05): likewise preserved by omission — the row IS the
  *   Nachweis that a migrated Alt-Überstunden value existed and why. It carries no PII of
  *   its own (employeeId reference only; reason/evidenceRef are operational text, and MUST
@@ -79,11 +93,25 @@
  * The helper assumes the employee exists and has a non-null userId. Callers
  * are expected to validate that before opening the transaction.
  */
+import { deleteCalendarFeedTokensOfUser } from "./calendar-feed-token"; // Issue #597
 import type { Prisma } from "@clokr/db";
-import { clearEntryNotesForEmployee, deletePresenceDevicesOfEmployee } from "../time-tracking"; // Phase 100B Plan 08 — T10
+import {
+  clearEntryNotesForEmployee,
+  deletePairingCodesOfUser, // Issue #610
+  deletePresenceDevicesOfEmployee,
+  listPresenceDevices,
+  timeEntryIdsOfEmployee,
+} from "../time-tracking"; // Phase 100B Plan 08 — T10; Issue #820
 import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B Plan 11 — T-100B-48
 import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
 import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
+import { clearSchedulingNotesForEmployee } from "../scheduling"; // Issue #718
+import {
+  clearOvertimePlanNotesForEmployee, // Issue #718
+  clearMonthCorrectionTextsForEmployee, // Issue #599
+} from "../working-time-account";
+import { redactAuditFreeTextOfPerson, type AuditRedactionResult } from "./audit-freetext-redaction"; // Issue #512
+import { redactMacAuditOfPerson, type MacAuditResult } from "./audit-mac-redaction"; // Issue #820
 import { removeRoleAssignmentsOfUser, type RemovedRoleAssignment } from "./facade/role-assignments";
 // Phase 101B (Issue #101, Nachtrag 2026-09-17): the two sentinel `where` fragments lifted out of
 // this file into ./employee-anonymization-filter.ts — re-exported below (unchanged) so
@@ -111,6 +139,22 @@ export interface AnonymizeEmployeeResult {
   exitDate: { before: Date | null; after: Date };
   /** Issue #388: counts only of the cleared device identifiers; the addresses are never returned. */
   clearedDeviceIdentifiers: { wifiMacs: number; presenceDevices: number };
+  /** Issue #512: AuditLog rows whose free text was redacted; counts only, never text. */
+  auditRedaction: AuditRedactionResult;
+  /** Issue #820: AuditLog rows whose MAC address was redacted; counts only, never an address. */
+  macAuditRedaction: MacAuditResult;
+  /** Issue #718: row counts of the cleared free-text fields; counts only, never text. */
+  clearedFreeText: {
+    leaveReviewNotes: number;
+    retroReasons: number;
+    retroReviewNotes: number;
+    overtimePlanNotes: number;
+    /** Issue #599 */
+    monthCorrectionReasons: number;
+    monthCorrectionReviewNotes: number;
+    shiftNotes: number;
+    availabilityNotes: number;
+  };
 }
 
 /**
@@ -140,6 +184,27 @@ export async function anonymizeEmployeeData(
   const { userId } = employee;
   const anonymizedLabel = `GELÖSCHT-${employee.employeeNumber || employeeId.slice(0, 8)}`;
 
+  // Issue #820: device MAC addresses inside the person's audit values are replaced (rows stay). MUST
+  // run first: before the #512 pass below (it reads the MACs that rows naming the person still hold),
+  // before the PresenceDevice delete (the live device ids/MACs are read here) and before the
+  // userId -> null step (rows authored by the user are found by it).
+  const liveDevices = await listPresenceDevices(tx, employeeId, employee.tenantId);
+  const macAuditRedaction = await redactMacAuditOfPerson(
+    tx,
+    {
+      employeeId,
+      userId,
+      deviceIds: liveDevices.map((d) => d.id),
+      macs: [...liveDevices.map((d) => d.mac), ...employee.wifiMacs],
+      timeEntryIds: await timeEntryIdsOfEmployee(tx, employeeId, employee.tenantId),
+    },
+    { write: true },
+  );
+
+  // Issue #512: person-authored free text inside the person's audit values is redacted by type
+  // (rows stay). MUST run before the userId -> null step: rows authored by the user are found by it.
+  const auditRedaction = await redactAuditFreeTextOfPerson(tx, { employeeId, userId });
+
   // AuditLog anonymisieren (userId → null)
   await tx.auditLog.updateMany({ where: { userId }, data: { userId: null } });
 
@@ -161,22 +226,16 @@ export async function anonymizeEmployeeData(
   });
 
   // User: deaktivieren + anonymisieren (kein Login mehr möglich)
-  // Issue #357 sub-fix C (revises Phase 75b D-14 / ADR 0001-abweichungen Eintrag N): `role` is
-  // rewritten to EMPLOYEE here too. Phase 75b deliberately left it standing so a still-valid
-  // access token of a self-anonymizing admin would not lose its rights mid-request-sequence — but
-  // that is exactly the security-review finding of #357: with the role assignments removed below
-  // and the column left at MANAGER/ADMIN, the Altrollen-Rückfall (D-08, `request-permissions.ts`)
-  // hands that still-valid token FULL Manager/Admin rights for the rest of its lifetime (up to the
-  // access-token TTL), even though the person is anonymized and `isActive: false` (which nothing
-  // re-checks per request, D-10). Anonymization must not leave a live grant behind, so the column
-  // is reset in the SAME update as `isActive`.
+  // The person holds nothing afterwards: every RoleAssignment row is hard-deleted below (Phase 74b
+  // D-22), in this same transaction, and permissions come only from stored assignments - a
+  // still-valid access token of a self-anonymizing admin resolves to no right at all. The former
+  // role-column rewrite of Issue #357 sub-fix C went with the column (Release B, #641).
   await tx.user.update({
     where: { id: userId },
     data: {
       email: `deleted-${employeeId.slice(0, 8)}@anonymized.local`,
       passwordHash: "ANONYMIZED",
       isActive: false,
-      role: "EMPLOYEE",
     },
   });
 
@@ -188,11 +247,18 @@ export async function anonymizeEmployeeData(
 
   // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
   // Phase 100B Plan 08 — T10, contexts/time-tracking facade (reaches soft-deleted rows too).
-  await clearEntryNotesForEmployee(tx, employeeId);
+  const retro = await clearEntryNotesForEmployee(tx, employeeId);
 
   // Notizen in Urlaubsanträgen anonymisieren
   // Phase 100B Plan 13 — F3, contexts/absence facade.
-  await anonymizeLeaveRequestsForEmployee(tx, employeeId);
+  // Issue #718: also reviewNote.
+  const leaveReviewNotes = await anonymizeLeaveRequestsForEmployee(tx, employeeId);
+
+  // Issue #718: Überstundenplan-, Schicht- and Verfügbarkeitsnotizen (person-authored free text).
+  const overtimePlanNotes = await clearOvertimePlanNotesForEmployee(tx, employeeId);
+  // Issue #599: the reason and review note of month-correction requests (rows and bookings stay).
+  const monthCorrection = await clearMonthCorrectionTextsForEmployee(tx, employeeId);
+  const scheduling = await clearSchedulingNotesForEmployee(tx, employeeId);
 
   // Notizen in Abwesenheiten anonymisieren + Dokument-Pfad entfernen
   // Phase 100B Plan 12 — F3, contexts/absence facade.
@@ -221,20 +287,36 @@ export async function anonymizeEmployeeData(
     },
   });
 
-  // Benachrichtigungen des Nutzers anonymisieren (können Namen/Informationen enthalten)
+  // Anonymize the user's notifications (they can contain names and other information)
   await tx.notification.updateMany({
     where: { userId },
     data: { title: "ANONYMIZED", message: "ANONYMIZED" },
   });
 
-  // Auth-Tokens löschen (nicht aufbewahrungspflichtig)
+  // Delete auth tokens (not retention-relevant). The person's push devices (Issue #608, D-04) and the
+  // WLAN pairing codes they consumed (Issue #610, D-04; a code names a device address) go with them:
+  // neither is a retention record, so no per-row audit is written here; the ANONYMIZE audit of the
+  // caller stays the one trace. Unconsumed codes belong to nobody and expire on their own.
   await tx.invitation.deleteMany({ where: { employeeId } });
   await tx.otpToken.deleteMany({ where: { userId } });
   await tx.refreshToken.deleteMany({ where: { userId } });
+  await tx.pushSubscription.deleteMany({ where: { userId } });
+  // Issue #597: the calendar-feed token is a credential of the person, not a record.
+  await deleteCalendarFeedTokensOfUser(tx, employee.tenantId, userId);
+  await deletePairingCodesOfUser(tx, userId, employee.tenantId);
 
   return {
     removedRoleAssignments,
     exitDate: { before: employee.exitDate, after: employee.exitDate ?? exitDayIfUnset },
     clearedDeviceIdentifiers: { wifiMacs: employee.wifiMacs.length, presenceDevices },
+    auditRedaction,
+    macAuditRedaction,
+    clearedFreeText: {
+      leaveReviewNotes,
+      ...retro,
+      overtimePlanNotes,
+      ...monthCorrection,
+      ...scheduling,
+    },
   };
 }

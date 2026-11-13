@@ -3,6 +3,8 @@ import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
 import {
   getTenantTimezone,
   dateStrInTz,
+  addDaysUtc, // Issue #172
+  startOfDayUtc, // Issue #172
   getDayOfWeekInTz,
   countBsDaysInIsoWeek,
   getVocationalSchoolMinutesForDate,
@@ -316,6 +318,8 @@ export async function checkArbZG(
         select: {
           type: true,
           weeklyHours: true,
+          monthlyHours: true, // Issue #787 — MONTHLY_HOURS Ø-day for the BS amount
+          workDays: true, // Issue #787
           mondayHours: true,
           tuesdayHours: true,
           wednesdayHours: true,
@@ -444,8 +448,7 @@ export async function checkArbZG(
 
     // § 5 ArbZG – Mindestruhezeit (11h zwischen Arbeitstagen)
     // Previous day: its last closed slot (any type).
-    const prevDate = new Date(changedDate);
-    prevDate.setDate(prevDate.getDate() - 1);
+    const prevDate = addDaysUtc(changedDate, -1);
     const prevDateStr = dateStrInTz(prevDate, tz);
 
     // Decision (Issue #70, D-04): the rest period is measured from the LATEST end of the previous
@@ -472,8 +475,7 @@ export async function checkArbZG(
     }
 
     // Next day: its first closed slot (any type).
-    const nextDate = new Date(changedDate);
-    nextDate.setDate(nextDate.getDate() + 1);
+    const nextDate = addDaysUtc(changedDate, 1);
     const nextDateStr = dateStrInTz(nextDate, tz);
 
     // Decision (Issue #70, D-04): the rest period is measured to the EARLIEST start of the next
@@ -509,8 +511,7 @@ export async function checkArbZG(
   // For the next-day check we use 18:00 tenant-TZ as BS-end on single days and
   // 24:00 on block-week days (≥5 BS days in the same ISO week, D-07).
   if (bsAbsenceToday) {
-    const nextDate = new Date(changedDate);
-    nextDate.setDate(nextDate.getDate() + 1);
+    const nextDate = addDaysUtc(changedDate, 1);
     const nextDateStr = dateStrInTz(nextDate, tz);
 
     // Decision (Issue #70, D-04): the Berufsschultag rest period, like the one above, is measured to
@@ -612,9 +613,8 @@ export async function checkArbZG(
   // days the employee actually worked.
   // MONTHLY_HOURS employees (Minijobber, pure tracking) have no daily target — skip this check.
   if (scheduleType !== "MONTHLY_HOURS") {
-    const windowStart = new Date(changedDate);
-    windowStart.setDate(windowStart.getDate() - 167); // 168 days = 24 weeks × 7
-    windowStart.setHours(0, 0, 0, 0);
+    // 168 days = 24 weeks × 7; calendar arithmetic in UTC fields, never host-local (Issue #172).
+    const windowStart = startOfDayUtc(addDaysUtc(changedDate, -167));
 
     const avgEntries = await prisma.timeEntry.findMany({
       where: {

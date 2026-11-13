@@ -72,7 +72,6 @@ async function createFixedEmployee(
     data: {
       email: `${label}-${suffix}@example.invalid`,
       passwordHash,
-      role: "EMPLOYEE",
       isActive: true,
     },
   });

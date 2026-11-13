@@ -1,5 +1,78 @@
 # Changelog
 
+## [1.18.0](https://github.com/sebastianzabel/clokr/compare/v1.17.0...v1.18.0) (2026-11-05)
+
+
+### Features
+
+* **531:** Mitarbeiter-CSV-Import mit Stammsalon je Zeile ([#829](https://github.com/sebastianzabel/clokr/issues/829)) ([d0b0283](https://github.com/sebastianzabel/clokr/commit/d0b02839b379636aaa3b2f369e0b6bb05c9aa26f))
+* **541:** NFC-Terminal an einen Salon binden ([#812](https://github.com/sebastianzabel/clokr/issues/812)) ([3334069](https://github.com/sebastianzabel/clokr/commit/3334069742db102af35c789c84fa14d50b2cd10d))
+* **579:** Feiertage je Salon auf der Salon-Detailseite pflegen ([#830](https://github.com/sebastianzabel/clokr/issues/830)) ([84b184d](https://github.com/sebastianzabel/clokr/commit/84b184d61ff496b53dc7f5ccbed94ff84493e0dd))
+* **608:** Push-Benachrichtigungen aufs Handy (Web-Push, als App installierbar) ([#813](https://github.com/sebastianzabel/clokr/issues/813)) ([becacb8](https://github.com/sebastianzabel/clokr/commit/becacb89f48118e85a98fd256b26e9f4bfc993c9))
+* **609:** Erinnerungen bei Schichtbeginn, Schichtende und Tagesabschluss ([#817](https://github.com/sebastianzabel/clokr/issues/817)) ([1ff76d2](https://github.com/sebastianzabel/clokr/commit/1ff76d20a496831e5a7bd34162f1b97fb75171f4))
+* **610:** WLAN-Stempeln – Handy per QR-Code im Salon koppeln ([#816](https://github.com/sebastianzabel/clokr/issues/816)) ([a58cbf1](https://github.com/sebastianzabel/clokr/commit/a58cbf1d8019058510396a8c456dca9270a01b3e))
+* **615:** Deaktivieren mit letztem Arbeitstag, Saldo und Resturlaub ([#833](https://github.com/sebastianzabel/clokr/issues/833)) ([157eb4e](https://github.com/sebastianzabel/clokr/commit/157eb4e2d152c28a403b3ce872c4fc934175ac29))
+* **624:** Erweiterte Rollen an das Ketten-Paket binden (nur Neuanlage) ([#828](https://github.com/sebastianzabel/clokr/issues/828)) ([7b5d642](https://github.com/sebastianzabel/clokr/commit/7b5d642686ead6d36f546f615f53ce04fb9c564d))
+* **641:** Release B – Spalte User.role und Enum Role entfernen ([#814](https://github.com/sebastianzabel/clokr/issues/814)) ([4f893f2](https://github.com/sebastianzabel/clokr/commit/4f893f2c5bd2c8ce8baddd48515eabb5984002e3))
+* **647:** Mindestbesetzung je Salon ([#832](https://github.com/sebastianzabel/clokr/issues/832)) ([1e2e8dc](https://github.com/sebastianzabel/clokr/commit/1e2e8dcefe66c2c481df03764025d06300dddc1f))
+* **657:** Zeitnachtrag je Zeitraum statt je Tag ([#831](https://github.com/sebastianzabel/clokr/issues/831)) ([71b6289](https://github.com/sebastianzabel/clokr/commit/71b628904d2e652da94792e334323d2ccf612e33))
+* **660:** Lücke zwischen zwei Salons als Fahrzeit übernehmen ([#834](https://github.com/sebastianzabel/clokr/issues/834)) ([df84314](https://github.com/sebastianzabel/clokr/commit/df8431443f3b45d0fc141dad3994f09f62ec7605))
+
+
+### Bug Fixes
+
+* **390:** clarify tenant Bundesland hint as default for new salons ([#806](https://github.com/sebastianzabel/clokr/issues/806)) ([96b9a83](https://github.com/sebastianzabel/clokr/commit/96b9a836ff1dd6da13506d8ad47c4a7c1d21050f))
+* **804:** gate unknown Prisma keys that tsc lets through; fix diagnose-saldo select ([#808](https://github.com/sebastianzabel/clokr/issues/808)) ([6605f0d](https://github.com/sebastianzabel/clokr/commit/6605f0d4df45e9720691c4bc3b433a49dbdefac6))
+* **805:** pseudonymizer leaves DSGVO-anonymized persons unchanged ([#807](https://github.com/sebastianzabel/clokr/issues/807)) ([c122825](https://github.com/sebastianzabel/clokr/commit/c122825896575190fddd0faeae339240b1719a29))
+* **818:** NFC-Ausstempeln nach Handy-Einstempeln antwortet nicht mehr mit 500 ([#823](https://github.com/sebastianzabel/clokr/issues/823)) ([9f071b6](https://github.com/sebastianzabel/clokr/commit/9f071b6c4b9b9b3ff7711033547b7eb0aa27943a))
+* **819:** DELETE /terminals/:id atomar und mandantengebunden widerrufen ([#825](https://github.com/sebastianzabel/clokr/issues/825)) ([e86bcfe](https://github.com/sebastianzabel/clokr/commit/e86bcfe12f891be2ee90fb72926a7dfc3dc1eada))
+* **820:** MAC-Adressen in Audit-Zeilen bei Anonymisierung schwärzen ([#824](https://github.com/sebastianzabel/clokr/issues/824)) ([1f49c9c](https://github.com/sebastianzabel/clokr/commit/1f49c9cea21c75ebd6b075667e4c1d4a5d853ab1))
+* **deps:** decode-uri-component unter query-string@7 auf 0.5.1 heben (GHSA-qr28-fpjm-wq7f) ([#809](https://github.com/sebastianzabel/clokr/issues/809)) ([ce0ece0](https://github.com/sebastianzabel/clokr/commit/ce0ece06c2ebfd96c3a990b0b987f938e3158096))
+
+## [1.17.0](https://github.com/sebastianzabel/clokr/compare/v1.16.1...v1.17.0) (2026-10-29)
+
+
+### Features
+
+* **715:** Bots für Stornierung, Zeitnachträge, Schichtänderungen und Monatsentsperrung ([#801](https://github.com/sebastianzabel/clokr/issues/801)) ([ab36a83](https://github.com/sebastianzabel/clokr/commit/ab36a83a58c1493b9f5aecbd419c4c5d54eeb730))
+* **715:** simulation instance with seeded bots and a nightly invariant checker ([#798](https://github.com/sebastianzabel/clokr/issues/798)) ([1293af2](https://github.com/sebastianzabel/clokr/commit/1293af24623acc7763c28711419d798a6755e94f)), closes [#715](https://github.com/sebastianzabel/clokr/issues/715)
+
+
+### Bug Fixes
+
+* **172:** Kalendertag-Arithmetik unabhängig von Host-TZ und Zeitumstellung ([#770](https://github.com/sebastianzabel/clokr/issues/770)) ([6568cea](https://github.com/sebastianzabel/clokr/commit/6568ceaf6af120481bcdd5087de0843d61503864))
+* **184:** API startet in Produktion nicht ohne MINIO_* ([#791](https://github.com/sebastianzabel/clokr/issues/791)) ([faa4cc6](https://github.com/sebastianzabel/clokr/commit/faa4cc67b4f46dcd48260d1e27411a4ad80d0c32))
+* **215:** typed write path for Absence.type (absenceTypeFields, ABSENCE_CODES) ([#757](https://github.com/sebastianzabel/clokr/issues/757)) ([f6bc196](https://github.com/sebastianzabel/clokr/commit/f6bc196b5de5e03942c85d4b49dddd76ffc51ea2))
+* **277:** year-close regressions and saldo-lock gate covers MONTHLY writes ([#769](https://github.com/sebastianzabel/clokr/issues/769)) ([bc8c87a](https://github.com/sebastianzabel/clokr/commit/bc8c87ab1a9096192eebac98efbc9d6b46fc3388))
+* **285:** audit settings writes with changed fields before/after, mask SMTP secret ([#285](https://github.com/sebastianzabel/clokr/issues/285), [#286](https://github.com/sebastianzabel/clokr/issues/286), [#287](https://github.com/sebastianzabel/clokr/issues/287)) ([#754](https://github.com/sebastianzabel/clokr/issues/754)) ([a20f76e](https://github.com/sebastianzabel/clokr/commit/a20f76e72f7794fe509f9cbe23411b2e41829fdb))
+* **304:** rebuild DATEV LODAS record layout on u_lod_bwd_buchung_stunden/_tage ([#797](https://github.com/sebastianzabel/clokr/issues/797)) ([827478c](https://github.com/sebastianzabel/clokr/commit/827478cc6a714221ea3c5128b5d1ddcae45bd999))
+* **323:** Ø-Tag SHIFT_BASED rechnet mit der vertraglichen Tagezahl ([#790](https://github.com/sebastianzabel/clokr/issues/790)) ([6272112](https://github.com/sebastianzabel/clokr/commit/6272112cd21b55e8354ccd2382d8c6b062b32984))
+* **389:** shift plan picks the contract by the displayed week, not today ([#777](https://github.com/sebastianzabel/clokr/issues/777)) ([f11bc75](https://github.com/sebastianzabel/clokr/commit/f11bc75dc0ea0390a3aa8521011d447212c6a470))
+* **396:** answer from the written entry when the post-commit re-fetch fails ([#756](https://github.com/sebastianzabel/clokr/issues/756)) ([35c3bee](https://github.com/sebastianzabel/clokr/commit/35c3bee67fee4cf203940843aa681fa71720785b))
+* **409:** GET /leave/requests mit fremder employeeId und nur EIGENE-Reichweite antwortet 403 ([#761](https://github.com/sebastianzabel/clokr/issues/761)) ([c1fa8ce](https://github.com/sebastianzabel/clokr/commit/c1fa8ce0c738b071dee6f13b4cc7e5d7c6213be1))
+* **459:** recalculateSnapshots rechnet den Startmonat der Änderung neu ([#760](https://github.com/sebastianzabel/clokr/issues/760)) ([c658692](https://github.com/sebastianzabel/clokr/commit/c6586922c092e89455a323731670dcde5506c22d))
+* **467:** serialise SHIFT_BASED leave pricing per employee and re-price later requests after /correct ([#768](https://github.com/sebastianzabel/clokr/issues/768)) ([3ce8e0a](https://github.com/sebastianzabel/clokr/commit/3ce8e0a6839c273290f0c97c26ef47ee9809dd41))
+* **470:** drop TenantConfig.monthlyHoursHolidayDeduction column (RISKY: migration) ([#772](https://github.com/sebastianzabel/clokr/issues/772)) ([fe0bf05](https://github.com/sebastianzabel/clokr/commit/fe0bf050d606a0e636bccaa54b71e37725e99341))
+* **473:** audit-473 selects closedAt instead of a nonexistent isLocked; rehearsal passes MINIO_* ([#803](https://github.com/sebastianzabel/clokr/issues/803)) ([eb81cc5](https://github.com/sebastianzabel/clokr/commit/eb81cc5920b8745debd2ef48441e25e2f7d2b1db))
+* **473:** credit a MONTHLY_HOURS Berufsschultag at the Ø-day value ([#786](https://github.com/sebastianzabel/clokr/issues/786)) ([2648434](https://github.com/sebastianzabel/clokr/commit/26484342678fc35972ad4f41c370eda182e65844))
+* **478:** Überschneidungsprüfung zählt Anträge in Stornierung mit ([#752](https://github.com/sebastianzabel/clokr/issues/752)) ([40f2512](https://github.com/sebastianzabel/clokr/commit/40f2512fbd77ed7c3d071f0b0c909784d8e8d063))
+* **512:** Freitext in AuditLog-Werten anonymisierter Personen typbasiert schwärzen ([#788](https://github.com/sebastianzabel/clokr/issues/788)) ([65926db](https://github.com/sebastianzabel/clokr/commit/65926db0ab5795442c4ad5b25846d4fbb1c2c6cb))
+* **668:** Monatsabschluss wählt nach Beschäftigung statt nach Login ([#751](https://github.com/sebastianzabel/clokr/issues/751)) ([1108804](https://github.com/sebastianzabel/clokr/commit/1108804bb689f06e5931f29ed21d545450243b96))
+* **696:** Periodenbericht - Übertrag und Kennzahlen offener Monate gebündelt ([#778](https://github.com/sebastianzabel/clokr/issues/778)) ([0847a23](https://github.com/sebastianzabel/clokr/commit/0847a23bc9185c7a92a760bec115a1aaec4215b8))
+* **718:** Anonymisierung leert weitere Freitextfelder (reviewNote, Zeitnachtrag, Notizen) ([#775](https://github.com/sebastianzabel/clokr/issues/775)) ([7932af5](https://github.com/sebastianzabel/clokr/commit/7932af5faa4fe58d914e50781a34f9c348a68dc1))
+* **737:** CI wieder grün – pnpm audit (high) und axe-scan auf ubuntu-24.04 ([#738](https://github.com/sebastianzabel/clokr/issues/738)) ([2eec7e7](https://github.com/sebastianzabel/clokr/commit/2eec7e7eaf157ae66972e795cdd26364e63d0e2d))
+* **743:** past half-day leave without an entry reads missing in the one day status ([#755](https://github.com/sebastianzabel/clokr/issues/755)) ([8322e67](https://github.com/sebastianzabel/clokr/commit/8322e67856854ba28f2b82ed6ea3573aa17555cb))
+* **744:** Halber Abwesenheitstag sperrt die Schichtzuweisung nicht mehr ([#749](https://github.com/sebastianzabel/clokr/issues/749)) ([1cc635f](https://github.com/sebastianzabel/clokr/commit/1cc635feb539e51ea36538cbfcca9a79d16e8345))
+* **745,746:** Halbtage in Lückenerinnerungen und iCal-Feeds ([#750](https://github.com/sebastianzabel/clokr/issues/750)) ([c329f3d](https://github.com/sebastianzabel/clokr/commit/c329f3de76a963304c7ba4d3fad44b61eb7e55e8))
+* **753:** Manueller Jahresabschluss erwartet Monate nur bis zum Austritt ([#762](https://github.com/sebastianzabel/clokr/issues/762)) ([ecf8285](https://github.com/sebastianzabel/clokr/commit/ecf82850da240cbbb7d240af6d503a683944b0b2))
+* **771:** derive live-saldo yesterday from the tenant-local calendar day, not now - 24 h ([#795](https://github.com/sebastianzabel/clokr/issues/795)) ([6848ae0](https://github.com/sebastianzabel/clokr/commit/6848ae02aaf1f6b07d763b5744ef6bab31aca497))
+* **774:** Backfill leert Freitexte vor [#718](https://github.com/sebastianzabel/clokr/issues/718) anonymisierter Personen ([#785](https://github.com/sebastianzabel/clokr/issues/785)) ([9ddf0a7](https://github.com/sebastianzabel/clokr/commit/9ddf0a7c26da68c9f3c3d09e1c6e67fab113774c))
+* **776:** Offene Punkte – Fenster in Mandanten-Tagen statt prozesslokal ([#779](https://github.com/sebastianzabel/clokr/issues/779)) ([82c76bc](https://github.com/sebastianzabel/clokr/commit/82c76bcf8a99bda51e920470c8c377699cc067aa))
+* **780:** Monate ohne Vertrag tragen kein Soll in Live-Saldo und Monatsabschluss ([#789](https://github.com/sebastianzabel/clokr/issues/789)) ([913604f](https://github.com/sebastianzabel/clokr/commit/913604f10efd917f41118e696b6f3a5ec726a5a0))
+* **781:** press exactly one report period preset ([#783](https://github.com/sebastianzabel/clokr/issues/783)) ([cb9295e](https://github.com/sebastianzabel/clokr/commit/cb9295efd2b2faa5b28e9914cb715187b674951d))
+* **787:** use the MONTHLY_HOURS Ø-day for the Berufsschule daily Soll ([#796](https://github.com/sebastianzabel/clokr/issues/796)) ([4eba697](https://github.com/sebastianzabel/clokr/commit/4eba697bb22d6ee18375c162fadb52d2d65ebc7b))
+* **799:** Auto-Pause bei jedem Stempel-Auslöser (Web, NFC, WLAN) ([#800](https://github.com/sebastianzabel/clokr/issues/800)) ([a883534](https://github.com/sebastianzabel/clokr/commit/a883534d8c96d5ceb48445798edd903d77e30968))
+
 ## [1.16.1](https://github.com/sebastianzabel/clokr/compare/v1.16.0...v1.16.1) (2026-10-23)
 
 

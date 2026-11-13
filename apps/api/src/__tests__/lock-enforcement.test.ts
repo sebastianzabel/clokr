@@ -533,7 +533,6 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
         data: {
           email: `other-le-${Date.now()}@test.de`,
           passwordHash: hash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -688,7 +687,6 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
         data: {
           email: `${s}@test.de`,
           passwordHash: hash,
-          role: "MANAGER",
           isActive: true,
         },
       });

@@ -184,7 +184,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
     beforeAll(async () => {
       const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       const user = await app.prisma.user.create({
-        data: { email: `sa-d09-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+        data: { email: `sa-d09-${s}@test.de`, passwordHash: "x", isActive: true },
       });
       const employee = await app.prisma.employee.create({
         data: {
@@ -281,7 +281,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
     beforeAll(async () => {
       const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       const user = await app.prisma.user.create({
-        data: { email: `sa-d10-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+        data: { email: `sa-d10-${s}@test.de`, passwordHash: "x", isActive: true },
       });
       const employee = await app.prisma.employee.create({
         data: {
@@ -400,7 +400,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
     beforeAll(async () => {
       const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       const user = await app.prisma.user.create({
-        data: { email: `sa-d12-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+        data: { email: `sa-d12-${s}@test.de`, passwordHash: "x", isActive: true },
       });
       const employee = await app.prisma.employee.create({
         data: {
@@ -459,7 +459,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
   it("AC-Aenderung-3/D-21: a successful create writes exactly one CREATE audit row for that assignment, with YYYY-MM-DD dates", async () => {
     const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const user = await app.prisma.user.create({
-      data: { email: `sa-audit-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `sa-audit-${s}@test.de`, passwordHash: "x", isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -493,7 +493,7 @@ describe("POST /api/v1/employees/:id/salon-assignments — create Einsatzsalon (
   it("D-02 concurrency: two real interleaved transactions creating overlapping, weekday-sharing DEPLOYMENTs for the SAME employee resolve to exactly one OK and one WEEKDAY_CONFLICT — never two rows", async () => {
     const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const user = await app.prisma.user.create({
-      data: { email: `sa-race-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      data: { email: `sa-race-${s}@test.de`, passwordHash: "x", isActive: true },
     });
     const employee = await app.prisma.employee.create({
       data: {
@@ -673,7 +673,6 @@ describe("POST .../salon-assignments/home & .../:assignmentId/end — Stammsalon
       data: {
         email: `${namePrefix}-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
@@ -1297,7 +1296,6 @@ describe("homeSalonAt (Phase 91b, Issue #91, D-08)", () => {
       data: {
         email: `${namePrefix}-${s}@test.de`,
         passwordHash: "x",
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

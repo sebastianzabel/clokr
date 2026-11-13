@@ -4,9 +4,9 @@ import { fmtHM, fmtSignedHM, fmtDecimalDe, fmtDays } from "./pdf-format";
 // ── Brand constants ──────────────────────────────────────
 // Issue #617 (D-617-5): the app's default brand colour (`--brand` of the pflaume theme in
 // apps/web/src/tokens.css) - no PDF carries the former indigo any more.
-const BRAND_COLOR = "#80377b";
+const BRAND_COLOR = "#7a3f6c";
 // Light tint of BRAND_COLOR for the subtitle on the brand band (readable on it).
-const BRAND_TINT = "#ecd9ea";
+const BRAND_TINT = "#f3e8ef"; // v2 --brand-soft of pflaume light (#842)
 const HEADER_H = 44;
 
 // ── Saldo labels (SALDO-DISP-05) ─────────────────────────
@@ -421,7 +421,7 @@ export const MONTHLY_EXPORT_FORECAST_LEGEND =
 export const MONTHLY_EXPORT_UNLABELLED_LEGEND =
   "ohne Soll: Vertrag ohne Sollvorgabe (reine Zeiterfassung) \u2014 dort entfallen Soll, Saldo und Gesamtsaldo.";
 export const MONTHLY_EXPORT_DATEV_LEGEND =
-  "DATEV-Std.: Normalstunden der DATEV-Datei in Dezimalstunden (Summe aller gültigen, abgeschlossenen Zeiteinträge des Monats). Sie können vom Ist abweichen: Das Ist stammt aus dem Arbeitszeitkonto, zählt nur Einträge der Art Arbeit an Tagen im Beschäftigungszeitraum, enthält die Berufsschul-Anrechnung und ist in abgeschlossenen Monaten der gespeicherte Stand.";
+  "DATEV-Std.: Normalstunden der DATEV-Datei in Dezimalstunden (Summe aller gültigen, abgeschlossenen Zeiteinträge des Monats). Diese Stunden können vom Ist abweichen: Das Ist stammt aus dem Arbeitszeitkonto, zählt nur Einträge der Art Arbeit an Tagen im Beschäftigungszeitraum, enthält die Berufsschul-Anrechnung und ist in abgeschlossenen Monaten der gespeicherte Stand.";
 export const MONTHLY_EXPORT_UNITS_LEGEND =
   "Zeiten in Stunden:Minuten. Abwesenheiten in Arbeitstagen wie im DATEV-Export (leer = keine). Saldo Monat: der ganze Monat, im laufenden Monat als Prognose. Gesamtsaldo: Stand zum Monatsende, im laufenden Monat bis gestern.";
 

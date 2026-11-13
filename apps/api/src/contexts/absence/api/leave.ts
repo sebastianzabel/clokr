@@ -10,7 +10,7 @@ import { scheduledLeaveMinutes, overtimeCompReversalMinutes } from "../overtime-
 import { selfHealUsedDays, loadVacationTypeMeta } from "../leave-self-heal";
 import { closedMonthLeaveMessage } from "../correction-lock"; // Issue #446 (D-07/D-08)
 import { findClosedMonthsInRange } from "../closed-month-guard"; // Issue #446 (D-07)
-import { EFFECTIVE_LEAVE_STATUSES } from "../effective-leave-statuses"; // Issue #446 (D-04)
+import { EFFECTIVE_LEAVE_STATUSES, isEffectiveLeaveStatus } from "../effective-leave-statuses"; // Issue #446 (D-04)
 // Phase 101B (Issue #101, D-11 Welle absence): lifted out of this file into ./leave-days.ts.
 // resolveLeaveDays/getHolidayMap/deductVacationDays/reverseVacationDays are re-exported below
 // (unchanged) so scheduling/api/shifts.ts, services/phorest/sync-shifts.ts and
@@ -23,13 +23,16 @@ import {
   getHolidayMap,
   deductVacationDays,
   reverseVacationDays,
-  recalculateCarryOver,
   type LeaveDaysPricing, // Issue #436, D-04/D-09
 } from "../leave-days";
 import { BS_ONLY_LEAVE_ERROR, BS_ONLY_LEAVE_ERROR_CODE } from "../bs-leave-days"; // Issue #448 (D-02)
 import { vocationalSchoolDatesForLeaveRequests } from "../bs-leave-days"; // Issue #448 (D-05, plan 03)
-import { formatMinutesHM } from "../format-hm"; // Phase 100
 import { ensureLeaveType } from "../ensure-leave-type"; // Issue #614 — moved out of this route
+import {
+  createLeaveRequestCore,
+  autoCarryOver,
+  overtimeCompBalanceRejection,
+} from "../leave-request-create"; // Issue #835 (D-835-12) — the create core, lifted out of POST /requests
 import {
   prepareLeaveCorrection,
   applyLeaveCorrection,
@@ -37,13 +40,10 @@ import {
   Section9ConcurrentCorrectionError,
 } from "../leave-correction"; // Issue #614 — the /correct domain body
 import {
-  flagShiftsConflictingWithLeave,
-  notifyShiftLeaveConflicts, // Phase 100B Plan 05 — S1/S2; Phase 430 (D-02) — shared audit+notify helper
   getShiftsInRange, // Phase 430 Plan 04 (D-15) — rosterImported on GET /hours-preview
 } from "../../scheduling";
 import {
   getOvertimeAccount,
-  bookOvertimeCompensation,
   reverseOvertimeCompensation,
   getTenantTimezone,
   monthDateRange, // Issue #493 (D-10)
@@ -69,39 +69,54 @@ import {
   resolveScopedHolderIds, // Phase 91b Plan 09 (#91), D-17
   employeeScopeFor, // Phase 430 Plan 04 (D-15) — rosterImported's getShiftsInRange scope
   resolveSalonInReach, // Issue #558 (D-01) — the one validator of a chosen salon
+  homeSalonsForDays, // Issue #840 (D-840-19) — Stammsalon per day, one call per calendar request
+  findSalon, // Issue #840 (D-840-25) — the salon in view of the range form
+  holidaysForSalon, // Issue #840 (D-840-25) — the holidays of the salon in view
+  countActiveSalons, // Issue #840 (D-840-25) — a one-salon tenant always names its salon
+  findDefaultSalon, // Issue #840 (D-840-25) — the one active salon of such a tenant
 } from "../../platform"; // Quick 260824-cjd
 import { filterLeaveRowsToHomeSalon } from "../salon-leave-attribution"; // Issue #558 (D-02/D-08)
-import { preserveCarryOverDeadline } from "../illness-carryover-guard"; // Phase 104, Issue #445 (D-17)
+import { canSeeLeaveType } from "../leave-calendar-visibility"; // Issue #835 — moved out of this route (second caller)
+import { maskCalendarRows } from "../leave-calendar-masking"; // Issue #840 (D-840-19) — per-person masking of the calendar read
+import { isPersonVisibleOnSomeDay } from "../leave-limits/redact"; // Issue #840 (D-840-19) — the #836 per-person rule, no second one
+import {
+  buildLeaveLimitExceptionAudit,
+  correctionCandidateRanges,
+  evaluateLeaveLimits,
+  leaveLimitExceptionRequiredBody,
+  limitExceptionSchema,
+  readerVisibilityFrom,
+  toLeaveLimitWarnings,
+} from "../leave-limits"; // Issue #836 (D-836-03/D-836-08/D-836-09/D-836-12)
+import {
+  loadLeaveRequestForReview,
+  leaveDecisionGuard,
+  decidePendingLeaveRequest,
+  formatDateDe,
+} from "../leave-decision"; // Issue #835 (D-835-12) — the decision core, lifted out of PATCH /requests/:id/review
 import { supersedeSection9CreditsOfCancelledRequest } from "../section9-supersede";
-import { findSection9Overlaps, intersectRanges } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
-import { isSickLeaveTypeCode } from "../leave-type"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
+import { intersectRanges } from "../section9-detect"; // Phase 104-05/06, Issue #468 (D-04/A-3)
+import {
+  findBlockingLeaveOverlap,
+  leaveDaysUsedInYear,
+  LEAVE_OVERLAP_ERROR,
+} from "../leave-overlap"; // Phase 97 (T2) — code-based, replacing the removed section9-detect.ts name helper
 import { activeParentalReductions } from "../parental-leave-reduction"; // Issue #468 plan 07 (D-10) — revoke-before-change guards
 import { karenzOverrunFromRequests, normalizeKarenzDays } from "../find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 import { sickLeaveDayCounts } from "../sick-leave-days"; // Issue #595 (D-04) — the one sick-day counter
 import {
   ensureRegularVacationEntitlement,
-  daysDiffer,
-  CARRY_OVER_RECALC_REASON,
-  REGULAR_ENTITLEMENT_REASON_LEAVE_REQUEST,
-  REGULAR_ENTITLEMENT_REASON_ROLLOVER,
   REGULAR_ENTITLEMENT_REASON_SELF_HEAL,
   vacationEntitlementWarning, // Issue #445 — one function builds the warning string (no business rule in composition/reports.ts)
-  splitLeaveDaysByYear, // Issue #445 (D-08/D-09) — chronological cross-year attribution
   healEntitlementUsedDays, // Issue #445 (D-10) — injected into leave-self-heal.ts's ctx below
   effectiveCarryOverDays, // Issue #445 (D-13) — the FIFO expiry check (replaces the removed local helper)
-  carryOverRemainder, // Issue #445 (D-14) — replaces the raw totalDays+carriedOverDays-usedDays sum
   syncExitYearVacationEntitlement, // Issue #447 (D-06/D-07) — exit-year row sync, GET-time heal
   exitVacationOverUseWarning, // Issue #447 (D-08) — the one over-use warning string (approval + GET)
 } from "../leave-days"; // Issue #445 — own statement: PR #437 edits the block above
 import { vacationBalanceForRow, type VacationBalance } from "../facade/vacation-balance"; // Issue #451 (D-07) — the ONE Resturlaub function, additive on the VACATION row of GET /entitlements
-import { writeEntitlementAudit } from "../entitlement-audit"; // Issue #445
 import { revalidateLeaveCancellationEntries } from "../../time-tracking"; // Phase 100B Plan 08 — T6
-import {
-  REQUESTABLE_CODES as TYPE_CODES,
-  LEAVE_TYPE_DEFS,
-  LEAVE_REQUEST_EMAIL_SUBJECT,
-  DISPLAY_NAME,
-} from "../leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
+import { byCodeUnit } from "../../../utils/code-unit-order";
+import { REQUESTABLE_CODES as TYPE_CODES, DISPLAY_NAME, withHalfDayMarker } from "../leave-type"; // Phase 97 (T2, D-04) — the one mapping; DISPLAY_NAME added Phase 98b (D-04)
 
 // Forwarded for the same backward-compatibility reason as the import above.
 export { resolveLeaveDays, getHolidayMap, deductVacationDays, reverseVacationDays };
@@ -189,6 +204,7 @@ const createSchema = z
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
   reviewNote: z.string().optional().nullable(),
+  limitException: limitExceptionSchema.optional(), // Issue #836 (D-836-09): approver's exception over a salon limit
 });
 
 const updateSchema = z
@@ -227,6 +243,7 @@ const correctSchema = z
     note: z.string().optional().nullable(),
     type: z.enum(TYPE_CODES).optional(),
     reason: auditReasonSchema, // Quick 260824-cjd — mandatory Korrektur-Begründung
+    limitException: limitExceptionSchema.optional(), // Issue #836 (D-836-19): exception when a correction adds days over a limit
   })
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
@@ -305,45 +322,70 @@ const sickDaysQuerySchema = z.object({ year: z.coerce.number().int().min(2000).m
 // against its own ZUGEWIESEN reach before any row read.
 const leaveSalonQuerySchema = z.object({ salonId: z.string().uuid().optional() });
 
+// Issue #840 (D-840-18/25): the calendar read alone also takes a day range. `from`/`to` are calendar
+// days, both or neither, `from <= to`, at most 366 days inclusive (one year plus a leap day); any
+// violation is a ZodError, i.e. a 400 through the global handler. `leaveSalonQuerySchema` stays
+// untouched because the other leave reads share it.
+const CALENDAR_RANGE_MAX_DAYS = 366;
+const calendarDaySchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  // Zod 4 runs this refinement even after the regex above failed, so an unparsable value must not
+  // reach `toISOString()` (a RangeError would answer 500 instead of 400).
+  .refine(
+    (v) => {
+      const t = Date.parse(`${v}T00:00:00.000Z`);
+      return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === v;
+    },
+    { message: "Ungültiges Datum" },
+  );
+const leaveCalendarQuerySchema = z
+  .object({
+    salonId: z.string().uuid().optional(),
+    // Issue #840 (D-840-18/24): the personal areas ask for their own slice. `own` = the caller's
+    // own rows, `team` = the caller's Stammsalon colleagues, masked. Never together with `salonId`.
+    scope: z.enum(["own", "team"]).optional(),
+    from: calendarDaySchema.optional(),
+    to: calendarDaySchema.optional(),
+    // The month form (review IN-07): a non-numeric or out-of-range value is a 400, never a NaN that
+    // reaches `monthDateRange` and answers 500.
+    year: z.coerce.number().int().min(2000).max(2100).optional(),
+    month: z.coerce.number().int().min(1).max(12).optional(),
+  })
+  .superRefine((q, ctx) => {
+    if (q.scope !== undefined && q.salonId !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "scope und salonId nicht gemeinsam",
+        path: ["scope"],
+      });
+      return;
+    }
+    if ((q.from === undefined) !== (q.to === undefined)) {
+      ctx.addIssue({ code: "custom", message: "from und to nur gemeinsam", path: ["from"] });
+      return;
+    }
+    if (q.from === undefined || q.to === undefined) return;
+    if (q.from > q.to) {
+      ctx.addIssue({ code: "custom", message: "from darf nicht nach to liegen", path: ["from"] });
+      return;
+    }
+    const days =
+      (Date.parse(`${q.to}T00:00:00.000Z`) - Date.parse(`${q.from}T00:00:00.000Z`)) / 86_400_000 +
+      1;
+    if (days > CALENDAR_RANGE_MAX_DAYS) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Zeitraum höchstens ${CALENDAR_RANGE_MAX_DAYS} Tage`,
+        path: ["to"],
+      });
+    }
+  });
+
 // Issue #558 (T-100-09): one body for every rejection cause — a foreign tenant's salon, an unknown
 // id, an inactive salon, a salon outside the reach and a caller without the ZUGEWIESEN reach are
 // indistinguishable (byte-identical with the dashboard's and the people list's body).
 const SALON_NOT_FOUND = { error: "Salon nicht gefunden" } as const;
-
-/**
- * German date label for USER-FACING § 9 notification texts: "16.09.2026".
- *
- * Phase 104 follow-up (not in REVIEW.md, owner-reported): the § 9 notification bodies rendered
- * dates ISO-style ("2026-09-16 – 2026-09-17") while everything else user-facing in this app
- * uses DD.MM.YYYY. UTC accessors on purpose — every date fed in here is a @db.Date column
- * (UTC midnight), so a local-time formatter would shift the label by a day on any host with a
- * negative UTC offset (the same class of bug as WR-09). API payloads and AuditLog values keep
- * their ISO form; only the human-readable message text changes.
- */
-function formatDateDe(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
-}
-
-/**
- * The ONE visibility decision behind an absence TYPE, shared by GET /overlap and GET /calendar
- * (Phase 262, GitHub issue #262, D-06): may this viewer learn `typeCode`/`typeName` (and, for
- * /calendar, `section9`/`section9Days`) for this entry, or must it be masked to `null`?
- *
- * `canSeeAll` is `hasPermission(req, "leave-request:read:ZUGEWIESEN")`, computed once per request
- * by the caller (Phase 75b, Issue #75, D-13) rather than re-derived per row — mirrors the
- * reasoning in `apps/web/src/lib/leave/team-calendar-visibility.ts`'s `canSeeLeaveType` (Phase
- * 257, D-06 in 262-CONTEXT.md): the masking decision must not silently widen for an unexpected
- * value on the PERMISSIVE side — the side that leaks.
- *
- * Deliberately module-private, NOT exported via `contexts/absence/index.ts`: no caller outside
- * this file exists yet (D-15b). GitHub issue #267 (`GET /shifts/week`'s ungated "sick" bucket)
- * is the case that would change that — making it public is issue #267's first task, not this
- * one's, per "no generalization on spec" (ADR 0001).
- */
-function canSeeLeaveType(isOwn: boolean, canSeeAll: boolean): boolean {
-  return isOwn === true || canSeeAll;
-}
 
 /**
  * Resolves the target employeeId for a read that defaults to the caller's own employeeId when
@@ -445,6 +487,20 @@ async function callerMaySeeSaldoOf(
   return isStammsalonScopeMatch(app.prisma, req.user.tenantId, scopeReach, employeeId, stichtag);
 }
 
+/**
+ * Issue #836 (AC-12, D-836-12): the reach within which the caller may be told the NAMES of the other
+ * persons behind a limit exceedance (`leave-request:read:ZUGEWIESEN`; the rest is a count). Resolved
+ * only when there is an exceedance, so a request under every limit (or a tenant without rules)
+ * costs no extra query.
+ */
+function limitReaderReach(app: FastifyInstance, req: FastifyRequest) {
+  return resolveAccessReach(
+    app.prisma,
+    accessContextFromRequest(req),
+    "leave-request:read:ZUGEWIESEN",
+  );
+}
+
 export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /requests  – Antrag stellen ────────────────────────────────────
   app.post("/requests", {
@@ -485,411 +541,48 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const tenantId = req.user.tenantId;
 
-      // Issue #446 (D-06(a)/D-09/D-10): checked before any read-dependent computation and
-      // before every write — a range touching a closed month is rejected as a whole, naming
-      // every closed month it spans (never just the first one found).
-      const closedMonths = await findClosedMonthsInRange(
-        app.prisma,
-        employeeId,
+      // Issue #835 (D-835-12): the create logic lives once, in `createLeaveRequestCore`; the route
+      // above authorised the caller and the target, the core validates, prices and stores.
+      const outcome = await createLeaveRequestCore(app, {
         tenantId,
-        start,
-        end,
-      );
-      if (closedMonths.length > 0) {
-        return reply.code(409).send({
-          error: closedMonthLeaveMessage(closedMonths, "request"),
-          code: "LEAVE_MONTH_CLOSED",
-        });
-      }
-
-      const holidayMap = await getHolidayMap(app.prisma, tenantId, employeeId, start, end);
-      const holidays = new Set(holidayMap.keys());
-      // Phase 107 (D-09): roster-aware estimate from creation onward, so the number does not
-      // visibly jump at approval. daysProvisional itself stays null until approval (D-10) --
-      // only `.days` is used here, `.provisional` is deliberately discarded.
-      // Issue #436 (D-04): priced against the employee's other counted VACATION requests
-      // sharing an ISO week — no id yet, so there is nothing to exclude.
-      const { days, vocationalSchoolOnly } = await resolveLeaveDays(
-        app.prisma,
         employeeId,
-        tenantId,
-        start,
-        end,
-        body.halfDay,
-        holidays,
-        { mode: "request", leaveTypeCode: body.type },
-      );
-
-      // Issue #448 (D-02): a request whose every chargeable day is a Berufsschultag is
-      // rejected before any write — the owner's binding text (01.10.2026), no LeaveRequest row
-      // is ever created.
-      if (vocationalSchoolOnly) {
-        return reply.code(400).send({ error: BS_ONLY_LEAVE_ERROR, code: BS_ONLY_LEAVE_ERROR_CODE });
-      }
-
-      // Überschneidung mit eigenem Antrag prüfen.
-      //
-      // Phase 104 / R1: § 9 BUrlG — wird ein Mitarbeiter während genehmigten Urlaubs krank,
-      // dürfen die attestierten Tage nicht auf den Jahresurlaub angerechnet werden. Bis
-      // Phase 104 blockte dieser Guard genau diesen Fall mit 409, weshalb Manager ersatzweise
-      // stornierten und in der Vier-Augen-Sackgasse landeten.
-      //
-      // Die Ausnahme ist BEWUSST eng und gerichtet (Pitfall 4): erlaubt ist ausschließlich
-      // eine SICK/SICK_CHILD-Meldung über einem bereits GENEHMIGTEN Nicht-Krank-Antrag.
-      // Gleichartige Überschneidungen (Urlaub/Urlaub, Krank/Krank) und Überschneidungen mit
-      // noch PENDING-Anträgen bleiben unverändert gesperrt — ein Blanko-Entfernen des Guards
-      // würde die Doppelbuchung wieder öffnen, gegen die er existiert.
-      const isSickRequest = body.type === "SICK" || body.type === "SICK_CHILD";
-      const overlaps = await app.prisma.leaveRequest.findMany({
-        where: {
-          employeeId,
-          deletedAt: null,
-          status: { in: ["PENDING", "APPROVED"] },
-          startDate: { lte: end },
-          endDate: { gte: start },
-        },
-        include: { leaveType: true },
+        actorUserId: req.user.sub,
+        body,
+        isOnBehalfOf,
       });
-      const blockingOverlap = overlaps.find((o) => {
-        if (!isSickRequest) return true; // non-sick: unchanged behaviour
-        if (o.status !== "APPROVED") return true; // sick vs PENDING: still blocked
-        if (isSickLeaveTypeCode(o.leaveType.code)) return true; // sick vs sick: still blocked
-        return false; // § 9 case — permitted
-      });
-      if (blockingOverlap)
-        return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
+      if (!outcome.ok) return reply.code(outcome.statusCode).send(outcome.body);
+      const request = outcome.request;
 
-      // Load tenant config for leave rules
-      const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-
-      const leaveTypeId = await ensureLeaveType(app.prisma, app.log, tenantId, body.type);
-      const leaveType = await app.prisma.leaveType.findUnique({ where: { id: leaveTypeId } });
-
-      // ── Half-day sick rejection ──
-      // Legal: teilweise Arbeitsunfähigkeit gibt es nicht; Krankheit wird immer
-      // ganztägig gutgeschrieben (EFZG §3/§4). Half-day only applies to vacation.
-      if (body.halfDay && ["SICK", "SICK_CHILD"].includes(body.type)) {
-        return reply.code(400).send({
-          error:
-            "Halbe Kranktage sind nicht zulässig — Krankheit wird immer ganztägig gutgeschrieben.",
+      // Issue #836 (D-836-08, D-836-19): a non-blocking salon-limit warning. The request already
+      // exists, so a failing check is logged and the key simply stays absent (fail-open).
+      let leaveLimitWarnings: ReturnType<typeof toLeaveLimitWarnings> = [];
+      try {
+        const limitResult = await evaluateLeaveLimits(app.prisma, tenantId, {
+          candidates: [
+            {
+              requestId: request.id,
+              employeeId,
+              typeCode: body.type,
+              startDay: body.startDate,
+              endDay: body.endDate,
+            },
+          ],
+          excludeRequestIds: [request.id],
         });
-      }
-
-      // ── Half-day check ──
-      if (body.halfDay) {
-        const globalHalfDay = tenantConfig?.halfDayAllowed ?? true;
-        const typeHalfDay = leaveType?.allowHalfDay ?? true;
-        if (!globalHalfDay || !typeHalfDay) {
-          return reply
-            .code(400)
-            .send({ error: "Halbe Tage sind für diesen Abwesenheitstyp nicht erlaubt" });
-        }
-      }
-
-      // ── Lead time check (not for sick types) ──
-      const isSickType = ["SICK", "SICK_CHILD"].includes(body.type);
-      if (!isSickType) {
-        const leadTimeDays = leaveType?.leadTimeDays ?? tenantConfig?.vacationLeadTimeDays ?? 0;
-        if (leadTimeDays > 0) {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const diffMs = start.getTime() - today.getTime();
-          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-          if (diffDays < leadTimeDays) {
-            return reply.code(400).send({
-              error: `Abwesenheit muss mindestens ${leadTimeDays} Tage im Voraus beantragt werden`,
-            });
-          }
-        }
-
-        // ── Max advance months check ──
-        const maxAdvanceMonths = tenantConfig?.vacationMaxAdvanceMonths ?? 0;
-        if (maxAdvanceMonths > 0) {
-          const maxDate = new Date();
-          maxDate.setMonth(maxDate.getMonth() + maxAdvanceMonths);
-          if (end > maxDate) {
-            return reply.code(400).send({
-              error: `Abwesenheit darf maximal ${maxAdvanceMonths} Monate im Voraus beantragt werden`,
-            });
-          }
-        }
-      }
-
-      // ── Max days per year check ──
-      if (leaveType?.maxDaysPerYear) {
-        const yearStart = new Date(start.getFullYear(), 0, 1);
-        const yearEnd = new Date(start.getFullYear(), 11, 31);
-        const usedThisYear = await app.prisma.leaveRequest.aggregate({
-          where: {
-            employeeId,
-            leaveTypeId,
-            deletedAt: null,
-            status: { in: ["PENDING", "APPROVED"] },
-            startDate: { gte: yearStart, lte: yearEnd },
-          },
-          _sum: { days: true },
-        });
-        const used = Number(usedThisYear._sum.days ?? 0);
-        if (used + days > leaveType.maxDaysPerYear) {
-          return reply.code(400).send({
-            error: `Max. ${leaveType.maxDaysPerYear} Tage/Jahr für diesen Typ (bereits ${used} genutzt)`,
-          });
-        }
-      }
-
-      // Für VACATION: Resturlaub auto-übertragen (lazy) + verfügbare Tage prüfen
-      //
-      // Issue #445 (D-08/D-09/P-15): UTC year boundaries, symmetric with deductVacationDays()/
-      // reverseVacationDays(). A cross-year request is split chronologically through
-      // splitLeaveDaysByYear() — the SAME day count the request itself was priced with above
-      // (resolveLeaveDays) — instead of re-deriving each year's count from the placeholder
-      // workDays array via splitDaysAcrossYears (a missing row used to also skip this entirely,
-      // see the ensureRegularVacationEntitlement calls below, D-04).
-      if (body.type === "VACATION") {
-        const year1 = start.getUTCFullYear();
-        const year2 = end.getUTCFullYear();
-        const isCrossYear = year1 !== year2;
-
-        const split = isCrossYear
-          ? await splitLeaveDaysByYear(app.prisma, employeeId, tenantId, start, end, days, holidays)
-          : { year1Days: days, year2Days: 0, year1, year2 };
-
-        // ── Year 1: check entitlement ──
-        await autoCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year1);
-        // Issue #445 D-04: a missing row used to skip the availability check entirely —
-        // ensureRegularVacationEntitlement() creates it (with the regular entitlement, never a
-        // hard-coded zero) before the check below ever runs.
-        const { entitlement: ent1 } = await ensureRegularVacationEntitlement(
-          app.prisma,
-          employeeId,
-          tenantId,
-          year1,
-          leaveTypeId,
-          REGULAR_ENTITLEMENT_REASON_LEAVE_REQUEST,
+        leaveLimitWarnings = toLeaveLimitWarnings(
+          limitResult.exceedances,
+          limitResult.exceedances.length > 0
+            ? {
+                visibility: readerVisibilityFrom(
+                  await limitReaderReach(app, req),
+                  req.user.employeeId ?? null,
+                ),
+                personNames: limitResult.personNames,
+              }
+            : undefined,
         );
-        if (split.year1Days > 0) {
-          // EuGH C-684/16: pre-fetch whether a warning was issued for this entitlement
-          const hinweis1 =
-            (await app.prisma.auditLog.count({
-              where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent1.id },
-            })) > 0;
-          const co1 = await effectiveCarryOverDays(
-            app.prisma,
-            { ...ent1, tenantId },
-            start,
-            hinweis1,
-          );
-          // Issue #447 (D-06) — the row is exit-aware (ensureRegularVacationEntitlement synced
-          // it just above) and carry-over is never pro-rated (§ 7 Abs. 3 BUrlG), so totalDays +
-          // effective carry − used is the whole rule. No second exit-pro-rata reduction is
-          // applied on top (the old H1-exit branch double-reduced an already-exit-prorated row).
-          const avail1 = Number(ent1.totalDays) + co1 - Number(ent1.usedDays);
-
-          if (split.year1Days > avail1) {
-            return reply.code(400).send({
-              error: `Nicht genug Urlaubstage in ${year1}`,
-              available: avail1,
-              requested: split.year1Days,
-            });
-          }
-        }
-
-        // ── Year 2: check entitlement (cross-year only) ──
-        if (isCrossYear && split.year2Days > 0) {
-          await autoCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year2);
-
-          // Recalculate projected carry-over for year 2
-          // (remaining from year 1 after this booking)
-          await recalculateCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year2);
-
-          // Issue #445 D-04: same reasoning as year 1 — a missing row used to skip this check
-          // entirely.
-          const { entitlement: ent2 } = await ensureRegularVacationEntitlement(
-            app.prisma,
-            employeeId,
-            tenantId,
-            year2,
-            leaveTypeId,
-            REGULAR_ENTITLEMENT_REASON_LEAVE_REQUEST,
-          );
-          // EuGH C-684/16: pre-fetch whether a warning was issued for this entitlement
-          const hinweis2 =
-            (await app.prisma.auditLog.count({
-              where: {
-                action: "CARRYOVER_WARNED",
-                entity: "LeaveEntitlement",
-                entityId: ent2.id,
-              },
-            })) > 0;
-          const co2 = await effectiveCarryOverDays(
-            app.prisma,
-            { ...ent2, tenantId },
-            end,
-            hinweis2,
-          );
-          // Issue #447 (D-06) — same rule as year 1: ent2 is already exit-aware, no second
-          // exit-pro-rata cap on top.
-          const avail2 = Number(ent2.totalDays) + co2 - Number(ent2.usedDays);
-
-          if (split.year2Days > avail2) {
-            return reply.code(400).send({
-              error: `Nicht genug Urlaubstage in ${year2}`,
-              available: avail2,
-              requested: split.year2Days,
-            });
-          }
-        }
-      }
-
-      // Für OVERTIME_COMP: Überstundensaldo prüfen (basierend auf echtem Stundenplan)
-      //
-      // Code review (owner) — this used to read OvertimeAccount.balanceHours directly, the
-      // SAME stale event-driven source 97-CONTEXT names as wrong (v1.8.24 already overrides it
-      // at read time everywhere else) and, worse, the LIVE total (confirmed + open-month
-      // forecast), while the leave form's own affordability UI (97-06) validates against the
-      // CONFIRMED (closed-month) carry-over only — never against a forecast that can still
-      // erode. This is a WRITE path touching entitlement, so {@link overtimeCompBalanceRejection}'s
-      // fail-safe branch intentionally falls back to the PRE-EXISTING stored-balance check (never
-      // 500, never silently permits an unbounded request) rather than inventing a new default.
-      // Issue #468 (D-01): the needed amount comes from `scheduledLeaveMinutes` — the SAME
-      // function the saldo and the booking/reversal use — not a `{day}Hours` placeholder sum.
-      if (body.type === "OVERTIME_COMP") {
-        const tzForGate = await getTenantTimezone(app.prisma, tenantId);
-        const neededMinutes = await scheduledLeaveMinutes(
-          app.prisma,
-          employeeId,
-          tenantId,
-          start,
-          end,
-          body.halfDay,
-          holidays,
-          tzForGate,
-        );
-        const rejection = await overtimeCompBalanceRejection(
-          app,
-          employeeId,
-          tenantId,
-          neededMinutes,
-        );
-        if (rejection) {
-          return reply.code(400).send(rejection);
-        }
-      }
-
-      // Für SPECIAL: specialLeaveRuleId required, validate days against rule
-      if (body.type === "SPECIAL") {
-        if (!body.specialLeaveRuleId) {
-          return reply
-            .code(400)
-            .send({ error: "Sonderurlaub erfordert einen Anlass (specialLeaveRuleId)" });
-        }
-        // #223: SpecialLeaveRule has its own tenantId — a client-supplied
-        // specialLeaveRuleId must be scoped to the caller's tenant, otherwise a
-        // tenant could reference (and consume) another tenant's rule. findUnique
-        // cannot take a second field, hence findFirst.
-        const rule = await app.prisma.specialLeaveRule.findFirst({
-          where: { id: body.specialLeaveRuleId, tenantId },
-        });
-        if (!rule || !rule.isActive) {
-          return reply
-            .code(400)
-            .send({ error: "Ungültiger oder deaktivierter Sonderurlaubs-Anlass" });
-        }
-        if (days > Number(rule.defaultDays)) {
-          return reply.code(400).send({
-            error: `Max. ${Number(rule.defaultDays)} Tage für "${rule.name}" (beantragt: ${days})`,
-          });
-        }
-      }
-
-      const request = await app.prisma.leaveRequest.create({
-        data: {
-          employeeId,
-          leaveTypeId,
-          specialLeaveRuleId: body.specialLeaveRuleId ?? null,
-          startDate: start,
-          endDate: end,
-          days,
-          halfDay: body.halfDay,
-          note: body.note,
-        },
-        include: {
-          leaveType: true,
-          employee: { select: { firstName: true, lastName: true } },
-        },
-      });
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "CREATE",
-        entity: "LeaveRequest",
-        entityId: request.id,
-        newValue: {
-          type: body.type,
-          startDate: body.startDate,
-          endDate: body.endDate,
-          days,
-          ...(isOnBehalfOf && {
-            source: "MANAGER_CREATED",
-            // Issue #539 (D-13): no actorRole on new rows (the actor is the row's userId); existing
-            // rows keep theirs - the audit log is append-only.
-            targetEmployeeId: employeeId,
-          }),
-        },
-      });
-
-      // ── Benachrichtigung: Manager über neuen Antrag informieren ──
-      // Issue #200: title and phrase both come from the single LEAVE_TYPE_DEFS mapping and are
-      // display text only (ADR 0001, never compared). The mail subject is deliberately neutral
-      // while the in-app title is type-specific (owner decision 2026-09-15).
-      const typeDef = LEAVE_TYPE_DEFS[body.type];
-      // Phase 75b Plan 10 (#75), D-16: holders of leave-request:approve replace the legacy A,M
-      // role predicate — the recorded recipient set is unchanged (docs/permissions.md §
-      // Empfängersuchen).
-      const leaveRequestApproveHolderIds = await userIdsHoldingPermission(
-        app.prisma,
-        req.user.tenantId,
-        "leave-request:approve:ZUGEWIESEN",
-      );
-      // Phase 91b Plan 09 (Issue #91), D-17: narrow the tenant-wide holder list to holders whose
-      // OWN reach covers the request's own employee — Stammsalon-only (D-10), Stichtag = the
-      // request's own startDate (the affected period, not "today").
-      const scopedLeaveRequestApproveHolderIds = await resolveScopedHolderIds(
-        app.prisma,
-        req.user.tenantId,
-        leaveRequestApproveHolderIds,
-        "leave-request:approve:ZUGEWIESEN",
-        (reach) =>
-          isStammsalonScopeMatch(
-            app.prisma,
-            req.user.tenantId,
-            reach,
-            request.employeeId,
-            request.startDate,
-          ),
-      );
-      const managers = await app.prisma.user.findMany({
-        where: {
-          id: { in: scopedLeaveRequestApproveHolderIds },
-          isActive: true,
-          employee: { tenantId: req.user.tenantId },
-        },
-        select: { id: true },
-      });
-      for (const mgr of managers) {
-        await app.notify({
-          userId: mgr.id,
-          type: "LEAVE_REQUEST",
-          title: typeDef.notificationTitle,
-          message: `${request.employee.firstName} ${request.employee.lastName} ${typeDef.requestPhrase} (${body.startDate} – ${body.endDate})`,
-          // Manager-facing: link to the approval surface (/team/leave honors ?request=),
-          // NOT /leave (which only shows the recipient's OWN requests).
-          link: `/team/leave?request=${request.id}`,
-          tenantId,
-          relatedType: "LeaveRequest",
-          relatedId: request.id,
-          emailSubject: LEAVE_REQUEST_EMAIL_SUBJECT,
-        });
+      } catch (err) {
+        app.log.warn({ err, requestId: request.id }, "leave limit check failed on request create");
       }
 
       return reply.code(201).send({
@@ -897,6 +590,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         typeCode: body.type,
         startDate: request.startDate.toISOString().split("T")[0],
         endDate: request.endDate.toISOString().split("T")[0],
+        ...(leaveLimitWarnings.length > 0 && { leaveLimitWarnings }),
       });
     },
   });
@@ -922,6 +616,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         year?: string;
         upcoming?: string;
       };
+      // Issue #409: an EIGENE-only caller naming a foreign `?employeeId=` used to get the own
+      // (usually empty) list with 200, because the own-requests branch below ignores the param.
+      // `leave-request:read:EIGENE` excludes foreign requests, so this is a 403 — same form as
+      // #368 finding 4 for `GET /time-entries`. Own id or no id stays unchanged.
+      if (!isManager && employeeId && employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
       const { salonId } = leaveSalonQuerySchema.parse(req.query);
 
       // Für Manager: PENDING-Filter schließt CANCELLATION_REQUESTED immer ein
@@ -1182,10 +883,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const body = reviewSchema.parse(req.body);
 
-      const existing = await app.prisma.leaveRequest.findFirst({
-        where: { id, deletedAt: null }, // D-09: soft-deleted requests are not-found
-        include: { leaveType: true, employee: { select: { tenantId: true } } },
-      });
+      const existing = await loadLeaveRequestForReview(app, id);
       if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
       // Tenant isolation check (SEC-V1814-03 / D-02): fetch-then-compare via employee.tenantId
       if (existing.employee.tenantId !== req.user.tenantId) {
@@ -1227,33 +925,13 @@ export async function leaveRoutes(app: FastifyInstance) {
           return reply.code(404).send({ error: "Antrag nicht gefunden" });
         }
       }
-      if (!["PENDING", "CANCELLATION_REQUESTED"].includes(existing.status)) {
-        return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
-      }
-
-      // Block self-approval — managers cannot approve their own requests
-      const reviewerEmployee = await app.prisma.employee.findFirst({
-        where: { userId: req.user.sub },
-        select: { id: true },
+      // Issue #835 (D-835-12): status decidable, self-approval and the cancellation four-eyes
+      // blocks live in `leaveDecisionGuard` (leave-decision.ts), run here in the original order.
+      const decisionRefusal = await leaveDecisionGuard(app, {
+        existing,
+        reviewerUserId: req.user.sub,
       });
-      if (reviewerEmployee && existing.employeeId === reviewerEmployee.id) {
-        return reply
-          .code(403)
-          .send({ error: "Eigene Anträge können nicht selbst genehmigt werden" });
-      }
-
-      // 4-eyes: block cancellation-approval by the person who requested the cancellation (COMP-V1814-02)
-      if (existing.cancellationRequestedBy && req.user.sub === existing.cancellationRequestedBy) {
-        return reply
-          .code(403)
-          .send({ error: "Stornierung kann nicht vom Antragsteller genehmigt werden" });
-      }
-      // 4-eyes: block cancellation-approval by the manager who originally approved the leave (COMP-V1814-02)
-      if (existing.reviewedBy && req.user.sub === existing.reviewedBy) {
-        return reply
-          .code(403)
-          .send({ error: "Stornierung kann nicht vom ursprünglichen Genehmiger genehmigt werden" });
-      }
+      if (decisionRefusal) return reply.code(decisionRefusal.statusCode).send(decisionRefusal.body);
 
       // ── Stornierungsantrag prüfen ────────────────────────────────────────────
       if (existing.status === "CANCELLATION_REQUESTED") {
@@ -1322,7 +1000,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           try {
             await app.prisma.$transaction(async (tx) => {
               await tx.leaveRequest.update({
-                where: { id },
+                where: { id, employee: { tenantId: req.user.tenantId } }, // Issue #835: scoped inline, the row was loaded by the decision core
                 data: {
                   status: "CANCELLED",
                   reviewedBy: req.user.sub,
@@ -1448,7 +1126,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           // person from approving a subsequent cancellation request.  The rejection
           // reviewer is captured in the AuditLog REJECT entry below.
           await app.prisma.leaveRequest.update({
-            where: { id },
+            where: { id, employee: { tenantId: req.user.tenantId } }, // Issue #835: scoped inline, the row was loaded by the decision core
             data: {
               status: "APPROVED",
               // reviewedBy intentionally NOT updated — preserves original approver identity
@@ -1471,7 +1149,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         // counted while CANCELLATION_REQUESTED and counts again as APPROVED), but heals
         // snapshots written under the old APPROVED-only rule. Locked months are skipped by
         // recalculateSnapshots itself (Phase 99, D-09); like every other caller, the
-        // recalculation starts at the first snapshot whose periodStart >= startDate.
+        // recalculation starts with the snapshot of the month containing startDate (Issue #459).
         if (body.status !== "APPROVED") {
           await recalculateSnapshots(app, existing.employeeId, existing.startDate).catch((err) =>
             app.log.error(
@@ -1539,7 +1217,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
 
         const refreshed = await app.prisma.leaveRequest.findUnique({
-          where: { id },
+          where: { id, employee: { tenantId: req.user.tenantId } }, // Issue #835: scoped inline, the row was loaded by the decision core
           include: { employee: { select: { firstName: true, lastName: true } }, leaveType: true },
         });
         return {
@@ -1550,528 +1228,38 @@ export async function leaveRoutes(app: FastifyInstance) {
         };
       }
 
-      // ── Normaler Antrag (PENDING) ────────────────────────────────────────────
-      // Issue #446 (D-06(b)/D-10): gated on APPROVED only — a PENDING -> REJECTED review
-      // stays allowed (saldo-neutral), checked before any read-dependent computation and
-      // before the write below.
-      if (body.status === "APPROVED") {
-        const closedMonths = await findClosedMonthsInRange(
-          app.prisma,
-          existing.employeeId,
-          existing.employee.tenantId,
-          existing.startDate,
-          existing.endDate,
-        );
-        if (closedMonths.length > 0) {
-          return reply.code(409).send({
-            error: closedMonthLeaveMessage(closedMonths, "change"),
-            code: "LEAVE_MONTH_CLOSED",
-          });
-        }
-      }
-
-      const reviewTypeCode = existing.leaveType.code;
-
-      // Issue #294: the OVERTIME_COMP booking below is computed but NOT written where it is
-      // decided — it is issued at the tail, in the SAME $transaction as the balance persist,
-      // so a failed persist rolls the booking back with it instead of leaving an orphan receipt.
-      // Issue #468 (A-4/D-02): `minutes` carried alongside `hours` — the exact integer value
-      // stored on LeaveRequest.overtimeCompMinutes, written in the SAME transaction as the
-      // REDUCTION journal row below.
-      let pendingOvertimeBooking: {
-        tenantId: string;
-        hours: number;
-        minutes: number;
-        description: string;
-      } | null = null;
-
-      // Phase 107 (D-07/D-10, T-107-20): for an APPROVED SHIFT_BASED vacation request, recompute
-      // `days` from the roster and determine `daysProvisional` BEFORE the update() call below, so
-      // both land in the SAME write as the status flip — a second update() would leave a crash
-      // window where a request is APPROVED with stale days and no flag. Builds the holiday map
-      // once here and reuses it for deductVacationDays() further down. Every other type/branch
-      // is untouched: `daysProvisional` stays `null`.
-      let holidayMapForDeduct: Map<string, string> | null = null;
-      let shiftBasedApprovalRecompute: { days: number; provisional: boolean } | null = null;
-      if (body.status === "APPROVED" && reviewTypeCode === "VACATION") {
-        holidayMapForDeduct = await getHolidayMap(
-          app.prisma,
-          existing.employee.tenantId,
-          existing.employeeId,
-          existing.startDate,
-          existing.endDate,
-        );
-        const wsForApproval = await app.prisma.workSchedule.findFirst({
-          where: { employeeId: existing.employeeId },
-          orderBy: { validFrom: "desc" },
-          select: { type: true },
-        });
-        if (wsForApproval?.type === "SHIFT_BASED") {
-          // Issue #436 (D-04): approval recomputes against the other counted VACATION requests,
-          // excluding this one — the ordering rule (createdAt, ties by id) keeps this request's
-          // price stable whether it is approved before or after a sibling.
-          shiftBasedApprovalRecompute = await resolveLeaveDays(
-            app.prisma,
-            existing.employeeId,
-            existing.employee.tenantId,
-            existing.startDate,
-            existing.endDate,
-            existing.halfDay,
-            new Set(holidayMapForDeduct.keys()),
-            { mode: "request", leaveTypeCode: reviewTypeCode, excludeRequestId: existing.id },
-          );
-        }
-      }
-
-      // Phase 120 (D-01/D-04): snapshot the pre-decision state BEFORE the update() below overwrites
-      // `days`/`daysProvisional` (Phase 107 writes both in the same call that flips `status`). Reading
-      // these values again after the write would return the NEW ones and silently produce an audit row
-      // whose oldValue equals its newValue — the exact failure this phase exists to prevent.
-      // `days` is a Prisma Decimal; JSON.stringify() would serialise it as a string, so Number() is
-      // load-bearing, not cosmetic (it matches the LEAVE_DAYS_ADJUSTED row's numeric `days`).
-      const auditOldValue = {
-        status: existing.status,
-        days: Number(existing.days),
-        daysProvisional: existing.daysProvisional,
-      };
-
-      const updated = await app.prisma.leaveRequest.update({
-        where: { id },
-        data: {
-          status: body.status,
-          reviewedBy: req.user.sub,
-          reviewedAt: new Date(),
-          reviewNote: body.reviewNote,
-          ...(shiftBasedApprovalRecompute
-            ? {
-                days: shiftBasedApprovalRecompute.days,
-                daysProvisional: shiftBasedApprovalRecompute.provisional,
-              }
-            : {}),
-        },
-        include: {
-          employee: { select: { firstName: true, lastName: true } },
-          leaveType: true,
-        },
-      });
-
-      if (body.status === "APPROVED") {
-        const typeCode = reviewTypeCode;
-
-        if (typeCode === "VACATION") {
-          const empForDeduct = await app.prisma.employee.findUnique({
-            where: { id: existing.employeeId },
-          });
-          await deductVacationDays(
-            app.prisma,
-            existing.employeeId,
-            existing.leaveTypeId,
-            existing.startDate,
-            existing.endDate,
-            Number(updated.days),
-            new Set(holidayMapForDeduct!.keys()),
-            empForDeduct?.tenantId ?? "",
-          );
-        }
-
-        if (typeCode === "OVERTIME_COMP") {
-          const empTenant = await app.prisma.employee.findUnique({
-            where: { id: existing.employeeId },
-            select: { tenantId: true },
-          });
-          const tenantIdForBooking = empTenant?.tenantId ?? "";
-          const hMap = await getHolidayMap(
-            app.prisma,
-            tenantIdForBooking,
-            existing.employeeId,
-            existing.startDate,
-            existing.endDate,
-          );
-          const tzForBooking = await getTenantTimezone(app.prisma, tenantIdForBooking);
-          const bookingMinutes = await scheduledLeaveMinutes(
-            app.prisma,
-            existing.employeeId,
-            tenantIdForBooking,
-            existing.startDate,
-            existing.endDate,
-            existing.halfDay,
-            new Set(hMap.keys()),
-            tzForBooking,
-          );
-          pendingOvertimeBooking = {
-            tenantId: tenantIdForBooking,
-            hours: bookingMinutes / 60,
-            minutes: bookingMinutes,
-            description: `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
-          };
-        }
-
-        // ── § 9 BUrlG (Phase 104, D-09): Krank-im-Urlaub-Vorgang anlegen ──────────
-        // Der Datensatz entsteht SOFORT bei Genehmigung der Krankmeldung, im wirkungslosen
-        // Zustand AU_PENDING — die Urlaubstage bleiben angerechnet, bis ein Manager die AU
-        // bestätigt (Plan 104-06). Nie gutschreiben und später zurückdrehen.
-        // D-13: genau deshalb hängt die Erkennung am Approve-Pfad und nicht an POST /requests —
-        // eine noch nicht genehmigte Krankmeldung darf keinen Vorgang erzeugen.
-        if (typeCode === "SICK" || typeCode === "SICK_CHILD") {
-          const candidates = await app.prisma.leaveRequest.findMany({
-            where: {
-              employeeId: existing.employeeId,
-              deletedAt: null,
-              status: "APPROVED",
-              id: { not: existing.id },
-              startDate: { lte: existing.endDate },
-              endDate: { gte: existing.startDate },
-            },
-            include: { leaveType: true },
-          });
-          const overlaps = findSection9Overlaps(existing.startDate, existing.endDate, candidates);
-          for (const ov of overlaps) {
-            // Idempotent: re-running approve must not fan out duplicate Vorgänge.
-            const dupe = await app.prisma.section9Credit.findFirst({
-              where: { sickRequestId: existing.id, vacationRequestId: ov.vacationRequestId },
-            });
-            if (dupe) continue;
-            // Phase 104 review (WR-03): the findFirst/create pair above is NOT in a
-            // transaction, so it is a check-then-create race — two concurrent approvals
-            // (double click, retry, a manager racing a cron path) both pass the guard.
-            // @@unique([sickRequestId, vacationRequestId]) now closes it in the DB; the
-            // loser of the race lands here as P2002 and is treated exactly like `dupe`:
-            // the Vorgang already exists, so skip it silently rather than 500 the whole
-            // approve. Without the constraint a second CONFIRMED row would double-credit
-            // the vacation, and the double credit SURVIVES selfHealUsedDays() because the
-            // self-heal trusts the credit sum.
-            let credit;
-            try {
-              credit = await app.prisma.section9Credit.create({
-                data: {
-                  employeeId: existing.employeeId,
-                  sickRequestId: existing.id,
-                  vacationRequestId: ov.vacationRequestId,
-                  overlapStart: ov.overlapStart,
-                  overlapEnd: ov.overlapEnd,
-                  // status defaults to AU_PENDING
-                },
-              });
-            } catch (err: unknown) {
-              if (
-                err &&
-                typeof err === "object" &&
-                "code" in err &&
-                (err as { code: unknown }).code === "P2002"
-              ) {
-                app.log.info(
-                  { sickRequestId: existing.id, vacationRequestId: ov.vacationRequestId },
-                  "§ 9: concurrent detection lost the race, Vorgang already exists",
-                );
-                continue;
-              }
-              throw err;
-            }
-            await app.audit({
-              userId: req.user.sub,
-              action: "SECTION9_CREDIT_DETECTED",
-              entity: "Section9Credit",
-              entityId: credit.id,
-              newValue: {
-                sickRequestId: existing.id,
-                vacationRequestId: ov.vacationRequestId,
-                overlapStart: ov.overlapStart.toISOString().split("T")[0],
-                overlapEnd: ov.overlapEnd.toISOString().split("T")[0],
-                note: "§ 9 BUrlG — Vorgang erkannt, AU ausstehend",
-              },
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-            });
-
-            // ── D-14: beide Seiten benachrichtigen, über die bestehende Bell-Mechanik ──
-            const employeeUser = await app.prisma.employee.findUnique({
-              where: { id: existing.employeeId },
-              select: { userId: true, tenantId: true },
-            });
-            // Phase 104 review (WR-05): in Prisma an `undefined` filter value means "omit
-            // this filter", not "match nothing". Passing employeeUser?.tenantId into the
-            // manager fan-out below would, if the row were ever missing, return EVERY
-            // ADMIN/MANAGER across ALL tenants and notify each of them about a foreign
-            // tenant's sickness period (plus a deep link into it). The FK is Restrict so
-            // this should be unreachable — but the failure mode is a silent cross-tenant
-            // broadcast, so it must not depend on that. The Vorgang itself is already
-            // created and audited; only the notification fan-out is skipped.
-            if (!employeeUser) {
-              app.log.error(
-                { employeeId: existing.employeeId, creditId: credit.id },
-                "§ 9: employee row missing, skipping notification fan-out",
-              );
-              continue;
-            }
-            const rangeLabel = `${formatDateDe(ov.overlapStart)} – ${formatDateDe(ov.overlapEnd)}`;
-            if (employeeUser.userId) {
-              await app.notify({
-                userId: employeeUser.userId,
-                type: "SECTION9_AU_PENDING_EMPLOYEE",
-                title: "AU nachreichen — Urlaubstage stehen auf dem Spiel",
-                message:
-                  `Für ${rangeLabel} liegt eine Krankmeldung während Ihres genehmigten Urlaubs vor. ` +
-                  `Ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet (§ 9 BUrlG).`,
-                link: "/leave",
-                tenantId: employeeUser.tenantId,
-                relatedType: "Section9Credit",
-                relatedId: credit.id,
-              });
-            }
-            // User has no tenantId column — tenant scoping goes through Employee.
-            // Phase 75b Plan 10 (#75), D-16: holders of section9:decide replace the legacy A,M
-            // role predicate — the recorded recipient set (skipping the acting manager) is
-            // unchanged (docs/permissions.md § Empfängersuchen).
-            const section9DecideHolderIds = await userIdsHoldingPermission(
-              app.prisma,
-              employeeUser.tenantId,
-              "section9:decide:ZUGEWIESEN",
-            );
-            // Phase 91b Plan 09 (Issue #91), D-17: narrow to holders whose OWN reach covers this
-            // Section9Credit's employee — Stammsalon-only (D-10), Stichtag = the credit's own
-            // overlap period start.
-            const scopedSection9DecideHolderIds = await resolveScopedHolderIds(
-              app.prisma,
-              employeeUser.tenantId,
-              section9DecideHolderIds,
-              "section9:decide:ZUGEWIESEN",
-              (reach) =>
-                isStammsalonScopeMatch(
-                  app.prisma,
-                  employeeUser.tenantId,
-                  reach,
-                  existing.employeeId,
-                  ov.overlapStart,
-                ),
-            );
-            const section9Managers = await app.prisma.employee.findMany({
-              where: {
-                tenantId: employeeUser.tenantId,
-                user: {
-                  id: { in: scopedSection9DecideHolderIds, not: req.user.sub }, // Phase-91 idiom: never notify the actor
-                  isActive: true,
-                },
-              },
-              select: { userId: true },
-            });
-            for (const mgr of section9Managers) {
-              await app.notify({
-                userId: mgr.userId,
-                type: "SECTION9_AU_PENDING_MANAGER",
-                title: "§ 9 BUrlG — AU-Nachweis ausstehend",
-                message: `Krankmeldung während genehmigten Urlaubs (${rangeLabel}). Sobald die AU vorliegt, bitte bestätigen.`,
-                link: `/team/leave?section9=${credit.id}`,
-                tenantId: employeeUser.tenantId,
-                relatedType: "Section9Credit",
-                relatedId: credit.id,
-              });
-            }
-          }
-        }
-      }
-
-      // Phase 120 (D-01/D-02/D-03): a value-changing operation records before AND after. BOTH actions
-      // write the full pair — REJECT does not change `days`, and "unchanged" is a different statement
-      // from "not recorded" in a revisionssichere Spur. `status` is part of the pair because only the
-      // OLD status answers "was this a first approval or the reversal of a cancellation?".
-      await app.audit({
-        userId: req.user.sub,
-        action: body.status === "APPROVED" ? "APPROVE" : "REJECT",
-        entity: "LeaveRequest",
-        entityId: id,
-        oldValue: auditOldValue,
-        newValue: {
-          status: updated.status,
-          days: Number(updated.days),
-          daysProvisional: updated.daysProvisional,
-          reviewNote: body.reviewNote,
-        },
-        // Phase 120 (D-12): CLAUDE.md §Audit-Proof names "userId, timestamp, IP, and before/after
-        // values" in ONE sentence — this entry was missing two of those parts, not one. Same call site,
-        // same rule, same phase. Verhaltensneutral: `request` is optional on `app.audit`
-        // (plugins/audit.ts:13) and feeds nothing but `ipAddress`/`userAgent`.
+      // ── Regular request (PENDING) ────────────────────────────────────────────
+      // Issue #835 (D-835-12): the whole PENDING decision lives in `decidePendingLeaveRequest`.
+      const outcome = await decidePendingLeaveRequest(app, {
+        existing,
+        status: body.status,
+        reviewerUserId: req.user.sub,
+        reviewNote: body.reviewNote,
+        limitException: body.limitException,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
-
-      // Retroactive recalculation: leave approval affects snapshots
-      if (body.status === "APPROVED") {
-        await recalculateSnapshots(app, existing.employeeId, existing.startDate).catch((err) =>
-          app.log.error(
-            { err, employeeId: existing.employeeId },
-            "Failed to recalculate snapshots after leave approval",
-          ),
-        );
-
-        // Issue #294: pure read BEFORE the transaction; booking (if any) then persist happen
-        // inside ONE `$transaction` — no swallower any more, so a failed persist now answers
-        // non-2xx instead of a silent 200 with a stale balance.
-        const effectiveBalanceHours = await computeOvertimeBalanceHours(app, existing.employeeId);
-        await app.prisma.$transaction(async (tx) => {
-          if (pendingOvertimeBooking) {
-            // Issue #468 (A-4/D-02): the booked minutes, the journal row and the audit commit
-            // together or not at all — written BEFORE bookOvertimeCompensation so
-            // "overtimeCompMinutes is set" <=> "the booking was written" even if a later
-            // statement in this same transaction fails.
-            await tx.leaveRequest.update({
-              where: { id: existing.id },
-              data: { overtimeCompMinutes: pendingOvertimeBooking.minutes },
-            });
-            await app.audit({
-              tx,
-              userId: req.user.sub,
-              action: "OVERTIME_COMP_BOOKED",
-              entity: "LeaveRequest",
-              entityId: existing.id,
-              newValue: {
-                overtimeCompMinutes: pendingOvertimeBooking.minutes,
-                hours: pendingOvertimeBooking.hours,
-              },
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-            });
-            await bookOvertimeCompensation(
-              tx,
-              existing.employeeId,
-              pendingOvertimeBooking.tenantId,
-              pendingOvertimeBooking.hours,
-              pendingOvertimeBooking.description,
-            );
-          }
-          // null = §18-exempt: persist nothing, the booking above (if any) still stands as the
-          // sole writer for that path.
-          if (effectiveBalanceHours !== null) {
-            await persistOvertimeBalance(app, tx, existing.employeeId, effectiveBalanceHours);
-          }
-        });
-
-        // Phase 43-04: reverse-hook — when a leave is APPROVED, mark any
-        // existing shifts for this employee on overlapping dates as
-        // conflictsWithLeave=true (audit-proof: never silent-delete shifts).
-        // Best-effort: never roll back the approval if marking fails.
-        // Phase 100B Plan 05 — S2, contexts/scheduling facade (find + flag as ONE operation).
-        try {
-          const conflictingShifts = await flagShiftsConflictingWithLeave(
-            app.prisma,
-            existing.employeeId,
-            existing.employee.tenantId,
-            existing.startDate,
-            existing.endDate,
-          );
-
-          if (conflictingShifts.length > 0) {
-            // Phase 430 (D-02): the audit loop + recipient-resolution + notify loop that used to
-            // live inline here are now ONE shared helper (`contexts/scheduling`), reused by the
-            // Phorest sync and the manual shift-planning routes for the new (inverse) direction —
-            // a shift created/updated on an already-approved leave day. Behaviour here is
-            // byte-identical: same audit rows, same notification text/link, same recipients.
-            const empName = await app.prisma.employee.findUnique({
-              where: { id: existing.employeeId },
-              select: { firstName: true, lastName: true, tenantId: true },
-            });
-            if (empName) {
-              await notifyShiftLeaveConflicts(app, {
-                actorUserId: req.user.sub,
-                employeeId: existing.employeeId,
-                tenantId: empName.tenantId,
-                employeeName: { firstName: empName.firstName, lastName: empName.lastName },
-                leaveRequestId: existing.id,
-                leaveStart: existing.startDate,
-                leaveEnd: existing.endDate,
-                conflictingShifts,
-                request: { ip: req.ip, headers: req.headers as Record<string, string> },
-              });
-            }
-          }
-        } catch (err) {
-          // Reverse-hook is best-effort — never undo the approval on failure
-          app.log.error(
-            { err, leaveRequestId: existing.id },
-            "Phase 43-04 reverse-hook (mark-conflicting shifts) failed",
+      if (!outcome.ok) {
+        if (outcome.reason === "LIMIT_EXCEPTION_REQUIRED" && outcome.limit) {
+          return reply.code(409).send(
+            leaveLimitExceptionRequiredBody(outcome.limit.exceedances, {
+              visibility: readerVisibilityFrom(
+                await limitReaderReach(app, req),
+                req.user.employeeId ?? null,
+              ),
+              personNames: outcome.limit.personNames,
+            }),
           );
         }
+        return reply.code(outcome.statusCode).send(outcome.body);
       }
-
-      // ── Pro-rata Urlaubswarnung bei Genehmigung (nur VACATION, nur bei exitDate) ──
-      let proRataWarning: { used: number; entitlement: number; message: string } | undefined =
-        undefined;
-      if (body.status === "APPROVED") {
-        const typeCodeForWarning = existing.leaveType.code;
-        if (typeCodeForWarning === "VACATION") {
-          try {
-            const empWithExit = await app.prisma.employee.findUnique({
-              where: { id: existing.employeeId },
-              select: { exitDate: true, tenantId: true, firstName: true, lastName: true },
-            });
-            // Issue #447 (D-08): no first-half-year guard any more — § 5 Abs. 1 b BUrlG
-            // Teilurlaub can also follow an exit in the second half-year, so a second-half exit
-            // can over-use just as well; exitVacationOverUseWarning itself decides, from the
-            // (already exit-synced, D-06) persisted row, whether used exceeds entitled.
-            if (empWithExit?.exitDate) {
-              // Issue #447 WR-01: exitDate is a UTC-midnight @db.Date value — use the UTC
-              // accessor to match the sync code (getUTCFullYear()) that keyed the row.
-              const exitYear = empWithExit.exitDate.getUTCFullYear();
-              const vacLeaveType = await app.prisma.leaveType.findUnique({
-                where: {
-                  tenantId_code: { tenantId: empWithExit.tenantId, code: "VACATION" },
-                },
-              });
-              if (vacLeaveType) {
-                const entitlement = await app.prisma.leaveEntitlement.findFirst({
-                  where: {
-                    employeeId: existing.employeeId,
-                    leaveTypeId: vacLeaveType.id,
-                    year: exitYear,
-                  },
-                });
-                if (entitlement) {
-                  proRataWarning =
-                    exitVacationOverUseWarning({
-                      employeeName: `${empWithExit.firstName} ${empWithExit.lastName}`,
-                      exitDate: empWithExit.exitDate,
-                      row: entitlement,
-                    }) ?? undefined;
-                }
-              }
-            }
-          } catch (err) {
-            app.log.warn({ err }, "Pro-rata warning calculation failed silently in leave review");
-          }
-        }
-      }
-
-      // ── Benachrichtigung: Mitarbeiter über Entscheidung informieren ──
-      const requestEmployee = await app.prisma.employee.findUnique({
-        where: { id: existing.employeeId },
-      });
-      if (requestEmployee) {
-        await app.notify({
-          userId: requestEmployee.userId,
-          type: body.status === "APPROVED" ? "LEAVE_APPROVED" : "LEAVE_REJECTED",
-          title: body.status === "APPROVED" ? "Antrag genehmigt" : "Antrag abgelehnt",
-          message: `Ihr ${existing.leaveType.name}-Antrag wurde ${body.status === "APPROVED" ? "genehmigt" : "abgelehnt"}.`,
-          link: `/leave?request=${existing.id}`,
-          tenantId: requestEmployee.tenantId,
-        });
-      }
-
-      // Auto-dismiss manager LEAVE_REQUEST notifications for this request
-      try {
-        await app.dismissByRelated("LeaveRequest", existing.id);
-      } catch (err) {
-        app.log.warn(
-          { err, leaveRequestId: existing.id },
-          "Failed to auto-dismiss LEAVE_REQUEST notifications on review",
-        );
-      }
+      const { updated, responseExtras } = outcome;
 
       return {
         ...updated,
         typeCode: updated.leaveType.code,
         startDate: updated.startDate.toISOString().split("T")[0],
         endDate: updated.endDate.toISOString().split("T")[0],
-        // Issue #468 (A-4/D-02): `updated` was read BEFORE the tail transaction wrote
-        // overtimeCompMinutes — reflect the just-booked value in the response without a
-        // second round-trip.
-        ...(pendingOvertimeBooking ? { overtimeCompMinutes: pendingOvertimeBooking.minutes } : {}),
-        ...(proRataWarning ? { proRataWarning } : {}),
+        ...responseExtras,
       };
     },
   });
@@ -2171,6 +1359,31 @@ export async function leaveRoutes(app: FastifyInstance) {
         );
         if (editRejection) {
           return reply.code(400).send(editRejection);
+        }
+      }
+
+      // Issue #478: the edit used to be a way around the create-side guards (create on free
+      // dates, then move onto an approved or cancellation-requested request). Same shared
+      // helpers as POST, the request itself excluded.
+      const editBlockingOverlap = await findBlockingLeaveOverlap(app.prisma, {
+        employeeId: existing.employeeId,
+        start,
+        end,
+        isSickRequest: existingTypeCode === "SICK" || existingTypeCode === "SICK_CHILD",
+        excludeRequestId: id,
+      });
+      if (editBlockingOverlap) return reply.code(409).send({ error: LEAVE_OVERLAP_ERROR });
+      if (existing.leaveType.maxDaysPerYear) {
+        const usedByOthers = await leaveDaysUsedInYear(app.prisma, {
+          employeeId: existing.employeeId,
+          leaveTypeId: existing.leaveTypeId,
+          start,
+          excludeRequestId: id,
+        });
+        if (usedByOthers + days > existing.leaveType.maxDaysPerYear) {
+          return reply.code(400).send({
+            error: `Max. ${existing.leaveType.maxDaysPerYear} Tage/Jahr für diesen Typ (bereits ${usedByOthers} genutzt)`,
+          });
         }
       }
 
@@ -2291,6 +1504,48 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { plan } = prepared;
       const { oldTypeCode, newType, oldOtMinutes, newOtMinutes, oldOtSource } = plan;
 
+      // Issue #836 (D-836-19): only the days a correction ADDS (or the whole range when an uncounted
+      // type becomes counted) can need a limit exception; a shortening never does. Checked here, in
+      // the route, after every pre-write guard and before the transaction — never inside
+      // prepareLeaveCorrection, which the employment exit shares and must not be refused by a limit.
+      let leaveLimitException: ReturnType<typeof buildLeaveLimitExceptionAudit> | null = null;
+      const limitRanges = correctionCandidateRanges({
+        oldStart: existing.startDate,
+        oldEnd: existing.endDate,
+        newStart: start,
+        newEnd: end,
+        oldTypeCode,
+        newTypeCode: newType,
+      });
+      if (limitRanges.length > 0) {
+        const limitResult = await evaluateLeaveLimits(app.prisma, req.user.tenantId, {
+          candidates: limitRanges.map((range) => ({
+            requestId: existing.id,
+            employeeId: existing.employeeId,
+            typeCode: newType,
+            ...range,
+          })),
+          excludeRequestIds: [existing.id],
+        });
+        if (limitResult.exceedances.length > 0) {
+          if (!body.limitException) {
+            return reply.code(409).send(
+              leaveLimitExceptionRequiredBody(limitResult.exceedances, {
+                visibility: readerVisibilityFrom(
+                  await limitReaderReach(app, req),
+                  req.user.employeeId ?? null,
+                ),
+                personNames: limitResult.personNames,
+              }),
+            );
+          }
+          leaveLimitException = buildLeaveLimitExceptionAudit(
+            body.limitException.reason,
+            limitResult.exceedances,
+          );
+        }
+      }
+
       // Steps 8-11 run inside ONE interactive transaction (94 CR-01): the correction issues TWO
       // authoritative ledger writes (reverse OLD + apply NEW); without a transaction a
       // mid-sequence failure would leave the OLD booking reversed but the NEW one unapplied. All
@@ -2351,6 +1606,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           // T-468-10: names whether the OLD side's reversal used the stored booking or the A-4
           // legacy recomputation fallback. Only present when the OLD side was OVERTIME_COMP.
           ...(oldTypeCode === "OVERTIME_COMP" ? { overtimeCompReversalSource: oldOtSource } : {}),
+          ...(leaveLimitException ? { leaveLimitException } : {}),
         },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
@@ -2578,40 +1834,62 @@ export async function leaveRoutes(app: FastifyInstance) {
     },
   });
 
-  // ── GET /calendar  – Kalenderansicht für einen Monat ────────────────────
+  // ── GET /calendar  – calendar view for one month or a day range ───────
+  // Issue #840 (D-840-19): the detail level is decided PER PERSON by the reader's
+  // `leave-request:read:ZUGEWIESEN` reach (Stammsalon per day), not by a bare permission check.
   app.get("/calendar", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
-      const { year, month } = req.query as { year?: string; month?: string };
-      const { salonId } = leaveSalonQuerySchema.parse(req.query);
-      const y = year ? parseInt(year) : new Date().getFullYear();
-      const m = month ? parseInt(month) : new Date().getMonth() + 1;
+      const query = leaveCalendarQuerySchema.parse(req.query);
+      const { salonId } = query;
+      const rangeForm = query.from !== undefined && query.to !== undefined;
+      const y = query.year ?? new Date().getFullYear();
+      const m = query.month ?? new Date().getMonth() + 1;
+      const tenantId = req.user.tenantId;
 
-      // Issue #558 (D-01): the salon is validated against the caller's leave-request
-      // ZUGEWIESEN reach before any read; a caller without it gets the same 404 body.
+      // Resolved ONCE per request: it validates the chosen salon (Issue #558, D-01 — a caller
+      // without the reach gets the same 404 body) and decides the detail level of every row below.
+      const reach = await resolveAccessReach(
+        app.prisma,
+        accessContextFromRequest(req),
+        "leave-request:read:ZUGEWIESEN",
+      );
       let chosenSalonId: string | null = null;
       if (salonId !== undefined) {
-        const reach = await resolveAccessReach(
-          app.prisma,
-          accessContextFromRequest(req),
-          "leave-request:read:ZUGEWIESEN",
-        );
-        const salon = await resolveSalonInReach(app.prisma, req.user.tenantId, reach, salonId);
+        const salon = await resolveSalonInReach(app.prisma, tenantId, reach, salonId);
         if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
         chosenSalonId = salon.salonId;
       }
+      // Data minimisation is enforced here, not left to the client (Art. 5 Abs. 1 lit. c DSGVO,
+      // review WR-04): a caller whose `leave-request:read` reach is empty (own data only) who names
+      // no scope is answered as `scope=team` — their own rows and the masked colleagues of their
+      // own Stammsalon, never every salon of the tenant for a whole year. A caller with a reach
+      // keeps the tenant-wide calendar of the Team -> Uebersicht; an explicit scope always wins.
+      const reachIsEmpty =
+        reach.kind === "scoped" && reach.salonIds.length === 0 && reach.employeeIds.length === 0;
+      const scope = query.scope ?? (reachIsEmpty && salonId === undefined ? "team" : undefined);
 
-      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const tz = await getTenantTimezone(app.prisma, tenantId);
       // Issue #493: the leave overlap, the holiday window and the § 9 overlap all hit `@db.Date`
       // columns / date-string windows, so they take calendar-day bounds, not month instants.
-      const { firstDay, lastDay } = monthDateRange(y, m, tz);
+      // The range form (Issue #840) names calendar days directly.
+      const { firstDay, lastDay } =
+        query.from !== undefined && query.to !== undefined
+          ? {
+              firstDay: new Date(`${query.from}T00:00:00.000Z`),
+              lastDay: new Date(`${query.to}T00:00:00.000Z`),
+            }
+          : monthDateRange(y, m, tz);
+      const windowFromDay = firstDay.toISOString().slice(0, 10);
+      const windowToDay = lastDay.toISOString().slice(0, 10);
 
+      const selfEmployeeId = req.user.employeeId ?? null;
       const [allRows, holidayMap] = await Promise.all([
         app.prisma.leaveRequest.findMany({
           where: {
             deletedAt: null,
-            employee: { tenantId: req.user.tenantId },
+            employee: { tenantId },
             status: { in: ["PENDING", ...EFFECTIVE_LEAVE_STATUSES] }, // Issue #446 (D-04): same set, now derived
             startDate: { lte: lastDay },
             endDate: { gte: firstDay },
@@ -2622,37 +1900,69 @@ export async function leaveRoutes(app: FastifyInstance) {
           },
           orderBy: { startDate: "asc" },
         }),
-        // Interim (Phase 71b, issue #71): a tenant-wide calendar has no single employee to
-        // resolve a work location for, so it shows the REQUESTER's own work-location holidays
-        // (or the tenant's default salon's, for a profile-less admin) until Block D (#82 ff.)
-        // designs a salon-aware calendar.
-        getHolidayMap(
-          app.prisma,
-          req.user.tenantId,
-          req.user.employeeId ?? null,
-          firstDay,
-          lastDay,
-        ),
+        // Issue #840 (D-840-25): a validated salon in view brings its OWN holidays (the one salon
+        // resolution of the Unterbau). Without one the interim below stays: a tenant-wide calendar
+        // has no single employee to resolve a work location for (Phase 71b, issue #71), so it
+        // shows the REQUESTER's own work-location holidays (or the tenant's default salon's, for a
+        // profile-less admin).
+        chosenSalonId !== null
+          ? holidaysForSalon(app.prisma, tenantId, chosenSalonId, windowFromDay, windowToDay).then(
+              (list) => new Map(list.map((h) => [h.date, h.name] as const)),
+            )
+          : getHolidayMap(app.prisma, req.user.tenantId, selfEmployeeId, firstDay, lastDay),
       ]);
+
+      // Issue #840 (D-840-18/23/24): the caller's own Stammsalons in the window, read ONCE and only
+      // when a personal scope or the `salons` field of the range form needs them. A foreign person's
+      // Stammsalon is never read here (that is the per-row decision below).
+      const ownHomeSalonIds: string[] = [];
+      if (scope !== undefined && selfEmployeeId !== null) {
+        const ownHome = (
+          await homeSalonsForDays(
+            app.prisma,
+            tenantId,
+            [selfEmployeeId],
+            windowFromDay,
+            windowToDay,
+          )
+        ).get(selfEmployeeId);
+        for (const home of ownHome?.values() ?? []) {
+          if (home !== null && !ownHomeSalonIds.includes(home)) ownHomeSalonIds.push(home);
+        }
+      }
 
       // Issue #558: the unfiltered calendar stays tenant-wide by design (type-masked below); a
       // chosen salon only narrows it. A row is kept by its range clipped to the SHOWN month
       // (calendar-day bounds, #493), so a request running into the next month is attributed by
-      // the Stammsalon of the days in view. The holiday entries stay the requester's
-      // work-location holidays (interim of #71) — the filter does not touch them.
-      const rows =
-        chosenSalonId === null
-          ? allRows
-          : await filterLeaveRowsToHomeSalon(
-              app.prisma,
-              req.user.tenantId,
-              allRows,
-              chosenSalonId,
-              {
-                fromDay: firstDay.toISOString().slice(0, 10),
-                toDay: lastDay.toISOString().slice(0, 10),
-              },
-            );
+      // the Stammsalon of the days in view. The holiday entries are not touched by the row filter
+      // (a chosen salon brings its own, see above; otherwise the requester's, interim of #71).
+      const isOwnRow = (r: (typeof allRows)[number]) => r.employee.userId === req.user.sub;
+      let rows = allRows;
+      if (chosenSalonId !== null) {
+        rows = await filterLeaveRowsToHomeSalon(app.prisma, tenantId, allRows, chosenSalonId, {
+          fromDay: windowFromDay,
+          toDay: windowToDay,
+        });
+      } else if (scope === "own") {
+        // Issue #840 (D-840-24): the personal calendar carries nothing of a colleague.
+        rows = allRows.filter(isOwnRow);
+      } else if (scope === "team") {
+        // Issue #840 (D-840-18/23, T-840-08): the persons homed in one of the caller's own
+        // Stammsalons on a window day, plus the caller; a caller without Stammsalon gets only
+        // their own rows. The input order is kept, a row reached through two salons appears once.
+        const teamIds = new Set<string>();
+        for (const ownSalonId of ownHomeSalonIds) {
+          const inSalon = await filterLeaveRowsToHomeSalon(
+            app.prisma,
+            tenantId,
+            allRows,
+            ownSalonId,
+            { fromDay: windowFromDay, toDay: windowToDay },
+          );
+          for (const r of inSalon) teamIds.add(r.id);
+        }
+        rows = allRows.filter((r) => isOwnRow(r) || teamIds.has(r.id));
+      }
 
       // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
       // query, scoped to the tenant, so the per-row masking below never needs a query inside
@@ -2706,30 +2016,71 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
-      // Computed once per request (not per row, Pitfall 10) — hoisted above the loop below.
-      const canSeeAll = await hasPermission(req, "leave-request:read:ZUGEWIESEN");
-      const leaveEntries = rows.map((r) => {
-        const isOwn = r.employee.userId === req.user.sub;
-        const showDetails = canSeeLeaveType(isOwn, canSeeAll);
-        return {
-          id: r.id,
-          isOwn,
-          employeeId: r.employeeId,
-          firstName: r.employee.firstName,
-          lastName: r.employee.lastName,
-          typeCode: showDetails ? r.leaveType.code : null,
-          typeName: showDetails ? r.leaveType.name : null,
-          startDate: r.startDate.toISOString().split("T")[0],
-          endDate: r.endDate.toISOString().split("T")[0],
-          halfDay: r.halfDay,
-          status: r.status,
-          isHoliday: false,
-          // Sichtbarkeit folgt exakt showDetails — wer typeCode nicht sehen darf, sieht auch
-          // keine § 9-Markierung (sonst wäre die Krankheit indirekt ablesbar).
-          section9: showDetails ? (section9ByEntry.get(r.id)?.marker ?? null) : null,
-          section9Days: showDetails ? Array.from(section9ByEntry.get(r.id)?.days ?? []).sort() : [],
-        };
-      });
+      // Issue #840 (D-840-19): the per-person decision. A row is detailed iff it is the caller's own
+      // or the person is visible on at least one day of the row clipped to the window (Stammsalon
+      // per day, ONE `homeSalonsForDays` call; skipped when no day can matter — a whole-tenant
+      // reach, or a reach without salons, answers without looking at days).
+      const visibility = readerVisibilityFrom(reach, req.user.employeeId ?? null);
+      const foreignIds = new Set<string>();
+      for (const r of rows) {
+        if (r.employee.userId === req.user.sub) continue;
+        foreignIds.add(r.employeeId);
+      }
+      // A personal scope forces every foreign row to "not visible" (E-03), so no day is looked at.
+      const needHomeDays =
+        scope === undefined &&
+        !visibility.wholeTenant &&
+        visibility.salonIds.size > 0 &&
+        foreignIds.size > 0;
+      const homes = needHomeDays
+        ? await homeSalonsForDays(
+            app.prisma,
+            tenantId,
+            Array.from(foreignIds),
+            windowFromDay,
+            windowToDay,
+          )
+        : new Map<string, Map<string, string | null>>();
+
+      const candidates = rows.map((r) => ({
+        id: r.id,
+        isOwn: r.employee.userId === req.user.sub,
+        employeeId: r.employeeId,
+        firstName: r.employee.firstName,
+        lastName: r.employee.lastName,
+        typeCode: r.leaveType.code,
+        typeName: r.leaveType.name,
+        startDate: r.startDate.toISOString().split("T")[0],
+        endDate: r.endDate.toISOString().split("T")[0],
+        halfDay: r.halfDay,
+        status: r.status as string,
+        isHoliday: false,
+      }));
+      const { detailed, masked } = maskCalendarRows(
+        candidates,
+        (row) =>
+          row.isOwn ||
+          // Issue #840 (D-840-18, E-03): the personal areas are neutral for everyone, whatever the
+          // caller's reach — the scope only ever forces "not visible", it never widens.
+          (scope === undefined &&
+            isPersonVisibleOnSomeDay(
+              visibility,
+              row.employeeId,
+              homes.get(row.employeeId),
+              row.startDate > windowFromDay ? row.startDate : windowFromDay,
+              row.endDate < windowToDay ? row.endDate : windowToDay,
+            )),
+        new Set<string>(EFFECTIVE_LEAVE_STATUSES),
+        // A masked range never reaches beyond the window asked for (WR-03).
+        { from: windowFromDay, to: windowToDay },
+      );
+      // § 9 markers and days only for detailed rows: whoever may not learn the type must not read
+      // the sick-in-vacation marker either (it would reveal the sickness indirectly).
+      const leaveEntries = detailed.map((row) => ({
+        ...row,
+        section9: section9ByEntry.get(row.id)?.marker ?? null,
+        section9Days: Array.from(section9ByEntry.get(row.id)?.days ?? []).sort(byCodeUnit),
+      }));
 
       // Feiertage als eigene Einträge hinzufügen
       const holidayEntries = Array.from(holidayMap.entries()).map(([date, name]) => ({
@@ -2746,7 +2097,33 @@ export async function leaveRoutes(app: FastifyInstance) {
         isHoliday: true,
       }));
 
-      return [...leaveEntries, ...holidayEntries];
+      const entries = [...leaveEntries, ...masked, ...holidayEntries];
+      if (!rangeForm) return entries;
+
+      // Issue #840 (D-840-25): the range form also names the salon in view (opening hours are
+      // salon master data, not personal data) so the web can draw closed days from the one rule.
+      // The salon in view: the validated one; else the caller's single Stammsalon of a personal
+      // scope; else the only active salon of a one-salon tenant (it has no header selection, so
+      // without this its closed days would never show; same reading as `coverageSalonInView`).
+      let salonInView: string | null = chosenSalonId;
+      if (salonInView === null && scope !== undefined && ownHomeSalonIds.length === 1) {
+        salonInView = ownHomeSalonIds[0];
+      }
+      let salon = salonInView === null ? null : await findSalon(app.prisma, tenantId, salonInView);
+      if (
+        salon === null &&
+        salonInView === null &&
+        (await countActiveSalons(app.prisma, tenantId)) === 1
+      ) {
+        salon = await findDefaultSalon(app.prisma, tenantId);
+      }
+      return {
+        entries,
+        salons:
+          salon === null
+            ? []
+            : [{ salonId: salon.id, name: salon.name, openingHours: salon.openingHours }],
+      };
     },
   });
 
@@ -3067,7 +2444,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         uid: `leave-${r.id}@clokr`,
         // Phase 97 (AC-2): the row's own display name. Before this phase the canonical name from
         // LEAVE_TYPE_DEFS overrode it, which silently undid a tenant's rename in the calendar feed.
-        summary: r.leaveType.name,
+        summary: withHalfDayMarker(r.leaveType.name, r.halfDay),
         dtstart: r.startDate.toISOString().split("T")[0],
         dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
         description: r.note ?? undefined,
@@ -3084,7 +2461,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           // could not name VOCATIONAL_SCHOOL or OTHER at all and fell through to the generic
           // word, while the dashboard already said "Berufsschule" — the app contradicted itself.
           // DISPLAY_NAME is exhaustive over LeaveTypeCode, so no fallback branch is needed.
-          summary: DISPLAY_NAME[a.type],
+          summary: withHalfDayMarker(DISPLAY_NAME[a.type], a.halfDay),
           dtstart: a.startDate.toISOString().split("T")[0],
           dtend: addOneDay(a.endDate.toISOString().split("T")[0]),
           description: a.note ?? undefined,
@@ -3165,7 +2542,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         const name = `${r.employee.firstName} ${r.employee.lastName}`;
         return {
           uid: `leave-${r.id}@clokr`,
-          summary: `${name} \u2014 ${r.leaveType.name}`,
+          summary: withHalfDayMarker(`${name} \u2014 ${r.leaveType.name}`, r.halfDay),
           dtstart: r.startDate.toISOString().split("T")[0],
           dtend: addOneDay(r.endDate.toISOString().split("T")[0]),
           description: r.note ?? undefined,
@@ -3178,7 +2555,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         const name = `${a.employee.firstName} ${a.employee.lastName}`;
         events.push({
           uid: `absence-${a.id}@clokr`,
-          summary: `${name} \u2014 ${DISPLAY_NAME[a.type]}`,
+          summary: withHalfDayMarker(`${name} \u2014 ${DISPLAY_NAME[a.type]}`, a.halfDay),
           dtstart: a.startDate.toISOString().split("T")[0],
           dtend: addOneDay(a.endDate.toISOString().split("T")[0]),
           description: a.note ?? undefined,
@@ -3544,7 +2921,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const overruns = karenzOverrunFromRequests(rows, tz, graceDays).map((o) => ({
         leaveRequestId: o.leaveRequestId,
-        days: [...o.days].sort(),
+        days: [...o.days].sort(byCodeUnit),
       }));
       const totalDays = new Set(overruns.flatMap((o) => o.days)).size;
       return { graceDays, overruns, totalDays };
@@ -3916,18 +3293,17 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Die Krankmeldung muss zuerst genehmigt werden." });
       }
 
-      // Phase 104 review (WR-01): the credit is detected at SICK-approval time, when the
-      // vacation was APPROVED. Between then and this confirm the vacation can move to
-      // CANCELLATION_REQUESTED or CANCELLED (leave.ts cancel path) — and the cancel path
-      // already decrements usedDays back. Confirming afterwards would run
-      // reverseVacationDays() a SECOND time for the same days (double credit), and would
-      // book a § 9 credit against a vacation that legally no longer exists: nothing was
-      // "angerechnet", so nothing can be "nicht angerechnet". selfHealUsedDays() masks the
-      // numeric symptom on the next load, but the CONFIRMED row itself stays wrong and
-      // feeds section9Movements, the monthly report and the DATEV Krank/Urlaub shift.
-      // CANCELLATION_REQUESTED is blocked too: the leave is still active today, but an
-      // approval of that cancellation later would decrement the same days again.
-      if (credit.vacationRequest.status !== "APPROVED") {
+      // Phase 104 review (WR-01), revised by Issue #478: the credit is detected at SICK-approval
+      // time against a vacation in EFFECTIVE_LEAVE_STATUSES (APPROVED or CANCELLATION_REQUESTED).
+      // Between then and this confirm the vacation can become CANCELLED (leave.ts cancel path)
+      // — and the cancel path already decrements usedDays back. Confirming afterwards would run
+      // reverseVacationDays() a SECOND time for the same days (double credit), and would book a
+      // § 9 credit against a vacation that legally no longer exists. A vacation still in
+      // CANCELLATION_REQUESTED is active leave, so its credit can be confirmed (otherwise the
+      // case the sick approval opened could never be acted on); if that cancellation is later
+      // approved, supersedeSection9CreditsOfCancelledRequest() (#662) supersedes the credit and
+      // takes the ledger give-back out again, so no day is credited twice.
+      if (!isEffectiveLeaveStatus(credit.vacationRequest.status)) {
         return reply.code(409).send({
           error:
             "Der betroffene Urlaubsantrag ist nicht mehr genehmigt — keine Gutschrift möglich.",
@@ -4266,12 +3642,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       // einen Anspruch verwehren, den § 9 kraft Gesetzes gewährt. Der Vorgang kann
       // wieder eröffnet werden, sobald eine gültige AU vorliegt.
       if (credit.employee.userId) {
+        // Issue #602: the notice names the period of the case, like the § 9 notices before it.
+        const rangeLabel = `${formatDateDe(credit.overlapStart)} – ${formatDateDe(credit.overlapEnd)}`;
         await app.notify({
           userId: credit.employee.userId,
           type: "SECTION9_CREDIT_REJECTED",
           title: "AU abgelehnt — Urlaubstage bleiben angerechnet",
           message:
-            `Die eingereichte AU wurde abgelehnt: ${body.reason}. Die Urlaubstage bleiben ` +
+            `Die eingereichte AU für ${rangeLabel} wurde abgelehnt: ${body.reason}. Die Urlaubstage bleiben ` +
             `vorerst angerechnet. Sobald eine gültige AU vorliegt, kann der Vorgang erneut ` +
             `geöffnet werden.`,
           link: "/leave",
@@ -4374,7 +3752,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           type: "SECTION9_AU_PENDING_EMPLOYEE",
           title: "AU nachreichen — Urlaubstage stehen auf dem Spiel",
           message:
-            `Für ${rangeLabel} liegt eine Krankmeldung während Ihres genehmigten Urlaubs vor. ` +
+            `Für ${rangeLabel} liegt eine Krankmeldung während deines genehmigten Urlaubs vor. ` +
             `Ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet (§ 9 BUrlG).`,
           link: "/leave",
           tenantId: credit.employee.tenantId,
@@ -4421,7 +3799,8 @@ export async function leaveRoutes(app: FastifyInstance) {
           type: "SECTION9_AU_PENDING_MANAGER",
           title: "§ 9 BUrlG — AU-Nachweis ausstehend",
           message: `Krankmeldung während genehmigten Urlaubs (${rangeLabel}). Sobald die AU vorliegt, bitte bestätigen.`,
-          link: `/team/leave?section9=${credit.id}`,
+          // Issue #840 (D-840-28): the § 9 cases live in the inbox section.
+          link: `/inbox?section9=${credit.id}`,
           tenantId: credit.employee.tenantId,
           relatedType: "Section9Credit",
           relatedId: credit.id,
@@ -4431,75 +3810,6 @@ export async function leaveRoutes(app: FastifyInstance) {
       return reply.send({ id: credit.id, status: "AU_PENDING" });
     },
   });
-}
-
-/**
- * Automatically carries over the previous year's unused vacation days into the current year as
- * Resturlaub — unless that has already happened. Called lazily on every leave request and
- * account read.
- *
- * Issue #445 (D-04): a missing current-year row used to be created here with a hard-coded
- * `totalDays: 0` — now `ensureRegularVacationEntitlement()` creates (or heals) it with the
- * regular yearly entitlement instead, through the same wrapper `recalculateCarryOver()` uses.
- */
-async function autoCarryOver(
-  prisma: FastifyInstance["prisma"],
-  tenantId: string,
-  employeeId: string,
-  leaveTypeId: string,
-  year: number,
-): Promise<void> {
-  const prevYear = year - 1;
-
-  // Fetch the previous year's entitlement.
-  const prev = await prisma.leaveEntitlement.findUnique({
-    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: prevYear } },
-  });
-  if (!prev) return;
-
-  // Issue #445 (D-14): the effective (FIFO) remainder — an expired, untaken carry never
-  // returns the following year.
-  const remaining = await carryOverRemainder(prisma, prev, tenantId);
-  if (remaining <= 0) return;
-
-  // Already carried over? -> abort (idempotent).
-  const alreadyCarried = await prisma.leaveEntitlement.findUnique({
-    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
-  });
-  if (alreadyCarried && Number(alreadyCarried.carriedOverDays) > 0) return;
-
-  // Expiry deadline from TenantConfig.
-  const config = await prisma.tenantConfig.findUnique({ where: { tenantId } });
-  const deadlineDay = config?.carryOverDeadlineDay ?? 31;
-  const deadlineMonth = config?.carryOverDeadlineMonth ?? 3;
-  const deadline = new Date(year, deadlineMonth - 1, deadlineDay, 23, 59, 59);
-
-  const { entitlement: cur } = await ensureRegularVacationEntitlement(
-    prisma,
-    employeeId,
-    tenantId,
-    year,
-    leaveTypeId,
-    REGULAR_ENTITLEMENT_REASON_ROLLOVER,
-  );
-
-  // Phase 104 (D-19), generalised by Issue #445 (D-16/D-17): see recalculateCarryOver — same
-  // documented-reason deadline protection.
-  const deadlineProtected = preserveCarryOverDeadline(cur);
-  await prisma.leaveEntitlement.update({
-    where: { id: cur.id },
-    data: deadlineProtected
-      ? { carriedOverDays: remaining }
-      : { carriedOverDays: remaining, carryOverDeadline: deadline },
-  });
-  if (daysDiffer(Number(cur.carriedOverDays), remaining)) {
-    await writeEntitlementAudit(prisma, {
-      action: "UPDATE",
-      entityId: cur.id,
-      oldValue: { carriedOverDays: Number(cur.carriedOverDays) },
-      newValue: { carriedOverDays: remaining, reason: CARRY_OVER_RECALC_REASON },
-    });
-  }
 }
 
 /**
@@ -4515,70 +3825,3 @@ class Section9MissingEntitlementError extends Error {
 }
 
 // calculateWorkDays moved to ../utils/calculate-work-days (Phase 61).
-
-/**
- * Issue #468 (D-01) — the shared Überstundenausgleich negative-balance gate, lifted out of
- * `POST /requests` so the PENDING edit (`PATCH /requests/:id`) can run the SAME check instead of
- * the gap D-01 found (an employee widening a still-PENDING request could pass the limit the
- * initial POST already enforced). Logic is byte-identical to the original POST-only gate —
- * tolerance chain, confirmed carry-over, zero-tolerance fail-safe fallback — only the needed
- * amount is now a caller-supplied minutes figure (from {@link scheduledLeaveMinutes}) rather than
- * recomputed here.
- *
- * Phase 100 (OTC-01/OTC-02, D-00a/D-00b) — availability also includes the configured
- * `maxNegativeBalanceMinutes` TOLERANCE, resolved through the SAME precedence chain overtime.ts
- * uses (loadNegativeBalanceTolerance, negative-balance-tolerance.ts): per-employee WorkSchedule
- * override > tenant default > null. D-00b: for THIS booking gate, an unconfigured (`null`) value
- * means a tolerance of ZERO — the opposite of the schema comment's "unbegrenzt" ALERTING reading
- * that `isNegativeLimitExceeded` uses elsewhere — so with nothing configured this gate stays
- * byte-identical to pre-Phase-100. D-02: the catch branch below applies ZERO tolerance regardless
- * of what is configured — a read failure must never be MORE generous than the normal path. D-04:
- * the comparison itself happens in MINUTES; hours only appear in the response body/rejection copy.
- *
- * Returns `null` when the request is affordable, otherwise the 400 response body.
- */
-async function overtimeCompBalanceRejection(
-  app: FastifyInstance,
-  employeeId: string,
-  tenantId: string,
-  neededMinutes: number,
-): Promise<{ error: string; available: number; requested: number; tolerance: number } | null> {
-  const { toleranceMinutes } = await loadNegativeBalanceTolerance(app.prisma, employeeId, tenantId);
-
-  let availableMinutes: number;
-  let appliedToleranceMinutes: number;
-  try {
-    const confirmed = await getConfirmedCarryOver(app.prisma, employeeId, tenantId);
-    appliedToleranceMinutes = toleranceMinutes;
-    availableMinutes = confirmed.minutes + appliedToleranceMinutes;
-  } catch (err) {
-    app.log.warn(
-      { err, employeeId },
-      "OVERTIME_COMP balance gate: getConfirmedCarryOver failed, falling back to stored OvertimeAccount.balanceHours",
-    );
-    // D-02: fail-safe applies ZERO tolerance — a broken read path must never be more
-    // permissive than the normal path.
-    appliedToleranceMinutes = 0;
-    const account = await getOvertimeAccount(app.prisma, employeeId, tenantId);
-    availableMinutes = account ? Math.round(Number(account.balanceHours) * 60) : 0;
-  }
-
-  if (neededMinutes > availableMinutes) {
-    // OTC-06 / D-14: names the applied tolerance when one was applied; the
-    // "(inkl. … erlaubtem Minus)" clause is omitted entirely at tolerance 0 so an unconfigured
-    // tenant sees the plain pre-Phase-100 message (100-UI-SPEC.md "Rejection copy").
-    const toleranceClause =
-      appliedToleranceMinutes > 0
-        ? ` (inkl. ${formatMinutesHM(appliedToleranceMinutes)} Std. erlaubtem Minus)`
-        : "";
-    return {
-      error:
-        `Nicht genug Überstunden: verfügbar ${formatMinutesHM(availableMinutes)} Std.` +
-        `${toleranceClause}, benötigt ${formatMinutesHM(neededMinutes)} Std.`,
-      available: +(availableMinutes / 60).toFixed(2),
-      requested: +(neededMinutes / 60).toFixed(2),
-      tolerance: +(appliedToleranceMinutes / 60).toFixed(2),
-    };
-  }
-  return null;
-}

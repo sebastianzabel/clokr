@@ -1,14 +1,25 @@
 <script lang="ts">
+  import { homeHref, rosterTabs } from "$lib/nav/routes";
+  import { pageLabel } from "$lib/nav/page-labels";
+  import {
+    STAFFING_EXPLANATION,
+    staffingFigure,
+    staffingStatusText,
+    staffingTooltip,
+  } from "$lib/shifts/staffing"; // Issue #850
+  import { shortGermanDay } from "$lib/shifts/planning-week"; // Issue #850
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { salonContext } from "$stores/salon-context";
+  import { tenantFeatures } from "$stores/tenant-features";
   import { closedDaysFor, type SalonOpeningHoursEntry } from "$lib/shifts/closed-days";
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
+  import TeamSection from "$lib/components/team/TeamSection.svelte";
   import {
     isSalonFilterRejected,
     salonPageFilter,
@@ -16,7 +27,9 @@
     SALON_SOLL_NOT_ATTRIBUTABLE_NOTE,
     withSalonId,
   } from "$lib/salons/page-scope"; // Issue #558 (D-02/D-03/D-04/D-13)
-  import Card from "$components/ui/Card.svelte";
+  import PageTabs from "$components/ui/PageTabs.svelte";
+  import PeriodPicker from "$components/ui/PeriodPicker.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
@@ -41,6 +54,8 @@
     }>;
   }
   interface Shift {
+    // Issue #744 — non-blocking hint of a shift write on a half-day leave (code HALF_DAY_LEAVE)
+    hint?: { code: string; message: string };
     id: string;
     employeeId: string;
     templateId: string | null;
@@ -151,7 +166,7 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
   let cursorMonday = $state(mondayOfWeek(new Date()));
-  let week: WeekData | null = $state(null);
+  let week = $state<WeekData | null>(null);
   let templates: Template[] = $state([]);
   let loading = $state(true);
   let error = $state("");
@@ -163,6 +178,11 @@
   const contextLoaded = $derived($salonContext.loaded);
   const pageSalonId = $derived(salonPageFilter($salonContext));
   const scopeLabel = $derived(salonScopeLabel($salonContext));
+  // Issue #853 (D-853-05): the four roster tabs are the link tabs of the route table; a tab the caller may
+  // not open (Verfügbarkeit without the feature or its permissions) is not part of the list.
+  const rosterTabsList = $derived(
+    rosterTabs($authStore.user, { availabilityEnabled: $tenantFeatures.availabilityEnabled }),
+  );
   let weekRejected = $state(false);
   // Plain `let`s (never `$state`): an effect that read them could re-trigger itself, which is the
   // v1.8.17 `effect_update_depth_exceeded` failure described at `prevCursorMondayTime` below.
@@ -390,7 +410,8 @@
       generateDiff = null;
       await load();
     } catch (e) {
-      generateError = e instanceof Error ? e.message : "Generierung fehlgeschlagen.";
+      generateError =
+        e instanceof Error ? e.message : "Die Muster konnten nicht angewendet werden.";
     } finally {
       generating = false;
     }
@@ -503,7 +524,7 @@
     mounted = true;
     if (!hasPermission($authStore.user, "shift:plan:ZUGEWIESEN")) {
       gated = true;
-      goto("/dashboard");
+      goto(homeHref($authStore.user));
       return;
     }
     // Issue #558: with the salon context not loaded yet the salon effect below issues the one
@@ -845,13 +866,9 @@
     const cellAvailability = availabilityByEmpDate.get(key);
     if (cellAvailability === "vocational_school") {
       restoreTemplatesStrip();
-      // Phase 65 follow-up: BS dropped onto an existing BS cell — already exists,
-      // surface the same 409 message we'd get from the server.
-      if (item.kind === "vocational_school") {
-        toasts.error("Berufsschultag existiert bereits für diesen Tag");
-      } else {
-        toasts.error("Berufsschultag — Schichten können nicht eingeplant werden");
-      }
+      // A drag item is only ever a template chip or a shift pill (the BS chip left the strip in
+      // v1.7.4), so a drop onto a BS cell always gets this message.
+      toasts.error("Berufsschultag — Schichten können nicht eingeplant werden");
       return;
     }
 
@@ -868,7 +885,7 @@
 
       dropPending = key;
       try {
-        await api.post<Shift>("/shifts", {
+        const created = await api.post<Shift>("/shifts", {
           employeeId,
           templateId: tpl.id,
           date: iso,
@@ -880,6 +897,7 @@
           ...(pageSalonId !== null ? { salonId: pageSalonId } : {}),
         });
         toasts.success(`Schicht zugewiesen: ${tpl.name}`);
+        announceShiftHint(created);
         await load();
       } catch (err) {
         // Phase 47.4-02 — § 3 ArbZG hard-block (422). Drag never auto-forces; toast only.
@@ -956,11 +974,12 @@
     }
     dropPending = targetKey;
     try {
-      await api.put<Shift>(`/shifts/${item.shiftId}`, {
+      const moved = await api.put<Shift>(`/shifts/${item.shiftId}`, {
         employeeId: newEmployeeId,
         date: newIso,
       });
       toasts.success("Schicht verschoben.");
+      announceShiftHint(moved);
       await load();
     } catch (err) {
       // Phase 47.4-02 — § 3 ArbZG hard-block (422). Drag never auto-forces; toast only.
@@ -1148,21 +1167,6 @@
     }
   }
 
-  // Coverage tooltip text
-  function coverageTooltip(c: CoverageEntry | undefined): string {
-    if (!c) return "";
-    const parts: string[] = [];
-    parts.push(`Σ Schicht-Gewicht: ${c.effectiveStaff.toFixed(2)} von ${c.minStaff.toFixed(2)}`);
-    if (c.unsupervisedAzubis > 0 && !c.hasSupervisor) {
-      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige(r) MA ohne Aufsicht`);
-    } else if (c.unsupervisedAzubis > 0) {
-      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige(r) MA, Aufsicht vorhanden`);
-    }
-    if (c.coverageStatus === "under") parts.push("⚠ Unterbesetzt");
-    if (c.coverageStatus === "supervision-missing") parts.push("⚠ Aufsicht fehlt");
-    return parts.join("\n");
-  }
-
   // ── Modal handlers ─────────────────────────────────────────────────────────
   function onCellClick(employeeId: string, date: string) {
     editingShiftId = null;
@@ -1252,6 +1256,11 @@
     }
   }
 
+  // Issue #744 — a shift on a half-day leave is saved; the server answers with a hint, never a 409.
+  function announceShiftHint(saved: Shift | undefined) {
+    if (saved?.hint?.code === "HALF_DAY_LEAVE") toasts.warning(saved.hint.message, 8000);
+  }
+
   // Persist the modal as a shift. `force` adds ?force=true so the API will write
   // an SHIFT_FORCED_OVER_LEAVE audit entry alongside the regular CREATE/UPDATE.
   async function saveShift(force = false) {
@@ -1264,7 +1273,7 @@
     try {
       const qs = force ? "?force=true" : "";
       if (editingShiftId) {
-        await api.put<Shift>(`/shifts/${editingShiftId}${qs}`, {
+        const saved = await api.put<Shift>(`/shifts/${editingShiftId}${qs}`, {
           templateId: modalTemplateId || undefined,
           startTime: modalStartTime,
           endTime: modalEndTime,
@@ -1272,8 +1281,9 @@
           note: modalNote || undefined,
         });
         toasts.success(force ? "Schicht trotz Konflikt aktualisiert." : "Schicht aktualisiert.");
+        announceShiftHint(saved);
       } else {
-        await api.post<Shift>(`/shifts${qs}`, {
+        const saved = await api.post<Shift>(`/shifts${qs}`, {
           employeeId: modalEmployeeId,
           templateId: modalTemplateId || undefined,
           date: modalDate,
@@ -1285,6 +1295,7 @@
           ...(pageSalonId !== null ? { salonId: pageSalonId } : {}),
         });
         toasts.success(force ? "Schicht trotz Konflikt zugewiesen." : "Schicht zugewiesen.");
+        announceShiftHint(saved);
       }
       modalOpen = false;
       editingShiftId = null;
@@ -1413,26 +1424,49 @@
 </script>
 
 <svelte:head>
-  <title>Schichtplanung – Clokr</title>
+  <title>{pageLabel("/shifts")} – Clokr</title>
 </svelte:head>
 
 <!-- Phase 75-02 (D-01): data-testid surface for the Schichtplanung visual baseline.
      Matches the Phase 73-04/-05 convention (`<surface>-page`). -->
 <div class="page" data-testid="shifts-page">
-  <PageHead
-    eyebrow="Team"
-    title="Schichtplanung"
-    accent="Schicht"
-    sub="Wöchentliche Schichten zuweisen — mit Verfügbarkeit und Coverage-Heatmap. Vorlagen und Bedarfsregeln pflegt die Administration."
-  >
-    {#snippet actions()}
-      <!-- Phase 430 (D-11/D-14, Issue #430): sibling links to the conflict overview and the
-           new Wochenübersicht Planungsbedarf — neither page was linked from here before. -->
-      <a class="btn btn-ghost btn-sm" href="/shifts/conflicts">Konflikte</a>
-      <a class="btn btn-ghost btn-sm" href="/shifts/planning">Planungsbedarf</a>
-    {/snippet}
-  </PageHead>
-  <SalonScopeLabel label={scopeLabel} rejected={weekRejected} />
+  <div class="roster-head">
+    <PageHead
+      title={pageLabel("/shifts")}
+      sub="Schichten der Woche planen und Muster anwenden. Vorlagen und Mindestbesetzung pflegt die Verwaltung."
+    >
+      {#snippet actions()}
+        <!-- Issue #853 (D-853-13): the two plan actions live in the head; the sibling links to the
+             conflict overview and to Planungsbedarf (Phase 430) are the tabs below now. -->
+        <button type="button" class="btn btn-secondary sm" onclick={openCopy}>
+          Letzte Woche kopieren
+        </button>
+        <button type="button" class="btn btn-primary sm" onclick={openGenerate}>
+          Muster anwenden
+        </button>
+      {/snippet}
+    </PageHead>
+    <PageTabs tabs={rosterTabsList} tab="/team/dienstplan" tabsLabel="Dienstplan" />
+  </div>
+
+  <!-- Prototype .toolbar2; the scope label is placed on the right by CSS. -->
+  <div class="roster-period-row">
+    <div class="roster-scope">
+      <SalonScopeLabel label={scopeLabel} rejected={weekRejected} />
+    </div>
+    <!-- #843 D-843-11 (#648): the week header is the PeriodPicker block; the page owns no period arrows. -->
+    <PeriodPicker
+      label={fmtRange()}
+      onPrev={prevWeek}
+      onNext={nextWeek}
+      onToday={goToToday}
+      zooms={["woche"]}
+      zoom="woche"
+      prevLabel="Vorherige Woche"
+      nextLabel="Nächste Woche"
+      testIdPrefix="shifts-week"
+    />
+  </div>
 
   {#if error}
     <div class="callout error card-animate" role="alert">{error}</div>
@@ -1442,108 +1476,49 @@
        v1.7.4: Berufsschule chip removed — BS is now managed via the canonical
        EmployeeVocationalSchoolPattern + auto-generator path. -->
   {#if dndTemplates.length > 0}
-    <div
-      class="sp-template-strip"
-      use:dndzone={{
-        items: dndTemplates,
-        flipDurationMs: FLIP_MS,
-        dropFromOthersDisabled: true,
-        type: "shift-template",
-      }}
-      onconsider={onTemplateConsider}
-      onfinalize={onTemplateFinalize}
-    >
-      {#each dndTemplates as item (item.id)}
-        {@const tpl =
-          item.kind === "template" ? templates.find((t) => t.id === item.templateId) : undefined}
-        <!--
-          ALWAYS render a chip div for every item so children.length stays
-          equal to items.length — svelte-dnd-action requires a 1:1 mapping
-          between items[] and direct children. Shadow placeholders (mid-drag)
-          may not resolve to a Template; render an invisible spacer for them.
-        -->
-        <div
-          class="card sp-tpl-row sp-tpl-chip"
-          class:sp-tpl-chip--shadow={!tpl}
-          data-template-id={tpl?.id ?? ""}
-        >
-          {#if tpl}
-            <div class="sp-tpl-text">
-              <div class="serif-eyebrow sp-tpl-eyebrow">Vorlage</div>
-              <div class="sp-tpl-name">{tpl.name}</div>
-              <div class="sp-tpl-time">
+    <TeamSection title="Vorlagen">
+      <div
+        class="sp-template-strip"
+        use:dndzone={{
+          items: dndTemplates,
+          flipDurationMs: FLIP_MS,
+          dropFromOthersDisabled: true,
+          type: "shift-template",
+        }}
+        onconsider={onTemplateConsider}
+        onfinalize={onTemplateFinalize}
+      >
+        {#each dndTemplates as item (item.id)}
+          {@const tpl =
+            item.kind === "template" ? templates.find((t) => t.id === item.templateId) : undefined}
+          <!--
+            ALWAYS render a chip div for every item so children.length stays
+            equal to items.length — svelte-dnd-action requires a 1:1 mapping
+            between items[] and direct children. Shadow placeholders (mid-drag)
+            may not resolve to a Template; render an invisible spacer for them.
+          -->
+          <div
+            class="sp-tpl-chip"
+            class:sp-tpl-chip--shadow={!tpl}
+            data-template-id={tpl?.id ?? ""}
+          >
+            {#if tpl}
+              <span class="sp-tpl-name">{tpl.name}</span>
+              <span class="sp-tpl-time">
                 {tpl.startTime.slice(0, 5)}–{tpl.endTime.slice(0, 5)}
-              </div>
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
+              </span>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </TeamSection>
   {/if}
 
-  <!-- Week nav + grid card -->
-  <Card animate class="week-card">
-    <!-- Header dimensions/typography mirror .cal-monthbar / MonthBar
-         (Buchungsmonat-Header auf /leave, /team/leave, /teamcal,
-         /time-entries, /team/time-entries). -->
-    <div class="week-header">
-      <div class="week-header-nav">
-        <button
-          type="button"
-          class="nav-btn"
-          aria-label="Vorherige Woche"
-          title="Vorherige Woche"
-          onclick={prevWeek}
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-          >
-        </button>
-        <div class="week-header-center">
-          <div class="serif-eyebrow week-header-eyebrow">Schichtwoche</div>
-          <div class="week-header-title">{fmtRange()}</div>
-        </div>
-        <button
-          type="button"
-          class="nav-btn"
-          aria-label="Nächste Woche"
-          title="Nächste Woche"
-          onclick={nextWeek}
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-          >
-        </button>
-        <button type="button" class="btn btn-ghost btn-sm week-header-today" onclick={goToToday}
-          >Heute</button
-        >
-      </div>
-      <div class="week-header-actions">
-        <!-- Phase 43-05: "Letzte Woche kopieren" is the primary action;
-             "Aus Mustern generieren" stays as a secondary/ghost button for
-             tenants that have EmployeeShiftPattern rows configured. -->
-        <button type="button" class="btn btn-primary sm" onclick={openCopy}>
-          Letzte Woche kopieren
-        </button>
-        <button type="button" class="btn btn-ghost sm" onclick={openGenerate}>
-          Aus Mustern generieren
-        </button>
-      </div>
-    </div>
-
+  <!-- The week grid is the page's one surface (D-853-18): no card around it. -->
+  <div class="week-surface">
     <div class="week-body">
       {#if loading}
-        <div class="state-msg">Lade Woche…</div>
+        <Skeleton shape="block" height="360px" />
       {:else if !week}
         {#if !weekRejected}
           <div class="state-msg">Keine Daten</div>
@@ -1552,8 +1527,8 @@
         <div class="callout info card-animate sp-empty-shift-roster" role="status">
           <strong>Keine Mitarbeiter im Schichtsystem.</strong>
           <p class="sp-empty-sub">
-            Um hier Schichten zu planen, weise mindestens einem Mitarbeiter den Schichtplan-Modus
-            (SHIFT_BASED) zu. Wechsle das Arbeitszeitmodell in
+            Um hier Schichten zu planen, stell bei mindestens einer Person das Arbeitszeitmodell
+            „Nach Schichtplan“ ein — in
             <a href="/admin/vacation">Administration → Personal &amp; Urlaub</a>.
           </p>
         </div>
@@ -1732,38 +1707,38 @@
               {@const reductionH = sr.leaveH + sr.absenceH}
               <div
                 class="sp-soll-label"
-                aria-label="Soll-Korrelation für {u.firstName} {u.lastName}"
+                aria-label="Geplant / Vertrag für {u.firstName} {u.lastName}"
               >
                 <div
                   class="sp-soll-sublabel"
-                  title="Soll = Ø-Methode − Urlaub/Abwesenheit/Feiertag + Berufsschule (Berufsschule zählt als erfüllte Arbeitszeit)"
+                  title="Vertrag der Woche abzüglich Urlaub, Abwesenheit und Feiertagen. Berufsschule zählt als geplante Zeit."
                 >
-                  ↳ Soll-Korrelation
+                  ↳ Geplant / Vertrag
                 </div>
               </div>
               <div
                 class="sp-soll-cell sp-soll-cell--{sr.klass}"
                 class:sp-soll-cell--under-coverage={sr.underCoverage}
-                title="{u.firstName} {u.lastName}: Σ {formatHours(sr.assignedH)}h ({formatHours(
-                  sr.shiftH,
-                )}h Schicht{sr.bsH > 0
+                title="{u.firstName} {u.lastName}: geplant {formatHours(
+                  sr.assignedH,
+                )}h ({formatHours(sr.shiftH)}h Schicht{sr.bsH > 0
                   ? ` + ${formatHours(sr.bsH)}h Berufsschule`
-                  : ''}), Soll {formatHours(sr.contractSollH)}h{reductionH > 0
+                  : ''}), Vertrag {formatHours(sr.contractSollH)}h{reductionH > 0
                   ? ` (${formatHours(sr.weeklyH)}h − ${formatHours(
                       reductionH,
                     )}h Urlaub/Abwesenheit)`
                   : ''}, Abweichung {sr.diff >= 0 ? '+' : ''}{formatHours(sr.diff)}h"
               >
-                <span class="sp-soll-num">Σ {formatHours(sr.assignedH)}h</span>
+                <span class="sp-soll-num">Geplant {formatHours(sr.assignedH)}h</span>
                 {#if reductionH > 0}
                   <span class="sp-soll-soll">
-                    / Soll {formatHours(sr.contractSollH)}h
+                    / Vertrag {formatHours(sr.contractSollH)}h
                     <small class="sp-soll-reduction">
                       ({formatHours(sr.weeklyH)}h − {formatHours(reductionH)}h Urlaub/Abwesenheit)
                     </small>
                   </span>
                 {:else}
-                  <span class="sp-soll-soll">/ Soll {formatHours(sr.contractSollH)}h</span>
+                  <span class="sp-soll-soll">/ Vertrag {formatHours(sr.contractSollH)}h</span>
                 {/if}
                 <span class="sp-soll-diff">
                   {sr.diff >= 0 ? "+" : "−"}{formatHours(Math.abs(sr.diff))}h
@@ -1771,39 +1746,45 @@
                 {#if sr.underCoverage}
                   <span
                     class="sp-soll-under-coverage"
-                    aria-label="Unterdeckung: {u.firstName} {u.lastName}"
+                    aria-label="Zu wenig geplant: {u.firstName} {u.lastName}"
                   >
-                    ↓ Unterdeckung: Soll {formatHours(sr.contractSollH)}h − geplant {formatHours(
-                      sr.geplantH,
-                    )}h = {formatHours(sr.gapH)}h unterplant
+                    ↓ {formatHours(sr.gapH)}h weniger geplant als im Vertrag
                   </span>
                 {/if}
               </div>
             {/if}
           {/each}
 
-          <!-- Coverage heatmap row -->
-          <div class="sp-coverage-label">Coverage</div>
+          <!-- Besetzung row (Issue #850): "x / y" against the Mindestbesetzung, explanation behind (i) -->
+          <div class="sp-coverage-label">
+            Besetzung
+            <span
+              class="sp-info"
+              role="img"
+              aria-label="Erklärung: {STAFFING_EXPLANATION}"
+              title={STAFFING_EXPLANATION}
+              data-testid="staffing-info">i</span
+            >
+          </div>
           {#each week.weekDays as d (d)}
             {@const iso = d.slice(0, 10)}
             {@const c = coverageByDate.get(iso)}
+            {@const closed = isClosedDay(iso)}
+            <!-- Issue #853 (owner review): only the figure x / y. Red only for a real shortfall on an
+                 open day; a closed day is never understaffed. The status word stays for screen
+                 readers and in the tooltip, never as a coloured cell. -->
             <div
               class="sp-coverage-cell"
-              class:sp-coverage-cell--ok={c?.coverageStatus === "ok"}
-              class:sp-coverage-cell--under={c?.coverageStatus === "under"}
-              class:sp-coverage-cell--supervision={c?.coverageStatus === "supervision-missing"}
-              title={coverageTooltip(c)}
+              class:sp-coverage-cell--under={!closed && c?.coverageStatus === "under"}
+              class:sp-coverage-cell--closed={closed}
+              title={staffingTooltip(c)}
             >
               {#if c}
-                <div class="sp-coverage-num">
-                  {c.effectiveStaff.toFixed(2)} / {c.minStaff.toFixed(2)}
-                </div>
-                {#if c.coverageStatus === "supervision-missing"}
-                  <span class="sp-coverage-warn" aria-label="Aufsicht fehlt">⚠ Aufsicht</span>
-                {:else if c.coverageStatus === "under"}
-                  <span class="sp-coverage-warn" aria-label="Unterbesetzt">⚠ Bedarf</span>
-                {:else}
-                  <span class="sp-coverage-ok">OK</span>
+                <div class="sp-coverage-num" data-testid="staffing-figure">{staffingFigure(c)}</div>
+                {#if !closed && c.coverageStatus === "supervision-missing"}
+                  <span class="sp-coverage-note">{staffingStatusText(c.coverageStatus)}</span>
+                {:else if !closed}
+                  <span class="sr-only">{staffingStatusText(c.coverageStatus)}</span>
                 {/if}
               {:else}
                 <span class="sp-coverage-num">—</span>
@@ -1811,14 +1792,9 @@
             </div>
           {/each}
         </div>
-
-        <p class="sp-legend">
-          Coverage = Σ Schicht-Gewicht der verfügbaren zugewiesenen MA. Default Min = 2.0 (oder
-          Bedarfsregel aus Schicht-Konfiguration).
-        </p>
       {/if}
     </div>
-  </Card>
+  </div>
 
   <!-- Modal: assign / edit shift -->
   <Modal
@@ -1942,11 +1918,11 @@
   />
 
   <!-- Phase 43-02: generate-week diff-preview modal -->
-  <Modal bind:open={generateOpen} eyebrow="Schichtplanung" title="Woche generieren">
+  <Modal bind:open={generateOpen} eyebrow="Schichtplanung" title="Muster auf die Woche anwenden">
     {#if pageSalonId !== null}
       <!-- Issue #558 D-10 — the bulk action keeps acting on the caller's whole reach. -->
       <p class="form-hint sp-bulk-scope" role="note">
-        Diese Aktion gilt für alle Salons Ihrer Reichweite, nicht nur für den gewählten Salon.
+        Diese Aktion gilt für alle Salons deiner Reichweite, nicht nur für den gewählten Salon.
       </p>
     {/if}
     {#if generating && !generateDiff}
@@ -1955,7 +1931,8 @@
       <div class="callout error" role="alert">{generateError}</div>
     {:else if generateDiff}
       <p class="sp-gen-intro">
-        Vorschau für Woche ab <strong>{generateDiff.weekStart}</strong>. Es werden
+        Vorschau für die Woche ab <strong>{shortGermanDay(generateDiff.weekStart)}</strong>. Es
+        werden
         <strong>{generateDiff.create.length}</strong>
         Schicht(en) erstellt; <strong>{generateDiff.skip.length}</strong> Eintrag/Einträge werden übersprungen.
       </p>
@@ -1966,7 +1943,7 @@
           {#each generateDiff.create as c (`${c.employeeId}::${c.date}`)}
             <div class="sp-gen-row">
               <span class="sp-gen-emp">{empName(c.employeeId)}</span>
-              <span class="sp-gen-date">{c.date}</span>
+              <span class="sp-gen-date">{shortGermanDay(c.date)}</span>
               <span class="sp-gen-time">{c.startTime}–{c.endTime}</span>
               {#if c.label}<span class="sp-gen-label">{c.label}</span>{/if}
             </div>
@@ -1980,7 +1957,7 @@
           {#each generateDiff.skip as s (`${s.employeeId}::${s.date}::${s.reason}`)}
             <div class="sp-gen-row">
               <span class="sp-gen-emp">{empName(s.employeeId)}</span>
-              <span class="sp-gen-date">{s.date}</span>
+              <span class="sp-gen-date">{shortGermanDay(s.date)}</span>
               <span class="sp-gen-reason sp-gen-reason--{s.reason}"
                 >{skipReasonLabel(s.reason)}</span
               >
@@ -2014,7 +1991,7 @@
     {#if pageSalonId !== null}
       <!-- Issue #558 D-10 — the bulk action keeps acting on the caller's whole reach. -->
       <p class="form-hint sp-bulk-scope" role="note">
-        Diese Aktion gilt für alle Salons Ihrer Reichweite, nicht nur für den gewählten Salon.
+        Diese Aktion gilt für alle Salons deiner Reichweite, nicht nur für den gewählten Salon.
       </p>
     {/if}
 
@@ -2053,7 +2030,7 @@
           {#each copyDiff.create as c (`${c.employeeId}::${c.date}`)}
             <div class="sp-gen-row">
               <span class="sp-gen-emp">{empName(c.employeeId)}</span>
-              <span class="sp-gen-date">{c.date}</span>
+              <span class="sp-gen-date">{shortGermanDay(c.date)}</span>
               <span class="sp-gen-time">{c.startTime}–{c.endTime}</span>
               {#if c.label}<span class="sp-gen-label">{c.label}</span>{/if}
             </div>
@@ -2067,7 +2044,7 @@
           {#each copyDiff.skip as s (`${s.employeeId}::${s.date}::${s.reason}`)}
             <div class="sp-gen-row">
               <span class="sp-gen-emp">{empName(s.employeeId)}</span>
-              <span class="sp-gen-date">{s.date}</span>
+              <span class="sp-gen-date">{shortGermanDay(s.date)}</span>
               <span class="sp-gen-reason sp-gen-reason--{s.reason}"
                 >{copySkipReasonLabel(s.reason)}</span
               >
@@ -2097,94 +2074,85 @@
 </div>
 
 <style>
-  .sp-template-strip {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 16px;
-    margin-bottom: 18px;
-  }
-  .sp-tpl-row {
+  /* Issue #853 (D-853-18): head and tab strip sit together, like the prototype's .head + .tabsbar;
+     the page gap applies between this block and the rows below. */
+  .roster-head {
     display: flex;
+    flex-direction: column;
+  }
+  /* One row (prototype .toolbar2): the period on the left, the salon scope on the right. */
+  .roster-period-row {
+    display: flex;
+    align-items: center;
     justify-content: space-between;
-    align-items: flex-start;
-    gap: 12px;
+    gap: 10px;
+    flex-wrap: wrap;
   }
-  .sp-tpl-text {
+  /* The picker keeps its own label and arrows (block); only its page-sized padding goes, so the period
+     starts at the page edge like the prototype's .period. */
+  .roster-period-row :global(.month-bar) {
+    padding: 0;
+  }
+  .roster-scope {
+    order: 2;
+    flex: 1 1 240px;
     min-width: 0;
+    text-align: right;
   }
-  .sp-tpl-eyebrow {
-    font-size: 13px;
+  .roster-scope :global(.salon-scope-label) {
+    margin: 0;
+  }
+  /* The template chips are drag sources, not cards: a compact surface with the name and the time. */
+  .sp-template-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .sp-tpl-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: var(--h-row);
+    padding: 0 12px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    cursor: grab;
+  }
+  .sp-tpl-chip--shadow {
+    visibility: hidden;
   }
   .sp-tpl-name {
-    font-family: var(--font-serif);
-    font-size: 20px;
-    font-weight: 400;
-    margin-top: 4px;
+    font-family: var(--font-ui);
+    font-size: var(--fs-base);
+    font-weight: 600;
     color: var(--text);
   }
   .sp-tpl-time {
-    font-size: 12.5px;
-    color: var(--text-muted);
-    margin-top: 4px;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
   }
-  /* Card-Wrapper-Padding ist auf 0 gesetzt, damit der Header sein eigenes
-     18px/24px-Padding besitzt — identisch zu .cal-monthbar / .month-bar. */
-  :global(.week-card) {
-    padding: 0;
-  }
-  .week-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    padding: 18px 24px;
-    border-bottom: 1px solid var(--border);
-    flex-wrap: wrap;
-  }
-  .week-header-nav {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: nowrap;
-  }
-  .week-header-center {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 200px;
-    text-align: center;
-  }
-  .week-header-eyebrow {
-    font-size: 13px;
-    line-height: 1;
-    margin-bottom: 4px;
-  }
-  .week-header-title {
-    font-family: var(--font-serif);
-    font-weight: 400;
-    font-size: 26px;
-    line-height: 1.1;
-    letter-spacing: 0.005em;
-    color: var(--text);
-    text-transform: capitalize;
-    white-space: nowrap;
-  }
-  .week-header-today {
-    margin-left: 4px;
-  }
-  .week-header-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
+  /* The week grid is the one surface of the page: a framed grid, full width, no card around it. */
+  .week-surface {
+    min-width: 0;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
   }
   .week-body {
-    padding: 18px;
+    min-width: 0;
+  }
+  /* Narrow screens scroll the framed grid sideways instead of squeezing the shift pills to "0…". */
+  @media (max-width: 760px) {
+    .week-body .shift-grid {
+      min-width: 1000px;
+    }
   }
   .state-msg {
     padding: 40px;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .head-date {
     font-weight: 700;
@@ -2197,7 +2165,7 @@
 
   /* Per-cell availability dimming + badges */
   .sp-cell--unavailable {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     opacity: 0.85;
   }
 
@@ -2221,7 +2189,7 @@
     font-weight: 600;
     line-height: 1.2;
     color: var(--shift-blue);
-    background: var(--bg-card);
+    background: var(--card);
     border: 1px solid color-mix(in srgb, var(--shift-blue) 30%, transparent);
     pointer-events: none;
     z-index: 1;
@@ -2239,9 +2207,9 @@
     border-radius: var(--r-pill);
     font-size: 11.5px;
     font-weight: 500;
-    background: var(--bg-card);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--text-2);
+    border: 1px solid var(--line);
   }
   .sp-avail-badge--vacation {
     color: var(--brand);
@@ -2256,14 +2224,14 @@
     border-color: var(--warn);
   }
   .sp-avail-badge--other {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   /* Phase 63 D-20 — brand-tinted Berufsschule badge with lock icon. v1.5
      tokens only; renders inside the existing .sp-cell--unavailable cell. */
   .sp-avail-badge--vocational-school {
     background: var(--brand-soft);
     color: var(--brand);
-    border-color: var(--border);
+    border-color: var(--line);
     font-weight: 600;
   }
 
@@ -2276,7 +2244,7 @@
   .sp-cell--vs-removable:focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: 2px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
 
   /* Phase 65 follow-up: who-cell layout simplified — the row-action menu
@@ -2295,15 +2263,15 @@
     background: transparent;
     border: none;
     cursor: pointer;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13px;
     padding: 6px 10px;
     width: 100%;
     height: 100%;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
   .sp-cell-empty:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
 
@@ -2329,11 +2297,10 @@
     grid-column: 1;
     font-weight: 600;
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
     padding: 12px 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    border-top: 2px solid var(--border);
+    border-top: 1px solid var(--line);
+    background: var(--card);
   }
   .sp-coverage-cell {
     display: flex;
@@ -2342,39 +2309,47 @@
     justify-content: center;
     gap: 4px;
     padding: 10px 6px;
-    border-radius: var(--r-sm);
-    border-top: 2px solid var(--border);
+    border-top: 1px solid var(--line);
     text-align: center;
     font-size: 12px;
+    color: var(--text-2);
+    background: var(--card);
   }
-  .sp-coverage-cell--ok {
-    background: color-mix(in srgb, var(--good) 12%, transparent);
-    color: var(--good);
-  }
-  .sp-coverage-cell--under,
-  .sp-coverage-cell--supervision {
-    background: color-mix(in srgb, var(--bad) 14%, transparent);
+  .sp-coverage-cell--under {
     color: var(--bad);
   }
+  .sp-coverage-cell--closed {
+    color: var(--text-3);
+  }
   .sp-coverage-num {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  /* A shortfall is told by the colour and by weight; the word is in the tooltip and for screen
+     readers (owner review of #853: only the figure is shown). */
+  .sp-coverage-cell--under .sp-coverage-num {
     font-weight: 700;
   }
-  .sp-coverage-warn {
+  .sp-coverage-note {
     font-size: 11px;
-    font-weight: 600;
-  }
-  .sp-coverage-ok {
-    font-size: 11px;
-    font-weight: 600;
+    color: var(--text-2);
   }
 
-  .sp-legend {
-    margin: 12px 0 0;
-    font-size: 12.5px;
-    color: var(--text-muted);
-    font-style: italic;
+  /* Issue #850 — the (i) behind which the Besetzung explanation sits (replaces the footnote). */
+  .sp-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.1em;
+    height: 1.1em;
+    margin-left: 4px;
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    font-size: 0.85em;
+    text-transform: none;
+    cursor: help;
+    vertical-align: middle;
   }
 
   .sp-modal-context {
@@ -2397,7 +2372,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--text-muted);
+    color: var(--text-2);
     margin: 16px 0 8px;
   }
   .sp-gen-list {
@@ -2406,10 +2381,10 @@
     gap: 4px;
     max-height: 240px;
     overflow-y: auto;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 8px;
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
   .sp-gen-list--skip {
     background: transparent;
@@ -2421,38 +2396,37 @@
     align-items: center;
     font-size: 13px;
     padding: 4px 6px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
   }
   .sp-gen-row:hover {
-    background: var(--bg-card);
+    background: var(--card);
   }
   .sp-gen-emp {
     font-weight: 600;
     color: var(--text);
   }
   .sp-gen-date {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .sp-gen-time {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: 12.5px;
     color: var(--text);
   }
   .sp-gen-label {
     font-size: 12.5px;
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
   .sp-gen-reason {
     font-size: 11.5px;
     font-weight: 600;
     padding: 2px 8px;
-    border-radius: var(--r-sm);
-    background: var(--bg-card);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
+    border-radius: var(--r-control);
+    background: var(--card);
+    color: var(--text-2);
+    border: 1px solid var(--line);
   }
   .sp-gen-reason--leave {
     color: var(--bad);
@@ -2463,11 +2437,10 @@
     border-color: var(--warn);
   }
   .sp-gen-reason--existing {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .sp-gen-reason--open-day {
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
   .sp-gen-reason--availability-unavailable {
     color: var(--bad);
@@ -2493,8 +2466,9 @@
 
   /* Phase 45: SHIFT_BASED Soll-Row */
   .sp-soll-label {
+    background: var(--card);
     padding: 8px 8px 12px;
-    border-top: 2px solid var(--border-strong);
+    border-top: 2px solid var(--line-2);
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -2506,11 +2480,9 @@
   }
   .sp-soll-sublabel {
     margin-top: 4px;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-faint);
+    color: var(--text-2);
   }
   .sp-soll-cell {
     grid-column: 2 / -1;
@@ -2519,38 +2491,38 @@
     justify-content: center;
     gap: 12px;
     padding: 8px 16px;
-    border-radius: var(--r-sm);
-    border-top: 2px solid var(--border-strong);
+    border-radius: var(--r-control);
+    border-top: 2px solid var(--line-2);
     font-size: 13px;
   }
   .sp-soll-num {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-weight: 600;
     font-size: 12.5px;
   }
   .sp-soll-soll {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-size: 12.5px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .sp-soll-diff {
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
     font-weight: 600;
     font-size: 12.5px;
   }
   .sp-soll-cell--ok {
-    background: color-mix(in srgb, var(--good) 12%, transparent);
-    color: var(--good);
+    background: var(--ok-soft);
+    color: var(--ok);
   }
   .sp-soll-cell--warn {
-    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    background: var(--warn-soft);
     color: var(--warn);
   }
   .sp-soll-cell--bad {
-    background: color-mix(in srgb, var(--bad) 14%, transparent);
+    background: var(--bad-soft);
     color: var(--bad);
   }
   /* Phase 76.23 — Unterdeckung (per-employee under-coverage vs contract Soll).
@@ -2571,11 +2543,11 @@
     font-size: 11.5px;
     font-weight: 600;
     color: var(--warn);
-    background: color-mix(in srgb, var(--warn) 10%, transparent);
-    border-radius: var(--r-sm);
+    background: var(--warn-soft);
+    border-radius: var(--r-control);
     padding: 2px 8px;
     margin-top: 2px;
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
   }
   @media (max-width: 640px) {
@@ -2589,8 +2561,8 @@
   .sp-cell--closed {
     background: repeating-linear-gradient(
       45deg,
-      var(--bg-subtle),
-      var(--bg-subtle) 6px,
+      var(--sunk),
+      var(--sunk) 6px,
       transparent 6px,
       transparent 12px
     );
@@ -2599,9 +2571,8 @@
   .sp-cell--closed .sp-closed-label {
     display: block;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 0.8125rem;
-    font-style: italic;
     user-select: none;
   }
 
@@ -2613,7 +2584,7 @@
   .sp-cell--past .sp-past-dash {
     display: block;
     text-align: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 1.25rem;
     user-select: none;
   }
@@ -2640,7 +2611,7 @@
   .sp-empty-sub {
     margin: 0;
     font-size: 0.9375rem;
-    color: var(--text-muted);
+    color: var(--text-2);
     line-height: 1.5;
   }
   .sp-empty-sub a {

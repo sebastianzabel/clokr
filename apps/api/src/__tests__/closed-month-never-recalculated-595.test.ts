@@ -62,7 +62,6 @@ describe("Issue #595 - readers never write a closed month", () => {
       data: {
         email: `nw595-${suffix}@example.invalid`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

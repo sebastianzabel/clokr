@@ -295,7 +295,6 @@ describe("Employee Availability API (Phase 46)", () => {
         data: {
           email: `emp2-audit-${Date.now()}@test.de`,
           passwordHash: empPasswordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });

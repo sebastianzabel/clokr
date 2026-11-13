@@ -21,7 +21,7 @@ import {
 export const PERMISSION_RESOURCE_LABELS: Readonly<Record<PermissionResource, string>> = {
   employee: "Mitarbeiter-Stammdaten",
   contract: "Vertrag und Arbeitszeitmodell",
-  "tenant-settings": "Mandanteneinstellungen",
+  "tenant-settings": "Unternehmenseinstellungen",
   "api-key": "API-Schlüssel",
   "audit-log": "Audit-Protokoll",
   holiday: "Feiertage und Schulferien",
@@ -36,10 +36,13 @@ export const PERMISSION_RESOURCE_LABELS: Readonly<Record<PermissionResource, str
   section9: "§ 9-Vorgänge (Krankheit im Urlaub)",
   "leave-entitlement": "Urlaubsanspruch",
   "leave-config": "Abwesenheitsarten und Sonderurlaubsregeln",
+  "leave-limit": "Urlaubsgrenzen und Urlaubssperren",
+  "leave-plan": "Urlaubsplanung",
   "company-shutdown": "Betriebsurlaub",
   "vocational-school": "Berufsschule",
   overtime: "Saldo und Überstundenkonto",
   "month-close": "Monats- und Jahresabschluss",
+  "month-correction": "Korrekturen abgeschlossener Monate",
   shift: "Schichten",
   "shift-config": "Schichtvorlagen und Besetzungsregeln",
   "shift-pattern": "Schicht-Wochenmuster",
@@ -65,8 +68,8 @@ export const PERMISSION_LABELS: Readonly<Record<PermissionKey, string>> = {
   "contract:read:ZUGEWIESEN":
     "Arbeitszeitmodelle und Vertragshistorie im zugewiesenen Bereich lesen",
   "contract:update:ZUGEWIESEN": "Vertragswechsel im zugewiesenen Bereich anlegen",
-  "tenant-settings:read:ZUGEWIESEN": "Mandanteneinstellungen lesen",
-  "tenant-settings:update:ZUGEWIESEN": "Mandanteneinstellungen ändern",
+  "tenant-settings:read:ZUGEWIESEN": "Unternehmenseinstellungen lesen",
+  "tenant-settings:update:ZUGEWIESEN": "Unternehmenseinstellungen ändern",
   "api-key:manage:ZUGEWIESEN": "API-Schlüssel verwalten",
   "audit-log:read:ZUGEWIESEN": "Audit-Protokoll lesen",
   "holiday:manage:ZUGEWIESEN": "Feiertage und Schulferien verwalten",
@@ -116,6 +119,8 @@ export const PERMISSION_LABELS: Readonly<Record<PermissionKey, string>> = {
   "leave-entitlement:update:ZUGEWIESEN": "Urlaubsansprüche im zugewiesenen Bereich festlegen",
   "leave-config:read:ZUGEWIESEN": "Abwesenheitsarten lesen",
   "leave-config:manage:ZUGEWIESEN": "Abwesenheitsarten und Sonderurlaubsregeln verwalten",
+  "leave-limit:manage:ZUGEWIESEN": "Urlaubsgrenzen und Urlaubssperren je Salon verwalten",
+  "leave-plan:manage:ZUGEWIESEN": "Urlaubsplanung eröffnen, Wünsche bearbeiten und übernehmen",
   "company-shutdown:manage:ZUGEWIESEN": "Betriebsurlaub verwalten",
   "vocational-school:read:EIGENE": "Eigene Berufsschultage lesen",
   "vocational-school:read:ZUGEWIESEN": "Berufsschultage im zugewiesenen Bereich lesen",
@@ -129,6 +134,14 @@ export const PERMISSION_LABELS: Readonly<Record<PermissionKey, string>> = {
   "month-close:close:ZUGEWIESEN": "Monate im zugewiesenen Bereich abschließen",
   "month-close:unlock:ZUGEWIESEN": "Abgeschlossene Monate wieder entsperren",
   "month-close:close-year:ZUGEWIESEN": "Jahresübertrag im zugewiesenen Bereich erstellen",
+  "month-correction:read:EIGENE": "Eigene Korrekturanfragen für abgeschlossene Monate sehen",
+  "month-correction:read:ZUGEWIESEN":
+    "Korrekturanfragen für abgeschlossene Monate im zugewiesenen Bereich sehen",
+  "month-correction:create:EIGENE": "Korrektur für einen abgeschlossenen Monat anfragen",
+  "month-correction:create:ZUGEWIESEN":
+    "Korrekturen abgeschlossener Monate für Personen im zugewiesenen Bereich anfragen",
+  "month-correction:approve:ZUGEWIESEN":
+    "Korrekturanfragen für abgeschlossene Monate im zugewiesenen Bereich entscheiden",
   // ── Schichtplanung ──
   "shift:read:EIGENE": "Eigene Schichten lesen",
   "shift:read:ZUGEWIESEN": "Schichten im zugewiesenen Bereich lesen",

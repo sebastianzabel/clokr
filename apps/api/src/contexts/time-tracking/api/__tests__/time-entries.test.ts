@@ -57,7 +57,6 @@ describe("Saldo Ø-Methode (Phase 76.12) — time-entries leave/absence subtract
       data: {
         email: `admin-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "ADMIN",
         isActive: true,
       },
     });
@@ -89,7 +88,6 @@ describe("Saldo Ø-Methode (Phase 76.12) — time-entries leave/absence subtract
       data: {
         email: `as-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

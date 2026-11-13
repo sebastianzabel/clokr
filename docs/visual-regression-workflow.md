@@ -1,7 +1,10 @@
 # Visual Regression Workflow
 
 Phase 75 (2026-06) introduced a Playwright `toHaveScreenshot()` baseline net
-covering 10 design-critical pages. This document is the operator runbook for
+covering 10 design-critical pages. Issue #843 added an 11th test, "11 — Bausteine", that takes
+one screenshot of each of the six theme x mode frames of the design-system example page
+`/admin/bausteine` (16 screenshots in total; its baselines come from the CI artifact like any
+other, never from a local render). This document is the operator runbook for
 the gate. For the why (decisions D-01..D-07), read
 `.planning/phases/75-visual-regression/75-CONTEXT.md`.
 
@@ -58,7 +61,7 @@ commit message explains it.
 # Make sure the dev stack is running (api + web + postgres)
 docker compose up --build -d
 
-# Re-capture all 10 baselines
+# Re-capture all baselines (10 pages + 6 example-page frames)
 docker compose -f docker-compose.e2e.yml run --rm e2e-visual \
   pnpm --filter e2e exec playwright test --project=visual --update-snapshots
 
@@ -118,38 +121,56 @@ Wider thresholds erode the signal. If you find yourself reaching for
 `>0.005` repeatedly, that's a hint the baseline or the test setup is
 wrong, not the threshold.
 
-## Token v1.5 changes (special case)
+## Token and design-system changes (special case)
 
-A real change to `apps/web/src/tokens.css` (color/spacing/radius
+A real change to `apps/web/src/tokens.css` (color/spacing/radius/font
 shift, not a whitespace edit) will almost always trip ALL 10 baselines
-at once. This is expected behaviour, not a bug. Standard process:
+at once, and the six frames of the example page with them. This is expected behaviour, not a bug. Standard process:
 
 1. PR description explains the token change and which surfaces it
    affects.
-2. Re-baseline all 10 pages in a single commit (`--update-snapshots`
+2. Re-baseline all pages and frames in a single commit (`--update-snapshots`
    on the full visual project).
 3. Commit message:
    `feat(tokens): adjust --brand from #X to #Y — Phase YY`.
 4. Reviewer spot-checks 2-3 pages (not all 10) against the PR
    description and approves.
 
+### Deliberate re-baselining after a design-system change (Issue #842)
+
+The design-system v2 (new palette, Figtree, radii) changed every baseline on purpose; no layout
+change was intended. The procedure for such a change, in order of preference:
+
+1. **Locally, in the pinned image.** Start the branch's own test stack (never the shared dev stack),
+   then run the `e2e-visual` service of `docker-compose.e2e.yml` with
+   `playwright test --project=visual --update-snapshots` (the command is in "Step 2"). Look at every
+   changed PNG, then commit only the ten files of `apps/e2e/tests/visual.spec.ts-snapshots/` in their own
+   commit, with the reason (palette, font, radii; no layout change) in the message.
+2. **From CI.** A red `visual-regression` job uploads the `visual-regression-diffs` artifact. Download it,
+   rename each `*-actual.png` to its baseline name in `apps/e2e/tests/visual.spec.ts-snapshots/`, inspect
+   the images, commit and push. CI is the arbiter either way: the baselines must come from the
+   linux/amd64 Playwright image, never from a macOS render.
+
+The visual fixture waits for `document.fonts.ready`, so a web font that fails to load shows up as a diff
+instead of a silent fallback render.
+
 ## Anatomy of the gate
 
-| Component      | Where                                                                | Why                                                |
-| -------------- | -------------------------------------------------------------------- | -------------------------------------------------- |
-| Pinned image   | `apps/e2e/Dockerfile.visual`                                         | Font rendering must be byte-identical              |
-| Visual project | `apps/e2e/playwright.config.ts` (`projects` array, `name: "visual"`) | Fixed viewport 1440×900, `reducedMotion: "reduce"` |
-| Freeze hook    | `apps/e2e/tests/visual.setup.ts`                                     | Per-test animation/transition/caret kill-switch    |
-| Seed helper    | `apps/e2e/fixtures/visual-seed.ts`                                   | Byte-stable DB state on every run (D-07)           |
-| Specs          | `apps/e2e/tests/visual.spec.ts`                                      | 10 `toHaveScreenshot()` calls (D-01)               |
-| Baselines      | `apps/e2e/tests/visual.spec.ts-snapshots/visual/`                    | Authoritative reference; tracked in git            |
-| CI gate        | `.github/workflows/ci.yml` (job `visual-regression`)                 | Path-filtered (D-06)                               |
+| Component      | Where                                                                         | Why                                                    |
+| -------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Pinned image   | `apps/e2e/Dockerfile.visual`                                                  | Font rendering must be byte-identical                  |
+| Visual project | `apps/e2e/playwright.config.ts` (`projects` array, `name: "visual"`)          | Fixed viewport 1440×900, `reducedMotion: "reduce"`     |
+| Freeze hook    | `apps/e2e/tests/visual.setup.ts`                                              | Per-test animation/transition/caret kill-switch        |
+| Seed helper    | `apps/e2e/fixtures/visual-seed.ts`                                            | Byte-stable DB state on every run (D-07)               |
+| Specs          | `apps/e2e/tests/visual.spec.ts`                                               | 10 page screenshots (D-01) + 6 Bausteine frames (#843) |
+| Baselines      | `apps/e2e/tests/visual.spec.ts-snapshots/` (flat, `NN-name-visual-linux.png`) | Authoritative reference; tracked in git                |
+| CI gate        | `.github/workflows/ci.yml` (job `visual-regression`)                          | Path-filtered (D-06)                                   |
 
 ## FAQ
 
 - **Why not Chromatic / Percy?** Built-in Playwright is free, lives in
   the repo, and was the v1.8 roadmap recommendation. Re-evaluate if
-  the manual diff-review load becomes painful or if the 10-page net
+  the manual diff-review load becomes painful or if the page net
   grows past a single reviewer's capacity.
 - **Why 10 pages and not all of them?** the operator's most re-checked
   surfaces (per D-01). More pages = more diff-review load per PR. The

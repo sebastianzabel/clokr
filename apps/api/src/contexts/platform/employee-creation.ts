@@ -26,7 +26,8 @@ import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@clokr/db";
 import { DEFAULT_PASSWORD_POLICY, validatePassword, type PasswordPolicy } from "./password-policy";
 import { normalizeWorkDays, type PerDayHours } from "./calculate-work-days";
-import { replaceSystemRoleAssignment, syncCompatRoleColumn } from "./compat-role";
+import { fixedScheduleCreateHours } from "./fixed-schedule-hours";
+import { replaceSystemRoleAssignment } from "./system-role-assignment";
 import { lockTenantForRoleChanges } from "./facade/role-assignments";
 import {
   createdAssignmentAuditEntry,
@@ -292,7 +293,6 @@ export interface EmployeeCreationAudit {
     change: {
       userId: string;
       entries: RoleAssignmentAuditEntry[];
-      compatRole: { from: string; to: string } | null;
     },
     tx: Prisma.TransactionClient,
   ): Promise<void>;
@@ -304,9 +304,20 @@ export interface EmployeeCreationAudit {
   employeeCreated(entry: EmployeeCreationAuditEntry, tx?: Prisma.TransactionClient): Promise<void>;
 }
 
+/** The Employee columns that hold a person's own reminder opt-outs (Issue #609, D-02); never audited. */
+const REMINDER_OPT_OUT_KEYS = [
+  "reminderShiftStartOff",
+  "reminderShiftEndOff",
+  "reminderDayCloseOff",
+] as const satisfies readonly (keyof Prisma.EmployeeOmit)[];
+
 /**
  * The `newValue` of the Employee CREATE audit row — one place, so the route and the operator path
  * record the identical shape.
+ *
+ * Issue #609 (D-16): the three per-person reminder opt-out columns are left out. A created row only
+ * carries their default, but an audit value readable by auditors names no person's reminder choice
+ * at all (the same omission `contexts/platform/api/employees.ts` applies to its reads).
  */
 export function employeeCreatedAuditValue(
   employee: {
@@ -321,8 +332,10 @@ export function employeeCreatedAuditValue(
   },
   directPassword: boolean,
 ): object {
+  const row: Record<string, unknown> = { ...employee };
+  for (const key of REMINDER_OPT_OUT_KEYS) delete row[key];
   return {
-    ...employee,
+    ...row,
     email: body.email,
     directPassword,
     // Personalstruktur (Phase 41) — Decimal → string for stable JSON
@@ -537,6 +550,10 @@ export async function createEmployeeInTransaction(
   audit: EmployeeCreationAudit,
 ) {
   const { passwordHash, directPassword, resolvedWorkDays, usualWorkDays, tz } = prepared;
+  const fixedCreateHours =
+    body.scheduleType === "FIXED_SCHEDULE"
+      ? fixedScheduleCreateHours(body.weeklyHours, resolvedWorkDays)
+      : null;
 
   // D-22/D-02: the FIRST statement in the transaction — a rejected outcome below returns
   // before any write, so a 400 never leaves behind a User, Employee or assignment row.
@@ -552,7 +569,6 @@ export async function createEmployeeInTransaction(
     data: {
       email: body.email,
       passwordHash,
-      role: body.role,
       isActive: directPassword, // active immediately when a password was given
     },
   });
@@ -605,7 +621,16 @@ export async function createEmployeeInTransaction(
       employeeId: emp.id,
       type: body.scheduleType,
       // For SHIFT_BASED: default to 40h if caller omits weeklyHours (null/0/undefined)
-      weeklyHours: body.scheduleType === "SHIFT_BASED" ? body.weeklyHours || 40 : body.weeklyHours,
+      weeklyHours:
+        body.scheduleType === "SHIFT_BASED"
+          ? body.weeklyHours || 40
+          : fixedCreateHours
+            ? fixedCreateHours.weeklyHours
+            : body.weeklyHours,
+      // Issue #848: a FIXED_SCHEDULE contract's day hours follow weeklyHours over its workDays
+      // (they used to fall to the column defaults Mo–Fr 8 h, whatever weeklyHours said).
+      // Other types keep the column defaults: their {day}Hours are placeholders.
+      ...(fixedCreateHours ? fixedCreateHours.dayHours : {}),
       monthlyHours: body.monthlyHours ?? null,
       // Phase 49.2 — FLEXTIME Kernarbeitszeit (only persisted when FLEXTIME)
       coreStart: body.scheduleType === "FLEXTIME" ? (body.coreStart ?? null) : null,
@@ -645,26 +670,33 @@ export async function createEmployeeInTransaction(
   // Issue #482: the ONE base-value resolution — the classification-aware base value from
   // resolveVacationBaseDays() — on `tx` since `emp` already exists inside this transaction.
   const vacationBaseDays = await resolveVacationBaseDays(tx, emp.id, tenantId);
-  await ensureVacationEntitlementForYear(
-    tx,
-    emp.id,
-    tenantId,
-    emp.hireDate.getFullYear(),
-    emp.hireDate,
-    emp.birthDate,
-    // Issue #447 (D-05): the create schema has no exitDate field, so this is always null at
-    // hire time — passed anyway, truthfully, now that the parameter is required.
-    emp.exitDate,
-    workDaysPerWeek,
-    vacationBaseDays,
-    "Automatisch angelegt bei Mitarbeiteranlage",
-    (entry) => audit.vacationEntitlement(entry, tx),
-  );
+  // Issue #849 (1): a person entered with a hire date in an earlier year also gets the CURRENT
+  // year's entitlement at creation — before, only the hire year existed, so the dashboard read
+  // "Resturlaub 0 / 0" until the first leave request created the current year on the fly.
+  const hireYear = emp.hireDate.getFullYear();
+  const currentYear = Number(tenantLocalDay(new Date(), tz).slice(0, 4));
+  const entitlementYears = currentYear > hireYear ? [hireYear, currentYear] : [hireYear];
+  for (const year of entitlementYears) {
+    await ensureVacationEntitlementForYear(
+      tx,
+      emp.id,
+      tenantId,
+      year,
+      emp.hireDate,
+      emp.birthDate,
+      // Issue #447 (D-05): the create schema has no exitDate field, so this is always null at
+      // hire time — passed anyway, truthfully, now that the parameter is required.
+      emp.exitDate,
+      workDaysPerWeek,
+      vacationBaseDays,
+      "Automatisch angelegt bei Mitarbeiteranlage",
+      (entry) => audit.vacationEntitlement(entry, tx),
+    );
+  }
 
   // Phase 75b (D-15): the new user's system-role assignment and its audit row, in this same
   // transaction. A grant cannot lower any holder count, so it takes the tenant lock (which
-  // serialises it with every guarded role change) but needs no before/after count. The
-  // column already holds `body.role`, so the write-back is a no-op kept for one uniform path.
+  // serialises it with every guarded role change) but needs no before/after count.
   await lockTenantForRoleChanges(tx, tenantId);
   const { created: roleAssignment } = await replaceSystemRoleAssignment(
     tx,
@@ -676,7 +708,6 @@ export async function createEmployeeInTransaction(
     {
       userId: user.id,
       entries: roleAssignment !== null ? [createdAssignmentAuditEntry(roleAssignment)] : [],
-      compatRole: await syncCompatRoleColumn(tx, tenantId, user.id),
     },
     tx,
   );

@@ -19,6 +19,9 @@ vi.mock("$api/client", () => ({
 }));
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createRawSnippet } from "svelte";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import LeaveRequestForm from "../LeaveRequestForm.svelte";
@@ -161,6 +164,46 @@ describe("LeaveRequestForm", () => {
     // 30 + 4 - 10 = 24
     expect(screen.getByText("24 Tage")).toBeTruthy();
     expect(screen.queryByTestId("leave-form-no-entitlement")).toBeNull();
+  });
+
+  // Issue #853-19: a balance that is the result of a float subtraction must never reach the screen
+  // as 19.990000000000002 (30 - 10.01, 19.99 - 1). Every figure of the box is a day count with a
+  // decimal comma and at most two decimals.
+  it("VACATION balance box: float arithmetic is shown rounded, with the German decimal comma", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/leave/entitlements/")) {
+        return Promise.resolve([
+          entitlementRow({
+            totalDays: 30,
+            carriedOverDays: 0,
+            effectiveCarryOverDays: 0,
+            usedDays: 10.01,
+            provisionalUsedDays: 0.1 + 0.2, // 0.30000000000000004
+          }),
+        ]);
+      }
+      return defaultGetImpl(path);
+    });
+    const { container } = renderForm();
+    // 30 - 10.01 = 19.990000000000002 in floating point.
+    expect(30 - 10.01).not.toBe(19.99);
+    await waitFor(() => expect(screen.getByText("19,99 Tage")).toBeTruthy());
+    expect(screen.getByText("30 Tage")).toBeTruthy();
+    // Genommen (bestätigt) = used - provisional, and the provisional line itself.
+    expect(screen.getByText("− 9,71 Tage")).toBeTruthy();
+    expect(screen.getByText("− 0,3 Tage")).toBeTruthy();
+
+    // One workday requested: "Verbleibend" = 19.99 - 1 = 18.990000000000002 in floating point.
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-10-05" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-05" },
+    });
+    await waitFor(() => expect(screen.getByText("18,99 Tage")).toBeTruthy());
+    // No raw float anywhere in the box.
+    expect(container.textContent ?? "").not.toMatch(/\d\.\d{3,}/);
+    expect(container.textContent ?? "").not.toMatch(/\d\.\d+ Tage/);
   });
 
   // ── OVERTIME_COMP balance box ────────────────────────────────────────────────────────────────
@@ -649,5 +692,197 @@ describe("LeaveRequestForm", () => {
         { timeout: 1000 },
       );
     });
+  });
+});
+
+// Issue #836 (plan 07) — limit warnings of a create reach the page; they never block the save.
+describe("LeaveRequestForm — leave limit warnings (#836)", () => {
+  const warning = {
+    ruleId: "r1",
+    ruleName: null,
+    groupKind: "CLASSIFICATION",
+    classification: "AZUBI",
+    accessRoleId: null,
+    accessRoleName: null,
+    salonId: "s1",
+    maxPersons: 2,
+    validFrom: null,
+    validUntil: null,
+    days: [{ day: "2026-10-05", count: 3, max: 2 }],
+  };
+
+  async function fillAndSubmit() {
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-10-05" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-06" },
+    });
+    await fireEvent.click(screen.getByTestId("leave-form-submit"));
+  }
+
+  it("a create answered with leaveLimitWarnings passes them to onSaved", async () => {
+    apiPost.mockResolvedValue({ id: "req-1", leaveLimitWarnings: [warning] });
+    const { onSaved } = renderForm();
+    await fillAndSubmit();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(onSaved).toHaveBeenCalledWith({ leaveLimitWarnings: [warning] });
+  });
+
+  it("a create without the key calls onSaved with no warnings", async () => {
+    apiPost.mockResolvedValue({ id: "req-1" });
+    const { onSaved } = renderForm();
+    await fillAndSubmit();
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(onSaved.mock.calls[0]).toHaveLength(0);
+  });
+
+  it("an edit (PATCH) never reports warnings", async () => {
+    apiPatch.mockResolvedValue({ leaveLimitWarnings: [warning] });
+    const { onSaved } = renderForm({
+      editingRequest: {
+        id: "req-9",
+        typeCode: "VACATION",
+        startDate: "2026-11-01",
+        endDate: "2026-11-03",
+        halfDay: false,
+        note: "",
+      },
+    });
+    await fireEvent.click(screen.getByTestId("leave-form-submit"));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(onSaved.mock.calls[0]).toHaveLength(0);
+  });
+});
+
+// Issue #840 G-9 — "Neue Abwesenheit" in two clear rows, one column on a phone, and no eyebrow
+// that names a type before the type is chosen.
+describe("LeaveRequestForm — #840 G-9 layout and eyebrow", () => {
+  const picker = createRawSnippet(() => ({
+    render: () =>
+      '<div class="form-group"><label class="form-label" for="create-emp">Mitarbeiter</label><select id="create-emp" class="form-input"></select></div>',
+  }));
+
+  const rowOf = (id: string) => document.getElementById(id)!.closest("[data-form-row]");
+
+  it("with a person picker: Mitarbeiter and Art share the who row, Von and Bis the dates row", () => {
+    renderForm({ personPicker: picker });
+    const who = rowOf("create-emp");
+    expect(who?.getAttribute("data-form-row")).toBe("who");
+    expect(rowOf("f-type")).toBe(who);
+    const dates = rowOf("f-start");
+    expect(dates?.getAttribute("data-form-row")).toBe("dates");
+    expect(rowOf("f-end")).toBe(dates);
+    expect(dates).not.toBe(who);
+  });
+
+  it("with Sonderurlaub the Anlass select is in the who row, on its own full line next to a picker", async () => {
+    renderForm({ personPicker: picker });
+    await fireEvent.change(screen.getByTestId("leave-form-type"), { target: { value: "SPECIAL" } });
+    const rule = document.getElementById("f-special-rule");
+    expect(rule).toBeTruthy();
+    expect(rowOf("f-special-rule")).toBe(rowOf("f-type"));
+    expect(rule!.closest(".form-group")!.classList.contains("form-group--full")).toBe(true);
+  });
+
+  it("without a picker the who row holds the type alone, and Anlass sits beside it for Sonderurlaub", async () => {
+    renderForm();
+    const who = rowOf("f-type")!;
+    expect(who.getAttribute("data-form-row")).toBe("who");
+    expect(who.querySelectorAll(".form-group")).toHaveLength(1);
+    expect(who.classList.contains("form-row--single")).toBe(true);
+    await fireEvent.change(screen.getByTestId("leave-form-type"), { target: { value: "SPECIAL" } });
+    expect(rowOf("f-special-rule")).toBe(rowOf("f-type"));
+    expect(rowOf("f-type")!.classList.contains("form-row--single")).toBe(false);
+    expect(
+      document
+        .getElementById("f-special-rule")!
+        .closest(".form-group")!
+        .classList.contains("form-group--full"),
+    ).toBe(false);
+  });
+
+  it("a create dialog shows no type eyebrow", () => {
+    renderForm();
+    expect(document.querySelector(".modal-eyebrow")).toBeNull();
+  });
+
+  it("an edit dialog keeps the edited request's type as its eyebrow", () => {
+    renderForm({
+      editingRequest: {
+        id: "req-9",
+        typeCode: "SICK",
+        startDate: "2026-11-01",
+        endDate: "2026-11-03",
+        halfDay: false,
+        note: "",
+      },
+    });
+    expect(document.querySelector(".modal-eyebrow")?.textContent).toBe("Krankmeldung");
+  });
+
+  describe("style source", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/components/leave/LeaveRequestForm.svelte"),
+      "utf8",
+    );
+    const style = source.slice(source.indexOf("<style>"));
+
+    it("the rows use two minmax(0, 1fr) columns and the former three-column template is gone", () => {
+      expect(style).toMatch(/\.form-row\s*\{[^}]*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+      expect(style).not.toContain("repeat(3");
+    });
+
+    it("below 480 px every row is one column", () => {
+      const media = style.slice(style.indexOf("@media (max-width: 480px)"));
+      expect(media).toMatch(/\.form-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    });
+  });
+});
+
+// Issue #853 (D-853-12, S-15) - „Abwesenheit eintragen“ asks „Für wen?“ first: with
+// `deferUntilPerson` the form shows only the picker until a person is chosen. The scoped CSS that
+// hides the rest is not injected into jsdom (see whats-new-stacking.test.ts), so the contract
+// pinned here is the marker attribute the rule keys on and the DOM order it relies on.
+describe("LeaveRequestForm — #853 deferUntilPerson", () => {
+  const picker = createRawSnippet(() => ({
+    render: () =>
+      '<div class="form-group"><label class="form-label" for="create-emp">Für wen?</label><select id="create-emp" class="form-input"></select></div>',
+  }));
+  const awaiting = () => screen.getByTestId("leave-form").hasAttribute("data-awaiting-person");
+
+  it("a create without a person is marked as awaiting one, the picker is the first field", () => {
+    renderForm({ personPicker: picker, deferUntilPerson: true, employeeId: "" });
+    expect(awaiting()).toBe(true);
+    const who = document.querySelector('[data-form-row="who"]')!;
+    expect(who.firstElementChild?.querySelector("#create-emp")).toBeTruthy();
+    expect(who.querySelector("#f-type")).toBeTruthy();
+  });
+
+  it("with a person chosen the form is no longer marked", () => {
+    renderForm({ personPicker: picker, deferUntilPerson: true, employeeId: EMPLOYEE_ID });
+    expect(awaiting()).toBe(false);
+  });
+
+  it("without the prop nothing changes, also without a person (the default is off)", () => {
+    renderForm({ personPicker: picker, employeeId: "" });
+    expect(awaiting()).toBe(false);
+  });
+
+  it("an edit is never awaiting a person", () => {
+    renderForm({
+      personPicker: picker,
+      deferUntilPerson: true,
+      employeeId: "",
+      editingRequest: {
+        id: "req-9",
+        typeCode: "VACATION",
+        startDate: "2026-11-01",
+        endDate: "2026-11-03",
+        halfDay: false,
+        note: "",
+      },
+    });
+    expect(awaiting()).toBe(false);
   });
 });

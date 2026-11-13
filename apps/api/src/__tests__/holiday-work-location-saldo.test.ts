@@ -49,7 +49,6 @@ describe("Saldo by work location (Phase 71b Plan 04, issue #71, AC-4..AC-7)", ()
         data: {
           email: `hwls-${label}-${suffix}@test.de`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -257,7 +256,6 @@ describe("AC-13: a locked month is never recomputed, even when a changed salon a
       data: {
         email: `ac13-${suffix}@test.de`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

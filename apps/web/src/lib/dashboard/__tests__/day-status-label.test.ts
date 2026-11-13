@@ -113,11 +113,20 @@ describe("teamMissingTitle", () => {
   });
 });
 
+describe("half-day leave (Issue #743)", () => {
+  it("a missing row with a leave reason keeps the absence visible", () => {
+    expect(attendanceStatusText({ status: "missing", reason: "Urlaub" })).toBe(
+      "Fehlt · halber Tag Urlaub",
+    );
+    expect(attendanceStatusText({ status: "missing", reason: null })).toBe("Fehlt");
+  });
+});
+
 describe("page sources use the one vocabulary", () => {
   it("[vacuity gate] both page sources are loaded and contain their anchors", () => {
     expect(REPORTS.length).toBeGreaterThan(0);
     expect(DASHBOARD.length).toBeGreaterThan(0);
-    expect(REPORTS).toContain("attendance-table");
+    expect(REPORTS).toContain("attendanceCell");
     expect(REPORTS_PAGE.length).toBeGreaterThan(1_000);
     expect(DASHBOARD).toContain("team-grid__cell");
   });

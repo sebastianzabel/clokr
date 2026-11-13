@@ -244,7 +244,6 @@ describe("Issue #542 — monthly report salon filter", () => {
         data: {
           email: `rsf542-${suffix}@example.invalid`,
           passwordHash,
-          role: "EMPLOYEE",
           isActive: true,
         },
       });
@@ -529,7 +528,6 @@ describe("Issue #542 — one 404 for all four places", () => {
       data: {
         email: `on542-${suffix}@example.invalid`,
         passwordHash,
-        role: "EMPLOYEE",
         isActive: true,
       },
     });

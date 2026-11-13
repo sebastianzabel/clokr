@@ -85,7 +85,6 @@ export const SCOPE_FILES = [
   "apps/web/src/routes/(app)/team/leave/+page.svelte",
   "apps/web/src/routes/(app)/inbox/+page.svelte",
   "apps/web/src/routes/(app)/shifts/+page.svelte",
-  "apps/web/src/routes/(app)/teamcal/+page.svelte",
   "apps/web/src/routes/(app)/leave/+page.svelte",
   "apps/web/src/lib/components/leave/CalendarDayDetail.svelte",
   "apps/web/src/lib/leave/team-calendar-visibility.ts",
@@ -107,6 +106,9 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/components/admin/roles/RoleEditor.svelte",
   "apps/web/src/lib/components/admin/roles/AssignmentsTab.svelte",
   "apps/web/src/lib/components/admin/roles/AssignmentDialog.svelte",
+  "apps/web/src/lib/components/admin/roles/PersonRoleAssignments.svelte", // #580
+  "apps/web/src/lib/roles/assignment-label.ts", // #580
+  "apps/web/src/lib/roles/assignment-drafts.ts", // #580
   "apps/web/src/lib/components/ui/CommandPalette.svelte",
   // Phase 84 (#84): the Team block's salon filter and trend-card decisions.
   "apps/web/src/lib/dashboard/team-view.ts",
@@ -134,6 +136,28 @@ export const SCOPE_FILES = [
   "apps/web/src/lib/stores/auth.ts",
   "apps/web/src/routes/(auth)/login/+page.svelte",
   "apps/web/src/routes/(auth)/otp/+page.svelte",
+  // Issue #854 (plan 854-07): Regeln › Arbeitszeit & Verträge shows a section by the permission
+  // alternatives of the page it came from (`mayOpenSection`), never by a role.
+  "apps/web/src/routes/(app)/verwalten/regeln/arbeitszeit/+page.svelte",
+  // Issue #854 (plan 854-08): the same for Regeln › Monatsabschluss and Benachrichtigungen & E-Mail.
+  "apps/web/src/routes/(app)/verwalten/regeln/monatsabschluss/+page.svelte",
+  "apps/web/src/routes/(app)/verwalten/regeln/benachrichtigungen/+page.svelte",
+  // Issue #854 (plan 854-20): the Person tab of the employee detail shows its controls by
+  // employee:update (`canEdit`), never by a role.
+  "apps/web/src/lib/components/employees/detail/PersonTab.svelte",
+  // Its siblings: Urlaub shows its fields by leave-entitlement:update, Zugang its three groups by
+  // employee:manage-access, role-assignment:manage and employee:anonymize; the Salons section by
+  // employee:update.
+  "apps/web/src/lib/components/employees/detail/UrlaubTab.svelte",
+  "apps/web/src/lib/components/employees/detail/ZugangTab.svelte",
+  "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte",
+  // Issue #854 (plan 854-21): the Vertrag tab shows its fields by contract:update (`canEdit`) and the
+  // pending-shift choice by shift:plan (`canDiscardShifts`), never by a role.
+  "apps/web/src/lib/components/employees/detail/VertragTab.svelte",
+  // Issue #854 (plan 854-22): the override groups show their fields by employee:update (`canEdit`).
+  "apps/web/src/lib/components/employees/detail/VertragOverrides.svelte",
+  // Issue #854 (plan 854-22): the patterns follow vocational-school:manage, the slots employee:update.
+  "apps/web/src/lib/components/employees/detail/BerufsschuleSection.svelte",
 ];
 
 /** (file, exact trimmed line text) pairs that may keep a flagged line. Empty since #538: the last

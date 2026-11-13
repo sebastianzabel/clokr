@@ -86,7 +86,7 @@ function mount(salons: OperatorSalon[] = TWO, overrides: Record<string, unknown>
       onReload,
       ...overrides,
     },
-    "nacht",
+    "salz",
   );
   return { onCreate, onUpdate, onDeactivate, onActivate, onReload };
 }
@@ -121,7 +121,7 @@ describe("SalonsSection", () => {
     mount();
     await fireEvent.click(el("op-salon-create"));
     await tick();
-    expect(el("op-salon-dialog")).toHaveAttribute("data-mode", "create");
+    expect(el("op-salon-dialog")).toHaveAttribute("data-dialog-mode", "create");
     expect(el<HTMLInputElement>("op-salon-name").value).toBe("");
     expect(el<HTMLSelectElement>("op-salon-federal-state").value).toBe("");
     expect(el<HTMLInputElement>("op-salon-hours-0-from").value).toBe("09:30");
@@ -134,7 +134,7 @@ describe("SalonsSection", () => {
     expect(edit).toHaveAttribute("aria-label", "Salon Zweitsalon bearbeiten");
     await fireEvent.click(edit);
     await tick();
-    expect(el("op-salon-dialog")).toHaveAttribute("data-mode", "edit");
+    expect(el("op-salon-dialog")).toHaveAttribute("data-dialog-mode", "edit");
     expect(el<HTMLInputElement>("op-salon-name").value).toBe("Zweitsalon");
   });
 
@@ -152,7 +152,7 @@ describe("SalonsSection", () => {
     mount([...ONE, salon({ id: "s9", name: "Altsalon", isActive: false })]);
     await fireEvent.click(el("op-salon-create"));
     await tick();
-    expect(el("op-salon-dialog")).toHaveAttribute("data-mode", "create");
+    expect(el("op-salon-dialog")).toHaveAttribute("data-dialog-mode", "create");
     expect(byId("op-salon-single-salon-hint")).toBeNull();
   });
 
@@ -213,7 +213,7 @@ describe("SalonsSection", () => {
   });
 
   it("a create refused with SALON_QUOTA_REACHED shows the console's own reason, not the server sentence (Phase 566)", async () => {
-    const serverSentence = "Ihr Anbieter schaltet das frei (Satz fuer Mandanten).";
+    const serverSentence = "Dein Anbieter schaltet das frei (Satz fuer Mandanten).";
     const onCreate = vi
       .fn()
       .mockRejectedValue(new OperatorApiError(409, "SALON_QUOTA_REACHED", serverSentence));
@@ -228,7 +228,7 @@ describe("SalonsSection", () => {
     const shown = el("op-salon-error");
     expect(shown).toHaveTextContent("Salon-Kontingent erreicht.");
     expect(shown).toHaveTextContent("Abschnitt „Pakete“");
-    expect(shown).not.toHaveTextContent("Ihr Anbieter");
+    expect(shown).not.toHaveTextContent("Anbieter schaltet");
     expect(byId("op-salon-dialog")).not.toBeNull();
     expect(toastMessages).toEqual([]);
   });
@@ -393,7 +393,7 @@ describe("SalonsSection", () => {
       const salons = [...TWO, salon({ id: "s3", name: "Altsalon", isActive: false })];
       const { onActivate } = mount(salons);
       onActivate.mockRejectedValueOnce(
-        refusal("SALON_QUOTA_REACHED", "Ihr Anbieter schaltet das frei."),
+        refusal("SALON_QUOTA_REACHED", "Dein Anbieter schaltet das frei."),
       );
       await fireEvent.click(el("op-salon-activate-s3"));
       await settle();
@@ -401,17 +401,17 @@ describe("SalonsSection", () => {
       expect(quota).toHaveAttribute("data-code", "SALON_QUOTA_REACHED");
       expect(quota).toHaveTextContent("Salon-Kontingent erreicht.");
       expect(quota).toHaveTextContent("Abschnitt „Pakete“");
-      expect(quota).not.toHaveTextContent("Ihr Anbieter");
+      expect(quota).not.toHaveTextContent("Anbieter schaltet");
 
       onActivate.mockRejectedValueOnce(
-        refusal("MODULE_NOT_BOOKED", "Ihr Anbieter schaltet es frei."),
+        refusal("MODULE_NOT_BOOKED", "Dein Anbieter schaltet es frei."),
       );
       await fireEvent.click(el("op-salon-activate-s3"));
       await settle();
       const module = el("op-salons-notice");
       expect(module).toHaveAttribute("data-code", "MODULE_NOT_BOOKED");
       expect(module).toHaveTextContent("Zusatzmodul ist nicht gebucht");
-      expect(module).not.toHaveTextContent("Ihr Anbieter");
+      expect(module).not.toHaveTextContent("Anbieter schaltet");
     });
 
     it("a missing salon (404) lands in the notice as SALON_NOT_FOUND", async () => {

@@ -1,0 +1,28 @@
+# Machine-readable twin of "Betrieb & Migration" in v1.17.0.md (Issue #709). The release notes and
+# scripts/release-rehearsal.sh walk THIS list, in this order; a change to the steps in the notes
+# changes this file in the same commit.
+#
+# Format:  phase | expected exit | id | kind | argument
+#   expected exit: one code or a comma list; audits exit 2 when they list findings, which is information, not a failure
+#   phase   pre = before the deploy (read-only), migrate = prisma migrate deploy, post = after it
+#   kind    sql = psql -c on the throwaway DB, script = `pnpm tsx scripts/<arg>` in the new api image,
+#           migrate = `prisma migrate deploy` as the image entrypoint runs it
+# Operational steps with no exit code to prove (pg_dump, MINIO_* on every stage, the demo compose
+# update) stay in the notes only.
+#
+# Notes "Betrieb & Migration": DATEV Personalnummern that the export now refuses (#304)
+pre|0|datev-pnr-non-numeric|sql|select count(*) from "Employee" where "employeeNumber" !~ '^[0-9]+$'
+# Notes "Betrieb & Migration": read-only audits before the deploy
+pre|0,2|audit-323-shift-avg-day|script|audit-323-shift-avg-day.ts
+pre|0,2|audit-473-azubi-monthly-bs|script|audit-473-azubi-monthly-bs.ts --all-tenants
+pre|0,2|audit-595-legacy-period-start|script|audit-595-legacy-period-start.ts
+pre|0,2|audit-613-month-close-population|script|audit-613-month-close-population.ts
+pre|0,2|audit-780-hire-before-contract|script|audit-780-hire-before-contract.ts --all-tenants
+pre|0,2|audit-799-clock-entries-without-auto-break|script|audit-799-clock-entries-without-auto-break.ts --all-tenants
+# Deploy: the 2 migrations (drop TenantConfig.monthlyHoursHolidayDeduction, add Break.isAuto)
+migrate|0|migrate-deploy|migrate|
+# Notes "Betrieb & Migration": backfills, dry run first, --confirm only after pg_dump (512 is irreversible)
+post|0,2|backfill-774-dry-run|script|backfill-774-anonymized-freetext.ts
+post|0|backfill-774-confirm|script|backfill-774-anonymized-freetext.ts --confirm
+post|0,2|backfill-512-dry-run|script|backfill-512-anonymized-audit-freetext.ts
+post|0|backfill-512-confirm|script|backfill-512-anonymized-audit-freetext.ts --confirm

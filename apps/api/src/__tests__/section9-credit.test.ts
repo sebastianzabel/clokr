@@ -349,7 +349,6 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
       data: {
         email: `mgr-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "MANAGER",
         isActive: true,
       },
     });
@@ -819,7 +818,10 @@ describe("confirm — Phase 104-06 Task 1", () => {
   // vacation can be cancelled — and the cancel path already gives the days back. Confirming
   // afterwards ran reverseVacationDays() a SECOND time (double credit) and booked a § 9
   // credit against a vacation that legally no longer exists.
-  it("Test 6b (WR-01): confirming a credit whose vacation is no longer APPROVED returns 409 and books nothing", async () => {
+  // Issue #478: CANCELLATION_REQUESTED is still active leave, so its credit CAN be confirmed
+  // (leave-edit-guards-478.test.ts proves the chain incl. the #662 supersession); only a
+  // CANCELLED vacation stays refused.
+  it("Test 6b (WR-01): confirming a credit whose vacation is CANCELLED returns 409 and books nothing", async () => {
     const { vacId, sickId } = await vacAndSick(
       ["2026-05-11", "2026-05-13"],
       ["2026-05-11", "2026-05-13"],
@@ -833,11 +835,9 @@ describe("confirm — Phase 104-06 Task 1", () => {
       reason: "AU liegt vor, der Urlaub ist aber zwischenzeitlich storniert worden",
     };
 
-    // CANCELLATION_REQUESTED: the leave is still active today, but approving that
-    // cancellation later would decrement the same days a second time.
     // CANCELLED: the days are already back — a second reverseVacationDays() would
     // over-credit outright.
-    for (const blockedStatus of ["CANCELLATION_REQUESTED", "CANCELLED"] as const) {
+    for (const blockedStatus of ["CANCELLED"] as const) {
       await app.prisma.leaveRequest.update({
         where: { id: vacId },
         data: { status: blockedStatus },
@@ -1298,7 +1298,7 @@ describe("reject and reopen — Phase 104-06 Task 2", () => {
     // (D-11) — never .optional(), never .nullable().
     const empty = await reject(creditId, { reason: "" });
     expect(empty.statusCode).toBe(400);
-    const germanMessage = "reason: Begründung ist erforderlich";
+    const germanMessage = "Begründung ist erforderlich";
     for (const res of [missing, nullReason, empty]) {
       const body = JSON.parse(res.body) as { error: string; message: string };
       expect(body.error).toBe("Validierungsfehler");
@@ -1415,11 +1415,10 @@ describe("display surface — Phase 104-10 Task 1", () => {
       data: {
         email: `col-${s}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
-        role: "EMPLOYEE",
         isActive: true,
       },
     });
-    await app.prisma.employee.create({
+    const colleagueEmployee = await app.prisma.employee.create({
       data: {
         tenantId: data.tenant.id,
         userId: colleagueUser.id,
@@ -1434,6 +1433,23 @@ describe("display surface — Phase 104-10 Task 1", () => {
       userId: colleagueUser.id,
       role: "EMPLOYEE",
     });
+
+    // WR-04 (#840): a caller without a read reach and without a scope is answered as scope=team,
+    // i.e. only the colleagues of the caller's own Stammsalon. Both persons are therefore homed in
+    // the tenant's default salon, which is what "a colleague of the same salon" means.
+    for (const employeeId of [data.employee.id, colleagueEmployee.id]) {
+      await app.prisma.employeeSalonAssignment.create({
+        data: {
+          tenantId: data.tenant.id,
+          employeeId,
+          salonId: data.salonId,
+          kind: "HOME",
+          validFrom: new Date("2024-01-01"),
+          validUntil: null,
+          weekdays: [],
+        },
+      });
+    }
     const loginRes = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
@@ -1498,8 +1514,12 @@ describe("display surface — Phase 104-10 Task 1", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
+    // #840 D-840-19: a masked row (a foreign absence outside the reader's reach) has no `id`.
     return JSON.parse(res.body) as Array<{
-      id: string;
+      id?: string;
+      employeeId: string;
+      startDate: string;
+      endDate: string;
       typeCode: string | null;
       section9?: string | null;
       section9Days?: string[];
@@ -1569,15 +1589,26 @@ describe("display surface — Phase 104-10 Task 1", () => {
     expect(vacEntry?.section9 ?? null).toBeNull();
   });
 
-  it("Test 3: a colleague without detail visibility receives section9=null and section9Days=[] — masking mirrors typeCode", async () => {
+  it("Test 3: a colleague without detail visibility receives only a masked range — no § 9 field, no type, no id", async () => {
     const { sickId } = await vacAndSick(["2033-05-02", "2033-05-06"], ["2033-05-03", "2033-05-04"]);
 
+    // #840 D-840-19: the colleague is outside the reach, so the vacation (2nd-6th) and the sick
+    // spell (3rd-4th) of the person arrive as ONE masked range with exactly the seven masked keys;
+    // nothing of the § 9 marker or the type can be read off it.
     const entries = await calendar(2033, 5, colleagueToken);
-    const sickEntry = entries.find((e) => e.id === sickId);
-    expect(sickEntry).toBeDefined();
-    expect(sickEntry?.typeCode).toBeNull();
-    expect(sickEntry?.section9 ?? null).toBeNull();
-    expect(sickEntry?.section9Days ?? []).toEqual([]);
+    const foreign = entries.filter((e) => e.employeeId === data.employee.id);
+    expect(foreign).toHaveLength(1);
+    expect(Object.keys(foreign[0]).sort()).toEqual([
+      "employeeId",
+      "endDate",
+      "firstName",
+      "isOwn",
+      "lastName",
+      "masked",
+      "startDate",
+    ]);
+    expect(foreign[0]).toMatchObject({ startDate: "2033-05-02", endDate: "2033-05-06" });
+    expect(JSON.stringify(entries)).not.toContain(sickId);
   });
 
   it("Test 4: GET /leave/requests rows carry section9Status and section9CreditId", async () => {

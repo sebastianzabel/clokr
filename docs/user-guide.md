@@ -31,7 +31,7 @@ Das Dashboard zeigt auf einen Blick:
 >
 > Arbeiten Sie in einem Betrieb mit mehreren Salons, können Sie an einem Tag mehrere Einträge erfassen, zum Beispiel vormittags in einem und nachmittags in einem anderen Salon. Wählen Sie im Formular das Feld **Salon**, oder öffnen Sie einen vorhandenen Eintrag und wählen Sie **Weiteren Eintrag an diesem Tag**; der Beginn ist dann auf das Ende des letzten Eintrags vorbelegt. Einträge eines Tages dürfen sich nicht überschneiden. Eine Überschneidung wird abgewiesen, direkt aufeinanderfolgende Einträge sind erlaubt. Auf der Startseite stempeln Sie nach dem Ende des ersten Einsatzes mit **In anderem Salon einstempeln** im anderen Salon ein. Die Lücke zwischen zwei Salons gilt nicht als Pause; war es eine Pause, erfassen Sie sie nachträglich als Pause für den Tag.
 >
-> **Fahrzeit zwischen Salons erfassen.** Die Fahrt von einem Salon zum anderen ist Arbeitszeit. Erfassen Sie sie so: Öffnen Sie **Zeiterfassung → Weiteren Eintrag an diesem Tag**, schalten Sie **Fahrzeit zwischen Salons** ein und wählen Sie **Von Salon** (der Salon, den Sie verlassen) und **Nach Salon** (der Salon, in den Sie fahren). Tragen Sie Beginn und Ende der Fahrt ein: die Fahrt beginnt, wenn Sie den ersten Salon verlassen, und endet bei der Ankunft im zweiten. Die Fahrt muss zwischen zwei Einträgen desselben Tages liegen, einem im Salon „Von“ davor und einem im Salon „Nach“ danach; legen Sie diese Einträge zuerst an. Eine Pause oder Tätigkeitsart gibt es bei einer Fahrt nicht. Der Weg von zu Hause zum ersten Salon und vom letzten Salon nach Hause ist keine Arbeitszeit und lässt sich nicht erfassen; das Formular meldet dann einen Fehler. Eine erfasste Fahrt zählt wie jeder Eintrag zur Arbeitszeit und ersetzt die Rückfrage „Fahrzeit oder Pause?“ für diese Lücke. Sie lässt sich bearbeiten oder löschen (**Fahrzeit bearbeiten**); einen der beiden Einträge, zwischen denen die Fahrt liegt, können Sie nicht so ändern oder löschen, dass die Fahrt ohne ihn dastünde; löschen Sie dann zuerst die Fahrt. Hat Ihre Führungskraft für diesen Tag schon eine Pausenquittung erteilt, muss sie diese nach dem Erfassen, Ändern oder Löschen der Fahrzeit neu erteilen, weil sich der Tag geändert hat.
+> **Fahrzeit zwischen Salons erfassen.** Die Fahrt von einem Salon zum anderen ist Arbeitszeit. Erfassen Sie sie so: Öffnen Sie **Zeiterfassung → Weiteren Eintrag an diesem Tag**, schalten Sie **Fahrzeit zwischen Salons** ein und wählen Sie **Von Salon** (der Salon, den Sie verlassen) und **Nach Salon** (der Salon, in den Sie fahren). Tragen Sie Beginn und Ende der Fahrt ein: die Fahrt beginnt, wenn Sie den ersten Salon verlassen, und endet bei der Ankunft im zweiten. Die Fahrt muss zwischen zwei Einträgen desselben Tages liegen, einem im Salon „Von“ davor und einem im Salon „Nach“ danach; legen Sie diese Einträge zuerst an. Eine Pause oder Tätigkeitsart gibt es bei einer Fahrt nicht. Der Weg von zu Hause zum ersten Salon und vom letzten Salon nach Hause ist keine Arbeitszeit und lässt sich nicht erfassen; das Formular meldet dann einen Fehler. Eine erfasste Fahrt zählt wie jeder Eintrag zur Arbeitszeit und ersetzt die Rückfrage „Fahrzeit oder Pause?“ für diese Lücke. Sie lässt sich bearbeiten oder löschen (**Fahrzeit bearbeiten**); einen der beiden Einträge, zwischen denen die Fahrt liegt, können Sie nicht so ändern oder löschen, dass die Fahrt ohne ihn dastünde; löschen Sie dann zuerst die Fahrt. Hat Ihre Führungskraft für diesen Tag schon eine Pausenquittung erteilt, muss sie diese nach dem Erfassen, Ändern oder Löschen der Fahrzeit neu erteilen, weil sich der Tag geändert hat. Steht in der Tagesprüfung eines Tages die Rückfrage „Fahrzeit oder Pause?“, lässt sich die Lücke dort mit der Schaltfläche „Fahrzeit … von … nach … erfassen“ direkt als Fahrzeit übernehmen; es gelten dieselben Regeln wie im Formular.
 
 ### Kalenderansicht
 
@@ -114,3 +114,17 @@ Unter **Mein Profil** (Profilmenü oben rechts → Mein Profil):
 - Passwort ändern
 - Benachrichtigungseinstellungen
 - Aktive Sessions verwalten (andere Geräte abmelden)
+
+### Erinnerungen
+
+Wenn dein Betrieb es eingeschaltet hat und du eine geplante Schicht hast, erinnert dich Clokr an drei Stellen: nach dem
+**Schichtbeginn**, wenn du noch nicht eingestempelt bist, nach dem **Schichtende**, wenn du noch eingestempelt bist, und **abends**,
+wenn an einem Schichttag noch keine Zeit eingetragen ist. Die Erinnerung erscheint in der Glocke und, wenn du Push auf deinem
+Handy eingerichtet hast, auf dem Sperrbildschirm. An Urlaubs-, Krankheits- und Feiertagen erinnert dich Clokr nie.
+
+- Unter **Mein Profil → Erinnerungen** schaltest du jede Erinnerung einzeln ab oder wieder an. Der Abschnitt erscheint nur, wenn dein
+  Betrieb mindestens eine Erinnerung eingeschaltet hat. Deine Auswahl steht in keiner Mitarbeiterliste. Die Änderung selbst wird,
+  wie jede Änderung an Personendaten, im Prüfprotokoll festgehalten, das nur dafür berechtigte Personen einsehen.
+- Ein Tipp auf die Erinnerung öffnet die Startseite mit einer Rückfrage („Jetzt einstempeln?" bzw. „Jetzt ausstempeln?"). **Gestempelt
+  wird erst, wenn du bestätigst**, und zwar mit der aktuellen Uhrzeit. Bei „Abbrechen" passiert nichts. Die Abend-Erinnerung öffnet
+  den Tag in deiner Zeitenliste, damit du die fehlende Zeit eintragen kannst.
