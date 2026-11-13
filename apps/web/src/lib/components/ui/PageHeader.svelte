@@ -191,5 +191,13 @@
       /* Two actions may be wider than a 320 px phone together; the second one then takes a row. */
       flex-wrap: wrap;
     }
+    /* The segments head keeps one line (nowrap): the text takes the free width and a status chip
+       keeps its own, so neither squeezes the other to nothing (salon detail, #854). */
+    .page-head--inline .page-head-text {
+      flex: 1 1 auto;
+    }
+    .page-head--inline .page-head-actions {
+      width: auto;
+    }
   }
 </style>
