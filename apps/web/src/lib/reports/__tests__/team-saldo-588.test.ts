@@ -62,9 +62,34 @@ describe("exclusion", () => {
     expect(teamSaldoExclusion(row("d", 0, 0))).toBeNull();
   });
 
-  it("words the three reasons", () => {
+  it("lists a person without a contract as NO_CONTRACT, after SALDO_UNAVAILABLE and before the rest (Issue #911)", () => {
+    expect(teamSaldoExclusion(row("n", 0, 0, { noContract: true }))).toBe("NO_CONTRACT");
+    expect(
+      teamSaldoExclusion(
+        row("n", 0, 0, { noContract: true, trackOnly: true, hasRecordedTime: false }),
+      ),
+    ).toBe("NO_CONTRACT");
+    expect(teamSaldoExclusion(row("n", 0, 0, { noContract: null, openMonthMinutes: null }))).toBe(
+      "SALDO_UNAVAILABLE",
+    );
+    expect(teamSaldoExclusion(row("n", 0, 0, { noContract: false }))).toBeNull();
+    const figures = teamSaldoFigures([
+      row("a", 600, 0),
+      row("b", 120, 0),
+      row("nc", -9000, 0, { noContract: true }),
+    ]);
+    expect(figures.counted).toBe(2);
+    expect(figures.medianMinutes).toBe(360);
+    expect(figures.minus).toEqual([]);
+    expect(figures.excluded.map((e) => [e.id, e.reason, e.reasonLabel])).toEqual([
+      ["nc", "NO_CONTRACT", "ohne Vertrag"],
+    ]);
+  });
+
+  it("words the four reasons", () => {
     expect(TEAM_SALDO_EXCLUSION_LABEL).toEqual({
       SALDO_UNAVAILABLE: "Saldo nicht verfügbar",
+      NO_CONTRACT: "ohne Vertrag",
       TIME_TRACKING_ONLY: "nur Zeiterfassung",
       NO_RECORDED_TIME: "ohne Erfassung",
     });

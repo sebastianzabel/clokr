@@ -1667,6 +1667,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
             hasRecordedTime: withRecordedTime.has(a.employeeId),
             // Issue #588 (D-588-2 a, D-588-4): additive; null when the live saldo is unavailable.
             trackOnly: breakdown === null ? null : breakdown.trackOnly,
+            // Issue #911: additive; null when the live saldo is unavailable. No saldo figure changes.
+            noContract: breakdown === null ? null : breakdown.noContract,
             unconfirmedMonths: breakdown === null ? null : breakdown.unconfirmedMonths,
             // Issue #595 (D-03/P-01): one item per month (the record the account reads), each
             // named by the server - `month` ("YYYY-MM", null when unnameable) is what the page

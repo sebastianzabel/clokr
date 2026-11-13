@@ -91,6 +91,13 @@ export type OvertimeBalanceBreakdown = {
    */
   trackOnly: boolean;
   /**
+   * Issue #911: true when NO stored WorkSchedule row is valid at the live Stichtag. The tenant
+   * default that `scheduleAt` falls back to does not count as a contract. Reported so the team
+   * saldo figures can list such a person apart (like #576); stored carry-overs of closed months
+   * from before #780 can still be non-zero for them. Changes no figure.
+   */
+  noContract: boolean;
+  /**
    * Issue #588 (P-05): the number of tenant-local calendar months from the month of the first
    * open day of the live window (`rangeStart`: the day after the last closed period's end, or
    * the hire day when nothing is closed) through the current tenant-local month, inclusive,
@@ -844,6 +851,9 @@ async function computeAccountChain(
   // display balance as 0 (hours are tracked but not accumulated). Today's contract — deliberate,
   // see the Issue #451 note above.
   const isTrackOnly = isTrackOnlySchedule(schedule);
+  // Issue #911: no stored contract row at the Stichtag (the fallback schedule above is not one).
+  const noContract =
+    (await src.scheduleRowAt(virtualToday !== undefined ? todayDate : new Date())) === null;
   const effectiveBalanceHours = isTrackOnly ? 0 : totalBalanceHours;
 
   // Phase 97-01 (SALDO-DISP-01/03) — confirmed/forecast decomposition of the SAME total.
@@ -880,6 +890,7 @@ async function computeAccountChain(
     hasClosedMonth,
     rosterIncomplete,
     trackOnly: isTrackOnly,
+    noContract,
     unconfirmedMonths,
     chainMinutes: liveBase + openPeriodBalance,
   };
