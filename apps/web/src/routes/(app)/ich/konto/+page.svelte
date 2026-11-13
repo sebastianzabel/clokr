@@ -84,8 +84,6 @@
   const employeeId = $derived($authStore.user?.employeeId ?? null);
 
   const totalMinutes = $derived(overtime ? Math.round(overtime.balanceHours * 60) : null);
-  // The derivation reads from the start towards today (prototype); the records list stays newest first.
-  const rowsAscending = $derived([...rows].reverse());
   const lastClosed = $derived(rows.find((r) => r.status === "CLOSED") ?? null);
   // A carry-over deadline is only news while it lies ahead.
   const carryDeadline = $derived(
@@ -255,11 +253,12 @@
     {/if}
 
     <section class="konto-sec" aria-labelledby="konto-herleitung">
+      <!-- Owner 13.11.2026: newest month first, like the Monatsnachweise below -->
       <h2 id="konto-herleitung" class="konto-h2">So setzt sich dein Stundenkonto zusammen</h2>
       <DataTable
         caption="Herleitung des Stundenkontos nach Monaten"
         columns={COLUMNS}
-        rows={rowsAscending}
+        {rows}
         rowKey={(r) => r.key}
         rowTestId={(r) => `konto-month-${r.key}`}
       >

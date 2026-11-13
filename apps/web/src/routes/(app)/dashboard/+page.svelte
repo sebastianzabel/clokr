@@ -1705,20 +1705,8 @@
           {#if view === "team" && mayOpenPath($authStore.user, "/team/abwesenheiten")}
             <a class="btn btn-primary btn-sm" href="/team/abwesenheiten">Abwesenheit anlegen</a>
           {/if}
-          <!-- #846 D-05: the own clock stays one click away on Heute im Salon, while not clocked in. -->
-          {#if view === "team" && !isExempt && primaryLabel === "Einstempeln"}
-            {#if clockInBlocked(clockSalonViewState, clockSalonId)}
-              <!-- a salon must be chosen first: that choice lives on the clock stage of Mein Tag -->
-              <a class="btn btn-ghost btn-sm" href="/ich/tag">Einstempeln</a>
-            {:else}
-              <button
-                onclick={handleClock}
-                disabled={clockLoading || clockInBlocked(clockSalonViewState, clockSalonId)}
-                class="btn btn-ghost btn-sm"
-                type="button">Einstempeln</button
-              >
-            {/if}
-          {/if}
+          <!-- Owner 13.11.2026: no own clock action on Heute im Salon (was #846 D-05); the own clock
+               lives on Mein Tag, the team page stays a team page. -->
         </span>
       {/if}
     {/snippet}
@@ -2061,68 +2049,6 @@
                 </List>
               {/if}
             </section>
-            {#if teamWeek}
-              <section class="ts-sec" aria-labelledby="ts-week">
-                <h2 id="ts-week" class="mt-h2">
-                  Team-Woche
-                  <span class="ts-h2-meta"
-                    >KW {getWeekNumber(teamWeek.weekStart)} · {formatShortDate(teamWeek.weekStart)} –
-                    {formatShortDate(teamWeek.weekEnd)}</span
-                  >
-                </h2>
-                <div class="mt-table-wrap">
-                  <table class="mt-table ts-week" data-testid="team-week">
-                    <thead>
-                      <tr>
-                        <th scope="col">Person</th>
-                        {#each teamWeekDays as d (d)}
-                          <th scope="col" class:ts-today={isToday(d)}>
-                            {dayLabel(d)}
-                            {dayNum(d)}
-                          </th>
-                        {/each}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {#each pagedTeam as member (member.id)}
-                        <tr>
-                          <td class="ts-name">{member.name}</td>
-                          {#each member.days as day (day.date)}
-                            {#if teamWeekDays.includes(day.date)}
-                              {@const href = teamDayHref(member.id, day.date)}
-                              <td class="team-grid__cell" class:ts-today={isToday(day.date)}>
-                                {#if canOpenTeamDay && href !== null}
-                                  <a
-                                    class="team-grid__link"
-                                    {href}
-                                    aria-label={teamCellAriaLabel(
-                                      member.name,
-                                      day.date,
-                                      teamCellStatusText(day),
-                                    )}
-                                  >
-                                    {@render teamCellContent(day)}
-                                  </a>
-                                {:else}
-                                  {@render teamCellContent(day)}
-                                {/if}
-                              </td>
-                            {/if}
-                          {/each}
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                </div>
-                {#if teamWeek.team.length > TEAM_WEEK_PAGE_SIZE}
-                  <Pagination
-                    total={teamWeek.team.length}
-                    bind:page={teamPage}
-                    bind:pageSize={teamPageSize}
-                  />
-                {/if}
-              </section>
-            {/if}
           </div>
 
           <div class="ts-col">
@@ -2196,6 +2122,70 @@
             </section>
           </div>
         </div>
+        <!-- Owner 13.11.2026: the Team-Woche spans the full width below both columns; in the left
+             column seven days with status chips did not fit and the table scrolled sideways. -->
+        {#if teamWeek}
+          <section class="ts-sec ts-week-sec" aria-labelledby="ts-week">
+            <h2 id="ts-week" class="mt-h2">
+              Team-Woche
+              <span class="ts-h2-meta"
+                >KW {getWeekNumber(teamWeek.weekStart)} · {formatShortDate(teamWeek.weekStart)} –
+                {formatShortDate(teamWeek.weekEnd)}</span
+              >
+            </h2>
+            <div class="mt-table-wrap">
+              <table class="mt-table ts-week" data-testid="team-week">
+                <thead>
+                  <tr>
+                    <th scope="col">Person</th>
+                    {#each teamWeekDays as d (d)}
+                      <th scope="col" class:ts-today={isToday(d)}>
+                        {dayLabel(d)}
+                        {dayNum(d)}
+                      </th>
+                    {/each}
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each pagedTeam as member (member.id)}
+                    <tr>
+                      <td class="ts-name">{member.name}</td>
+                      {#each member.days as day (day.date)}
+                        {#if teamWeekDays.includes(day.date)}
+                          {@const href = teamDayHref(member.id, day.date)}
+                          <td class="team-grid__cell" class:ts-today={isToday(day.date)}>
+                            {#if canOpenTeamDay && href !== null}
+                              <a
+                                class="team-grid__link"
+                                {href}
+                                aria-label={teamCellAriaLabel(
+                                  member.name,
+                                  day.date,
+                                  teamCellStatusText(day),
+                                )}
+                              >
+                                {@render teamCellContent(day)}
+                              </a>
+                            {:else}
+                              {@render teamCellContent(day)}
+                            {/if}
+                          </td>
+                        {/if}
+                      {/each}
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            {#if teamWeek.team.length > TEAM_WEEK_PAGE_SIZE}
+              <Pagination
+                total={teamWeek.team.length}
+                bind:page={teamPage}
+                bind:pageSize={teamPageSize}
+              />
+            {/if}
+          </section>
+        {/if}
       </div>
       <LeaveReviewDialog
         bind:open={reviewOpen}
@@ -2580,6 +2570,9 @@
     font-weight: 500;
     color: var(--text-2);
     font-variant-numeric: tabular-nums;
+  }
+  .ts-week-sec {
+    margin-top: var(--s-6);
   }
   .ts-week th,
   .ts-week td {
