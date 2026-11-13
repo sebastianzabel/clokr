@@ -177,7 +177,13 @@ test.describe("Phase 75 — Visual baselines", () => {
     // before the screenshot fires.
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
     await page.waitForLoadState("networkidle");
-    await expect(page).toHaveScreenshot("07-admin-employees-list.png", { fullPage: true });
+    // #854: the shared person table names each person's Stammsalon. The fixture tenant's salon is called
+    // after the per-run tenant id („Test test-<hex>“), so those cells are masked; the column, its head
+    // and the row layout stay in the comparison.
+    await expect(page).toHaveScreenshot("07-admin-employees-list.png", {
+      fullPage: true,
+      mask: [page.locator('td[data-label="Stammsalon"]')],
+    });
   });
 
   test("08 — Admin System", async ({ page }) => {
