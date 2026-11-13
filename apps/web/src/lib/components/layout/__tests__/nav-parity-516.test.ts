@@ -42,26 +42,37 @@ describe("visibleNavSections — the one definition (#516, since #844 three area
     const sections = visibleNavSections({ permissions: p.ADMIN }, on);
     expect(sections.map((s) => s.label)).toEqual(["Ich", "Team", "Verwalten"]);
     const hrefs = hrefsOf(sections);
-    // Both Verfügbarkeit pages are offered (Ich › Dienstplan and Team › Verfügbarkeit, D-05).
-    for (const href of ["/ich/dienstplan", "/team/verfuegbarkeit", "/verwalten/system"]) {
+    // Ich › Dienstplan and Team › Dienstplan are offered (D-05); since #853 the team availability is the
+    // fourth tab of Team › Dienstplan and has no rail entry of its own.
+    for (const href of ["/ich/dienstplan", "/team/dienstplan", "/verwalten/system"]) {
       expect(hrefs).toContain(href);
     }
+    expect(hrefs).not.toContain("/team/verfuegbarkeit");
     // Every rail entry of the route table is offered, a hub child or an alias never.
+    // #853 (D-853-15): the one exception is Team › Personen, which an administration persona sees as
+    // Verwalten › Personen instead (exactly one „Personen“).
     for (const route of APP_ROUTES.filter((r) => r.area !== "ich" || r.inNav)) {
+      if (route.href === "/team/personen") continue;
       expect(hrefs.includes(route.href), route.href).toBe(route.inNav);
     }
+    expect(hrefs).toContain("/verwalten/personen");
+    expect(hrefs).not.toContain("/team/personen");
     expect(hrefs).not.toContain("/admin/special-leave");
     expect(hrefs).not.toContain("/verwalten/system/phorest");
   });
 
-  it("lists no target twice and keeps the two Verfügbarkeit pages in different areas", () => {
+  it("lists no target twice; Ich › Dienstplan stays in Ich and Team › Verfügbarkeit is a tab of Team › Dienstplan", () => {
     const sections = visibleNavSections({ permissions: p.ADMIN }, on);
     const hrefs = hrefsOf(sections);
     expect(new Set(hrefs).size).toBe(hrefs.length);
     const headingOf = (href: string) =>
       sections.find((s) => s.items.some((i) => i.href === href))?.label;
     expect(headingOf("/ich/dienstplan")).toBe("Ich");
-    expect(headingOf("/team/verfuegbarkeit")).toBe("Team");
+    expect(headingOf("/team/dienstplan")).toBe("Team");
+    expect(headingOf("/team/verfuegbarkeit")).toBeUndefined();
+    const tab = APP_ROUTES.find((r) => r.href === "/team/verfuegbarkeit");
+    expect(tab?.inNav).toBe(false);
+    expect(tab?.parent).toBe("/team/dienstplan");
   });
 
   it("follows the permissions per persona and drops the team availability with the feature", () => {
@@ -73,13 +84,16 @@ describe("visibleNavSections — the one definition (#516, since #844 three area
       "/ich/konto", // #594 (Phase 851)
     ]);
     const salon = hrefsOf(visibleNavSections({ permissions: p.SALON_MANAGER }, on));
-    expect(salon).toContain("/team/verfuegbarkeit");
+    expect(salon).toContain("/team/dienstplan");
+    expect(salon).not.toContain("/team/verfuegbarkeit");
     expect(salon).not.toContain("/verwalten/system");
     const off = hrefsOf(
       visibleNavSections({ permissions: p.SALON_MANAGER }, { availabilityEnabled: false }),
     );
     expect(off).toContain("/ich/dienstplan"); // #597 (Phase 851): the own shifts need no feature
     expect(off).not.toContain("/team/verfuegbarkeit");
+    // the roster itself does not depend on the feature
+    expect(off).toContain("/team/dienstplan");
   });
 });
 
@@ -110,13 +124,15 @@ describe("mobile Mehr sheet renders the same sections (#516)", () => {
     });
   }
 
-  it("marks the current target as the page (Team › Verfügbarkeit and Verwalten › System)", async () => {
+  it("marks the current target as the page (Team › Dienstplan on its Verfügbarkeit tab and Verwalten › System)", async () => {
     (authStore as unknown as { set(v: unknown): void }).set({
       user: { permissions: p.ADMIN },
     });
-    for (const [path, group] of [
-      ["/team/verfuegbarkeit", "Team"],
-      ["/verwalten/system", "Verwalten"],
+    // #853: the Verfügbarkeit tab is no rail entry; the sheet marks its parent „Dienstplan“ as the page.
+    for (const [path, group, target] of [
+      ["/team/verfuegbarkeit", "Team", "/team/dienstplan"],
+      ["/team/dienstplan/planung", "Team", "/team/dienstplan"],
+      ["/verwalten/system", "Verwalten", "/verwalten/system"],
     ] as const) {
       const { unmount } = renderWithTheme(BottomTabBar, { currentPath: path });
       await fireEvent.click(screen.getByRole("button", { name: /^Mehr/, hidden: true }));
@@ -126,7 +142,7 @@ describe("mobile Mehr sheet renders the same sections (#516)", () => {
         within(within(dialog).getByRole("navigation", { name: group })).getByRole("link", {
           current: "page",
         }),
-      ).toHaveAttribute("href", path);
+      ).toHaveAttribute("href", target);
       unmount();
     }
   });

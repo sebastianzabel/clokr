@@ -25,9 +25,10 @@
  *   7. (gap round, plan 840-17, G-1/G-3/G-8) the Anträge count is neutral and explained on every tab
  *      (also on a directly opened Planung) and leads to the „Offen“ filter, the type chips of the
  *      Anträge list and the inbox use the colours of the one mapping, the inbox header reads
- *      „Team“ / „Inbox“;
- *   8. (gap round, plan 840-18, G-9) „Neue Abwesenheit“ lays out as Mitarbeiter + Art, then
- *      Von + Bis, with no select cut off and no type eyebrow, and stacks on a phone;
+ *      „Aufgaben“ without an eyebrow (#843 D-843-22, #853 D-853-19);
+ *   8. (gap round, plan 840-18, G-9; #853 re-pointed) „Abwesenheit eintragen“ asks „Für wen?“
+ *      first, then lays out as Für wen? + Art, then Von + Bis, with no field cut off and no type
+ *      eyebrow, and stacks on a phone;
  *   9. (gap round, plan 840-18, G-7) the primary buttons of the leave pages compute exactly the
  *      colours of the reference primary (`/admin/employees`) and reach 4.5:1 in every theme (pflaume,
  *      salz, petrol; #842 D-842-16), mode and state (rest and hover), read from the computed styles in the real browser.
@@ -46,8 +47,15 @@ import AxeBuilder from "@axe-core/playwright";
 import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import type { TestTenant } from "../fixtures";
+import {
+  API_BASE,
+  authHeaders,
+  chooseFromCombobox,
+  createEmployee,
+  ensureEntitlement,
+  fileVacation,
+} from "../helpers/team-seed";
 
-const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4001";
 const PASSWORD = "test1234";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -67,10 +75,6 @@ function nthMonday(first: Date, n: number): Date {
   return new Date(first.getTime() + (offset + (n - 1) * 7) * DAY_MS);
 }
 
-function authHeaders(tenant: TestTenant) {
-  return { "content-type": "application/json", Authorization: `Bearer ${tenant.adminToken}` };
-}
-
 async function loginViaForm(page: Page, email: string, password: string): Promise<void> {
   await page.goto("/login");
   await page.getByLabel("E-Mail").fill(email);
@@ -81,77 +85,6 @@ async function loginViaForm(page: Page, email: string, password: string): Promis
 
 async function loginAsTenantAdmin(page: Page, tenant: TestTenant): Promise<void> {
   await loginViaForm(page, `admin@${tenant.tenantId}.test`, PASSWORD);
-}
-
-interface Person {
-  id: string;
-  /** Present for a person created with a password. */
-  email: string;
-  firstName: string;
-  lastName: string;
-}
-
-/**
- * An employee homed in the tenant's default salon. A `password` gives the person a direct sign-in
- * (the Mitarbeiter role), the way an admin sets one at creation.
- */
-async function createEmployee(
-  request: APIRequestContext,
-  tenant: TestTenant,
-  spec: { key?: string; firstName?: string; lastName?: string; password?: string } = {},
-): Promise<Person> {
-  const key = spec.key ?? "uebersicht";
-  const firstName = spec.firstName ?? "Uebersicht";
-  const lastName = spec.lastName ?? "Balken";
-  const stamp = Date.now();
-  const email = `${key}-${stamp}@${tenant.tenantId}.test`;
-  const res = await request.post(`${API_BASE}/api/v1/employees`, {
-    headers: authHeaders(tenant),
-    data: {
-      usualWorkDays: [1, 2, 3, 4, 5],
-      email,
-      firstName,
-      lastName,
-      employeeNumber: `${key.slice(0, 2).toUpperCase()}-${stamp.toString(36).slice(-6)}`,
-      hireDate: new Date("2024-01-01T00:00:00.000Z").toISOString(),
-      role: "EMPLOYEE",
-      ...(spec.password ? { password: spec.password } : {}),
-    },
-  });
-  expect(res.status(), `create the employee (${await res.text()})`).toBeLessThan(300);
-  const body = (await res.json()) as { id: string };
-  return { id: body.id, email, firstName, lastName };
-}
-
-/** Reading the entitlements of a year creates the regular VACATION row for it, as the app does. */
-async function ensureEntitlement(
-  request: APIRequestContext,
-  tenant: TestTenant,
-  employeeId: string,
-  year: number,
-): Promise<void> {
-  const res = await request.get(
-    `${API_BASE}/api/v1/leave/entitlements/${employeeId}?year=${year}`,
-    {
-      headers: authHeaders(tenant),
-    },
-  );
-  expect(res.ok(), `read the ${year} entitlement (${res.status()})`).toBe(true);
-}
-
-async function fileVacation(
-  request: APIRequestContext,
-  tenant: TestTenant,
-  employeeId: string,
-  startDate: string,
-  endDate: string,
-): Promise<string> {
-  const res = await request.post(`${API_BASE}/api/v1/leave/requests`, {
-    headers: authHeaders(tenant),
-    data: { employeeId, type: "VACATION", startDate, endDate },
-  });
-  expect(res.status(), `file the request (${await res.text()})`).toBeLessThan(300);
-  return ((await res.json()) as { id: string }).id;
 }
 
 // ── Shared helpers of the later tests ────────────────────────────────────────────────────────
@@ -252,7 +185,14 @@ async function animationsSettled(page: Page): Promise<void> {
  * Selectors of the markup this phase introduced; the colour contrast of exactly these is checked
  * (the shared shell, KPI strip and badge tokens are not part of the phase, see below).
  */
-const PHASE_MARKUP = [".leave-toolbar", '[data-testid="absence-timeline"]', ".leave-legend"];
+// `.lv-controls` is the Team page's toolbar since #853 (`.leave-toolbar` stays on the own /leave page);
+// both are listed so the contrast pass covers the toolbar on either page.
+const PHASE_MARKUP = [
+  ".leave-toolbar",
+  ".lv-controls",
+  '[data-testid="absence-timeline"]',
+  ".leave-legend",
+];
 
 function describeViolations(
   violations: Awaited<ReturnType<AxeBuilder["analyze"]>>["violations"],
@@ -801,8 +741,9 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
       description: `forecast head x=${headBox!.x} (viewport right ${scrollRight}); 31.03. right=${lastBox!.x + lastBox!.width}, forecast left=${headAfter!.x}`,
     });
 
-    // (d) the controls are in the toolbar; the planner is one card.
-    const toolbar = page.locator(".leave-toolbar");
+    // (d) the controls are in the toolbar row under the tab strip (#853: `.lv-controls` replaced the
+    // old `.leave-toolbar`); the planner is one card.
+    const toolbar = page.locator(".lv-controls");
     await expect(toolbar.getByTestId("leave-plan-head")).toBeVisible();
     await expect(toolbar.getByTestId("leave-plan-add-wish")).toBeVisible();
     await expect(page.getByTestId("leave-plan-page").locator(".card")).toHaveCount(1);
@@ -946,7 +887,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
       {
         name: "Team Anträge",
         path: `/team/leave?tab=antraege&datum=${datum}`,
-        ready: "leave-team-filter-status",
+        ready: "leave-team-requests",
       },
       {
         name: "Team Planung",
@@ -979,9 +920,10 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     expect(found).toEqual(Object.fromEntries(Object.keys(found).map((name) => [name, []])));
   });
 
-  // The inbox is the one place requests are decided (D-840-03). Its rows use the `onPrimary` mode of
-  // `ApprovalRow` (#840): the name is the one row button and the „Prüfen“ button is its sibling, so
-  // axe `nested-interactive` has nothing to report.
+  // The inbox is the one place requests are decided (D-840-03). Since #853 its rows are `TaskRow`s
+  // (test id `task-row-<kind>-<id>`) in the list `inbox-task-list`; they keep the `onPrimary` mode of
+  // `ListRow`: the name is the one row button and the „Ablehnen“ / „Genehmigen“ buttons (#853-19) are
+  // its siblings, so axe `nested-interactive` has nothing to report.
   test("5b. axe: the inbox with an open request", async ({ page, request, tenant }) => {
     const first = firstOfNextMonth();
     const employee = await createEmployee(request, tenant, {
@@ -1001,11 +943,16 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/inbox");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.locator(".approval-row").first()).toBeVisible();
+    await expect(page.getByTestId("inbox-task-list")).toBeVisible();
+    await expect(page.locator('[data-testid^="task-row-urlaub-"]').first()).toBeVisible();
     expect(await axeViolations(page), "axe on the inbox").toEqual([]);
 
     // Keyboard: Enter on the row's name button opens the review dialog (the `onPrimary` mode).
-    const nameButton = page.locator(".approval-row button.approval-primary").first();
+    const nameButton = page
+      .locator('[data-testid^="task-row-urlaub-"]')
+      .first()
+      .getByRole("button", { name: /Posteingang Zeile/ })
+      .first();
     await nameButton.focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("dialog").first()).toBeVisible();
@@ -1072,7 +1019,9 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     const count = page.getByTestId("leave-team-view-list-badge");
     await expect(count).toBeVisible();
     await expect(count).toHaveText("1");
-    await expect(count).toHaveClass(/tab-badge--count/);
+    // #853: the strip is PageTabs; its count pill is `page-tab-badge` (a link pill, still neutral -
+    // the not-red assertion below is what pins "information, not alarm").
+    await expect(count).toHaveClass(/page-tab-badge/);
     await expect(count).toHaveAttribute("title", /1 offen: 1 Antrag/);
     expect(await count.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(
       await tokenColor("--bad"),
@@ -1092,7 +1041,8 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(page).toHaveURL(/status=PENDING/);
     const row = page.getByTestId(`leave-team-row-${pendingId}`);
     await expect(row).toBeVisible();
-    await expect(page.getByTestId("leave-team-filter-status")).toHaveValue("PENDING");
+    // #853: the Status filter is a toolbar filter; its active chip names the choice.
+    await expect(page.getByText("Status: Offen", { exact: true })).toBeVisible();
 
     // ── G-3: the chip of the PENDING row is dashed in the vacation colour ────────────────────
     const vacation = await tokenColor("--leave-type-vacation");
@@ -1103,7 +1053,7 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     // The approved sick row (all statuses, the current year) has a solid chip filled with the sick
     // colour. The list year follows the anchor day of the URL, so open it on today's year.
     await page.goto("/team/leave?tab=antraege");
-    await expect(page.getByTestId("leave-team-filter-status")).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Filter Status entfernen" })).toHaveCount(0);
     const sickChip = page
       .getByTestId(`leave-team-row-${sick.id}`)
       .getByTestId(`leave-team-row-${sick.id}-type-chip`);
@@ -1119,13 +1069,17 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await expect(head.locator(".eyebrow")).toHaveCount(0);
     await expect(head.getByRole("heading", { level: 1 })).toHaveText("Aufgaben"); // Issue #574: one page name
     await expect(head.locator("h1 em")).toHaveCount(0);
-    const inboxChip = page.locator(".approval-row .leave-type-chip").first();
+    // #853-19 (prototype „Aufgaben“): the inbox row names its type with the plain Chip - the dashed
+    // LeaveTypeChip of G-3 stays on the Anträge list, where the timeline style belongs.
+    const inboxRow = page.locator('[data-testid^="task-row-urlaub-"]').first();
+    await expect(inboxRow).toBeVisible();
+    await expect(inboxRow.locator(".leave-type-chip")).toHaveCount(0);
+    const inboxChip = inboxRow.locator(".chip", { hasText: "Urlaub" }).first();
     await expect(inboxChip).toBeVisible();
-    expect(await borderStyleOf(inboxChip)).toBe("dashed");
-    expect(await inboxChip.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(vacation);
+    expect(await borderStyleOf(inboxChip)).not.toBe("dashed");
   });
 
-  test("8. Neue Abwesenheit: Mitarbeiter + Art, then Von + Bis; stacked on a phone", async ({
+  test("8. Abwesenheit eintragen: Für wen? + Art, then Von + Bis; stacked on a phone", async ({
     page,
     request,
     tenant,
@@ -1135,22 +1089,43 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     await createEmployee(request, tenant, { key: "frm", firstName: "Formular", lastName: "Zeile" });
     await loginAsTenantAdmin(page, tenant);
 
-    // Team: „+ Neue Abwesenheit“ — row 1 Mitarbeiter + Art, row 2 Von + Bis, no eyebrow.
+    // Team: „Abwesenheit eintragen“ — „Für wen?“ comes first and nothing else is offered until a
+    // person is chosen; then row 1 Für wen? + Art, row 2 Von + Bis, no eyebrow.
     await page.goto("/team/leave?tab=uebersicht");
-    await page
-      .locator(".page-head")
-      .getByRole("button", { name: /Neue Abwesenheit/ })
-      .click();
+    await page.locator(".page-head").getByRole("button", { name: "Abwesenheit eintragen" }).click();
     const dialog = page.getByTestId("leave-form-modal");
     await expect(dialog).toBeVisible();
     await animationsSettled(page);
+    const who = dialog.getByRole("combobox", { name: "Für wen?" });
+    await expect(who).toBeVisible();
+    await expect(who).toHaveValue("");
+    await expect(page.locator("#f-type")).toBeHidden();
+    await expect(page.locator("#f-start")).toBeHidden();
+    await chooseFromCombobox(who, page.getByRole("option", { name: /Zeile, Formular/ }), "Zeile");
+    await expect(who).toHaveValue(/Zeile, Formular/);
+    await expect(page.locator("#f-type")).toBeVisible();
+    // The person's balance block and the colleague hint load after the pick and grow (re-centre) the
+    // dialog: the four boxes are read in ONE evaluate, so they come from the same layout.
+    await expect(dialog.getByText("Jahresanspruch")).toBeVisible();
+    await animationsSettled(page);
     const topOf = async (selector: string) => (await page.locator(selector).boundingBox())!;
-    const emp = await topOf("#create-emp");
-    const type = await topOf("#f-type");
-    const from = await topOf("#f-start");
-    const to = await topOf("#f-end");
-    expect(Math.abs(emp.y - type.y), "Mitarbeiter and Art share their top").toBeLessThanOrEqual(2);
-    expect(emp.width, "the Mitarbeiter select is wide enough").toBeGreaterThanOrEqual(200);
+    const boxes = () =>
+      page.evaluate(() => {
+        const rect = (selector: string) => {
+          const r = document.querySelector(selector)!.getBoundingClientRect();
+          return { y: r.y, width: r.width, height: r.height };
+        };
+        // The Combobox's field box (input + chevron) is the counterpart of the Art select's box.
+        return {
+          emp: rect('[data-testid="leave-form-modal"] .cb-field'),
+          type: rect("#f-type"),
+          from: rect("#f-start"),
+          to: rect("#f-end"),
+        };
+      });
+    const { emp, type, from, to } = await boxes();
+    expect(Math.abs(emp.y - type.y), "Für wen? and Art share their top").toBeLessThanOrEqual(2);
+    expect(emp.width, "the Für wen? field is wide enough").toBeGreaterThanOrEqual(200);
     expect(type.width, "the Art select is wide enough").toBeGreaterThanOrEqual(200);
     expect(Math.abs(from.y - to.y), "Von and Bis share their top").toBeLessThanOrEqual(2);
     expect(from.y, "the dates row is below the who row").toBeGreaterThan(emp.y + emp.height - 1);
@@ -1163,9 +1138,8 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
     expect(phoneTo.y, "Bis lies below Von on a phone").toBeGreaterThanOrEqual(
       phoneFrom.y + phoneFrom.height - 1,
     );
-    const phoneEmp = await topOf("#create-emp");
-    const phoneType = await topOf("#f-type");
-    expect(phoneType.y, "Art lies below Mitarbeiter on a phone").toBeGreaterThanOrEqual(
+    const { emp: phoneEmp, type: phoneType } = await boxes();
+    expect(phoneType.y, "Art lies below Für wen? on a phone").toBeGreaterThanOrEqual(
       phoneEmp.y + phoneEmp.height - 1,
     );
 
@@ -1256,9 +1230,9 @@ test.describe("Abwesenheiten area (Issue #840)", () => {
         url: "/team/leave?tab=uebersicht",
         buttons: [
           {
-            name: "team: + Neue Abwesenheit",
+            name: "team: Abwesenheit eintragen",
             locate: () =>
-              page.locator(".page-head").getByRole("button", { name: /Neue Abwesenheit/ }),
+              page.locator(".page-head").getByRole("button", { name: "Abwesenheit eintragen" }),
           },
         ],
       },

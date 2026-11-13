@@ -76,6 +76,7 @@ describe("visibleTeamNavItems", () => {
       "/team/zeiten",
       "/team/abwesenheiten",
       "/team/dienstplan",
+      "/team/personen", // #853: the read-only team directory (employee:read, no person-management right)
     ]);
     expect(hrefs).not.toContain("/verwalten/berichte");
   });
@@ -83,7 +84,7 @@ describe("visibleTeamNavItems", () => {
   it("AK-378-2: Ausbilder sees only Team-Zeiten, Abwesenheiten — no Aufgaben, no Schichtplanung, no Berichte", () => {
     const items = visibleTeamNavItems({ permissions: AUSBILDER_PERMISSIONS });
     const hrefs = items.map((i) => i.href);
-    expect(hrefs).toEqual(["/team/zeiten", "/team/abwesenheiten"]);
+    expect(hrefs).toEqual(["/team/zeiten", "/team/abwesenheiten", "/team/personen"]);
     expect(hrefs).not.toContain("/team/aufgaben"); // no approve permission
     expect(hrefs).not.toContain("/team/dienstplan"); // shift:read only, not shift:plan
     expect(hrefs).not.toContain("/team/heute"); // no team-overview:read
@@ -101,6 +102,8 @@ describe("visibleTeamNavItems", () => {
     expect(hrefs).not.toContain("/team/zeiten"); // no time-entry:read — no daily times
     expect(hrefs).not.toContain("/team/dienstplan");
     expect(hrefs).not.toContain("/team/aufgaben"); // no approve permission
+    // #853: she manages persons, so she sees Verwalten › Personen instead of Team › Personen
+    expect(hrefs).not.toContain("/team/personen");
   });
 
   it("a user object with no permissions list at all sees no Team-Bereich items (fail-closed)", () => {
@@ -141,6 +144,7 @@ describe("visibleTeamNavItems", () => {
       "/team/zeiten",
       "/team/abwesenheiten",
       "/team/dienstplan",
+      "/team/personen",
     ]);
   });
 });

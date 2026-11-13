@@ -70,3 +70,35 @@ describe("DaySheet", () => {
     expect(screen.queryByTestId("day-sheet-primary")).toBeNull();
   });
 });
+
+// Issue #853 (additive, Team › Zeiten): the manager's sheet carries the entry details the list no
+// longer shows, the day's findings and a closed-month text addressed to the manager.
+describe("DaySheet - manager additions (#853)", () => {
+  it("shows source, note and findings, and the manager's closed-month text", async () => {
+    const { createRawSnippet } = await import("svelte");
+    const entryActions = createRawSnippet((e: () => { id: string }) => ({
+      render: () => `<button type="button">Bearbeiten ${e().id}</button>`,
+    }));
+    renderWithTheme(DaySheet, {
+      ...base,
+      locked: true,
+      lockedText: "Der Monat ist abgeschlossen.",
+      findings: ["Pause zu kurz"],
+      entries: [{ ...base.entries[0], source: "Mobil", note: "Kasse", testId: "row-a" }],
+      entryActions,
+    });
+    const sheet = screen.getByTestId("day-sheet");
+    expect(screen.getByTestId("row-a").textContent).toContain("Mobil");
+    expect(screen.getByTestId("row-a").textContent).toContain("Kasse");
+    expect(screen.getByRole("button", { name: "Bearbeiten a" })).toBeTruthy();
+    expect(sheet.textContent).toContain("Pause zu kurz");
+    expect(sheet.textContent).toContain("Der Monat ist abgeschlossen.");
+    expect(sheet.textContent).not.toContain("deine Leitung");
+  });
+
+  it("without the additions it renders exactly the person's sheet", () => {
+    renderWithTheme(DaySheet, base);
+    const header = [...document.querySelectorAll("th")].map((th) => th.textContent);
+    expect(header).toEqual(["Von", "Bis", "Pause", "Netto"]);
+  });
+});

@@ -3,7 +3,7 @@
 // The forecast of a personal saldo is worded by `lib/saldo/forecast-label.ts` from the server's
 // `unconfirmedMonths` (and `hasClosedMonth`); a view that forgets to pass the number would fall back
 // to the "unknown" wording and quietly read "Seit Monatsabschluss" for a genuine running month. These
-// pins read the five consumers (Mein Tag figure, /leave KPI, the leave form, both Konto cards) and
+// pins read the consumers (Mein Tag figure, the leave form, Ich › Konto) and
 // fail when the value stops flowing from the endpoint to the primitive. The behaviour of the
 // primitives themselves is pinned by their mounted tests; the ban on a hard-coded wording is the
 // guard `team-saldo-one-place-588.test.ts`.
@@ -86,13 +86,13 @@ describe("personal saldo views pass the data to the forecast label (Issue #588, 
     expect(compact).toContain("{unconfirmedMonths}");
   });
 
-  it("team/time-entries: the Konto card gets the count of /overtime/:id", () => {
+  // Issue #853 (owner review): Team › Zeiten shows the month only (the four figures of the prototype);
+  // a person's account total is worded on /ich/konto and in the reports, never on this page.
+  it("team/time-entries shows no account total", () => {
     const text = read(TEAM_TIME_ENTRIES);
-    expect(text).toMatch(/unconfirmedMonths\?: number \| null;/);
-    expect(text).toContain("overtimeUnconfirmedMonths = overtimeValue?.unconfirmedMonths");
-    const card = elementAfter(text, "<KontoSaldoCard");
-    expect(card).toContain("unconfirmedMonths={overtimeUnconfirmedMonths}");
-    expect(card).toContain("hasClosedMonth={overtimeHasClosedMonth}");
+    expect(text).not.toContain("kontoKpiItem(");
+    expect(text).not.toContain("<KontoSaldoCard");
+    expect(text).toContain("zeitenKpis({");
   });
 
   // Issue #851: the own account total left /time-entries for /ich/konto, which words its forecast

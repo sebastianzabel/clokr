@@ -124,7 +124,8 @@
     leaveTypeLabel,
     type TeamTaskLeave,
   } from "$lib/dashboard/heute-im-salon"; // Issue #846
-  import { leaveDaysLabel } from "$lib/leave/leave-days-label";
+  import { formatDayCount, leaveDaysLabel } from "$lib/leave/leave-days-label"; // #853-19: formatDayCount = day figures with a decimal comma
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19
   import type { TodayEmployee } from "$lib/reports/today-attendance";
   import type { TodayAttendanceData } from "$lib/reports/today-attendance";
   import LeaveReviewDialog from "$lib/components/leave/LeaveReviewDialog.svelte"; // #846 D-03: the dialog of Aufgaben
@@ -1460,8 +1461,8 @@
       ? `${format(new Date(myNextLeave.startDate), "d.M.")}–${format(new Date(myNextLeave.endDate), "d.M.")}`
       : null;
     return (
-      [pending > 0 ? `${pending} beantragt` : null, next].filter(Boolean).join(" · ") ||
-      `von ${v.total}`
+      [pending > 0 ? `${formatDays(pending)} beantragt` : null, next].filter(Boolean).join(" · ") ||
+      `von ${formatDays(v.total)}`
     );
   }
 
@@ -1504,8 +1505,8 @@
     if (stats?.vacation) {
       items.push({
         label: "Resturlaub",
-        value: String(stats.vacation.remaining),
-        unit: stats.vacation.remaining === 1 ? "Tag" : "Tage",
+        value: formatDays(stats.vacation.remaining),
+        unit: formatDays(stats.vacation.remaining) === "1" ? "Tag" : "Tage",
         explanation: vacationLine(stats.vacation),
         testId: "kpi-vacation",
       });
@@ -2186,9 +2187,7 @@
                         <Chip tone="neutral">{leave.type}</Chip>
                       {/snippet}
                       {#snippet trailing()}
-                        <span class="mt-quiet"
-                          >{leave.days} {leave.days === 1 ? "Tag" : "Tage"}</span
-                        >
+                        <span class="mt-quiet">{formatDayCount(leave.days)}</span>
                       {/snippet}
                     </ListRow>
                   {/each}

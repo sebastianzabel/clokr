@@ -6,6 +6,13 @@
   //
   // Each bits-ui part renders through its `child` snippet, so the elements are this component's
   // own and the scoped CSS below applies to them.
+  //
+  // Issue #853 (D-853-05, D-853-11) - two modes. PANEL mode (above) keeps the tab panels on the page.
+  // LINK mode: every tab carries an `href` and no `panel` is passed - the tabs are routes of their
+  // own, so the strip is a `<nav>` of anchors (the current one marked `aria-current="page"`), not an
+  // ARIA tablist. A page places the strip directly under its PageHead. The test ids and the badge
+  // click target follow the #840 contract of the old LeaveToolbar (`<prefix>-tabs`, `<prefix>-<tab>`,
+  // `<prefix>-<tab>-badge`, `[data-tab-count]`).
   import type { Snippet } from "svelte";
   import { Tabs } from "bits-ui";
 
@@ -14,6 +21,19 @@
     value: string;
     /** German label of the trigger. */
     label: string;
+    /** Link mode (D-853-05): the route of the tab. Every tab needs one, else the strip is a tablist. */
+    href?: string;
+    /** Own test id suffix (`<testIdPrefix>-<testId>`); defaults to the tab value. */
+    testId?: string;
+    /** Count shown next to the label; absent or 0 shows none. */
+    badge?: number;
+    /** Explanation of the count: its title and a screen-reader text. Display text only. */
+    badgeLabel?: string;
+    /**
+     * A pointer click on the count selects the tab and then calls this (panel mode). Keyboard
+     * activation of the tab does not call it.
+     */
+    onBadgeSelect?: () => void;
   }
 
   interface Props {
@@ -26,11 +46,36 @@
     onTabChange?: (value: string) => void;
     /** Accessible name of the tab strip. */
     tabsLabel?: string;
+    /** Test ids of the strip, the tabs and their badges (`<prefix>-tabs`, `<prefix>-<tab>`, `…-badge`). */
+    testIdPrefix?: string;
   }
 
-  let { tabs, tab = $bindable(), panel, onTabChange, tabsLabel = "Bereiche" }: Props = $props();
+  let {
+    tabs,
+    tab = $bindable(),
+    panel,
+    onTabChange,
+    tabsLabel = "Bereiche",
+    testIdPrefix,
+  }: Props = $props();
 
   const current = $derived(tab ?? tabs[0]?.value ?? "");
+  const linkMode = $derived(!panel && tabs.length > 0 && tabs.every((t) => !!t.href));
+
+  function tabTestId(item: PageTab): string | undefined {
+    return testIdPrefix ? `${testIdPrefix}-${item.testId ?? item.value}` : undefined;
+  }
+
+  // The count is no nested button (a button inside a tab is invalid): the trigger's click handler
+  // decides by the event target whether the pointer hit the count. bits-ui has already selected the
+  // tab when its own handler ran first.
+  function onTriggerClick(e: MouseEvent, item: PageTab, inner: unknown): void {
+    (inner as ((ev: MouseEvent) => void) | undefined)?.(e);
+    const target = e.target;
+    if (item.onBadgeSelect && target instanceof Element && target.closest("[data-tab-count]")) {
+      item.onBadgeSelect();
+    }
+  }
 
   function select(next: string) {
     tab = next;
@@ -38,34 +83,85 @@
   }
 </script>
 
-<Tabs.Root value={current} onValueChange={select} loop activationMode="automatic">
-  {#snippet child({ props })}
-    <div {...props} class="page-tabs">
-      <Tabs.List aria-label={tabsLabel}>
-        {#snippet child({ props: listProps })}
-          <div {...listProps} class="page-tab-strip">
-            {#each tabs as item (item.value)}
-              <Tabs.Trigger value={item.value}>
-                {#snippet child({ props: triggerProps })}
-                  <button {...triggerProps} class="page-tab">{item.label}</button>
-                {/snippet}
-              </Tabs.Trigger>
-            {/each}
-          </div>
-        {/snippet}
-      </Tabs.List>
+{#snippet badge(item: PageTab)}
+  {#if item.badge}
+    {#if item.badgeLabel}
+      <span
+        class="page-tab-badge"
+        class:page-tab-badge--link={item.onBadgeSelect}
+        title={item.badgeLabel}
+        aria-hidden="true"
+        data-tab-count
+        data-testid={tabTestId(item) ? `${tabTestId(item)}-badge` : undefined}>{item.badge}</span
+      >
+      <span class="page-tab-sr">{item.badgeLabel}</span>
+    {:else}
+      <span class="page-tab-badge" data-tab-count>{item.badge}</span>
+    {/if}
+  {/if}
+{/snippet}
+
+{#if linkMode}
+  <nav
+    class="page-tabs"
+    aria-label={tabsLabel}
+    data-testid={testIdPrefix ? `${testIdPrefix}-tabs` : undefined}
+  >
+    <div class="page-tab-strip">
       {#each tabs as item (item.value)}
-        <Tabs.Content value={item.value}>
-          {#snippet child({ props: contentProps })}
-            <div {...contentProps} class="page-tab-panel">
-              {@render panel?.(item.value)}
-            </div>
-          {/snippet}
-        </Tabs.Content>
+        <a
+          class="page-tab"
+          href={item.href}
+          aria-current={item.value === current ? "page" : undefined}
+          data-testid={tabTestId(item)}
+        >
+          {item.label}{@render badge(item)}
+        </a>
       {/each}
     </div>
-  {/snippet}
-</Tabs.Root>
+  </nav>
+{:else}
+  <Tabs.Root value={current} onValueChange={select} loop activationMode="automatic">
+    {#snippet child({ props })}
+      <div {...props} class="page-tabs">
+        <Tabs.List aria-label={tabsLabel}>
+          {#snippet child({ props: listProps })}
+            <div
+              {...listProps}
+              class="page-tab-strip"
+              data-testid={testIdPrefix ? `${testIdPrefix}-tabs` : undefined}
+            >
+              {#each tabs as item (item.value)}
+                <Tabs.Trigger value={item.value}>
+                  {#snippet child({ props: triggerProps })}
+                    <button
+                      {...triggerProps}
+                      class="page-tab"
+                      data-testid={tabTestId(item)}
+                      onclick={(e) =>
+                        onTriggerClick(e, item, (triggerProps as { onclick?: unknown }).onclick)}
+                    >
+                      {item.label}{@render badge(item)}
+                    </button>
+                  {/snippet}
+                </Tabs.Trigger>
+              {/each}
+            </div>
+          {/snippet}
+        </Tabs.List>
+        {#each tabs as item (item.value)}
+          <Tabs.Content value={item.value}>
+            {#snippet child({ props: contentProps })}
+              <div {...contentProps} class="page-tab-panel">
+                {@render panel?.(item.value)}
+              </div>
+            {/snippet}
+          </Tabs.Content>
+        {/each}
+      </div>
+    {/snippet}
+  </Tabs.Root>
+{/if}
 
 <style>
   .page-tabs {
@@ -90,6 +186,7 @@
   }
 
   .page-tab {
+    position: relative;
     flex: 0 0 auto;
     white-space: nowrap;
     min-height: var(--h-row);
@@ -105,11 +202,19 @@
     color: var(--text-2);
   }
 
+  /* Link mode: the anchor looks like the trigger. */
+  a.page-tab {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+  }
+
   .page-tab:hover {
     color: var(--text);
   }
 
-  .page-tab[data-state="active"] {
+  .page-tab[data-state="active"],
+  .page-tab[aria-current="page"] {
     color: var(--brand);
     border-bottom-color: var(--brand);
     font-weight: 600;
@@ -119,6 +224,40 @@
   .page-tab:focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: -2px;
+  }
+
+  /* A quiet count pill (#840 G-1): information, not an alarm. */
+  .page-tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.125rem;
+    height: 1.125rem;
+    padding: 0 0.3rem;
+    margin-left: 0.375rem;
+    border-radius: 9999px;
+    background: var(--rail);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--line-2);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .page-tab-badge--link {
+    cursor: pointer;
+  }
+
+  .page-tab-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
   }
 
   .page-tab-panel:focus-visible {

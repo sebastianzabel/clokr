@@ -87,6 +87,21 @@ describe("ParentalReductionDialog", () => {
     expect(screen.getByText(PARENTAL_REDUCTION_HINT)).toBeTruthy();
   });
 
+  it("lists the years in the DataTable block: a captioned table, one row per year, labelled cells", async () => {
+    renderDialog();
+    await screen.findByTestId("parental-reduction-row-2026");
+    const table = document.querySelector("table.dt-table")!;
+    expect(table).toBeTruthy();
+    expect(table.querySelector("caption")?.textContent).toBe("Kürzung je Kalenderjahr");
+    expect(table.querySelectorAll('tbody tr[data-testid^="parental-reduction-row-"]')).toHaveLength(
+      2,
+    );
+    const row2026 = screen.getByTestId("parental-reduction-row-2026");
+    expect(row2026.querySelector('td[data-label="Anspruch (alt → neu)"]')?.textContent).toMatch(
+      /30\s*→\s*23/,
+    );
+  });
+
   it("preselects the committable year's checkbox", async () => {
     renderDialog();
     await screen.findByTestId("parental-reduction-row-2026");

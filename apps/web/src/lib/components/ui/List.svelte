@@ -6,12 +6,14 @@
     /** Accessible name of the list. */
     ariaLabel: string;
     children: Snippet;
+    /** `data-testid` of the `ul` (Issue #853, D-853-06). */
+    testId?: string;
   }
 
-  let { ariaLabel, children }: Props = $props();
+  let { ariaLabel, children, testId }: Props = $props();
 </script>
 
-<ul class="ui-list" aria-label={ariaLabel}>
+<ul class="ui-list" aria-label={ariaLabel} data-testid={testId}>
   {@render children()}
 </ul>
 
@@ -24,5 +26,7 @@
     border: 1px solid var(--line);
     border-radius: var(--r-card);
     overflow: hidden;
+    /* #853-19: the task rows trail their buttons from the wide container breakpoint on. */
+    container-type: inline-size;
   }
 </style>

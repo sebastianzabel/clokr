@@ -81,15 +81,19 @@ export function leaveRequested(
 }
 
 /**
- * #846 (D-03): „Urlaub genehmigt · 14.12.–18.12.2026“ / „Urlaub abgelehnt · …“ — the acknowledgement of a
- * decision in the shared review dialog (Aufgaben and Heute im Salon). `typeLabel` as in `leaveRequested`.
+ * #846 (D-03) and #853 (S-29): „Antrag von Alex Muster genehmigt · 14.12.–18.12.2026“ — the one
+ * acknowledgement of a decision in the shared review dialog (Aufgaben and Heute im Salon). It names
+ * the person, the decision and the period, never the leave type: a sick-leave decision on a shared
+ * screen would be health data (Art. 9 DSGVO, T-853-12). A cancellation decision says „Stornierung“.
  */
 export function leaveDecided(
-  typeLabel: string,
+  personName: string,
   startDate: string,
   endDate: string,
   status: "APPROVED" | "REJECTED",
+  isCancellation = false,
 ): string {
+  const subject = isCancellation ? "Stornierung" : "Antrag";
   const verb = status === "APPROVED" ? "genehmigt" : "abgelehnt";
-  return `${typeLabel} ${verb} · ${leavePeriod(startDate, endDate)}`;
+  return `${subject} von ${personName} ${verb} · ${leavePeriod(startDate, endDate)}`;
 }

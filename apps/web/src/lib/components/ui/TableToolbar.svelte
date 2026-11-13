@@ -43,6 +43,11 @@
     onReset?: () => void;
     /** Accessible label of the search input. */
     searchLabel?: string;
+    /**
+     * Issue #853 (additive): one „+ <Label>“ button per filter that is off (the prototype's
+     * „+ Salon“, „+ Vertrag“), each opening only its own options, instead of one „+ Filter“ menu.
+     */
+    filterButtons?: boolean;
   }
 
   let {
@@ -53,6 +58,7 @@
     onFilterChange,
     onReset,
     searchLabel = "Suchen",
+    filterButtons = false,
   }: Props = $props();
 
   // The id of the "all" radio; a real option value never takes it.
@@ -99,6 +105,58 @@
   }
 </script>
 
+{#snippet filterPortal(list: ToolbarFilter[])}
+  <Popover.Portal>
+    <Popover.Content sideOffset={4} collisionPadding={8} align="start">
+      {#snippet child({ props, wrapperProps, open: isOpen })}
+        {#if isOpen}
+          <div {...wrapperProps} class="tt-wrapper">
+            <div {...props} class="tt-pop">
+              {#each list as filter (filter.key)}
+                <div class="tt-group">
+                  <p class="tt-group-title" id="{uid}-{filter.key}">{filter.label}</p>
+                  <RadioGroup.Root
+                    class="tt-options"
+                    aria-labelledby="{uid}-{filter.key}"
+                    value={filter.value === "" ? ALL : filter.value}
+                    onValueChange={(v) => setFilter(filter.key, v)}
+                  >
+                    {#each [{ value: ALL, label: "Alle" }, ...filter.options] as option (option.value)}
+                      <RadioGroup.Item value={option.value}>
+                        {#snippet child({ props: itemProps, checked })}
+                          <button {...itemProps} class="tt-option" class:tt-option--on={checked}>
+                            <span class="tt-option-label">{option.label}</span>
+                            {#if checked}
+                              <svg
+                                class="tt-check"
+                                aria-hidden="true"
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2.5"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              >
+                                <path d="M20 6 9 17l-5-5" />
+                              </svg>
+                            {/if}
+                          </button>
+                        {/snippet}
+                      </RadioGroup.Item>
+                    {/each}
+                  </RadioGroup.Root>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      {/snippet}
+    </Popover.Content>
+  </Popover.Portal>
+{/snippet}
+
 <div class="table-toolbar">
   <div class="tt-bar">
     <div class="tt-search">
@@ -128,62 +186,17 @@
       />
     </div>
 
-    {#if filters.length > 0}
+    {#if filters.length > 0 && filterButtons}
+      {#each filters.filter((f) => f.value === "") as filter (filter.key)}
+        <Popover.Root>
+          <Popover.Trigger class="tt-filter-btn">+ {filter.label}</Popover.Trigger>
+          {@render filterPortal([filter])}
+        </Popover.Root>
+      {/each}
+    {:else if filters.length > 0}
       <Popover.Root bind:open>
         <Popover.Trigger class="tt-filter-btn">+ Filter</Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content sideOffset={4} collisionPadding={8} align="start">
-            {#snippet child({ props, wrapperProps, open: isOpen })}
-              {#if isOpen}
-                <div {...wrapperProps} class="tt-wrapper">
-                  <div {...props} class="tt-pop">
-                    {#each filters as filter (filter.key)}
-                      <div class="tt-group">
-                        <p class="tt-group-title" id="{uid}-{filter.key}">{filter.label}</p>
-                        <RadioGroup.Root
-                          class="tt-options"
-                          aria-labelledby="{uid}-{filter.key}"
-                          value={filter.value === "" ? ALL : filter.value}
-                          onValueChange={(v) => setFilter(filter.key, v)}
-                        >
-                          {#each [{ value: ALL, label: "Alle" }, ...filter.options] as option (option.value)}
-                            <RadioGroup.Item value={option.value}>
-                              {#snippet child({ props: itemProps, checked })}
-                                <button
-                                  {...itemProps}
-                                  class="tt-option"
-                                  class:tt-option--on={checked}
-                                >
-                                  <span class="tt-option-label">{option.label}</span>
-                                  {#if checked}
-                                    <svg
-                                      class="tt-check"
-                                      aria-hidden="true"
-                                      width="14"
-                                      height="14"
-                                      viewBox="0 0 24 24"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      stroke-width="2.5"
-                                      stroke-linecap="round"
-                                      stroke-linejoin="round"
-                                    >
-                                      <path d="M20 6 9 17l-5-5" />
-                                    </svg>
-                                  {/if}
-                                </button>
-                              {/snippet}
-                            </RadioGroup.Item>
-                          {/each}
-                        </RadioGroup.Root>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-            {/snippet}
-          </Popover.Content>
-        </Popover.Portal>
+        {@render filterPortal(filters)}
       </Popover.Root>
     {/if}
 

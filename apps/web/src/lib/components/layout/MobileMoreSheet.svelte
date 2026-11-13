@@ -9,6 +9,7 @@
   } from "$stores/release-notes";
   import { onMount } from "svelte";
   import { activeNavHref } from "$lib/nav/active-route";
+  import { navCurrentPath } from "$lib/nav/routes";
 
   import type { NavSection } from "$lib/nav/app-nav";
 
@@ -59,7 +60,7 @@
   const currentHref = $derived(
     activeNavHref(
       sections.flatMap((section) => section.items.map((item) => item.href)),
-      currentPath,
+      navCurrentPath(currentPath),
     ),
   );
 

@@ -58,16 +58,35 @@ describe("SalonTimeEntries — rows", () => {
       capReached: false,
       salonName: "Hauptsalon",
     });
-    for (const header of ["Mitarbeiter", "Beginn", "Ende", "Pause", "Arbeitszeit"]) {
+    for (const header of ["Tag", "Person", "Zeiten", "Pause", "Netto", "Status"]) {
       expect(screen.getAllByText(header).length).toBeGreaterThan(0);
     }
-    expect(screen.getByText("Mo, 15.06.2026")).toBeTruthy();
-    expect(screen.getByText("Di, 16.06.2026")).toBeTruthy();
+    expect(screen.getAllByText("Mo 15.6.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Di 16.6.").length).toBeGreaterThan(0);
     expect(screen.getByText("Adler, Bernd")).toBeTruthy();
     expect(screen.getAllByText("Berg, Anna").length).toBe(2);
     expect(screen.getByText("offen")).toBeTruthy();
     expect(screen.getByText("ungültig")).toBeTruthy();
     expect(document.body.textContent ?? "").not.toMatch(/Summe|Gesamt/);
+  });
+
+  // Issue #853 (owner review): one table in the pattern of the person view; no row is tinted, an
+  // open or invalid entry says so in a quiet chip, and no break interval or emoji is printed.
+  it("renders one table for the month, untinted, with H:MM figures", () => {
+    renderWithTheme(SalonTimeEntries, {
+      days,
+      status: "rows",
+      capReached: false,
+      salonName: "Hauptsalon",
+    });
+    expect(document.querySelectorAll("table")).toHaveLength(1);
+    expect(screen.getByRole("table", { name: "Einträge in Hauptsalon" })).toBeTruthy();
+    expect(document.querySelector(".card")).toBeNull();
+    expect(screen.getByTestId("salon-time-entries")).toBeTruthy();
+    expect(document.querySelectorAll("tr[data-tone]")).toHaveLength(0);
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain(" min");
+    expect(text).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 
   it("shows the Skeleton loading state", () => {

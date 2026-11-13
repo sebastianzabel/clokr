@@ -350,6 +350,15 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "`leave-limits-load-836.test.ts`.",
   },
   {
+    route: "GET /api/v1/tasks/open",
+    reason:
+      "New route added in Issue #853, long after the role guard (`requireRole`) was deleted from " +
+      "middleware/auth.ts (#75b/#83) - built permission-gated (`time-entry:read:ZUGEWIESEN`) from " +
+      "its very first commit and never had role-based access behavior to compare. Same " +
+      "vacuous-satisfaction reasoning as the Phase 430, 468 and 481 entries: RECORD/MERGE mode " +
+      "refuses to run once the role guard is gone. Proven by `tasks-open-853.test.ts`.",
+  },
+  {
     route: "POST /api/v1/leave/limits",
     reason:
       "New route added in Issue #836, long after the role guard (`requireRole`) was deleted from " +

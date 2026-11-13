@@ -50,7 +50,7 @@
     NEUTRAL_CHIP_LABEL,
     type CalendarTypeCode,
   } from "$lib/leave/team-calendar-visibility";
-  import { leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { formatDayCount, leaveDaysLabel } from "$lib/leave/leave-days-label"; // Issue #595 (D-04), #853-19
   import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588
   import { leaveRequested } from "$lib/feedback/action-messages"; // #843 (D-843-08)
   import type { EditableLeaveRequest } from "$lib/leave/leave-request-form";
@@ -120,6 +120,10 @@
     /** Team-context-only addition (Phase 415, D-03): the person picker. Rendered above this
      *  component's own first field. Omitted on `/leave` — nothing extra renders there. */
     personPicker?: Snippet;
+    /** Issue #853 (D-853-12, S-15): with a `personPicker`, show only the picker until a person is
+     *  chosen (`employeeId` is empty); type, dates and the rest follow after the choice. Off by
+     *  default - an omitted prop changes nothing. */
+    deferUntilPerson?: boolean;
   }
 
   let {
@@ -132,7 +136,11 @@
     entitlementYear = new Date().getFullYear(),
     onSaved,
     personPicker,
+    deferUntilPerson = false,
   }: Props = $props();
+
+  // Only a create can wait for a person: an edit always has one.
+  const awaitingPerson = $derived(deferUntilPerson && !editingRequest && !employeeId);
 
   // ── Form state ───────────────────────────────────────────────────────────
   let formType: CalendarTypeCode = $state("VACATION");
@@ -618,6 +626,7 @@
     <form
       id="leave-form"
       data-testid="leave-form"
+      data-awaiting-person={awaitingPerson ? "" : undefined}
       onsubmit={preventDefault(submitRequest)}
       class="form-grid"
     >
@@ -656,7 +665,9 @@
             <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
               <option value="">— Anlass wählen —</option>
               {#each specialLeaveRules as rule (rule.id)}
-                <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
+                <option value={rule.id}
+                  >{rule.name} ({formatDayCount(Number(rule.defaultDays))})</option
+                >
               {/each}
             </select>
           </div>
@@ -846,7 +857,7 @@
             <div class="balance-box">
               <div class="balance-row">
                 <span class="balance-label">Jahresanspruch</span>
-                <span class="balance-value">{vacationBalance.total} Tage</span>
+                <span class="balance-value">{formatDayCount(vacationBalance.total)}</span>
               </div>
               {#if vacationBalance.carryOver > 0}
                 <div class="balance-row">
@@ -858,7 +869,7 @@
                       >
                     {/if}
                   </span>
-                  <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
+                  <span class="balance-value">+ {formatDayCount(vacationBalance.carryOver)}</span>
                 </div>
               {/if}
               <div class="balance-row">
@@ -868,20 +879,20 @@
                     : "Genommen"}</span
                 >
                 <span class="balance-value"
-                  >− {vacationBalance.used - vacationBalance.provisionalUsed} Tage</span
+                  >− {formatDayCount(vacationBalance.used - vacationBalance.provisionalUsed)}</span
                 >
               </div>
               {#if vacationBalance.provisionalUsed > 0}
                 <div class="balance-row">
                   <span class="balance-label">Verbraucht (vorläufig)</span>
                   <span class="balance-value balance-value--muted"
-                    >− {vacationBalance.provisionalUsed} Tage</span
+                    >− {formatDayCount(vacationBalance.provisionalUsed)}</span
                   >
                 </div>
               {/if}
               <div class="balance-row">
                 <span class="balance-label">Resturlaub</span>
-                <span class="balance-value">{vacRemaining} Tage</span>
+                <span class="balance-value">{formatDayCount(vacRemaining ?? 0)}</span>
               </div>
               {#if vacationBalance.section9Movements?.length}
                 <ul class="section9-movements">
@@ -905,16 +916,17 @@
                     {/if}
                   </span>
                   <span class="balance-value balance-deduct">
-                    {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}− {effectiveDays}
-                      {effectiveDays === 1 ? "Tag" : "Tage"}{/if}
+                    {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}− {formatDayCount(
+                        effectiveDays,
+                      )}{/if}
                   </span>
                 </div>
                 <div class="balance-divider"></div>
                 <div class="balance-row">
                   <span class="balance-label">Verbleibend</span>
                   <span class="balance-value {(vacAfter ?? 0) < 0 ? 'balance-warn' : ''}">
-                    {#if hoursPreviewLoading}<span class="text-muted">…</span>{:else}{vacAfter}
-                      {(vacAfter ?? 0) === 1 ? "Tag" : "Tage"}{/if}
+                    {#if hoursPreviewLoading}<span class="text-muted">…</span
+                      >{:else}{formatDayCount(vacAfter ?? 0)}{/if}
                   </span>
                 </div>
                 {#if !hoursPreviewLoading && (vacAfter ?? 0) < 0}
@@ -1035,6 +1047,35 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1rem;
+  }
+  /* Issue #853: before a person is chosen only the picker (the first field) and „Abbrechen“ are
+     shown. */
+  .form-grid[data-awaiting-person] > :not([data-form-row="who"]):not(.form-actions) {
+    display: none;
+  }
+  .form-grid[data-awaiting-person] [data-form-row="who"] > :not(:first-child) {
+    display: none;
+  }
+  .form-grid[data-awaiting-person] [data-testid="leave-form-submit"] {
+    display: none;
+  }
+  /* Issue #853 (S-15): the person picker of the team dialog is the #843 FormField with a Combobox. In
+     the form rows it takes this form's own field look (label size, label gap, control height of
+     `.form-input`), so „Für wen?“ and „Art“ line up on one top. */
+  .form-row > :global(.form-field) {
+    gap: 0.5rem;
+  }
+  .form-row :global(.ff-label) {
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .form-row :global(.cb-field) {
+    min-height: 2.6rem;
+  }
+  .form-row :global(.cb-field .cb-input) {
+    min-height: calc(2.6rem - 2px);
+    font-size: 1rem;
   }
   .form-row--single {
     grid-template-columns: minmax(0, 1fr);

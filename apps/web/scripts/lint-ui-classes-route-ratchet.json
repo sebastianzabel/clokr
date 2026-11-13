@@ -14,8 +14,8 @@
       },
       "apps/web/src/lib/components/leave/LeaveToolbar.svelte": {
         "count": 2,
-        "ticket": "#853",
-        "reason": "Shared with /team/leave; its tabs, PeriodSwitcher and SegmentedControl are blocks already, only the wrapper classes match. #851 left it for #853, which owns the team page and migrates the toolbar for both pages (decision on #851)."
+        "ticket": null,
+        "reason": "Used by /leave only: #853 moved /team/leave onto the blocks, #851 (merged) kept the toolbar for /leave. Its tabs, PeriodSwitcher and SegmentedControl are blocks already, only the wrapper classes match; folding it into PeriodPicker is a follow-up named in PR #906."
       },
       "apps/web/src/lib/components/operator/SupportAuditLog.svelte": {
         "count": 1,
@@ -38,10 +38,6 @@
         "count": 1,
         "ticket": "#854"
       },
-      "apps/web/src/routes/(app)/admin/availability/+page.svelte": {
-        "count": 1,
-        "ticket": "#853"
-      },
       "apps/web/src/routes/(app)/admin/employees/+page.svelte": {
         "count": 7,
         "ticket": "#854"
@@ -53,10 +49,6 @@
       "apps/web/src/routes/(app)/admin/shutdowns/+page.svelte": {
         "count": 1,
         "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/team/leave/+page.svelte": {
-        "count": 4,
-        "ticket": "#853"
       }
     },
     "own-period-control": {
@@ -95,10 +87,6 @@
         "count": 1,
         "ticket": "#845"
       },
-      "apps/web/src/routes/(app)/inbox/+page.svelte": {
-        "count": 5,
-        "ticket": "#853"
-      },
       "apps/web/src/routes/(app)/reports/+page.svelte": {
         "count": 1,
         "ticket": "#854"
@@ -112,10 +100,6 @@
       "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte": {
         "count": 1,
         "ticket": "#854"
-      },
-      "apps/web/src/lib/components/leave/ParentalReductionDialog.svelte": {
-        "count": 1,
-        "ticket": "#853"
       },
       "apps/web/src/lib/components/operator/SalonTable.svelte": {
         "count": 1,
@@ -166,10 +150,6 @@
         "count": 2,
         "ticket": "#854"
       },
-      "apps/web/src/lib/components/team/SalonTimeEntries.svelte": {
-        "count": 1,
-        "ticket": "#853"
-      },
       "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte": {
         "count": 1,
         "ticket": "#854"
@@ -209,18 +189,6 @@
       "apps/web/src/routes/(app)/admin/system/+page.svelte": {
         "count": 2,
         "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/shifts/planning/+page.svelte": {
-        "count": 1,
-        "ticket": "#853"
-      },
-      "apps/web/src/routes/(app)/team/leave/+page.svelte": {
-        "count": 1,
-        "ticket": "#853"
-      },
-      "apps/web/src/routes/(app)/team/time-entries/+page.svelte": {
-        "count": 1,
-        "ticket": "#853"
       }
     },
     "raw-scrim-modal": {}

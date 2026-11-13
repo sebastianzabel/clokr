@@ -107,10 +107,11 @@ describe("Issue #835 - the planner (hosts of the Planung tab, #840)", () => {
     expect(PANEL).toContain("<ManagePlanDialog");
     expect(PANEL).toContain("max-width: 767px");
     // #840: both hosts mount the panel on their own toolbar (the old page is a stub).
-    for (const host of HOSTS) {
-      expect(host).toContain("<LeavePlanningPanel");
-      expect(host).toContain("<LeaveToolbar");
-    }
+    for (const host of HOSTS) expect(host).toContain("<LeavePlanningPanel");
+    // #853: the team host's tab strip is the PageTabs block; Mein Bereich keeps LeaveToolbar (#851).
+    expect(TEAM_HOST).toContain("<PageTabs");
+    expect(TEAM_HOST).not.toContain("<LeaveToolbar");
+    expect(MY_HOST).toContain("<LeaveToolbar");
     expect(STUB).not.toContain("<LeavePlanningPanel");
   });
 

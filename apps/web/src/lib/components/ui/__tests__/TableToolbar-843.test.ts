@@ -203,3 +203,26 @@ describe("TableToolbar - source", () => {
     expect(toolbarSource).not.toMatch(/@media/);
   });
 });
+
+// Issue #853 (additive, owner review of Team › Personen): the prototype's „+ Salon“ / „+ Vertrag“.
+describe("TableToolbar - one button per filter", () => {
+  it("shows „+ <Label>“ for each filter that is off and no „+ Filter“", () => {
+    render({ filterButtons: true });
+    expect(screen.getByRole("button", { name: "+ Salon" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "+ Status" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "+ Filter" })).toBeNull();
+  });
+
+  it("an active filter is its chip, not a second button", () => {
+    render({ filterButtons: true, filters: [{ ...filters[0], value: "n" }, filters[1]] });
+    expect(screen.queryByRole("button", { name: "+ Salon" })).toBeNull();
+    expect(screen.getByText("Salon: Salon Nord")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Filter Salon entfernen" })).toBeTruthy();
+  });
+
+  it("without the prop the single „+ Filter“ menu stays", () => {
+    render();
+    expect(screen.getByRole("button", { name: "+ Filter" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "+ Salon" })).toBeNull();
+  });
+});

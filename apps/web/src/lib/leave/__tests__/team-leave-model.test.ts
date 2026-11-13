@@ -3,6 +3,7 @@
 import { describe, it, expect } from "vitest";
 import {
   emptyRequestsText,
+  inLeaderReach,
   locateDeepLinkedRequest,
   matchesStatusFilter,
   openRequestsSummary,
@@ -196,5 +197,84 @@ describe("openRequestsSummary (#840 G-1: an explained count)", () => {
         { status: "CANCELLATION_REQUESTED" },
       ])?.label,
     ).toBe("2 offen: 2 Stornos angefragt");
+  });
+});
+
+describe("inLeaderReach (Issue #853, D-853-12)", () => {
+  const masked = (id: string, name: string): TimelinePerson => ({
+    employeeId: id,
+    name,
+    isOwn: false,
+    bars: [
+      {
+        ...bar,
+        key: `masked-${id}`,
+        typeCode: null,
+        label: "abwesend",
+        style: "abwesend",
+        editable: false,
+      },
+    ],
+  });
+  const ids = (rows: readonly TimelinePerson[]) => rows.map((r) => r.employeeId);
+
+  it("keeps the caller's own row even when it is masked and off the roster", () => {
+    const own = { ...masked("me", "Ich"), isOwn: true };
+    expect(ids(inLeaderReach([own], new Set(), false))).toEqual(["me"]);
+  });
+
+  it("keeps a roster person, with or without a bar, masked or not", () => {
+    const rows = [
+      masked("r1", "Roster Masked"),
+      person("r2", "Roster Open"),
+      { ...person("r3", "No Bar"), bars: [] },
+    ];
+    expect(ids(inLeaderReach(rows, new Set(["r1", "r2", "r3"]), false))).toEqual([
+      "r1",
+      "r2",
+      "r3",
+    ]);
+  });
+
+  it("keeps an unmasked row outside the roster (the server named its type)", () => {
+    expect(ids(inLeaderReach([person("x1", "Outside Open")], new Set(["r1"]), false))).toEqual([
+      "x1",
+    ]);
+  });
+
+  it("keeps a row with one masked and one unmasked bar", () => {
+    const mixed: TimelinePerson = {
+      ...masked("x2", "Mixed"),
+      bars: [...masked("x2", "Mixed").bars, ...person("x2", "Mixed").bars],
+    };
+    expect(ids(inLeaderReach([mixed], new Set(), false))).toEqual(["x2"]);
+  });
+
+  it("drops an all-masked row that is neither own nor on the roster", () => {
+    const rows = [masked("x3", "Other Salon"), person("r1", "Roster")];
+    expect(ids(inLeaderReach(rows, new Set(["r1"]), false))).toEqual(["r1"]);
+  });
+
+  it("keeps everything when all is set, in the given order", () => {
+    const rows = [masked("x3", "Other Salon"), person("r1", "Roster")];
+    expect(ids(inLeaderReach(rows, new Set(["r1"]), true))).toEqual(["x3", "r1"]);
+  });
+
+  it("accepts the roster as a plain id list", () => {
+    expect(ids(inLeaderReach([masked("r1", "A"), masked("x", "B")], ["r1"], false))).toEqual([
+      "r1",
+    ]);
+  });
+
+  it("returns an empty list for empty input and never mutates the input", () => {
+    expect(inLeaderReach([], new Set(["r1"]), false)).toEqual([]);
+    const rows = [masked("x3", "Other Salon")];
+    inLeaderReach(rows, new Set(), false);
+    expect(rows).toHaveLength(1);
+  });
+
+  it("a whole-tenant answer (no masked rows) is returned unchanged", () => {
+    const rows = [person("a", "A"), person("b", "B")];
+    expect(inLeaderReach(rows, new Set(), false)).toEqual(rows);
   });
 });

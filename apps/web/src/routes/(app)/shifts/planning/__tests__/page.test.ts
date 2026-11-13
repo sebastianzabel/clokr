@@ -37,6 +37,26 @@ vi.mock("$stores/salon-context", async (importOriginal) => {
   };
 });
 
+// Issue #853 (D-853-05): the page now reads the roster tabs from the signed-in user and the tenant feature
+// flag. The auth store imports `$app/environment`, which vitest does not resolve, so a salon manager who
+// may plan shifts stands in for it (same style as the salon-context mock above); the tenant-features store
+// needs no mock (its only request goes through the mocked `$api/client` and is never started here).
+vi.mock("$stores/auth", async () => {
+  const { writable } = await import("svelte/store");
+  return {
+    authStore: writable({
+      accessToken: "t",
+      user: {
+        id: "u1",
+        email: "x@example.test",
+        employeeId: "e1",
+        firstName: "Test",
+        permissions: ["shift:plan:ZUGEWIESEN"],
+      },
+    }),
+  };
+});
+
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor, fireEvent } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
@@ -134,7 +154,7 @@ describe("Wochenübersicht Planungsbedarf (Phase 430, Issue #430)", () => {
     expect(screen.queryByText(/0 \(/)).toBeNull();
   });
 
-  it("the week pager's 'Nächste Woche' button re-fetches with a weekStart 7 days later", async () => {
+  it("the week picker's next-week arrow re-fetches with a weekStart 7 days later", async () => {
     apiGet.mockResolvedValueOnce(response("2031-02-03", "2031-02-09", []));
     renderWithTheme(PlanningOverviewPage, {});
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1));
@@ -142,7 +162,7 @@ describe("Wochenübersicht Planungsbedarf (Phase 430, Issue #430)", () => {
     const firstWeekStart = new URL(firstUrl, "http://localhost").searchParams.get("weekStart")!;
 
     apiGet.mockResolvedValueOnce(response("x", "y", []));
-    await fireEvent.click(screen.getByText("Nächste Woche →"));
+    await fireEvent.click(screen.getByRole("button", { name: "Nächste Woche" }));
 
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2));
     const secondUrl = apiGet.mock.calls[1][0] as string;
@@ -180,5 +200,32 @@ describe("Wochenübersicht Planungsbedarf (Phase 430, Issue #430)", () => {
         screen.getByText("In deiner Reichweite arbeitet niemand nach Schichtplan."),
       ).toBeTruthy(),
     );
+  });
+
+  it("sits under the roster tabs with its own tab current, as a block table with a caption (Issue #853)", async () => {
+    apiGet.mockResolvedValueOnce(
+      response("2031-02-03", "2031-02-09", [
+        {
+          employeeId: "emp-1",
+          name: "Lena Beispiel",
+          contractDays: 5,
+          leaveDays: 0,
+          leaveWeekdays: [],
+          otherAbsenceDays: 0,
+          stillToPlan: 5,
+        },
+      ]),
+    );
+    renderWithTheme(PlanningOverviewPage, {});
+    await waitFor(() => expect(screen.getByText("Lena Beispiel")).toBeTruthy());
+
+    const nav = screen.getByRole("navigation", { name: "Dienstplan" });
+    const current = nav.querySelector("[aria-current='page']");
+    expect(current?.textContent).toContain("Bedarf");
+    expect(current?.getAttribute("href")).toBe("/team/dienstplan/planung");
+    expect(nav.querySelectorAll("a").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByRole("table", { name: "Planungsbedarf der Woche" })).toBeTruthy();
+    // The text-link pager is gone: the week is moved by the picker's arrows only.
+    expect(screen.queryByText("Nächste Woche →")).toBeNull();
   });
 });

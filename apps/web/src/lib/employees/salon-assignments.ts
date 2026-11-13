@@ -76,6 +76,31 @@ function isCurrent(a: SalonAssignment, today: string): boolean {
 }
 
 /**
+ * Issue #853 (D-853-08) - the Stammsalon valid on a calendar day: the HOME assignment with
+ * `validFrom <= day` and `validUntil` null or `>= day`; with several matches the latest
+ * `validFrom` wins (id as tie-break), `null` when none matches. Both bounds are inclusive and
+ * `day` is a `YYYY-MM-DD` calendar day (pure string comparison, no time zone involved). Display
+ * only; the rule that decides a person's Stammsalon lives in the API.
+ */
+export function homeSalonIdOn(assignments: readonly SalonAssignment[], day: string): string | null {
+  const d = day.slice(0, 10);
+  let best: SalonAssignment | null = null;
+  for (const a of assignments) {
+    if (a.kind !== "HOME") continue;
+    if (a.validFrom > d) continue;
+    if (a.validUntil !== null && a.validUntil < d) continue;
+    if (
+      best === null ||
+      a.validFrom > best.validFrom ||
+      (a.validFrom === best.validFrom && a.id > best.id)
+    ) {
+      best = a;
+    }
+  }
+  return best ? best.salonId : null;
+}
+
+/**
  * Rows of the assignment list: current first (open, or ending today or later), then ended; each group
  * by `validFrom` descending (id as tie-break). `today` is a `YYYY-MM-DD` calendar day. Inputs are not
  * mutated.

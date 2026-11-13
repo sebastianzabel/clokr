@@ -56,6 +56,7 @@
     MISSING_BIRTH_DATE_HINT,
   } from "$lib/statutory-minimum-vacation";
   import { vacationBaseDefaultPlaceholder } from "$lib/vacation-base-default";
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19: day figures with a decimal comma
   import {
     CARRY_OVER_REASON_OPTIONS,
     carryOverReasonLabel,
@@ -3785,11 +3786,11 @@
             <div class="vac-summary-row">
               <span class="vac-stat">
                 <span class="vac-label">Genommen</span>
-                <span class="vac-value">{vacationEntitlement.usedDays}</span>
+                <span class="vac-value">{formatDays(vacationEntitlement.usedDays)}</span>
               </span>
               <span class="vac-stat">
                 <span class="vac-label">Übertrag</span>
-                <span class="vac-value">{vacationEntitlement.carriedOverDays}</span>
+                <span class="vac-value">{formatDays(vacationEntitlement.carriedOverDays)}</span>
               </span>
             </div>
           {/if}

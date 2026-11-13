@@ -42,14 +42,33 @@ export interface AppRoute {
   parent?: string;
   /** One line for the hub page. */
   description?: string;
+  /** Issue #853 (D-853-04 revised) — the name of this page as a TAB of its parent area page („Woche“, „Bedarf“).
+   *  Read only by a tab strip (`rosterTabs`); the H1, `<title>` and crumb keep `label`. */
+  tabLabel?: string;
   /** Tenant feature that must be on (Verfügbarkeits-System, Phase 47.3). */
   feature?: "availability";
   /** An internal tool page (#843): reachable by URL behind its guard, never in a navigation, a hub, the
    *  command palette or as a start page. */
   internal?: true;
+  /**
+   * Issue #853 (D-853-15 revised) — NAVIGATION visibility only: the entry is shown in a navigation only
+   * when one of these alternatives is held (in addition to `requires`). `mayOpenRoute` / `mayOpenPath` /
+   * `homeHref` never read it, so a guard and a direct URL behave exactly as `requires` says.
+   */
+  navRequires?: PermissionAlternatives;
+  /** Issue #853 (D-853-15 revised) — NAVIGATION visibility only: the entry is hidden from a navigation
+   *  when one of these alternatives is held. Guards and direct URLs are unaffected (see `navRequires`). */
+  navHiddenWhen?: PermissionAlternatives;
 }
 
 const Z = (resourceAction: string) => `${resourceAction}:ZUGEWIESEN`;
+
+/** Who works with persons (creates or edits them) and therefore sees Verwalten › Personen in the navigation
+ *  instead of Team › Personen (#853, D-853-15 revised). One constant so the two entries cannot drift. */
+const PERSON_MANAGE_ALTERNATIVES: PermissionAlternatives = [
+  [Z("employee:create")],
+  [Z("employee:update")],
+];
 
 export const AREA_LABELS: Readonly<Record<Area, string>> = Object.freeze({
   ich: "Ich",
@@ -185,35 +204,40 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: [[Z("shift:plan")]],
     file: "/shifts",
     inNav: true,
+    tabLabel: "Woche",
   },
   {
     href: "/team/dienstplan/planung",
     area: "team",
-    label: "Planungsbedarf",
+    // #853 (D-853-04 revised): the four roster pages are tabs of ONE „Dienstplan“ (H1, title and crumb).
+    label: "Dienstplan",
     icon: "grid",
     width: "full",
     requires: [[Z("shift:plan")]],
     file: "/shifts/planning",
     inNav: false,
     parent: "/team/dienstplan",
+    tabLabel: "Bedarf",
   },
   {
     href: "/team/dienstplan/konflikte",
     area: "team",
-    label: "Hinweise zur Schichtplanung",
+    label: "Dienstplan",
     icon: "grid",
     width: "full",
     requires: [[Z("shift:plan")]],
     file: "/shifts/conflicts",
     inNav: false,
     parent: "/team/dienstplan",
+    tabLabel: "Hinweise",
   },
-  // D-05: the team availability belongs to the roster; own rail entry until #851 joins both into one page.
+  // D-05: the team availability belongs to the roster. #853 (D-853-04 revised): it is the fourth tab of
+  // „Dienstplan“, no rail entry of its own; the rail marks „Dienstplan“ on it (`navCurrentPath`).
   // GET /employees plus GET/PUT /employees/:id/availability
   {
     href: "/team/verfuegbarkeit",
     area: "team",
-    label: "Verfügbarkeit",
+    label: "Dienstplan",
     icon: "calendar-check",
     width: "full",
     requires: [
@@ -221,8 +245,23 @@ export const APP_ROUTES: readonly AppRoute[] = [
       [Z("employee:read"), Z("availability:update")],
     ],
     file: "/admin/availability",
-    inNav: true,
+    inNav: false,
+    parent: "/team/dienstplan",
     feature: "availability",
+    tabLabel: "Verfügbarkeit",
+  },
+  // #853 (D-853-14, D-853-15 revised): the read-only team directory for leaders. A page created by #853 (no
+  // `file`). GET /employees (reach narrowing #547). Hidden from the navigation of whoever sees Verwalten ›
+  // Personen instead; the URL stays openable for everyone with employee:read.
+  {
+    href: "/team/personen",
+    area: "team",
+    label: "Personen",
+    icon: "users",
+    width: "full",
+    requires: [[Z("employee:read")]],
+    inNav: true,
+    navHiddenWhen: PERSON_MANAGE_ALTERNATIVES,
   },
 
   // ── Verwalten ──────────────────────────────────────────────────────────────────────────────────────
@@ -247,6 +286,9 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inNav: true,
     parent: "/verwalten",
     description: "Personen, Verträge, Rollen und Zugänge",
+    // #853 (D-853-15): exactly one „Personen“ per person. Whoever creates or edits persons sees this entry;
+    // everyone else with employee:read gets the read-only Team › Personen (navHiddenWhen of that entry).
+    navRequires: PERSON_MANAGE_ALTERNATIVES,
   },
   // GET /salons (writes: salon:manage, decided by the API)
   {
@@ -580,6 +622,9 @@ export function holdsAlternatives(
   );
 }
 
+/** The roster page; the other roster pages name it as `parent` (tabs of one „Dienstplan“, #853). */
+const ROSTER_HREF = "/team/dienstplan";
+
 function childrenOf(href: string): AppRoute[] {
   return APP_ROUTES.filter((route) => route.parent === href);
 }
@@ -593,13 +638,22 @@ export function mayOpenRoute(user: PermissionHolder | null | undefined, route: A
   return holdsAlternatives(user, route.requires);
 }
 
-/** Shown to `user` in a navigation: may open it, and its tenant feature (if any) is on. */
+/** Shown to `user` in a navigation: may open it, its tenant feature (if any) is on, and the navigation-only
+ *  fields `navRequires` / `navHiddenWhen` (#853) allow it. A hub is shown only when one of its children is
+ *  (the guard still opens a hub through any openable child, see `mayOpenRoute`). */
 export function visibleRoute(
   user: PermissionHolder | null | undefined,
   route: AppRoute,
   options: RouteOptions,
 ): boolean {
   if (route.feature === "availability" && !options.availabilityEnabled) return false;
+  if (route.navRequires !== undefined && !holdsAlternatives(user, route.navRequires)) return false;
+  if (route.navHiddenWhen !== undefined && holdsAlternatives(user, route.navHiddenWhen)) {
+    return false;
+  }
+  if (route.requires === "children") {
+    return childrenOf(route.href).some((child) => visibleRoute(user, child, options));
+  }
   return mayOpenRoute(user, route);
 }
 
@@ -614,6 +668,46 @@ export function mayOpenPath(user: PermissionHolder | null | undefined, pathname:
   const exact = pathname === route.href || pathname === `${route.href}/`;
   if (!exact && route.file === undefined) return false;
   return mayOpenRoute(user, route);
+}
+
+/**
+ * The path a navigation compares with its items to find the current one (#853). A page that is no rail entry
+ * but a tab or sub-page of one (`inNav: false` with an `inNav` parent: the roster tab Verfügbarkeit, a hub
+ * child) is represented by its parent, so the rail and the „Mehr“ sheet mark „Dienstplan“ on every roster tab.
+ * A page below its parent's path (`/team/dienstplan/planung`, a hub child) is already matched by prefix and
+ * every other path is returned unchanged; the rule of "which item is current" stays in `active-route.ts`.
+ */
+export function navCurrentPath(pathname: string): string {
+  const route = routeFor(pathname);
+  if (route === null || route.inNav || route.parent === undefined) return pathname;
+  const parent = APP_ROUTES.find((entry) => entry.href === route.parent);
+  return parent !== undefined && parent.inNav && !matchesRoute(parent.href, pathname)
+    ? parent.href
+    : pathname;
+}
+
+export interface RosterTab {
+  value: string;
+  href: string;
+  label: string;
+}
+
+/**
+ * The tabs of „Dienstplan“ (#853, D-853-04/05 revised): the roster page and every entry whose `parent` is
+ * the roster page, in table order, as LINK tabs (each tab is its own route). A tab the person may not open,
+ * or whose tenant feature is off, is not returned. `value` is the href.
+ */
+export function rosterTabs(
+  user: PermissionHolder | null | undefined,
+  options: RouteOptions,
+): RosterTab[] {
+  return APP_ROUTES.filter((route) => route.href === ROSTER_HREF || route.parent === ROSTER_HREF)
+    .filter((route) => visibleRoute(user, route, options))
+    .map((route) => ({
+      value: route.href,
+      href: route.href,
+      label: route.tabLabel ?? route.label,
+    }));
 }
 
 /** The visible hub children of `hubHref` for the hub page, in table order. */
