@@ -67,10 +67,15 @@ describe("/admin/employees/[id] - a person without a role (Issue #539)", () => {
 });
 
 describe("/admin/employees list - a person without a role (Issue #539)", () => {
-  it("reads no role from the employee row; the chips come from the stored assignments only", () => {
+  // #854 (owner review): the list is the shared PersonenTable; its Rollen column shows the names of the
+  // person's STORED role assignments, served by GET /employees?include=directory (#853), and "–"
+  // without any. The page reads no role of its own.
+  const MODEL = readRouteFile("../lib/team/personen-model.ts", "src/lib/team/personen-model.ts");
+  it("reads no role from the employee row; the names come from the stored assignments only", () => {
     expect(LIST).not.toMatch(/\buser\??\.role\b/);
-    // Issue #580: one chip per stored assignment, through the shared formatter
-    expect(LIST).toContain("{#each assignmentsOf(emp) as assignment (assignment.id)}");
-    expect(LIST).toContain("assignmentLabel(assignment, assignmentCtx)");
+    expect(LIST).toContain("/employees?include=directory");
+    expect(MODEL).not.toMatch(/\buser\??\.role\b/);
+    expect(MODEL).toMatch(/const roles = person\.roleNames \?\? \[\];/);
+    expect(MODEL).toMatch(/roles: roles\.length > 0 \? roles\.join\(", "\) : "–"/);
   });
 });

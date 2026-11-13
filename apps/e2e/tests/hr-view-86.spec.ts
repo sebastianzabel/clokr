@@ -504,21 +504,23 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     expect((await exitSaved).status(), "the exit date is saved").toBe(200);
     await expect(page.getByText("Austritt und Urlaubsbasis gespeichert.")).toBeVisible();
 
-    // ── 5. the ended employee is found with the filter „Ausgeschieden“ ───────────────────────
+    // ── 5. the ended employee stays in the list and is marked „Ausgeschieden“ ────────────────
+    // #854 (owner review): the shared PersonenTable lists everyone by default in Verwalten (AC-86-6);
+    // the employment state is the status chip, and „+ Status“ › „Aktiv“ narrows to the employed.
     await page.goto(`${tenant.baseUrl}/admin/employees`);
     await expect(page.getByTestId(`admin-employees-row-${hr.id}`)).toBeVisible();
-    // #854: the filters sit behind the toolbar's „+ Filter“ popover (a radio group per filter).
-    await page.getByRole("button", { name: "+ Filter" }).click();
+    await expect(page.getByTestId(`admin-employees-row-${x.id}`)).toBeVisible();
+    await expect(page.getByTestId(`admin-employees-row-${x.id}-status`)).toHaveText(
+      "Ausgeschieden",
+    );
+    await page.getByRole("button", { name: "+ Status" }).click();
     await page
-      .getByRole("radiogroup", { name: "Beschäftigung" })
-      .getByRole("radio", { name: "Ausgeschieden" })
+      .getByRole("radiogroup", { name: "Status" })
+      .getByRole("radio", { name: "Aktiv" })
       .click();
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId(`admin-employees-row-${x.id}`)).toBeVisible();
-    await expect(page.getByTestId(`admin-employees-row-${x.id}-employment`)).toHaveText(
-      `Ausgeschieden am ${deDate(exitDay)}`,
-    );
-    await expect(page.getByTestId(`admin-employees-row-${hr.id}`)).toHaveCount(0);
+    await expect(page.getByTestId(`admin-employees-row-${x.id}`)).toHaveCount(0);
+    await expect(page.getByTestId(`admin-employees-row-${hr.id}`)).toBeVisible();
 
     // ── 6. AC-86-3: „Berichte“ is in the navigation and the reports open without exports ─────
     await page
@@ -926,12 +928,13 @@ test.describe("Issue #86 — Sichtmatrix 390/360 px, hell/dunkel", () => {
         for (const p of people) {
           await expect(page.getByTestId(`admin-employees-row-${String(p.id)}`)).toBeVisible();
         }
+        // #854: the shared PersonenTable names the employment state in the status chip.
         await expect(
-          page.getByTestId(`admin-employees-row-${String(people[1].id)}-employment`),
-        ).toContainText("Ausgeschieden am");
+          page.getByTestId(`admin-employees-row-${String(people[1].id)}-status`),
+        ).toHaveText("Ausgeschieden");
         await expect(
-          page.getByTestId(`admin-employees-row-${String(people[2].id)}-employment`),
-        ).toContainText("Austritt am");
+          page.getByTestId(`admin-employees-row-${String(people[2].id)}-status`),
+        ).toHaveText("Austritt geplant");
         results.push(await checkCell(page, "employee-list", viewport.width, mode));
 
         // 2. the detail page, Salons tab: three rows incl. an inactive salon

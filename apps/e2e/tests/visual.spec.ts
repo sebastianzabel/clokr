@@ -172,7 +172,7 @@ test.describe("Phase 75 — Visual baselines", () => {
     // (employeeNumber: `A-{tenantId.slice(-4)}`, last-login timestamp,
     // email with random hex) is excluded — only the 4 deterministic
     // VIS-001..VIS-004 employees remain in the snapshot.
-    await page.getByRole("searchbox", { name: "Personen suchen" }).fill("VIS");
+    await page.getByRole("searchbox", { name: "Name oder Nummer" }).fill("VIS");
     // Re-anchor on the page after debounce so the filtered table is rendered
     // before the screenshot fires.
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();

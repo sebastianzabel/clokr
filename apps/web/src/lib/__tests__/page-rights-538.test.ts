@@ -425,15 +425,15 @@ describe("the employee list shows roles only from the stored assignments (Issue 
     resolve(process.cwd(), "src/routes/(app)/admin/employees/+page.svelte"),
     "utf8",
   );
-  it("never reads the compat role of a listed person, and offers chip, filter and count only when names arrive", () => {
+  it("never reads the compat role of a listed person; the role names come from the stored assignments", () => {
     expect(src.length).toBeGreaterThan(10_000);
     expect(src).not.toMatch(/\buser\??\.role\b/);
+    // #854 (owner review): the Rollen column of the shared table names the stored roles the server
+    // serves (`include=directory`, #853); the assignments themselves are read only by a holder of
+    // role-assignment:manage, for the bulk role change's skip rule.
+    expect(src).toContain("/employees?include=directory");
     expect(src).toContain("listRoleAssignments(");
-    expect(src).toContain("let showRoles = $derived(assignmentsByUser !== null);");
     expect(src).toContain("if (!canAssignRoles)");
-    // #854: the role column, the role filter and the „Rollen“ figure each wait for the names.
-    expect(src.match(/\.\.\.\(showRoles/g)?.length).toBeGreaterThanOrEqual(3);
-    expect(src).toMatch(/key: "role",\s*label: "Rolle"/);
   });
 
   it("the team absence page (formerly the team calendar) no longer renders a role under a name", () => {

@@ -120,15 +120,20 @@ function finiteNumber(value: number | string | null | undefined): number | null 
   return Number.isFinite(n) ? n : null;
 }
 
-/** Rows of the table; an anonymised person never appears. */
+/**
+ * Rows of the table; an anonymised person appears only when `includeAnonymized` is set (Verwalten ›
+ * Personen, „Anonymisierte anzeigen“, #854 - the server returns such rows only to holders of
+ * employee:anonymize). Team › Personen never sets it.
+ */
 export function personenRows(
   employees: readonly PersonenEmployee[],
   today: string,
   /** Display names of the salons the caller reaches, by id (the header's salon list). */
   salonNames: ReadonlyMap<string, string> = new Map(),
+  options: { includeAnonymized?: boolean } = {},
 ): PersonenRow[] {
   return employees
-    .filter((person) => !isAnonymizedPerson(person))
+    .filter((person) => options.includeAnonymized === true || !isAnonymizedPerson(person))
     .map((person) => {
       const status = personStatus(person, today);
       const salonId = person.homeSalonId ?? "";

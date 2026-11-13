@@ -104,12 +104,19 @@ describe("/admin/employees/[id] — Berechtigungen (#580)", () => {
   });
 });
 
-describe("/admin/employees — the Rolle column (#580)", () => {
-  it("shows every stored assignment through the shared formatter", () => {
-    expect(LIST).toContain('from "$lib/roles/assignment-label"');
-    expect(LIST).toContain("assignmentLabel(assignment, assignmentCtx)");
-    expect(LIST).toContain("{NO_ASSIGNMENT_LABEL}");
+describe("/admin/employees — the Rollen column (#580, #854)", () => {
+  // #854 (owner review): the list shows the same Rollen column as Team › Personen - the names of the
+  // stored roles from the server; the scope of every assignment is shown and changed in the Zugang tab
+  // (PersonRoleAssignments through the shared formatter). The list still asks for no role-name route.
+  it("names the stored roles through the shared table and keeps the scope in the Zugang tab", () => {
+    expect(LIST).toContain("<PersonenTable");
     expect(LIST).not.toContain("/role-assignments/role-names");
+    expect(LIST).not.toContain("assignmentLabel(");
+    const ZUGANG = readFileSync(
+      resolve(process.cwd(), "src/lib/components/employees/detail/ZugangTab.svelte"),
+      "utf8",
+    );
+    expect(ZUGANG).toContain("<PersonRoleAssignments");
   });
 });
 

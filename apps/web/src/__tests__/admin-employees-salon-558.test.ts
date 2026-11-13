@@ -36,14 +36,14 @@ function functionBody(name: string): string {
 
 describe("Issue #558 — the admin employee list follows the header salon", () => {
   it("[vacuity gate] the page source is loaded and still carries the person directory", () => {
-    expect(PAGE.length).toBeGreaterThan(30_000);
-    // #854: the former „Personenverzeichnis“ section head is gone; the table caption names the list.
-    expect(PAGE).toContain('caption="Personen"');
+    expect(PAGE.length).toBeGreaterThan(15_000);
+    // #854: the list renders the shared person table (its caption names the list „Personen“).
+    expect(PAGE).toContain("<PersonenTable");
   });
 
   it("[filter] the list request is built by withSalonId from the page filter", () => {
     expect(functionBody("loadEmployees")).toContain(
-      'withSalonId("/employees?includeAnonymized=true", pageSalonId)',
+      'withSalonId("/employees?include=directory&includeAnonymized=true", pageSalonId)',
     );
     expect(PAGE).toContain("salonPageFilter($salonContext)");
   });

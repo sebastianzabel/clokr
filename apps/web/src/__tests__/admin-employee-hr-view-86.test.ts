@@ -108,26 +108,46 @@ describe("/admin/employees/[id] - employment on today's model (Issue #86, D-01)"
   });
 });
 
+// #854 (owner review): the list renders the shared PersonenTable over the rows of personen-model.ts,
+// whose ONE status decision reads employmentState(); the employment state is the status chip
+// („Austritt geplant“, „Ausgeschieden“), not a filter of its own.
+const PERSONEN_MODEL = readRouteFile(
+  "../lib/team/personen-model.ts",
+  "src/lib/team/personen-model.ts",
+);
+const PERSONEN_URL = readRouteFile(
+  "../lib/team/personen-url-state.ts",
+  "src/lib/team/personen-url-state.ts",
+);
+
 describe("/admin/employees - employment state and filter (Issue #86, AC-86-6)", () => {
   it("shows the label from employmentState and never reads a display string", () => {
     expect(LIST).toMatch(
+      /import \{[^}]*\bpersonenRows\b[^}]*\} from "\$lib\/team\/personen-model"/,
+    );
+    expect(LIST).toContain("<PersonenTable");
+    expect(PERSONEN_MODEL).toMatch(
       /import \{[^}]*\bemploymentState\b[^}]*\} from "\$lib\/employees\/employment-state"/,
     );
-    expect(LIST).toMatch(/employmentState\([^)]*exitDate/);
+    expect(PERSONEN_MODEL).toMatch(/employmentState\(person\.exitDate, today\)/);
+    // the branch is taken on the kind (a control value), never on the label
+    expect(PERSONEN_MODEL).toMatch(/employment\.kind === "ENDED"/);
+    expect(PERSONEN_MODEL).toMatch(/employment\.kind === "EXIT_PLANNED"/);
+    expect(PERSONEN_MODEL).not.toMatch(/\.label ===/);
   });
 
-  it("offers the Beschäftigung filter with the three kinds and filters by kind only", () => {
-    // #854: the filter is a group of the toolbar popover („Alle“ is the toolbar's own option).
-    expect(LIST).toMatch(/key: "employment",\s*label: "Beschäftigung"/);
-    for (const label of ["Beschäftigt", "Austritt geplant", "Ausgeschieden"]) {
-      expect(LIST, label).toContain(label);
+  it("names the two employment states in the status chip", () => {
+    for (const label of ["Austritt geplant", "Ausgeschieden"]) {
+      expect(PERSONEN_MODEL, label).toContain(`label: "${label}"`);
     }
-    expect(LIST).toMatch(/filterEmployment/);
-    expect(LIST).toMatch(/employmentState\([^)]*\)\.kind/);
   });
 
-  it("lists ended employees by default (the filter starts on Alle)", () => {
-    expect(LIST).toMatch(/let filterEmployment = \$state<[^>]*>\(""\)/);
+  it("lists ended employees by default (the status filter starts on alle)", () => {
+    expect(LIST).toMatch(/verwaltenPersonenUrlSchema as personenUrlSchema/);
+    expect(PERSONEN_URL).toMatch(
+      /verwaltenPersonenUrlSchema = \{\s*\.\.\.personenUrlSchema,\s*status: oneOf\(\["aktiv", "alle"\] as const, "alle"\)/,
+    );
+    expect(LIST).toMatch(/status: "alle", vertrag: "", salon: ""/);
   });
 });
 

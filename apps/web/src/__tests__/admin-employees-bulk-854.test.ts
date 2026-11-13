@@ -36,11 +36,20 @@ describe("#854 /admin/employees selection and bulk changes", () => {
   });
 
   it("[selection] the table is selectable and keeps its selection in a bound state", () => {
-    const start = PAGE.indexOf("<DataTable\n");
-    const end = PAGE.indexOf("caption=", start);
-    const element = PAGE.slice(start, end + 200);
+    // #854: the page renders the shared PersonenTable, which hands the selection to DataTable.
+    const start = PAGE.indexOf("<PersonenTable\n");
+    const element = PAGE.slice(start, PAGE.indexOf("{#snippet", start));
+    expect(start).toBeGreaterThan(-1);
     expect(element).toContain("selectable");
-    expect(element).toContain("bind:selectedKeys");
+    expect(element).toContain("bind:selectedKeys={selectedIds}");
+    const TABLE = readRouteFile(
+      "../lib/components/employees/PersonenTable.svelte",
+      "src/lib/components/employees/PersonenTable.svelte",
+    );
+    expect(TABLE).toMatch(/selectedKeys = \$bindable\(\[\]\)/);
+    const table = TABLE.slice(TABLE.indexOf("<DataTable\n"), TABLE.indexOf("{#snippet toolbar"));
+    expect(table).toContain("{selectable}");
+    expect(table).toContain("bind:selectedKeys");
   });
 
   it("[preview] both bulk changes run behind the BulkPreviewDialog, one person after the other", () => {
@@ -70,9 +79,24 @@ describe("#854 /admin/employees selection and bulk changes", () => {
     expect(PAGE).toMatch(/selectedIds\s*=\s*result\.failed\.map/);
   });
 
-  it("[csv] the export writes the list's own columns without the action column", () => {
-    expect(PAGE).toContain("rowsToCsv(exported, records)");
-    expect(PAGE).toMatch(/columns\.filter\(\(column\) => column\.key !== "actions"\)/);
+  it("[csv] the export writes the table's own columns without the „Öffnen“ column", () => {
+    expect(PAGE).toContain("rowsToCsv(EXPORT_COLUMNS, records)");
+    const block = PAGE.slice(
+      PAGE.indexOf("const EXPORT_COLUMNS"),
+      PAGE.indexOf("function exportSelectedCsv"),
+    );
+    for (const label of [
+      "Name",
+      "Personalnummer",
+      "Stammsalon",
+      "Vertrag",
+      "Std./Woche",
+      "Rollen",
+      "Status",
+    ]) {
+      expect(block, label).toContain(`label: "${label}"`);
+    }
+    expect(block).not.toMatch(/E-Mail|Login|"open"/);
     expect(PAGE).toContain("personen-${today}.csv");
   });
 });

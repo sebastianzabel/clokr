@@ -198,10 +198,51 @@ describe("Personen list - selection and bulk invitation", () => {
   it("filters through the toolbar search and keeps the count in step", async () => {
     await mountList();
     expect(screen.getByText("3 von 3")).toBeInTheDocument();
-    await fireEvent.input(screen.getByRole("searchbox", { name: "Personen suchen" }), {
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Name oder Nummer" }), {
       target: { value: "drei" },
     });
     await waitFor(() => expect(screen.getByText("1 von 3")).toBeInTheDocument());
     expect(screen.queryByRole("checkbox", { name: "Eins, Test auswählen" })).toBeNull();
+  });
+});
+
+// #854 (owner review): the list is the shared table of Team › Personen - the same columns, no e-mail
+// or last-login column, no buttons per row; a row opens the person through one quiet „Öffnen“ link.
+describe("Personen list - the shared table", () => {
+  it("shows the columns of Team › Personen and no e-mail or login column", async () => {
+    await mountList();
+    const heads = screen.getAllByRole("columnheader").map((h) => h.textContent?.trim() ?? "");
+    for (const label of ["Name", "Stammsalon", "Vertrag", "Std./Woche", "Rollen", "Status"]) {
+      expect(
+        heads.some((h) => h.startsWith(label)),
+        label,
+      ).toBe(true);
+    }
+    expect(heads.some((h) => /E-Mail|Login|Aktionen|Eintritt/.test(h))).toBe(false);
+    expect(screen.queryByText("e3@beispiel.test")).toBeNull();
+  });
+
+  it("gives every row one „Öffnen“ link to the person and no row buttons", async () => {
+    await mountList();
+    const open = screen.getByTestId("admin-employees-row-e3-open");
+    expect(open).toHaveTextContent("Öffnen");
+    expect(open).toHaveAttribute("href", "/admin/employees/e3");
+    expect(screen.queryByTestId("admin-employees-row-e3-edit")).toBeNull();
+    expect(screen.queryByTestId("admin-employees-row-e3-deactivate")).toBeNull();
+    expect(screen.getByTestId("admin-employees-row-e1-status")).toHaveTextContent(
+      "Einladung offen",
+    );
+  });
+
+  it("hides anonymised persons until „Anonymisierte anzeigen“ is ticked", async () => {
+    get.mockImplementation(async (path: string) => {
+      if (path.startsWith("/employees"))
+        return [...PEOPLE, person("e9", "GELÖSCHT-9", { firstName: "Gelöscht" })];
+      return {};
+    });
+    await mountList();
+    expect(screen.queryByTestId("admin-employees-row-e9")).toBeNull();
+    await fireEvent.click(screen.getByRole("checkbox", { name: "Anonymisierte anzeigen" }));
+    expect(await screen.findByTestId("admin-employees-row-e9")).toBeInTheDocument();
   });
 });

@@ -24,3 +24,12 @@ export const personenUrlSchema = {
   sort: oneOf(PERSONEN_SORT_KEYS, "name"),
   dir: oneOf(["asc", "desc"] as const, "asc"),
 };
+
+/**
+ * Verwalten › Personen (#854): the same keys, but the list starts on „alle“ - an ended employee stays
+ * in the admin list by default (Issue #86, AC-86-6); Team › Personen starts on „aktiv“.
+ */
+export const verwaltenPersonenUrlSchema = {
+  ...personenUrlSchema,
+  status: oneOf(["aktiv", "alle"] as const, "alle"),
+};

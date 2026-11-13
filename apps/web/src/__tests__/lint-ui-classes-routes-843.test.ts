@@ -279,7 +279,9 @@ describe("the checked-in ratchet register", () => {
   it("is not empty (the ratchet is not vacuous) and `--print` reproduces it", () => {
     const entries = RATCHET_RULES.flatMap((rule) => Object.keys(checkedIn.rules[rule]));
     // #854 empties the register page by page (it only falls); the floor proves it is not vacuous.
-    expect(entries.length).toBeGreaterThan(10);
+    // What stays are the operator console (no follow-up ticket), the dashboard, the /leave toolbar and
+    // the clock salon select - eight or more entries while those are not migrated.
+    expect(entries.length).toBeGreaterThanOrEqual(8);
     expect(registerFromCounts(found, checkedIn)).toEqual(checkedIn);
   });
 

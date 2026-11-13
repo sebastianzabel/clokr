@@ -12,6 +12,8 @@
 //   M1 a `<table class="table">` put back into the page -> red: "[own table]"
 //   M2 the `<DataTable …>` element removed from the page -> red: "[block]"
 //   M3 the `urlState(listUrlSchema)` binding removed -> red: "[url state]"
+// Since #854 the page renders the shared PersonenTable (the DataTable lives there) and the URL schema is
+// the Personen one of `$lib/team/personen-url-state`.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -45,38 +47,46 @@ describe("#648 /admin/employees person table is the DataTable block (#843 D-843-
     expect(PAGE.length).toBeGreaterThan(10_000);
   });
 
-  it("[block] the page imports and renders DataTable with the row click and the Skeleton loading", () => {
-    expect(PAGE).toContain('from "$components/ui/DataTable.svelte"');
+  // #854 (owner review): the list renders the ONE person table shared with Team › Personen; the table
+  // component owns the DataTable element, the page passes the rows, the row target and the loading.
+  const TABLE = readRouteFile(
+    "../lib/components/employees/PersonenTable.svelte",
+    "src/lib/components/employees/PersonenTable.svelte",
+  );
+
+  it("[block] the page renders the shared PersonenTable, which renders DataTable with the row click and the Skeleton loading", () => {
+    expect(PAGE).toContain('from "$lib/components/employees/PersonenTable.svelte"');
+    const pageStart = PAGE.indexOf("<PersonenTable\n");
+    expect(pageStart, "no <PersonenTable> element on the page").toBeGreaterThan(-1);
+    const pageElement = PAGE.slice(pageStart, PAGE.indexOf("{#snippet", pageStart));
+    expect(pageElement).toContain("onOpen=");
+    expect(pageElement).toContain("{loading}");
+    expect(TABLE).toContain('from "$components/ui/DataTable.svelte"');
     // The element ends at its caption prop; `=>` inside the handlers rules out a plain `>` search.
-    const start = PAGE.indexOf("<DataTable\n");
-    const end = PAGE.indexOf("caption=", start);
-    expect(start, "no <DataTable> element on the page").toBeGreaterThan(-1);
+    const start = TABLE.indexOf("<DataTable\n");
+    const end = TABLE.indexOf("caption=", start);
+    expect(start, "no <DataTable> element in the table component").toBeGreaterThan(-1);
     expect(end, "the <DataTable> element has no caption").toBeGreaterThan(start);
-    const element = PAGE.slice(start, end);
-    expect(element).toContain("onRowClick");
+    const element = TABLE.slice(start, end);
+    expect(element).toContain("onRowClick={onOpen}");
     expect(element).toContain("{loading}");
   });
 
-  it("[own table] the page has no <table> and no table-wrap of its own", () => {
+  it("[own table] neither the page nor the table component has a <table> or table-wrap of its own", () => {
     expect(ownTableMarkup(PAGE)).toEqual([]);
+    expect(ownTableMarkup(TABLE)).toEqual([]);
   });
 
-  it("[url state] search and sort go through urlState with the list schema", () => {
-    expect(PAGE).toContain('from "$lib/employees/list-url-state"');
-    expect(PAGE).toMatch(/urlState\(\s*listUrlSchema\s*\)/);
+  it("[url state] search, filters and sort go through urlState with the Personen schema", () => {
+    expect(PAGE).toContain('from "$lib/team/personen-url-state"');
+    expect(PAGE).toMatch(/urlState\(\s*personenUrlSchema\s*\)/);
   });
 
-  // #854 (plan 854-18): the filter bar and the KPI row of the list are blocks too.
-  it("[toolbar] the filter bar is the TableToolbar block and the KPI row the KpiStrip", () => {
-    expect(PAGE).toContain('from "$components/ui/TableToolbar.svelte"');
-    expect(PAGE).toContain("<TableToolbar");
-    expect(PAGE).toContain('from "$components/ui/KpiStrip.svelte"');
-    expect(PAGE).toContain("<KpiStrip");
+  it("[toolbar] the filter bar is the TableToolbar block inside the shared table; the head is PageHead", () => {
+    expect(TABLE).toContain('from "$components/ui/TableToolbar.svelte"');
+    expect(TABLE).toContain("<TableToolbar");
     expect(PAGE).toContain("<PageHead");
-    // The former hand-built bar: a search input, selects and a „x von y“ count of its own.
-    expect(PAGE).not.toMatch(
-      /class="[^"]*\b(filter-search|filter-select|filter-toggle|filter-count)\b/,
-    );
+    expect(PAGE).not.toMatch(/<select\b/);
     expect(PAGE).not.toContain("<KPIStat");
   });
 
