@@ -119,7 +119,7 @@
     }
   }
 
-  async function confirm() {
+  async function confirmApply() {
     if (!preview || !canConfirm) return;
     const selection: BulkApplySelection = {
       applyEmployeeIds: [...selected].sort(),
@@ -159,7 +159,7 @@
   confirmLabel={saving ? "Wird übernommen…" : "Änderungen übernehmen"}
   pending={saving}
   {loading}
-  onConfirm={confirm}
+  onConfirm={confirmApply}
 >
   {#snippet intro()}
     {#if errorText}

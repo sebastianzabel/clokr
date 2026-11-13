@@ -1,7 +1,7 @@
 // Issue #714 (D-06, D-07, G7, G10) - the section „Im Salon gearbeitet“, mounted: the Stammsalon
 // persons with salon hours, the Aushilfen of other salons, the server's total - and nothing that
-// could be read as a saldo. lib/components/reports/ is outside the lint:ui-classes gate, so the
-// structure is proven here. Synthetic names only.
+// could be read as a saldo. Since Issue #854 both lists are DataTables; the structure is proven
+// here. Synthetic names only.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 
@@ -139,12 +139,12 @@ describe("SalonWorkedSection - nothing a saldo can be read from (D-06, G10, T-71
     expect(text).not.toMatch(/Bestätigt|Prognose/);
   });
 
-  it("only two columns: person and hours, in a table-wrap", () => {
+  it("only two columns: person and hours, each list a DataTable", () => {
     renderWithTheme(SalonWorkedSection, props());
     for (const id of ["salon-worked-own", "salon-worked-helpers"]) {
-      const table = screen.getByTestId(id);
-      expect(within(table).getAllByRole("columnheader")).toHaveLength(2);
-      expect(table.closest(".table-wrap")).not.toBeNull();
+      const wrapper = screen.getByTestId(id);
+      expect(within(wrapper).getAllByRole("columnheader")).toHaveLength(2);
+      expect(wrapper.querySelector(".dt-root table")).not.toBeNull();
     }
   });
 });

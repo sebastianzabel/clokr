@@ -42,6 +42,8 @@
     /** Set false for a row without avatar. */
     avatar?: boolean;
     variant?: "default" | "task";
+    /** Lets the subtitle wrap instead of ending in an ellipsis (text that must be read in full). */
+    wrap?: boolean;
     /** Makes the text block a link. */
     href?: string;
     trailing?: Snippet;
@@ -69,6 +71,7 @@
     avatarKey,
     avatar = true,
     variant = "default",
+    wrap = false,
     href,
     trailing,
     actions,
@@ -103,7 +106,7 @@
     >
   {/if}
   {#if leading && !avatar}<span class="list-leading">{@render leading()}</span>{/if}
-  <div class="list-text">
+  <div class="list-text" class:list-text--wrap={wrap}>
     {#if href}
       <a class="list-title list-link" {href}>{title}</a>
     {:else if onPrimary}
@@ -170,6 +173,10 @@
     font-size: var(--fs-base);
     font-weight: 600;
     color: var(--text);
+  }
+  .list-text--wrap .list-subtitle {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .list-link {
     text-decoration: none;

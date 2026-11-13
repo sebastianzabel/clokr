@@ -320,6 +320,16 @@ export const EXCLUDED_ROUTES: readonly RouteReason[] = [
       "principal gets 403).",
   },
   {
+    route: "GET /api/v1/audit-logs/export",
+    reason:
+      "New export route added in Issue #854 (#583), long after the role guard (`requireRole`) was " +
+      "deleted from middleware/auth.ts (#75b/#83) — built permission-gated (`audit-log:read:ZUGEWIESEN`) " +
+      "from its very first commit and never had role-based access behavior to compare. Same " +
+      "vacuous-satisfaction reasoning as the entries around it: RECORD/MERGE mode refuses to run " +
+      "once the role guard is gone. Proven by `audit-logs-export-854.test.ts` (file, audit before " +
+      "the bytes, tenant scope, period cap, 403 for a principal without `audit-log:read`).",
+  },
+  {
     route: "GET /api/v1/leave/sick-days",
     reason:
       "New route added in Issue #595 (D-04), long after the role guard (`requireRole`) was " +

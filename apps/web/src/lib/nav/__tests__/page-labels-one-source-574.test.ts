@@ -91,6 +91,8 @@ const NO_HEADING: Record<string, string> = {
   "/ich/tag":
     "renders from the dashboard file with a view prop; pinned by the dashboard test below",
   "/team/heute": "renders the dashboard file with view=team; pinned by the dashboard test below",
+  "/verwalten/regeln/betriebsurlaub":
+    "a redirect stub since #854 (plan 854-12): the list is the Betriebsurlaub tab of Abwesenheiten; the detail sub-route below names the shutdown itself",
 };
 const HEADING_TAG = /<(PageHead|PageHeader|SectionStack|ListDetail|ToolPage|HubPage)\b[\s\S]*?\/?>/;
 
@@ -147,14 +149,27 @@ describe("page-labels: Mein Tag and Heute im Salon (#844, one file, two views)",
 });
 
 describe("page-labels: breadcrumbs of detail pages (review WR-04)", () => {
-  const DETAIL_PAGES = [
+  // #854 (owner review): a Verwalten page carries no breadcrumb of its own - its path stands only
+  // in the top bar, which reads the page names from page-labels.ts. The guard keeps it that way.
+  const VERWALTEN_PAGES = [
     "routes/(app)/admin/support-access/[id]/+page.svelte",
     "routes/(app)/admin/shutdowns/[id]/+page.svelte",
     "routes/(app)/admin/audit/[id]/+page.svelte",
     "routes/(app)/admin/salons/[id]/+page.svelte",
     "routes/(app)/admin/employees/[id]/+page.svelte",
-    "routes/(app)/admin/availability/[employeeId]/+page.svelte",
+    "routes/(app)/verwalten/regeln/arbeitszeit/+page.svelte",
+    "routes/(app)/verwalten/regeln/monatsabschluss/+page.svelte",
+    "routes/(app)/verwalten/regeln/benachrichtigungen/+page.svelte",
   ];
+  for (const rel of VERWALTEN_PAGES) {
+    it(`${rel}: no page breadcrumb (the path is in the top bar)`, () => {
+      const source = read(rel);
+      expect(source.length, `${rel} is empty`).toBeGreaterThan(1_000);
+      expect(source).not.toContain("<Breadcrumb");
+    });
+  }
+
+  const DETAIL_PAGES = ["routes/(app)/admin/availability/[employeeId]/+page.svelte"];
   for (const rel of DETAIL_PAGES) {
     it(`${rel}: a crumb to a named page carries that page's name`, () => {
       const source = read(rel);

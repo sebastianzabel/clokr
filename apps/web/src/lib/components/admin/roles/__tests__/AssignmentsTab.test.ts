@@ -121,9 +121,7 @@ async function mount(canReadRoles = true, salonsLoaded = true) {
 }
 
 function personBlock(name: string): HTMLElement {
-  return screen
-    .getByText(name, { selector: ".assignments-name" })
-    .closest(".assignments-person") as HTMLElement;
+  return screen.getByText(name, { selector: ".assignments-name" }).closest("tr") as HTMLElement;
 }
 
 async function openGrant(name = "Probe Eins") {
@@ -340,6 +338,8 @@ describe("AssignmentsTab (Issue #83)", () => {
     expect(source).toContain("<PersonRoleAssignments");
     expect(source).not.toContain("<AssignmentDialog");
     expect(source).not.toContain("<ConfirmDialog");
-    expect(source).toMatch(/<Section[^>]*animate=\{false\}/);
+    // Issue #854: one DataTable row per person, no hand-built table.
+    expect(source).toContain("<DataTable");
+    expect(source).not.toContain('class="data-table"');
   });
 });

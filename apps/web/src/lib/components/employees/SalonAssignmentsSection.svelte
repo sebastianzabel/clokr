@@ -1,13 +1,16 @@
 <!--
-  SalonAssignmentsSection - the salon assignments of one employee (Issue #86, AC-86-5).
+  SalonAssignmentsSection - the salon assignments of one employee (Issue #86, AC-86-5; rebuilt on
+  the blocks of #843 in Issue #854).
 
-  Lists the full history from GET /employees/:id/salon-assignments: Stammsalon and Einsatzsalons,
-  current and ended. The assignment DTO carries only the salon id, so names come from
+  Lists the full history from GET /employees/:id/salon-assignments in a DataTable: Stammsalon and
+  Einsatzsalons, current and ended. The assignment DTO carries only the salon id, so names come from
   GET /salons?includeInactive=true (permission salon:read); a caller without it still sees the rows,
   with "Unbekannter Salon" and a neutral hint. Every rule (overlap, weekday conflict, month lock,
   hire date, inactive salon) stays on the server - this component shows its answers verbatim and
-  never deletes a row (the API has no delete route). Each change carries an effective date, so it is
-  a form group with its own button, never an instant save (docs/ADMIN_STRUCTURE.md 3.2.1).
+  never deletes a row (the API has no delete route). Each change carries an effective date, so it
+  is a form with its own button in a Dialog, never an instant save (docs/ADMIN_STRUCTURE.md 3.2.1):
+  a new Einsatzsalon, a Stammsalon change, or the end of one row. A refusal keeps the dialog open
+  with the server's text.
 
   Props:
     employeeId - the employee whose assignments are shown
@@ -15,11 +18,18 @@
 -->
 <script lang="ts">
   import { api } from "$api/client";
-  import Section from "$lib/components/admin/Section.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import DatePicker from "$components/ui/DatePicker.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import Note from "$components/ui/Note.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
+  import WeekdayPicker from "$lib/components/admin/settings/WeekdayPicker.svelte";
   import { localCalendarDay } from "$lib/employees/employment-state";
   import {
-    WEEKDAY_OPTIONS,
     assignmentRows,
     deploymentBody,
     endBody,
@@ -43,15 +53,30 @@
   let loadError = $state("");
   let generation = 0;
 
-  let rows = $derived(assignmentRows(assignments, salons, localCalendarDay()));
+  const uid = $props.id();
+  const titleId = `${uid}-title`;
+
+  const columns: DataTableColumn[] = [
+    { key: "salonName", label: "Salon", primary: true },
+    { key: "kindLabel", label: "Art" },
+    { key: "periodLabel", label: "Zeitraum" },
+    { key: "weekdaysLabel", label: "Wochentage" },
+    { key: "status", label: "Status" },
+  ];
+
+  type TableRow = AssignmentRow & Record<string, unknown>;
+  let rows = $derived(
+    assignmentRows(assignments, salons, localCalendarDay()).map((row): TableRow => ({ ...row })),
+  );
   let activeSalons = $derived(salons.filter((s) => s.isActive));
 
-  // One form group open at a time: a new Einsatzsalon, a Stammsalon change, or the end of one row.
+  // One form at a time: a new Einsatzsalon, a Stammsalon change, or the end of one row.
   type FormMode = "deployment" | "home" | "end" | null;
   let mode = $state<FormMode>(null);
+  let formOpen = $state(false);
   let formSalonId = $state("");
-  let formValidFrom = $state("");
-  let formValidUntil = $state("");
+  let formValidFrom = $state<string | null>(null);
+  let formValidUntil = $state<string | null>(null);
   let formWeekdays = $state<number[]>([]);
   let endTarget = $state<AssignmentRow | null>(null);
   let submitting = $state(false);
@@ -60,37 +85,45 @@
   let canSubmit = $derived(
     !submitting &&
       (mode === "end"
-        ? formValidUntil !== ""
-        : mode !== null && formSalonId !== "" && formValidFrom !== ""),
+        ? Boolean(formValidUntil)
+        : mode !== null && formSalonId !== "" && Boolean(formValidFrom)),
+  );
+
+  const dialogTitle = $derived(
+    mode === "deployment"
+      ? "Einsatzsalon hinzufügen"
+      : mode === "home"
+        ? "Stammsalon ändern"
+        : `Zuordnung beenden: ${endTarget?.salonName ?? ""}`,
+  );
+  const submitLabel = $derived(
+    mode === "deployment" ? "Zuordnen" : mode === "home" ? "Stammsalon speichern" : "Beenden",
   );
 
   function openForm(next: "deployment" | "home") {
     mode = next;
     formSalonId = "";
     formValidFrom = localCalendarDay();
-    formValidUntil = "";
+    formValidUntil = null;
     formWeekdays = [];
     endTarget = null;
     formError = "";
+    formOpen = true;
   }
 
   function openEnd(row: AssignmentRow) {
     mode = "end";
     endTarget = row;
-    formValidUntil = "";
+    formValidUntil = null;
     formError = "";
+    formOpen = true;
   }
 
   function closeForm() {
+    formOpen = false;
     mode = null;
     endTarget = null;
     formError = "";
-  }
-
-  function toggleWeekday(value: number) {
-    formWeekdays = formWeekdays.includes(value)
-      ? formWeekdays.filter((d) => d !== value)
-      : [...formWeekdays, value];
   }
 
   async function submit() {
@@ -104,18 +137,18 @@
           base,
           deploymentBody({
             salonId: formSalonId,
-            validFrom: formValidFrom,
-            validUntil: formValidUntil,
+            validFrom: formValidFrom ?? "",
+            validUntil: formValidUntil ?? "",
             weekdays: formWeekdays,
           }),
         );
       } else if (mode === "home") {
         await api.post(
           `${base}/home`,
-          homeBody({ salonId: formSalonId, validFrom: formValidFrom }),
+          homeBody({ salonId: formSalonId, validFrom: formValidFrom ?? "" }),
         );
       } else if (endTarget) {
-        await api.post(`${base}/${endTarget.id}/end`, endBody(formValidUntil));
+        await api.post(`${base}/${endTarget.id}/end`, endBody(formValidUntil ?? ""));
       }
       closeForm();
       await load(true);
@@ -160,17 +193,17 @@
   });
 </script>
 
-<Section
-  title="Salonzuordnungen"
-  sub="Stammsalon und Einsatzsalons; beendete Zuordnungen bleiben sichtbar."
->
-  <!-- The buttons sit in the body, not in the Section header actions: the header never wraps, so
-       two buttons next to the title overflow the card on a phone (Issue #86, AC-86-7). -->
+<section class="settings-group" aria-labelledby={titleId}>
+  <h2 class="settings-group-title" id={titleId}>Salonzuordnungen</h2>
+  <p class="settings-group-desc">
+    Stammsalon und Einsatzsalons; beendete Zuordnungen bleiben sichtbar.
+  </p>
+
   {#if canEdit && activeSalons.length > 0}
-    <div class="assign-toolbar">
+    <div class="sa-actions">
       <button
         type="button"
-        class="btn btn-ghost btn-sm"
+        class="btn btn-secondary btn-sm"
         data-testid="salon-assignment-add"
         disabled={submitting}
         onclick={() => openForm("deployment")}
@@ -179,7 +212,7 @@
       </button>
       <button
         type="button"
-        class="btn btn-ghost btn-sm"
+        class="btn btn-secondary btn-sm"
         data-testid="salon-assignment-home"
         disabled={submitting}
         onclick={() => openForm("home")}
@@ -188,198 +221,153 @@
       </button>
     </div>
   {/if}
+
   {#if loadError}
-    <div class="callout error">{loadError}</div>
+    <div role="alert"><Note tone="bad">{loadError}</Note></div>
   {:else if loading}
     <Skeleton shape="row" count={2} />
   {:else}
     {#if salonNamesUnavailable}
-      <p class="hint" data-testid="salon-names-hint">
-        Die Salonnamen kannst du nicht einsehen; die Zuordnungen erscheinen ohne Namen.
-      </p>
-    {/if}
-    {#if rows.length === 0}
-      <p class="hint">Keine Salonzuordnung vorhanden.</p>
-    {:else}
-      <div class="table-wrap">
-        <table class="data-table" data-testid="salon-assignments-table">
-          <thead>
-            <tr>
-              <th scope="col">Art</th>
-              <th scope="col">Salon</th>
-              <th scope="col">Zeitraum</th>
-              <th scope="col">Wochentage</th>
-              <th scope="col">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each rows as row (row.id)}
-              <tr data-testid="salon-assignment-row-{row.id}">
-                <td>{row.kindLabel}</td>
-                <td>{row.salonName}</td>
-                <td>{row.periodLabel}</td>
-                <td>{row.weekdaysLabel}</td>
-                <td>
-                  {#if row.ended}<span class="badge badge-gray">beendet</span>{/if}
-                  {#if canEdit && row.canEnd}
-                    <button
-                      type="button"
-                      class="btn btn-ghost btn-sm"
-                      data-testid="salon-assignment-end-{row.id}"
-                      disabled={submitting}
-                      onclick={() => openEnd(row)}
-                    >
-                      Beenden
-                    </button>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+      <div data-testid="salon-names-hint">
+        <Note tone="info">
+          Die Salonnamen kannst du nicht einsehen; die Zuordnungen erscheinen ohne Namen.
+        </Note>
       </div>
     {/if}
-
-    {#if canEdit && mode !== null}
-      <div class="assign-form" data-testid="salon-assignment-form">
-        <h4 class="assign-form-title">
-          {#if mode === "deployment"}Einsatzsalon hinzufügen
-          {:else if mode === "home"}Stammsalon ändern
-          {:else}Zuordnung beenden: {endTarget?.salonName}{/if}
-        </h4>
-        {#if formError}
-          <div class="callout error" role="alert" data-testid="salon-assignment-error">
-            {formError}
-          </div>
-        {/if}
-        <div class="form-grid">
-          {#if mode !== "end"}
-            <div class="form-group">
-              <label class="form-label" for="sa-salon">Salon</label>
-              <select id="sa-salon" class="select" bind:value={formSalonId}>
-                <option value="">Bitte wählen</option>
-                {#each activeSalons as salon (salon.id)}
-                  <option value={salon.id}>{salon.name}</option>
-                {/each}
-              </select>
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="sa-from">Gültig ab</label>
-              <input id="sa-from" type="date" class="input" bind:value={formValidFrom} />
-            </div>
-          {/if}
-          {#if mode === "deployment"}
-            <div class="form-group">
-              <label class="form-label" for="sa-until">Gültig bis (optional)</label>
-              <input id="sa-until" type="date" class="input" bind:value={formValidUntil} />
-            </div>
-            <div class="form-group">
-              <span class="form-label">Wochentage (optional)</span>
-              <div class="weekday-chips" role="group" aria-label="Wochentage">
-                {#each WEEKDAY_OPTIONS as day (day.value)}
-                  <button
-                    type="button"
-                    class="wd-chip"
-                    class:wd-chip--active={formWeekdays.includes(day.value)}
-                    aria-pressed={formWeekdays.includes(day.value)}
-                    data-testid="salon-assignment-weekday-{day.value}"
-                    onclick={() => toggleWeekday(day.value)}>{day.label}</button
-                  >
-                {/each}
-              </div>
-              <p class="hint">Ohne Auswahl gilt die Zuordnung an allen Tagen.</p>
-            </div>
-          {/if}
-          {#if mode === "end"}
-            <div class="form-group">
-              <label class="form-label" for="sa-end">Beendet zum</label>
-              <input id="sa-end" type="date" class="input" bind:value={formValidUntil} />
-            </div>
-          {/if}
-        </div>
-        <div class="assign-form-actions">
-          <button
-            type="button"
-            class="btn btn-ghost"
-            disabled={submitting}
-            onclick={closeForm}
-            data-testid="salon-assignment-cancel"
-          >
-            Abbrechen
-          </button>
-          <button
-            type="button"
-            class="btn btn-primary"
-            disabled={!canSubmit}
-            onclick={submit}
-            data-testid="salon-assignment-submit"
-          >
-            {#if submitting}Wird gespeichert…
-            {:else if mode === "deployment"}Zuordnen
-            {:else if mode === "home"}Stammsalon speichern
-            {:else}Beenden{/if}
-          </button>
-        </div>
+    {#if rows.length === 0}
+      <EmptyState title="Keine Salonzuordnung vorhanden." />
+    {:else}
+      <div data-testid="salon-assignments-table">
+        <DataTable
+          {columns}
+          {rows}
+          rowKey={(row) => row.id}
+          rowTestId={(row) => `salon-assignment-row-${row.id}`}
+          caption="Salonzuordnungen der Person"
+        >
+          {#snippet cell(row, column)}
+            {#if column.key === "status"}
+              {#if row.ended}<Chip tone="neutral">beendet</Chip>{/if}
+              {#if canEdit && row.canEnd}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm"
+                  data-testid="salon-assignment-end-{row.id}"
+                  disabled={submitting}
+                  onclick={() => openEnd(row)}
+                >
+                  Beenden
+                </button>
+              {/if}
+            {:else}
+              {String(row[column.key] ?? "")}
+            {/if}
+          {/snippet}
+        </DataTable>
       </div>
     {/if}
   {/if}
-</Section>
+</section>
+
+{#if canEdit}
+  <Dialog
+    bind:open={formOpen}
+    title={dialogTitle}
+    onOpenChange={(next) => {
+      if (!next) closeForm();
+    }}
+  >
+    <div class="sa-form" data-testid="salon-assignment-form">
+      {#if formError}
+        <div role="alert" data-testid="salon-assignment-error">
+          <Note tone="bad">{formError}</Note>
+        </div>
+      {/if}
+
+      {#if mode === "end"}
+        <FormField label="Beendet zum" required>
+          {#snippet field({ id, describedBy, invalid })}
+            <DatePicker
+              bind:value={formValidUntil}
+              label="Beendet zum"
+              {id}
+              {describedBy}
+              {invalid}
+            />
+          {/snippet}
+        </FormField>
+      {:else}
+        <FormField label="Salon" required>
+          {#snippet field({ id, describedBy })}
+            <select {id} class="form-input" bind:value={formSalonId} aria-describedby={describedBy}>
+              <option value="">Bitte wählen</option>
+              {#each activeSalons as salon (salon.id)}
+                <option value={salon.id}>{salon.name}</option>
+              {/each}
+            </select>
+          {/snippet}
+        </FormField>
+        <FormField label="Gültig ab" required>
+          {#snippet field({ id, describedBy, invalid })}
+            <DatePicker bind:value={formValidFrom} label="Gültig ab" {id} {describedBy} {invalid} />
+          {/snippet}
+        </FormField>
+        {#if mode === "deployment"}
+          <FormField label="Gültig bis (optional)">
+            {#snippet field({ id, describedBy, invalid })}
+              <DatePicker
+                bind:value={formValidUntil}
+                label="Gültig bis"
+                {id}
+                {describedBy}
+                {invalid}
+              />
+            {/snippet}
+          </FormField>
+          <WeekdayPicker
+            bind:value={formWeekdays}
+            legend="Wochentage (optional)"
+            help="Ohne Auswahl gilt die Zuordnung an allen Tagen."
+            testidPrefix="salon-assignment-weekday"
+          />
+        {/if}
+      {/if}
+    </div>
+
+    {#snippet footer()}
+      <button
+        type="button"
+        class="btn btn-secondary"
+        disabled={submitting}
+        onclick={closeForm}
+        data-testid="salon-assignment-cancel"
+      >
+        Abbrechen
+      </button>
+      <button
+        type="button"
+        class="btn btn-primary"
+        disabled={!canSubmit}
+        onclick={submit}
+        data-testid="salon-assignment-submit"
+      >
+        {#if submitting}<Spinner size={14} label="Wird gespeichert" />{/if}
+        {submitLabel}
+      </button>
+    {/snippet}
+  </Dialog>
+{/if}
 
 <style>
-  .assign-toolbar {
+  .sa-actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--s-2);
-    margin-bottom: var(--s-3);
   }
 
-  .assign-form {
-    margin-top: var(--s-4);
-    padding-top: var(--s-4);
-    border-top: 1px solid var(--line);
-  }
-
-  .assign-form-title {
-    margin: 0 0 var(--s-3);
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .assign-form-actions {
+  .sa-form {
     display: flex;
-    justify-content: flex-end;
-    gap: var(--s-2);
-    margin-top: var(--s-3);
-  }
-
-  .weekday-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-1);
-  }
-
-  .wd-chip {
-    min-width: 40px;
-    padding: var(--s-1) var(--s-2);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    background: var(--sunk);
-    color: var(--text-2);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .wd-chip--active {
-    border-color: var(--brand);
-    background: var(--brand-soft);
-    color: var(--brand);
-  }
-
-  .hint {
-    margin: 0;
-    color: var(--text-2);
-    font-size: 0.875rem;
+    flex-direction: column;
+    gap: var(--s-4);
   }
 </style>

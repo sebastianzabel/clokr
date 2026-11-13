@@ -33,9 +33,18 @@
     return Math.round(sum * 100) / 100;
   }
 
-  /** German decimal notation: 39,5 h. */
-  export function formatHours(hours: number): string {
-    return `${hours.toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`;
+  /** The days with hours above 0 - the contract's working days per week. */
+  export function workDayCount(value: DayHours): number {
+    return DAY_KEYS.filter((key) => {
+      const hours = value[key];
+      return isValidDayHours(hours) && hours > 0;
+    }).length;
+  }
+
+  /** Hours as a clock value, like every saldo of the app: 39,5 -> „39:30 h“. */
+  export function clockHours(hours: number): string {
+    const minutes = Math.round(hours * 60);
+    return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")} h`;
   }
 </script>
 
@@ -49,14 +58,24 @@
     step?: number;
     disabled?: boolean;
     onchange?: (value: DayHours) => void;
+    /** Test id of the sum row. */
+    sumTestId?: string;
   }
 
-  let { value = $bindable(), label, step = 0.25, disabled = false, onchange }: Props = $props();
+  let {
+    value = $bindable(),
+    label,
+    step = 0.25,
+    disabled = false,
+    onchange,
+    sumTestId,
+  }: Props = $props();
 
   const uid = $props.id();
   const groupId = `${uid}-group`;
 
   const sum = $derived(sumDayHours(value));
+  const workDays = $derived(workDayCount(value));
 
   function update(key: DayKey, event: Event) {
     const parsed = (event.currentTarget as HTMLInputElement).valueAsNumber;
@@ -97,9 +116,11 @@
       </p>
     {/if}
   {/each}
-  <p class="dg-sum" aria-live="polite">
-    <span>Summe</span>
-    <strong class="dg-sum-value">{formatHours(sum)}</strong>
+  <!-- Issue #854 (owner review): one tinted sum row on every page - the working days on the left,
+       the week's hours as a clock value on the right (the prototype's contract form). -->
+  <p class="dg-sum" aria-live="polite" data-testid={sumTestId}>
+    <span>{workDays} {workDays === 1 ? "Arbeitstag" : "Arbeitstage"} pro Woche</span>
+    <strong class="dg-sum-value">{clockHours(sum)}</strong>
   </p>
 </div>
 
@@ -141,6 +162,7 @@
   }
 
   .dg-day-name {
+    text-align: center;
     font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--text-2);
@@ -152,6 +174,7 @@
     padding-bottom: 0;
     font-size: var(--fs-base);
     font-variant-numeric: tabular-nums;
+    text-align: center;
   }
 
   .dg-input[aria-invalid="true"] {
@@ -178,15 +201,20 @@
   .dg-sum {
     display: flex;
     align-items: baseline;
-    gap: var(--s-2);
+    justify-content: space-between;
+    gap: var(--s-3);
     margin: 0;
-    font-size: var(--fs-base);
+    padding: var(--s-2) var(--s-3);
+    background: var(--sunk);
+    border-radius: var(--r-control);
+    font-size: var(--fs-sm);
     color: var(--text-2);
   }
 
   .dg-sum-value {
-    color: var(--text);
+    font-size: var(--fs-base);
     font-weight: 600;
+    color: var(--text);
     font-variant-numeric: tabular-nums;
   }
 </style>

@@ -1,7 +1,0 @@
-<script lang="ts">
-  // 301-style redirect: Sonderurlaubs-Typen was merged into /admin/vacation as
-  // the "Sonderurlaub" tab. Old bookmarks land here and bounce to the new spot.
-  import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
-  onMount(() => goto("/admin/vacation#sonderurlaub", { replaceState: true }));
-</script>

@@ -6,10 +6,15 @@
   The API stays the authority; disabled buttons only mirror the caller's permissions.
   Draft mode (`drafts` bound): the person does not exist yet (create dialog, D-580-03) — rows are
   fixed rows plus local drafts; nothing is requested and onChanged is never called.
+  Rebuilt on the List, Chip and Note blocks in Issue #854; the props are unchanged.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import List from "$components/ui/List.svelte";
+  import ListRow from "$components/ui/ListRow.svelte";
+  import Note from "$components/ui/Note.svelte";
   import { toasts } from "$stores/toast";
   import { ApiError } from "$api/client";
   import {
@@ -150,51 +155,39 @@
 </script>
 
 <div class="person-roles">
-  <div class="person-roles-head">
-    {#if head}{@render head()}{/if}
-    {#if allowGrant}
-      <button
-        type="button"
-        class="btn btn-ghost btn-sm person-roles-grant"
-        disabled={!canEdit}
-        onclick={() => (draftMode ? openDraft(null) : openDialog(null))}
-      >
-        Rolle zuweisen
-      </button>
-    {/if}
-  </div>
+  {#if head}
+    <div class="person-roles-head">{@render head()}</div>
+  {/if}
 
   {#if permissionNote && !canManage}
-    <div class="callout brand" role="note">{ASSIGN_RIGHT_REQUIRED_NOTE}</div>
+    <Note tone="brand">{ASSIGN_RIGHT_REQUIRED_NOTE}</Note>
   {:else if permissionNote && !canReadRoles}
-    <div class="callout brand" role="note">{ROLE_READ_REQUIRED_NOTE}</div>
+    <Note tone="brand">{ROLE_READ_REQUIRED_NOTE}</Note>
   {/if}
   {#if errorText}
-    <div class="callout error" role="alert">{errorText}</div>
+    <div role="alert"><Note tone="bad">{errorText}</Note></div>
   {/if}
 
   {#if draftMode}
     {#if fixedRows.length === 0 && (drafts ?? []).length === 0}
-      <p class="form-hint person-roles-empty">{NO_ASSIGNMENT_LABEL}</p>
+      <p class="person-roles-empty">{NO_ASSIGNMENT_LABEL}</p>
     {:else}
-      <ul class="assignments-list">
+      <List ariaLabel="Rollen von {personName}">
         {#each fixedRows as row, i (i)}
-          <li class="assignments-item">
-            <span class="assignments-role">{row.roleName}</span>
-            <span class="assignments-scope">{scopeLabel(row.scope, ctx)}</span>
-            <span class="assignments-actions"></span>
-          </li>
+          <ListRow title={row.roleName} subtitle={scopeLabel(row.scope, ctx)} avatar={false} wrap />
         {/each}
         {#each drafts ?? [] as draft (draft.key)}
-          <li class="assignments-item">
-            <span class="assignments-role">
-              {roleOf(draft.accessRoleId)?.name ?? ""}
+          <ListRow
+            title={roleOf(draft.accessRoleId)?.name ?? ""}
+            subtitle={scopeLabel(draft.scope, ctx)}
+            avatar={false}
+            variant="task"
+            wrap
+          >
+            {#snippet actions()}
               {#if roleOf(draft.accessRoleId)?.isSystem}
-                <span class="chip chip-brand">{SYSTEM_ROLE_CHIP_LABEL}</span>
+                <Chip tone="brand">{SYSTEM_ROLE_CHIP_LABEL}</Chip>
               {/if}
-            </span>
-            <span class="assignments-scope">{scopeLabel(draft.scope, ctx)}</span>
-            <span class="assignments-actions">
               <button
                 type="button"
                 class="btn btn-ghost btn-sm"
@@ -211,25 +204,27 @@
               >
                 Entfernen
               </button>
-            </span>
-          </li>
+            {/snippet}
+          </ListRow>
         {/each}
-      </ul>
+      </List>
     {/if}
   {:else if items.length === 0}
-    <p class="form-hint person-roles-empty">{NO_ASSIGNMENT_LABEL}</p>
+    <p class="person-roles-empty">{NO_ASSIGNMENT_LABEL}</p>
   {:else}
-    <ul class="assignments-list">
+    <List ariaLabel="Rollen von {personName}">
       {#each items as assignment (assignment.id)}
-        <li class="assignments-item">
-          <span class="assignments-role">
-            {assignment.roleName}
+        <ListRow
+          title={assignment.roleName}
+          subtitle={scopeLabel(assignment.scope, ctx)}
+          avatar={false}
+          variant="task"
+          wrap
+        >
+          {#snippet actions()}
             {#if assignment.isSystemRole}
-              <span class="chip chip-brand">{SYSTEM_ROLE_CHIP_LABEL}</span>
+              <Chip tone="brand">{SYSTEM_ROLE_CHIP_LABEL}</Chip>
             {/if}
-          </span>
-          <span class="assignments-scope">{scopeLabel(assignment.scope, ctx)}</span>
-          <span class="assignments-actions">
             <button
               type="button"
               class="btn btn-ghost btn-sm"
@@ -246,10 +241,23 @@
             >
               Entziehen
             </button>
-          </span>
-        </li>
+          {/snippet}
+        </ListRow>
       {/each}
-    </ul>
+    </List>
+  {/if}
+
+  {#if allowGrant}
+    <div class="person-roles-grant">
+      <button
+        type="button"
+        class="btn btn-ghost btn-sm"
+        disabled={!canEdit}
+        onclick={() => (draftMode ? openDraft(null) : openDialog(null))}
+      >
+        Rolle zuweisen
+      </button>
+    </div>
   {/if}
 </div>
 
@@ -283,55 +291,21 @@
   .person-roles {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--s-2);
+    min-width: 0;
   }
   .person-roles-head {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--s-2);
     flex-wrap: wrap;
-  }
-  .person-roles-grant {
-    margin-left: auto;
   }
   .person-roles-empty {
     margin: 0;
-  }
-  .assignments-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .assignments-item {
-    display: grid;
-    grid-template-columns: minmax(160px, 1fr) minmax(200px, 2fr) auto;
-    align-items: center;
-    gap: 8px 16px;
-    font-size: 14px;
-  }
-  .assignments-role {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--text);
-  }
-  .assignments-scope {
+    font-size: var(--fs-sm);
     color: var(--text-2);
   }
-  .assignments-actions {
+  .person-roles-grant {
     display: flex;
-    gap: 6px;
-    justify-content: flex-end;
-  }
-  @media (max-width: 720px) {
-    .assignments-item {
-      grid-template-columns: 1fr;
-    }
-    .assignments-actions {
-      justify-content: flex-start;
-    }
   }
 </style>

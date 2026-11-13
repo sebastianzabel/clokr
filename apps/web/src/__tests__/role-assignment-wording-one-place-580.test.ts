@@ -77,7 +77,8 @@ describe("Issue #580 — the role-assignment wording lives in one place", () => 
   }
 
   it("the employee detail page renders the shared block (it takes the wording from there)", () => {
-    const detail = FILES.find((f) => f.rel === "routes/(app)/admin/employees/[id]/+page.svelte");
+    // Since Issue #854 the Zugang tab component of the detail page renders it.
+    const detail = FILES.find((f) => f.rel === "lib/components/employees/detail/ZugangTab.svelte");
     expect(detail?.source).toContain("<PersonRoleAssignments");
   });
 });

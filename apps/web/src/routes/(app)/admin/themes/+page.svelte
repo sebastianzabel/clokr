@@ -1,10 +1,17 @@
+<!--
+  Verwalten › System › Branding & Themes (Issue #854, D-854-03): the colour world, the mode and the language of
+  the app, rebuilt on the blocks of #843. The choice is a PERSONAL preference: it is saved for the signed-in
+  account through the preference stores (`PUT /me/preferences`) and gives the tenant no default. Three
+  `.settings-group`s, no SaveBar: a theme or mode click is a presentation choice that saves at once
+  (docs/ADMIN_STRUCTURE.md §3.2.1).
+-->
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
   import { theme, themes, type Theme } from "$stores/theme";
   import { mode, type Mode } from "$stores/mode";
   import { applyPreferences } from "$stores/apply-preferences";
-  import SectionStack from "$lib/components/admin/SectionStack.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Chip from "$components/ui/Chip.svelte";
   import LanguageToggle from "$components/ui/LanguageToggle.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
 
@@ -35,47 +42,52 @@
   <title>{pageLabel("/admin/themes")} – Clokr</title>
 </svelte:head>
 
-<SectionStack
-  eyebrow="Verwalten"
+<PageHead
   title={pageLabel("/admin/themes")}
   sub="Dein Erscheinungsbild: Es wird für dein Konto gespeichert und gilt auf all deinen Geräten."
-  animate
->
-  <Section title="Theme" sub="Wähle die Farbwelt, jeweils in Hell und Dunkel gezeigt.">
-    <div class="theme-grid" role="group" aria-label="Theme auswählen">
-      {#each themes as t (t.id)}
-        {@const active = $theme === t.id}
-        <button
-          type="button"
-          class="theme-card"
-          class:active
-          aria-pressed={active}
-          onclick={() => selectTheme(t.id)}
-        >
-          <div class="theme-previews">
-            {#each previewModes as m (m.id)}
-              <div class="theme-preview" data-theme={t.id} data-mode={m.id}>
-                <div class="tp-bar"></div>
-                <div class="tp-card">
-                  <span class="tp-brand"></span>
-                  <span class="tp-text"></span>
-                </div>
-                <span class="tp-caption">{m.label}</span>
-              </div>
-            {/each}
-          </div>
-          <div class="theme-body">
-            <span class="theme-label">{t.label}</span>
-            {#if active}
-              <span class="chip-brand">Aktiv</span>
-            {/if}
-          </div>
-        </button>
-      {/each}
-    </div>
-  </Section>
+/>
 
-  <Section title="Modus" sub="Hell oder dunkel, unabhängig vom Theme.">
+<section class="settings-group" aria-labelledby="themes-farbwelt-title">
+  <h2 class="settings-group-title" id="themes-farbwelt-title">Farbwelt</h2>
+  <p class="settings-group-desc">Wähle die Farbwelt, jeweils in Hell und Dunkel gezeigt.</p>
+  <div class="theme-grid" role="group" aria-label="Farbwelt auswählen">
+    {#each themes as t (t.id)}
+      {@const active = $theme === t.id}
+      <button
+        type="button"
+        class="theme-card"
+        class:active
+        aria-pressed={active}
+        onclick={() => selectTheme(t.id)}
+      >
+        <div class="theme-previews">
+          {#each previewModes as m (m.id)}
+            <div class="theme-preview" data-theme={t.id} data-mode={m.id}>
+              <div class="tp-bar"></div>
+              <div class="tp-card">
+                <span class="tp-brand"></span>
+                <span class="tp-text"></span>
+              </div>
+              <span class="tp-caption">{m.label}</span>
+            </div>
+          {/each}
+        </div>
+        <div class="theme-body">
+          <span class="theme-label">{t.label}</span>
+          {#if active}
+            <Chip tone="brand">Aktiv</Chip>
+          {/if}
+        </div>
+      </button>
+    {/each}
+  </div>
+</section>
+
+<section class="settings-group" aria-labelledby="themes-modus-title">
+  <h2 class="settings-group-title" id="themes-modus-title">Modus</h2>
+  <p class="settings-group-desc">Hell oder dunkel, unabhängig von der Farbwelt.</p>
+  <!-- A block wrapper keeps the control as wide as its options (the group stretches its children). -->
+  <div>
     <SegmentedControl
       options={modeOptions}
       value={$mode}
@@ -83,12 +95,14 @@
       ariaLabel="Modus auswählen"
       onchange={selectMode}
     />
-  </Section>
+  </div>
+</section>
 
-  <Section title="Sprache" sub="UI-Sprache (Englisch folgt in v1.6)">
-    <LanguageToggle variant="segmented" />
-  </Section>
-</SectionStack>
+<section class="settings-group" aria-labelledby="themes-sprache-title">
+  <h2 class="settings-group-title" id="themes-sprache-title">Sprache</h2>
+  <p class="settings-group-desc">Clokr ist auf Deutsch. Englisch folgt später.</p>
+  <div><LanguageToggle variant="segmented" /></div>
+</section>
 
 <style>
   .theme-grid {
@@ -186,13 +200,5 @@
     font-size: 16px;
     font-weight: 600;
     color: var(--text);
-  }
-  .chip-brand {
-    padding: 3px 9px;
-    border-radius: var(--r-pill);
-    background: var(--brand-soft);
-    color: var(--brand);
-    font-size: 11px;
-    font-weight: 600;
   }
 </style>

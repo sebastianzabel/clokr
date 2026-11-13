@@ -8,7 +8,7 @@
  * „offen“): the page passes `null` for an unread source.
  *
  * `mailWithoutDelivery()` is the ONE rule of the warning „E-Mail aktiv, SMTP nicht eingerichtet“; the
- * overview and the mail settings (`/admin/system`) both call it. „Can deliver“ is the server's own
+ * overview and the mail settings (Regeln › Benachrichtigungen) both call it. „Can deliver“ is the server's own
  * answer (`GET /settings/smtp` → `deliveryReady`, the mailer's rule incl. the server fallback).
  */
 
@@ -120,7 +120,7 @@ export function setupChecks(input: CheckInputs, today: string): SetupCheck[] {
         ? "Die Prüfung nach Arbeitszeitgesetz ist eingeschaltet."
         : "Die Prüfung nach Arbeitszeitgesetz ist ausgeschaltet.",
       state: input.work.arbzgEnabled ? "erledigt" : "offen",
-      href: "/verwalten/regeln/urlaub#arbzg",
+      href: "/verwalten/regeln/arbeitszeit#arbzg",
       action: "Regeln",
     });
   }
@@ -132,7 +132,7 @@ export function setupChecks(input: CheckInputs, today: string): SetupCheck[] {
         ? "E-Mails können verschickt werden."
         : "Es ist kein Mailserver eingerichtet.",
       state: canDeliver(input.smtp) ? "erledigt" : "offen",
-      href: "/verwalten/system/allgemein#kommunikation",
+      href: "/verwalten/regeln/benachrichtigungen#mailserver",
       action: "E-Mail",
     });
   }
@@ -161,7 +161,7 @@ export function setupChecks(input: CheckInputs, today: string): SetupCheck[] {
           ? `${plural(live.length, "aktives Terminal", "aktive Terminals")}`
           : "Noch kein Terminal verbunden.",
       state: live.length > 0 ? "erledigt" : "offen",
-      href: "/verwalten/system/allgemein#integration",
+      href: "/verwalten/system/integrationen#terminals",
       action: "Terminals",
     });
   }

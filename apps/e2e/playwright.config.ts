@@ -267,6 +267,12 @@ export default defineConfig({
       //   - mein-tag-845.spec.ts (the four clock stage states with their texts and toasts, the
       //     standing working-time figure during a break, the 390 x 844 first screen and 360 px
       //     without overflow on Ich › Mein Tag); tenant fixture only, no seed
+      // Issue #854 (D-854-17, AC-4) added a further file:
+      //   - verwalten-854.spec.ts (every migrated Verwalten page of fixtures/verwalten-854-pages.json:
+      //     H1 text, axe WCAG 2 A/AA with colour contrast on the page and on each of its tabs, tab
+      //     keyboard navigation, no horizontal overflow at 390 and 1440 px); tenant fixture only, no
+      //     seed. Its sibling screenshots-854.spec.ts runs in the separate, non-gating `screenshots`
+      //     project below, never here.
       //
       // Issue #846 added a further file:
       //   - heute-im-salon-846.spec.ts (Team › Heute im Salon: every Kennzahl links to its list,
@@ -309,6 +315,7 @@ export default defineConfig({
         /heute-im-salon-846\.spec\.ts/,
         /verwalten-uebersicht-847\.spec\.ts/,
         /shift-notices-850\.spec\.ts/,
+        /verwalten-854\.spec\.ts/,
         /team-pages-853\.spec\.ts/,
       ],
       use: {
@@ -317,6 +324,17 @@ export default defineConfig({
       // No `dependencies: ["setup"]` (D-04) — these specs authenticate via the tenant
       // fixture's own bootstrap-tenant call (apps/e2e/fixtures/tenant.ts), not via
       // storageState, so they don't need the seeded admin user auth.setup.ts logs in.
+    },
+    {
+      // Issue #854 (D-854-17, AC-9) - the acceptance screenshots of the migrated Verwalten pages.
+      // Run by the non-gating CI job `screenshots-854` (CAPTURE_854=1, uploads the PNGs as the
+      // artifact screenshots-854); no pixel assertion exists. No other project picks the file up,
+      // and without CAPTURE_854 the spec skips itself. Same `use` as e2e-ci.
+      name: "screenshots",
+      testMatch: [/screenshots-854\.spec\.ts/],
+      use: {
+        ...devices["Desktop Chrome"],
+      },
     },
   ],
 });

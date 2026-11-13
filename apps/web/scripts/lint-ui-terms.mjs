@@ -37,13 +37,16 @@ const SCAN_DIRS = ["src/routes", "src/lib"];
 /** Areas where "Phorest" may be named: the integration is configured and planned there. */
 const PHOREST_ALLOWED = [
   "src/routes/(app)/admin/", // Verwaltung: the integration's own settings page
+  "src/routes/(app)/verwalten/", // Verwaltung (#854): the Regeln pages name the Phorest import
   "src/routes/(app)/shifts/", // Schichtplanung: imported shifts are planned by managers
   "src/routes/(operator)/", // operator console: salon coupling
   "src/lib/components/admin/",
   "src/lib/components/schedule/", // contract fields edited in Verwaltung
+  "src/lib/components/employees/detail/", // the person detail's per-person Phorest buffer (#854), a Verwaltung page
   "src/lib/components/operator/",
   "src/lib/operator/",
   "src/lib/nav/routes.ts", // the page names (#844): the Phorest entry is shown only under Verwalten › System
+  "src/lib/settings/settings-pages.ts", // the settings registry (#854) names the Phorest page file of its section
 ];
 /** Areas where "Mandant" may be named (D-574-04): the operator console speaks to the operator. */
 const MANDANT_ALLOWED = [

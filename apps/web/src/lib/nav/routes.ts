@@ -22,8 +22,10 @@ import { activeNavHref, matchesRoute } from "$lib/nav/active-route";
 export type Area = "ich" | "team" | "verwalten";
 export type PermissionAlternatives = readonly (readonly string[])[];
 
-/** The two page widths of the shell (owner 09.11.2026): `read` = at most 1120 px centred (forms, settings,
- *  details), `full` = up to 2400 px with a 32 px margin (planners, calendars, tables, reports, start pages). */
+/** The two page widths of the shell (owner 09.11.2026): `read` = at most 1120 px (forms, settings, details),
+ *  `full` = up to 2400 px (planners, calendars, tables, reports, start pages), both with a 32 px margin.
+ *  Owner decision 13.11.2026 (#907, changes #844's "reading width centred"): both widths are left-aligned,
+ *  so every page starts at the same left edge at every screen width. */
 export type PageWidth = "read" | "full";
 
 export interface AppRoute {
@@ -312,22 +314,49 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: "children",
     inNav: true,
     parent: "/verwalten",
-    description: "Urlaub, Betriebsurlaub, Urlaubsgrenzen und Schichten",
+    description: "Arbeitszeit, Abwesenheiten, Dienstplan, Monatsabschluss und Benachrichtigungen",
+  },
+  // Issue #854: a page created by the Verwalten rebuild (no route file of its own before). Its sections come from
+  // /admin/system and /admin/vacation; the registry (settings-pages.ts) pins `requires` to the union of theirs.
+  {
+    href: "/verwalten/regeln/arbeitszeit",
+    area: "verwalten",
+    label: "Arbeitszeit & Verträge",
+    icon: "clock",
+    width: "read",
+    requires: [
+      [Z("tenant-settings:read")],
+      [Z("tenant-settings:update")],
+      [Z("terminal:manage")],
+      [Z("api-key:manage")],
+      [Z("leave-config:manage")],
+    ],
+    inNav: false,
+    parent: "/verwalten/regeln",
+    description: "Standard-Arbeitszeit, Pausen, Überstunden, Gleitzeit und Berufsschule",
   },
   // no read guard; the page's writes decide (PUT /settings/work, /settings/leave-types)
   {
-    href: "/verwalten/regeln/urlaub",
+    href: "/verwalten/regeln/abwesenheiten",
     area: "verwalten",
-    label: "Urlaubsverwaltung",
+    label: "Abwesenheiten",
     icon: "umbrella",
     width: "read",
-    requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
+    // The union of the alternatives of the vacation page, the company shutdowns and the leave limits (D-854-05).
+    requires: [
+      [Z("tenant-settings:update")],
+      [Z("leave-config:manage")],
+      [Z("company-shutdown:manage")],
+      [Z("leave-limit:manage")],
+      [Z("leave-request:approve")],
+    ],
     file: "/admin/vacation",
     inNav: false,
     parent: "/verwalten/regeln",
-    description: "Arbeitszeit-Vorgaben, Urlaubsanspruch, Anträge, Erinnerungen und Sonderurlaub",
+    description: "Urlaub, Sonderurlaub, Betriebsurlaub, Urlaubsgrenzen und Übertrag",
   },
-  // writes /company-shutdowns
+  // writes /company-shutdowns. The list is the „Betriebsurlaub“ tab of Abwesenheiten (the route file is a redirect
+  // stub, #854); the entry stays as the carrier of the detail sub-route /verwalten/regeln/betriebsurlaub/<id>.
   {
     href: "/verwalten/regeln/betriebsurlaub",
     area: "verwalten",
@@ -337,34 +366,68 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: [[Z("company-shutdown:manage")]],
     file: "/admin/shutdowns",
     inNav: false,
-    parent: "/verwalten/regeln",
-    description: "Zeiträume, in denen der ganze Betrieb geschlossen hat",
-  },
-  // GET /leave/limits (handler checks: leave-limit:manage or leave-request:approve)
-  {
-    href: "/verwalten/regeln/urlaubsgrenzen",
-    area: "verwalten",
-    label: "Urlaubsgrenzen & Sperren",
-    icon: "umbrella",
-    width: "read",
-    requires: [[Z("leave-limit:manage")], [Z("leave-request:approve")]],
-    file: "/admin/leave-limits",
-    inNav: false,
-    parent: "/verwalten/regeln",
-    description: "Wie viele Personen gleichzeitig Urlaub haben dürfen",
+    parent: "/verwalten/regeln/abwesenheiten",
+    description: "Ein Betriebsurlaub im Detail",
   },
   // Promise.all of templates/coverage, week, patterns
   {
     href: "/verwalten/regeln/dienstplan",
     area: "verwalten",
-    label: "Schichteinstellungen",
+    label: "Dienstplan",
     icon: "grid",
     width: "read",
-    requires: [[Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")]],
+    // Issue #854: the union of the gates of its sections (settings-pages.ts, D-854-05) - the shift
+    // configuration plus the System and Urlaub settings that joined it; the tabs narrow it per person.
+    requires: [
+      [Z("shift-config:manage"), Z("shift:read"), Z("shift-pattern:read")],
+      [Z("tenant-settings:read")],
+      [Z("tenant-settings:update")],
+      [Z("terminal:manage")],
+      [Z("api-key:manage")],
+      [Z("leave-config:manage")],
+    ],
     file: "/admin/shifts",
     inNav: false,
     parent: "/verwalten/regeln",
-    description: "Schichtvorlagen, Bedarfsregeln und Wochenmuster",
+    description:
+      "Schichtvorlagen, Bedarfsregeln, Wochenmuster, Öffnungszeiten-Bindung und Erinnerungen",
+  },
+  // Issue #854: a page created by the Verwalten rebuild. Its sections come from /admin/system; the registry
+  // (settings-pages.ts) pins `requires` to the union of theirs. The close WORKFLOW is /verwalten/monatsabschluss.
+  {
+    href: "/verwalten/regeln/monatsabschluss",
+    area: "verwalten",
+    label: "Monatsabschluss",
+    icon: "lock",
+    width: "read",
+    requires: [
+      [Z("tenant-settings:read")],
+      [Z("tenant-settings:update")],
+      [Z("terminal:manage")],
+      [Z("api-key:manage")],
+    ],
+    inNav: false,
+    parent: "/verwalten/regeln",
+    description: "Wann ein Monat abgeschlossen werden darf",
+  },
+  // Issue #854: a page created by the Verwalten rebuild. Its sections come from /admin/system and /admin/vacation;
+  // the registry (settings-pages.ts) pins `requires` to the union of theirs.
+  {
+    href: "/verwalten/regeln/benachrichtigungen",
+    area: "verwalten",
+    label: "Benachrichtigungen & E-Mail",
+    icon: "inbox",
+    width: "read",
+    requires: [
+      [Z("tenant-settings:read")],
+      [Z("tenant-settings:update")],
+      [Z("terminal:manage")],
+      [Z("api-key:manage")],
+      [Z("leave-config:manage")],
+    ],
+    inNav: false,
+    parent: "/verwalten/regeln",
+    description: "E-Mail-Server, Benachrichtigungen und Erinnerungen",
   },
   // GET /overtime/close-month/status
   {
@@ -401,7 +464,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: "children",
     inNav: true,
     parent: "/verwalten",
-    description: "Import, DATEV-Export, Protokoll und Support-Zugriffe",
+    description: "Import, Export, Protokoll und Support-Zugriffe",
   },
   // POST /imports/employees, POST /imports/time-entries
   {
@@ -416,18 +479,18 @@ export const APP_ROUTES: readonly AppRoute[] = [
     parent: "/verwalten/daten",
     description: "Personen und Zeiten aus einer CSV-Datei übernehmen",
   },
-  // GET /reports/datev
+  // GET /reports/datev, GET /reports/datev/employee, GET /reports/period/csv, GET /reports/monthly-export/pdf
   {
-    href: "/verwalten/daten/datev",
+    href: "/verwalten/daten/export",
     area: "verwalten",
-    label: "DATEV-Export",
+    label: "Export",
     icon: "download",
     width: "read",
     requires: [[Z("report:export")]],
     file: "/admin/export",
     inNav: false,
     parent: "/verwalten/daten",
-    description: "Lohndaten für die Lohnbuchhaltung",
+    description: "DATEV, CSV, Monatsexport und Kalender",
   },
   // GET /audit-logs
   {
@@ -466,7 +529,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     parent: "/verwalten",
     description: "Allgemeines, Darstellung, Schnittstellen und Rollen",
   },
-  // tabs: settings, terminals, API keys
+  // Plan 854-14: the terminal and API keys moved to System › Integrationen
   {
     href: "/verwalten/system/allgemein",
     area: "verwalten",
@@ -482,7 +545,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     file: "/admin/system",
     inNav: false,
     parent: "/verwalten/system",
-    description: "Unternehmen, Arbeitszeit, Sicherheit, Kommunikation und Geräte",
+    description: "Unternehmen, Region und Sicherheit",
   },
   // no API guard (writes /me/preferences); grouped with the tenant settings
   {
@@ -504,11 +567,19 @@ export const APP_ROUTES: readonly AppRoute[] = [
     label: "Integrationen",
     icon: "wifi",
     width: "read",
-    requires: [[Z("presence-source:manage")]],
+    // Plan 854-14: tabs WLAN-Anwesenheit (presence-source:manage), NFC-Terminals and API-Schlüssel (the
+    // System alternatives); the registry (settings-pages.ts) pins this to the union of the tabs' sections.
+    requires: [
+      [Z("presence-source:manage")],
+      [Z("tenant-settings:read")],
+      [Z("tenant-settings:update")],
+      [Z("terminal:manage")],
+      [Z("api-key:manage")],
+    ],
     file: "/admin/integrations",
     inNav: false,
     parent: "/verwalten/system",
-    description: "WLAN-Anwesenheit und Handy-Kopplung",
+    description: "WLAN-Anwesenheit, NFC-Terminals und API-Schlüssel",
   },
   // /integrations/phorest/*
   {
@@ -552,20 +623,77 @@ export const APP_ROUTES: readonly AppRoute[] = [
 ];
 
 /**
- * Redirect-only aliases that still have a page file of their own, with the permission alternatives their old
- * guard used (the admin layout guards them before their own redirect runs; it lands on an old URL, which then
- * redirects once more).
+ * An old URL that has no route-table entry of its own: its permission alternatives (the old guard) and, since
+ * #854, optionally the page that now holds its content.
  */
-export const LEGACY_ROUTE_REDIRECTS: readonly { href: string; requires: PermissionAlternatives }[] =
-  [
-    // → /admin/vacation#sonderurlaub (its own onMount redirect)
-    {
-      href: "/admin/special-leave",
-      requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
-    },
-    // → /admin/integrations (301 from its +page.server.ts)
-    { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },
-  ];
+export interface LegacyRedirect {
+  href: string;
+  requires: PermissionAlternatives;
+  /**
+   * An old page whose content now lives on another page (#854): the old URL and every sub-path redirect to
+   * `to` (a constant of this table, never derived from the request). May end in `#<tab>`. Such an alias has no
+   * page file; `rerouteTarget` renders the page of `to` so the `(app)` layout load can send the redirect.
+   */
+  to?: string;
+}
+
+/**
+ * Redirect-only aliases with the permission alternatives their old guard used (the admin layout guards them
+ * before their own redirect runs). An alias without `to` still has a page file of its own that redirects once
+ * more; an alias with `to` is redirected on the server and has no file.
+ */
+export const LEGACY_ROUTE_REDIRECTS: readonly LegacyRedirect[] = [
+  // The Sonderurlaub rules are a tab of the Abwesenheiten page.
+  {
+    href: "/admin/special-leave",
+    requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
+    to: "/verwalten/regeln/abwesenheiten#sonderurlaub",
+  },
+  // The #844 URL of the vacation page (renamed by #854, plan 854-11); it may be bookmarked.
+  {
+    href: "/verwalten/regeln/urlaub",
+    requires: [[Z("tenant-settings:update")], [Z("leave-config:manage")]],
+    to: "/verwalten/regeln/abwesenheiten",
+  },
+  // The leave limits and blackouts (#836) are a tab of the Abwesenheiten page (plan 854-13). Both URLs keep the
+  // old guard: a holder of leave-request:approve reaches the page and sees this tab alone.
+  {
+    href: "/admin/leave-limits",
+    requires: [[Z("leave-limit:manage")], [Z("leave-request:approve")]],
+    to: "/verwalten/regeln/abwesenheiten#urlaubsgrenzen",
+  },
+  {
+    href: "/verwalten/regeln/urlaubsgrenzen",
+    requires: [[Z("leave-limit:manage")], [Z("leave-request:approve")]],
+    to: "/verwalten/regeln/abwesenheiten#urlaubsgrenzen",
+  },
+  // The #844 URL of the DATEV export page (renamed by #854, plan 854-24); it may be bookmarked.
+  {
+    href: "/verwalten/daten/datev",
+    requires: [[Z("report:export")]],
+    to: "/verwalten/daten/export",
+  },
+  // → /admin/integrations (301 from its +page.server.ts)
+  { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },
+];
+
+/** The folded-page alias `pathname` belongs to, or null. */
+function foldedAlias(pathname: string): (LegacyRedirect & { to: string }) | null {
+  const alias = LEGACY_ROUTE_REDIRECTS.find(
+    (entry) => entry.to !== undefined && matchesRoute(entry.href, pathname),
+  );
+  return alias === undefined ? null : (alias as LegacyRedirect & { to: string });
+}
+
+/**
+ * The redirect location of `target` with the request's query string kept: the query goes BEFORE the fragment
+ * (`/a#t` + `?x=1` → `/a?x=1#t`), appending it to the whole target would put it behind the fragment.
+ */
+export function redirectLocation(target: string, search: string): string {
+  const hashAt = target.indexOf("#");
+  if (hashAt === -1) return target + search;
+  return target.slice(0, hashAt) + search + target.slice(hashAt);
+}
 
 const ROUTE_HREFS = APP_ROUTES.map((route) => route.href);
 const FILE_ROUTES = APP_ROUTES.filter(
@@ -591,6 +719,12 @@ function rest(pathname: string, base: string): string {
 /** The route file a new URL renders (`/verwalten/personen/1` → `/admin/employees/1`), or null when the path is
  *  not a rerouted URL (a page created by #844, an old URL, an unknown path). Used by `src/hooks.ts` `reroute`. */
 export function rerouteTarget(pathname: string): string | null {
+  // A folded old page has no file: render the page that holds its content, the layout load then redirects.
+  const folded = foldedAlias(pathname);
+  if (folded !== null) {
+    const toPath = folded.to.split("#")[0];
+    return rerouteTarget(toPath) ?? toPath;
+  }
   const route = routeFor(pathname);
   if (route === null || route.file === undefined) return null;
   return route.file + rest(pathname, route.href);
@@ -600,6 +734,8 @@ export function rerouteTarget(pathname: string): string | null {
  *  `/verwalten/personen/1`), or null when `pathname` is not an old URL. Used by `routes/(app)/+layout.ts`. */
 export function legacyRedirectTarget(pathname: string): string | null {
   if (pathname === "/admin" || pathname === "/admin/") return "/verwalten";
+  const folded = foldedAlias(pathname);
+  if (folded !== null) return folded.to;
   // No new href lies under a file path (`routes-844.test.ts`), so a new URL never matches here.
   const file = activeNavHref(FILE_HREFS, pathname);
   if (file === null) return null;
@@ -739,6 +875,55 @@ export function homeHref(user: PermissionHolder | null | undefined): string {
 export function areaLabelForPath(pathname: string): string {
   const route = routeFor(pathname);
   return route === null ? "" : AREA_LABELS[route.area];
+}
+
+export interface Crumb {
+  label: string;
+  /** The page the crumb opens; null for the current page and for a page the user may not open. */
+  href: string | null;
+}
+
+/**
+ * Issue #854 (owner review) - the top bar's whole path of `pathname`, from the route table only: the area,
+ * then every `parent` of the page's entry up to the area hub, then the page itself; below a page file (a
+ * detail page such as `/verwalten/personen/123`) the page links to its list and `detailLabel` (the record's
+ * name, given by the page) closes the trail. Every crumb but the last is a link when the user may open it.
+ * A tab of a page (`tabLabel`, the roster tabs of #853) names only its page: its parent carries the same
+ * name. Pages carry no breadcrumb of their own.
+ */
+export function crumbTrail(
+  pathname: string,
+  user: PermissionHolder | null | undefined,
+  detailLabel: string | null = null,
+): Crumb[] {
+  const route = routeFor(pathname);
+  if (route === null) return [];
+  const link = (href: string): string | null => (mayOpenPath(user, href) ? href : null);
+  const hub = `/${route.area}`;
+  const hubRoute = APP_ROUTES.find((entry) => entry.href === hub);
+  const trail: Crumb[] = [
+    { label: AREA_LABELS[route.area], href: hubRoute && route.href !== hub ? link(hub) : null },
+  ];
+  if (route.href === hub) return trail;
+
+  const ancestors: AppRoute[] = [];
+  let parentHref = route.tabLabel ? undefined : route.parent;
+  while (parentHref !== undefined && parentHref !== hub) {
+    const parent = APP_ROUTES.find((entry) => entry.href === parentHref);
+    if (parent === undefined) break;
+    ancestors.unshift(parent);
+    parentHref = parent.parent;
+  }
+  for (const parent of ancestors) trail.push({ label: parent.label, href: link(parent.href) });
+
+  const exact = pathname === route.href || pathname === `${route.href}/`;
+  if (exact || detailLabel === null) {
+    trail.push({ label: route.label, href: exact ? null : link(route.href) });
+  } else {
+    trail.push({ label: route.label, href: link(route.href) });
+    trail.push({ label: detailLabel, href: null });
+  }
+  return trail;
 }
 
 /** The page width of `pathname`: its entry's width; a detail page below an entry (`/verwalten/personen/123`,

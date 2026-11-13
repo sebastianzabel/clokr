@@ -257,16 +257,17 @@ test.describe("Error Handling + UX Plausibility", () => {
   });
 
   test("empty states provide guidance", async ({ page }) => {
-    await page.goto("/admin/shutdowns");
+    // The company shutdown list is the Betriebsurlaub tab of Regeln › Abwesenheiten since #854.
+    await page.goto("/verwalten/regeln/abwesenheiten#betriebsurlaub");
     await page.waitForLoadState("networkidle");
 
-    // Empty state should tell user what to do
-    const emptyText = page.getByText(/Keine|Erstellen|anlegen/i).first();
-    await expect(emptyText).toBeVisible();
+    // Empty state should tell user what to do (scoped to the tab: the other tabs' panels are not on screen)
+    await expect(page.getByText("Keine Betriebsurlaube").first()).toBeVisible();
 
     // Should have a CTA button
-    const ctaBtn = page.getByText(/Neu|Erstellen|anlegen/i).first();
-    await expect(ctaBtn).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Betriebsurlaub anlegen/ }).first(),
+    ).toBeVisible();
 
     await screenshotPage(page, "flow-empty-state-guidance");
   });

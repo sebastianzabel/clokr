@@ -278,7 +278,10 @@ describe("the checked-in ratchet register", () => {
 
   it("is not empty (the ratchet is not vacuous) and `--print` reproduces it", () => {
     const entries = RATCHET_RULES.flatMap((rule) => Object.keys(checkedIn.rules[rule]));
-    expect(entries.length).toBeGreaterThan(40);
+    // #854 empties the register page by page (it only falls); the floor proves it is not vacuous.
+    // What stays are the operator console (no follow-up ticket), the dashboard, the /leave toolbar and
+    // the clock salon select - eight or more entries while those are not migrated.
+    expect(entries.length).toBeGreaterThanOrEqual(8);
     expect(registerFromCounts(found, checkedIn)).toEqual(checkedIn);
   });
 
@@ -289,9 +292,15 @@ describe("the checked-in ratchet register", () => {
     expect(tables.some((f) => f.endsWith("(app)/admin/employees/+page.svelte"))).toBe(false);
   });
 
-  it("registers the employee list toolbar against #854 (it stays until the Verwalten rebuild)", () => {
-    const entry = checkedIn.rules[FILTER]["apps/web/src/routes/(app)/admin/employees/+page.svelte"];
-    expect(entry).toMatchObject({ ticket: "#854" });
+  // Plan 854-18 rebuilt the employee list's filter bar (TableToolbar) and KPI row (KpiStrip): the
+  // entries left the register in the same commit, so nothing of the page may be registered any more.
+  it("keeps the rebuilt employee list out of the register (filter bar and KPI row are blocks)", () => {
+    const page = "apps/web/src/routes/(app)/admin/employees/+page.svelte";
+    for (const rule of RATCHET_RULES) {
+      expect(checkedIn.rules[rule][page], `${rule} still registers the employee list`).toBe(
+        undefined,
+      );
+    }
   });
 
   it("names the operator console with a null ticket and the D-843-15 reason", () => {

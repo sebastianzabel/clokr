@@ -181,9 +181,15 @@ test.describe("admin salons (Issue #563)", () => {
     await page.goto("/admin/salons");
     await page
       .getByRole("row", { name: /Niedersachsen/ })
-      .getByRole("link")
+      // The name cell's button is the row's only control (the status chip is not interactive).
+      .getByRole("button")
       .click();
     await expect(page).toHaveURL(new RegExp(`/verwalten/salons/${salon.id}$`));
+
+    // Issue #854: the hours are the panel „Öffnungszeiten“ of the salon; the tab is kept in the
+    // URL hash, so the reload below lands on it again.
+    await page.getByRole("tab", { name: "Öffnungszeiten" }).click();
+    await expect(page).toHaveURL(/#oeffnungszeiten$/);
 
     const closed = page.getByLabel("Geschlossen Sonntag");
     await expect(closed).toBeChecked();
@@ -228,8 +234,8 @@ test.describe("admin salons (Issue #563)", () => {
     // Create: the list's own link navigates client-side.
     await page.getByRole("link", { name: "Salon anlegen" }).click();
     await expect(page).toHaveURL(/\/verwalten\/salons\/neu$/);
-    await page.getByLabel("Name *").fill(SECOND_SALON_NAME);
-    await page.getByLabel("Bundesland *").selectOption("HESSEN");
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill(SECOND_SALON_NAME);
+    await page.getByLabel("Bundesland").selectOption("HESSEN");
     await page.getByRole("button", { name: "Salon anlegen" }).click();
 
     await expect(page.getByText("Salon angelegt.")).toBeVisible();
@@ -242,7 +248,7 @@ test.describe("admin salons (Issue #563)", () => {
     ]);
     expect(await documentIsMarked(page), "the page was not reloaded by the create").toBe(true);
 
-    // Deactivate through „Kritische Aktionen“ and its confirmation.
+    // Deactivate through the section „Salon deaktivieren“ and its confirmation.
     await page.getByRole("button", { name: "Salon deaktivieren" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Deaktivieren" }).click();
 
@@ -274,15 +280,20 @@ test.describe("admin salons (Issue #563)", () => {
     await expect(page.getByRole("link", { name: "Salon anlegen" })).toHaveCount(0);
   });
 
-  test("admin/system keeps only the shift check mode and saves nothing else", async ({
+  test("the shift check mode is set on Regeln › Dienstplan › Einstellungen and saves nothing else", async ({
     page,
     request,
     tenant,
   }) => {
     await signIn(page, request, tenant);
-    await page.goto("/admin/system");
 
-    await expect(page.getByText("Schichtprüfung gegen Öffnungszeiten")).toBeVisible();
+    // Issue #854: the mode left the System page; it lives only on the Dienstplan page now.
+    await page.goto("/verwalten/system/allgemein");
+    await expect(page.getByText("Unternehmen & Region").first()).toBeVisible();
+    await expect(page.locator('input[name="shiftStoreHoursMode"]')).toHaveCount(0);
+
+    await page.goto("/verwalten/regeln/dienstplan#einstellungen");
+    await expect(page.getByRole("heading", { name: "Schichten und Öffnungszeiten" })).toBeVisible();
     await expect(page.locator('input[name="shiftStoreHoursMode"]')).toHaveCount(3);
     await expect(page.getByText("Wochentag", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Öffnung", { exact: true })).toHaveCount(0);
@@ -341,18 +352,18 @@ test.describe("admin salons (Issue #563)", () => {
     });
 
     await page.goto(`/admin/salons/${salon.id}`);
-    const select = page.getByLabel("Bundesland *");
+    const select = page.getByLabel("Bundesland");
     await expect(select).toHaveValue("NIEDERSACHSEN");
     await select.selectOption("HESSEN");
-    await page.getByRole("button", { name: "Stammdaten speichern" }).click();
+    await page.getByRole("button", { name: "Salon speichern" }).click();
 
-    await expect(page.locator("#salon-federal-state-error")).toHaveText(serverText);
+    await expect(page.getByText(serverText)).toBeVisible();
     await expect(select).toHaveValue("NIEDERSACHSEN");
     await expect(select).toBeDisabled();
     expect(patches).toBe(1);
 
     // The lock is only the Bundesland: the other master-data fields stay editable.
-    const name = page.getByLabel("Name *");
+    const name = page.getByRole("textbox", { name: "Name", exact: true });
     await expect(name).toBeEnabled();
     await name.fill("Umbenannter Testsalon");
     await expect(name).toHaveValue("Umbenannter Testsalon");
@@ -386,7 +397,7 @@ test.describe("admin salons (Issue #563)", () => {
 
     await dialog.getByRole("button", { name: "Abbrechen" }).click();
     await expect(dialog).toHaveCount(0);
-    // Still active: the „Kritische Aktionen“ card is offered and the list shows both salons as "Aktiv".
+    // Still active: the section „Salon deaktivieren“ is offered and the list shows both salons as "Aktiv".
     await expect(page.getByRole("button", { name: "Salon deaktivieren" })).toBeVisible();
     await page.goto("/admin/salons");
     await expect(page.getByRole("row", { name: new RegExp(SECOND_SALON_NAME) })).toContainText(
@@ -450,11 +461,12 @@ test.describe("admin salons (Issue #563)", () => {
 
       for (const path of ["/admin/salons", `/admin/salons/${salon.id}`]) {
         const where = `${path} at ${viewport.width} px`;
-        await page.goto(path);
+        // The hours editor lives on the panel „Öffnungszeiten“, which the hash selects.
+        await page.goto(path === "/admin/salons" ? path : `${path}#oeffnungszeiten`);
         if (path === "/admin/salons") {
-          // Below 640 px the Bundesland column is hidden (it is no longer in the row's name); the
-          // status badge is what this view must keep.
-          await expect(page.getByRole("row", { name: /Aktiv/ })).toBeVisible();
+          // Below 760 px of table width the DataTable turns its rows into cards; the status chip
+          // is what this view must keep.
+          await expect(page.getByText("Aktiv", { exact: true }).first()).toBeVisible();
         } else {
           await expect(page.getByLabel("Geschlossen Sonntag")).toBeVisible();
         }
@@ -472,10 +484,10 @@ test.describe("admin salons (Issue #563)", () => {
         );
 
         if (path === "/admin/salons") {
-          // The list's own scroll box must not hide the status column either (measured at 390 px
-          // before the Bundesland column gave way: the badge sat cut off inside `.table-wrap`).
+          // The table's own scroll box must not hide the status column either: below 760 px the
+          // DataTable is a card list and scrolls nowhere.
           const inner = await page
-            .locator(".table-wrap")
+            .locator(".dt-scroll")
             .first()
             .evaluate((el) => ({
               overflow: el.scrollWidth - el.clientWidth,

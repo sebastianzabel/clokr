@@ -4,6 +4,10 @@
 // `admin-system-save-wiring.test.ts` and `layout-boundaries.test.ts`), so the page contract is read
 // from source: the exact PATCH body, the context reload after a successful write, the unsaved
 // registration, the rights call, the operator isolation and the shape of admin/system.
+//
+// Issue #854: the Stammdaten section and the create form moved out of the page into
+// `SalonMasterDataForm.svelte` (FORM below); the page keeps the shell, the hours section, the
+// lifecycle actions and the one unsaved registration. Each pin names the file that now owns it.
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -23,6 +27,10 @@ const DETAIL = readRouteFile(
   "../routes/(app)/admin/salons/[id]/+page.svelte",
   "src/routes/(app)/admin/salons/[id]/+page.svelte",
 );
+const FORM = readRouteFile(
+  "../lib/components/admin/salons/SalonMasterDataForm.svelte",
+  "src/lib/components/admin/salons/SalonMasterDataForm.svelte",
+);
 const LIST = readRouteFile(
   "../routes/(app)/admin/salons/+page.svelte",
   "src/routes/(app)/admin/salons/+page.svelte",
@@ -30,6 +38,11 @@ const LIST = readRouteFile(
 const SYSTEM = readRouteFile(
   "../routes/(app)/admin/system/+page.svelte",
   "src/routes/(app)/admin/system/+page.svelte",
+);
+// Issue #854 (plan 854-10): the shift check mode moved from admin/system to Regeln › Dienstplan › Einstellungen.
+const DIENSTPLAN_SETTINGS = readRouteFile(
+  "../lib/components/admin/dienstplan/DienstplanSettingsPanel.svelte",
+  "src/lib/components/admin/dienstplan/DienstplanSettingsPanel.svelte",
 );
 
 /** The text of `signature { ... }` up to its matching closing brace. */
@@ -57,7 +70,7 @@ describe("salon detail page - the hours write", () => {
 
   it("builds its PATCH body with salonPatch limited to openingHours, so it can only carry that key", () => {
     const body = SAVE();
-    expect(body).toContain('salonPatch(salon, form, ["openingHours"])');
+    expect(body).toContain('salonPatch(salon, formWithHours(salon), ["openingHours"])');
     const patchCall = /api\.patch\(\s*`\/salons\/\$\{[^`]*\}`\s*,\s*([^)]*)\)/.exec(body);
     expect(patchCall, "api.patch(`/salons/${...}`, <patch>) not found").not.toBeNull();
     expect(patchCall?.[1].trim()).toBe("patch");
@@ -91,13 +104,17 @@ describe("salon detail page - the hours write", () => {
 });
 
 describe("salon detail page - create mode (D-06)", () => {
-  const CREATE = () => fnBody(DETAIL, "async function createSalon");
+  const CREATE = () => fnBody(FORM, "async function createSalon");
+  const AFTER_CREATE = () => fnBody(DETAIL, "async function afterCreate");
 
   it("posts createSalonBody(form) to /salons, once; the only other posts are the two lifecycle actions", () => {
     const body = CREATE();
     expect(body).toContain('api.post("/salons", createSalonBody(form))');
     expect((body.match(/api\.post\(/g) ?? []).length).toBe(1);
-    const targets = [...DETAIL.matchAll(/api\.post\(\s*([^,)]+)/g)].map((m) => m[1].trim());
+    const targets = [
+      ...FORM.matchAll(/api\.post\(\s*([^,)]+)/g),
+      ...DETAIL.matchAll(/api\.post\(\s*([^,)]+)/g),
+    ].map((m) => m[1].trim());
     expect(targets).toEqual([
       '"/salons"',
       "`/salons/${salon.id}/deactivate`",
@@ -113,26 +130,31 @@ describe("salon detail page - create mode (D-06)", () => {
     );
   });
 
-  it("reloads the salon context before it navigates to the new salon", () => {
+  it("reloads the salon context after the POST and before it hands the created salon to the page", () => {
     const body = CREATE();
     const postAt = body.indexOf("api.post(");
     const reloadAt = body.indexOf("await refreshSalonContext()");
-    const gotoAt = body.indexOf("goto(");
+    const handOffAt = body.indexOf("onCreated?.(");
     expect(postAt).toBeGreaterThanOrEqual(0);
     expect(reloadAt).toBeGreaterThan(postAt);
-    expect(gotoAt).toBeGreaterThan(reloadAt);
+    expect(handOffAt).toBeGreaterThan(reloadAt);
+    const helper = fnBody(FORM, "async function refreshSalonContext");
+    expect(helper).toMatch(/salonContext\.load\([^)]*\{\s*force:\s*true\s*\}\s*\)/);
   });
 
-  it("clears the unsaved registration before the navigation", () => {
-    const body = CREATE();
+  it("the page navigates to the new salon only after the context reload, and clears the unsaved registration first", () => {
+    const body = AFTER_CREATE();
     const clearAt = body.indexOf('markUnsaved("admin-salon-detail", false)');
     expect(clearAt).toBeGreaterThanOrEqual(0);
     expect(clearAt).toBeLessThan(body.indexOf("goto("));
+    expect(DETAIL).toContain("onCreated={afterCreate}");
   });
 
-  it("has exactly one create submit button", () => {
-    expect((DETAIL.match(/onclick=\{createSalon\}/g) ?? []).length).toBe(1);
-    expect(DETAIL).toContain("Salon anlegen");
+  it("has exactly one create submit: the SaveBar of the form, labelled 'Salon anlegen'", () => {
+    expect((FORM.match(/onSave=\{isCreate \? createSalon : saveMasterData\}/g) ?? []).length).toBe(
+      1,
+    );
+    expect(FORM).toContain('saveLabel={isCreate ? "Salon anlegen" : "Salon speichern"}');
   });
 
   it("shows the create form only to a caller who may manage salons", () => {
@@ -142,23 +164,31 @@ describe("salon detail page - create mode (D-06)", () => {
 });
 
 describe("salon detail page - master data (Stammdaten)", () => {
-  const SAVE = () => fnBody(DETAIL, "async function saveMasterData");
+  const SAVE = () => fnBody(FORM, "async function saveMasterData");
 
-  it("PATCHes the changed keys from salonPatch(), restricted to the master-data keys", () => {
+  it("PATCHes exactly the master-data keys of the section (pickSection), never the hours", () => {
     const body = SAVE();
-    expect(body).toContain("salonPatch(salon, form, MASTER_KEYS)");
-    const patchCall = /api\.patch\(\s*`\/salons\/\$\{[^`]*\}`\s*,\s*([^)]*)\)/.exec(body);
-    expect(patchCall?.[1].trim()).toBe("patch");
-    const keys = /const MASTER_KEYS[^=]*=\s*\[([^\]]*)\]/.exec(DETAIL);
-    expect(keys, "MASTER_KEYS not found").not.toBeNull();
+    const patchCall = /api\.patch\(\s*`\/salons\/\$\{[^`]*\}`\s*,\s*([\s\S]*?)\);/.exec(body);
+    expect(patchCall, "api.patch(`/salons/${...}`, <patch>) not found").not.toBeNull();
+    expect(patchCall?.[1].replace(/\s+/g, " ").trim()).toBe(
+      "pickSection(normalised(values), SALON_MASTER_KEYS),",
+    );
+    const keys = /const SALON_MASTER_KEYS\s*=\s*\[([^\]]*)\]/.exec(FORM);
+    expect(keys, "SALON_MASTER_KEYS not found").not.toBeNull();
     expect(keys?.[1]).not.toContain("openingHours");
     expect(keys?.[1]).toContain('"federalState"');
   });
 
-  it("never sends an empty body: a null patch stops with a hint", () => {
+  it("never sends an empty body: the SaveBar exists only while there is a change, and an invalid form stops before the PATCH", () => {
     const body = SAVE();
-    expect(body.indexOf("if (!patch)")).toBeGreaterThanOrEqual(0);
-    expect(body.indexOf("if (!patch)")).toBeLessThan(body.indexOf("api.patch("));
+    expect(FORM).toContain("changes={changeCount}");
+    expect(body.indexOf("hasMessages(liveErrors)")).toBeGreaterThanOrEqual(0);
+    expect(body.indexOf("hasMessages(liveErrors)")).toBeLessThan(body.indexOf("api.patch("));
+    const bar = readFileSync(
+      resolve(process.cwd(), "src/lib/components/ui/SaveBar.svelte"),
+      "utf8",
+    );
+    expect(bar).toContain("{#if changes > 0}");
   });
 
   it("reloads the salon context after the PATCH succeeded", () => {
@@ -170,16 +200,18 @@ describe("salon detail page - master data (Stammdaten)", () => {
     const body = SAVE();
     expect(body).toMatch(/err\.status === 409 && data\?\.code === "FEDERAL_STATE_IN_USE"/);
     expect(body).toContain("err.data");
-    expect(body).toContain("form.federalState = salon.federalState");
+    expect(body).toContain("values.federalState = snapshot.federalState");
     expect(body).toContain("federalStateLocked = true");
-    expect(DETAIL).toMatch(/disabled=\{!rights\.canManage \|\| federalStateLocked\}/);
+    expect(FORM).toMatch(/disabled=\{!canEdit \|\| federalStateLocked\}/);
   });
 
-  it("has its own save button and section state, next to the hours section", () => {
-    expect(DETAIL).toContain("onclick={saveMasterData}");
-    expect(DETAIL).toContain("onclick={saveHours}");
-    expect(DETAIL).toContain("dirty={masterDirty}");
-    expect(DETAIL).toContain("dirty={hoursDirty}");
+  it("has its own SaveBar and section state, next to the hours section", () => {
+    expect(FORM).toContain("<SaveBar");
+    expect(FORM).toContain("countChanges(snapshot, values, SALON_MASTER_KEYS)");
+    expect(DETAIL).toContain("onSave={saveHours}");
+    expect(DETAIL).toContain("changes={hoursChanges}");
+    expect(DETAIL).toContain("bind:changes={masterChanges}");
+    expect(DETAIL).toContain("const totalChanges = $derived(masterChanges + hoursChanges)");
   });
 });
 
@@ -236,8 +268,8 @@ describe("salon detail page - deactivate and activate (D-06)", () => {
   });
 
   it("offers the lifecycle controls only to a caller who may manage salons, in edit mode", () => {
-    const zone = DETAIL.indexOf("<DangerZone");
-    const section = DETAIL.indexOf('title="Salon aktivieren"');
+    const zone = DETAIL.indexOf('id="salon-deactivate-title"');
+    const section = DETAIL.indexOf('id="salon-activate-title"');
     expect(zone).toBeGreaterThanOrEqual(0);
     expect(section).toBeGreaterThanOrEqual(0);
     for (const at of [zone, section]) {
@@ -272,11 +304,19 @@ describe("salon pages - no control flow on display text", () => {
   });
 
   it("every write control of the detail page is gated by canManage", () => {
-    const disabledInputs = (DETAIL.match(/disabled=\{!rights\.canManage/g) ?? []).length;
-    // name, street, postal code, city, federal state (+ the editor)
-    expect(disabledInputs).toBeGreaterThanOrEqual(6);
-    expect(DETAIL).toMatch(/footer=\{rights\.canManage && !isCreate \? masterFooter : undefined\}/);
-    expect(DETAIL).toMatch(/footer=\{rights\.canManage \? hoursFooter : undefined\}/);
+    // name, street, postal code, city, federal state: the form disables them without the right
+    expect((FORM.match(/disabled=\{!canEdit/g) ?? []).length).toBeGreaterThanOrEqual(5);
+    // ... and shows no SaveBar to a reader
+    expect(FORM).toMatch(/\{#if canEdit\}\s*<SaveBar/);
+    expect(DETAIL).toMatch(/canEdit=\{rights\.canManage\}/);
+    // the hours editor: the same right, read-only without it, no SaveBar for a reader
+    expect(DETAIL).toMatch(/disabled=\{!rights\.canManage\}/);
+    expect(
+      readFileSync(
+        resolve(process.cwd(), "src/lib/components/admin/OpeningHoursEditor.svelte"),
+        "utf8",
+      ),
+    ).toMatch(/\{#if onSave && !disabled\}\s*<SaveBar/);
   });
 });
 
@@ -304,7 +344,7 @@ describe("salon list page", () => {
 
   it("shows the Bundesland per salon through the one label function", () => {
     expect(LIST).toContain("federalStateLabel(");
-    expect(LIST).toContain('<th class="col-state">Bundesland</th>');
+    expect(LIST).toContain('{ key: "federalState", label: "Bundesland" }');
   });
 
   it("reads the CHAIN hint's inputs from the package state and renders the hint component", () => {
@@ -326,20 +366,22 @@ describe("salon list page", () => {
   });
 });
 
-describe("admin/system keeps only the shift check mode (D-12)", () => {
-  it("no longer holds the opening-hours editor or any tenant-level hours", () => {
+describe("the shift check mode lives on Regeln › Dienstplan › Einstellungen (D-12, #854)", () => {
+  it("admin/system no longer holds the opening-hours editor, any tenant-level hours or the mode", () => {
     expect(SYSTEM).not.toContain("OpeningHoursEditor");
     expect(SYSTEM).not.toMatch(/\bstoreHours\b/);
+    expect(SYSTEM).not.toContain("shiftStoreHoursMode");
   });
 
-  it("still renders the three shiftStoreHoursMode radios", () => {
-    expect((SYSTEM.match(/name="shiftStoreHoursMode"/g) ?? []).length).toBe(3);
+  it("renders the three shiftStoreHoursMode radios from the choice list", () => {
+    expect((DIENSTPLAN_SETTINGS.match(/name="shiftStoreHoursMode"/g) ?? []).length).toBe(1);
+    expect(DIENSTPLAN_SETTINGS).toContain("{#each STORE_HOURS_MODES as mode");
   });
 
   it("saves the mode with the minimal payload, never the full other-fields spread", () => {
-    const body = fnBody(SYSTEM, "async function saveShiftHoursMode");
-    expect(body).toContain('api.put("/settings/work"');
-    expect(body).toContain("shiftStoreHoursMode");
+    const body = fnBody(DIENSTPLAN_SETTINGS, "async function saveHours");
+    expect(body).toContain('api.put(\n        "/settings/work"');
+    expect(body).toContain('settingsSection("dienstplan-oeffnungszeiten").keys');
     expect(body).not.toContain("_gOtherFields");
   });
 });
@@ -349,9 +391,13 @@ describe("salon detail page - section Feiertage (Issue #579)", () => {
     expect(importSpecifiers(DETAIL)).toContain("$lib/components/admin/SalonHolidays.svelte");
     expect(DETAIL).toContain("salonHolidayRights(");
     expect(DETAIL).toMatch(
-      /<SalonHolidays salonId=\{salon\.id\} canManage=\{holidayRights\.canManage\} \/>/,
+      /<SalonHolidays salonId=\{stored\.id\} canManage=\{holidayRights\.canManage\} \/>/,
     );
-    expect(DETAIL).toMatch(/\{#if !isCreate && salon\}\s*<SalonHolidays/);
+    // an existing salon only: the tabs (and with them the calendar) are rendered in the edit branch
+    // #854 (owner review): the tabs are the segment control of PageHeader, as on Personen › Detail.
+    expect(DETAIL).toMatch(
+      /\{:else if salon\}\s*\{@const stored = salon\}[\s\S]*?<PageHeader[\s\S]*?tabsLook="segments"/,
+    );
   });
 
   it("keeps the holiday writes out of the page: only the lifecycle and create posts remain", () => {

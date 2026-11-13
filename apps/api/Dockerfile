@@ -282,6 +282,13 @@ RUN test -n "$(find /app/docs/release-notes -name 'v*.md' -type f -print -quit)"
 # ever drift. Runs the real module, not a re-implementation of it.
 RUN cd /app/apps/api && node -e "const { loadReleaseNotes } = require('./dist/utils/release-notes'); const n = loadReleaseNotes(); if (!Array.isArray(n) || n.length === 0) { console.error('FATAL: loadReleaseNotes() resolved 0 releases inside the image -- RELEASE_NOTES_DIR does not point at /app/docs/release-notes from dist/utils'); process.exit(1); } console.log('release notes baked:', n.length, 'newest', n[0].version);"
 
+# Build gate (Issue #583, D-854-23, T-854-12): the audit-log CSV prints the German words of
+# packages/types/audit-labels.json, which tsc does NOT copy into dist/ (it lives outside rootDir) and
+# which node resolves at runtime through the @clokr/types exports map. A missing or unresolvable file
+# would turn the first export into a 500 with nothing failing earlier. Runs the real compiled module
+# and fails the build unless it loads and knows a word for EXPORT that is not the shared fallback.
+RUN cd /app/apps/api && node -e "const m = require('./dist/contexts/platform/audit-csv'); if (typeof m.auditLogCsv !== 'function') { console.error('FATAL: audit-csv did not export auditLogCsv'); process.exit(1); } const known = m.auditActionLabel('EXPORT'); const fallback = m.auditActionLabel('NO_SUCH_AUDIT_ACTION'); if (!known || known === fallback) { console.error('FATAL: audit-csv cannot resolve @clokr/types/audit-labels.json inside the image -- check packages/types/package.json exports and the COPY of packages/'); process.exit(1); } console.log('audit labels baked:', known, '/', fallback);"
+
 # apps/api/node_modules/typescript and packages/db/node_modules/typescript are each
 # workspace package's own local symlink into the root .pnpm/typescript@* entry just removed
 # above (inherited unchanged from the build stage's full install) — would dangle otherwise.

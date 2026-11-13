@@ -32,6 +32,7 @@ jobs:
       pull-requests: read # dorny/paths-filter lists the PR's changed files
     outputs:
       api: ${{ steps.changes.outputs.api }}
+      web: ${{ steps.changes.outputs.web }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -61,6 +62,14 @@ jobs:
               - '.github/workflows/ci.yml'
               # Read by permission-site-mapping.test.ts: a doc-only PR must still run the suite (#284).
               - 'docs/permissions.md'
+            # Issue #854 (D-854-17): what can change a rendered page; read by `screenshots-854` only.
+            web:
+              - 'apps/web/**'
+              - 'apps/e2e/**'
+              - 'packages/**'
+              - 'docker-compose.test.yml'
+              - 'docker-compose.e2e.yml'
+              - '.github/workflows/ci.yml'
 
       - name: Skip notice (no API-relevant changes)
         if: steps.changes.outputs.api != 'true'
@@ -245,7 +254,7 @@ jobs:
         # `später-datum` / `später-seed`, plus a mandatory written reason); this gate fails the
         # build the instant that completeness is no longer true — a new spec file with no entry,
         # a register entry pointing at a file that no longer exists, or an `in-ci` entry the
-        # e2e-ci/axe-scan/visual Playwright projects do not actually run (the concrete sub-case
+        # e2e-ci/axe-scan/visual/screenshots Playwright projects do not actually run (the concrete sub-case
         # that produced Issue #275: a file believed to run in CI that no project executed). The
         # check is on the INPUT set (spec files discovered), same discipline as the gate above.
         # There is no "exception" concept here — every file gets exactly one category, never zero.
@@ -1283,6 +1292,77 @@ jobs:
         with:
           name: e2e-ci-report
           path: apps/e2e/playwright-report/
+          retention-days: 14
+
+      - name: Tear down docker stack
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v || true
+
+  # ── Acceptance screenshots (Issue #854, AC-9, D-854-17) ─────────────────
+  # Issue #854 (D-854-17): acceptance screenshots, never gating. Captures every page of
+  # apps/e2e/fixtures/verwalten-854-pages.json at 1440 and 390 px against the CI e2e stack
+  # (the throwaway fixture tenant, synthetic names, no demo seed - nothing personal reaches the
+  # artifact) with the Playwright project `screenshots`, and uploads the PNGs as the artifact
+  # `screenshots-854` for the comparison with the prototype. `continue-on-error` keeps a failure
+  # here from ever turning the PR red, and the job is not part of any required-check list nor of
+  # the aggregate `test` job.
+  screenshots-854:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read # actions/checkout
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @clokr/db exec prisma generate
+
+      - name: Build web (for the screenshot stack)
+        run: pnpm --filter @clokr/web build
+        env:
+          PUBLIC_API_URL: http://localhost:4000
+
+      - name: Start docker test stack
+        run: |
+          docker compose -f docker-compose.test.yml up --wait --quiet-pull
+          curl -sf http://localhost:4001/api/v1/health || (echo "api-test not healthy" && exit 1)
+          curl -sf http://localhost:3001/login || (echo "web-test not reachable" && exit 1)
+
+      - name: Capture the Verwalten pages inside pinned image
+        run: |
+          docker compose -f docker-compose.e2e.yml build e2e-visual
+          # Same shape as e2e-ci above: pnpm install inside the sh -c chain (anonymous volumes
+          # shadow node_modules), --user root (bind-mounted /work is owned by uid 1001) and
+          # WEB_SERVER_DISABLED=true (the stack is already up). CAPTURE_854=1 switches the
+          # capture spec on; without it the spec skips itself.
+          docker compose -f docker-compose.e2e.yml run --rm \
+            --user root \
+            -e PLAYWRIGHT_BASE_URL=http://localhost:3001 \
+            -e E2E_API_BASE=http://localhost:4001 \
+            -e CI=true \
+            -e WEB_SERVER_DISABLED=true \
+            -e CAPTURE_854=1 \
+            e2e-visual \
+            sh -c "pnpm install --frozen-lockfile && pnpm --filter e2e exec playwright test --project=screenshots"
+
+      - name: Upload the screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshots-854
+          path: apps/e2e/test-results/screenshots-854/
+          if-no-files-found: warn
           retention-days: 14
 
       - name: Tear down docker stack

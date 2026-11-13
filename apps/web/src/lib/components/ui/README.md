@@ -54,6 +54,10 @@ Every block is a Svelte 5 component built on bits-ui (the only primitive library
 - **Tailwind is a token pipeline only.** Utilities are permitted inside `lib/components/ui`, but the blocks are scoped CSS by default; a route with a utility class fails `no-route-utilities-843.test.ts`. The mapping lives in `src/tailwind-theme.css`.
 - **No `{@html}`.** Block text is rendered as text (guarded by source tests).
 
+### Page widths
+
+The app layout gives every page one of two widths, chosen per route in `$lib/nav/routes` (`width`): `read` (at most `--page-read`, 1120 px; forms, settings, details) and `full` (at most `--page-full`, 2400 px; planners, calendars, tables, reports, start pages), both inside the 32 px side padding of the main area. Owner decision 13.11.2026 (#907, changes the "reading width centred" of #844): both widths are left-aligned, so every page starts at the same left edge at every screen width. No page sets a content max-width of its own.
+
 ### `<PageHeader>` and `<PageTabs>`
 
 Source: `$components/ui/PageHeader.svelte`, `PageTabs.svelte`. Props: `title`, `subtitle?`, `eyebrow?` and `accent?` (both inert since D-843-22: accepted so `PageHead` callers compile, never rendered), `actions?` (one or two buttons, at most one primary), `tabs?` + `tab` (bindable) + `panel?` + `onTabChange?` (bits-ui Tabs, arrow keys loop, every trigger controls a rendered panel), `headingLevel?` (1 or 2). The `<PageHead>` section below documents the legacy props and the look; `layout/PageHead.svelte` has no markup of its own.
@@ -74,13 +78,13 @@ Sources: `KpiStrip.svelte` (`items`, `band?`, `ariaLabel?`, `extra?` — one mor
 
 ### `<List>`, `<ListRow>`
 
-Sources: `List.svelte` (`ariaLabel`, `children`), `ListRow.svelte` (`title`, `subtitle?`, `avatar?` + `avatarKey?`, `variant` `default | task`, `href?`, `trailing?`, `actions?`). 44 px rows with a stable avatar colour; the `task` variant puts the buttons under the text.
+Sources: `List.svelte` (`ariaLabel`, `children`), `ListRow.svelte` (`title`, `subtitle?`, `avatar?` + `avatarKey?`, `variant` `default | task`, `wrap?` (subtitle wraps instead of ending in an ellipsis), `href?`, `trailing?`, `actions?`). 44 px rows with a stable avatar colour; the `task` variant puts the buttons under the text.
 
 Additive props (Issue #853, all optional, output unchanged without them): `List.testId?` (`data-testid` of the `ul`); `ListRow.meta?` (chips under the subtitle, both variants; in the `task` variant between subtitle and actions), `rowId?` (`id` of the `li`, a deep-link target), `testId?`, `kind?` (`data-kind`, a control value never shown), `highlight?` (tints the row with `--brand-tint`), `onPrimary?` (the title becomes the row's one `<button type="button">`, stretched over the row; `actions` and `trailing` stay siblings above it so nothing interactive is nested; same pattern as `ApprovalRow.onPrimary`, ignored when `href` is set).
 
 ### `<DataTable>`, `<TableToolbar>`, `<SortHeader>`
 
-Sources: `DataTable.svelte` (`columns`, `rows`, `rowKey`, `cell?`, `sort` + `onSort` with the exported `nextSortState` cycle none → asc → desc → none, `filtered` + `onResetFilters` for „keine Treffer“, `onRowClick?`, `rowTestId?`, `rowId?` (element id, e.g. a deep-link scroll target), `rowHighlight?` (tinted row), `rowClass?` (page classes, styled through `:global`), `toolbar?`, `caption`, `loading?`; a column may carry `title?` as its head-cell explanation; rows may be any object type — all additive in #851), `TableToolbar.svelte` (`query` bindable, `count`, `total`, `filters?`, `onFilterChange?`, `onReset?`), `SortHeader.svelte` (`aria-sort`, button „Nach <Spalte> sortieren“). One table DOM with a horizontal scroll container; below 760 px container width the rows render as cards. State lives in the URL through `urlState(schema)` of `$lib/table/url-state.ts` (allow-list parsers `text`, `oneOf`, `pattern`, `int`; unknown keys are dropped, other keys of the URL are kept). The search text is normalised in one place, `matchesSearch()` of `$lib/table/search.ts`. Loading shows the Skeleton in place of the table; an empty result says „keine Daten“ or „keine Treffer“ with „Filter zurücksetzen“. First adopter: `/admin/employees`. Additive prop (#853): `rowTone?: (row) => "warn" | "info" | "highlight" | undefined` puts `data-tone` on the row (table and card layout), tinted by the block with `--warn-soft`, `--info-soft`, `--brand-tint`; a page never styles DataTable internals. One table DOM with a horizontal scroll container; below 760 px container width the rows render as cards. State lives in the URL through `urlState(schema)` of `$lib/table/url-state.ts` (allow-list parsers `text`, `oneOf`, `pattern`, `int`; unknown keys are dropped, other keys of the URL are kept). The search text is normalised in one place, `matchesSearch()` of `$lib/table/search.ts`. Loading shows the Skeleton in place of the table; an empty result says „keine Daten“ or „keine Treffer“ with „Filter zurücksetzen“. First adopter: `/admin/employees`.
+Sources: `DataTable.svelte` (`columns`, `rows`, `rowKey`, `cell?`, `sort` + `onSort` with the exported `nextSortState` cycle none → asc → desc → none, `filtered` + `onResetFilters` for „keine Treffer“, `onRowClick?`, `rowTestId?`, `rowId?` (element id, e.g. a deep-link scroll target), `rowHighlight?` (tinted row), `rowClass?` (page classes, styled through `:global`), `toolbar?`, `caption`, `loading?`; a column may carry `title?` as its head-cell explanation; rows may be any object type — all additive in #851; and the additive row selection of #854: `selectable?`, `selectedKeys?` (bindable keys; keys of rows not shown stay), `onSelectionChange?`, `selectionLabel?` (accessible name of a row's checkbox, default „<primary cell> auswählen“) — a leading checkbox column, the same checkbox on the card layout, a header checkbox for the shown rows with an indeterminate state; a checkbox click never opens the row, and without `selectable` nothing changes), `TableToolbar.svelte` (`query` bindable, `count`, `total`, `filters?`, `onFilterChange?`, `onReset?`), `SortHeader.svelte` (`aria-sort`, button „Nach <Spalte> sortieren“). One table DOM with a horizontal scroll container; below 760 px container width the rows render as cards. State lives in the URL through `urlState(schema)` of `$lib/table/url-state.ts` (allow-list parsers `text`, `oneOf`, `pattern`, `int`; unknown keys are dropped, other keys of the URL are kept). The search text is normalised in one place, `matchesSearch()` of `$lib/table/search.ts`. Loading shows the Skeleton in place of the table; an empty result says „keine Daten“ or „keine Treffer“ with „Filter zurücksetzen“. First adopter: `/admin/employees` (with selection: `rowsToCsv`/`downloadCsv` of `$lib/table/csv-export.ts` export the selected rows with a formula guard, and the bulk changes of `$lib/employees/bulk-actions.ts` run behind a `BulkPreviewDialog`). Additive prop (#853): `rowTone?: (row) => "warn" | "info" | "highlight" | undefined` puts `data-tone` on the row (table and card layout), tinted by the block with `--warn-soft`, `--info-soft`, `--brand-tint`; a page never styles DataTable internals.
 
 ### `<Chip>`, `<Note>`
 
@@ -179,7 +183,7 @@ Usage:
 </script>
 
 <Card animate class="dashboard-stat" style="--card-idx: 3;">
-  <CardHeader title="URLAUB" sub="Verbleibende Tage" />
+  <CardHeader title="Urlaub" sub="Verbleibende Tage" />
   <p>Inhalt…</p>
 </Card>
 ```
@@ -190,7 +194,7 @@ Source: `$components/ui/CardHeader.svelte`
 
 ```ts
 interface Props {
-  /** Bold uppercase title row inside .card-hd. */
+  /** Title row inside .card-hd (sentence case, small and muted). */
   title: string;
   /** Optional eyebrow text rendered below the title (upright). */
   sub?: string;
@@ -204,7 +208,7 @@ Rendered DOM: `<header class="card-hd"><div class="card-title">{title}</div>{#if
 Usage:
 
 ```svelte
-<CardHeader title="ZEITERFASSUNG" sub="Übersicht der aktuellen Woche">
+<CardHeader title="Zeiterfassung" sub="Übersicht der aktuellen Woche">
   {#snippet actions()}
     <button class="btn btn-ghost">Export</button>
   {/snippet}
@@ -387,7 +391,8 @@ Sources: `$components/ui/FormField.svelte`, `SaveBar.svelte` (+ `save-bar.ts`), 
 
 - `FormField` (`label`, `help?`, `error?`, `required?`, `field` snippet): the snippet receives `{ id, describedBy, invalid }` and puts them on the page's own control (`aria-describedby={describedBy}`, `aria-invalid={invalid ? "true" : undefined}`). Ids come from `$props.id()`.
 - `SaveBar` (`changes`, `errors`, `saving?`, `saveLabel`, `onSave`, `onDiscard`): the section-button rule of `docs/ADMIN_STRUCTURE.md` §3.2.1 as code. Hidden at 0 changes; the save button is disabled while `errors > 0` or `saving`; `saveLabel` says what happens („Vertrag speichern“). The German phrase and the `canSave` rule live only in `save-bar.ts`. No page adopts it yet.
-- `DayGrid` (`value` bindable `{ mon … sun }` hours or `null`, `label`, `step?`, `disabled?`, `onchange?`): Mo…So fields, live sum in German notation („39,5 h“), a field error outside 0…24 (feedback only, the API validates).
+- **Settings pages (Issue #854, D-854-04/D-854-15).** A settings page groups its fields in `.settings-group` sections (`app.css`: `.settings-group-title` is an `h2` in sentence case at the h2 token, `.settings-group-desc` the muted help line) and gives each section its own `SaveBar`. The bar is fed by `$lib/settings/section-state.ts`: `countChanges(snapshot, values, KEYS)` for `changes`, `sectionErrors(errors)` for `errors`, `pickSection(values, KEYS)` as the own-fields payload of the save (never a spread of a load-time copy, #878). The page sums the counts of its sections into ONE `markUnsaved` call. The frame is `SettingsGroup` (`lib/components/admin/settings/`, with `ToggleField` and `WeekdayPicker`); a section's keys, endpoint and permission come from the one registry `lib/settings/settings-pages.ts` (`settingsSection(id)`), never from a literal in the page (`settings-pages-854.test.ts`). One `SaveBar` per section, never across tabs; the toggles of a section wait for it, they do not save instantly.
+- `DayGrid` (`value` bindable `{ mon … sun }` hours or `null`, `label`, `step?`, `disabled?`, `onchange?`, `sumTestId?`): Mo…So fields (one row of seven from 760 px container width, two rows below), a tinted live sum row „N Arbeitstage pro Woche … 39:30 h“ (#854, the same on Regeln › Arbeitszeit and in a person's contract), a field error outside 0…24 (feedback only, the API validates).
 
 ### Bulk change preview: `<BulkPreviewDialog>`
 
@@ -398,7 +403,7 @@ Source: `$components/ui/BulkPreviewDialog.svelte` (Issue #843, D-843-01 block 7)
 Sources: `$components/ui/Combobox.svelte`, `DatePicker.svelte`, `$lib/table/search.ts` (Issue #843, D-843-01 block 7). Import them only where used, never through a barrel (bundle, D-843-17).
 
 - `Combobox` (`items: { value, label }[]`, `value` bindable string, `label?`, `placeholder?`, `disabled?`, FormField attrs `id`, `describedBy`, `invalid`): the first ArrowDown opens the list (it does not select), and so does typed text that arrives without a key press (paste, IME, autofill; #853 - bits-ui opens on keydown only); arrows move, Enter selects. The list is filtered by `matchesSearch()` of `lib/table/search.ts`, the one search normaliser (trim + `toLocaleLowerCase("de")`), also used by the table toolbar. No match says „Keine Treffer“.
-- `DatePicker` (`value` bindable ISO `YYYY-MM-DD` or `null`, `label`, `min?`, `max?`, `disabled?`, FormField attrs, `open?`): German segments, weeks start on Monday, weekday heads keyed by index. `@internationalized/date` is used inside only; the page sees ISO strings. An unparsable string reads as empty. The popover cannot be opened by a synthetic click in jsdom; unit tests pass `open`, the real opening is proven in the e2e.
+- `DatePicker` (`value` bindable ISO `YYYY-MM-DD` or `null`, `label`, `min?`, `max?`, `disabled?`, `monthFirstOnly?`, FormField attrs, `open?`): German segments, weeks start on Monday, weekday heads keyed by index. `@internationalized/date` is used inside only; the page sees ISO strings. An unparsable string reads as empty. The popover cannot be opened by a synthetic click in jsdom; unit tests pass `open`, the real opening is proven in the e2e. `monthFirstOnly` (Issue #854, a contract change) makes every day but the 1st unavailable in the calendar; a typed day that is not a 1st is NOT snapped, it keeps the value and marks the field invalid (`aria-invalid`), so the page names the rule (`isMonthFirst` in `$lib/employees/contract-start`) and blocks the save while the API's `MONTH_FIRST_ERROR` stays the authority.
 
 ### `<KPIStat>`
 

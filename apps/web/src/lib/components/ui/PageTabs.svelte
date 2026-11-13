@@ -13,6 +13,12 @@
   // ARIA tablist. A page places the strip directly under its PageHead. The test ids and the badge
   // click target follow the #840 contract of the old LeaveToolbar (`<prefix>-tabs`, `<prefix>-<tab>`,
   // `<prefix>-<tab>-badge`, `[data-tab-count]`).
+  //
+  // Issue #854 (owner review of the Personen detail): `look="segments"` draws the panel-mode tablist as
+  // a segmented control and, with `head`, places it on the RIGHT of a head row (the prototype's detail
+  // head: avatar, name, sub line, segments). The semantics, the roving focus and the panels are the
+  // same as the strip's; below 760 px of the row's width the segments wrap under the head and scroll
+  // inside their own box, never widening the page.
   import type { Snippet } from "svelte";
   import { Tabs } from "bits-ui";
 
@@ -48,6 +54,10 @@
     tabsLabel?: string;
     /** Test ids of the strip, the tabs and their badges (`<prefix>-tabs`, `<prefix>-<tab>`, `…-badge`). */
     testIdPrefix?: string;
+    /** Panel mode: "strip" (default) draws underlined tabs; "segments" a segmented control. */
+    look?: "strip" | "segments";
+    /** Panel mode: rendered in one row BEFORE the tablist (the segments sit on its right). */
+    head?: Snippet;
   }
 
   let {
@@ -57,6 +67,8 @@
     onTabChange,
     tabsLabel = "Bereiche",
     testIdPrefix,
+    look = "strip",
+    head,
   }: Props = $props();
 
   const current = $derived(tab ?? tabs[0]?.value ?? "");
@@ -101,6 +113,34 @@
   {/if}
 {/snippet}
 
+{#snippet tabList()}
+  <Tabs.List aria-label={tabsLabel}>
+    {#snippet child({ props: listProps })}
+      <div
+        {...listProps}
+        class="page-tab-strip"
+        data-testid={testIdPrefix ? `${testIdPrefix}-tabs` : undefined}
+      >
+        {#each tabs as item (item.value)}
+          <Tabs.Trigger value={item.value}>
+            {#snippet child({ props: triggerProps })}
+              <button
+                {...triggerProps}
+                class="page-tab"
+                data-testid={tabTestId(item)}
+                onclick={(e) =>
+                  onTriggerClick(e, item, (triggerProps as { onclick?: unknown }).onclick)}
+              >
+                {item.label}{@render badge(item)}
+              </button>
+            {/snippet}
+          </Tabs.Trigger>
+        {/each}
+      </div>
+    {/snippet}
+  </Tabs.List>
+{/snippet}
+
 {#if linkMode}
   <nav
     class="page-tabs"
@@ -123,32 +163,15 @@
 {:else}
   <Tabs.Root value={current} onValueChange={select} loop activationMode="automatic">
     {#snippet child({ props })}
-      <div {...props} class="page-tabs">
-        <Tabs.List aria-label={tabsLabel}>
-          {#snippet child({ props: listProps })}
-            <div
-              {...listProps}
-              class="page-tab-strip"
-              data-testid={testIdPrefix ? `${testIdPrefix}-tabs` : undefined}
-            >
-              {#each tabs as item (item.value)}
-                <Tabs.Trigger value={item.value}>
-                  {#snippet child({ props: triggerProps })}
-                    <button
-                      {...triggerProps}
-                      class="page-tab"
-                      data-testid={tabTestId(item)}
-                      onclick={(e) =>
-                        onTriggerClick(e, item, (triggerProps as { onclick?: unknown }).onclick)}
-                    >
-                      {item.label}{@render badge(item)}
-                    </button>
-                  {/snippet}
-                </Tabs.Trigger>
-              {/each}
-            </div>
-          {/snippet}
-        </Tabs.List>
+      <div {...props} class="page-tabs" class:page-tabs--segments={look === "segments"}>
+        {#if head}
+          <div class="page-tabs-head">
+            <div class="page-tabs-lead">{@render head()}</div>
+            {@render tabList()}
+          </div>
+        {:else}
+          {@render tabList()}
+        {/if}
         {#each tabs as item (item.value)}
           <Tabs.Content value={item.value}>
             {#snippet child({ props: contentProps })}
@@ -258,6 +281,76 @@
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border-width: 0;
+  }
+
+  /* ── look="segments" ─────────────────────────────────────────────────────── */
+
+  /* The head row is the container: the lead takes the free width, the segments keep their own. */
+  .page-tabs-head {
+    container-type: inline-size;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s-3) var(--s-6);
+    margin-bottom: var(--s-6);
+  }
+
+  .page-tabs-lead {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .page-tabs--segments .page-tab-strip {
+    flex: 0 1 auto;
+    gap: 0;
+    max-width: 100%;
+    margin-bottom: 0;
+    padding: 2px;
+    box-sizing: border-box;
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+    box-shadow: none;
+  }
+
+  /* Without a head the segments still keep their distance to the panel and stay as wide as their
+     options (a list page: Berichte, Protokoll). */
+  .page-tabs--segments > .page-tab-strip {
+    width: fit-content;
+    margin-bottom: var(--s-6);
+  }
+
+  .page-tabs--segments .page-tab {
+    min-height: var(--h-control-sm);
+    padding: 0 var(--s-3);
+    border: 0;
+    border-radius: var(--r-pill);
+    font-size: var(--fs-sm);
+  }
+
+  .page-tabs--segments .page-tab[data-state="active"] {
+    background: var(--card);
+    color: var(--text);
+    box-shadow: var(--shadow);
+  }
+
+  .page-tabs--segments .page-tab:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* A phone (or any narrow row): the segments take their own line under the head. */
+  @container (max-width: 759.98px) {
+    .page-tabs-lead {
+      flex-basis: 100%;
+    }
+  }
+
+  /* WCAG 2.5.5 - 44 px hit targets on touch devices. */
+  @media (pointer: coarse) {
+    .page-tabs--segments .page-tab {
+      min-height: 44px;
+    }
   }
 
   .page-tab-panel:focus-visible {

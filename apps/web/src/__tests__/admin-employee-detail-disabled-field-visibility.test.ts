@@ -24,12 +24,15 @@
 // component's scoped stylesheet must carry its OWN `:disabled` override using the same shared
 // tokens app.css uses, so it no longer matters who wins the specificity tie on the base rule.
 //
-// Before the fix, this test fails: no `.form-input:disabled` (or grouped `.input:disabled,
-// .select:disabled, .form-input:disabled`) rule exists anywhere in this file's scoped `<style>`
-// block, so REGEX below finds nothing and DISABLED_BLOCK is null.
+// Issue #854 (plan 854-22): the page is a shell now and the tabs are components with their own
+// scoped CSS. A page-scoped `.form-input` rule never reached a child component's inputs anyway,
+// and no component of the person detail restyles `.form-input` any more, so the shared recipe of
+// app.css decides the disabled look everywhere. This test pins exactly that: no scoped
+// `.form-input` / `.input` / `.select` rule on the page or in a detail component (the leak that
+// made issue #94), and the shared recipe still resolves disabled and editable to different tokens.
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, it, expect } from "vitest";
@@ -46,74 +49,74 @@ const PAGE = readRouteFile(
   "../routes/(app)/admin/employees/[id]/+page.svelte",
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
+const APP_CSS = readRouteFile("../app.css", "src/app.css");
 
-// Isolate the scoped `<style>` block so we never accidentally match something in markup/script.
-const STYLE_MATCH = PAGE.match(/<style>([\s\S]*)<\/style>/);
-expect(STYLE_MATCH, "no <style> block found in +page.svelte").not.toBeNull();
-const STYLE = STYLE_MATCH![1];
+// The tests run with the cwd `apps/web` (`pnpm --filter @clokr/web test`).
+const DETAIL_DIR = resolve(process.cwd(), "src/lib/components/employees/detail");
+const DETAIL_COMPONENTS = readdirSync(DETAIL_DIR)
+  .filter((name) => name.endsWith(".svelte"))
+  .map((name) => ({ name, text: readFileSync(join(DETAIL_DIR, name), "utf8") }));
 
-// The base (non-disabled) rule this file defines for .input/.select/.form-input. This MUST
-// keep using --card / --text — those are the "editable" look the disabled state must differ
-// from. If a future edit changes these, the test below re-derives its expectations from the
-// actual tokens found here instead of hardcoding them, so it still pins the *distinction*.
-const BASE_BLOCK_MATCH = STYLE.match(/\.input,\s*\n\s*\.select,\s*\n\s*\.form-input\s*\{([^}]*)\}/);
+/** The text of every `<style>` block of a Svelte source. */
+function styleOf(source: string): string {
+  return [...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join("\n");
+}
 
-// The disabled override this fix adds. Written to tolerate minor formatting drift (selector
-// grouping order, whitespace) while still requiring all three selectors and both declarations.
-const DISABLED_BLOCK_MATCH = STYLE.match(
-  /\.input:disabled,\s*\n\s*\.select:disabled,\s*\n\s*\.form-input:disabled\s*\{([^}]*)\}/,
-);
+/** A scoped rule that restyles the shared input classes (the leak of issue #94). */
+const INPUT_RULE = /(^|[\s,}])\.(?:form-input|input|select)\b[^{]*\{/m;
 
 describe("admin employee detail — disabled .form-input visibility (issue #94)", () => {
-  it("defines a base (editable) .input/.select/.form-input rule using --card and --text", () => {
-    expect(
-      BASE_BLOCK_MATCH,
-      "base .form-input rule not found — page structure changed",
-    ).not.toBeNull();
-    const base = BASE_BLOCK_MATCH![1];
-    expect(base).toMatch(/background:\s*var\(--card\)/);
-    expect(base).toMatch(/color:\s*var\(--text\)/);
+  it("[vacuity gate] the page and the detail components are loaded", () => {
+    expect(PAGE).toContain("<style>");
+    expect(DETAIL_COMPONENTS.map((c) => c.name)).toEqual(
+      expect.arrayContaining([
+        "PersonTab.svelte",
+        "VertragTab.svelte",
+        "VertragOverrides.svelte",
+        "BerufsschuleSection.svelte",
+        "UrlaubTab.svelte",
+        "ZugangTab.svelte",
+      ]),
+    );
+    // the detail components do use the shared input class, so the check below is not vacuous
+    const users = DETAIL_COMPONENTS.filter((c) => c.text.includes('class="form-input'));
+    expect(users.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("defines a scoped :disabled override for .input/.select/.form-input (the actual fix)", () => {
-    expect(
-      DISABLED_BLOCK_MATCH,
-      "no .form-input:disabled rule in this file's scoped <style> — the component's own " +
-        "background/color declarations on the base rule will keep winning the specificity tie " +
-        "against app.css's shared .form-input:disabled recipe, and a disabled field will be " +
-        "visually indistinguishable from an editable one (issue #94 regression)",
-    ).not.toBeNull();
+  it("the page's scoped styles carry no .form-input / .input / .select rule", () => {
+    expect(styleOf(PAGE)).not.toMatch(INPUT_RULE);
   });
 
-  it("the :disabled override reuses the SAME shared tokens app.css's recipe uses — no new class or token", () => {
-    const disabled = DISABLED_BLOCK_MATCH![1];
-    expect(disabled).toMatch(/background:\s*var\(--sunk\)/);
-    expect(disabled).toMatch(/color:\s*var\(--text-2\)/);
-    expect(disabled).toMatch(/cursor:\s*not-allowed/);
+  it("no detail component restyles .form-input / .input / .select in its scoped CSS", () => {
+    for (const component of DETAIL_COMPONENTS) {
+      expect(styleOf(component.text), component.name).not.toMatch(INPUT_RULE);
+    }
   });
 
-  it("the disabled treatment resolves to DIFFERENT tokens than the editable base rule", () => {
-    // #842 D-842-11: the expected names follow the renamed roles (card, sunk, text-2); the
-    // assertion that disabled and editable resolve to DIFFERENT tokens is unchanged.
-    // --sunk !== --card and --text-2 !== --text are true by construction in every theme and
-    // mode combination of tokens.css — they are always distinct token DECLARATIONS, never
-    // aliases of each other. Pinning that the disabled rule references --sunk and --text-2
-    // rather than re-declaring --card/--text is what actually fixes AC-FE-04: it guarantees
-    // a real value delta in every theme, not just the one theme this bug was measured in.
-    const base = BASE_BLOCK_MATCH![1];
-    const disabled = DISABLED_BLOCK_MATCH![1];
+  it("control: the detector flags a scoped base rule that would leak into the disabled state", () => {
+    expect(".form-input { background: var(--card); }").toMatch(INPUT_RULE);
+    expect(".a, .select:focus { color: red; }").toMatch(INPUT_RULE);
+    expect(".vo-number { max-width: 12rem; }").not.toMatch(INPUT_RULE);
+  });
 
-    const baseBg = base.match(/background:\s*var\((--[\w-]+)\)/)?.[1];
-    const disabledBg = disabled.match(/background:\s*var\((--[\w-]+)\)/)?.[1];
-    const baseColor = base.match(/color:\s*var\((--[\w-]+)\)/)?.[1];
-    const disabledColor = disabled.match(/color:\s*var\((--[\w-]+)\)/)?.[1];
+  it("the shared recipe resolves disabled and editable to DIFFERENT tokens", () => {
+    // #842 D-842-11: --sunk !== --card and --text-2 !== --text hold by construction in every theme
+    // and mode of tokens.css; pinning that the disabled rule references --sunk and --text-2 is what
+    // guarantees a real value delta in every theme (AC-FE-04).
+    const base = APP_CSS.match(/\n\.form-input\s*\{([^}]*)\}/)?.[1] ?? "";
+    const disabled = APP_CSS.match(/\n\.form-input:disabled\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(base, "base .form-input recipe not found in app.css").not.toBe("");
+    expect(disabled, ".form-input:disabled recipe not found in app.css").not.toBe("");
+
+    const baseBg = base.match(/background-color:\s*var\((--[\w-]+)\)/)?.[1];
+    const disabledBg = disabled.match(/background-color:\s*var\((--[\w-]+)\)/)?.[1];
+    const baseColor = base.match(/(?:^|[\s;])color:\s*var\((--[\w-]+)\)/)?.[1];
+    const disabledColor = disabled.match(/(?:^|[\s;])color:\s*var\((--[\w-]+)\)/)?.[1];
 
     expect(baseBg).toBe("--card");
     expect(disabledBg).toBe("--sunk");
     expect(baseColor).toBe("--text");
     expect(disabledColor).toBe("--text-2");
-
-    expect(disabledBg).not.toBe(baseBg);
-    expect(disabledColor).not.toBe(baseColor);
+    expect(disabled).toMatch(/cursor:\s*not-allowed/);
   });
 });

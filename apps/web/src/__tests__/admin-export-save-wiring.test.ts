@@ -1,27 +1,18 @@
-// Phase 109 (Issue #35), Plan 10, Task 1 — Wave-0 (gap closure) regression net for
-// `admin/export/+page.svelte` (466 lines, zero prior test coverage).
+// Phase 109 (Issue #35), Plan 10 - regression net for `admin/export/+page.svelte`, rewritten by plan 854-24.
 //
-// This is a source-read PIN, not a behaviour test: `apps/web/vitest.config.ts` has no
-// `$app` alias, so a route page cannot be mounted (see `nav-guard.test.ts` for the
-// established `readRouteFile` shape this file follows).
+// A source-read PIN, not a behaviour test: `apps/web/vitest.config.ts` has no `$app` alias, so a route page
+// cannot be mounted (see `nav-guard.test.ts` for the established `readRouteFile` shape this file follows).
 //
 // What this pins (T-109-38):
-// - D-01: `saveDatev` (the DATEV configuration section) writes only via its section button.
-// - The payload carries exactly the `datev*` keys and no spread of the loaded settings. The
-//   former `_gOtherFields` spread was the known N-09 lost-update race (every save wrote the whole
-//   configuration back from the load-time copy); Issue #878 removed it, and this file now pins
-//   its absence (`settings-own-fields-878.test.ts` pins the exact key set of every save).
-// - `saveDatev` is a provable no-op after a failed `loadDatev` (`if (!datevLoaded) return;`) —
-//   this is the WR-01 shape plan 109-13 must gate `snapshotsReady` around.
-// - `taxOffice` is never persisted — it is a download parameter, not a setting — so no
-//   `dirty=` marker belongs on that Section.
+// - D-01: `saveDatev` (the DATEV-Einrichtung, registry section `export-datev-einrichtung`) writes only via its
+//   section's SaveBar, never on a field event.
+// - The payload is `pickSection(datev, settingsSection("export-datev-einrichtung").keys)` - exactly the six
+//   `datev*` keys, no spread of loaded settings (the former `_gOtherFields` spread was the N-09 lost-update race,
+//   Issue #878; `settings-pages-854` pins the exact key set of the registry section).
+// - `saveDatev` is a provable no-op after a failed load (`if (!snapshotsReady) return;`), and the unsaved marker
+//   is gated on the same flag (WR-01): a "Nicht gespeichert" marker on a page whose save cannot write is a lie.
+// - The downloads (month, person, period, hint) are read state, never part of the unsaved state.
 // - AK-02: no text/number input on this page carries an inline write handler.
-//
-// Issue #256 (Befund 3) widened the payload from four keys to six: Berater- and
-// Mandantennummer became TenantConfig-backed settings and joined the same button-gated
-// section, which is why the censuses below read six. The former `advisorNumber` /
-// `clientNumber` inputs were decoration with hardcoded literals that reached no export —
-// they were removed rather than left next to the two fields that now do work.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -44,8 +35,7 @@ const PAGE = readRouteFile(
   "src/routes/(app)/admin/export/+page.svelte",
 );
 
-/** Brace/paren-depth fnBody() slicer — copied from admin-system-save-wiring.test.ts (Plan
- *  109-01's correction), robust against functions whose own parameter types contain braces. */
+/** Brace/paren-depth fnBody() slicer, robust against functions whose own parameter types contain braces. */
 function fnBody(marker: string): string {
   const start = PAGE.indexOf(marker);
   expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
@@ -78,7 +68,7 @@ function fnBody(marker: string): string {
   return PAGE.slice(bodyStart, j + 1);
 }
 
-/** AK-02 census helper — same shape as admin-system-save-wiring.test.ts. */
+/** AK-02 census helper - the handler names on text/number inputs. */
 function textOrNumberInputHandlers(source: string): string[] {
   const found: string[] = [];
   for (const tag of source.match(/<input\b[\s\S]*?>/g) ?? []) {
@@ -89,44 +79,32 @@ function textOrNumberInputHandlers(source: string): string[] {
   return found;
 }
 
-describe("D-01 — the DATEV Lohnarten form saves only on its section button", () => {
-  it("saveDatev is wired via onclick=", () => {
-    expect(PAGE).toContain("onclick={saveDatev}");
+describe("D-01 - the DATEV-Einrichtung saves only on its section button", () => {
+  it("saveDatev is wired as the SettingsGroup onSave", () => {
+    expect(PAGE).toContain("onSave={saveDatev}");
   });
 
-  it("saveDatev is never wired via onchange=", () => {
-    expect(PAGE).not.toContain("onchange={saveDatev}");
+  it("saveDatev is never wired via onchange= / oninput=", () => {
+    expect(PAGE).not.toMatch(/on(?:change|input|blur)=\{saveDatev\}/);
   });
 });
 
 describe("saveDatev payload census", () => {
-  it("carries exactly the six datev* keys and spreads nothing (Issue #878)", () => {
+  it("sends the registry section's keys through pickSection and spreads nothing (Issue #878)", () => {
     const body = fnBody("async function saveDatev");
     expect(body).not.toContain("...");
-    // Isolate the api.put(...) payload object literal itself — a naive `datev[A-Za-z]+` scan
-    // over the whole function body also matches `datevSaving`/`datevError`/`datevSaved`
-    // (the function's own local $state flags), which are not payload keys.
-    const anchor = 'api.put("/settings/work", {';
-    const anchorStart = body.indexOf(anchor);
-    expect(anchorStart, "saveDatev's api.put call not found").toBeGreaterThan(-1);
-    const openBrace = anchorStart + anchor.length - 1;
-    let depth = 0;
-    let closeBrace = openBrace;
-    for (let i = openBrace; i < body.length; i++) {
-      if (body[i] === "{") depth++;
-      else if (body[i] === "}") {
-        depth--;
-        if (depth === 0) {
-          closeBrace = i;
-          break;
-        }
-      }
-    }
-    const objectSrc = body.slice(openBrace + 1, closeBrace);
-    const datevKeys = objectSrc.match(/datev[A-Za-z]+/g) ?? [];
-    const distinctDatevKeys = new Set(datevKeys);
-    expect(distinctDatevKeys.size).toBe(6);
-    expect(distinctDatevKeys).toEqual(
+    expect(body).toContain('settingsSection("export-datev-einrichtung").keys');
+    expect(body).toContain("pickSection(");
+    expect((body.match(/api\.\w+\(/g) ?? []).length).toBe(1);
+    expect(PAGE).not.toContain("_gOtherFields");
+  });
+
+  it("the form value carries exactly the six datev* keys", () => {
+    const start = PAGE.indexOf("type DatevValues = {");
+    expect(start).toBeGreaterThan(-1);
+    const slice = PAGE.slice(start, PAGE.indexOf("};", start));
+    const keys = new Set(slice.match(/datev[A-Za-z]+/g) ?? []);
+    expect(keys).toEqual(
       new Set([
         "datevNormalstundenNr",
         "datevUrlaubNr",
@@ -141,59 +119,39 @@ describe("saveDatev payload census", () => {
 
 describe("saveDatev is a no-op after a failed load", () => {
   it("saveDatev bails out while the settings are not loaded", () => {
-    expect(fnBody("async function saveDatev")).toContain("if (!datevLoaded) return;");
+    expect(fnBody("async function saveDatev")).toContain("if (!snapshotsReady");
   });
 
-  it("loadDatev is the only place datevLoaded is set", () => {
-    expect(fnBody("async function loadDatev")).toContain("datevLoaded = true");
-    expect(PAGE.match(/datevLoaded = true/g)).toHaveLength(1);
+  it("loadDatev is the only place snapshotsReady is set, after both baselines, never in finally", () => {
+    const body = fnBody("async function loadDatev");
+    expect(body.indexOf("datevSnapshot = datevFrom(cfg)")).toBeGreaterThan(-1);
+    expect(body.indexOf("snapshotsReady = true")).toBeGreaterThan(
+      body.indexOf("datevSnapshot = datevFrom(cfg)"),
+    );
+    expect(PAGE.match(/snapshotsReady = true/g)).toHaveLength(1);
+    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
   });
 
-  // With the load failed, the four number inputs still show their defaults but the button
-  // provably cannot write — a "Nicht gespeichert" marker there would be a lie, which is why
-  // plan 109-13 gates the registration on `snapshotsReady` set at the end of `loadDatev`'s try.
+  it("a server-side 403 stays the authority: the save is not hidden behind a client-only check", () => {
+    // `canEditSettings` only disables the inputs (presentation); the PUT itself is still sent.
+    expect(fnBody("async function saveDatev")).not.toContain("canEditSettings");
+  });
 });
 
-describe("export parameters are never persisted — no marker for them", () => {
-  // Issue #256: `advisorNumber`/`clientNumber` are gone — they masqueraded as the
-  // Berater-/Mandantennummer while reaching no export. `taxOffice` is the one remaining
-  // label-on-this-download parameter.
-  const EXPORT_PARAMS = ["taxOffice"] as const;
-
-  it.each(EXPORT_PARAMS)("%s never appears in a saveDatev write body", (name) => {
-    expect(fnBody("async function saveDatev")).not.toContain(name);
+describe("the downloads are read state - no marker for them", () => {
+  it("the page writes exactly one thing: the DATEV-Einrichtung", () => {
+    expect((PAGE.match(/api\.(put|post|patch|delete)\(/g) ?? []).length).toBe(1);
   });
 
-  it.each(EXPORT_PARAMS)(
-    "%s never appears between any api.put(/api.post( and its closing",
-    (name) => {
-      // Census across the whole page: find every api.put(/api.post( call and check none of its
-      // slice up to the matching `});` mentions the export-parameter name.
-      const callStarts: number[] = [];
-      for (const m of PAGE.matchAll(/api\.(put|post)\(/g)) callStarts.push(m.index ?? -1);
-      for (const start of callStarts) {
-        const end = PAGE.indexOf("});", start);
-        expect(end).toBeGreaterThan(start);
-        const callSlice = PAGE.slice(start, end);
-        expect(callSlice).not.toContain(name);
-      }
-    },
-  );
-
-  it.each(EXPORT_PARAMS)("%s is declared as a $state with a hardcoded literal default", (name) => {
-    expect(PAGE).toMatch(new RegExp(`let ${name} = \\$state\\(`));
+  it("the month, person, period and busy flag never reach the unsaved marker or a write body", () => {
+    const start = PAGE.indexOf('markUnsaved("admin-export"');
+    const line = PAGE.slice(start, PAGE.indexOf(")", start + 30) + 1);
+    expect(line).not.toMatch(/exportMonth|personId|csvFrom|csvTo|busy/);
+    const body = fnBody("async function saveDatev");
+    for (const name of ["exportMonth", "personId", "csvFrom", "csvTo"]) {
+      expect(body).not.toContain(name);
+    }
   });
-
-  // Issue #256: the two removed decoy inputs must not come back.
-  it.each(["advisorNumber", "clientNumber"] as const)(
-    "%s no longer exists anywhere on the page",
-    (name) => {
-      expect(PAGE).not.toContain(name);
-    },
-  );
-
-  // these are parameters of one download, not settings — plan 109-13 must NOT put a `dirty=`
-  // prop on the "Export konfigurieren" Section.
 });
 
 describe("AK-02", () => {
@@ -202,88 +160,29 @@ describe("AK-02", () => {
   });
 });
 
-describe("D-11/D-12 — unsaved marker and guard registration on admin/export", () => {
-  it("datevDirty is $derived(snap(...)) with exactly the six datev* variables", () => {
-    const start = PAGE.indexOf("let datevDirty = $derived(");
-    expect(start).toBeGreaterThan(-1);
-    const end = PAGE.indexOf("!== datevSnapshot", start);
-    expect(end).toBeGreaterThan(start);
-    const slice = PAGE.slice(start, end);
-    expect(slice).toMatch(/\$derived\(\s*snap\(/);
-    for (const v of [
-      "datevNormalstundenNr",
-      "datevUrlaubNr",
-      "datevKrankNr",
-      "datevSonderurlaubNr",
-      "datevBeraterNr",
-      "datevMandantenNr",
-    ]) {
-      expect(slice).toContain(v);
-    }
+describe("D-11/D-12 - unsaved marker and guard registration on admin/export", () => {
+  it("the change count is countChanges(snapshot, values, keys) over the registry keys", () => {
+    expect(PAGE).toContain(
+      "const datevChanges = $derived(countChanges(datevSnapshot, datev, datevKeys));",
+    );
+    expect(PAGE).toContain('settingsSection("export-datev-einrichtung").keys');
   });
 
   it("the registration is gated on snapshotsReady (WR-01)", () => {
-    expect(PAGE).toContain('markUnsaved("admin-export", snapshotsReady && datevDirty)');
-    expect(PAGE).not.toContain('markUnsaved("admin-export", datevDirty)');
-  });
-
-  it("snapshotsReady = true sits inside loadDatev's try, after datevLoaded = true, never in finally", () => {
-    const body = fnBody("async function loadDatev");
-    const gOtherPoint = body.indexOf("datevLoaded = true");
-    const readyPoint = body.indexOf("snapshotsReady = true");
-    expect(gOtherPoint).toBeGreaterThan(-1);
-    expect(readyPoint).toBeGreaterThan(gOtherPoint);
-    expect(PAGE).not.toMatch(/finally\s*\{[^}]*snapshotsReady/s);
-  });
-
-  it("the export parameters get no marker — exactly one dirty={ prop, on Lohnartennummern", () => {
-    const matches = PAGE.match(/dirty=\{/g) ?? [];
-    expect(matches).toHaveLength(1);
-    const lohnartStart = PAGE.indexOf(
-      '<Section\n        title="Berater-, Mandanten- und Lohnartennummern"',
-    );
-    expect(lohnartStart).toBeGreaterThan(-1);
-    const lohnartEnd = PAGE.indexOf("</Section>", lohnartStart);
-    const dirtyIdx = PAGE.indexOf("dirty={");
-    expect(dirtyIdx).toBeGreaterThan(lohnartStart);
-    expect(dirtyIdx).toBeLessThan(lohnartEnd);
-
-    const exportKonfigStart = PAGE.indexOf('<Section title="Export konfigurieren"');
-    expect(exportKonfigStart).toBeGreaterThan(-1);
-    const exportKonfigEnd = PAGE.indexOf("</Section>", exportKonfigStart);
-    const exportKonfigSlice = PAGE.slice(exportKonfigStart, exportKonfigEnd);
-    expect(exportKonfigSlice).not.toContain("dirty=");
-    expect(exportKonfigSlice).not.toContain("unsaved-hint");
-  });
-
-  it("no copy of the loaded settings is sent (Issue #878, N-09)", () => {
-    const body = fnBody("async function saveDatev");
-    expect(body).not.toContain("...");
-    expect(PAGE).not.toContain("_gOtherFields");
-    const datevKeys = new Set(body.match(/datev[A-Za-z]+/g) ?? []);
-    expect(
-      [...datevKeys].filter((k) =>
-        [
-          "datevNormalstundenNr",
-          "datevUrlaubNr",
-          "datevKrankNr",
-          "datevSonderurlaubNr",
-          "datevBeraterNr",
-          "datevMandantenNr",
-        ].includes(k),
-      ),
-    ).toHaveLength(6);
-  });
-
-  it("T-109-24 — no datevSnapshot = snap( assignment is inside a finally block", () => {
-    for (const m of PAGE.matchAll(/datevSnapshot = snap\(/g)) {
-      const idx = m.index ?? -1;
-      const before = PAGE.slice(Math.max(0, idx - 120), idx);
-      expect(before).not.toMatch(/finally\s*\{/);
-    }
+    expect(PAGE).toContain('markUnsaved("admin-export", snapshotsReady && datevChanges > 0)');
+    expect(PAGE).not.toContain('markUnsaved("admin-export", datevChanges > 0)');
   });
 
   it("the effect de-registers on unmount", () => {
     expect(PAGE).toContain('return () => markUnsaved("admin-export", false);');
+  });
+
+  it("T-109-24 - the snapshot moves after the successful write, before the catch, never in finally", () => {
+    const body = fnBody("async function saveDatev");
+    const snapPoint = body.indexOf("datevSnapshot = $state.snapshot(datev)");
+    const catchPoint = body.indexOf("} catch");
+    expect(snapPoint).toBeGreaterThan(-1);
+    expect(snapPoint).toBeLessThan(catchPoint);
+    expect(PAGE).not.toMatch(/finally\s*\{[^}]*datevSnapshot =/s);
   });
 });

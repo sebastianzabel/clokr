@@ -96,8 +96,10 @@ describe("no Tailwind utility classes in route files (D-843-02)", () => {
   it("finds no utility class without a recipe in any route file", () => {
     const routes = walkFiles(join(SRC_ROOT, "routes"), [".svelte"], { includeTests: false });
     // Floor on the harvest too: the extractor really reads class tokens out of the walked files.
+    // It falls as pages move their markup into shared blocks (#854: the two Personen pages render
+    // one table component); 400 still proves the extractor reads hundreds of real tokens.
     const harvested = new Set(routes.flatMap((f) => [...extractEmittedClasses(f.text)]));
-    expect(harvested.size).toBeGreaterThanOrEqual(500);
+    expect(harvested.size).toBeGreaterThanOrEqual(400);
     const hits = routes.flatMap((f) => utilityHits(f.rel, f.text, globals));
     expect(hits.map((h) => `${h.file}: ${h.token}`)).toEqual([]);
   });

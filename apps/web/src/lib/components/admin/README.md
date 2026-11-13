@@ -1,9 +1,11 @@
 # Admin Layout Primitives
 
-> **Status: ACTIVE (Phase 50, v1.6.1).**
-> These five components are the canonical page-shell and section-card primitives for all admin routes.
-> Consuming a route MUST use one of the three page shells (`SectionStack`, `ListDetail`, or `ToolPage`)
-> instead of building a layout by hand.
+> **Status: LEGACY SHELLS (since Issue #854).**
+> `Section`, `SectionStack`, `ListDetail` and `ToolPage` are no longer used by any Verwalten page. The
+> Verwalten area is built from the #843 blocks (`PageHead`, `PageTabs`, `DataTable`, `SettingsGroup`,
+> `SaveBar`, `Dialog` …) and `verwalten-pages-blocks-854.test.ts` fails on an import of these shells there.
+> They remain only for the operator console (`/betreiber`), the personal `/settings` page and the
+> availability pages of #853, which migrate with their own tickets. Do not use them for new pages.
 
 This directory provides the **enforceable contract** for admin-area layouts. If an admin route builds
 raw sections, headings, or tab strips by hand it bypasses this spec and will fail the lint gate
@@ -23,8 +25,9 @@ Source: `apps/web/src/lib/components/admin/Section.svelte`
 Section is the atomic card primitive that replaces the legacy `<Card animate><CardHeader title sub/>`
 pattern in all admin pages. It owns the title/sub/actions/footer structure and is the composable
 building block that `SectionStack`, `ListDetail`, and `ToolPage` fill their page columns with. The
-`tone="danger"` escape hatch exists to mark a section as dangerous; prefer `<DangerZone>` over
-setting `tone="danger"` directly — DangerZone locks the tone and supplies the correct default title.
+`tone="danger"` escape hatch exists to mark a section as dangerous (the former `<DangerZone>` wrapper
+is gone since Issue #854; the Verwalten pages show irreversible actions as a `.settings-group` with
+`btn btn-danger` buttons behind a `ConfirmDialog`).
 
 ```ts
 interface Props {
@@ -57,12 +60,11 @@ interface Props {
 `animate` is inherited from the `admin-animate` Svelte context set by the parent shell. Pass an
 explicit `animate` prop to override the context.
 
-**`footer` blast radius (Phase 109, N-03):** the `footer` snippet has **14** consumers across the
-admin area, not the smaller count an earlier count assumed — any change to `Section`'s footer
-markup (such as the `dirty` prop above) affects all of them: `admin/audit`, `admin/employees`,
-`admin/employees/[id]`, `admin/export`, `admin/import`, `admin/integrations`, `admin/month-close`,
-`admin/phorest`, `admin/shifts`, `admin/shutdowns`, `admin/shutdowns/[id]`, `admin/system`,
-`admin/vacation`, `inbox`.
+**`footer` blast radius (Phase 109, N-03; updated for #854):** after #854 the `footer` snippet and the
+`dirty` prop of `Section` are consumed only by the operator console, the personal `/settings` page and the
+availability pages (`admin/availability`, `admin/availability/[employeeId]`) - the Verwalten pages
+(`admin/audit`, `admin/employees`, `admin/export`, `admin/import`, `admin/phorest`, `admin/system`,
+`admin/vacation`, `admin/shutdowns`, …) use `SettingsGroup` + `SaveBar` instead.
 
 Usage:
 
@@ -71,7 +73,7 @@ Usage:
   import Section from "$lib/components/admin/Section.svelte";
 </script>
 
-<Section title="UNTERNEHMEN" sub="Firmenname & Region">
+<Section title="Unternehmen" sub="Firmenname & Region">
   <FormFields />
   {#snippet actions()}
     <button class="btn btn-ghost btn-sm">Vorschau</button>
@@ -80,64 +82,6 @@ Usage:
     <button class="btn btn-primary btn-sm">Speichern</button>
   {/snippet}
 </Section>
-```
-
----
-
-### `<DangerZone>`
-
-Source: `apps/web/src/lib/components/admin/DangerZone.svelte`
-
-DangerZone is a thin wrapper around `<Section tone="danger">` for irreversible actions. It renders a
-red-tinted card with the default title „Kritische Aktionen“ (docs/glossar.md) and is meant to be placed
-as the **last child** in a `SectionStack` or as the **last tab panel** in a `ListDetail`. Callers
-compose `ConfirmDialog` (from `$lib/components/ui/ConfirmDialog.svelte`) or a type-to-confirm input
-around each destructive action — `DangerZone` itself does NOT render a dialog.
-
-```ts
-interface Props {
-  title?: string;
-  description?: string;
-  animate?: boolean;
-  actions: Snippet;
-}
-```
-
-**Snippets:**
-
-| Name      | Required | Description                                             |
-| --------- | -------- | ------------------------------------------------------- |
-| `actions` | **yes**  | Destructive action buttons and their confirmation flows |
-
-Usage:
-
-```svelte
-<script>
-  import DangerZone from "$lib/components/admin/DangerZone.svelte";
-  import ConfirmDialog from "$lib/components/ui/ConfirmDialog.svelte";
-
-  let confirmOpen = $state(false);
-
-  async function handleDelete() {
-    await api.delete("/tenants/current");
-  }
-</script>
-
-<DangerZone description="Irreversible Aktionen für diesen Mandanten.">
-  {#snippet actions()}
-    <button class="btn btn-danger" onclick={() => (confirmOpen = true)}>
-      Daten zurücksetzen
-    </button>
-    <ConfirmDialog
-      bind:open={confirmOpen}
-      title="Daten zurücksetzen?"
-      description="Diese Aktion kann nicht rückgängig gemacht werden."
-      confirmLabel="Zurücksetzen"
-      danger
-      onConfirm={handleDelete}
-    />
-  {/snippet}
-</DangerZone>
 ```
 
 ---
@@ -183,14 +127,14 @@ Usage:
 </script>
 
 <SectionStack eyebrow="Administration" title="Allgemein" animate>
-  <Section title="UNTERNEHMEN" sub="Firmenname & Region">
+  <Section title="Unternehmen" sub="Firmenname & Region">
     <FormFields />
     {#snippet footer()}
       <button class="btn btn-primary btn-sm">Speichern</button>
     {/snippet}
   </Section>
 
-  <Section title="FEATURES">
+  <Section title="Features">
     <FeatureToggles />
   </Section>
 
@@ -258,7 +202,7 @@ Usage (list mode):
 
 <ListDetail eyebrow="Administration" title="Mandanten" view="list">
   {#snippet list()}
-    <Section title="ALLE MANDANTEN">
+    <Section title="Alle Mandanten">
       <TenantTable />
     </Section>
   {/snippet}
@@ -288,11 +232,11 @@ Usage (detail mode with tabs):
 <ListDetail eyebrow="Administration" title="Mandant" view="detail" {crumbs} {tabs} bind:activeTab>
   {#snippet tabContent(tab)}
     {#if tab === "general"}
-      <Section title="ALLGEMEIN">
+      <Section title="Allgemein">
         <TenantForm />
       </Section>
     {:else if tab === "billing"}
-      <Section title="ABRECHNUNG">
+      <Section title="Abrechnung">
         <BillingForm />
       </Section>
     {:else if tab === "danger"}
@@ -306,7 +250,7 @@ Usage (detail mode with tabs):
 </ListDetail>
 ```
 
-List-mode consumer with a `<Modal>` form: `admin/leave-limits` (Urlaubsgrenzen & Sperren, Issue #836).
+No route page uses list mode any more: its last consumer, `admin/leave-limits` (Issue #836), became the Urlaubsgrenzen & Sperren tab of Regeln › Abwesenheiten (`UrlaubsgrenzenPanel`, Issue #854).
 
 ---
 
@@ -356,7 +300,7 @@ Usage (no steps):
 
 <ToolPage eyebrow="Administration" title="Daten importieren">
   {#snippet form()}
-    <Section title="DATEI HOCHLADEN">
+    <Section title="Datei hochladen">
       <ImportDropzone />
     </Section>
   {/snippet}

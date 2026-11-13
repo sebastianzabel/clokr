@@ -88,7 +88,7 @@ describe("the messages and the hand-over", () => {
   });
   it("hands over to a real tab of the detail page", () => {
     const href = berechtigungenTabHref("a/b");
-    expect(href).toBe("/admin/employees/a%2Fb#berechtigungen");
+    expect(href).toBe("/admin/employees/a%2Fb#zugang");
     const ids = employeeDetailTabs({
       canManageAccess: true,
       canAssignRoles: true,

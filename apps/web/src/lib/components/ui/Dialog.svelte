@@ -206,7 +206,7 @@
     width: min(880px, calc(100vw - 32px));
   }
 
-  /* The wide dialog carries the drill-down's footer buttons ("Schließen", "DATEV (Person)",
+  /* The wide dialog carries the drill-down's footer buttons ("Schließen", "DATEV für diese Person",
      "Stundennachweis (PDF)"): in one row they end beyond a phone and the dialog clips them (found
      by the 390/360 px matrix of reports-period.spec.ts). They wrap instead; a footer that fits
      renders exactly as before. */

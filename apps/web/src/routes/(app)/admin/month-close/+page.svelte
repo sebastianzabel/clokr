@@ -1,132 +1,85 @@
+<!--
+  Verwalten › Monatsabschluss (Issue #854, D-854-10): the close WORKFLOW (status per month, closing,
+  unlocking). The settings that decide when a month may be closed live at Regeln › Monatsabschluss.
+
+  Built from the #843 blocks: PageHead, the four-step indicator (CloseStepper, kept on purpose), the year
+  in a PeriodPicker, the status filter in the URL, a KpiStrip of the year, a DataTable of months with the
+  persons of the month in view below it (MonthStatusTable), Dialogs for closing and unlocking. No rule of
+  the close changed: the same reads and writes, the same gap acknowledgement, the same unlock reason.
+  Day lists stay withheld outside the reader's reach (Issue #86, D-02): dates come from
+  `$lib/month-close/day-lists`, which prints the server's count when `dayDetailsWithheld` is set.
+-->
 <script lang="ts">
+  import { onMount } from "svelte";
   import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
-  import { page } from "$app/stores";
-  import Modal from "$components/ui/Modal.svelte";
-  import Spinner from "$components/ui/Spinner.svelte";
+  import { toasts } from "$stores/toast";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import KpiStrip from "$components/ui/KpiStrip.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import PeriodPicker from "$components/ui/PeriodPicker.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
-  import ToolPage from "$lib/components/admin/ToolPage.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
+  import CloseStepper from "$lib/components/admin/monatsabschluss/CloseStepper.svelte";
+  import MonthStatusTable from "$lib/components/admin/monatsabschluss/MonthStatusTable.svelte";
   import {
     DAY_DETAILS_WITHHELD_HINT,
     anyDayDetailsWithheld,
-    breakFindingHintFor,
     daysWithoutEntryText,
     gapCountOf,
-    karenzOverrunCountOf,
-    karenzOverrunTitle,
     missingDaysText,
   } from "$lib/month-close/day-lists";
-  import { exitLabel } from "$lib/month-close/exit-label";
+  import type {
+    DeferredState,
+    EmployeeStatus,
+    MonthDetailResponse,
+    MonthStatus,
+    YearStatusResponse,
+  } from "$lib/month-close/types";
+  import { int, oneOf, urlState } from "$lib/table/url-state";
   import { MONTH_STATUS_LABEL } from "$lib/saldo/month-status"; // Issue #598: one status wording
-
-  interface MissingEmployee {
-    employeeName: string;
-    employeeNumber: string;
-    missingDates: string[];
-    /** Issue #86 (D-02): the server's count; survives a withheld (emptied) `missingDates`. */
-    missingDateCount?: number;
-    dayDetailsWithheld?: boolean;
-  }
-
-  interface MonthStatus {
-    month: number;
-    name: string;
-    status: "closed" | "partial" | "ready" | "open" | "blocked" | "future" | "no_data";
-    closedCount: number;
-    totalCount: number;
-    missing?: MissingEmployee[];
-  }
-
-  interface YearStatusResponse {
-    year: number;
-    months: MonthStatus[];
-    autoCloseDeadline: number;
-    earliestYear: number;
-  }
-
-  interface EmployeeStatus {
-    employeeId: string;
-    employeeName: string;
-    employeeNumber: string;
-    status: "ready" | "missing" | "closed";
-    /** Issue #613 (P-03): the tenant-local exit day (`YYYY-MM-DD`) of a person who leaves or left. */
-    exitDate?: string | null;
-    missingDates?: string[];
-    /** Issue #86 (D-02): the server's counts and the flag. A reader without time-entry:read reach
-     *  over the person gets the four day lists emptied and `dayDetailsWithheld: true`; the counts
-     *  stay. An emptied list is never "no gaps" - read the counts (see lib/month-close/day-lists). */
-    missingDateCount?: number;
-    unconfirmedBreakDayCount?: number;
-    breakFindingDayCount?: number;
-    karenzOverrunDayCount?: number;
-    dayDetailsWithheld?: boolean;
-    /** Phase 104 (D-21): § 5 EFZG — Krankheitstage ohne Attest über die Karenzzeit hinaus.
-     *  Reiner Hinweis, KEIN Gate: der Abschluss bleibt in jedem Fall möglich. Für
-     *  abgeschlossene Monate und flexible Verträge liefert der Server bewusst []. */
-    karenzOverrunDays?: string[];
-    /** Issue #80 (D-09b/D-15) + #511 (D-12): days with an open, unacknowledged § 4 ArbZG /
-     *  § 11 JArbSchG break finding (cross-salon shortfall or Satz 2/3). Blocks the close only
-     *  while the tenant's break-confirmation flag is on, but is shown regardless; display-only
-     *  here. Empty for a closed month. */
-    breakFindingDays?: string[];
-  }
-
-  interface MonthDetailResponse {
-    year: number;
-    month: number;
-    employees: EmployeeStatus[];
-  }
-
-  /** Phase 292 (issue #292) — GET /overtime/close-month/deferred. */
-  interface DeferredEmployee {
-    employeeId: string;
-    employeeName: string;
-    oldestOpenMonth: { year: number; month: number };
-    monthsBehind: number;
-    reason:
-      | "GAPS"
-      | "UNCONFIRMED_BREAKS"
-      | "CROSS_SALON_BREAKS"
-      | "BREAK_PLACEMENT"
-      | "EXIT_DATE_MISSING"
-      | "UNKNOWN";
-    gapDates: string[];
-    gapCount: number;
-    /** Issue #86 (D-02): `gapDates` is emptied while `gapCount` stays. */
-    dayDetailsWithheld?: boolean;
-  }
-
-  interface DeferredState {
-    employeeCount: number;
-    oldestOpenMonth: { year: number; month: number } | null;
-    monthsBehind: number;
-    gapCount: number;
-    severity: "NONE" | "INFO" | "WARNING" | "CRITICAL";
-    employees: DeferredEmployee[];
-  }
 
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentDay = now.getDate();
 
-  let selectedYear = $state(currentYear);
-  // Phase 116 (issue #119) — starts TRUE for intent, not for behaviour: `loadYearStatus()` is
-  // invoked from the <script> body (:496, there is no onMount) and sets `loading = true`
-  // synchronously before the first paint, so this page never had the "loaded and empty" frame.
-  // Its markup is already `{#if loading} … {:else if loaded}` with `loaded` starting false.
-  // Safe: loadYearStatus is `loading = true` → try → `finally { loading = false }`, no early return.
+  // ── Filters in the URL (Issue #854, D-854-03) ───────────────────────────────────────────────
+  // `year` and `month` also carry the deep link of the Monatsabschluss notifications
+  // (/admin/month-close?year=2026&month=5, Phase 292); `status` is the filter of the month list.
+  // Every value goes through an allow-list parser, other keys of the URL are left alone.
+  const STATUS_FILTERS = ["all", "open", "closed", "actionable"] as const;
+  const urlSchema = {
+    year: int({ min: 2000, max: 2999 }, currentYear),
+    month: int({ min: 0, max: 12 }, 0),
+    status: oneOf(STATUS_FILTERS, "all"),
+  };
+  const url = urlState(urlSchema);
+  const initialUrl = url.read();
+
+  const filterOptions = [
+    { value: "all", label: "Alle" },
+    { value: "open", label: "Offen / Fehlend" },
+    { value: "closed", label: MONTH_STATUS_LABEL.CLOSED },
+    { value: "actionable", label: "Handlungsbedarf" },
+  ];
+
+  let selectedYear = $state(initialUrl.year);
+  let statusFilter = $state<(typeof STATUS_FILTERS)[number]>(initialUrl.status);
+  let selectedMonth = $state<number | null>(null);
+
+  // Starts true: `onMount` loads the year before the first paint of anything but the Skeleton.
   let loading = $state(true);
-  let error = $state("");
-  let success = $state("");
-  let monthStatuses: MonthStatus[] = $state([]);
+  let loadError = $state("");
   let loaded = $state(false);
+  let refreshing = $state(false);
+  let monthStatuses: MonthStatus[] = $state([]);
   let earliestYear = $state(currentYear);
 
-  // Phase 292 (issue #292): the deferred-Monatsabschluss state, shown as a banner on the page
-  // an admin opens for exactly this question. Before this, a month that the auto-closer had
-  // permanently deferred was visible nowhere — one had to already suspect the right month and
-  // pick it from the year list to see anything at all.
+  // Phase 292 (issue #292): the deferred-Monatsabschluss state, shown as a note on the page an admin
+  // opens for exactly this question. A failing side read never takes the page down.
   let deferred = $state<DeferredState | null>(null);
 
   const MONTH_NAMES_DE = [
@@ -149,78 +102,46 @@
     return `${MONTH_NAMES_DE[m.month - 1]} ${m.year}`;
   }
 
-  let deferredCalloutClass = $derived(
-    deferred?.severity === "CRITICAL"
-      ? "callout error"
-      : deferred?.severity === "INFO"
-        ? "callout brand"
-        : "callout",
+  const deferredTone = $derived(
+    deferred?.severity === "CRITICAL" ? "bad" : deferred?.severity === "INFO" ? "info" : "warn",
   );
 
-  // Expanded month detail
-  let expandedMonth = $state<number | null>(null);
+  // The persons of the month in view
   let detailLoading = $state(false);
   let detailEmployees: EmployeeStatus[] = $state([]);
 
-  // Closing state
+  // Writes
   let closing = $state(false);
   let closingProgress = $state(0);
   let closingTotal = $state(0);
-
-  // Unlocking state (tracks employeeId being unlocked)
+  let closingEmployee = $state<string | null>(null);
   let unlocking = $state<string | null>(null);
 
-  // Unlock reason modal state
-  let unlockModalOpen = $state(false);
-  let unlockModalEmployeeId = $state<string | null>(null);
-  let unlockModalMonth = $state<number | null>(null);
-  let unlockReason = $state("");
-
-  let unlockModalTitle = $derived.by(() => {
-    if (unlockModalMonth == null) return "Monat entsperren";
-    const ms = monthStatuses.find((m) => m.month === unlockModalMonth);
-    const name = ms?.name ?? `Monat ${unlockModalMonth}`;
-    const emp = detailEmployees.find((e) => e.employeeId === unlockModalEmployeeId);
-    return `${name} ${selectedYear} – ${emp?.employeeName ?? "Mitarbeiter"} entsperren?`;
-  });
-
-  function openUnlockModal(employeeId: string, month: number) {
-    unlockModalEmployeeId = employeeId;
-    unlockModalMonth = month;
-    unlockReason = "";
-    unlockModalOpen = true;
-  }
-
-  function closeUnlockModal() {
-    unlockModalOpen = false;
-    unlockModalEmployeeId = null;
-    unlockModalMonth = null;
-    unlockReason = "";
-  }
-
-  async function onUnlockProceed() {
-    if (unlockModalEmployeeId == null || unlockModalMonth == null || !unlockReason.trim()) return;
-    const empId = unlockModalEmployeeId;
-    const month = unlockModalMonth;
-    const reason = unlockReason.trim();
-    closeUnlockModal();
-    await unlockEmployee(empId, month, reason);
-  }
-
-  // Per-employee closing state
-  let closingEmployee = $state<string | null>(null);
-
-  // Confirm modal state
-  let confirmModalOpen = $state(false);
+  // Close dialog
+  let confirmOpen = $state(false);
   let confirmMonth = $state<number | null>(null);
   let confirmEmployeeId = $state<string | null>(null);
   let gapAcknowledged = $state(false);
+  let confirmError = $state("");
+  const confirmBusy = $derived(closing || closingEmployee !== null);
 
-  // pendingGaps: gap dates for the employee(s) being confirmed.
-  // Derived from status-endpoint missingDates — never client-computed (A1 parity).
+  // Unlock dialog
+  let unlockOpen = $state(false);
+  let unlockEmployeeId = $state<string | null>(null);
+  let unlockMonth = $state<number | null>(null);
+  let unlockReason = $state("");
+  let unlockError = $state("");
+
+  /** The server's own text of a refused call, else `fallback`. */
+  function errorText(e: unknown, fallback: string): string {
+    const apiErr = e as { data?: { error?: string }; message?: string };
+    return apiErr?.data?.error ?? apiErr?.message ?? fallback;
+  }
+
   // pendingGapCount is the server's count (Issue #86, D-02): a closer without time-entry:read reach
-  // gets no dates, but the acknowledgement of the gaps still applies.
-  let pendingGapCount = $derived.by<number>(() => {
+  // gets no dates, but the acknowledgement of the gaps still applies. Derived from the status
+  // endpoint, never computed in the client (A1 parity).
+  const pendingGapCount = $derived.by<number>(() => {
     if (confirmEmployeeId) {
       const emp = detailEmployees.find((e) => e.employeeId === confirmEmployeeId);
       return emp ? gapCountOf(emp) : 0;
@@ -229,19 +150,19 @@
       .filter((e) => e.status === "missing")
       .reduce((sum, e) => sum + gapCountOf(e), 0);
   });
-  let pendingGaps = $derived.by<string[]>(() => {
+  const pendingGaps = $derived.by<string[]>(() => {
     if (confirmEmployeeId) {
       const emp = detailEmployees.find((e) => e.employeeId === confirmEmployeeId);
       return emp?.missingDates ?? [];
     }
-    // Bulk close: union of all "missing" employees' dates
+    // Month close: the union of the dates of every person with a gap
     return detailEmployees
       .filter((e) => e.status === "missing")
       .flatMap((e) => e.missingDates ?? []);
   });
 
   // One neutral hint for the whole page when the server withheld any day list (Issue #86, D-02).
-  let withheldAny = $derived(
+  const withheldAny = $derived(
     anyDayDetailsWithheld([
       ...detailEmployees,
       ...monthStatuses.flatMap((m) => m.missing ?? []),
@@ -249,59 +170,55 @@
     ]),
   );
 
-  const years = $derived(
-    Array.from({ length: currentYear - earliestYear + 1 }, (_, i) => currentYear - i),
-  );
-
-  // Status filter
-  let statusFilter = $state("all");
-  const filterOptions = [
-    { value: "all", label: "Alle" },
-    { value: "open", label: "Offen / Fehlend" },
-    { value: "closed", label: MONTH_STATUS_LABEL.CLOSED },
-    { value: "actionable", label: "Handlungsbedarf" },
-  ];
-
-  let filteredMonths = $derived.by(() => {
-    if (statusFilter === "all") return monthStatuses;
-    if (statusFilter === "open")
+  const visibleMonths = $derived.by(() => {
+    if (statusFilter === "open") {
       return monthStatuses.filter((ms) =>
         ["open", "partial", "ready", "blocked"].includes(ms.status),
       );
+    }
     if (statusFilter === "closed") return monthStatuses.filter((ms) => ms.status === "closed");
-    if (statusFilter === "actionable")
+    if (statusFilter === "actionable") {
       return monthStatuses.filter((ms) => ["open", "partial", "ready"].includes(ms.status));
+    }
     return monthStatuses;
   });
 
-  // No pagination: a year has at most 12 months, all should be visible at once.
-  const pagedMonths = $derived(filteredMonths);
+  const kpiItems = $derived([
+    {
+      label: MONTH_STATUS_LABEL.CLOSED,
+      value: monthStatuses.filter((ms) => ms.status === "closed").length,
+      explanation: "Monate dieses Jahres",
+    },
+    {
+      label: "Bereit",
+      value: monthStatuses.filter((ms) => ms.status === "ready").length,
+      explanation: "Alle Personen bereit",
+    },
+    {
+      label: MONTH_STATUS_LABEL.OPEN,
+      value: monthStatuses.filter((ms) => ["open", "partial"].includes(ms.status)).length,
+      explanation: "Noch nicht abgeschlossen",
+    },
+    {
+      label: "Blockiert",
+      value: monthStatuses.filter((ms) => ms.status === "blocked").length,
+      explanation: "Ein früherer Monat ist offen",
+    },
+  ]);
 
-  // Summary counts
-  let closedMonthCount = $derived(monthStatuses.filter((ms) => ms.status === "closed").length);
-  let openMonthCount = $derived(
-    monthStatuses.filter((ms) => ["open", "partial", "ready"].includes(ms.status)).length,
-  );
-
-  // Determine the first actionable month (first open/ready/partial month)
-  let firstActionableMonth = $derived.by(() => {
+  // The first month still open (open/ready/partial) is the one the close button is offered for.
+  const firstActionableMonth = $derived.by(() => {
     for (const ms of monthStatuses) {
-      if (ms.status === "open" || ms.status === "ready" || ms.status === "partial") {
-        return ms.month;
-      }
+      if (ms.status === "open" || ms.status === "ready" || ms.status === "partial") return ms.month;
     }
     return null;
   });
 
-  // Active step derived from the currently expanded month, or the first actionable one.
+  // Active step, from the month in view or the first actionable one.
   // 0=Prüfen, 1=Korrigieren, 2=Bestätigen, 3=Sperren
   const activeStepIndex = $derived.by(() => {
-    let ms: MonthStatus | undefined;
-    if (expandedMonth != null) {
-      ms = monthStatuses.find((m) => m.month === expandedMonth);
-    } else if (firstActionableMonth != null) {
-      ms = monthStatuses.find((m) => m.month === firstActionableMonth);
-    }
+    const target = selectedMonth ?? firstActionableMonth;
+    const ms = target === null ? undefined : monthStatuses.find((m) => m.month === target);
     if (!ms) return 0;
     if (ms.status === "closed") return 3; // Sperren (done)
     if (ms.status === "ready") return 2; // Bestätigen (current)
@@ -309,156 +226,210 @@
     return 0; // Prüfen (default for open/blocked/no_data)
   });
 
-  // Auto-close hint
-  let autoCloseHint = $derived.by(() => {
+  const autoCloseHint = $derived.by(() => {
     const hasOpenMonths = monthStatuses.some(
       (ms) => ms.status === "open" || ms.status === "ready" || ms.status === "partial",
     );
     if (!hasOpenMonths) return null;
-    if (currentDay <= 10) {
-      return "Automatischer Abschluss versucht es bis zum 10.";
-    }
-    return "Nur noch manuell möglich";
+    if (currentDay <= 10) return "Der automatische Abschluss versucht es bis zum 10.";
+    return "Der Abschluss ist nur noch manuell möglich.";
   });
 
-  // Confirm modal helpers
-  let confirmTitle = $derived.by(() => {
-    if (confirmMonth == null) return "Monat sperren";
-    const ms = monthStatuses.find((m) => m.month === confirmMonth);
-    const name = ms?.name ?? `Monat ${confirmMonth}`;
-    if (confirmEmployeeId) {
-      const emp = detailEmployees.find((e) => e.employeeId === confirmEmployeeId);
-      return `${name} ${selectedYear} – ${emp?.employeeName ?? "Mitarbeiter"} sperren?`;
-    }
-    return `${name} ${selectedYear} sperren?`;
-  });
+  const monthName = (month: number) =>
+    monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
 
-  function openConfirmCloseMonth(month: number) {
-    confirmMonth = month;
-    confirmEmployeeId = null;
-    confirmModalOpen = true;
+  function writeUrl() {
+    url.write({ year: selectedYear, month: selectedMonth ?? 0, status: statusFilter });
   }
 
-  function openConfirmCloseEmployee(employeeId: string, month: number) {
-    confirmMonth = month;
-    confirmEmployeeId = employeeId;
-    confirmModalOpen = true;
+  // ── Reads ───────────────────────────────────────────────────────────────────────────────────
+  async function fetchYear() {
+    const res = await api.get<YearStatusResponse>(
+      `/overtime/close-month/year-status?year=${selectedYear}`,
+    );
+    monthStatuses = res.months;
+    if (res.earliestYear) earliestYear = res.earliestYear;
   }
 
-  function closeConfirmModal() {
-    confirmModalOpen = false;
-    confirmMonth = null;
-    confirmEmployeeId = null;
-    gapAcknowledged = false; // synchronous reset — no $effect (avoids v1.8.17 loop trap)
-  }
-
-  async function onConfirmProceed() {
-    if (confirmMonth == null) return;
-    const month = confirmMonth;
-    const empId = confirmEmployeeId;
-    closeConfirmModal();
-    if (empId) {
-      await closeEmployee(empId, month);
-    } else {
-      await closeMonth(month);
-    }
-  }
-
-  async function loadYearStatus() {
-    loading = true;
-    error = "";
-    success = "";
-    loaded = false;
-    expandedMonth = null;
-    detailEmployees = [];
-    try {
-      const res = await api.get<YearStatusResponse>(
-        `/overtime/close-month/year-status?year=${selectedYear}`,
-      );
-      monthStatuses = res.months;
-      if (res.earliestYear) earliestYear = res.earliestYear;
-      loaded = true;
-    } catch {
-      error = "Jahresstatus konnte nicht geladen werden";
-    } finally {
-      loading = false;
-    }
-  }
-
-  function onYearChange() {
-    loadYearStatus();
+  async function fetchDetail(month: number) {
+    const res = await api.get<MonthDetailResponse>(
+      `/overtime/close-month/status?year=${selectedYear}&month=${month}`,
+    );
+    // A slower answer of a month that is no longer in view is dropped.
+    if (selectedMonth === month) detailEmployees = res.employees;
   }
 
   async function loadDeferred() {
     try {
       deferred = await api.get<DeferredState>("/overtime/close-month/deferred?detailed=true");
     } catch {
-      // A failing side-panel must never take the page down — the year list is the primary view.
       deferred = null;
     }
   }
 
-  /** Jump straight to the oldest month that is still open, and expand it. */
+  /** First load and year change: the whole list is replaced by the Skeleton meanwhile. */
+  async function loadYearStatus() {
+    loading = true;
+    loadError = "";
+    loaded = false;
+    try {
+      await fetchYear();
+      loaded = true;
+    } catch {
+      loadError = "Der Jahresstatus konnte nicht geladen werden.";
+    } finally {
+      loading = false;
+    }
+  }
+
+  /** After a write and for „Aktualisieren“: year, persons of the month in view and the deferred note. */
+  async function refresh() {
+    refreshing = true;
+    try {
+      await fetchYear();
+      if (selectedMonth !== null) await fetchDetail(selectedMonth);
+      await loadDeferred();
+    } catch (e) {
+      toasts.error(errorText(e, "Die Daten konnten nicht aktualisiert werden."));
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  /** Opens the persons of `month` (or closes them when it is already in view). False when the load failed. */
+  async function selectMonth(month: number): Promise<boolean> {
+    if (selectedMonth === month) {
+      selectedMonth = null;
+      detailEmployees = [];
+      writeUrl();
+      return true;
+    }
+    selectedMonth = month;
+    detailEmployees = [];
+    detailLoading = true;
+    writeUrl();
+    try {
+      await fetchDetail(month);
+      return true;
+    } catch (e) {
+      toasts.error(errorText(e, "Die Details konnten nicht geladen werden."));
+      return false;
+    } finally {
+      if (selectedMonth === month) detailLoading = false;
+    }
+  }
+
+  async function changeYear(delta: number) {
+    const next = selectedYear + delta;
+    if (next > currentYear || next < earliestYear) return;
+    selectedYear = next;
+    selectedMonth = null;
+    detailEmployees = [];
+    writeUrl();
+    await loadYearStatus();
+  }
+
+  function setStatusFilter(value: string) {
+    statusFilter = urlSchema.status.parse(value);
+    writeUrl();
+  }
+
+  function resetFilters() {
+    setStatusFilter("all");
+  }
+
+  /** Jump straight to the oldest month that is still open, and show its persons. */
   async function openOldestDeferredMonth() {
     const target = deferred?.oldestOpenMonth;
     if (!target) return;
     if (selectedYear !== target.year) {
       selectedYear = target.year;
+      selectedMonth = null;
+      detailEmployees = [];
       await loadYearStatus();
     }
-    await toggleMonthDetail(target.month);
+    if (selectedMonth !== target.month) await selectMonth(target.month);
   }
 
-  async function toggleMonthDetail(month: number) {
-    if (expandedMonth === month) {
-      expandedMonth = null;
-      detailEmployees = [];
-      return;
+  // ── Close dialog ────────────────────────────────────────────────────────────────────────────
+  const confirmTitle = $derived.by(() => {
+    if (confirmMonth == null) return "Monat sperren";
+    const name = monthName(confirmMonth);
+    if (confirmEmployeeId) {
+      const emp = detailEmployees.find((e) => e.employeeId === confirmEmployeeId);
+      return `${name} ${selectedYear}: ${emp?.employeeName ?? "Mitarbeiter"} sperren?`;
     }
+    return `${name} ${selectedYear} sperren?`;
+  });
 
-    expandedMonth = month;
-    detailLoading = true;
-    detailEmployees = [];
-    try {
-      const res = await api.get<MonthDetailResponse>(
-        `/overtime/close-month/status?year=${selectedYear}&month=${month}`,
-      );
-      detailEmployees = res.employees;
-    } catch (e) {
-      const apiErr = e as { data?: { error?: string }; message?: string };
-      error = apiErr?.data?.error ?? apiErr?.message ?? "Details konnten nicht geladen werden";
-    } finally {
-      detailLoading = false;
-    }
+  async function openConfirmCloseMonth(month: number) {
+    // The gap acknowledgement applies to the persons that will be closed, so their status must be
+    // loaded before the dialog opens.
+    if (selectedMonth !== month && !(await selectMonth(month))) return;
+    confirmMonth = month;
+    confirmEmployeeId = null;
+    confirmError = "";
+    gapAcknowledged = false;
+    confirmOpen = true;
   }
 
-  async function closeMonth(month: number) {
+  function openConfirmCloseEmployee(employeeId: string, month: number) {
+    confirmMonth = month;
+    confirmEmployeeId = employeeId;
+    confirmError = "";
+    gapAcknowledged = false;
+    confirmOpen = true;
+  }
+
+  function closeConfirmDialog() {
+    confirmOpen = false;
+    confirmMonth = null;
+    confirmEmployeeId = null;
+    confirmError = "";
+    gapAcknowledged = false; // synchronous reset - no $effect (avoids the v1.8.17 loop trap)
+  }
+
+  /** The dialog refuses to close while a close is running. */
+  function setConfirmOpen(next: boolean) {
+    if (!next && confirmBusy) return;
+    if (next) confirmOpen = true;
+    else closeConfirmDialog();
+  }
+
+  async function onConfirmProceed() {
+    if (confirmMonth == null) return;
+    const month = confirmMonth;
+    const empId = confirmEmployeeId;
+    confirmError = "";
+    const done = empId ? await closeEmployee(empId, month) : await closeMonth(month);
+    if (!done) return;
+    // The dialog closes first so it never shows the refreshed (already closed) state.
+    closeConfirmDialog();
+    await refresh();
+  }
+
+  /** True when the dialog may close; a refusal stays in the dialog as the server's text. */
+  async function closeMonth(month: number): Promise<boolean> {
     closing = true;
     closingProgress = 0;
-    error = "";
-    success = "";
-
-    // Load the month detail to find ready employees
+    closingTotal = 0;
     try {
+      // The status is read fresh: a person may have become ready or closed since the list was loaded.
       const res = await api.get<MonthDetailResponse>(
         `/overtime/close-month/status?year=${selectedYear}&month=${month}`,
       );
-      // FORK-A: include "missing" employees — single combined modal covers all
-      const closableEmployees = res.employees.filter(
-        (e) => e.status === "ready" || e.status === "missing",
-      );
-      closingTotal = closableEmployees.length;
-
-      if (closableEmployees.length === 0) {
-        error = "Keine Mitarbeiter zum Abschluss";
-        closing = false;
-        return;
+      // "missing" persons are included: the single dialog covers them with the gap acknowledgement.
+      const closable = res.employees.filter((e) => e.status === "ready" || e.status === "missing");
+      closingTotal = closable.length;
+      if (closable.length === 0) {
+        confirmError = "Keine Mitarbeiter zum Abschluss.";
+        return false;
       }
 
       let succeeded = 0;
       let failed = 0;
-
-      for (const emp of closableEmployees) {
+      let firstRefusal = "";
+      for (const emp of closable) {
         try {
           await api.post("/overtime/close-month", {
             employeeId: emp.employeeId,
@@ -467,23 +438,24 @@
             confirmGaps: gapCountOf(emp) > 0,
           });
           succeeded++;
-        } catch {
+        } catch (e) {
           failed++;
+          if (!firstRefusal) firstRefusal = errorText(e, "Abschluss fehlgeschlagen");
         }
         closingProgress = succeeded + failed;
       }
 
-      const monthName = monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
-      success = `${monthName} ${selectedYear}: ${succeeded} abgeschlossen${failed > 0 ? `, ${failed} fehlgeschlagen` : ""}`;
-
-      // Reload year status and detail
-      await loadYearStatus();
-      if (expandedMonth === month) {
-        await toggleMonthDetail(month);
+      if (succeeded === 0) {
+        confirmError = firstRefusal;
+        return false;
       }
+      const text = `${monthName(month)} ${selectedYear}: ${succeeded} abgeschlossen`;
+      if (failed > 0) toasts.error(`${text}, ${failed} fehlgeschlagen. ${firstRefusal}`);
+      else toasts.success(`${text}.`);
+      return true;
     } catch (e) {
-      const apiErr = e as { data?: { error?: string }; message?: string };
-      error = apiErr?.data?.error ?? apiErr?.message ?? "Fehler beim Monatsabschluss";
+      confirmError = errorText(e, "Fehler beim Monatsabschluss");
+      return false;
     } finally {
       closing = false;
       closingProgress = 0;
@@ -491,77 +463,8 @@
     }
   }
 
-  function statusLabel(status: string): string {
-    switch (status) {
-      case "closed":
-        return MONTH_STATUS_LABEL.CLOSED;
-      case "partial":
-        return "Teilweise";
-      case "ready":
-        return "Bereit";
-      case "open":
-        return MONTH_STATUS_LABEL.OPEN;
-      case "blocked":
-        return "Blockiert";
-      case "future":
-        return "Zukunft";
-      case "no_data":
-        return "Keine Daten";
-      default:
-        return status;
-    }
-  }
-
-  function statusChipClass(status: string): string {
-    switch (status) {
-      case "closed":
-        return "chip chip-good";
-      case "ready":
-        return "chip chip-brand";
-      case "partial":
-        return "chip chip-warn";
-      case "blocked":
-        return "chip chip-warn";
-      case "open":
-        return "chip";
-      case "future":
-        return "chip";
-      case "no_data":
-        return "chip";
-      default:
-        return "chip";
-    }
-  }
-
-  function reasonText(ms: MonthStatus): string {
-    if (ms.status === "closed") return "—";
-    if (ms.status === "future") return "—";
-    if (ms.status === "no_data") return "Keine Erfassung in diesem Zeitraum";
-    if (ms.status === "blocked") {
-      // Find the first non-closed month before this one
-      const prev = monthStatuses.find(
-        (p) => p.month < ms.month && p.status !== "closed" && p.status !== "future",
-      );
-      return prev ? `${prev.name} noch offen` : "Vorheriger Monat noch offen";
-    }
-    if (ms.status === "open" && ms.missing && ms.missing.length > 0) {
-      return ms.missing
-        .map((m) => `${shortenName(m.employeeName)}: ${missingDaysText(m, { short: true })}`)
-        .join("; ");
-    }
-    if (ms.status === "partial") {
-      return `${ms.closedCount} von ${ms.totalCount} abgeschlossen`;
-    }
-    if (ms.status === "ready") {
-      return "Alle Mitarbeiter bereit";
-    }
-    return "—";
-  }
-
-  async function closeEmployee(employeeId: string, month: number) {
+  async function closeEmployee(employeeId: string, month: number): Promise<boolean> {
     closingEmployee = employeeId;
-    error = "";
-    success = "";
     try {
       await api.post("/overtime/close-month", {
         employeeId,
@@ -569,878 +472,428 @@
         month,
         confirmGaps: pendingGapCount > 0,
       });
-      const monthName = monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
-      success = `${monthName} ${selectedYear} für Mitarbeiter abgeschlossen`;
-      await loadYearStatus();
-      if (expandedMonth === month) {
-        await toggleMonthDetail(month);
-      }
+      toasts.success(`${monthName(month)} ${selectedYear} ist für die Person abgeschlossen.`);
+      return true;
     } catch (e) {
-      const apiErr = e as { data?: { error?: string }; message?: string };
-      error = apiErr?.data?.error ?? apiErr?.message ?? "Abschluss fehlgeschlagen";
+      confirmError = errorText(e, "Abschluss fehlgeschlagen");
+      return false;
     } finally {
       closingEmployee = null;
     }
   }
 
-  async function unlockEmployee(employeeId: string, month: number, reason: string) {
+  // ── Unlock dialog (Revisionssicherheit: the admin must say why) ─────────────────────────────
+  const unlockTitle = $derived.by(() => {
+    if (unlockMonth == null) return "Monat entsperren";
+    const emp = detailEmployees.find((e) => e.employeeId === unlockEmployeeId);
+    return `${monthName(unlockMonth)} ${selectedYear}: ${emp?.employeeName ?? "Mitarbeiter"} entsperren?`;
+  });
+
+  function openUnlockDialog(employeeId: string, month: number) {
+    unlockEmployeeId = employeeId;
+    unlockMonth = month;
+    unlockReason = "";
+    unlockError = "";
+    unlockOpen = true;
+  }
+
+  function closeUnlockDialog() {
+    unlockOpen = false;
+    unlockEmployeeId = null;
+    unlockMonth = null;
+    unlockReason = "";
+    unlockError = "";
+  }
+
+  function setUnlockOpen(next: boolean) {
+    if (!next && unlocking !== null) return;
+    if (next) unlockOpen = true;
+    else closeUnlockDialog();
+  }
+
+  async function onUnlockProceed() {
+    if (unlockEmployeeId == null || unlockMonth == null || !unlockReason.trim()) return;
+    const employeeId = unlockEmployeeId;
+    const month = unlockMonth;
     unlocking = employeeId;
-    error = "";
-    success = "";
+    unlockError = "";
     try {
       await api.post("/overtime/unlock-month", {
         employeeId,
         year: selectedYear,
         month,
-        reason,
+        reason: unlockReason.trim(),
       });
-      const monthName = monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
-      success = `${monthName} ${selectedYear} für Mitarbeiter entsperrt`;
-      await loadYearStatus();
-      if (expandedMonth === month) {
-        await toggleMonthDetail(month);
-      }
+      toasts.success(`${monthName(month)} ${selectedYear} ist für die Person entsperrt.`);
+      closeUnlockDialog();
+      await refresh();
     } catch (e) {
-      const apiErr = e as { data?: { error?: string }; message?: string };
-      error = apiErr?.data?.error ?? apiErr?.message ?? "Entsperren fehlgeschlagen";
+      unlockError = errorText(e, "Entsperren fehlgeschlagen");
     } finally {
       unlocking = null;
     }
   }
 
-  function shortenName(name: string): string {
-    const parts = name.split(" ");
-    if (parts.length >= 2) {
-      return `${parts[0]} ${parts[parts.length - 1].charAt(0)}.`;
-    }
-    return name;
-  }
-
-  // Phase 292 (issue #292): deep link from the Monatsabschluss notifications
-  // (/admin/month-close?year=2026&month=5). The message names the blocked month; this is what
-  // makes the link land on it instead of on the current year with nothing expanded.
-  const deepLinkYear = Number($page.url.searchParams.get("year"));
-  const deepLinkMonth = Number($page.url.searchParams.get("month"));
-  const hasDeepLinkYear =
-    Number.isInteger(deepLinkYear) && deepLinkYear >= 2000 && deepLinkYear <= 2999;
-  const hasDeepLinkMonth =
-    Number.isInteger(deepLinkMonth) && deepLinkMonth >= 1 && deepLinkMonth <= 12;
-  if (hasDeepLinkYear) selectedYear = deepLinkYear;
-
-  loadDeferred();
-  loadYearStatus().then(() => {
-    if (hasDeepLinkMonth) void toggleMonthDetail(deepLinkMonth);
+  onMount(() => {
+    void loadDeferred();
+    void loadYearStatus().then(() => {
+      if (initialUrl.month >= 1 && loaded) void selectMonth(initialUrl.month);
+    });
   });
 </script>
 
 <svelte:head><title>{pageLabel("/admin/month-close")} – Clokr</title></svelte:head>
 
-<!-- Phase 73-05 (D-05): data-testid surface for admin Monatsabschluss flows.
-     `display: contents` keeps ToolPage's layout intact while exposing a
-     stable page-root selector to E2E specs (74-01 reopen flow). -->
+<!-- Phase 73-05 (D-05): data-testid surface for the admin Monatsabschluss flows. `display: contents`
+     keeps the page layout intact while exposing a stable page-root selector to the e2e specs. -->
 <div data-testid="month-close-page" style="display: contents;">
-  <ToolPage
-    eyebrow="Verwalten"
-    title={pageLabel("/admin/month-close")}
-    sub="Monat prüfen, korrigieren und sperren"
-    steps={["Prüfen", "Korrigieren", "Bestätigen", "Sperren"]}
-    currentStep={activeStepIndex}
-    animate
-  >
-    {#snippet form()}
-      <Section title="Filter" sub="Jahr und Status wählen">
-        <div class="ma-controls">
-          <div class="control-row">
-            <label class="control-group">
-              <span class="control-label">Jahr</span>
-              <select
-                class="form-select"
-                bind:value={selectedYear}
-                onchange={onYearChange}
-                data-testid="month-close-year"
-              >
-                {#each years as y (y)}
-                  <option value={y}>{y}</option>
-                {/each}
-              </select>
-            </label>
+  <PageHead title={pageLabel("/admin/month-close")} sub="Monat prüfen, korrigieren und sperren">
+    {#snippet actions()}
+      <button
+        type="button"
+        class="btn btn-secondary"
+        onclick={refresh}
+        disabled={loading || refreshing}
+        aria-busy={refreshing}
+      >
+        {#if refreshing}<Spinner size={14} />{/if}
+        Aktualisieren
+      </button>
+    {/snippet}
+  </PageHead>
 
-            <label class="control-group">
-              <span class="control-label">Filter</span>
-              <select class="form-select" bind:value={statusFilter}>
+  <CloseStepper
+    steps={["Prüfen", "Korrigieren", "Bestätigen", "Sperren"]}
+    current={activeStepIndex}
+  />
+
+  {#if deferred && deferred.employeeCount > 0}
+    <div class="mc-deferred" role="status" data-testid="month-close-deferred">
+      <Note tone={deferredTone}>
+        <b>{deferred.severity === "CRITICAL" ? "Dringend: " : ""}Monatsabschluss überfällig.</b>
+        {deferred.employeeCount === 1
+          ? "1 Mitarbeiter hat"
+          : `${deferred.employeeCount} Mitarbeiter haben`}
+        einen offenen Monatsabschluss. Ältester offener Monat:
+        <b>{monthLabel(deferred.oldestOpenMonth)}</b>
+        ({deferred.monthsBehind === 1 ? "1 Monat" : `${deferred.monthsBehind} Monate`} Rückstand).
+        {#if deferred.gapCount > 0}
+          {deferred.gapCount === 1
+            ? "1 fehlender Tageseintrag blockiert"
+            : `${deferred.gapCount} fehlende Tageseinträge blockieren`} den Abschluss.
+        {/if}
+      </Note>
+      <ul class="mc-deferred-list">
+        {#each deferred.employees.slice(0, 8) as e (e.employeeId)}
+          <li>
+            {e.employeeName}: offen seit {monthLabel(e.oldestOpenMonth)}
+            {#if e.reason === "EXIT_DATE_MISSING"}
+              · Austrittsdatum fehlt, bitte prüfen
+            {:else if gapCountOf(e) > 0}
+              · {e.dayDetailsWithheld ? "" : "fehlende Tage: "}{missingDaysText(e, {
+                iso: true,
+              })}
+            {:else}
+              · keine Tageslücken gefunden
+            {/if}
+          </li>
+        {/each}
+        {#if deferred.employees.length > 8}
+          <li>… und {deferred.employees.length - 8} weitere.</li>
+        {/if}
+      </ul>
+      <button
+        type="button"
+        class="btn btn-secondary btn-sm"
+        onclick={openOldestDeferredMonth}
+        data-testid="month-close-deferred-jump"
+      >
+        {monthLabel(deferred.oldestOpenMonth)} öffnen
+      </button>
+    </div>
+  {/if}
+
+  {#if withheldAny}
+    <div data-testid="month-close-withheld-hint">
+      <Note tone="info">{DAY_DETAILS_WITHHELD_HINT}</Note>
+    </div>
+  {/if}
+
+  <!-- The year is the PeriodPicker in the shape of Zeiten (#854 owner review): no eyebrow, „Heute“ jumps to
+       the current year, and the status filter sits in the same bar. -->
+  <div class="mc-controls">
+    <PeriodPicker
+      label={String(selectedYear)}
+      testIdPrefix="month-close-year"
+      prevLabel="Vorheriges Jahr"
+      nextLabel="Nächstes Jahr"
+      prevDisabled={loading || selectedYear <= earliestYear}
+      nextDisabled={loading || selectedYear >= currentYear}
+      onPrev={() => changeYear(-1)}
+      onNext={() => changeYear(1)}
+      onToday={selectedYear === currentYear
+        ? undefined
+        : () => changeYear(currentYear - selectedYear)}
+    >
+      {#snippet aside()}
+        <!-- A select, not a Segment: four options do not fit a 360 px phone; the bar wraps it into
+             its own row on a narrow screen. -->
+        <div class="mc-filter">
+          <FormField label="Status">
+            {#snippet field({ id, describedBy })}
+              <select
+                {id}
+                class="form-input"
+                value={statusFilter}
+                aria-describedby={describedBy}
+                data-testid="month-close-status"
+                onchange={(event) => setStatusFilter(event.currentTarget.value)}
+              >
                 {#each filterOptions as opt (opt.value)}
                   <option value={opt.value}>{opt.label}</option>
                 {/each}
               </select>
-            </label>
-
-            <div class="control-group control-action">
-              <span class="control-label">&nbsp;</span>
-              <button
-                class="btn btn-primary"
-                onclick={loadYearStatus}
-                disabled={loading}
-                aria-busy={loading}
-              >
-                {#if loading}<Spinner />{/if}
-                Aktualisieren
-              </button>
-            </div>
-          </div>
-
-          {#if autoCloseHint && loaded}
-            <div class="callout brand">
-              <div>
-                <b>Automatischer Abschluss:</b>
-                <p>{autoCloseHint}</p>
-              </div>
-            </div>
-          {/if}
+            {/snippet}
+          </FormField>
         </div>
-      </Section>
+      {/snippet}
+    </PeriodPicker>
+  </div>
 
-      {#if deferred && deferred.employeeCount > 0}
-        <div class={deferredCalloutClass} role="status" data-testid="month-close-deferred">
-          <div>
-            <b>
-              {deferred.severity === "CRITICAL" ? "Dringend: " : ""}Monatsabschluss überfällig
-            </b>
-            <p>
-              {deferred.employeeCount === 1
-                ? "1 Mitarbeiter hat"
-                : `${deferred.employeeCount} Mitarbeiter haben`}
-              einen offenen Monatsabschluss. Ältester offener Monat:
-              <b>{monthLabel(deferred.oldestOpenMonth)}</b>
-              ({deferred.monthsBehind === 1 ? "1 Monat" : `${deferred.monthsBehind} Monate`} Rückstand).
-              {#if deferred.gapCount > 0}
-                {deferred.gapCount === 1
-                  ? "1 fehlender Tageseintrag blockiert"
-                  : `${deferred.gapCount} fehlende Tageseinträge blockieren`} den Abschluss.
-              {/if}
-            </p>
-            <ul class="deferred-list">
-              {#each deferred.employees.slice(0, 8) as e (e.employeeId)}
-                <li>
-                  {e.employeeName} – offen seit {monthLabel(e.oldestOpenMonth)}
-                  {#if e.reason === "EXIT_DATE_MISSING"}
-                    · Austrittsdatum fehlt – bitte prüfen
-                  {:else if gapCountOf(e) > 0}
-                    · {e.dayDetailsWithheld ? "" : "fehlende Tage: "}{missingDaysText(e, {
-                      iso: true,
-                    })}
-                  {:else}
-                    · keine Tageslücken gefunden
-                  {/if}
-                </li>
-              {/each}
-              {#if deferred.employees.length > 8}
-                <li>… und {deferred.employees.length - 8} weitere.</li>
-              {/if}
-            </ul>
-            <button
-              class="btn btn-secondary"
-              onclick={openOldestDeferredMonth}
-              data-testid="month-close-deferred-jump"
-            >
-              {monthLabel(deferred.oldestOpenMonth)} öffnen
-            </button>
-          </div>
-        </div>
+  {#if loading}
+    <Skeleton shape="card" lines={3} />
+  {:else if loadError}
+    <ErrorState message={loadError} onRetry={loadYearStatus} />
+  {:else if loaded}
+    <!-- Hint, figures and the month list keep the section distance of the other Verwalten pages. -->
+    <div class="mc-stack">
+      {#if autoCloseHint}
+        <Note tone="brand">{autoCloseHint}</Note>
       {/if}
-
-      {#if error}
-        <div class="callout error" role="alert">
-          <div><p>{error}</p></div>
-        </div>
-      {/if}
-      {#if success}
-        <div class="callout brand" role="status">
-          <div><p>{success}</p></div>
-        </div>
-      {/if}
-
-      {#if withheldAny}
-        <div class="callout" role="note" data-testid="month-close-withheld-hint">
-          <div><p>{DAY_DETAILS_WITHHELD_HINT}</p></div>
-        </div>
-      {/if}
-
-      {#if closing}
-        <Section
-          title="Abschluss läuft"
-          sub={`${closingProgress} von ${closingTotal} Mitarbeitern verarbeitet`}
-        >
-          <div class="progress-bar-track">
-            <div
-              class="progress-bar-fill"
-              style="width: {closingTotal > 0 ? (closingProgress / closingTotal) * 100 : 0}%"
-            ></div>
-          </div>
-        </Section>
-      {/if}
-
-      {#if loading}
-        <div class="loading-spacer"></div>
-      {:else if loaded}
-        {#if monthStatuses.length === 0}
-          <Section>
-            <p class="text-muted">Keine Daten verfügbar.</p>
-          </Section>
-        {:else}
-          <Section
-            title={`Monate ${selectedYear}`}
-            sub={`${closedMonthCount} abgeschlossen · ${openMonthCount} offen · ${monthStatuses.length} gesamt`}
-          >
-            <div class="table-wrapper">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th>Monat</th>
-                    <th>Status</th>
-                    <th>Grund</th>
-                    <th class="text-right">Aktion</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each pagedMonths as ms (ms.month)}
-                    <tr
-                      class="month-row"
-                      class:row-closed={ms.status === "closed"}
-                      class:row-future={ms.status === "future" || ms.status === "no_data"}
-                      class:row-blocked={ms.status === "blocked"}
-                      class:row-clickable={ms.status !== "future" && ms.status !== "no_data"}
-                      onclick={() => {
-                        if (ms.status !== "future" && ms.status !== "no_data")
-                          toggleMonthDetail(ms.month);
-                      }}
-                      data-testid={`month-close-row-${ms.month}`}
-                      data-status={ms.status}
-                    >
-                      <td class="month-name">
-                        <span class="month-expand-icon">
-                          {#if expandedMonth === ms.month}
-                            &#9660;
-                          {:else if ms.status !== "future" && ms.status !== "no_data"}
-                            &#9654;
-                          {/if}
-                        </span>
-                        {ms.name}
-                        {selectedYear}
-                      </td>
-                      <td>
-                        <span class={statusChipClass(ms.status)}>
-                          <span class="dot"></span>
-                          {statusLabel(ms.status)} ({ms.closedCount}/{ms.totalCount})
-                        </span>
-                      </td>
-                      <td class="reason-cell">
-                        <span class="reason-text">{reasonText(ms)}</span>
-                      </td>
-                      <td class="text-right">
-                        {#if (ms.status === "ready" || ms.status === "partial" || ms.status === "open") && ms.month === firstActionableMonth}
-                          <button
-                            class="btn btn-primary btn-sm"
-                            disabled={closing}
-                            onclick={(e: MouseEvent) => {
-                              e.stopPropagation();
-                              openConfirmCloseMonth(ms.month);
-                            }}
-                            data-testid={`month-close-row-${ms.month}-trigger`}
-                          >
-                            Abschließen
-                          </button>
-                        {:else if ms.status === "closed"}
-                          <span
-                            class="text-muted text-sm"
-                            data-testid={`month-close-row-${ms.month}-locked`}>&mdash;</span
-                          >
-                        {:else}
-                          <span class="text-muted text-sm">&mdash;</span>
-                        {/if}
-                      </td>
-                    </tr>
-                    {#if expandedMonth === ms.month}
-                      <tr class="detail-row">
-                        <td colspan="4">
-                          {#if ms.status === "ready"}
-                            <div class="detail-callout-wrapper">
-                              <div class="callout warn">
-                                <div>
-                                  <b>Achtung: Endgültiger Abschluss.</b>
-                                  <p>
-                                    Mit dem Abschluss werden alle Zeiteinträge dieses Monats
-                                    gesperrt (isLocked=true) und das Audit-Log fortgeschrieben.
-                                    Änderungen sind danach nur noch durch Storno-Buchungen möglich
-                                    (CLAUDE.md Audit-Proof / Revisionssicherheit).
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          {/if}
-                          {#if detailLoading}
-                            <Skeleton shape="row" count={3} />
-                          {:else if detailEmployees.length === 0}
-                            <div class="detail-empty">Keine Mitarbeiter gefunden.</div>
-                          {:else}
-                            <div class="detail-table-wrapper">
-                              <table class="detail-table">
-                                <thead>
-                                  <tr>
-                                    <th>Name</th>
-                                    <th>Personalnummer</th>
-                                    <th>Status</th>
-                                    <th>Fehlende Tage</th>
-                                    <th></th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {#each detailEmployees as emp (emp.employeeId)}
-                                    <tr class:detail-row-closed={emp.status === "closed"}>
-                                      <td class="employee-name">
-                                        {emp.employeeName}
-                                        {#if exitLabel(emp.exitDate)}
-                                          <span class="badge badge-gray"
-                                            >{exitLabel(emp.exitDate)}</span
-                                          >
-                                        {/if}
-                                      </td>
-                                      <td>{emp.employeeNumber}</td>
-                                      <td>
-                                        {#if emp.status === "closed"}
-                                          <span class="chip chip-good">
-                                            <span class="dot"></span>
-                                            {MONTH_STATUS_LABEL.CLOSED}
-                                          </span>
-                                        {:else if emp.status === "ready"}
-                                          <span class="chip chip-brand">
-                                            <span class="dot"></span>
-                                            Bereit
-                                          </span>
-                                        {:else}
-                                          <span class="chip">
-                                            <span class="dot"></span>
-                                            Fehlend
-                                          </span>
-                                        {/if}
-                                        {#if karenzOverrunCountOf(emp) > 0}
-                                          <span
-                                            class="chip chip-warn karenz-chip"
-                                            data-testid="karenz-overrun-hint"
-                                            title={karenzOverrunTitle(emp)}
-                                          >
-                                            Attest fehlt ({karenzOverrunCountOf(emp)})
-                                          </span>
-                                        {/if}
-                                        <!-- Issue #80 (D-09b) / #511 (D-12): display-only chip, no control -->
-                                        {#if breakFindingHintFor(emp)}
-                                          {@const breakFindingHint = breakFindingHintFor(emp)}
-                                          <span
-                                            class="chip chip-warn karenz-chip"
-                                            data-testid="break-finding-hint"
-                                            title={breakFindingHint?.title}
-                                          >
-                                            {breakFindingHint?.label}
-                                          </span>
-                                        {/if}
-                                      </td>
-                                      <td class="missing-dates">
-                                        {#if gapCountOf(emp) > 0}
-                                          <span class="dates-text">{missingDaysText(emp)}</span>
-                                          {#if !emp.dayDetailsWithheld}
-                                            <span class="dates-count">({gapCountOf(emp)})</span>
-                                          {/if}
-                                        {:else}
-                                          <span class="text-muted">-</span>
-                                        {/if}
-                                      </td>
-                                      <td class="text-right">
-                                        {#if emp.status === "ready"}
-                                          <button
-                                            class="btn btn-primary btn-sm"
-                                            disabled={closingEmployee === emp.employeeId || closing}
-                                            onclick={() =>
-                                              openConfirmCloseEmployee(
-                                                emp.employeeId,
-                                                expandedMonth!,
-                                              )}
-                                          >
-                                            {closingEmployee === emp.employeeId
-                                              ? "..."
-                                              : "Abschließen"}
-                                          </button>
-                                        {:else if emp.status === "missing"}
-                                          <button
-                                            class="btn btn-primary btn-sm"
-                                            disabled={closingEmployee === emp.employeeId || closing}
-                                            onclick={() =>
-                                              openConfirmCloseEmployee(
-                                                emp.employeeId,
-                                                expandedMonth!,
-                                              )}
-                                          >
-                                            {closingEmployee === emp.employeeId
-                                              ? "..."
-                                              : "Abschließen"}
-                                          </button>
-                                        {:else if emp.status === "closed"}
-                                          <button
-                                            class="btn btn-outline btn-sm"
-                                            disabled={unlocking === emp.employeeId}
-                                            onclick={() =>
-                                              openUnlockModal(emp.employeeId, expandedMonth!)}
-                                          >
-                                            {unlocking === emp.employeeId ? "..." : "Entsperren"}
-                                          </button>
-                                        {/if}
-                                      </td>
-                                    </tr>
-                                  {/each}
-                                </tbody>
-                              </table>
-                            </div>
-                          {/if}
-                        </td>
-                      </tr>
-                    {/if}
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          </Section>
-        {/if}
-      {:else}
-        <Skeleton shape="card" lines={3} />
-      {/if}
-    {/snippet}
-  </ToolPage>
-
-  <!-- ── Unlock reason modal (Revisionssicherheit: admin must enter why) ── -->
-  <Modal bind:open={unlockModalOpen} eyebrow="Monat entsperren" title={unlockModalTitle}>
-    <div class="callout warn" role="alert">
-      <div>
-        <b>Entsperrung erfordert einen Grund.</b>
-        <p>
-          Die Entsperrung hebt den Monatsabschluss auf und wird im Audit-Log festgehalten. Der Grund
-          wird dauerhaft gespeichert (Revisionssicherheit).
-        </p>
-      </div>
+      <KpiStrip items={kpiItems} ariaLabel={`Stand der Monatsabschlüsse ${selectedYear}`} />
+      <MonthStatusTable
+        year={selectedYear}
+        months={monthStatuses}
+        {visibleMonths}
+        filtered={statusFilter !== "all"}
+        onResetFilters={resetFilters}
+        {selectedMonth}
+        {firstActionableMonth}
+        employees={detailEmployees}
+        {detailLoading}
+        busy={closing}
+        {closingEmployee}
+        {unlocking}
+        onSelectMonth={selectMonth}
+        onCloseMonth={openConfirmCloseMonth}
+        onCloseEmployee={openConfirmCloseEmployee}
+        onUnlockEmployee={openUnlockDialog}
+      />
     </div>
-    <div class="unlock-reason-field">
-      <label class="unlock-reason-label" for="unlock-reason-input">
-        Grund für die Entsperrung <span class="unlock-reason-required" aria-hidden="true">*</span>
-      </label>
-      <textarea
-        id="unlock-reason-input"
-        class="form-input unlock-reason-textarea"
-        bind:value={unlockReason}
-        placeholder="z. B. Fehlerhafte Buchung – Korrektur erforderlich"
-        rows="3"
-        maxlength="500"
-      ></textarea>
-    </div>
-    {#snippet footer()}
-      <button class="btn btn-ghost" onclick={closeUnlockModal} disabled={unlocking != null}>
-        Abbrechen
-      </button>
-      <button
-        class="btn btn-primary"
-        onclick={onUnlockProceed}
-        disabled={unlocking != null || !unlockReason.trim()}
-      >
-        {#if unlocking != null}<Spinner />{/if}
-        Entsperren bestätigen
-      </button>
-    {/snippet}
-  </Modal>
-
-  <!-- ── Confirm modal (v1.5 — uses Modal primitive) ─────── -->
-  <Modal bind:open={confirmModalOpen} eyebrow="Endgültiger Monatsabschluss" title={confirmTitle}>
-    <div class="callout warn" role="alert" data-testid="month-close-modal">
-      <div>
-        <b>Diese Aktion ist nicht rückgängig.</b>
-        <p>
-          Alle Zeiteinträge dieses Monats werden gesperrt (<span class="code-text"
-            >isLocked=true</span
-          >). Korrekturen sind danach nur noch durch Storno-Buchungen möglich (Audit-Proof /
-          Revisionssicherheit).
-        </p>
-      </div>
-    </div>
-    {#if pendingGapCount > 0}
-      <div class="callout warn gap-warning" role="alert" data-testid="month-close-gap-warning">
-        <div>
-          <b
-            >{daysWithoutEntryText(pendingGapCount)}
-            {pendingGapCount === 1 ? "wird" : "werden"} als 0h gewertet</b
-          >
-          <p>
-            Diese Tage zählen mit vollem Soll (kein Abzug). Der Saldo wird entsprechend negativ.
-          </p>
-          {#if pendingGaps.length > 0}
-            <ul class="gap-date-list">
-              {#each pendingGaps as d (d)}
-                <li>{missingDaysText({ missingDates: [d] })}</li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-      </div>
-      <label class="gap-ack-label">
-        <input type="checkbox" bind:checked={gapAcknowledged} data-testid="month-close-gap-ack" />
-        Ich habe die {pendingGapCount} fehlende{pendingGapCount === 1 ? "n" : ""} Tag{pendingGapCount ===
-        1
-          ? ""
-          : "e"} zur Kenntnis genommen
-      </label>
-    {/if}
-    <p class="modal-note">
-      Bitte stelle sicher, dass alle Salden und fehlenden Einträge vor dem Sperren geprüft wurden.
-    </p>
-    {#snippet footer()}
-      <button
-        class="btn btn-ghost"
-        onclick={closeConfirmModal}
-        disabled={closing}
-        data-testid="month-close-cancel">Abbrechen</button
-      >
-      <button
-        class="btn btn-primary"
-        onclick={onConfirmProceed}
-        disabled={closing || (pendingGapCount > 0 && !gapAcknowledged)}
-        data-testid="month-close-confirm"
-      >
-        {#if closing}<Spinner />{/if}
-        Endgültig sperren
-      </button>
-    {/snippet}
-  </Modal>
+  {/if}
 </div>
 
+<!-- Close dialog: the final lock, with the gap acknowledgement where days have no entry. -->
+<Dialog
+  bind:open={() => confirmOpen, setConfirmOpen}
+  eyebrow="Endgültiger Monatsabschluss"
+  title={confirmTitle}
+>
+  <div class="mc-dialog" data-testid="month-close-modal">
+    <Note tone="warn">
+      Diese Aktion ist nicht rückgängig. Alle Zeiteinträge dieses Monats werden gesperrt.
+      Korrekturen sind danach nur noch durch Storno-Buchungen möglich.
+    </Note>
+
+    {#if pendingGapCount > 0}
+      <div class="mc-gaps" role="alert" data-testid="month-close-gap-warning">
+        <Note tone="warn">
+          <b
+            >{daysWithoutEntryText(pendingGapCount)}
+            {pendingGapCount === 1 ? "wird" : "werden"} als 0h gewertet.</b
+          >
+          Diese Tage zählen mit vollem Soll (kein Abzug). Der Saldo wird entsprechend negativ.
+        </Note>
+        {#if pendingGaps.length > 0}
+          <ul class="mc-gap-list">
+            {#each pendingGaps as d (d)}
+              <li>{missingDaysText({ missingDates: [d] })}</li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+      <label class="mc-ack">
+        <input type="checkbox" bind:checked={gapAcknowledged} data-testid="month-close-gap-ack" />
+        <span>
+          Ich habe {pendingGapCount === 1
+            ? "den fehlenden Tag"
+            : `die ${pendingGapCount} fehlenden Tage`}
+          zur Kenntnis genommen.
+        </span>
+      </label>
+    {/if}
+
+    <p class="mc-hint">
+      Stelle sicher, dass alle Salden und fehlenden Einträge vor dem Sperren geprüft sind.
+    </p>
+
+    {#if closing && closingTotal > 0}
+      <div class="mc-progress">
+        <progress
+          max={closingTotal}
+          value={closingProgress}
+          aria-label="Fortschritt des Abschlusses"
+        ></progress>
+        <span>{closingProgress} von {closingTotal} Mitarbeitern verarbeitet</span>
+      </div>
+    {/if}
+
+    {#if confirmError}
+      <div role="alert"><Note tone="bad">{confirmError}</Note></div>
+    {/if}
+  </div>
+  {#snippet footer()}
+    <button
+      type="button"
+      class="btn btn-ghost"
+      onclick={() => setConfirmOpen(false)}
+      disabled={confirmBusy}
+      data-testid="month-close-cancel"
+    >
+      Abbrechen
+    </button>
+    <button
+      type="button"
+      class="btn btn-primary"
+      onclick={onConfirmProceed}
+      disabled={confirmBusy || (pendingGapCount > 0 && !gapAcknowledged)}
+      data-testid="month-close-confirm"
+    >
+      {#if confirmBusy}<Spinner size={14} />{/if}
+      Monat abschließen
+    </button>
+  {/snippet}
+</Dialog>
+
+<!-- Unlock dialog: lifting a close needs a reason, which is stored for good (Revisionssicherheit). -->
+<Dialog bind:open={() => unlockOpen, setUnlockOpen} eyebrow="Monat entsperren" title={unlockTitle}>
+  <div class="mc-dialog">
+    <Note tone="warn">
+      Eine Entsperrung erfordert einen Grund. Das Entsperren hebt den Monatsabschluss auf und wird
+      im Audit-Log festgehalten. Der Grund wird dauerhaft gespeichert.
+    </Note>
+    <FormField label="Grund für die Entsperrung" required>
+      {#snippet field({ id, describedBy })}
+        <textarea
+          {id}
+          class="form-input"
+          bind:value={unlockReason}
+          placeholder="z. B. Fehlerhafte Buchung, Korrektur erforderlich"
+          rows="3"
+          maxlength="500"
+          aria-describedby={describedBy}
+        ></textarea>
+      {/snippet}
+    </FormField>
+    {#if unlockError}
+      <div role="alert"><Note tone="bad">{unlockError}</Note></div>
+    {/if}
+  </div>
+  {#snippet footer()}
+    <button
+      type="button"
+      class="btn btn-ghost"
+      onclick={() => setUnlockOpen(false)}
+      disabled={unlocking !== null}
+    >
+      Abbrechen
+    </button>
+    <button
+      type="button"
+      class="btn btn-primary"
+      onclick={onUnlockProceed}
+      disabled={unlocking !== null || !unlockReason.trim()}
+      data-testid="month-close-unlock-confirm"
+    >
+      {#if unlocking !== null}<Spinner size={14} />{/if}
+      Monat entsperren
+    </button>
+  {/snippet}
+</Dialog>
+
 <style>
-  /* Phase 292 (issue #292) — the per-employee lines inside the deferred-Monatsabschluss
-     callout. Inherits the callout's own colour; only the list reset and spacing live here. */
-  .deferred-list {
-    margin: 8px 0 12px;
-    padding-left: 18px;
-    line-height: 1.55;
-  }
-  .deferred-list li {
-    color: inherit;
+  .mc-controls {
+    margin: var(--s-4) 0;
   }
 
-  /* ─── Controls ──────────────────────────────────────── */
-  .ma-controls {
+  .mc-filter {
+    min-width: min(100%, 220px);
+  }
+
+  .mc-stack {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--s-6);
   }
 
-  .control-row {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    align-items: flex-end;
-  }
-
-  .control-group {
+  .mc-deferred {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    min-width: 160px;
-  }
-
-  .control-action {
-    min-width: auto;
-  }
-
-  .control-label {
-    font-family: var(--font-ui);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-2);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .form-select {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    background: var(--card);
-    font-family: var(--font-ui);
-    font-size: 0.875rem;
-    color: var(--text);
-    transition:
-      border-color 0.15s,
-      box-shadow 0.15s;
-  }
-  .form-select:focus {
-    border-color: var(--brand);
-    box-shadow: 0 0 0 3px var(--brand-soft);
-    outline: none;
-  }
-
-  /* ─── Progress ──────────────────────────────────────── */
-  .progress-bar-track {
-    height: 0.5rem;
-    background: var(--sunk);
-    border-radius: var(--r-pill);
-    overflow: hidden;
-  }
-
-  .progress-bar-fill {
-    height: 100%;
-    background: var(--brand);
-    border-radius: var(--r-pill);
-    transition: width 0.3s ease;
-  }
-
-  /* ─── List / table ──────────────────────────────────── */
-  .loading-spacer {
-    height: 200px;
-  }
-
-  .list-foot {
-    padding: 8px 0 0;
-  }
-
-  .table-wrapper {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .table {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: var(--font-ui);
-    font-size: 0.875rem;
-  }
-
-  .table th {
-    text-align: left;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--line);
-    font-weight: 600;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-2);
-    background: var(--sunk);
-  }
-
-  .table td {
-    padding: 0.625rem 1rem;
-    border-bottom: 1px solid var(--line);
-    vertical-align: middle;
-  }
-
-  .month-row {
-    transition: background 0.15s ease;
-  }
-
-  .row-clickable {
-    cursor: pointer;
-  }
-
-  .row-clickable:hover {
-    background: var(--brand-soft);
-  }
-
-  .row-closed {
-    opacity: 0.7;
-  }
-
-  .row-future {
-    opacity: 0.5;
-  }
-
-  .row-blocked {
-    opacity: 0.6;
-  }
-
-  .month-name {
-    font-weight: 500;
-    white-space: nowrap;
-  }
-
-  .month-expand-icon {
-    display: inline-block;
-    width: 1rem;
-    font-size: 0.65rem;
-    color: var(--text-2);
-  }
-
-  .text-right {
-    text-align: right;
-  }
-
-  .text-sm {
-    font-size: 0.8rem;
-  }
-
-  .code-text {
-    font-family: var(--font-code);
-    font-size: 0.8rem;
-  }
-
-  .text-muted {
-    color: var(--text-2);
-    font-size: 0.85rem;
-  }
-
-  /* ─── Reason column ─────────────────────────────────── */
-  .reason-cell {
-    max-width: 400px;
-  }
-
-  .reason-text {
-    font-size: 0.8rem;
-    color: var(--text-2);
-  }
-
-  /* ─── Detail row ────────────────────────────────────── */
-  .detail-row td {
-    padding: 0;
-    background: var(--sunk);
-    border-bottom: 1px solid var(--line);
-  }
-
-  .detail-callout-wrapper {
-    padding: 12px 16px 0;
-  }
-
-  .detail-empty {
-    padding: 1rem;
-    text-align: center;
-    font-size: 0.85rem;
-    color: var(--text-2);
-  }
-
-  .detail-table-wrapper {
-    padding: 0.5rem 1rem 1rem;
-  }
-
-  .detail-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: var(--font-ui);
-    font-size: 0.8rem;
-  }
-
-  .detail-table th {
-    text-align: left;
-    padding: 0.375rem 0.5rem;
-    border-bottom: 1px solid var(--line);
-    font-weight: 600;
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    color: var(--text-2);
-  }
-
-  .detail-table td {
-    padding: 0.375rem 0.5rem;
-    border-bottom: 1px solid var(--line);
-    vertical-align: middle;
-  }
-
-  .detail-row-closed {
-    opacity: 0.6;
-  }
-
-  .employee-name {
-    font-weight: 500;
-  }
-
-  /* ─── Missing dates ────────────────────────────────── */
-  .missing-dates {
-    max-width: 320px;
-  }
-
-  .dates-text {
-    font-size: 0.8rem;
-    color: var(--bad, var(--warn));
-  }
-
-  .dates-count {
-    font-size: 0.75rem;
-    color: var(--text-2);
-    margin-left: 0.25rem;
-  }
-
-  /* Phase 104 (D-21) — second chip in the Status cell must not collide with the status chip. */
-  .karenz-chip {
-    margin-left: 0.375rem;
-  }
-
-  /* ─── Buttons ──────────────────────────────────────── */
-  .btn-sm {
-    padding: 0.25rem 0.625rem;
-    font-size: 0.8rem;
-  }
-
-  /* ─── Gap warning (UX-01) ──────────────────────────────── */
-  .gap-date-list {
-    margin: var(--s-2) 0 0;
-    padding-left: var(--s-4);
-    font-size: 0.85rem;
-  }
-
-  .gap-ack-label {
-    display: flex;
-    gap: var(--s-2);
     align-items: flex-start;
-    margin-top: var(--s-3);
-    font-size: 0.9rem;
+    gap: var(--s-3);
+    margin: var(--s-4) 0;
   }
 
-  /* ─── Modal body helper (Modal primitive owns backdrop/card/header/footer) ────── */
-  .modal-note {
+  .mc-deferred-list {
     margin: 0;
-    font-family: var(--font-ui);
-    font-size: 0.875rem;
+    padding-left: var(--s-5);
+    font-size: var(--fs-sm);
+    line-height: 1.55;
     color: var(--text-2);
-    line-height: 1.5;
   }
 
-  /* ─── Unlock reason modal ──────────────────────────────── */
-  .unlock-reason-field {
+  .mc-dialog {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+  }
+
+  .mc-gaps {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+
+  .mc-gap-list {
+    margin: 0;
+    padding-left: var(--s-5);
+    font-size: var(--fs-sm);
+  }
+
+  .mc-ack {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-2);
+    font-size: var(--fs-base);
+  }
+
+  .mc-hint {
+    margin: 0;
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    color: var(--text-2);
+  }
+
+  .mc-progress {
     display: flex;
     flex-direction: column;
     gap: var(--s-1);
-    margin-top: var(--s-3);
-  }
-
-  .unlock-reason-label {
-    font-family: var(--font-ui);
-    font-size: 0.8rem;
-    font-weight: 600;
+    font-size: var(--fs-sm);
     color: var(--text-2);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
   }
 
-  .unlock-reason-required {
-    color: var(--bad, #e53e3e);
-    margin-left: 2px;
-  }
-
-  .unlock-reason-textarea {
+  .mc-progress progress {
     width: 100%;
-    box-sizing: border-box;
-  }
-
-  @media (max-width: 640px) {
-    .control-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .control-group {
-      min-width: 0;
-    }
-
-    .reason-cell {
-      max-width: none;
-    }
+    height: 8px;
   }
 </style>

@@ -4,7 +4,7 @@
  * Pure: no SvelteKit app-module import and no clock read — the page passes `today` (the
  * tenant-local current month). The URL contract
  *
- *   /reports?from=YYYY-MM&to=YYYY-MM&tab=zeiten|urlaub|heute[&salonId=<uuid>][&person=<uuid>]
+ *   /reports?from=YYYY-MM&to=YYYY-MM&tab=zeiten|urlaub|heute|verlaeufe[&salonId=<uuid>][&person=<uuid>]
  *
  * is what #591's chart clicks open, so key names and the stable key order are API.
  *
@@ -22,7 +22,11 @@ import type { YearMonth } from "./period-report";
 /** At most this many whole months in one period (P-10). */
 export const MAX_PERIOD_MONTHS = 12;
 
-export type PeriodTab = "zeiten" | "urlaub" | "heute";
+/**
+ * "verlaeufe" (Issue #895) is the fixed six-month team trend view: it has no period of its own, so
+ * `from`/`to` in the URL are carried through but never read by that tab.
+ */
+export type PeriodTab = "zeiten" | "urlaub" | "heute" | "verlaeufe";
 
 export interface PeriodState {
   from: YearMonth;
@@ -71,7 +75,7 @@ export const MONTH_NAMES_SHORT_DE: readonly string[] = [
 
 const YEAR_MONTH_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const TABS: readonly PeriodTab[] = ["zeiten", "urlaub", "heute"];
+const TABS: readonly PeriodTab[] = ["zeiten", "urlaub", "heute", "verlaeufe"];
 
 // ── Month arithmetic ─────────────────────────────────────────────────────────
 
@@ -283,6 +287,46 @@ export function stepPeriod(
 /** Whether the next arrow may be used. */
 export function canStepNext(from: YearMonth, to: YearMonth, today: YearMonth): boolean {
   return stepPeriod(from, to, 1, today) !== null;
+}
+
+// ── Zoom (the PeriodPicker segment) ──────────────────────────────────────────
+
+/** The zoom levels the period bar offers; a free range has none selected. */
+export type ReportZoom = "monat" | "quartal" | "jahr";
+
+/** The zoom level a detected period kind sits on, or `null` for a free range. */
+export function zoomOfKind(kind: PeriodKind): ReportZoom | null {
+  switch (kind) {
+    case "month":
+      return "monat";
+    case "quarter":
+      return "quartal";
+    case "year":
+      return "jahr";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The period a zoom level shows around `anchor` (the bar passes the end of the current period):
+ * the month itself, its calendar quarter or its calendar year, the end clamped to `today` (P-16).
+ */
+export function periodForZoom(
+  zoom: ReportZoom,
+  anchor: YearMonth,
+  today: YearMonth,
+): { from: YearMonth; to: YearMonth } {
+  const at = clampToToday(anchor, today);
+  if (zoom === "monat") return { from: at, to: { ...at } };
+  if (zoom === "quartal") {
+    const from = { year: at.year, month: at.month - ((at.month - 1) % 3) };
+    return { from, to: clampToToday(addMonths(from, 2), today) };
+  }
+  return {
+    from: { year: at.year, month: 1 },
+    to: clampToToday({ year: at.year, month: 12 }, today),
+  };
 }
 
 // ── Presets ──────────────────────────────────────────────────────────────────

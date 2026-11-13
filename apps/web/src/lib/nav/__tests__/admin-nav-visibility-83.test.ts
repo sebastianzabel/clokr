@@ -42,10 +42,10 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
     ]);
   });
 
-  it("Daten lists Import, DATEV-Export, Protokoll, then Support-Zugriffe directly after Protokoll (#93, #574)", () => {
+  it("Daten lists Import, Export, Protokoll, then Support-Zugriffe directly after Protokoll (#93, #574)", () => {
     expect(labelsOf("/verwalten/daten")).toEqual([
       "CSV-Import",
-      "DATEV-Export",
+      "Export",
       "Protokoll",
       "Support-Zugriffe",
     ]);
@@ -57,12 +57,14 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
     });
   });
 
-  it("Regeln and System list today's pages unchanged (D-04: #854 regroups them later)", () => {
+  // Issue #854 regrouped the pages one plan at a time; Regeln now lists the five themes of D-854-03 (plan 854-13).
+  it("Regeln lists the five themes of D-854-03 and System today's pages", () => {
     expect(labelsOf("/verwalten/regeln")).toEqual([
-      "Urlaubsverwaltung",
-      "Betriebsurlaub",
-      "Urlaubsgrenzen & Sperren",
-      "Schichteinstellungen",
+      "Arbeitszeit & Verträge",
+      "Abwesenheiten",
+      "Dienstplan",
+      "Monatsabschluss",
+      "Benachrichtigungen & E-Mail",
     ]);
     expect(labelsOf("/verwalten/system")).toEqual([
       "Allgemein",
@@ -90,7 +92,7 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
       "/verwalten/monatsabschluss",
       "/verwalten/berichte",
     ]);
-    // Issue #836: SALON_MANAGER holds leave-request:approve, so Regeln (Urlaubsgrenzen & Sperren) joins;
+    // Issue #836: SALON_MANAGER holds leave-request:approve, so Regeln (Abwesenheiten › Urlaubsgrenzen & Sperren) joins;
     // the team availability moved to the Team area (D-05). #853 (D-853-15): she creates and edits no
     // persons, so her „Personen“ is Team › Personen and the Verwalten rail does not list it.
     expect(visibleAdminNavItems({ permissions: p.SALON_MANAGER }, on).map((i) => i.href)).toEqual([
@@ -101,7 +103,7 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
       visibleChildren({ permissions: p.SALON_MANAGER }, "/verwalten/regeln", on).map(
         (r) => r.label,
       ),
-    ).toEqual(["Urlaubsgrenzen & Sperren"]);
+    ).toEqual(["Abwesenheiten"]);
     expect(visibleAdminNavItems({ permissions: p.EMPLOYEE }, on)).toEqual([]);
   });
 

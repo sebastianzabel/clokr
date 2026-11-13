@@ -23,6 +23,7 @@ const MONTH_STATUS_SITES = [
   "lib/components/reports/PersonDrilldown.svelte", // /reports person view, month table
   "routes/(app)/reports/+page.svelte", // /reports own month list and its KPI
   "routes/(app)/admin/month-close/+page.svelte", // Monatsabschluss: closed / open month
+  "lib/components/admin/monatsabschluss/MonthStatusTable.svelte", // Monatsabschluss table (#854)
 ] as const;
 
 /** Files whose "Abgeschlossen" names another concept than a month's status. */

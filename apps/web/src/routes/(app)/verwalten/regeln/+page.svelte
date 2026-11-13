@@ -11,5 +11,5 @@
 <HubPage
   title={pageLabel("/verwalten/regeln")}
   hub="/verwalten/regeln"
-  sub="Die Vorgaben für Urlaub, Betriebsurlaub, Urlaubsgrenzen und Schichten."
+  sub="Die Vorgaben für Arbeitszeit, Urlaub, Betriebsurlaub, Urlaubsgrenzen und Schichten."
 />

@@ -7,14 +7,13 @@
  *
  *   - tenant fixture (73-02 D-04) for per-test isolation
  *   - data-testid selectors from 73-05:
- *       admin/system: admin-system-pausendauer-{autoBreakEnabled,over6h,over9h}
- *       admin/employees/[id]: pausendauer-{over6h,over9h,save,azubi-pill,azubi-apply}
+ *       Regeln › Arbeitszeit & Verträge (Issue #854): arbeitszeit-pausen-{autoBreakEnabled,over6h,over9h}
+ *       admin/employees/[id]: pausendauer-{over6h,over9h,azubi-pill,azubi-apply} (the group's SaveBar replaced pausendauer-save)
  *   - waitForResponse instead of waitForTimeout
  *
  * Flow A — tenant defaults round-trip:
- *   Admin loads /admin/system → Arbeitszeit tab → toggles auto-break ON
- *   if needed, fills 45/60 into the two break inputs, blurs to save, reloads,
- *   asserts values persist.
+ *   Admin loads Regeln › Arbeitszeit & Verträge, fills 45/60 into the two break
+ *   inputs, saves the Pausen section with its SaveBar, reloads, asserts values persist.
  *
  * Flow B — employee Pausendauer override:
  *   Admin creates an employee, navigates to the detail page, finds the
@@ -71,24 +70,13 @@ async function seedEmployee(
 test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
   test("tenant-default Pausendauer saves and persists across reload", async ({ page, tenant }) => {
     await loginAsTenantAdmin(page, tenant);
-    await page.goto("/admin/system");
-    await expect(page.getByTestId("admin-system-page")).toBeVisible();
+    // Issue #854: the Pausen section lives on Regeln › Arbeitszeit & Verträge and saves through its
+    // own SaveBar (one request for the whole section).
+    await page.goto("/verwalten/regeln/arbeitszeit");
+    await expect(page.getByRole("heading", { level: 2, name: "Pausen" })).toBeVisible();
 
-    // Auto-break + Pausendauer fields live in the Arbeitszeit tab.
-    await page.getByRole("tab", { name: /Arbeitszeit/i }).click();
-
-    // Ensure auto-break is enabled so the >6h / >9h inputs are not disabled.
-    const autoBreak = page.getByTestId("admin-system-pausendauer-autoBreakEnabled");
-    if (!(await autoBreak.isChecked())) {
-      const toggleResponse = page.waitForResponse(
-        (res) => res.url().includes("/settings/work") && res.request().method() === "PATCH",
-      );
-      await page.locator("label.switch", { has: autoBreak }).click();
-      await toggleResponse;
-    }
-
-    const over6h = page.getByTestId("admin-system-pausendauer-over6h");
-    const over9h = page.getByTestId("admin-system-pausendauer-over9h");
+    const over6h = page.getByTestId("arbeitszeit-pausen-over6h");
+    const over9h = page.getByTestId("arbeitszeit-pausen-over9h");
     await expect(over6h).toBeVisible();
     await expect(over9h).toBeVisible();
 
@@ -96,34 +84,28 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     const baseline6h = await over6h.inputValue();
     const baseline9h = await over9h.inputValue();
 
-    // saveBreakDefaults fires on blur — wait for the PATCH each time so the
-    // assertion below doesn't race against the request.
-    const save6 = page.waitForResponse(
-      (res) => res.url().includes("/settings/work") && res.request().method() === "PATCH",
+    const save = page.waitForResponse(
+      (res) => res.url().includes("/settings/work") && res.request().method() === "PUT",
     );
     await over6h.fill("45");
-    await over6h.blur();
-    await save6;
-
-    const save9 = page.waitForResponse(
-      (res) => res.url().includes("/settings/work") && res.request().method() === "PATCH",
-    );
     await over9h.fill("60");
-    await over9h.blur();
-    await save9;
+    await page.getByRole("button", { name: "Pausen speichern" }).click();
+    await save;
 
-    // Reload + reopen tab — the values must persist.
+    // Reload — the values must persist.
     await page.reload();
-    await page.getByRole("tab", { name: /Arbeitszeit/i }).click();
-    await expect(page.getByTestId("admin-system-pausendauer-over6h")).toHaveValue("45");
-    await expect(page.getByTestId("admin-system-pausendauer-over9h")).toHaveValue("60");
+    await expect(page.getByTestId("arbeitszeit-pausen-over6h")).toHaveValue("45");
+    await expect(page.getByTestId("arbeitszeit-pausen-over9h")).toHaveValue("60");
 
     // Restore baseline so any sibling assertion on the tenant sees the
     // original config (tenant is torn down, but explicit is better).
-    await page.getByTestId("admin-system-pausendauer-over6h").fill(baseline6h || "30");
-    await page.getByTestId("admin-system-pausendauer-over6h").blur();
-    await page.getByTestId("admin-system-pausendauer-over9h").fill(baseline9h || "45");
-    await page.getByTestId("admin-system-pausendauer-over9h").blur();
+    const restore = page.waitForResponse(
+      (res) => res.url().includes("/settings/work") && res.request().method() === "PUT",
+    );
+    await page.getByTestId("arbeitszeit-pausen-over6h").fill(baseline6h || "30");
+    await page.getByTestId("arbeitszeit-pausen-over9h").fill(baseline9h || "45");
+    await page.getByRole("button", { name: "Pausen speichern" }).click();
+    await restore;
   });
 
   test("employee Pausendauer override saves and persists across reload", async ({
@@ -134,12 +116,8 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     await loginAsTenantAdmin(page, tenant);
 
     await page.goto(`/admin/employees/${employeeId}`);
-    // The Pausendauer Section lives under the Arbeitszeit tab on the detail page.
-    await page
-      .getByRole("button", { name: /Arbeitszeit/i })
-      .or(page.locator(".admin-tab").filter({ hasText: "Arbeitszeit" }))
-      .first()
-      .click();
+    // The Pausendauer group lives under the Vertrag tab (formerly Arbeitszeit) on the detail page.
+    await page.getByRole("tab", { name: "Vertrag" }).click();
 
     const editor = page.getByTestId("pausendauer-editor");
     await expect(editor).toBeVisible();
@@ -158,15 +136,12 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     );
     await over6h.fill("40");
     await over9h.fill("50");
-    await page.getByTestId("pausendauer-save").click();
+    // Issue #854: the group saves through its own SaveBar.
+    await page.getByRole("button", { name: "Pausendauer speichern" }).click();
     await savePromise;
 
     await page.reload();
-    await page
-      .getByRole("button", { name: /Arbeitszeit/i })
-      .or(page.locator(".admin-tab").filter({ hasText: "Arbeitszeit" }))
-      .first()
-      .click();
+    await page.getByRole("tab", { name: "Vertrag" }).click();
     await expect(page.getByTestId("pausendauer-over6h")).toHaveValue("40");
     await expect(page.getByTestId("pausendauer-over9h")).toHaveValue("50");
 
@@ -176,7 +151,7 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     const clearPromise = page.waitForResponse(
       (res) => res.url().includes(`/employees/${employeeId}`) && res.request().method() === "PATCH",
     );
-    await page.getByTestId("pausendauer-save").click();
+    await page.getByRole("button", { name: "Pausendauer speichern" }).click();
     await clearPromise;
   });
 });

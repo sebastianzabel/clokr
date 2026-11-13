@@ -1072,6 +1072,53 @@ select.form-input {
   margin-bottom: 1.75rem;
 }
 
+/* Issue #854 (D-854-15/D-854-04): one settings section = .settings-group with its own SaveBar */
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+.settings-group + .settings-group {
+  margin-top: var(--s-8);
+  padding-top: var(--s-8);
+  border-top: 1px solid var(--line);
+}
+.settings-group-title {
+  margin: 0;
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-group-desc {
+  margin: calc(-1 * var(--s-2)) 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/* Issue #854 (owner review of the Personen detail): a tab of a detail page is ONE form column
+   (prototype `.form`; 768 px, so the DayGrid's row of seven - from 760 px, D-843-03 - fits it)
+   whose parts sit under a hairline (prototype `.fs`). Every part is its
+   own container, so a field pair inside follows the part's width. The quieter rhythm replaces the
+   wide .settings-group + .settings-group gap inside the column. */
+.detail-form {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.detail-form > * {
+  max-width: 48rem;
+  min-width: 0;
+  container-type: inline-size;
+}
+.detail-form > :not(:first-child),
+.detail-form > .settings-group + .settings-group {
+  margin-top: var(--s-6);
+  padding-top: var(--s-6);
+  border-top: 1px solid var(--line);
+}
+
 .page-header {
   margin-bottom: 2.25rem;
 }

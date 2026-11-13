@@ -5,9 +5,10 @@
  *      button lies inside the viewport, is a 44 px target and nothing on the page ends right of
  *      the viewport (an unclipped element beyond it is a failure; a scrolling grid is not).
  *   2. /admin/employees: the person table is a DataTable whose rows become cards below a 760 px
- *      container width. At 360 px the e-mail value of the fixture admin is visible inside the
- *      viewport (before, it sat in a column that scrolled out of sight). At 1440 px (the visual
- *      viewport) the nine columns fit their box on one line each, Aktionen included (843-37).
+ *      container width. Since #854 (owner review) it is the shared PersonenTable of Team ›
+ *      Personen (no e-mail column, one „Öffnen“ link per row). At 360 px the fixture admin's name
+ *      and its „Öffnen“ link are visible inside the viewport; at 1440 px (the visual viewport) the
+ *      seven columns fit their box and a name stays on one line (843-37).
  *
  * The employee list also keeps its search text and sort in the URL (urlState): the spec types a
  * search, reads it from the URL and reloads to prove the filtered list survives; at desktop width it
@@ -101,47 +102,73 @@ for (const viewport of [
   });
 }
 
+/** The fixture admin's own row of the list: its employee id and last name, read through the API. */
+async function fixtureAdminPerson(
+  request: APIRequestContext,
+  tenant: TestTenant,
+): Promise<{ id: string; lastName: string }> {
+  const email = `admin@${tenant.tenantId}.test`;
+  const login = await request.post(`${API_BASE}/api/v1/auth/login`, {
+    headers: { "content-type": "application/json" },
+    data: { email, password: PASSWORD },
+  });
+  expect(login.ok(), `login as the tenant admin (${login.status()})`).toBe(true);
+  const { accessToken } = (await login.json()) as { accessToken: string };
+  const list = await request.get(`${API_BASE}/api/v1/employees`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  expect(list.ok(), `GET /employees (${list.status()})`).toBe(true);
+  const people = (await list.json()) as { id: string; lastName: string; user: { email: string } }[];
+  const admin = people.find((p) => p.user.email === email);
+  expect(admin, "the fixture admin is in the list").toBeDefined();
+  return { id: admin!.id, lastName: admin!.lastName };
+}
+
 test.describe("/admin/employees on the DataTable", () => {
-  test("at 360 px the e-mail value of a row is visible inside the viewport", async ({
+  test("at 360 px the name and the „Öffnen“ link of a row are visible inside the viewport", async ({
     page,
     request,
     tenant,
   }) => {
     await page.setViewportSize({ width: 360, height: 800 });
-    const email = await signIn(page, request, tenant);
+    await signIn(page, request, tenant);
+    const admin = await fixtureAdminPerson(request, tenant);
     await page.goto("/admin/employees");
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
 
-    // The value, not the row: before the block the address sat in a column scrolled out of sight.
-    const value = page.locator(".col-email").filter({ hasText: email });
-    await expect(value).toBeVisible();
-    await value.scrollIntoViewIfNeeded();
-    const box = await value.boundingBox();
-    expect(box, "the e-mail value has no box").not.toBeNull();
-    expect(box?.x ?? -1, "the e-mail value starts left of the viewport").toBeGreaterThanOrEqual(
-      -TOLERANCE_PX,
-    );
-    expect(
-      (box?.x ?? 0) + (box?.width ?? 0),
-      "the e-mail value ends right of the viewport",
-    ).toBeLessThanOrEqual(360 + TOLERANCE_PX);
+    const row = page.getByTestId(`admin-employees-row-${admin.id}`);
+    for (const [label, locator] of [
+      ["the name", row.locator(".p-title")],
+      ["the „Öffnen“ link", page.getByTestId(`admin-employees-row-${admin.id}-open`)],
+    ] as const) {
+      await expect(locator, label).toBeVisible();
+      await locator.scrollIntoViewIfNeeded();
+      const box = await locator.boundingBox();
+      expect(box, `${label} has no box`).not.toBeNull();
+      expect(box?.x ?? -1, `${label} starts left of the viewport`).toBeGreaterThanOrEqual(
+        -TOLERANCE_PX,
+      );
+      expect(
+        (box?.x ?? 0) + (box?.width ?? 0),
+        `${label} ends right of the viewport`,
+      ).toBeLessThanOrEqual(360 + TOLERANCE_PX);
+    }
   });
 
-  // 843-37: at the visual-test viewport the nine columns lie inside the card. Found by the visual
-  // baseline of /admin/employees: the cells wrapped ("VIS-/004") and the Aktionen column was cut at
-  // the card edge. A value stays on one line in table mode, the table scrolls inside its own box only
-  // when it genuinely does not fit, and here it must fit.
-  test("at 1440 px the table fits its box: Aktionen and the action buttons are not clipped", async ({
+  // 843-37: at the visual-test viewport the columns lie inside the card. Found by the visual baseline
+  // of /admin/employees: cells wrapped and the last column was cut at the card edge. Since #854 the
+  // last column is the quiet „Öffnen“ link of the shared table.
+  test("at 1440 px the table fits its box: the last column and its links are not clipped", async ({
     page,
     request,
     tenant,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    const email = await signIn(page, request, tenant);
+    await signIn(page, request, tenant);
+    const admin = await fixtureAdminPerson(request, tenant);
     await page.goto("/admin/employees");
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
-    const emailValue = page.locator(".col-email").filter({ hasText: email });
-    await expect(emailValue).toBeVisible();
+    await expect(page.getByTestId(`admin-employees-row-${admin.id}`)).toBeVisible();
     // Webfonts change the column widths; measure only after they are loaded.
     await page.evaluate(async () => {
       await document.fonts.ready;
@@ -160,65 +187,45 @@ test.describe("/admin/employees on the DataTable", () => {
     const frame = await scroll.boundingBox();
     expect(frame, "the table box has no box").not.toBeNull();
     const right = (frame?.x ?? 0) + (frame?.width ?? 0);
-    const inside = async (
-      label: string,
-      box: Awaited<ReturnType<typeof emailValue.boundingBox>>,
-    ) => {
-      expect(box, `${label} has no box`).not.toBeNull();
-      expect(box?.x ?? -1, `${label} starts left of the table box`).toBeGreaterThanOrEqual(
-        (frame?.x ?? 0) - TOLERANCE_PX,
-      );
-      expect(
-        (box?.x ?? 0) + (box?.width ?? 0),
-        `${label} ends right of the table box (clipped)`,
-      ).toBeLessThanOrEqual(right + TOLERANCE_PX);
-    };
+    const open = page.locator("[data-testid$='-open']").last();
+    await expect(open).toBeVisible();
+    const box = await open.boundingBox();
+    expect(box, "the „Öffnen“ link has no box").not.toBeNull();
+    expect(
+      (box?.x ?? 0) + (box?.width ?? 0),
+      "the „Öffnen“ link of the last row ends right of the table box (clipped)",
+    ).toBeLessThanOrEqual(right + TOLERANCE_PX);
+    await expect(page.getByRole("columnheader", { name: /Rollen/ })).toBeVisible();
+    // No e-mail or last-login column any more (owner review).
+    await expect(page.getByRole("columnheader", { name: /E-Mail|Login/ })).toHaveCount(0);
 
-    await inside(
-      "the Aktionen header",
-      await page.getByRole("columnheader", { name: "Aktionen" }).boundingBox(),
-    );
-    const edit = page.locator("[data-testid$='-edit']").last();
-    await expect(edit).toBeVisible();
-    await inside("the Bearbeiten button of the last row", await edit.boundingBox());
-    const deactivate = page.locator("[data-testid$='-deactivate']").last();
-    await expect(deactivate).toBeVisible();
-    await inside("the Deaktivieren button of the last row", await deactivate.boundingBox());
-
-    // Names and values stay on one line in table mode (before: "VIS-/004", an e-mail over two lines).
-    const lines = await page.evaluate(() => {
-      const oneLine = (el: Element) => {
+    // A name stays on one line in table mode (before: "VIS-/004" over two lines).
+    const oneLine = await page.evaluate(() =>
+      [...document.querySelectorAll(".p-title")].every((el) => {
         const style = getComputedStyle(el);
         const line = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.4;
         return el.getBoundingClientRect().height <= line * 1.5;
-      };
-      return {
-        email: [...document.querySelectorAll(".col-email")].every(oneLine),
-        number: [...document.querySelectorAll(".col-number")].every(oneLine),
-        name: [...document.querySelectorAll(".dt-primary")].every(oneLine),
-      };
-    });
-    expect(lines, "a value wraps onto a second line in table mode").toEqual({
-      email: true,
-      number: true,
-      name: true,
-    });
+      }),
+    );
+    expect(oneLine, "a name wraps onto a second line in table mode").toBe(true);
   });
 
   test("the search text is in the URL and survives a reload", async ({ page, request, tenant }) => {
     await page.setViewportSize({ width: 360, height: 800 });
-    const email = await signIn(page, request, tenant);
+    await signIn(page, request, tenant);
+    const admin = await fixtureAdminPerson(request, tenant);
     await page.goto("/admin/employees");
-    const search = page.getByTestId("admin-employees-search");
-    const row = page.locator(".col-email").filter({ hasText: email });
+    const search = page.getByRole("searchbox", { name: "Name oder Nummer" });
+    const row = page.getByTestId(`admin-employees-row-${admin.id}`);
     await expect(row).toBeVisible();
 
     // A term that matches the fixture admin: the list keeps the row and the URL carries the term.
-    await search.fill("admin");
-    await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("admin");
+    const term = admin.lastName.toLowerCase();
+    await search.fill(term);
+    await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe(term);
     await expect(row).toBeVisible();
     await page.reload();
-    await expect(search).toHaveValue("admin");
+    await expect(search).toHaveValue(term);
     await expect(row).toBeVisible();
 
     // A term that matches nobody: the list is empty after the reload as well.
@@ -230,19 +237,19 @@ test.describe("/admin/employees on the DataTable", () => {
     await expect(page.getByText("Keine Treffer")).toBeVisible();
   });
 
-  test("the sort of the Eintritt column is in the URL", async ({ page, request, tenant }) => {
+  test("the sort of the Std./Woche column is in the URL", async ({ page, request, tenant }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await signIn(page, request, tenant);
     await page.goto("/admin/employees");
-    const sort = page.getByRole("button", { name: "Nach Eintritt sortieren" });
+    const sort = page.getByRole("button", { name: "Nach Std./Woche sortieren" });
     await expect(sort).toBeVisible();
 
     await sort.click();
-    await expect.poll(() => new URL(page.url()).searchParams.get("sort")).toBe("hire");
+    await expect.poll(() => new URL(page.url()).searchParams.get("sort")).toBe("stunden");
     await sort.click();
     await expect.poll(() => new URL(page.url()).searchParams.get("dir")).toBe("desc");
     await page.reload();
-    await expect(page.getByRole("columnheader", { name: /Eintritt/ })).toHaveAttribute(
+    await expect(page.getByRole("columnheader", { name: /Std\.\/Woche/ })).toHaveAttribute(
       "aria-sort",
       "descending",
     );

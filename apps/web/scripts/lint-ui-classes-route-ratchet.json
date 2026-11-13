@@ -7,11 +7,6 @@
         "ticket": "#845",
         "reason": "Salon choice select styled with the filter recipe; folds into the Stage block"
       },
-      "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte": {
-        "count": 1,
-        "ticket": "#854",
-        "reason": "Action row of the assignment section matched by the toolbar rule"
-      },
       "apps/web/src/lib/components/leave/LeaveToolbar.svelte": {
         "count": 2,
         "ticket": null,
@@ -21,34 +16,6 @@
         "count": 1,
         "ticket": null,
         "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
-      },
-      "apps/web/src/lib/components/reports/AbsencesByPersonTable.svelte": {
-        "count": 3,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/TimesAccountsTable.svelte": {
-        "count": 3,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/VacationAbsenceTab.svelte": {
-        "count": 3,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/audit/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/employees/+page.svelte": {
-        "count": 7,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/integrations/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/shutdowns/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
       }
     },
     "own-period-control": {
@@ -59,48 +26,12 @@
       }
     },
     "own-kpi-card": {
-      "apps/web/src/lib/components/reports/PeriodKpis.svelte": {
-        "count": 8,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/PersonDrilldown.svelte": {
-        "count": 4,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/employees/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/phorest/+page.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/vacation/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/routes/(app)/dashboard/+page.svelte": {
         "count": 1,
         "ticket": "#845"
-      },
-      "apps/web/src/routes/(app)/reports/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
       }
     },
     "own-data-table": {
-      "apps/web/src/lib/components/admin/roles/RolesTab.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/employees/SalonAssignmentsSection.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
       "apps/web/src/lib/components/operator/SalonTable.svelte": {
         "count": 1,
         "ticket": null,
@@ -125,70 +56,6 @@
         "count": 1,
         "ticket": null,
         "reason": "Betreiberkonsole — Umbau nach v2.0.0, kein Folgeticket"
-      },
-      "apps/web/src/lib/components/reports/AbsencesByPersonTable.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/ExitedFinalSaldoSection.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/PersonDrilldown.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/SalonWorkedSection.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/TimesAccountsTable.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/lib/components/reports/VacationAbsenceTab.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/employees/[id]/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/import/+page.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/integrations/+page.svelte": {
-        "count": 3,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/leave-limits/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/month-close/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/phorest/+page.svelte": {
-        "count": 2,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/salons/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/shutdowns/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/shutdowns/[id]/+page.svelte": {
-        "count": 1,
-        "ticket": "#854"
-      },
-      "apps/web/src/routes/(app)/admin/system/+page.svelte": {
-        "count": 2,
-        "ticket": "#854"
       }
     },
     "raw-scrim-modal": {}

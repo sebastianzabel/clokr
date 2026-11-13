@@ -53,7 +53,8 @@ const REPORTS_PAGE = readRepoFile(
   "src/routes/(app)/reports/+page.svelte",
 );
 // Issue #612 (pin ledger row 10): the last action cell of /reports - the Verfall cell with its
-// „Hinweis senden“ button - lives in the vacation tab component now, no longer in the page.
+// „Hinweis senden“ button - lives in the vacation tab component now, no longer in the page. Since
+// Issue #854 the td around it is the DataTable block's; the component owns the wrapper only.
 const VACATION_TAB = readRepoFile(
   "../lib/components/reports/VacationAbsenceTab.svelte",
   "src/lib/components/reports/VacationAbsenceTab.svelte",
@@ -157,19 +158,17 @@ describe("#442 — instrument controls (anti-vacuity)", () => {
 
   it("styleBlockOf(reports) really loaded the page rules — anti-vacuity", () => {
     const block = styleBlockOf(REPORTS_PAGE);
-    expect(block).toContain(".period-content {");
-    expect(block).toContain(".kpi-row {");
+    expect(block).toContain(".period-content,");
+    expect(block).toContain(".period-body--dim {");
   });
 
   it("styleBlockOf(attendance list) really loaded the action cell rules — anti-vacuity", () => {
     const block = styleBlockOf(TODAY_ATTENDANCE);
-    expect(block).toContain(".attendance-actions {");
     expect(block).toContain(".row-actions__group {");
   });
 
   it("styleBlockOf(vacation tab) really loaded the Verfall cell rules — anti-vacuity", () => {
     const block = styleBlockOf(VACATION_TAB);
-    expect(block).toContain(".vac-verfall {");
     expect(block).toContain(".verfall-cell {");
   });
 });
@@ -357,7 +356,7 @@ function reportsStyleBlock(): string {
 // an action cell stays a table cell, its flex layout lives on the inner wrapper.
 function reportsTableMarkup(): string {
   return `
-    <table class="data-table vac-table">
+    <table class="data-table dt-table">
       <thead>
         <tr>
           <th scope="col">Verfall</th>
@@ -365,7 +364,7 @@ function reportsTableMarkup(): string {
       </thead>
       <tbody>
         <tr>
-          <td class="vac-verfall">
+          <td data-label="Verfall">
             <div class="verfall-cell">
               <span class="verfall-line">3 T. bis 31.03.2027</span>
               <button class="btn btn-ghost xs">Hinweis senden</button>
@@ -378,20 +377,20 @@ function reportsTableMarkup(): string {
 }
 
 describe("#442 — /reports action cells at 1280px (measured)", () => {
-  it("td.vac-verfall and its header stay table-cell", () => {
+  it("the Verfall td and its header stay table-cell", () => {
     probeAt(DESKTOP_WIDTH, cssForViewport(reportsStyleBlock(), DESKTOP_WIDTH));
     document.body.innerHTML = reportsTableMarkup();
-    document.querySelectorAll("td.vac-verfall, th").forEach((cell) => {
+    document.querySelectorAll("td[data-label='Verfall'], th").forEach((cell) => {
       expect(getComputedStyle(cell).display).toBe("table-cell");
     });
   });
 
-  it("positive control: td.vac-verfall still reads its min-width (the component rule really hits it)", () => {
-    // The injected sheet must reach this cell, otherwise the table-cell assertions above would pass
+  it("positive control: .verfall-cell still reads its min-width (the component rule really hits it)", () => {
+    // The injected sheet must reach this wrapper, otherwise the assertions above would pass
     // against a sheet that never applied. min-width is untouched by the table-level rules.
     probeAt(DESKTOP_WIDTH, cssForViewport(reportsStyleBlock(), DESKTOP_WIDTH));
     document.body.innerHTML = reportsTableMarkup();
-    const cell = document.querySelector("td.vac-verfall")!;
+    const cell = document.querySelector(".verfall-cell")!;
     expect(getComputedStyle(cell).minWidth).toBe("170px");
   });
 
@@ -404,14 +403,14 @@ describe("#442 — /reports action cells at 1280px (measured)", () => {
   });
 });
 
-// The former mobile-hide rule (`display: none` below 720px) belonged to the old layout. Below 960px
-// the vacation tab renders an ApprovalRow list instead of this table (ADD-6), so the table cell is
-// never squeezed: at 390px the cell must still be a table cell, never turned into a flex box.
+// The former mobile-hide rule (`display: none` below 720px) belonged to the old layout. Narrow
+// containers turn the DataTable into cards through its own container query; the component's CSS
+// never touches the td, so at 390px the cell must still be a table cell for this probe.
 describe("#442 — /reports action cell at 390px (the cell is never flexed)", () => {
-  it("td.vac-verfall computes table-cell at 390px", () => {
+  it("the Verfall td computes table-cell at 390px", () => {
     probeAt(PHONE_WIDTH, cssForViewport(reportsStyleBlock(), PHONE_WIDTH));
     document.body.innerHTML = reportsTableMarkup();
-    document.querySelectorAll("td.vac-verfall").forEach((cell) => {
+    document.querySelectorAll("td[data-label='Verfall']").forEach((cell) => {
       expect(getComputedStyle(cell).display).toBe("table-cell");
     });
   });
@@ -420,11 +419,11 @@ describe("#442 — /reports action cell at 390px (the cell is never flexed)", ()
 // Issue #587 / #442: the attendance list's action cell (the „Fehlt“ row links) follows the same rule.
 function attendanceMarkup(): string {
   return `
-    <table class="attendance-table">
+    <table class="data-table dt-table">
       <thead><tr><th>Aktionen</th></tr></thead>
       <tbody>
         <tr>
-          <td class="attendance-actions">
+          <td data-label="Aktionen">
             <div class="row-actions__group">
               <a class="btn btn-ghost xs" href="/team/time-entries">Eintrag nachtragen</a>
             </div>
@@ -437,43 +436,39 @@ function attendanceMarkup(): string {
 
 describe("#442 — /reports attendance action cell (measured)", () => {
   for (const width of [DESKTOP_WIDTH, PHONE_WIDTH]) {
-    it(`td.attendance-actions stays table-cell and its wrapper carries the flex layout at ${width}px`, () => {
+    it(`the action td stays table-cell and its wrapper carries the flex layout at ${width}px`, () => {
       probeAt(width, cssForViewport(styleBlockOf(TODAY_ATTENDANCE), width));
       document.body.innerHTML = attendanceMarkup();
-      expect(getComputedStyle(document.querySelector("td.attendance-actions")!).display).toBe(
+      expect(getComputedStyle(document.querySelector("td[data-label='Aktionen']")!).display).toBe(
         "table-cell",
       );
       expect(getComputedStyle(document.querySelector(".row-actions__group")!).display).toBe("flex");
     });
   }
 
-  it("positive control: the cell reads white-space nowrap (the component rule really hits it)", () => {
+  it("positive control: the wrapper reads flex-end alignment (the component rule really hits it)", () => {
     probeAt(DESKTOP_WIDTH, cssForViewport(styleBlockOf(TODAY_ATTENDANCE), DESKTOP_WIDTH));
     document.body.innerHTML = attendanceMarkup();
-    expect(getComputedStyle(document.querySelector("td.attendance-actions")!).whiteSpace).toBe(
-      "nowrap",
+    expect(getComputedStyle(document.querySelector(".row-actions__group")!).justifyContent).toBe(
+      "flex-end",
     );
   });
 });
 
 describe("#442 — /reports source pin", () => {
-  it("exactly one td.vac-verfall (the Verfall cell), wrapping a div.verfall-cell", () => {
-    const matches = VACATION_TAB.match(/<td class="vac-verfall">/g) ?? [];
+  it("exactly one Verfall cell wrapper (div.verfall-cell); the td belongs to the DataTable block", () => {
+    const matches = VACATION_TAB.match(/<div class="verfall-cell">/g) ?? [];
     expect(matches).toHaveLength(1);
-    const start = VACATION_TAB.indexOf('<td class="vac-verfall">');
-    const end = VACATION_TAB.indexOf("</td>", start);
-    expect(VACATION_TAB.slice(start, end)).toContain('<div class="verfall-cell">');
+    expect(VACATION_TAB).not.toContain("<td");
+    expect(VACATION_TAB).not.toMatch(/td\s*\{[^}]*display:\s*flex/);
     // No td in the page carries a flex rule, and the removed tables leave no trace.
     expect(REPORTS_PAGE).not.toContain("overtime-table");
     expect(REPORTS_PAGE).not.toContain("carryover-table");
     expect(REPORTS_PAGE).not.toContain("btn-icon");
     expect(REPORTS_PAGE).not.toContain('<td class="row-actions">');
-    // The attendance action cell wraps a div, too.
-    const at = TODAY_ATTENDANCE.indexOf('<td class="attendance-actions">');
-    expect(at).toBeGreaterThan(-1);
-    expect(TODAY_ATTENDANCE.slice(at, TODAY_ATTENDANCE.indexOf("</td>", at))).toContain(
-      '<div class="row-actions__group">',
-    );
+    // The attendance action cell wraps a div, too; the td itself belongs to the DataTable block.
+    expect(TODAY_ATTENDANCE).not.toContain("<td");
+    expect(TODAY_ATTENDANCE).toContain('<div class="row-actions__group">');
   });
 });
 

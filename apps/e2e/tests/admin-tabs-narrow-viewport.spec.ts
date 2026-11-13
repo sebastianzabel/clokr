@@ -1,9 +1,11 @@
 /**
- * Issue #621 — the shared tab strip (`.view-tabs`, rendered by SectionStack and ListDetail) fits
- * narrow phone viewports.
+ * Issue #621 — the page tab strip fits narrow phone viewports.
  *
  * Before the fix, at 390 px `/admin/system` (five tabs) was ~565 px wide and the whole page
- * scrolled sideways. The strip now scrolls on its own. This spec is the permanent gate: per page x
+ * scrolled sideways. The strip now scrolls on its own. Since the Verwalten rebuild (Issue #854, plan
+ * 854-15) System › Allgemein has no tabs any more; the widest strip of the app is the one of Regeln ›
+ * Abwesenheiten (five tabs, rendered by `PageTabs`: `.page-tab-strip`, `.page-tab`, the active tab carries
+ * `data-state="active"`), and the gate follows it. This spec is the permanent gate: per page x
  * theme x viewport it proves that
  *   - the document does not scroll horizontally,
  *   - the strip really is wider than its box on the narrowest page (non-vacuous: otherwise the
@@ -31,11 +33,19 @@ const VIEWPORTS = [
 const THEMES = ["pflaume", "salz", "petrol"] as const;
 type Theme = (typeof THEMES)[number];
 
-/** Pages whose SectionStack renders a tab strip; `/admin/system` has the widest one (5 tabs). */
-const PAGES = [
-  { path: "/admin/system", widest: true },
-  { path: "/admin/vacation", widest: false },
-] as const;
+/**
+ * Pages whose `PageTabs` strip is gated here. `/admin/system` had the widest strip (5 tabs) until the
+ * Verwalten rebuild (Issue #854) moved its tabs away and plan 854-15 removed the rest; Regeln › Abwesenheiten
+ * (plan 854-11/12/13: Urlaub, Sonderurlaub, Übertrag, Betriebsurlaub, Urlaubsgrenzen & Sperren) is the page
+ * with the most tabs now, so the overflow assertion (`widest`) is on for it: the strip is wider than a phone
+ * and must scroll inside itself. The PageTabs strip of every other migrated Verwalten page is covered by
+ * verwalten-854.spec.ts (keyboard navigation, no horizontal overflow at 390 and 1440 px).
+ */
+const PAGES = [{ path: "/verwalten/regeln/abwesenheiten", widest: true }] as const;
+
+/** The tab strip of `PageTabs` and its active trigger. */
+const STRIP = ".page-tab-strip";
+const ACTIVE_TAB = '.page-tab[data-state="active"]';
 
 async function login(request: APIRequestContext, tenant: TestTenant, theme: Theme) {
   const res = await request.post(`${API_BASE}/api/v1/auth/login`, {
@@ -74,9 +84,9 @@ interface StripGeometry {
 }
 
 async function measure(strip: Locator): Promise<StripGeometry> {
-  return strip.evaluate((el) => {
+  return strip.evaluate((el, sel) => {
     const s = el.getBoundingClientRect();
-    const active = el.querySelector<HTMLElement>(".view-tab--active");
+    const active = el.querySelector<HTMLElement>(sel);
     const a = active?.getBoundingClientRect();
     return {
       innerWidth: window.innerWidth,
@@ -95,7 +105,7 @@ async function measure(strip: Locator): Promise<StripGeometry> {
           : null,
       strip: { left: s.left, right: s.right, bottom: s.bottom },
     };
-  });
+  }, ACTIVE_TAB);
 }
 
 function expectActiveInside(g: StripGeometry, expectedLabel: string, where: string) {
@@ -120,10 +130,8 @@ function expectActiveInside(g: StripGeometry, expectedLabel: string, where: stri
 
 async function openPage(page: Page, path: string): Promise<Locator> {
   await page.goto(path);
-  // The app re-navigates once after auth hydration; SectionStack then writes the active tab into
-  // the hash. Measure only after that settled, never mid-navigation.
-  await page.waitForURL(/#.+/);
-  const strip = page.locator(".view-tabs").first();
+  // The strip is rendered once the page's settings have loaded; measure only then, never mid-load.
+  const strip = page.locator(STRIP).first();
   await expect(strip).toBeVisible();
   await page.evaluate(async () => {
     await document.fonts.ready;

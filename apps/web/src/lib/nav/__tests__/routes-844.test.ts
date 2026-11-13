@@ -10,12 +10,15 @@ import {
   mobileTabs,
   navCurrentPath,
   pageWidthForPath,
+  redirectLocation,
   rerouteTarget,
   rosterTabs,
+  crumbTrail,
   routeFor,
   visibleChildren,
 } from "$lib/nav/routes";
 import { visibleNavSections } from "$lib/nav/app-nav";
+import { sectionsOfPage } from "$lib/settings/settings-pages";
 import { labelForPath } from "$lib/nav/page-labels";
 import { activeNavHref } from "$lib/nav/active-route";
 import personas from "./fixtures/system-role-permissions.json";
@@ -65,8 +68,11 @@ describe("route table (D-844-01..08)", () => {
 
 describe("reroute and redirect are inverse (D-844-03/04)", () => {
   const filed = APP_ROUTES.filter((r) => r.file !== undefined);
+  const folded = LEGACY_ROUTE_REDIRECTS.filter((a) => a.to !== undefined);
+  // Both kinds are moved pages: a filed one is rerouted to its old file, a folded one to the page that now
+  // holds its content (#854).
   it("covers at least 28 moved pages (non-vacuity)", () =>
-    expect(filed.length).toBeGreaterThanOrEqual(28));
+    expect(filed.length + folded.length).toBeGreaterThanOrEqual(28));
   for (const route of filed) {
     it(`${route.href} ⇄ ${route.file}`, () => {
       expect(rerouteTarget(route.href)).toBe(route.file);
@@ -92,6 +98,51 @@ describe("reroute and redirect are inverse (D-844-03/04)", () => {
   });
 });
 
+describe("folded old pages (#854)", () => {
+  const folded = LEGACY_ROUTE_REDIRECTS.filter((a) => a.to !== undefined);
+
+  it("has at least one folded page (non-vacuity)", () =>
+    expect(folded.length).toBeGreaterThanOrEqual(1));
+
+  for (const alias of folded) {
+    it(`${alias.href} → ${alias.to}`, () => {
+      expect(legacyRedirectTarget(alias.href)).toBe(alias.to);
+      expect(legacyRedirectTarget(`${alias.href}/x`)).toBe(alias.to);
+      // Without a page file the URL must still resolve to a route so the layout load can redirect.
+      expect(rerouteTarget(alias.href)).not.toBeNull();
+      expect(rerouteTarget(`${alias.href}/x`)).not.toBeNull();
+      // The target is a page of the table, and the alias keeps its old alternatives.
+      expect(routeFor(alias.to!.split("#")[0])).not.toBeNull();
+      const holder = { permissions: alias.requires[0].map((key) => key) };
+      expect(mayOpenPath(holder, alias.href)).toBe(true);
+      expect(mayOpenPath({ permissions: [] }, alias.href)).toBe(false);
+    });
+  }
+
+  it("special-leave rerouting renders the page the redirect lands on", () => {
+    expect(rerouteTarget("/admin/special-leave")).toBe("/admin/vacation");
+    expect(rerouteTarget("/admin/special-leave/42")).toBe("/admin/vacation");
+  });
+
+  it("the renamed #844 vacation URL renders the Abwesenheiten page and keeps its gate", () => {
+    expect(rerouteTarget("/verwalten/regeln/urlaub")).toBe("/admin/vacation");
+    expect(legacyRedirectTarget("/verwalten/regeln/urlaub")).toBe(
+      "/verwalten/regeln/abwesenheiten",
+    );
+    expect(
+      mayOpenPath({ permissions: ["leave-config:manage:ZUGEWIESEN"] }, "/verwalten/regeln/urlaub"),
+    ).toBe(true);
+    expect(mayOpenPath({ permissions: [] }, "/verwalten/regeln/urlaub")).toBe(false);
+  });
+
+  it("redirectLocation puts the query before the fragment", () => {
+    expect(redirectLocation("/a#t", "?x=1")).toBe("/a?x=1#t");
+    expect(redirectLocation("/a", "?x=1")).toBe("/a?x=1");
+    expect(redirectLocation("/a#t", "")).toBe("/a#t");
+    expect(redirectLocation("/a", "")).toBe("/a");
+  });
+});
+
 describe("old URLs of the acceptance criteria land on the new place", () => {
   const CASES: [string, string][] = [
     ["/dashboard", "/ich/tag"],
@@ -109,10 +160,16 @@ describe("old URLs of the acceptance criteria land on the new place", () => {
     ["/shifts/conflicts", "/team/dienstplan/konflikte"],
     ["/admin", "/verwalten"],
     ["/admin/employees/abc", "/verwalten/personen/abc"],
-    ["/admin/vacation", "/verwalten/regeln/urlaub"],
+    ["/admin/vacation", "/verwalten/regeln/abwesenheiten"],
+    ["/verwalten/regeln/urlaub", "/verwalten/regeln/abwesenheiten"], // the renamed #844 URL (alias)
+    ["/admin/special-leave", "/verwalten/regeln/abwesenheiten#sonderurlaub"],
+    ["/admin/leave-limits", "/verwalten/regeln/abwesenheiten#urlaubsgrenzen"],
+    ["/verwalten/regeln/urlaubsgrenzen", "/verwalten/regeln/abwesenheiten#urlaubsgrenzen"],
     ["/admin/system", "/verwalten/system/allgemein"],
     ["/admin/month-close", "/verwalten/monatsabschluss"],
     ["/admin/audit/42", "/verwalten/daten/protokoll/42"],
+    ["/admin/export", "/verwalten/daten/export"],
+    ["/verwalten/daten/datev", "/verwalten/daten/export"], // the renamed #844 URL (alias)
     ["/admin/availability", "/team/verfuegbarkeit"],
     ["/reports", "/verwalten/berichte"],
   ];
@@ -142,6 +199,18 @@ describe("no permission change (D-06, AC: keine Berechtigungsänderung)", () => 
     it(`${file} keeps its alternatives`, () => {
       const route = APP_ROUTES.find((r) => r.file === file);
       const alias = LEGACY_ROUTE_REDIRECTS.find((a) => a.href === file);
+      // A page that RECEIVES settings sections from other old pages opens under the union of their gates
+      // (D-854-05): nobody loses access, so every pinned alternative must still be there; the exact value is
+      // pinned by settings-pages-854.test.ts. Every other page keeps the equality pin.
+      if (
+        route !== undefined &&
+        sectionsOfPage(route.href).length > 0 &&
+        Array.isArray(route.requires)
+      ) {
+        for (const alternative of requires)
+          expect(route.requires, file).toContainEqual(alternative);
+        return;
+      }
       expect(route?.requires ?? alias?.requires, file).toEqual(requires);
     });
   }
@@ -236,9 +305,9 @@ describe("navigation (Z-01, AC: kein Eintrag doppelt)", () => {
     expect(sections.map((s) => s.label)).toEqual(["Ich", "Team", "Verwalten"]);
     const verwalten = sections[2].items.map((i) => i.href);
     expect(verwalten).toContain("/verwalten/regeln");
-    expect(verwalten).not.toContain("/verwalten/regeln/urlaub");
+    expect(verwalten).not.toContain("/verwalten/regeln/abwesenheiten");
     expect(visibleChildren(user("ADMIN"), "/verwalten/regeln", ALL).map((r) => r.href)).toContain(
-      "/verwalten/regeln/urlaub",
+      "/verwalten/regeln/abwesenheiten",
     );
   });
 
@@ -257,6 +326,81 @@ describe("navigation (Z-01, AC: kein Eintrag doppelt)", () => {
     expect(mayOpenRoute({ permissions: ["company-shutdown:manage:ZUGEWIESEN"] }, regeln)).toBe(
       true,
     );
+  });
+});
+
+describe("Betriebsurlaub (plan 854-12)", () => {
+  it("is no child of the Regeln hub any more: its list is a tab of Abwesenheiten", () => {
+    const hrefs = visibleChildren(user("ADMIN"), "/verwalten/regeln", ALL).map((r) => r.href);
+    expect(hrefs).not.toContain("/verwalten/regeln/betriebsurlaub");
+    expect(hrefs).toContain("/verwalten/regeln/abwesenheiten");
+  });
+
+  it("stays a route entry under Abwesenheiten that carries the detail sub-route and its gate", () => {
+    const entry = APP_ROUTES.find((r) => r.href === "/verwalten/regeln/betriebsurlaub")!;
+    expect(entry.parent).toBe("/verwalten/regeln/abwesenheiten");
+    expect(entry.file).toBe("/admin/shutdowns");
+    expect(rerouteTarget("/verwalten/regeln/betriebsurlaub/s1")).toBe("/admin/shutdowns/s1");
+    const holder = { permissions: ["company-shutdown:manage:ZUGEWIESEN"] };
+    expect(mayOpenPath(holder, "/verwalten/regeln/betriebsurlaub/s1")).toBe(true);
+    expect(
+      mayOpenPath(
+        { permissions: ["leave-config:manage:ZUGEWIESEN"] },
+        "/verwalten/regeln/betriebsurlaub/s1",
+      ),
+    ).toBe(false);
+  });
+
+  it("the Abwesenheiten page opens for a holder of company-shutdown:manage alone", () => {
+    const holder = { permissions: ["company-shutdown:manage:ZUGEWIESEN"] };
+    expect(mayOpenPath(holder, "/verwalten/regeln/abwesenheiten")).toBe(true);
+    expect(mayOpenPath({ permissions: [] }, "/verwalten/regeln/abwesenheiten")).toBe(false);
+  });
+});
+
+describe("Urlaubsgrenzen & Sperren (plan 854-13)", () => {
+  const MANAGER = { permissions: ["leave-request:approve:ZUGEWIESEN"] };
+
+  it("both URLs are aliases of the Abwesenheiten tab and no table entry or page file is left", () => {
+    for (const href of ["/admin/leave-limits", "/verwalten/regeln/urlaubsgrenzen"]) {
+      expect(legacyRedirectTarget(href)).toBe("/verwalten/regeln/abwesenheiten#urlaubsgrenzen");
+      expect(rerouteTarget(href)).toBe("/admin/vacation");
+      expect(APP_ROUTES.some((r) => r.href === href || r.file === href)).toBe(false);
+    }
+  });
+
+  it("the aliases keep the pinned pre-844 alternatives of the leave-limits page", () => {
+    const pinned = (pre844.admin as Record<string, string[][]>)["/admin/leave-limits"];
+    expect(pinned.length).toBeGreaterThan(0);
+    for (const href of ["/admin/leave-limits", "/verwalten/regeln/urlaubsgrenzen"]) {
+      const alias = LEGACY_ROUTE_REDIRECTS.find((a) => a.href === href)!;
+      expect(alias.requires).toEqual(pinned);
+    }
+  });
+
+  it("a manager who could open the old page still reaches the Abwesenheiten page", () => {
+    expect(mayOpenPath(MANAGER, "/admin/leave-limits")).toBe(true);
+    expect(mayOpenPath(MANAGER, "/verwalten/regeln/urlaubsgrenzen")).toBe(true);
+    expect(mayOpenPath(MANAGER, "/verwalten/regeln/abwesenheiten")).toBe(true);
+    expect(
+      mayOpenPath(
+        { permissions: ["leave-limit:manage:ZUGEWIESEN"] },
+        "/verwalten/regeln/abwesenheiten",
+      ),
+    ).toBe(true);
+    expect(mayOpenPath({ permissions: [] }, "/admin/leave-limits")).toBe(false);
+  });
+});
+
+describe("Regeln hub (plan 854-13, D-854-03)", () => {
+  it("lists exactly the five themes of D-854-03, in that order, for the ADMIN persona", () => {
+    expect(visibleChildren(user("ADMIN"), "/verwalten/regeln", ALL).map((r) => r.href)).toEqual([
+      "/verwalten/regeln/arbeitszeit",
+      "/verwalten/regeln/abwesenheiten",
+      "/verwalten/regeln/dienstplan",
+      "/verwalten/regeln/monatsabschluss",
+      "/verwalten/regeln/benachrichtigungen",
+    ]);
   });
 });
 
@@ -480,7 +624,7 @@ describe("page widths (owner 09.11.2026)", () => {
     for (const href of [
       "/ich/profil",
       "/verwalten/regeln",
-      "/verwalten/regeln/urlaub",
+      "/verwalten/regeln/abwesenheiten",
       "/verwalten/system/allgemein",
       "/verwalten/salons/1",
     ]) {
@@ -491,5 +635,55 @@ describe("page widths (owner 09.11.2026)", () => {
     expect(routeFor("/verwalten/personen/123")?.href).toBe("/verwalten/personen");
     expect(pageWidthForPath("/verwalten/personen/123")).toBe("read");
     expect(pageWidthForPath("/nowhere")).toBe("read");
+  });
+});
+
+describe("crumbTrail: the whole path in the top bar (#854, owner review)", () => {
+  const admin = user("ADMIN");
+  it("a sub-page names every level, each but the last a link", () => {
+    expect(crumbTrail("/verwalten/system/integrationen", admin)).toEqual([
+      { label: "Verwalten", href: "/verwalten" },
+      { label: "System", href: "/verwalten/system" },
+      { label: "Integrationen", href: null },
+    ]);
+    expect(crumbTrail("/verwalten/daten/export", admin).map((c) => c.label)).toEqual([
+      "Verwalten",
+      "Daten",
+      "Export",
+    ]);
+    expect(crumbTrail("/verwalten/regeln/arbeitszeit", admin).map((c) => c.label)).toEqual([
+      "Verwalten",
+      "Regeln",
+      "Arbeitszeit & Verträge",
+    ]);
+  });
+
+  it("a detail page links its list and closes with the record name the page gives", () => {
+    expect(crumbTrail("/verwalten/personen/abc", admin, "Mia Friseurin")).toEqual([
+      { label: "Verwalten", href: "/verwalten" },
+      { label: "Personen", href: "/verwalten/personen" },
+      { label: "Mia Friseurin", href: null },
+    ]);
+    // before the record is loaded the list closes the trail, still as a link
+    expect(crumbTrail("/verwalten/personen/abc", admin).at(-1)).toEqual({
+      label: "Personen",
+      href: "/verwalten/personen",
+    });
+  });
+
+  it("the hub is one crumb; a level the user may not open is text, not a link", () => {
+    expect(crumbTrail("/verwalten", admin)).toEqual([{ label: "Verwalten", href: null }]);
+    const employee = crumbTrail("/verwalten/system/integrationen", user("EMPLOYEE"));
+    expect(employee.every((c) => c.href === null)).toBe(true);
+  });
+
+  it("a roster tab names only its page (the parent carries the same name)", () => {
+    expect(
+      crumbTrail("/team/dienstplan/planung", user("SALON_MANAGER")).map((c) => c.label),
+    ).toEqual(["Team", "Dienstplan"]);
+  });
+
+  it("an unknown path has no trail", () => {
+    expect(crumbTrail("/nowhere", admin)).toEqual([]);
   });
 });

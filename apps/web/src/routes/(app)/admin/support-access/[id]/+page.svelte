@@ -1,16 +1,27 @@
+<!--
+  Verwalten › Daten › Support-Zugriffe › one access (Issue #93, #854): the grant (operator display name,
+  reason, window, status), every read made under it, and „Zugriff beenden“ behind a ConfirmDialog (only with
+  tenant-settings:update; the API's 403 stays the authority). Never an operator e-mail or IP (T-854-64).
+-->
 <script lang="ts">
+  import { showDetailCrumb } from "$lib/nav/detail-crumb";
   import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
-  import ListDetail from "$lib/components/admin/ListDetail.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
   import SupportAccessDetail from "$lib/components/admin/SupportAccessDetail.svelte";
+  import Note from "$components/ui/Note.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import { formatInZone, type SupportAccessDetailResponse } from "$lib/support-access/labels";
 
   let detail = $state<SupportAccessDetailResponse | null>(null);
+  // The access's start closes the top bar's path (#854: pages carry no breadcrumb of their own).
+  $effect(() =>
+    showDetailCrumb(detail ? formatInZone(detail.access.startedAt, detail.timezone) : null),
+  );
   // Starts TRUE for the same reason as the list: the request fires after mount.
   let loading = $state(true);
   let loadError = $state("");
@@ -18,20 +29,19 @@
 
   const accessId = $derived($page.params.id);
 
-  const crumbs = $derived([
-    { label: pageLabel("/admin/support-access"), href: "/admin/support-access" },
-    {
-      label: detail ? formatInZone(detail.access.startedAt, detail.timezone) : "Support-Zugriff",
-    },
-  ]);
+  const windowText = $derived.by(() => {
+    if (!detail) return "";
+    const { access, timezone } = detail;
+    return `${formatInZone(access.startedAt, timezone)} – ${formatInZone(access.endedAt ?? access.expiresAt, timezone)}`;
+  });
 
   onMount(() => {
     void load();
   });
 
-  /** `showSpinner` is false for the reload after an end, so the page does not flash empty. */
-  async function load(showSpinner = true) {
-    if (showSpinner) loading = true;
+  /** `showSkeleton` is false for the reload after an end, so the page does not flash empty. */
+  async function load(showSkeleton = true) {
+    if (showSkeleton) loading = true;
     loadError = "";
     notFound = false;
     try {
@@ -56,41 +66,24 @@
 </script>
 
 <svelte:head>
-  <title>Support-Zugriff – Clokr</title>
+  <title>Support-Zugriff – {pageLabel("/admin/support-access")} – Clokr</title>
 </svelte:head>
 
-<ListDetail
-  view="detail"
-  eyebrow="Compliance"
-  title="Support-Zugriff"
-  sub="Begründung, Zeitraum und alle Abrufe"
-  {crumbs}
->
-  {#snippet tabContent(_)}
-    {#if loading}
-      <Skeleton shape="card" lines={3} />
-    {:else if notFound}
-      <div class="alert alert-error" role="alert">
-        <span>⚠</span>
-        <span>Support-Zugriff nicht gefunden.</span>
-        <a class="btn btn-outline sm sa-back" href="/admin/support-access">Zurück zur Übersicht</a>
-      </div>
-    {:else if loadError || !detail}
-      <div class="alert alert-error" role="alert">
-        <span>⚠</span>
-        <span>{loadError || "Der Support-Zugriff konnte nicht geladen werden."}</span>
-        <button class="btn btn-outline sm sa-back" type="button" onclick={() => void load()}>
-          Erneut laden
-        </button>
-      </div>
-    {:else}
-      <SupportAccessDetail {detail} user={$authStore.user} onEnd={endAccess} />
-    {/if}
-  {/snippet}
-</ListDetail>
-
-<style>
-  .sa-back {
-    margin-left: auto;
-  }
-</style>
+<div data-testid="admin-support-access-detail-page" style="display: contents;">
+  {#if loading}
+    <Skeleton shape="card" lines={3} />
+  {:else if notFound}
+    <div role="alert"><Note tone="bad">Support-Zugriff nicht gefunden.</Note></div>
+    <a class="btn btn-secondary" href="/admin/support-access">Zurück zur Übersicht</a>
+  {:else if loadError || !detail}
+    <div role="alert">
+      <Note tone="bad">{loadError || "Der Support-Zugriff konnte nicht geladen werden."}</Note>
+    </div>
+    <button class="btn btn-secondary" type="button" onclick={() => void load()}>
+      Erneut laden
+    </button>
+  {:else}
+    <PageHead title={`Support-Zugriff von ${detail.access.operatorName}`} sub={windowText} />
+    <SupportAccessDetail {detail} user={$authStore.user} onEnd={endAccess} />
+  {/if}
+</div>

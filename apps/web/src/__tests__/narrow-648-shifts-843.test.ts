@@ -59,3 +59,35 @@ describe("#648 /shifts week header is the PeriodPicker block (#843 D-843-11)", (
     expect(ownNavMarkup(fixture)).toEqual(["nav-btn", "week-header-nav"]);
   });
 });
+
+// Issue #854 (plan 09): the shift CONFIGURATION page (/verwalten/regeln/dienstplan) carried its own
+// grid rows (`.cfg-row`, `.pat-row`) that fell back to one column at 720/900 px. Its three lists are
+// DataTables now, whose cells become cards below 760 px of container width - the same narrow-screen
+// contract as the week header above. This pin keeps the panels on the block.
+describe("#854 the Dienstplan configuration lists are DataTables (cards on narrow screens)", () => {
+  const PANELS = ["ShiftTemplatesPanel", "CoverageRulesPanel", "WeekPatternsPanel"];
+
+  it.each(PANELS)("%s renders its list through DataTable and owns no grid rows", (name) => {
+    const source = readRouteFile(
+      `../lib/components/admin/dienstplan/${name}.svelte`,
+      `src/lib/components/admin/dienstplan/${name}.svelte`,
+    );
+    expect(source.length).toBeGreaterThan(1000);
+    expect(source).toContain(
+      'import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte"',
+    );
+    expect(source).toMatch(/<DataTable\b/);
+    expect(source).not.toMatch(/class="[^"]*\b(?:cfg-row|pat-row|pat-table|cfg-table)\b/);
+    expect(source).not.toMatch(/<table[\s>]/);
+  });
+
+  it("the route page holds no list markup of its own", () => {
+    const route = readRouteFile(
+      "../routes/(app)/admin/shifts/+page.svelte",
+      "src/routes/(app)/admin/shifts/+page.svelte",
+    );
+    expect(route.length).toBeGreaterThan(1000);
+    expect(route).not.toMatch(/\b(?:cfg-row|pat-row|pat-table|cfg-table)\b/);
+    expect(route).not.toMatch(/@media/);
+  });
+});

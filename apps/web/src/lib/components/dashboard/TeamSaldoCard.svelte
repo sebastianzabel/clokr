@@ -75,7 +75,8 @@
   });
 </script>
 
-<Card animate class="team-saldo-card" style={`--card-idx: ${cardIdx};`}>
+<!-- #854: no entrance animation on Berichte › Verläufe; a fading card fails the contrast check while it fades. -->
+<Card class="team-saldo-card" style={`--card-idx: ${cardIdx};`}>
   <CardHeader title="Salden" />
   {#if loading}
     <div class="saldo-skeleton" aria-hidden="true"></div>

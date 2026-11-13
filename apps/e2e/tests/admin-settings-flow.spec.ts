@@ -10,8 +10,8 @@
  *  - sidebar nav: `nav-${slug}` (Sidebar.svelte, derived from href)
  *  - admin/employees: `admin-employees-page`, `admin-employees-add`,
  *      `admin-employees-row-${id}-edit`, ...
- *  - admin/system: `admin-system-page`, `admin-system-${section}-${field}`,
- *      `admin-system-${section}-save`
+ *  - admin/system: `admin-system-page`, `admin-system-${section}-${field}`; since Issue #854 (plan 854-15)
+ *      the page has no tabs and its sections are saved through their SaveBar (button name)
  *  - admin/month-close: `month-close-page`, `month-close-row-${month}-trigger`,
  *      `month-close-modal`, `month-close-confirm`
  *
@@ -54,33 +54,30 @@ test.describe("Admin Settings — Complete Flow", () => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/system");
     await expect(page.getByTestId("admin-system-page")).toBeVisible();
-    // Sicherheit tab — 2FA toggle is the test-id we own from 73-05.
-    await page.getByRole("tab", { name: /Sicherheit/i }).click();
+    // The 2FA switch is the test-id we own from 73-05; the page has no tabs since #854.
     await expect(page.getByTestId("admin-system-sicherheit-twoFaEnabled")).toBeVisible();
   });
 
   test("admin system — toggle 2FA", async ({ page, tenant }) => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/system");
-    await page.getByRole("tab", { name: /Sicherheit/i }).click();
     const toggle = page.getByTestId("admin-system-sicherheit-twoFaEnabled");
     await expect(toggle).toBeVisible();
 
-    // The toggle is a visually-hidden checkbox wrapped by .switch — read the
-    // state, click via the surrounding label (the input itself has 0 size),
-    // and assert the value flipped.
+    // The switch is a plain checkbox that saves at once (§3.2.1): read the state, click it and
+    // assert the value flipped.
     const before = await toggle.isChecked();
-    await page.locator("label.switch", { has: toggle }).click();
+    await toggle.click();
     await expect(toggle).toBeChecked({ checked: !before });
     // Flip back so we don't leave the tenant in a weird state for any
     // follow-up assertion (tenant gets torn down anyway, but explicit > implicit).
-    await page.locator("label.switch", { has: toggle }).click();
+    await toggle.click();
+    await expect(toggle).toBeChecked({ checked: before });
   });
 
   test("admin system — save password policy round-trip", async ({ page, tenant }) => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/system");
-    await page.getByRole("tab", { name: /Sicherheit/i }).click();
 
     const minLength = page.getByTestId("admin-system-password-minLength");
     await expect(minLength).toBeVisible();
@@ -92,13 +89,12 @@ test.describe("Admin Settings — Complete Flow", () => {
     // Listen for the save API call so we know the round-trip completed
     // without relying on a fragile timeout.
     const savePromise = page.waitForResponse(
-      (res) => res.url().includes("/password-policy") && res.request().method() === "PUT",
+      (res) => res.url().includes("/settings/security") && res.request().method() === "PUT",
     );
-    await page.getByTestId("admin-system-password-save").click();
+    await page.getByRole("button", { name: "Richtlinie speichern" }).click();
     await savePromise;
 
     await page.reload();
-    await page.getByRole("tab", { name: /Sicherheit/i }).click();
     await expect(page.getByTestId("admin-system-password-minLength")).toHaveValue(String(next));
   });
 
@@ -107,13 +103,13 @@ test.describe("Admin Settings — Complete Flow", () => {
     await page.goto("/admin/employees");
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
     await expect(page.getByTestId("admin-employees-add")).toBeVisible();
-    await expect(page.getByTestId("admin-employees-search")).toBeVisible();
+    await expect(page.getByRole("searchbox", { name: "Name oder Nummer" })).toBeVisible();
   });
 
   test("admin employees — search input narrows the list", async ({ page, tenant }) => {
     await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/employees");
-    const search = page.getByTestId("admin-employees-search");
+    const search = page.getByRole("searchbox", { name: "Name oder Nummer" });
     await search.fill("zzzz-no-such-person");
     // Filter is reactive (Svelte $derived) — the row count drops on the
     // next render frame. Asserting the empty body avoids a timeout-based

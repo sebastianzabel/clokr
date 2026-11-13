@@ -26,7 +26,7 @@
   Example (no steps):
     <ToolPage eyebrow="Administration" title="Daten importieren">
       {#snippet form()}
-        <Section title="DATEI HOCHLADEN">
+        <Section title="Datei hochladen">
           <ImportDropzone />
         </Section>
       {/snippet}
@@ -40,10 +40,10 @@
       currentStep={1}
     >
       {#snippet form()}
-        <Section title="PRÜFBERICHT"><ReviewTable /></Section>
+        <Section title="Prüfbericht"><ReviewTable /></Section>
       {/snippet}
       {#snippet result()}
-        <Section title="ERGEBNIS"><DownloadLinks /></Section>
+        <Section title="Ergebnis"><DownloadLinks /></Section>
       {/snippet}
     </ToolPage>
 -->

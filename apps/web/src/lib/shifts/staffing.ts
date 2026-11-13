@@ -60,5 +60,5 @@ export function staffingTooltip(day: StaffingDay | undefined): string {
 /** The explanation behind (i) next to the row label — it replaces the old formula footnote. */
 export const STAFFING_EXPLANATION =
   "Gezählt werden eingeplante Personen, die an dem Tag verfügbar sind. Wer in Ausbildung ist, kann " +
-  "je nach Einstellung nur halb zählen. Die Mindestbesetzung kommt aus den Schichteinstellungen; " +
+  "je nach Einstellung nur halb zählen. Die Mindestbesetzung kommt aus den Bedarfsregeln des Dienstplans; " +
   "ohne eigene Regel gelten 2 Personen.";

@@ -29,6 +29,7 @@ import {
   TEAM_SOLL_NOT_ATTRIBUTABLE_NOTE,
   TEAM_SOLL_PARTIAL_SCOPE_NOTE,
   isTeamSalonRejected,
+  overtimeTrendHours,
   teamSalonFilter,
   teamSalonViewSalon,
   teamTrendView,
@@ -308,5 +309,30 @@ describe("upcomingFromResponse", () => {
 
   it("an empty list stays empty", () => {
     expect(upcomingFromResponse([])).toEqual([]);
+  });
+});
+
+describe("overtimeTrendHours — the saldo line of the Verläufe tab (Issue #895)", () => {
+  const months = ["2026-06", "2026-07", "2026-08", "2026-09"].map((month) => ({ month }));
+
+  it("uses the snapshot of a closed month, fills a gap forward and ends on the live balance", () => {
+    const hours = overtimeTrendHours(months, {
+      snapshots: [
+        { month: "2026-06-01", teamCarryOverMinutes: 600 },
+        { month: "2026-08-01", teamCarryOverMinutes: -90 },
+      ],
+      currentTeamBalanceMinutes: 150,
+    });
+    // June 10 h, July repeats June, August -1.5 h, September is the live 2.5 h.
+    expect(hours).toEqual([10, 10, -1.5, 2.5]);
+  });
+
+  it("starts at 0 when the leading months have no snapshot, and rounds to one decimal", () => {
+    const hours = overtimeTrendHours(months, { snapshots: [], currentTeamBalanceMinutes: 100 });
+    expect(hours).toEqual([0, 0, 0, 1.7]);
+  });
+
+  it("an empty window gives an empty series", () => {
+    expect(overtimeTrendHours([], { snapshots: [], currentTeamBalanceMinutes: 5 })).toEqual([]);
   });
 });

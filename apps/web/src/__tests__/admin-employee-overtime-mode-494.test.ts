@@ -19,7 +19,16 @@ function readRouteFile(relativeFromHere: string, relativeFromCwd: string): strin
   }
 }
 
+// Since Issue #854 (plan 854-21) the contract form lives in the Vertrag tab component and its model.
 const DETAIL = readRouteFile(
+  "../lib/components/employees/detail/VertragTab.svelte",
+  "src/lib/components/employees/detail/VertragTab.svelte",
+);
+const MODEL = readRouteFile(
+  "../lib/employees/vertrag-form.ts",
+  "src/lib/employees/vertrag-form.ts",
+);
+const PAGE = readRouteFile(
   "../routes/(app)/admin/employees/[id]/+page.svelte",
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
@@ -32,26 +41,29 @@ describe("Überstunden-Modus lock on admin/employees/[id] (Issue #494 R5)", () =
     const start = DETAIL.indexOf("<OvertimeModeField");
     expect(start, "component usage not found").toBeGreaterThan(-1);
     const usage = DETAIL.slice(start, DETAIL.indexOf("/>", start));
-    expect(usage).toContain("type={eType}");
-    expect(usage).toContain("monthlyHours={eMonthlyHours}");
-    expect(usage).toContain("value={eOvertimeMode}");
+    expect(usage).toContain("type={values.type}");
+    expect(usage).toContain("monthlyHours={values.monthlyHours}");
+    expect(usage).toContain("value={values.overtimeMode}");
   });
 
   it("no longer owns the select itself", () => {
-    expect(DETAIL).toContain('id="e-monthly-hours"'); // marker: the neighbouring field is still there
+    expect(DETAIL).toContain('label="Stunden pro Monat"'); // marker: the neighbouring field is still there
     expect(DETAIL).not.toContain('<select id="e-overtime-mode"');
-    expect(DETAIL).not.toContain("bind:value={eOvertimeMode}");
+    expect(DETAIL).not.toContain("bind:value={values.overtimeMode}");
+    // The page holds no overtime-mode state any more.
+    expect(PAGE).not.toContain("eOvertimeMode");
   });
 
   it("sends the stored mode unchanged (payload line verbatim)", () => {
-    expect(DETAIL).toContain(
-      'overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",',
+    expect(MODEL).toContain(
+      'overtimeMode: values.type === "MONTHLY_HOURS" ? values.overtimeMode : "CARRY_FORWARD",',
     );
   });
 
-  it("never assigns TRACK_ONLY to eOvertimeMode (the lock is display only)", () => {
-    expect(DETAIL).toContain("eOvertimeMode = sched?.overtimeMode"); // marker: the load assignment
-    expect(DETAIL).not.toMatch(/eOvertimeMode\s*=\s*"TRACK_ONLY"/);
+  it("never assigns TRACK_ONLY to the overtime mode (the lock is display only)", () => {
+    expect(MODEL).toContain("overtimeMode: s?.overtimeMode ??"); // marker: the load assignment
+    expect(DETAIL).not.toMatch(/overtimeMode\s*=\s*"TRACK_ONLY"/);
+    expect(MODEL).not.toMatch(/overtimeMode\s*[=:]\s*"TRACK_ONLY"/);
   });
 
   it("does not duplicate the hint sentence (single source: work-schedule.ts)", () => {

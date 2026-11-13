@@ -57,7 +57,7 @@
     },
     {
       "page": "(app)/admin/export/+page.svelte",
-      "path": "/verwalten/daten/datev",
+      "path": "/verwalten/daten/export",
       "auth": "tenant-admin"
     },
     {
@@ -68,11 +68,6 @@
     {
       "page": "(app)/admin/integrations/+page.svelte",
       "path": "/verwalten/system/integrationen",
-      "auth": "tenant-admin"
-    },
-    {
-      "page": "(app)/admin/leave-limits/+page.svelte",
-      "path": "/verwalten/regeln/urlaubsgrenzen",
       "auth": "tenant-admin"
     },
     {
@@ -109,25 +104,14 @@
     {
       "page": "(app)/admin/shutdowns/+page.svelte",
       "path": "/verwalten/regeln/betriebsurlaub",
-      "auth": "tenant-admin"
+      "auth": "tenant-admin",
+      "skip": "Redirect-only page (#854): the company shutdown list is the Betriebsurlaub tab of Regeln › Abwesenheiten (/verwalten/regeln/abwesenheiten, measured as its own route); the file renders no content of its own. Its detail sub-route below keeps its path."
     },
     {
       "page": "(app)/admin/shutdowns/[id]/+page.svelte",
       "path": "/verwalten/regeln/betriebsurlaub/:shutdownId",
       "auth": "tenant-admin",
       "fill": "shutdown"
-    },
-    {
-      "page": "(app)/admin/special-leave/+page.svelte",
-      "path": "/admin/special-leave",
-      "auth": "tenant-admin",
-      "skip": "Redirect-only page: onMount sends the browser to /admin/vacation#sonderurlaub, which is measured as the /admin/vacation route."
-    },
-    {
-      "page": "(app)/admin/special-leave/[id]/+page.svelte",
-      "path": "/admin/special-leave/example",
-      "auth": "tenant-admin",
-      "skip": "Redirect stub with no content of its own (it sends the browser to /admin/vacation#sonderurlaub); the target is measured as the /admin/vacation route."
     },
     {
       "page": "(app)/admin/support-access/+page.svelte",
@@ -152,7 +136,7 @@
     },
     {
       "page": "(app)/admin/vacation/+page.svelte",
-      "path": "/verwalten/regeln/urlaub",
+      "path": "/verwalten/regeln/abwesenheiten",
       "auth": "tenant-admin"
     },
     {
@@ -260,6 +244,21 @@
     {
       "page": "(app)/verwalten/regeln/+page.svelte",
       "path": "/verwalten/regeln",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/verwalten/regeln/arbeitszeit/+page.svelte",
+      "path": "/verwalten/regeln/arbeitszeit",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/verwalten/regeln/benachrichtigungen/+page.svelte",
+      "path": "/verwalten/regeln/benachrichtigungen",
+      "auth": "tenant-admin"
+    },
+    {
+      "page": "(app)/verwalten/regeln/monatsabschluss/+page.svelte",
+      "path": "/verwalten/regeln/monatsabschluss",
       "auth": "tenant-admin"
     },
     {

@@ -1,7 +1,7 @@
-// Issue #593 (quick part) — `/admin/export` offers only formats that work. The former „Bald“ tiles
-// (PDF-Bericht, iCal) did nothing but toast „Bald verfügbar“; the PDF documents live under
-// „Berichte“ and the iCal feed under „Abwesenheiten“. Source-read pin (a route page cannot be
-// mounted here, see admin-export-save-wiring.test.ts).
+// Issue #593 (quick part), carried into the Export page of #854 (plan 854-24) - `/admin/export` offers only
+// exports that work. The former „Bald“ tiles (PDF-Bericht, iCal) did nothing but toast „Bald verfügbar“; today
+// every button on the page starts a real download through `downloadFromApi`. Source-read pin (a route page
+// cannot be mounted here, see admin-export-save-wiring.test.ts).
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,9 +28,25 @@ describe("Issue #593 — no non-functional placeholders on /admin/export", () =>
     expect(src).not.toContain("späteren Milestone");
   });
 
-  it("offers no PDF or iCal tile — only the working DATEV export", () => {
-    expect(src).not.toMatch(/format-name">PDF-Bericht/);
-    expect(src).not.toMatch(/format-name">iCal/);
-    expect(src).toMatch(/format-name" translate="no">DATEV-LODAS/);
+  it("has no decorative CSV preview and no display-only export parameter", () => {
+    expect(src).not.toContain("csv-preview");
+    expect(src).not.toContain("taxOffice");
+    expect(src).not.toContain("Beratungsbüro");
+  });
+
+  it("every export button goes through the authorised download helper", () => {
+    expect(src).toContain('import { downloadFromApi } from "$api/download";');
+    // The paths of the real exports; each is requested only inside `download()`.
+    for (const path of [
+      "/reports/datev?",
+      "/reports/datev/employee?",
+      "/reports/monthly-export/pdf?",
+      "/leave/ical/",
+    ]) {
+      expect(src, path).toContain(path);
+    }
+    expect(src).toContain("periodCsvPath(");
+    expect(src).toContain("periodAbsencesCsvPath(");
+    expect(src).not.toMatch(/\bfetch\(/);
   });
 });

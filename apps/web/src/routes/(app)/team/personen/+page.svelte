@@ -16,14 +16,9 @@
   import { mayOpenTeamPage } from "$lib/nav/team-nav";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import SalonScopeLabel from "$lib/components/team/SalonScopeLabel.svelte";
-  import DataTable, {
-    type DataTableColumn,
-    type DataTableSort,
-  } from "$components/ui/DataTable.svelte";
-  import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
-  import { avatarIndex, initialsOf } from "$components/ui/ListRow.svelte";
   import ErrorState from "$components/ui/ErrorState.svelte";
-  import Chip from "$components/ui/Chip.svelte";
+  import PersonenTable from "$lib/components/employees/PersonenTable.svelte";
+  import type { DataTableSort } from "$components/ui/DataTable.svelte";
   import {
     isSalonFilterRejected,
     salonPageFilter,
@@ -32,8 +27,6 @@
   } from "$lib/salons/page-scope";
   import { urlState } from "$lib/table/url-state";
   import { localCalendarDay } from "$lib/employees/employment-state";
-  import { scheduleModelLabel } from "$lib/employees/contract-history";
-  import { fmtMin } from "$lib/utils/format-minutes";
   import {
     activeCount,
     activeCountSentence,
@@ -43,7 +36,7 @@
     type PersonenEmployee,
     type PersonenSortKey,
   } from "$lib/team/personen-model";
-  import { PERSONEN_VERTRAG_CODES, personenUrlSchema } from "$lib/team/personen-url-state";
+  import { personenUrlSchema } from "$lib/team/personen-url-state";
 
   let people: PersonenEmployee[] = $state([]);
   let loading = $state(true);
@@ -129,33 +122,11 @@
   // The Stammsalon filter is offered only with salon choice (#64 rule), over the salons the caller
   // reaches (the header's list); the header salon itself narrows the request (#558).
   const salonFilterOffered = $derived(showSalonOptions($salonContext) && pageSalonId === null);
-  const toolbarFilters = $derived<ToolbarFilter[]>([
-    ...(salonFilterOffered
-      ? [
-          {
-            key: "salon",
-            label: "Salon",
-            options: $salonContext.salons.map((salon) => ({ value: salon.id, label: salon.name })),
-            value: $salonContext.salons.some((salon) => salon.id === view.salon) ? view.salon : "",
-          },
-        ]
-      : []),
-    {
-      key: "status",
-      label: "Status",
-      options: [{ value: "aktiv", label: "Aktiv" }],
-      value: view.status === "aktiv" ? "aktiv" : "",
-    },
-    {
-      key: "vertrag",
-      label: "Vertrag",
-      options: PERSONEN_VERTRAG_CODES.map((code) => ({
-        value: code,
-        label: scheduleModelLabel(code),
-      })),
-      value: view.vertrag,
-    },
-  ]);
+  const salonOptions = $derived(
+    salonFilterOffered
+      ? $salonContext.salons.map((salon) => ({ value: salon.id, label: salon.name }))
+      : null,
+  );
   function onFilterChange(key: string, value: string) {
     if (key === "status") listUrl.write({ status: value === "aktiv" ? "aktiv" : "alle" });
     else if (key === "vertrag") listUrl.write({ vertrag: personenUrlSchema.vertrag.parse(value) });
@@ -206,17 +177,6 @@
   function zeitenHref(id: string): string {
     return `/team/zeiten?employeeId=${encodeURIComponent(id)}`;
   }
-
-  // The prototype's columns: Name, Stammsalon, Vertrag, Std./Woche, Rollen, Status and „Öffnen“.
-  const columns = $derived<DataTableColumn[]>([
-    { key: "name", label: "Name", primary: true, sortable: true },
-    { key: "salon", label: "Stammsalon", sortable: true },
-    { key: "vertrag", label: "Vertrag", sortable: true },
-    { key: "stunden", label: "Std./Woche", sortable: true, align: "end" },
-    { key: "rollen", label: "Rollen" },
-    { key: "status", label: "Status", sortable: true },
-    ...(mayOpenZeiten ? [{ key: "open", label: "", align: "end" as const }] : []),
-  ]);
 </script>
 
 <svelte:head>
@@ -230,122 +190,22 @@
 {#if failed}
   <ErrorState onRetry={() => void load()} retrying={loading} />
 {:else}
-  <DataTable
-    {columns}
+  <PersonenTable
     rows={shownRows}
-    rowKey={(row) => row.id}
-    rowTestId={(row) => `team-person-${row.id}`}
+    total={allRows.length}
+    {loading}
+    query={filterSearch}
+    onQueryInput={onSearchInput}
+    filter={{ status: view.status, vertrag: view.vertrag, salon: view.salon }}
+    {salonOptions}
+    {onFilterChange}
+    onReset={resetFilters}
+    filtered={filtersActive && allRows.length > 0}
     sort={tableSort}
     {onSort}
-    filtered={filtersActive && allRows.length > 0}
-    onResetFilters={resetFilters}
-    onRowClick={mayOpenZeiten ? (row) => goto(zeitenHref(row.id)) : undefined}
-    {loading}
-    caption="Personen"
-  >
-    {#snippet toolbar()}
-      <TableToolbar
-        bind:query={() => filterSearch, onSearchInput}
-        count={shownRows.length}
-        total={allRows.length}
-        filters={toolbarFilters}
-        {onFilterChange}
-        onReset={resetFilters}
-        searchLabel="Name oder Nummer"
-        filterButtons
-      />
-    {/snippet}
-    {#snippet cell(row, column)}
-      {#if column.key === "name"}
-        <span class="p-name">
-          <span
-            class="p-avatar"
-            style="--av: var(--a{avatarIndex(row.name)}); --av-t: var(--a{avatarIndex(row.name)}-t)"
-            aria-hidden="true">{initialsOf(row.name)}</span
-          >
-          <span class="p-text">
-            <span class="p-title">{row.name}</span>
-            <span class="p-number">{row.number}</span>
-          </span>
-        </span>
-      {:else if column.key === "salon"}
-        {row.salonName}
-      {:else if column.key === "vertrag"}
-        {row.modelLabel}
-      {:else if column.key === "stunden"}
-        <span class="p-figure">
-          {row.weeklyHours === null ? "–" : fmtMin(Math.round(row.weeklyHours * 60))}
-        </span>
-      {:else if column.key === "rollen"}
-        <span class="p-roles">{row.roles}</span>
-      {:else if column.key === "status"}
-        <Chip tone={row.statusTone}>{row.statusLabel}</Chip>
-      {:else if column.key === "open"}
-        <a
-          class="p-open row-action"
-          href={zeitenHref(row.id)}
-          aria-label="Zeiten von {row.name} öffnen">Öffnen</a
-        >
-      {/if}
-    {/snippet}
-  </DataTable>
+    rowTestIdPrefix="team-person"
+    openHref={mayOpenZeiten ? (row) => zeitenHref(row.id) : undefined}
+    openLabel={(row) => `Zeiten von ${row.name} öffnen`}
+    onOpen={mayOpenZeiten ? (row) => goto(zeitenHref(row.id)) : undefined}
+  />
 {/if}
-
-<style>
-  .p-name {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s-3);
-    min-width: 0;
-  }
-
-  .p-avatar {
-    display: inline-flex;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: var(--av);
-    color: var(--av-t);
-    font-size: var(--fs-xs);
-    font-weight: 600;
-  }
-
-  .p-text {
-    display: inline-flex;
-    flex-direction: column;
-    min-width: 0;
-    text-align: start;
-  }
-
-  .p-title {
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .p-number {
-    color: var(--text-3);
-    font-size: var(--fs-xs);
-    font-weight: 400;
-  }
-
-  .p-figure {
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* A quiet text action like the prototype's „Öffnen“ (owner review): no underline, no brand weight. */
-  .p-open {
-    color: var(--text-2);
-    font-weight: 500;
-  }
-
-  .p-open:hover {
-    color: var(--text);
-  }
-
-  .p-roles {
-    color: var(--text-2);
-  }
-</style>

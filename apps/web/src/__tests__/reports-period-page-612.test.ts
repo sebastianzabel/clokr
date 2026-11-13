@@ -110,14 +110,23 @@ describe("/reports period area (Issue #612) - the URL is the one state", () => {
     );
   });
 
-  it("the tab list is an ARIA tablist named Berichtsbereich with a roving tabindex", () => {
-    expect(TEMPLATE).toContain('role="tablist"');
-    expect(TEMPLATE).toContain('aria-label="Berichtsbereich"');
-    expect(TEMPLATE).toContain('role="tab"');
-    expect(TEMPLATE).toContain("tabindex={tab === activeTab ? 0 : -1}");
-    expect(TEMPLATE).toContain("{#each rights.periodTabs as tab (tab)}");
-    const keys = functionBody("onTabKeydown");
-    for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) expect(keys).toContain(key);
+  it("the tab strip is the PageTabs block named Berichtsbereich and writes the tab only through the URL state (Issue #854)", () => {
+    expect(TEMPLATE).toContain("<PageTabs");
+    expect(TEMPLATE).toContain('tabsLabel="Berichtsbereich"');
+    expect(TEMPLATE).toContain("{onTabChange}");
+    expect(TEMPLATE).toContain("tab={activeTab}");
+    expect(TEMPLATE).toContain("rights.periodTabs.map((t) => ({ value: t, label: TAB_LABEL[t] }))");
+    // The block owns the roving focus and the arrow keys; the page keeps no tablist of its own.
+    expect(PAGE).not.toContain('role="tablist"');
+    expect(PAGE).not.toContain("view-tabs");
+    expect(SCRIPT).not.toContain("onTabKeydown");
+    const body = functionBody("onTabChange");
+    expect(body).toContain("rights.periodTabs.find((t) => t === value)");
+    expect(body).toContain("writeState({ ...urlState, tab })");
+  });
+
+  it("only the selected tab panel holds content (the block renders every panel)", () => {
+    expect(TEMPLATE).toContain("{#if value === activeTab}");
   });
 
   it("the tabs come from the permissions (reportRights.periodTabs), never from a role", () => {
@@ -148,12 +157,14 @@ describe("/reports period area (Issue #612) - one period control, no old selects
     expect(PAGE).not.toContain('label="Mitarbeiter"');
     expect(PAGE).not.toContain('label="Kritische Salden"');
     expect(PAGE).not.toContain('label="Urlaub genutzt"');
-    expect(PAGE).toContain("<KPIStat label={MONTH_STATUS_LABEL.CLOSED}"); // #598: one status wording
+    expect(PAGE).toContain("{ label: MONTH_STATUS_LABEL.CLOSED, value: String(kpiClosedMonths)");
+    expect(TEMPLATE).toContain("<KpiStrip items={empKpiItems}");
+    expect(PAGE).not.toContain("KPIStat");
     expect(PAGE).toContain("<PeriodKpis");
   });
 
-  it("PageHead names the Verwalten eyebrow for team callers and keeps the personal one (#844, Z-03)", () => {
-    expect(TEMPLATE).toContain('eyebrow={showTeamArea ? "Verwalten" : "Ich"}');
+  it("PageHead names the page by its table label and carries the team and the personal sub (#844, Z-03)", () => {
+    expect(TEMPLATE).toContain('title={pageLabel("/reports")}');
     expect(TEMPLATE).toContain(
       '"Zeiten, Konten und Urlaub für einen Zeitraum – bis zu 12 Monate."',
     );
@@ -202,7 +213,8 @@ describe("/reports period area (Issue #612) - one request, the latest answer, no
     const body = functionBody("loadPeriod");
     expect(body).toContain("PERIOD_TIMEOUT_MS");
     expect(body).toContain('e instanceof ApiError && e.status === 400 ? "INVALID" : "FAILED"');
-    expect(TEMPLATE).toContain("Erneut versuchen");
+    // The retry button is the ErrorState block's own; the invalid period names its own action.
+    expect(TEMPLATE).toContain("<ErrorState");
     expect(TEMPLATE).toContain("Zum aktuellen Monat");
     expect(TEMPLATE).toContain(
       "Dieser Zeitraum lässt sich nicht auswerten – höchstens 12 Monate auf einmal.",
@@ -244,22 +256,27 @@ describe("/reports period area (Issue #612) - one request, the latest answer, no
 
 describe("/reports period area (Issue #612) - dialogs, export-only callers, tabs", () => {
   it("the range dialog sits after the period panel, never inside it", () => {
-    const panelStart = TEMPLATE.indexOf('class="page period-content"');
-    const panelEnd = TEMPLATE.indexOf("<PeriodRangeDialog");
+    const panelStart = TEMPLATE.indexOf("{#snippet periodPanel()}");
+    const panelEnd = TEMPLATE.indexOf("{#snippet heutePanel()}");
     expect(panelStart).toBeGreaterThan(-1);
     expect(panelEnd).toBeGreaterThan(panelStart);
-    expect(TEMPLATE.slice(panelStart, panelEnd)).not.toContain("<Modal");
+    const panel = TEMPLATE.slice(panelStart, panelEnd);
+    for (const dialog of ["<Modal", "<Dialog", "<PeriodRangeDialog", "<ExportDialog"]) {
+      expect(panel).not.toContain(dialog);
+    }
+    expect(TEMPLATE.indexOf("<PeriodRangeDialog")).toBeGreaterThan(-1);
   });
 
   it("a caller who may export but read no report gets the bar and a short note, no tabs (amendment 5)", () => {
     expect(SCRIPT).toContain(
       "const exportOnly = $derived(showTeamArea && rights.periodTabs.length === 0);",
     );
-    expect(TEMPLATE).toContain("{#if periodTabActive || exportOnly}");
+    expect(TEMPLATE).toContain("(periodTabActive || exportOnly)");
     expect(TEMPLATE).toContain("{#if exportOnly}");
     expect(TEMPLATE).toContain("Keine Auswertung freigegeben – Exporte verfügbar");
-    expect(TEMPLATE).toContain("canExport={canReportExport}");
-    expect(TEMPLATE).toContain("{#if rights.periodTabs.length > 0}");
+    expect(TEMPLATE).toContain("showTeamArea && canReportExport");
+    expect(TEMPLATE).toContain("{#if rights.periodTabs.length > 0 && activeTab !== null}");
+    expect(TEMPLATE).toContain("{:else if exportOnly}");
   });
 
   it("the Überstunden-Übersicht card is replaced by the period table; the exited section stays under it", () => {
@@ -338,14 +355,16 @@ describe("/reports period area (Issue #612) - dialogs, export-only callers, tabs
 });
 
 describe("/reports period area (Issue #612) - the person drill-down", () => {
-  it("renders one <PersonDrilldown after the period panel and the range dialog, never inside it", () => {
+  it("renders one <PersonDrilldown after the range dialog, outside the period panel", () => {
     expect((TEMPLATE.match(/<PersonDrilldown\b/g) ?? []).length).toBe(1);
-    const panel = TEMPLATE.indexOf('class="page period-content"');
+    const panelStart = TEMPLATE.indexOf("{#snippet periodPanel()}");
+    const panelEnd = TEMPLATE.indexOf("{#snippet heutePanel()}");
     const range = TEMPLATE.indexOf("<PeriodRangeDialog");
     const drill = TEMPLATE.indexOf("<PersonDrilldown");
-    expect(panel).toBeGreaterThan(-1);
-    expect(range).toBeGreaterThan(panel);
+    expect(panelStart).toBeGreaterThan(-1);
+    expect(range).toBeGreaterThan(-1);
     expect(drill).toBeGreaterThan(range);
+    expect(drill < panelStart || drill > panelEnd).toBe(true);
   });
 
   it("the URL decides what is open: person= must name a row of the answer, on a period tab only", () => {
@@ -396,24 +415,20 @@ describe("/reports period area (Issue #612) - the person drill-down", () => {
     expect((PAGE.match(/loadDayEntries\(/g) ?? []).length).toBe(1);
   });
 
-  it("the person documents are the page's blob downloads, for the month the modal names", () => {
+  it("the person's Stundennachweis is the page's blob download; DATEV left the page (Issue #854)", () => {
     const pdf = functionBody("downloadEmployeePdf");
     expect(pdf).toContain(
       "/reports/monthly/pdf?employeeId=${employeeId}&year=${target.year}&month=${target.month}",
     );
     expect(pdf).toContain("toasts.error(");
-    const datev = functionBody("downloadEmployeeDatev");
-    expect(datev).toContain(
-      "/api/v1/reports/datev/employee?employeeId=${employeeId}&year=${target.year}&month=${target.month}",
-    );
-    expect(datev).toContain("toasts.error(");
     expect(TEMPLATE).toContain("{canReportExport}");
     expect(TEMPLATE).toContain(
       "downloadEmployeePdf(drillRow.employeeId, drillRow.employeeName, target)",
     );
-    expect(TEMPLATE).toContain(
-      "downloadEmployeeDatev(drillRow.employeeId, drillRow.employeeName, target)",
-    );
+    // D-854-22: the drill-down links into Daten > Export; the page keeps no DATEV download.
+    expect(SCRIPT).not.toContain("downloadEmployeeDatev");
+    expect(TEMPLATE).not.toContain("onDownloadDatev");
+    expect(PAGE).not.toContain("/reports/datev");
     // The old per-row error state is gone with the buttons.
     expect(PAGE).not.toContain("empDownloadErrors");
   });
@@ -425,9 +440,9 @@ describe("/reports period area (Issue #612) - the person drill-down", () => {
 
 describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one export dialog", () => {
   it("the Heute panel has no period bar, no KPIs and renders the list only with team-overview rights", () => {
-    const panel = TEMPLATE.indexOf('id="reports-panel-heute"');
+    const panel = TEMPLATE.indexOf("{#snippet heutePanel()}");
     expect(panel).toBeGreaterThan(-1);
-    const block = TEMPLATE.slice(panel, TEMPLATE.indexOf("<PeriodRangeDialog", panel));
+    const block = TEMPLATE.slice(panel, TEMPLATE.indexOf("{/snippet}", panel));
     expect(block).toContain("{#if canTeamAttendance}");
     expect(block).toContain("<TodayAttendance");
     expect(block).not.toContain("<PeriodBar");
@@ -440,7 +455,7 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     const body = functionBody("openExport");
     expect(body).toContain("focusReturnTo = trigger;");
     expect(body).toContain("exportOpen = true;");
-    expect(TEMPLATE).toContain("onOpenExport={openExport}");
+    expect(TEMPLATE).toContain("onclick={(e) => openExport(e.currentTarget)}");
   });
 
   it("renders one <ExportDialog after the period panel, only for report:export", () => {
@@ -454,11 +469,10 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     expect(TEMPLATE).toContain("bind:open={exportOpen}");
   });
 
-  it("wires the four downloads, the § 9 loader and the error toast", () => {
+  it("wires the three downloads, the § 9 loader and the error toast (no DATEV, Issue #854)", () => {
     for (const wiring of [
       "loadSection9Note={loadExportSection9Note}",
       "onMonthlyExport={downloadMonthlyExport}",
-      "onDatev={downloadDatev}",
       "onCsv={downloadPeriodCsv}",
       "onAbsenceCsv={downloadAbsencesCsv}", // Issue #713
       "onError={(message) => toasts.error(message)}",
@@ -467,11 +481,12 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     }
   });
 
-  it("Monatsexport and CSV carry the salon, DATEV never does", () => {
+  it("Monatsexport and CSV carry the salon; the page starts no tenant DATEV download (Issue #854)", () => {
     expect(functionBody("downloadMonthlyExport")).toContain("withSalonId(");
     expect(functionBody("downloadPeriodCsv")).toContain("pageSalonId");
-    expect(functionBody("downloadDatev")).not.toContain("pageSalonId");
-    expect(functionBody("downloadDatev")).not.toContain("withSalonId(");
+    expect(SCRIPT).not.toContain("function downloadDatev(");
+    expect(SCRIPT).not.toContain("/reports/datev?");
+    expect(TEMPLATE).not.toContain("onDatev");
   });
 
   // Issue #713 (D-11): the Abwesenheiten file asks the same question as the table and carries the
@@ -487,7 +502,6 @@ describe("/reports period area (Issue #612, 612-06) - the Heute tab and the one 
     expect(body).toContain("isSalonFilterRejected(e)");
     expect(body).toContain("exportSalonRejected = true;");
     expect(body).toContain("throw e;");
-    expect(functionBody("downloadDatev")).not.toContain("pageSalonId");
   });
 
   it("the CSV is saved as Zeiten-und-Konten_<from>_<to>.csv", () => {
@@ -561,23 +575,22 @@ describe("/reports (Issue #612, AC-612-1) - exactly one period control", () => {
     expect(countOf(SCRIPT, /<select\b/g)).toBe(0);
   });
 
-  it("the only month or year selects live in the two dialogs; the table holds one narrow sort select", () => {
+  it("the only month or year selects live in the two dialogs; the tables hold none", () => {
     const selects = Object.fromEntries(
       COMPONENT_NAMES.map((name) => [name, countOf(COMPONENTS[name], /<select\b/g)]),
     );
     // PeriodRangeDialog: month and year of „Von“ and „Bis“; ExportDialog: the month of
-    // Monatsexport and DATEV; TimesAccountsTable: the sort select of the narrow list, nothing else.
+    // Monatsexport and DATEV; the table sorts through its column heads and holds no select (#854).
     expect(selects).toEqual({
       PeriodBar: 0,
       PeriodKpis: 0,
       PeriodRangeDialog: 4,
       PersonDrilldown: 0,
-      TimesAccountsTable: 1,
+      TimesAccountsTable: 0,
       VacationAbsenceTab: 0,
       TodayAttendance: 0,
       ExportDialog: 1,
     });
-    expect(COMPONENTS.TimesAccountsTable).toContain('aria-label="Sortieren nach"');
     expect(COMPONENTS.ExportDialog).toContain("Monat für Monatsexport und DATEV");
   });
 
@@ -611,19 +624,16 @@ describe("/reports (Issue #612, AC-612-1) - exactly one period control", () => {
     expect(COMPONENTS.TimesAccountsTable).toContain('from "$lib/reports/team-saldo"');
   });
 
-  it("the three dialogs render after .period-content, never inside it or an animated Card (#570)", () => {
-    const panel = TEMPLATE.indexOf('class="page period-content"');
-    expect(panel).toBeGreaterThan(-1);
+  it("the three dialogs render outside the period panel, never inside it or an animated block (#570)", () => {
+    const panelStart = TEMPLATE.indexOf("{#snippet periodPanel()}");
+    const panelEnd = TEMPLATE.indexOf("{#snippet heutePanel()}");
+    expect(panelStart).toBeGreaterThan(-1);
     for (const tag of ["<PeriodRangeDialog", "<ExportDialog", "<PersonDrilldown"]) {
-      expect(TEMPLATE.indexOf(tag), tag).toBeGreaterThan(panel);
+      const at = TEMPLATE.indexOf(tag);
+      expect(at, tag).toBeGreaterThan(-1);
+      expect(at < panelStart || at > panelEnd, tag).toBe(true);
     }
-    // Nothing between the panel and the first dialog opens a Modal or a Card.
-    const firstDialog = Math.min(
-      ...["<PeriodRangeDialog", "<ExportDialog", "<PersonDrilldown"].map((t) =>
-        TEMPLATE.indexOf(t),
-      ),
-    );
-    expect(TEMPLATE.slice(panel, firstDialog)).not.toContain("<Modal");
+    expect(TEMPLATE.slice(panelStart, panelEnd)).not.toContain("<Modal");
   });
 });
 
@@ -652,9 +662,24 @@ describe("/reports (Issue #612) - who sees what is decided by permissions", () =
     expect(combinations).toBe(32);
   });
 
-  it("a holder of team-overview:read without report:read sees only the Heute tab by default", () => {
+  it("a holder of team-overview:read without report:read sees the Heute and Verläufe tabs, Heute first", () => {
     const rights = reportRights({ permissions: ["team-overview:read:ZUGEWIESEN"] });
-    expect([...rights.periodTabs]).toEqual(["heute"]);
+    expect([...rights.periodTabs]).toEqual(["heute", "verlaeufe"]);
+  });
+
+  it("Issue #895: the Verläufe tab renders TeamTrendsTab behind the team-overview right, fed with the page's salon filter and saldo rows", () => {
+    expect(PAGE).toContain('verlaeufe: "Verläufe"');
+    expect(TEMPLATE).toContain('{:else if value === "verlaeufe"}');
+    const panel = /\{#snippet verlaeufePanel\(\)\}([\s\S]*?)\{\/snippet\}/.exec(TEMPLATE);
+    expect(panel, "verlaeufePanel snippet").not.toBeNull();
+    const body = panel![1];
+    expect(body).toContain("{#if canTeamAttendance}");
+    expect(body).toContain("salonId={pageSalonId}");
+    expect(body).toContain("saldoRows={overtimeSections.active}");
+    // The tab is not period-driven: the period bar and the period request belong to zeiten/urlaub only.
+    expect(PAGE).toContain(
+      'const periodTabActive = $derived(activeTab === "zeiten" || activeTab === "urlaub");',
+    );
   });
 });
 
@@ -751,10 +776,10 @@ describe("/reports (Issue #612) - states of the period area", () => {
     withRows.unmount();
   });
 
-  it("failure states: error callout with a retry, the invalid period offers the current month", () => {
-    expect(TEMPLATE).toContain('class="callout error" role="alert" data-testid="period-error"');
-    expect(TEMPLATE).toContain('class="callout error" role="alert" data-testid="period-invalid"');
-    expect(TEMPLATE).toContain("Erneut versuchen");
+  it("failure states: ErrorState with a retry, the invalid period offers the current month", () => {
+    expect(TEMPLATE).toContain('data-testid="period-error"');
+    expect(TEMPLATE).toContain('role="alert" data-testid="period-invalid"');
+    expect(TEMPLATE).toContain("<ErrorState");
     expect(TEMPLATE).toContain("Zum aktuellen Monat");
   });
 
@@ -791,10 +816,12 @@ describe("/reports (Issue #612) - states of the period area", () => {
 describe("/reports (Issue #612) - staggered reveal", () => {
   it("animates the bar wrapper, the KPI card and each section of the tabs, and re-keys none of them", () => {
     expect(COMPONENTS.PeriodBar).toContain('class="period-sticky card-animate"');
-    expect(TEMPLATE).toMatch(/<Card animate>\s*<PeriodKpis/);
-    expect(COMPONENTS.TimesAccountsTable).toContain('<section class="card-animate period-section"');
-    expect(countOf(COMPONENTS.VacationAbsenceTab, "<Card animate>")).toBe(2);
-    expect(COMPONENTS.TodayAttendance).toContain("<Card animate");
+    expect(TEMPLATE).toMatch(/<div class="period-body"[^>]*>\s*<PeriodKpis/);
+    expect(COMPONENTS.TimesAccountsTable).toMatch(
+      /<section\s+class="settings-group period-section"/,
+    );
+    expect(countOf(COMPONENTS.VacationAbsenceTab, '<section class="settings-group"')).toBe(2);
+    expect(COMPONENTS.TodayAttendance).toContain('<section class="settings-group"');
     // Data changes swap the content inside the blocks: nothing is keyed.
     expect(countOf(TEMPLATE, "{#key")).toBe(0);
     for (const name of COMPONENT_NAMES) {
@@ -802,7 +829,7 @@ describe("/reports (Issue #612) - staggered reveal", () => {
     }
   });
 
-  it("mounted: both tab components emit .card-animate sections", () => {
+  it("mounted: the vacation tab emits two group sections, the Heute tab its group section", () => {
     const vacation = renderWithTheme(VacationAbsenceTab, {
       vacation: null,
       absences: null,
@@ -815,7 +842,7 @@ describe("/reports (Issue #612) - staggered reveal", () => {
       onOpenPerson: () => {},
       onNotify: async () => ({ warned: 0, skippedDedup: 0 }),
     });
-    expect(document.querySelectorAll("section.card.card-animate")).toHaveLength(2);
+    expect(document.querySelectorAll("section.settings-group")).toHaveLength(2);
     vacation.unmount();
     const today = renderWithTheme(TodayAttendance, {
       attendance: null,
@@ -825,10 +852,10 @@ describe("/reports (Issue #612) - staggered reveal", () => {
       canAddTeamEntry: false,
       canRecordTeamAbsence: false,
     });
-    expect(document.querySelectorAll("section.card.card-animate")).toHaveLength(1);
+    expect(document.querySelectorAll("section.settings-group")).toHaveLength(1);
     today.unmount();
     renderWithTheme(TimesAccountsTable, { ...TABLE_PROPS, rows: [person("A")] });
-    expect(screen.getByTestId("period-section").classList.contains("card-animate")).toBe(true);
+    expect(screen.getByTestId("period-section").classList.contains("settings-group")).toBe(true);
   });
 });
 

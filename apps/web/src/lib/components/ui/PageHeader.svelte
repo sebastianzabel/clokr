@@ -4,7 +4,9 @@
   // head is title + subtitle on the left and one or two actions on the right (below the text on a
   // phone): no accent rule, no eyebrow line, no colour-set accent word (owner request 10.11.).
   // `eyebrow` and `accent` stay in the props so every PageHead caller compiles unchanged, but they
-  // are inert - nothing renders them. With tabs a bits-ui tab strip follows the head.
+  // are inert - nothing renders them. With tabs a bits-ui tab strip follows the head; with
+  // `tabsLook="segments"` the tabs are a segmented control on the RIGHT of the head instead (the
+  // detail head of the prototype, Issue #854), and `leading` puts an avatar before the title.
   import type { Snippet } from "svelte";
   import PageTabs from "./PageTabs.svelte";
 
@@ -34,6 +36,12 @@
     onTabChange?: (value: string) => void;
     /** Level of the title element; 2 for a header inside a page that has its own h1. */
     headingLevel?: 1 | 2;
+    /** "strip" (default): tabs below the head; "segments": a segmented control right of the head. */
+    tabsLook?: "strip" | "segments";
+    /** Accessible name of the tablist. */
+    tabsLabel?: string;
+    /** Rendered before the title block (an avatar) with `tabsLook="segments"`; decorative only. */
+    leading?: Snippet;
   }
 
   let {
@@ -45,11 +53,18 @@
     panel,
     onTabChange,
     headingLevel = 1,
+    tabsLook = "strip",
+    tabsLabel,
+    leading,
   }: Props = $props();
 </script>
 
 {#snippet head(withTabs: boolean)}
-  <header class="page-head" class:page-head--tabs={withTabs}>
+  <header
+    class="page-head"
+    class:page-head--tabs={withTabs}
+    class:page-head--inline={withTabs && tabsLook === "segments"}
+  >
     <div class="page-head-text">
       {#if headingLevel === 2}
         <h2 translate="no">{title}</h2>
@@ -69,9 +84,24 @@
 {/snippet}
 
 <!-- The head is a snippet so that both branches render exactly one <header> and nothing else. -->
-{#if tabs && tabs.length > 0}
+<!-- The leading (an avatar) sits next to the header, never inside it, so the header's markup is the
+     same with and without one. -->
+{#snippet segmentsHead()}
+  {#if leading}
+    <div class="page-head-row">
+      <div class="page-head-leading">{@render leading()}</div>
+      {@render head(true)}
+    </div>
+  {:else}
+    {@render head(true)}
+  {/if}
+{/snippet}
+
+{#if tabs && tabs.length > 0 && tabsLook === "segments"}
+  <PageTabs {tabs} bind:tab {panel} {onTabChange} {tabsLabel} look="segments" head={segmentsHead} />
+{:else if tabs && tabs.length > 0}
   {@render head(true)}
-  <PageTabs {tabs} bind:tab {panel} {onTabChange} />
+  <PageTabs {tabs} bind:tab {panel} {onTabChange} {tabsLabel} />
 {:else}
   {@render head(false)}
 {/if}
@@ -95,6 +125,31 @@
   .page-head-text {
     flex: 1;
     min-width: 0;
+  }
+
+  /* Inside the segments row the row itself keeps the distance to the panel. */
+  .page-head--inline {
+    margin-bottom: 0;
+    flex-wrap: nowrap;
+    gap: var(--s-3);
+  }
+
+  .page-head-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-width: 0;
+  }
+
+  .page-head-row > .page-head {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .page-head-leading {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
   }
 
   .page-head :is(h1, h2) {
@@ -135,6 +190,14 @@
       justify-content: flex-start;
       /* Two actions may be wider than a 320 px phone together; the second one then takes a row. */
       flex-wrap: wrap;
+    }
+    /* The segments head keeps one line (nowrap): the text takes the free width and a status chip
+       keeps its own, so neither squeezes the other to nothing (salon detail, #854). */
+    .page-head--inline .page-head-text {
+      flex: 1 1 auto;
+    }
+    .page-head--inline .page-head-actions {
+      width: auto;
     }
   }
 </style>

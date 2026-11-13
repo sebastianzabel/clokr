@@ -3,12 +3,19 @@
   // figures, the closing saldo, the month series of the SAME answer, the vacation line, the day
   // list of the selected month and the person documents. Pattern 3: every figure is the server's;
   // the month names come from the server's year/month, never from a stored period start.
+  // Rebuilt on the blocks for Issue #854: a Dialog, a KpiStrip, a DataTable for the months and one
+  // for the days (cards below 760 px of container width), Chips. The DATEV file of one person is
+  // not started here any more (D-854-22, AC-7): a link opens Daten > Export with the person, the
+  // year and the month preselected.
   //
   // The component owns no URL, no navigation and no API client. The page injects the day-list
   // loader, which it only reaches through this component - and this component calls it only with
   // `canTimeEntryRead` (T-612-20): without the right there is no request, just one hint line.
   import { untrack } from "svelte";
-  import Modal from "$components/ui/Modal.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte";
@@ -22,6 +29,7 @@
     YearMonth,
   } from "$lib/reports/period-report";
   import { withheldReason } from "$lib/reports/period-table";
+  import { exportHref } from "$lib/export/export-centre"; // D-854-22: the one export page
   import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588 (amendment 7)
   import { monthStatusLabel } from "$lib/saldo/month-status"; // Issue #598: one status wording
   import { isTravelRow, travelRouteLabel } from "$lib/time-entries/travel-entry-form";
@@ -36,13 +44,12 @@
     periodLabel: string;
     /** time-entry:read - without it the day list is never requested. */
     canTimeEntryRead: boolean;
-    /** report:export - the two person documents. */
+    /** report:export - the Stundennachweis and the link to the DATEV export of the person. */
     canReportExport: boolean;
     /** Salon options are shown (#64): the day list gets a Salon column. */
     showSalonColumn: boolean;
     loadDayEntries: (employeeId: string, fromDay: string, toDay: string) => Promise<DayEntry[]>;
     onDownloadPdf: (month: YearMonth) => void | Promise<void>;
-    onDownloadDatev: (month: YearMonth) => void | Promise<void>;
     /** Called once when the dialog went from open to closed. */
     onClose: () => void;
   }
@@ -57,7 +64,6 @@
     showSalonColumn,
     loadDayEntries,
     onDownloadPdf,
-    onDownloadDatev,
     onClose,
   }: Props = $props();
 
@@ -100,9 +106,44 @@
 
   // Issue #598: the month's status is worded like on Zeiten and Konto (closed or open); a month
   // without a Soll keeps that remark, it is a fact about the figures, not a status.
-  function monthStatus(m: PeriodMonth): { label: string; good: boolean; noSoll: boolean } {
-    return { label: monthStatusLabel(m.confirmed), good: m.confirmed, noSoll: !m.labelled };
+  function monthStatus(m: PeriodMonth): { label: string; tone: "ok" | "neutral"; noSoll: boolean } {
+    return {
+      label: monthStatusLabel(m.confirmed),
+      tone: m.confirmed ? "ok" : "neutral",
+      noSoll: !m.labelled,
+    };
   }
+
+  // DataTable's row type is a string-keyed record; the interfaces of the period answer have no index
+  // signature, so the shown rows carry the intersection.
+  type MonthRow = PeriodMonth & Record<string, unknown>;
+  type DayRow = DayEntry & Record<string, unknown>;
+
+  const stats = $derived.by((): KpiItem[] => {
+    if (row === null) return [];
+    return [
+      { label: "Soll", value: hours(row.expectedMinutes, false) },
+      { label: "Ist", value: hours(row.workedMinutes, false) },
+      { label: "Saldo Zeitraum", value: hours(row.balanceMinutes, true) },
+      { label: "Saldo am Ende", value: hours(row.closingBalanceMinutes, true) },
+    ];
+  });
+
+  const monthColumns: DataTableColumn[] = [
+    { key: "month", label: "Monat", primary: true },
+    { key: "soll", label: "Soll (h)", align: "end" },
+    { key: "ist", label: "Ist (h)", align: "end" },
+    { key: "saldo", label: "Saldo (h)", align: "end" },
+    { key: "status", label: "Status" },
+  ];
+
+  const dayColumns = $derived<DataTableColumn[]>([
+    { key: "date", label: "Datum", primary: true },
+    { key: "time", label: "Von–Bis" },
+    { key: "break", label: "Pause", align: "end" },
+    { key: "work", label: "Arbeitszeit", align: "end" },
+    ...(showSalonColumn ? [{ key: "salon", label: "Salon" }] : []),
+  ]);
 
   // ── The closing saldo (P-13) ─────────────────────────────────────────────────────
 
@@ -130,18 +171,6 @@
   let dayState = $state<"idle" | "loading" | "error" | "ready">("idle");
   let dayGeneration = 0; // plain: only the latest read may apply its answer
   let reloadTick = $state(0);
-  let narrow = $state(false);
-
-  $effect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 640px)");
-    narrow = query.matches;
-    const onChange = (e: { matches: boolean }) => {
-      narrow = e.matches;
-    };
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  });
 
   function pad(n: number): string {
     return String(n).padStart(2, "0");
@@ -208,9 +237,14 @@
     return e.endTime === null || e.workingMinutes == null ? DASH : fmtMin(e.workingMinutes);
   }
 
-  function firstOfDay(list: DayEntry[], i: number): boolean {
-    return i === 0 || calendarDay(list[i - 1].date) !== calendarDay(list[i].date);
-  }
+  // The date is printed on the first entry of a day only.
+  const firstOfDayIds = $derived(
+    new Set(
+      entries
+        .filter((e, i) => i === 0 || calendarDay(entries[i - 1].date) !== calendarDay(e.date))
+        .map((e) => e.id),
+    ),
+  );
 
   // Issue #594: every day of the list opens that day in Team-Zeiten (the same page and reach as the
   // month link below; the list itself is only rendered with time-entry:read).
@@ -229,20 +263,24 @@
   // ── The person documents ─────────────────────────────────────────────────────────
 
   let pdfBusy = $state(false);
-  let datevBusy = $state(false);
 
-  async function download(kind: "pdf" | "datev") {
+  async function downloadPdf() {
     if (!selected) return;
     const target: YearMonth = { year: selected.year, month: selected.month };
-    if (kind === "pdf") pdfBusy = true;
-    else datevBusy = true;
+    pdfBusy = true;
     try {
-      await (kind === "pdf" ? onDownloadPdf(target) : onDownloadDatev(target));
+      await onDownloadPdf(target);
     } finally {
-      if (kind === "pdf") pdfBusy = false;
-      else datevBusy = false;
+      pdfBusy = false;
     }
   }
+
+  // D-854-22: the DATEV file of the person is made on Daten > Export; the link carries the choice.
+  const datevHref = $derived(
+    row && selected
+      ? exportHref({ personId: row.employeeId, year: selected.year, month: selected.month })
+      : "",
+  );
 </script>
 
 {#snippet footerButtons()}
@@ -250,22 +288,18 @@
     >Schließen</button
   >
   {#if canReportExport && selected && row}
-    <button
-      type="button"
+    <a
       class="btn btn-outline sm"
-      disabled={datevBusy}
-      aria-label="DATEV-Datei {selectedName} für {row.employeeName}"
-      onclick={() => download("datev")}
+      href={datevHref}
+      aria-label="DATEV für diese Person: {selectedName} für {row.employeeName} im Export öffnen"
+      >DATEV für diese Person</a
     >
-      {#if datevBusy}<Spinner size={13} />{/if}
-      DATEV (Person)
-    </button>
     <button
       type="button"
       class="btn btn-outline sm"
       disabled={pdfBusy}
       aria-label="Stundennachweis {selectedName} für {row.employeeName} (PDF)"
-      onclick={() => download("pdf")}
+      onclick={downloadPdf}
     >
       {#if pdfBusy}<Spinner size={13} />{/if}
       Stundennachweis (PDF)
@@ -273,7 +307,52 @@
   {/if}
 {/snippet}
 
-<Modal
+{#snippet monthCell(m: MonthRow, column: DataTableColumn)}
+  {#if column.key === "month"}
+    {@const index = months.findIndex((x) => x.year === m.year && x.month === m.month)}
+    <button
+      type="button"
+      class="drill-month-btn"
+      aria-pressed={index === selectedIndex}
+      onclick={() => (selectedIndex = index)}>{monthNameDe(m.year, m.month)}</button
+    >
+  {:else if column.key === "soll"}
+    <span title={m.expectedMinutes === null && row ? withheldReason(row) : undefined}
+      >{hours(m.expectedMinutes, false)}</span
+    >
+  {:else if column.key === "ist"}
+    {hours(m.workedMinutes, false)}
+  {:else if column.key === "saldo"}
+    <span title={m.balanceMinutes === null && row ? withheldReason(row) : undefined}
+      >{hours(m.balanceMinutes, true)}</span
+    >
+  {:else if column.key === "status"}
+    {@const status = monthStatus(m)}
+    <Chip tone={status.tone}>{status.label}</Chip>
+    {#if status.noSoll}<span class="drill-sub">ohne Soll</span>{/if}
+  {/if}
+{/snippet}
+
+{#snippet dayCell(e: DayRow, column: DataTableColumn)}
+  {#if column.key === "date"}
+    {#if firstOfDayIds.has(e.id)}<a class="drill-link" href={dayHref(e.date)}>{dayLabel(e.date)}</a
+      >{:else}<span class="drill-repeat"></span>{/if}
+  {:else if column.key === "time"}
+    {span(e)}
+    {#if e.endTime === null}<Chip tone="neutral">läuft</Chip>{/if}
+    {#if e.isInvalid}
+      <Chip tone="warn" title={e.invalidReason ?? undefined}>zählt nicht</Chip>
+    {/if}
+  {:else if column.key === "break"}
+    {fmtMin(e.breakMinutes)}
+  {:else if column.key === "work"}
+    {workText(e)}
+  {:else if column.key === "salon"}
+    {salonText(e)}
+  {/if}
+{/snippet}
+
+<Dialog
   bind:open
   eyebrow="Personenansicht"
   title={row?.employeeName ?? ""}
@@ -284,24 +363,7 @@
     <div class="drill">
       <p class="drill-sub">Personalnr. {row.employeeNumber} · {periodLabel}</p>
 
-      <div class="drill-stats">
-        <div class="mini-stat">
-          <span class="label">Soll</span>
-          <span class="value">{hours(row.expectedMinutes, false)}</span>
-        </div>
-        <div class="mini-stat">
-          <span class="label">Ist</span>
-          <span class="value">{hours(row.workedMinutes, false)}</span>
-        </div>
-        <div class="mini-stat">
-          <span class="label">Saldo Zeitraum</span>
-          <span class="value">{hours(row.balanceMinutes, true)}</span>
-        </div>
-        <div class="mini-stat">
-          <span class="label">Saldo am Ende</span>
-          <span class="value">{hours(row.closingBalanceMinutes, true)}</span>
-        </div>
-      </div>
+      <KpiStrip items={stats} ariaLabel="Zahlen der Person im Zeitraum" />
 
       {#if closing !== null}
         <div class="drill-saldo">
@@ -331,57 +393,20 @@
         </div>
       {/if}
 
-      <section aria-labelledby="drill-months">
-        <h3 id="drill-months" class="drill-h">Monate</h3>
-        <div class="table-wrap">
-          <table class="data-table data-table--compact drill-table">
-            <caption class="sr-only">Monate, {periodLabel}</caption>
-            <thead>
-              <tr>
-                <th scope="col">Monat</th>
-                <th scope="col" class="num">Soll (h)</th>
-                <th scope="col" class="num">Ist (h)</th>
-                <th scope="col" class="num">Saldo (h)</th>
-                <th scope="col">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each months as m, i (`${m.year}-${m.month}`)}
-                {@const status = monthStatus(m)}
-                <tr class:drill-selected={i === selectedIndex}>
-                  <td>
-                    <button
-                      type="button"
-                      class="drill-month-btn"
-                      aria-pressed={i === selectedIndex}
-                      onclick={() => (selectedIndex = i)}>{monthNameDe(m.year, m.month)}</button
-                    >
-                  </td>
-                  <td
-                    class="num"
-                    title={m.expectedMinutes === null ? withheldReason(row) : undefined}
-                    >{hours(m.expectedMinutes, false)}</td
-                  >
-                  <td class="num">{hours(m.workedMinutes, false)}</td>
-                  <td
-                    class="num"
-                    title={m.balanceMinutes === null ? withheldReason(row) : undefined}
-                    >{hours(m.balanceMinutes, true)}</td
-                  >
-                  <td>
-                    <span class="chip" class:chip-good={status.good}>{status.label}</span>
-                    {#if status.noSoll}<span class="drill-sub">ohne Soll</span>{/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+      <section class="drill-section" aria-labelledby="drill-months">
+        <h3 id="drill-months" class="settings-group-title">Monate</h3>
+        <DataTable
+          columns={monthColumns}
+          rows={months as MonthRow[]}
+          rowKey={(m) => `${m.year}-${m.month}`}
+          cell={monthCell}
+          caption={`Monate, ${periodLabel}`}
+        />
       </section>
 
       {#if vacationRow}
-        <section aria-labelledby="drill-vacation">
-          <h3 id="drill-vacation" class="drill-h">Urlaub</h3>
+        <section class="drill-section" aria-labelledby="drill-vacation">
+          <h3 id="drill-vacation" class="settings-group-title">Urlaub</h3>
           {#if vacationRow.missingEntitlement}
             <p class="drill-sub">Urlaubsjahr {vacationRow.year}: kein Anspruch hinterlegt</p>
           {:else}
@@ -397,8 +422,8 @@
 
       <!-- Issue #713 (AC-713-5, D-07): counts per kind and unit, never a date; no right beyond the
            row itself is needed, so the section does not depend on the day list's permission. -->
-      <section aria-labelledby="drill-absences">
-        <h3 id="drill-absences" class="drill-h">Abwesenheiten</h3>
+      <section class="drill-section" aria-labelledby="drill-absences">
+        <h3 id="drill-absences" class="settings-group-title">Abwesenheiten</h3>
         {#if absenceEntries.length === 0}
           <p class="drill-sub">Keine Abwesenheiten im Zeitraum.</p>
         {:else}
@@ -411,8 +436,8 @@
       </section>
 
       {#if selected}
-        <section aria-labelledby="drill-days">
-          <h3 id="drill-days" class="drill-h">Tage im {selectedName}</h3>
+        <section class="drill-section" aria-labelledby="drill-days">
+          <h3 id="drill-days" class="settings-group-title">Tage im {selectedName}</h3>
           {#if !canTimeEntryRead}
             <p class="drill-sub">Die Tagesliste ist nur mit Leserecht auf Zeiteinträge sichtbar.</p>
           {:else if dayState === "loading" || dayState === "idle"}
@@ -426,59 +451,16 @@
             </div>
           {:else if entries.length === 0}
             <p class="drill-sub">Keine Einträge in diesem Monat.</p>
-          {:else if narrow}
-            <ul class="drill-day-list" aria-label="Tage im {selectedName}">
-              {#each entries as e (e.id)}
-                <li>
-                  <span>
-                    <a class="drill-link" href={dayHref(e.date)}>{dayLabel(e.date)}</a> · {span(e)} ·
-                    Pause {fmtMin(e.breakMinutes)} · {workText(e)} h
-                  </span>
-                  {#if e.endTime === null}<span class="chip">läuft</span>{/if}
-                  {#if e.isInvalid}
-                    <span class="chip" title={e.invalidReason ?? undefined}>zählt nicht</span>
-                  {/if}
-                  {#if showSalonColumn && salonText(e)}
-                    <span class="drill-sub">{salonText(e)}</span>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
           {:else}
-            <div class="table-wrap">
-              <table class="data-table data-table--compact drill-table">
-                <caption class="sr-only">Tage im {selectedName}</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">Datum</th>
-                    <th scope="col">Von–Bis</th>
-                    <th scope="col" class="num">Pause</th>
-                    <th scope="col" class="num">Arbeitszeit</th>
-                    {#if showSalonColumn}<th scope="col">Salon</th>{/if}
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each entries as e, i (e.id)}
-                    <tr>
-                      <td>
-                        {#if firstOfDay(entries, i)}<a class="drill-link" href={dayHref(e.date)}
-                            >{dayLabel(e.date)}</a
-                          >{/if}
-                      </td>
-                      <td>
-                        {span(e)}
-                        {#if e.endTime === null}<span class="chip">läuft</span>{/if}
-                        {#if e.isInvalid}
-                          <span class="chip" title={e.invalidReason ?? undefined}>zählt nicht</span>
-                        {/if}
-                      </td>
-                      <td class="num">{fmtMin(e.breakMinutes)}</td>
-                      <td class="num">{workText(e)}</td>
-                      {#if showSalonColumn}<td>{salonText(e)}</td>{/if}
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
+            <div class="drill-days">
+              <DataTable
+                columns={dayColumns}
+                rows={entries as DayRow[]}
+                rowKey={(e) => e.id}
+                rowTestId={(e) => `drill-day-${e.id}`}
+                cell={dayCell}
+                caption={`Tage im ${selectedName}`}
+              />
             </div>
           {/if}
           {#if canTimeEntryRead}
@@ -488,14 +470,20 @@
       {/if}
     </div>
   {/if}
-</Modal>
+</Dialog>
 
 <style>
   .drill {
     display: flex;
     flex-direction: column;
     gap: var(--s-4);
-    font-size: 15px;
+    font-size: var(--fs-base);
+  }
+
+  .drill-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
   }
 
   /* The info tooltip of the saldo is positioned from its trigger, which on a phone sits near the
@@ -521,7 +509,7 @@
 
   .drill-sub {
     margin: 0;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.4;
     color: var(--text-2);
   }
@@ -533,41 +521,9 @@
     display: flex;
     flex-direction: column;
     gap: var(--s-1);
-    font-size: 15px;
     line-height: 1.4;
     color: var(--text);
     font-variant-numeric: tabular-nums;
-  }
-
-  .drill-h {
-    margin: 0 0 var(--s-2);
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 1.3;
-    color: var(--text);
-  }
-
-  .drill-stats {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--s-4);
-  }
-
-  @media (max-width: 640px) {
-    .drill-stats {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-
-  .drill-table .num {
-    text-align: right;
-    white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .drill-selected {
-    background: var(--sunk);
-    box-shadow: inset 2px 0 0 var(--brand);
   }
 
   .drill-month-btn {
@@ -582,20 +538,11 @@
     cursor: pointer;
   }
 
-  .drill-day-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-  }
-
-  .drill-day-list li {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--s-1) var(--s-2);
+  /* The selected month reads in the brand colour with an underline (the state is also aria-pressed). */
+  .drill-month-btn[aria-pressed="true"] {
+    color: var(--brand);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
   .drill-error {
@@ -612,8 +559,15 @@
   .drill-link {
     display: inline-block;
     margin-top: var(--s-2);
-    font-size: 13.5px;
+    font-size: var(--fs-base);
     color: var(--brand);
+  }
+
+  /* A second entry of a day has no date: in the card layout its empty title cell is dropped. */
+  @container (max-width: 759.98px) {
+    .drill-days :global(td.dt-primary-cell:has(.drill-repeat)) {
+      display: none;
+    }
   }
 
   @media (pointer: coarse) {
