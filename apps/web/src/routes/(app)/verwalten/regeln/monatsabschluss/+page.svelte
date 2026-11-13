@@ -17,7 +17,6 @@
   import { mayOpenSection, settingsSection } from "$lib/settings/settings-pages";
   import type { ClosingConfig } from "$lib/settings/monatsabschluss";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import Note from "$components/ui/Note.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import GapsSection from "$lib/components/admin/monatsabschluss/GapsSection.svelte";
@@ -63,12 +62,6 @@
   <title>{pageLabel("/verwalten/regeln/monatsabschluss")} – Clokr</title>
 </svelte:head>
 
-<Breadcrumb
-  crumbs={[
-    { label: pageLabel("/verwalten/regeln"), href: "/verwalten/regeln" },
-    { label: pageLabel("/verwalten/regeln/monatsabschluss") },
-  ]}
-/>
 <PageHead
   title={pageLabel("/verwalten/regeln/monatsabschluss")}
   sub="Hier legst du fest, wann ein Monat abgeschlossen werden darf. Den Abschluss selbst machst du unter „Monatsabschluss“ in der Verwaltung."

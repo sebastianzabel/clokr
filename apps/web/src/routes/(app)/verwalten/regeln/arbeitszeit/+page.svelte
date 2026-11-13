@@ -16,7 +16,6 @@
   import { mayOpenSection, settingsSection } from "$lib/settings/settings-pages";
   import type { WorkConfig } from "$lib/settings/arbeitszeit";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import Note from "$components/ui/Note.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import BreaksSection from "$lib/components/admin/arbeitszeit/BreaksSection.svelte";
@@ -86,12 +85,6 @@
   <title>{pageLabel("/verwalten/regeln/arbeitszeit")} – Clokr</title>
 </svelte:head>
 
-<Breadcrumb
-  crumbs={[
-    { label: pageLabel("/verwalten/regeln"), href: "/verwalten/regeln" },
-    { label: pageLabel("/verwalten/regeln/arbeitszeit") },
-  ]}
-/>
 <PageHead
   title={pageLabel("/verwalten/regeln/arbeitszeit")}
   sub="Diese Vorgaben gelten für alle im Unternehmen. Für einzelne Personen legst du sie im Vertrag der Person fest."

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { pageLabel } from "$lib/nav/page-labels";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { employeeAdminRights, contractShiftRights } from "$lib/page-rights";
@@ -9,7 +8,6 @@
   import { page } from "$app/stores";
   import { onMount } from "svelte";
   import PageHeader from "$components/ui/PageHeader.svelte";
-  import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import { avatarIndex, initialsOf } from "$components/ui/ListRow.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import PersonTab from "$lib/components/employees/detail/PersonTab.svelte";
@@ -247,12 +245,6 @@
 {:else if loadError || !employee}
   <div class="page-error">{loadError || "Mitarbeiter nicht gefunden."}</div>
 {:else}
-  <Breadcrumb
-    crumbs={[
-      { label: pageLabel("/admin/employees"), href: "/admin/employees" },
-      { label: displayName || "Mitarbeiter" },
-    ]}
-  />
   <PageHeader
     title={displayName || "Mitarbeiter"}
     subtitle={headSub}

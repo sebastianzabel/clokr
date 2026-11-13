@@ -24,7 +24,6 @@
     SmtpConfig,
   } from "$lib/settings/benachrichtigungen";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import Note from "$components/ui/Note.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import SmtpSection from "$lib/components/admin/benachrichtigungen/SmtpSection.svelte";
@@ -129,12 +128,6 @@
   <title>{pageLabel("/verwalten/regeln/benachrichtigungen")} – Clokr</title>
 </svelte:head>
 
-<Breadcrumb
-  crumbs={[
-    { label: pageLabel("/verwalten/regeln"), href: "/verwalten/regeln" },
-    { label: pageLabel("/verwalten/regeln/benachrichtigungen") },
-  ]}
-/>
 <PageHead
   title={pageLabel("/verwalten/regeln/benachrichtigungen")}
   sub="Hier richtest du den E-Mail-Versand ein und legst fest, worüber Clokr benachrichtigt und woran es erinnert."

@@ -7,7 +7,6 @@
   import { page } from "$app/stores";
   import { onMount } from "svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
@@ -272,13 +271,6 @@
 {:else}
   <!-- A snippet body loses the `!shutdown` narrowing of the branch above, so it reads this const. -->
   {@const shownShutdown = shutdown}
-  <Breadcrumb
-    crumbs={[
-      { label: pageLabel("/admin/vacation"), href: "/admin/vacation" },
-      { label: "Betriebsurlaub", href: "/verwalten/regeln/abwesenheiten#betriebsurlaub" },
-      { label: shownShutdown.name },
-    ]}
-  />
   <PageHead
     title={shownShutdown.name}
     sub={`${formatShutdownDate(shownShutdown.startDate)} – ${formatShutdownDate(shownShutdown.endDate)} (${dayCountLabel(shownShutdown.startDate, shownShutdown.endDate)})`}

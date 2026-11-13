@@ -19,7 +19,6 @@
   import { entityLabel } from "$lib/audit/labels";
   import { listUrlSchema } from "$lib/audit/list-url-state";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import Chip from "$components/ui/Chip.svelte";
   import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import Note from "$components/ui/Note.svelte";
@@ -91,12 +90,6 @@
 </svelte:head>
 
 <div data-testid="admin-audit-detail-page" style="display: contents;">
-  <Breadcrumb
-    crumbs={[
-      { label: pageLabel("/admin/audit"), href: "/admin/audit" },
-      { label: entry ? `Eintrag vom ${fmtDate(entry.createdAt)}` : "Eintrag" },
-    ]}
-  />
   {#if loading}
     <Skeleton shape="card" lines={4} />
   {:else if loadError || !entry}

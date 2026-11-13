@@ -12,7 +12,6 @@
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import SupportAccessDetail from "$lib/components/admin/SupportAccessDetail.svelte";
-  import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import Note from "$components/ui/Note.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import { formatInZone, type SupportAccessDetailResponse } from "$lib/support-access/labels";
@@ -24,10 +23,6 @@
   let notFound = $state(false);
 
   const accessId = $derived($page.params.id);
-
-  const startedAt = $derived(
-    detail ? formatInZone(detail.access.startedAt, detail.timezone) : "Support-Zugriff",
-  );
 
   const windowText = $derived.by(() => {
     if (!detail) return "";
@@ -70,12 +65,6 @@
 </svelte:head>
 
 <div data-testid="admin-support-access-detail-page" style="display: contents;">
-  <Breadcrumb
-    crumbs={[
-      { label: pageLabel("/admin/support-access"), href: "/admin/support-access" },
-      { label: startedAt },
-    ]}
-  />
   {#if loading}
     <Skeleton shape="card" lines={3} />
   {:else if notFound}

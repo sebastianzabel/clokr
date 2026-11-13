@@ -96,12 +96,9 @@ async function mount() {
 }
 
 describe("Betriebsurlaub detail", () => {
-  it("shows the shutdown with a breadcrumb back to the Betriebsurlaub tab and no SaveBar yet", async () => {
+  it("shows the shutdown without a page breadcrumb (the path is in the top bar) and no SaveBar yet", async () => {
     await mount();
-    const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
-    expect(within(crumbs).getByRole("link", { name: "Betriebsurlaub" }).getAttribute("href")).toBe(
-      "/verwalten/regeln/abwesenheiten#betriebsurlaub",
-    );
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
     expect((screen.getByLabelText(/^Startdatum/) as HTMLInputElement).value).toBe("2026-12-24");
     expect((screen.getByLabelText(/^Bezeichnung/) as HTMLInputElement).value).toBe(
       "Weihnachtsschließung",

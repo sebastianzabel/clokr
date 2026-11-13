@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -10,7 +9,6 @@
   import { markUnsaved } from "$stores/unsaved";
   import { salonAdminRights, salonHolidayRights } from "$lib/page-rights";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Breadcrumb from "$components/ui/Breadcrumb.svelte";
   import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import Note from "$components/ui/Note.svelte";
@@ -238,12 +236,6 @@
 {:else if !isCreate && (loadError || !salon)}
   <div role="alert"><Note tone="bad">{loadError || "Salon nicht gefunden."}</Note></div>
 {:else}
-  <Breadcrumb
-    crumbs={[
-      { label: pageLabel("/admin/salons"), href: "/admin/salons" },
-      { label: salon ? salon.name : "Neuer Salon" },
-    ]}
-  />
   <PageHead
     title={salon ? salon.name : "Neuer Salon"}
     sub={isCreate
