@@ -91,8 +91,13 @@
     },
     ...(entitlement
       ? [
-          { label: "Genommen", value: formatDays(entitlement.usedDays), unit: "Tage" },
-          { label: "Übertrag", value: formatDays(entitlement.carriedOverDays), unit: "Tage" },
+          { label: "Genommen", value: entitlement.usedDays, format: formatDays, unit: "Tage" },
+          {
+            label: "Übertrag",
+            value: entitlement.carriedOverDays,
+            format: formatDays,
+            unit: "Tage",
+          },
         ]
       : []),
   ]);

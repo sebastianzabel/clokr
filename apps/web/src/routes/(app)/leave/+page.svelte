@@ -959,7 +959,8 @@
   let balanceItems = $derived<KpiItem[]>([
     {
       label: vacationCardLabel(vacSummaryPlanned),
-      value: vacRemaining === null ? "–" : formatDays(vacRemaining),
+      value: vacRemaining === null ? "–" : vacRemaining,
+      format: formatDays,
       unit: (vacRemaining ?? 0) === 1 ? "Tag" : "Tage",
       delta: vacationBalance
         ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
@@ -968,7 +969,8 @@
     {
       // `used` counts approved days still ahead as well, so the label says so.
       label: "Genommen & genehmigt",
-      value: vacationBalance ? formatDays(vacSummaryUsed) : "–",
+      value: vacationBalance ? vacSummaryUsed : "–",
+      format: formatDays,
       unit: vacSummaryUsed === 1 ? "Tag" : "Tage",
       explanation: nextVacation
         ? `nächster: ${shortDate(nextVacation.startDate)}–${shortDate(nextVacation.endDate)}`
@@ -976,9 +978,8 @@
     },
     {
       label: "Verfällt",
-      value: !vacationBalance
-        ? "–"
-        : formatDays(carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0),
+      value: !vacationBalance ? "–" : carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0,
+      format: formatDays,
       unit: (carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0) === 1 ? "Tag" : "Tage",
       explanation: carryDeadlineAhead
         ? `Übertrag verfällt am ${shortDate(carryDeadlineAhead)}${carryDeadlineAhead.slice(0, 4)}`
@@ -986,7 +987,8 @@
     },
     {
       label: "Krankheitstage",
-      value: sickDaysYear === null ? "–" : formatDays(sickDaysYear),
+      value: sickDaysYear === null ? "–" : sickDaysYear,
+      format: formatDays,
       unit: calendarDaysUnit(sickDaysYear ?? 0),
       explanation: `in ${calYear}`,
     },

@@ -71,18 +71,18 @@
   const latestItems = $derived(
     latest
       ? [
-          { label: "Importiert", value: String(latest.created) },
-          { label: "Aktualisiert", value: String(latest.updated) },
+          { label: "Importiert", value: latest.created },
+          { label: "Aktualisiert", value: latest.updated },
           {
             label: "Ersetzt",
-            value: String(latest.replaced ?? 0),
+            value: latest.replaced ?? 0,
             deltaTone: (latest.replaced ?? 0) > 0 ? ("warn" as const) : ("neutral" as const),
           },
-          { label: "Abgesagt", value: String(latest.cancelled) },
-          { label: "BS übersprungen", value: String(latest.skippedVocationalSchool ?? 0) },
+          { label: "Abgesagt", value: latest.cancelled },
+          { label: "BS übersprungen", value: latest.skippedVocationalSchool ?? 0 },
           {
             label: "Ohne Zuordnung",
-            value: String(latest.unmapped),
+            value: latest.unmapped,
             deltaTone: latest.unmapped > 0 ? ("warn" as const) : ("neutral" as const),
           },
         ]

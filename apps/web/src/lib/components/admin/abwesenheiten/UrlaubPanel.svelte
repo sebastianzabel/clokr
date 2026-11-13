@@ -242,7 +242,7 @@
   const kpiItems = $derived([
     {
       label: "Jahresurlaub (Standard)",
-      value: String(anspruchSnapshot.defaultVacationDays ?? ""),
+      value: anspruchSnapshot.defaultVacationDays ?? "",
       unit: "Tage",
       explanation: "Basis einer 5-Tage-Woche",
       testId: "abwesenheiten-kpi-days",

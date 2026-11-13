@@ -689,7 +689,7 @@
   }
 
   const empKpiItems = $derived<KpiItem[]>([
-    { label: MONTH_STATUS_LABEL.CLOSED, value: String(kpiClosedMonths), unit: "Monate" },
+    { label: MONTH_STATUS_LABEL.CLOSED, value: kpiClosedMonths, unit: "Monate" },
     { label: "Soll", value: fmtHoursFromMin(kpiTotalExpectedMin), unit: "h" },
     { label: "Ist", value: fmtHoursFromMin(kpiTotalWorkedMin), unit: "h" },
     { label: "Saldo", value: fmtBalance(kpiTotalBalanceMin), unit: "h" },

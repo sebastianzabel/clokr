@@ -25,7 +25,7 @@ export interface TaskKindInfo {
 export const TASK_KINDS: readonly TaskKindInfo[] = [
   { kind: "urlaub", label: "Urlaub" },
   { kind: "nachtrag", label: "Nachtrag" },
-  { kind: "paragraf9", label: "§ 9" },
+  { kind: "paragraf9", label: "Krank im Urlaub" },
   { kind: "pausenbefund", label: "Pausenbefund" },
   { kind: "ausstempeln", label: "Ausstempeln fehlt" },
   { kind: "zeitkorrektur", label: "Zeitkorrektur" },
