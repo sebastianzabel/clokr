@@ -12,6 +12,8 @@
   import SalonSwitcher from "./SalonSwitcher.svelte";
   import { removeThisDevicePush } from "$lib/push/logout";
   import { pageLabel } from "$lib/nav/page-labels";
+  import { crumbTrail } from "$lib/nav/routes";
+  import { detailCrumb } from "$lib/nav/detail-crumb";
   import { openPalette } from "$lib/nav/palette-event";
 
   interface Props {
@@ -21,10 +23,10 @@
     currentAreaLabel?: string;
   }
 
-  // currentPath is part of the public API for symmetry with Sidebar; the crumb shows
-  // `<area> / <page>` from the route table (#844, D-844-11).
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // The crumb shows the whole path from the route table (#844 D-844-11; #854: every level, each but the
+  // last a link, the record name of a detail page last). Outside the table it falls back to the labels.
   let { currentPath, currentPageLabel, currentAreaLabel = "" }: Props = $props();
+  const trail = $derived(crumbTrail(currentPath, $authStore.user, $detailCrumb));
 
   // ── Avatar dropdown ────────────────────────────────────────────
   let avatarMenuOpen = $state(false);
@@ -264,7 +266,20 @@
 {/snippet}
 
 <header class="topbar">
-  {#if currentPageLabel}
+  {#if trail.length > 0}
+    <nav class="topbar-crumb" aria-label="Pfad" data-testid="topbar-crumb">
+      {#each trail as crumb, i (i)}
+        {#if i > 0}<span class="topbar-sep" aria-hidden="true">/</span>{/if}
+        {#if i === trail.length - 1}
+          <b aria-current="page">{crumb.label}</b>
+        {:else if crumb.href}
+          <a class="topbar-crumb-link" href={crumb.href}>{crumb.label}</a>
+        {:else}
+          <span>{crumb.label}</span>
+        {/if}
+      {/each}
+    </nav>
+  {:else if currentPageLabel}
     <span class="topbar-crumb" data-testid="topbar-crumb">
       {#if currentAreaLabel}<span>{currentAreaLabel}</span><span
           class="topbar-sep"
@@ -448,6 +463,14 @@
     color: var(--text);
     font-weight: 600;
     font-size: var(--fs-base);
+  }
+  .topbar-crumb-link {
+    color: var(--text-2);
+    text-decoration: none;
+  }
+  .topbar-crumb-link:hover {
+    color: var(--text);
+    text-decoration: underline;
   }
   .topbar-sep {
     color: var(--line-2);

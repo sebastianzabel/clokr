@@ -224,11 +224,14 @@
   {:else if loading && keys.length === 0}
     <Skeleton shape="card" count={1} lines={3} />
   {:else if keys.length === 0}
-    <EmptyState
-      icon="inbox"
-      title="Noch keine API-Schlüssel"
-      description="Leg einen Schlüssel an, wenn ein externer Dienst auf Clokr zugreifen soll."
-    />
+    <!-- Without the module only its hint stands above: no invitation to set up the first one (#566). -->
+    {#if integrationsBooked !== false}
+      <EmptyState
+        icon="inbox"
+        title="Noch keine API-Schlüssel"
+        description="Leg einen Schlüssel an, wenn ein externer Dienst auf Clokr zugreifen soll."
+      />
+    {/if}
   {:else}
     <DataTable
       {columns}

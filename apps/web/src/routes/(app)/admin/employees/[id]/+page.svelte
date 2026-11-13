@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { showDetailCrumb } from "$lib/nav/detail-crumb";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { employeeAdminRights, contractShiftRights } from "$lib/page-rights";
@@ -202,6 +203,8 @@
 
   // ── Derived display ────────────────────────────────────────────────────────
   let displayName = $derived(`${employee?.firstName ?? ""} ${employee?.lastName ?? ""}`.trim());
+  // The person's name closes the top bar's path (#854: pages carry no breadcrumb of their own).
+  $effect(() => showDetailCrumb(displayName));
   // The head's sub line as in the prototype: „<Personalnummer> · <Stammsalon> · seit <Eintritt>“,
   // plus the exit state when one is set (Issue #86, D-01; decided from the exit date and a calendar
   // day, never from a display string).

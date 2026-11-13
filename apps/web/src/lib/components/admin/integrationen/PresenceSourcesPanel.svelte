@@ -376,11 +376,14 @@
   {:else if sourcesLoading && sources.length === 0}
     <Skeleton shape="card" count={1} lines={3} />
   {:else if sources.length === 0}
-    <EmptyState
-      icon="wifi"
-      title="Noch keine Präsenz-Quellen"
-      description="Leg einen Schlüssel für deinen ersten Adapter an."
-    />
+    <!-- Without the module only its hint stands above: no invitation to set up the first one (#566). -->
+    {#if hardwareBooked !== false}
+      <EmptyState
+        icon="wifi"
+        title="Noch keine Präsenz-Quellen"
+        description="Leg einen Schlüssel für deinen ersten Adapter an."
+      />
+    {/if}
   {:else}
     <DataTable
       columns={sourceColumns}

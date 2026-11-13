@@ -13,6 +13,7 @@ import {
   redirectLocation,
   rerouteTarget,
   rosterTabs,
+  crumbTrail,
   routeFor,
   visibleChildren,
 } from "$lib/nav/routes";
@@ -634,5 +635,55 @@ describe("page widths (owner 09.11.2026)", () => {
     expect(routeFor("/verwalten/personen/123")?.href).toBe("/verwalten/personen");
     expect(pageWidthForPath("/verwalten/personen/123")).toBe("read");
     expect(pageWidthForPath("/nowhere")).toBe("read");
+  });
+});
+
+describe("crumbTrail: the whole path in the top bar (#854, owner review)", () => {
+  const admin = user("ADMIN");
+  it("a sub-page names every level, each but the last a link", () => {
+    expect(crumbTrail("/verwalten/system/integrationen", admin)).toEqual([
+      { label: "Verwalten", href: "/verwalten" },
+      { label: "System", href: "/verwalten/system" },
+      { label: "Integrationen", href: null },
+    ]);
+    expect(crumbTrail("/verwalten/daten/export", admin).map((c) => c.label)).toEqual([
+      "Verwalten",
+      "Daten",
+      "Export",
+    ]);
+    expect(crumbTrail("/verwalten/regeln/arbeitszeit", admin).map((c) => c.label)).toEqual([
+      "Verwalten",
+      "Regeln",
+      "Arbeitszeit & Verträge",
+    ]);
+  });
+
+  it("a detail page links its list and closes with the record name the page gives", () => {
+    expect(crumbTrail("/verwalten/personen/abc", admin, "Mia Friseurin")).toEqual([
+      { label: "Verwalten", href: "/verwalten" },
+      { label: "Personen", href: "/verwalten/personen" },
+      { label: "Mia Friseurin", href: null },
+    ]);
+    // before the record is loaded the list closes the trail, still as a link
+    expect(crumbTrail("/verwalten/personen/abc", admin).at(-1)).toEqual({
+      label: "Personen",
+      href: "/verwalten/personen",
+    });
+  });
+
+  it("the hub is one crumb; a level the user may not open is text, not a link", () => {
+    expect(crumbTrail("/verwalten", admin)).toEqual([{ label: "Verwalten", href: null }]);
+    const employee = crumbTrail("/verwalten/system/integrationen", user("EMPLOYEE"));
+    expect(employee.every((c) => c.href === null)).toBe(true);
+  });
+
+  it("a roster tab names only its page (the parent carries the same name)", () => {
+    expect(
+      crumbTrail("/team/dienstplan/planung", user("SALON_MANAGER")).map((c) => c.label),
+    ).toEqual(["Team", "Dienstplan"]);
+  });
+
+  it("an unknown path has no trail", () => {
+    expect(crumbTrail("/nowhere", admin)).toEqual([]);
   });
 });

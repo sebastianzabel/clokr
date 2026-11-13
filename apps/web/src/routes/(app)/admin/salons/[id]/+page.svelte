@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { showDetailCrumb } from "$lib/nav/detail-crumb";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -42,6 +43,8 @@
   let salon = $state<SalonDto | null>(null);
   // Create mode: the route `/admin/salons/neu`, until the created salon has been adopted.
   const isCreate = $derived(salonId === "neu" && salon === null);
+  // The salon's name closes the top bar's path (#854: pages carry no breadcrumb of their own).
+  $effect(() => showDetailCrumb(salon ? salon.name : isCreate ? "Neuer Salon" : null));
 
   let loading = $state(true);
   let loadError = $state("");

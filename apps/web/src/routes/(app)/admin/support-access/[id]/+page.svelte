@@ -4,6 +4,7 @@
   tenant-settings:update; the API's 403 stays the authority). Never an operator e-mail or IP (T-854-64).
 -->
 <script lang="ts">
+  import { showDetailCrumb } from "$lib/nav/detail-crumb";
   import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { page } from "$app/stores";
@@ -17,6 +18,10 @@
   import { formatInZone, type SupportAccessDetailResponse } from "$lib/support-access/labels";
 
   let detail = $state<SupportAccessDetailResponse | null>(null);
+  // The access's start closes the top bar's path (#854: pages carry no breadcrumb of their own).
+  $effect(() =>
+    showDetailCrumb(detail ? formatInZone(detail.access.startedAt, detail.timezone) : null),
+  );
   // Starts TRUE for the same reason as the list: the request fires after mount.
   let loading = $state(true);
   let loadError = $state("");

@@ -875,6 +875,55 @@ export function areaLabelForPath(pathname: string): string {
   return route === null ? "" : AREA_LABELS[route.area];
 }
 
+export interface Crumb {
+  label: string;
+  /** The page the crumb opens; null for the current page and for a page the user may not open. */
+  href: string | null;
+}
+
+/**
+ * Issue #854 (owner review) - the top bar's whole path of `pathname`, from the route table only: the area,
+ * then every `parent` of the page's entry up to the area hub, then the page itself; below a page file (a
+ * detail page such as `/verwalten/personen/123`) the page links to its list and `detailLabel` (the record's
+ * name, given by the page) closes the trail. Every crumb but the last is a link when the user may open it.
+ * A tab of a page (`tabLabel`, the roster tabs of #853) names only its page: its parent carries the same
+ * name. Pages carry no breadcrumb of their own.
+ */
+export function crumbTrail(
+  pathname: string,
+  user: PermissionHolder | null | undefined,
+  detailLabel: string | null = null,
+): Crumb[] {
+  const route = routeFor(pathname);
+  if (route === null) return [];
+  const link = (href: string): string | null => (mayOpenPath(user, href) ? href : null);
+  const hub = `/${route.area}`;
+  const hubRoute = APP_ROUTES.find((entry) => entry.href === hub);
+  const trail: Crumb[] = [
+    { label: AREA_LABELS[route.area], href: hubRoute && route.href !== hub ? link(hub) : null },
+  ];
+  if (route.href === hub) return trail;
+
+  const ancestors: AppRoute[] = [];
+  let parentHref = route.tabLabel ? undefined : route.parent;
+  while (parentHref !== undefined && parentHref !== hub) {
+    const parent = APP_ROUTES.find((entry) => entry.href === parentHref);
+    if (parent === undefined) break;
+    ancestors.unshift(parent);
+    parentHref = parent.parent;
+  }
+  for (const parent of ancestors) trail.push({ label: parent.label, href: link(parent.href) });
+
+  const exact = pathname === route.href || pathname === `${route.href}/`;
+  if (exact || detailLabel === null) {
+    trail.push({ label: route.label, href: exact ? null : link(route.href) });
+  } else {
+    trail.push({ label: route.label, href: link(route.href) });
+    trail.push({ label: detailLabel, href: null });
+  }
+  return trail;
+}
+
 /** The page width of `pathname`: its entry's width; a detail page below an entry (`/verwalten/personen/123`,
  *  no entry of its own) and an unknown path get the reading width. */
 export function pageWidthForPath(pathname: string): PageWidth {

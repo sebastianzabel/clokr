@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { showDetailCrumb } from "$lib/nav/detail-crumb";
   import { pageLabel } from "$lib/nav/page-labels";
   import { api, ApiError } from "$api/client";
   import { toasts } from "$stores/toast";
@@ -33,6 +34,8 @@
 
   // ── Data state ─────────────────────────────────────────────────────────────
   let shutdown = $state<CompanyShutdown | null>(null);
+  // The shutdown's name closes the top bar's path (#854: pages carry no breadcrumb of their own).
+  $effect(() => showDetailCrumb(shutdown?.name ?? null));
   let allEmployees = $state<ShutdownEmployee[]>([]);
 
   const shutdownId = $derived($page.params.id);

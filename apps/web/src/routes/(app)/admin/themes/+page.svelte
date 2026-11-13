@@ -86,19 +86,22 @@
 <section class="settings-group" aria-labelledby="themes-modus-title">
   <h2 class="settings-group-title" id="themes-modus-title">Modus</h2>
   <p class="settings-group-desc">Hell oder dunkel, unabhängig von der Farbwelt.</p>
-  <SegmentedControl
-    options={modeOptions}
-    value={$mode}
-    name="mode"
-    ariaLabel="Modus auswählen"
-    onchange={selectMode}
-  />
+  <!-- A block wrapper keeps the control as wide as its options (the group stretches its children). -->
+  <div>
+    <SegmentedControl
+      options={modeOptions}
+      value={$mode}
+      name="mode"
+      ariaLabel="Modus auswählen"
+      onchange={selectMode}
+    />
+  </div>
 </section>
 
 <section class="settings-group" aria-labelledby="themes-sprache-title">
   <h2 class="settings-group-title" id="themes-sprache-title">Sprache</h2>
   <p class="settings-group-desc">Clokr ist auf Deutsch. Englisch folgt später.</p>
-  <LanguageToggle variant="segmented" />
+  <div><LanguageToggle variant="segmented" /></div>
 </section>
 
 <style>

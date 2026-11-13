@@ -115,7 +115,7 @@
 
   <Note tone="info">
     Vorgabe für neu angelegte Salons. Feiertage richten sich nach dem Bundesland des jeweiligen
-    Salons (Admin → Salons).
+    Salons (<a href="/verwalten/salons">Verwalten › Salons</a>).
   </Note>
 
   <FormField label="Bundesland">

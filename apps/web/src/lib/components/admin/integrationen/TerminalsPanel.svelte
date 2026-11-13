@@ -232,11 +232,14 @@
   {:else if loading && keys.length === 0}
     <Skeleton shape="card" count={1} lines={3} />
   {:else if keys.length === 0}
-    <EmptyState
-      icon="wifi"
-      title="Noch keine Terminal-Schlüssel"
-      description="Lege für jedes Terminal einen Schlüssel an und trag ihn dort ein."
-    />
+    <!-- Without the module only its hint stands above: no invitation to set up the first one (#566). -->
+    {#if hardwareBooked !== false}
+      <EmptyState
+        icon="wifi"
+        title="Noch keine Terminal-Schlüssel"
+        description="Lege für jedes Terminal einen Schlüssel an und trag ihn dort ein."
+      />
+    {/if}
   {:else}
     <DataTable
       {columns}

@@ -7,6 +7,7 @@
   through the same allow-list schema as the list itself.
 -->
 <script lang="ts">
+  import { showDetailCrumb } from "$lib/nav/detail-crumb";
   import { pageLabel } from "$lib/nav/page-labels";
   import { onMount } from "svelte";
   import { page } from "$app/stores";
@@ -43,6 +44,8 @@
   let loading = $state(true);
   let loadError = $state("");
   let entry = $state<AuditEntry | null>(null);
+  // The entry closes the top bar's path (#854: pages carry no breadcrumb of their own).
+  $effect(() => showDetailCrumb(entry ? `Eintrag vom ${fmtDate(entry.createdAt)}` : null));
 
   const entryId = $derived($page.params.id);
 
