@@ -13,7 +13,6 @@ import {
   type OvertimeBalanceBreakdown,
 } from "../overtime-balance"; // Phase 101B — same-context sibling now that the pair moved here
 import { freeDaysEquivalent } from "../free-days-equivalent"; // Issue #605
-import { getLeaveTypeByCode } from "../../absence"; // Issue #605 — is Überstundenausgleich set up for the tenant
 import { getConfirmedCarryOver } from "../confirmed-saldo"; // Phase 97-01
 import { getShiftsInRange } from "../../scheduling"; // Phase 100B Plan 05 — S1
 import {
@@ -353,12 +352,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
             todayDay: dateStrInTz(new Date(), tz),
             defaultWorkDays: employee.tenant?.config?.defaultWorkDays,
           });
-          if (
-            freeDays &&
-            !(await getLeaveTypeByCode(app.prisma, employee.tenantId, "OVERTIME_COMP"))
-          ) {
-            freeDays = null;
-          }
+          // Überstundenausgleich is always requestable (REQUESTABLE_CODES): its leave-type row is
+          // created on the first request (`ensureLeaveType`), so a missing row is no reason to hide
+          // the conversion (Issue #605 follow-up, 13.11.2026).
         }
       } catch (err) {
         app.log.warn({ err, employeeId }, "GET /overtime: free-days conversion failed, omitted");

@@ -2,8 +2,9 @@
  * Issue #605 — the saldo in free days.
  *
  * Part 1 pins the pure kernel (`freeDaysEquivalent`) per schedule type; part 2 pins the additive
- * fields of GET /api/v1/overtime/:employeeId: shown for a positive saldo with an Überstundenausgleich
- * leave type, absent (null) for saldo <= 0, a track-only contract and a tenant without that type.
+ * fields of GET /api/v1/overtime/:employeeId: shown for a positive confirmed balance, absent (null)
+ * for a confirmed balance <= 0 and a track-only contract. A tenant without a stored
+ * Überstundenausgleich row still gets the conversion: the row is created on the first request.
  */
 import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -252,13 +253,16 @@ describe("GET /api/v1/overtime/:employeeId freeDaysEquivalent (Issue #605)", () 
     }
   });
 
-  it("serves null when the tenant has no Überstundenausgleich leave type", async () => {
+  // Follow-up 13.11.2026: leave types are created on first use (`ensureLeaveType`), so a tenant
+  // in which nobody requested Überstundenausgleich yet has no row - and must still see the days.
+  it("serves the conversion when the tenant has no stored Überstundenausgleich row yet", async () => {
     await app.prisma.leaveType.deleteMany({
       where: { tenantId: data.tenant.id, code: "OVERTIME_COMP" },
     });
     try {
       const body = await read();
-      expect(body.freeDaysEquivalent).toBeNull();
+      expect(body.freeDaysEquivalent).not.toBeNull();
+      expect(body.freeDaysEquivalent).toBeGreaterThan(0);
     } finally {
       await app.prisma.leaveType.create({
         data: { tenantId: data.tenant.id, ...leaveTypeFields("OVERTIME_COMP") },
