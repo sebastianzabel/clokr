@@ -76,6 +76,11 @@
     rowId?: (row: Row) => string | undefined;
     /** Issue #851 (additive): marks a row as the one a deep link points at (tinted background). */
     rowHighlight?: (row: Row) => boolean;
+    /**
+     * Issue #899 (additive): extra `data-*` attributes of a row (control values a page or a test
+     * reads, e.g. `data-deleted`); a value of `undefined` omits the attribute.
+     */
+    rowAttrs?: (row: Row) => Record<`data-${string}`, string | undefined> | undefined;
     /** Issue #851 (additive): extra class names of a row the page styles itself (`:global`). */
     rowClass?: (row: Row) => string | undefined;
     /** Accessible table caption (visually hidden). */
@@ -109,6 +114,7 @@
     rowId,
     rowHighlight,
     rowClass,
+    rowAttrs,
     caption,
     loading = false,
     selectable = false,
@@ -237,6 +243,7 @@
                 id={rowId?.(row)}
                 data-testid={rowTestId?.(row)}
                 data-tone={rowTone?.(row)}
+                {...rowAttrs?.(row)}
                 onclick={(e) => onRowActivate(e, row)}
               >
                 {#if selectable}
@@ -279,6 +286,7 @@
                 class:dt-row--highlight={rowHighlight?.(row) ?? false}
                 data-testid={rowTestId?.(row)}
                 data-tone={rowTone?.(row)}
+                {...rowAttrs?.(row)}
               >
                 {#if selectable}
                   <td class="dt-select-cell" data-label="Auswahl">

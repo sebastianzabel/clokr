@@ -5,10 +5,11 @@
 
   Every label is keyed by the control value the API sends (`support-labels`); an unknown value is shown
   raw. A deleted entry stays in the list, muted and badged, because support traces vanished entries.
-  Times are shown in the browser's zone together with the day (D-03). Tables switch to a stacked list
-  below 640 px by CSS only (same markup), so a phone never scrolls sideways.
+  Times are shown in the browser's zone together with the day (D-03). The tables are DataTable blocks
+  (Issue #899): a card list below 760 px of container width, so a phone never scrolls sideways.
 -->
 <script lang="ts">
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import Section from "$lib/components/admin/Section.svelte";
   import {
     formatOperatorDay,
@@ -41,6 +42,33 @@
   let { month }: Props = $props();
 
   const person = $derived(month.employee);
+
+  const ENTRY_COLUMNS: DataTableColumn[] = [
+    { key: "date", label: "Datum", primary: true },
+    { key: "startTime", label: "Beginn" },
+    { key: "endTime", label: "Ende" },
+    { key: "breaks", label: "Pausen" },
+    { key: "breakStatus", label: "Pausenstatus" },
+    { key: "salon", label: "Salon" },
+    { key: "type", label: "Art" },
+    { key: "source", label: "Quelle" },
+    { key: "marks", label: "Markierungen" },
+  ];
+  const DAY_BREAK_COLUMNS: DataTableColumn[] = [
+    { key: "date", label: "Datum", primary: true },
+    { key: "pause", label: "Pause" },
+  ];
+  const LEAVE_COLUMNS: DataTableColumn[] = [
+    { key: "typeName", label: "Art", primary: true },
+    { key: "status", label: "Status" },
+    { key: "period", label: "Zeitraum" },
+    { key: "days", label: "Tage" },
+  ];
+  const ABSENCE_COLUMNS: DataTableColumn[] = [
+    { key: "type", label: "Art", primary: true },
+    { key: "period", label: "Zeitraum" },
+    { key: "source", label: "Herkunft" },
+  ];
 
   function timeRange(startTime: string, endTime: string): string {
     return `${formatOperatorTime(startTime)} – ${formatOperatorTime(endTime)}`;
@@ -109,74 +137,63 @@
       {#if month.entries.length === 0}
         <p class="empty">Keine Zeiteinträge in diesem Monat.</p>
       {:else}
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div class="table-wrap" role="region" aria-label="Zeiteinträge des Monats" tabindex="0">
-          <table class="data-table stack-table" data-testid="op-support-entries-table">
-            <caption class="sr-only">Zeiteinträge des Monats</caption>
-            <thead>
-              <tr>
-                <th scope="col">Datum</th>
-                <th scope="col">Beginn</th>
-                <th scope="col">Ende</th>
-                <th scope="col">Pausen</th>
-                <th scope="col">Pausenstatus</th>
-                <th scope="col">Salon</th>
-                <th scope="col">Art</th>
-                <th scope="col">Quelle</th>
-                <th scope="col">Markierungen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each month.entries as entry (entry.id)}
-                <tr
-                  class:deleted={entry.deleted}
-                  data-testid={`op-support-entry-row-${entry.id}`}
-                  data-deleted={String(entry.deleted)}
-                  data-invalid={String(entry.isInvalid)}
-                  data-locked={String(entry.isLocked)}
-                >
-                  <td class="cell-primary" data-label="Datum">{formatOperatorDay(entry.date)}</td>
-                  <td data-label="Beginn">{formatOperatorTime(entry.startTime)}</td>
-                  <td data-label="Ende">
-                    {entry.endTime ? formatOperatorTime(entry.endTime) : "offen"}
-                  </td>
-                  <td data-label="Pausen">
-                    {#if entry.breaks.length > 0}
-                      <ul class="breaks">
-                        {#each entry.breaks as item, index (index)}
-                          <li data-break>{timeRange(item.startTime, item.endTime)}</li>
-                        {/each}
-                      </ul>
-                      <span class="minutes">{entry.breakMinutes} Min.</span>
-                    {:else if entry.breakMinutes > 0}
-                      <span class="minutes">{entry.breakMinutes} Min.</span>
-                    {:else}
-                      –
-                    {/if}
-                  </td>
-                  <td data-label="Pausenstatus"
-                    >{labelFor(BREAK_STATUS_LABELS, entry.breakStatus)}</td
-                  >
-                  <td data-label="Salon"><span class="text">{entry.salon.name}</span></td>
-                  <td data-label="Art">{labelFor(ENTRY_TYPE_LABELS, entry.type)}</td>
-                  <td data-label="Quelle">{labelFor(ENTRY_SOURCE_LABELS, entry.source)}</td>
-                  <td class="cell-marks">
-                    <div class="marks">
-                      {#if entry.isInvalid}
-                        <span class="badge badge-red mark">{invalidText(entry)}</span>
-                      {/if}
-                      {#if entry.deleted}
-                        <span class="badge badge-gray">gelöscht</span>
-                      {/if}
-                      {#if entry.isLocked}
-                        <span class="badge badge-blue mark">gesperrt</span>
-                      {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+        <div data-testid="op-support-entries-table">
+          <DataTable
+            caption="Zeiteinträge des Monats"
+            columns={ENTRY_COLUMNS}
+            rows={month.entries}
+            rowKey={(entry) => entry.id}
+            rowTestId={(entry) => `op-support-entry-row-${entry.id}`}
+            rowClass={(entry) => (entry.deleted ? "deleted" : undefined)}
+            rowAttrs={(entry) => ({
+              "data-deleted": String(entry.deleted),
+              "data-invalid": String(entry.isInvalid),
+              "data-locked": String(entry.isLocked),
+            })}
+          >
+            {#snippet cell(entry, column)}
+              {#if column.key === "date"}
+                {formatOperatorDay(entry.date)}
+              {:else if column.key === "startTime"}
+                {formatOperatorTime(entry.startTime)}
+              {:else if column.key === "endTime"}
+                {entry.endTime ? formatOperatorTime(entry.endTime) : "offen"}
+              {:else if column.key === "breaks"}
+                {#if entry.breaks.length > 0}
+                  <ul class="breaks">
+                    {#each entry.breaks as item, index (index)}
+                      <li data-break>{timeRange(item.startTime, item.endTime)}</li>
+                    {/each}
+                  </ul>
+                  <span class="minutes">{entry.breakMinutes} Min.</span>
+                {:else if entry.breakMinutes > 0}
+                  <span class="minutes">{entry.breakMinutes} Min.</span>
+                {:else}
+                  –
+                {/if}
+              {:else if column.key === "breakStatus"}
+                {labelFor(BREAK_STATUS_LABELS, entry.breakStatus)}
+              {:else if column.key === "salon"}
+                <span class="text">{entry.salon.name}</span>
+              {:else if column.key === "type"}
+                {labelFor(ENTRY_TYPE_LABELS, entry.type)}
+              {:else if column.key === "source"}
+                {labelFor(ENTRY_SOURCE_LABELS, entry.source)}
+              {:else}
+                <span class="marks">
+                  {#if entry.isInvalid}
+                    <span class="badge badge-red mark">{invalidText(entry)}</span>
+                  {/if}
+                  {#if entry.deleted}
+                    <span class="badge badge-gray">gelöscht</span>
+                  {/if}
+                  {#if entry.isLocked}
+                    <span class="badge badge-blue mark">gesperrt</span>
+                  {/if}
+                </span>
+              {/if}
+            {/snippet}
+          </DataTable>
         </div>
       {/if}
     </div>
@@ -187,26 +204,21 @@
       {#if month.dayBreaks.length === 0}
         <p class="empty">Keine Tagespausen in diesem Monat.</p>
       {:else}
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div class="table-wrap" role="region" aria-label="Tagespausen des Monats" tabindex="0">
-          <table class="data-table stack-table">
-            <caption class="sr-only">Tagespausen des Monats</caption>
-            <thead>
-              <tr>
-                <th scope="col">Datum</th>
-                <th scope="col">Pause</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each month.dayBreaks as item (item.id)}
-                <tr data-testid={`op-support-daybreak-row-${item.id}`}>
-                  <td class="cell-primary" data-label="Datum">{formatOperatorDay(item.date)}</td>
-                  <td data-label="Pause">{timeRange(item.startTime, item.endTime)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          caption="Tagespausen des Monats"
+          columns={DAY_BREAK_COLUMNS}
+          rows={month.dayBreaks}
+          rowKey={(item) => item.id}
+          rowTestId={(item) => `op-support-daybreak-row-${item.id}`}
+        >
+          {#snippet cell(item, column)}
+            {#if column.key === "date"}
+              {formatOperatorDay(item.date)}
+            {:else}
+              {timeRange(item.startTime, item.endTime)}
+            {/if}
+          {/snippet}
+        </DataTable>
       {/if}
     </div>
   </Section>
@@ -216,40 +228,29 @@
       {#if month.leaveRequests.length === 0}
         <p class="empty">Keine Anträge in diesem Monat.</p>
       {:else}
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div class="table-wrap" role="region" aria-label="Anträge des Monats" tabindex="0">
-          <table class="data-table stack-table">
-            <caption class="sr-only">Anträge des Monats</caption>
-            <thead>
-              <tr>
-                <th scope="col">Art</th>
-                <th scope="col">Status</th>
-                <th scope="col">Zeitraum</th>
-                <th scope="col">Tage</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each month.leaveRequests as request (request.id)}
-                <tr data-testid={`op-support-leave-row-${request.id}`}>
-                  <td class="cell-primary" data-label="Art"
-                    ><span class="text">{request.typeName}</span></td
-                  >
-                  <td data-label="Status">{labelFor(LEAVE_STATUS_LABELS, request.status)}</td>
-                  <td data-label="Zeitraum">
-                    {formatOperatorDayRange(request.startDate, request.endDate)}
-                    {#if request.halfDay}<span class="badge badge-gray">halber Tag</span>{/if}
-                  </td>
-                  <td data-label="Tage">
-                    {formatDays(request.days)}
-                    {#if request.daysProvisional === true}
-                      <span class="badge badge-yellow mark">vorläufig</span>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          caption="Anträge des Monats"
+          columns={LEAVE_COLUMNS}
+          rows={month.leaveRequests}
+          rowKey={(request) => request.id}
+          rowTestId={(request) => `op-support-leave-row-${request.id}`}
+        >
+          {#snippet cell(request, column)}
+            {#if column.key === "typeName"}
+              <span class="text">{request.typeName}</span>
+            {:else if column.key === "status"}
+              {labelFor(LEAVE_STATUS_LABELS, request.status)}
+            {:else if column.key === "period"}
+              {formatOperatorDayRange(request.startDate, request.endDate)}
+              {#if request.halfDay}<span class="badge badge-gray">halber Tag</span>{/if}
+            {:else}
+              {formatDays(request.days)}
+              {#if request.daysProvisional === true}
+                <span class="badge badge-yellow mark">vorläufig</span>
+              {/if}
+            {/if}
+          {/snippet}
+        </DataTable>
       {/if}
     </div>
   </Section>
@@ -259,33 +260,24 @@
       {#if month.absences.length === 0}
         <p class="empty">Keine Abwesenheiten in diesem Monat.</p>
       {:else}
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <div class="table-wrap" role="region" aria-label="Abwesenheiten des Monats" tabindex="0">
-          <table class="data-table stack-table">
-            <caption class="sr-only">Abwesenheiten des Monats</caption>
-            <thead>
-              <tr>
-                <th scope="col">Art</th>
-                <th scope="col">Zeitraum</th>
-                <th scope="col">Herkunft</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each month.absences as absence (absence.id)}
-                <tr data-testid={`op-support-absence-row-${absence.id}`}>
-                  <td class="cell-primary" data-label="Art"
-                    >{labelFor(LEAVE_TYPE_LABELS, absence.type)}</td
-                  >
-                  <td data-label="Zeitraum">
-                    {formatOperatorDayRange(absence.startDate, absence.endDate)}
-                    {#if absence.halfDay}<span class="badge badge-gray">halber Tag</span>{/if}
-                  </td>
-                  <td data-label="Herkunft">{labelFor(ABSENCE_SOURCE_LABELS, absence.source)}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          caption="Abwesenheiten des Monats"
+          columns={ABSENCE_COLUMNS}
+          rows={month.absences}
+          rowKey={(absence) => absence.id}
+          rowTestId={(absence) => `op-support-absence-row-${absence.id}`}
+        >
+          {#snippet cell(absence, column)}
+            {#if column.key === "type"}
+              {labelFor(LEAVE_TYPE_LABELS, absence.type)}
+            {:else if column.key === "period"}
+              {formatOperatorDayRange(absence.startDate, absence.endDate)}
+              {#if absence.halfDay}<span class="badge badge-gray">halber Tag</span>{/if}
+            {:else}
+              {labelFor(ABSENCE_SOURCE_LABELS, absence.source)}
+            {/if}
+          {/snippet}
+        </DataTable>
       {/if}
     </div>
   </Section>
@@ -350,7 +342,8 @@
   }
 
   .text {
-    display: block;
+    display: inline-block;
+    white-space: normal;
     overflow-wrap: anywhere;
     min-width: 0;
     /* A very long unbroken salon name wraps inside its own column instead of squeezing the other columns
@@ -389,72 +382,9 @@
     color: var(--text);
   }
 
-  /* A deleted entry stays in the list but reads as no longer valid. */
-  tr.deleted td {
+  /* A deleted entry stays in the list but reads as no longer valid (the row class comes from the
+     DataTable `rowClass`, so it is styled globally). */
+  .month :global(tr.deleted td) {
     color: var(--text-2);
-  }
-
-  @media (min-width: 640px) and (max-width: 1023px) {
-    .stack-table th,
-    .stack-table td {
-      padding-inline: 8px;
-    }
-  }
-
-  @media (max-width: 639px) {
-    .stack-table thead {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      margin: -1px;
-      padding: 0;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-      border: 0;
-    }
-
-    .stack-table,
-    .stack-table tbody {
-      display: block;
-    }
-
-    .stack-table tr {
-      display: block;
-      padding: 16px;
-      border-bottom: 1px solid var(--line);
-    }
-
-    .stack-table tbody tr:last-child {
-      border-bottom: 0;
-    }
-
-    .stack-table td {
-      display: block;
-      padding: 0;
-      border: 0;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .stack-table td + td {
-      margin-top: 4px;
-    }
-
-    .stack-table td.cell-primary {
-      font-size: 16px;
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-
-    .stack-table td:not(.cell-primary):not(.cell-marks)::before {
-      content: attr(data-label) ": ";
-      font-weight: 600;
-      color: var(--text-2);
-    }
-
-    .cell-marks {
-      margin-top: 8px;
-    }
   }
 </style>
