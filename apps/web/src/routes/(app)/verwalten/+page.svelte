@@ -123,7 +123,7 @@
     if (overdue !== null)
       items.push({
         label: "Monatsabschlüsse offen",
-        value: String(overdue),
+        value: overdue,
         explanation: overdue === 0 ? "alle vergangenen Monate abgeschlossen" : "vergangene Monate",
         deltaTone: overdue > 0 ? "warn" : "neutral",
         derivationHref: linkIf("/verwalten/monatsabschluss"),
@@ -133,7 +133,7 @@
     if (counts) {
       items.push({
         label: "Einladungen offen",
-        value: String(counts.pendingInvitations),
+        value: counts.pendingInvitations,
         explanation: "noch nicht angenommen",
         derivationHref: linkIf("/verwalten/personen"),
         derivationLabel: "Personen →",
@@ -141,7 +141,7 @@
       });
       items.push({
         label: "Ohne Vertrag",
-        value: String(counts.withoutContract),
+        value: counts.withoutContract,
         explanation: "Personen ohne Arbeitszeit",
         derivationHref: linkIf("/verwalten/personen"),
         derivationLabel: "Personen →",
@@ -151,7 +151,7 @@
     if (atRisk !== null)
       items.push({
         label: "Urlaubsverfall droht",
-        value: String(atRisk),
+        value: atRisk,
         explanation: "Personen mit Resturlaub vor Ablauf (§ 7 BUrlG)",
         derivationHref: linkIf("/verwalten/berichte"),
         derivationLabel: "Berichte →",

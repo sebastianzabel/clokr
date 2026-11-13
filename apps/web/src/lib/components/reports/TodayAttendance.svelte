@@ -52,12 +52,12 @@
     if (attendance === null) return [];
     const { summary } = attendance;
     const items: KpiItem[] = [
-      { label: "Anwesend", value: String(summary.present) },
-      { label: "Eingestempelt", value: String(summary.clockedIn) },
-      { label: "Abwesend", value: String(summary.absent) },
-      { label: DAY_STATUS_LABEL.missing, value: String(summary.missing) },
+      { label: "Anwesend", value: summary.present },
+      { label: "Eingestempelt", value: summary.clockedIn },
+      { label: "Abwesend", value: summary.absent },
+      { label: DAY_STATUS_LABEL.missing, value: summary.missing },
     ];
-    if (summary.holiday > 0) items.push({ label: "Feiertag", value: String(summary.holiday) });
+    if (summary.holiday > 0) items.push({ label: "Feiertag", value: summary.holiday });
     return items;
   });
 

@@ -430,9 +430,17 @@ describe("every year-changing path reloads the figures (D-02, issue #122)", () =
     expect(fnBody("async function loadVacationSummary(")).toContain("vacationBalance = null;");
     const items = PAGE.slice(PAGE.indexOf("let balanceItems = $derived<KpiItem[]>(["));
     // #853-19: the day figures go through formatDays (decimal comma), never a raw float.
-    expect(items).toContain('value: vacRemaining === null ? "–" : formatDays(vacRemaining)');
-    expect(items).toContain('value: vacationBalance ? formatDays(vacSummaryUsed) : "–"');
-    expect(items).toMatch(/value: !vacationBalance\s+\? "–"\s+:/);
+    // Since the count-up (13.11.2026) the cell takes the NUMBER plus `format: formatDays`, so the
+    // text is the same decimal-comma string at rest while the figure can count up.
+    expect(items).toContain(
+      'value: vacRemaining === null ? "–" : vacRemaining,\n      format: formatDays,',
+    );
+    expect(items).toContain(
+      'value: vacationBalance ? vacSummaryUsed : "–",\n      format: formatDays,',
+    );
+    expect(items).toMatch(
+      /value: !vacationBalance \? "–" : carryDeadlineAhead \? vacSummaryCarryOverRemaining : 0,\s+format: formatDays,/,
+    );
   });
 });
 

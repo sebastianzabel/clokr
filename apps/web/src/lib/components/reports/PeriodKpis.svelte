@@ -84,25 +84,29 @@
     return [
       {
         label: "Urlaub genommen",
-        value: fmtDaysDe(kpis.vacationTakenDays),
+        value: kpis.vacationTakenDays,
+        format: fmtDaysDe,
         unit: "Tage",
         delta: `bis ${fmtDateDe(kpis.vacationAsOf)}`,
       },
       {
         label: "Urlaub genehmigt",
-        value: fmtDaysDe(kpis.vacationApprovedDays),
+        value: kpis.vacationApprovedDays,
+        format: fmtDaysDe,
         unit: "Tage",
         delta: `nach ${fmtDateDe(kpis.vacationAsOf)}, Urlaubsjahr ${kpis.vacationYear}`,
       },
       {
         label: "Urlaubsanspruch",
-        value: fmtDaysDe(kpis.vacationEntitlementDays),
+        value: kpis.vacationEntitlementDays,
+        format: fmtDaysDe,
         unit: "Tage",
         delta: `Urlaubsjahr ${kpis.vacationYear}`,
       },
       {
         label: "Krankheitstage",
-        value: fmtDaysDe(kpis.sickDays),
+        value: kpis.sickDays,
+        format: fmtDaysDe,
         unit: "Tage",
         delta: "Kalendertage",
       },

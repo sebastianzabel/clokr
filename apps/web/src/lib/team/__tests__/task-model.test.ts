@@ -54,13 +54,13 @@ describe("TASK_KINDS", () => {
     expect(TASK_KINDS.map((k) => [k.kind, k.label])).toEqual([
       ["urlaub", "Urlaub"],
       ["nachtrag", "Nachtrag"],
-      ["paragraf9", "§ 9"],
+      ["paragraf9", "Krank im Urlaub"],
       ["pausenbefund", "Pausenbefund"],
       ["ausstempeln", "Ausstempeln fehlt"],
       ["zeitkorrektur", "Zeitkorrektur"],
     ]);
     expect(TASK_KIND_VALUES).toHaveLength(6);
-    expect(taskKindLabel("paragraf9")).toBe("§ 9");
+    expect(taskKindLabel("paragraf9")).toBe("Krank im Urlaub");
   });
 });
 

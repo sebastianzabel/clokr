@@ -1,7 +1,8 @@
 /**
  * Issue #844 — Navigation v2: the start page per role (Z-02), old URLs redirect to their new place
  * (in the app and as a 308 for e-mail / push deep links), and the rail shows every entry of a role
- * without scrolling at 1440×900 and 1024×768.
+ * without scrolling at 1440×900. Since the owner's spacing decision of 13.11.2026 (34 px rows, 40 px
+ * mark) the rail may scroll at 1024×768; there every entry must still be reachable in the rail.
  *
  * Every test runs in its own throwaway tenant (tenant fixture). Persons are created through the API
  * and get their system role template assigned (ids copied from SYSTEM_ROLE_IDS in
@@ -167,10 +168,7 @@ test.describe("Navigation v2 — old URLs land on the new place", () => {
 });
 
 test.describe("Navigation v2 — the rail fits without scrolling", () => {
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 1024, height: 768 },
-  ]) {
+  for (const viewport of [{ width: 1440, height: 900 }]) {
     test(`Inhaber at ${viewport.width}×${viewport.height}`, async ({ page, request, tenant }) => {
       const email = await createPerson(request, tenant, "railowner", {
         id: TEMPLATE.OWNER,
@@ -189,4 +187,36 @@ test.describe("Navigation v2 — the rail fits without scrolling", () => {
       expect(scrollHeight, "no rail scrolling").toBeLessThanOrEqual(clientHeight);
     });
   }
+
+  // Owner 13.11.2026: at 1024×768 the rail scrolls inside itself; the page never does, and the last
+  // entry of the longest role menu is reachable by scrolling the rail.
+  test("Inhaber at 1024×768: the rail scrolls and its last entry is reachable", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    const email = await createPerson(request, tenant, "railsmall", {
+      id: TEMPLATE.OWNER,
+      scope: { type: "TENANT" },
+    });
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await login(page, email, PASSWORD);
+    const scroll = page.locator(".sidebar-scroll");
+    await expect(scroll).toBeVisible();
+    const items = scroll.locator("a.nav-item");
+    expect(
+      await items.count(),
+      "the Inhaber has entries in all three areas",
+    ).toBeGreaterThanOrEqual(15);
+    const last = items.last();
+    await last.scrollIntoViewIfNeeded();
+    await expect(last).toBeInViewport();
+    const box = await last.boundingBox();
+    const railBox = await scroll.boundingBox();
+    expect(box && railBox, "the last entry and the rail have a box").toBeTruthy();
+    expect(
+      box!.y + box!.height,
+      "the last entry lies inside the rail's scroll area",
+    ).toBeLessThanOrEqual(railBox!.y + railBox!.height + 1);
+  });
 });

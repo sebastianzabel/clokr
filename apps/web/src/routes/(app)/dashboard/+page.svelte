@@ -839,7 +839,7 @@
     const items: KpiItem[] = [
       {
         label: "Anwesend",
-        value: String(band.present),
+        value: band.present,
         unit: `von ${band.expected}`,
         explanation: band.done > 0 ? `${band.done} heute schon gearbeitet` : "gerade eingestempelt",
         derivationHref: statusHref("anwesend"),
@@ -848,7 +848,7 @@
       },
       {
         label: "Erwartet",
-        value: String(band.missing + band.scheduled),
+        value: band.missing + band.scheduled,
         // prototype: „Timo · Schicht seit 09:00“ — the first person whose shift began unclocked
         explanation: firstMissing
           ? `${firstMissing.name}${firstMissing.expectedStart ? ` · Schicht seit ${firstMissing.expectedStart}` : ""}${band.missing > 1 ? ` · +${band.missing - 1}` : ""}`
@@ -862,7 +862,7 @@
       },
       {
         label: "Abwesend",
-        value: String(band.absent),
+        value: band.absent,
         explanation: "Urlaub, Krankheit, Berufsschule",
         derivationHref: statusHref("abwesend"),
         derivationLabel: "Liste →",
@@ -872,7 +872,7 @@
     if (canDecideLeave || canDecideRetro) {
       items.push({
         label: "Aufgaben",
-        value: String(pendingLeave.length + pendingRetroCount),
+        value: pendingLeave.length + pendingRetroCount,
         explanation: `${pendingLeave.length} ${pendingLeave.length === 1 ? "Antrag" : "Anträge"} · ${pendingRetroCount} ${pendingRetroCount === 1 ? "Nachtrag" : "Nachträge"}`,
         derivationHref: "/team/aufgaben",
         derivationLabel: "Aufgaben →",
@@ -1505,7 +1505,8 @@
     if (stats?.vacation) {
       items.push({
         label: "Resturlaub",
-        value: formatDays(stats.vacation.remaining),
+        value: stats.vacation.remaining,
+        format: formatDays,
         unit: formatDays(stats.vacation.remaining) === "1" ? "Tag" : "Tage",
         explanation: vacationLine(stats.vacation),
         testId: "kpi-vacation",

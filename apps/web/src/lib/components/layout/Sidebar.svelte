@@ -80,9 +80,9 @@
 </script>
 
 <aside class="sidebar" aria-label="Hauptnavigation" data-testid="sidebar">
-  <!-- #844 (D-844-11): the rail head is exactly as tall as the header, mark 32 px (owner, #852) -->
+  <!-- Owner 13.11.2026: mark 40 px in a 64 px rail head (was 32 px, aligned to the header, #852) -->
   <a href={homeHref($authStore.user)} class="sidebar-brand" data-testid="sidebar-brand">
-    <BrandLogo size={32} label="Clokr Zeiterfassung" />
+    <BrandLogo size={40} label="Clokr Zeiterfassung" />
   </a>
 
   <div class="sidebar-scroll">
@@ -99,7 +99,7 @@
             aria-current={active ? "page" : undefined}
             data-testid={item.testId}
           >
-            <span class="ico" aria-hidden="true"><Icon name={item.icon} size={17} /></span>
+            <span class="ico" aria-hidden="true"><Icon name={item.icon} size={19} /></span>
             <span class="label" translate="no">{item.label}</span>
           </a>
         {/each}
@@ -175,11 +175,11 @@
   .sidebar-brand,
   .sidebar-brand:hover,
   .sidebar-brand:focus {
-    /* #852/#844: the brand row is exactly as tall as the header, so mark and wordmark sit centred on
-       the same line as the header content. */
+    /* Owner 13.11.2026: a taller rail head for the larger mark (64 px). Until then the row matched the
+       header height (#852/#844); the larger logo no longer fits that line. */
     box-sizing: border-box;
-    height: var(--topbar-h);
-    min-height: var(--topbar-h);
+    height: 64px;
+    min-height: 64px;
     padding: 0 18px;
     display: flex;
     align-items: center;
@@ -208,8 +208,9 @@
     background: var(--line-2);
   }
 
+  /* Owner 13.11.2026: more air above each area heading (12 px, was 6 px) */
   .sidebar-section-label {
-    padding: 6px 18px 2px;
+    padding: 12px 18px 4px;
     font-size: var(--fs-th);
     color: var(--text-3);
     font-weight: 600;
@@ -219,20 +220,21 @@
     display: flex;
     flex-direction: column;
     padding: 0 10px;
-    gap: 1px;
+    gap: 2px;
   }
 
-  /* #844: 30 px rows (prototype), so every entry of a role fits without scrolling at 1024×768 */
+  /* Owner 13.11.2026: 34 px rows (were 30 px, #844 prototype). The longest menu fits at 1440×900; at
+     1024×768 it scrolls inside the rail, which has its own scroll. */
   .nav-item {
     display: flex;
     align-items: center;
-    gap: 9px;
-    height: 30px;
+    gap: 10px;
+    height: 34px;
     padding: 0 8px;
     border-radius: var(--r-control);
     color: var(--text-2);
     font-weight: 500;
-    font-size: 13px;
+    font-size: 14px;
     text-decoration: none;
     position: relative;
     transition:
@@ -269,8 +271,8 @@
   .nav-item .ico {
     display: grid;
     place-items: center;
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     flex-shrink: 0;
     opacity: 0.85;
   }

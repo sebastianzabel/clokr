@@ -157,7 +157,7 @@ describe("/reports period area (Issue #612) - one period control, no old selects
     expect(PAGE).not.toContain('label="Mitarbeiter"');
     expect(PAGE).not.toContain('label="Kritische Salden"');
     expect(PAGE).not.toContain('label="Urlaub genutzt"');
-    expect(PAGE).toContain("{ label: MONTH_STATUS_LABEL.CLOSED, value: String(kpiClosedMonths)");
+    expect(PAGE).toContain("{ label: MONTH_STATUS_LABEL.CLOSED, value: kpiClosedMonths");
     expect(TEMPLATE).toContain("<KpiStrip items={empKpiItems}");
     expect(PAGE).not.toContain("KPIStat");
     expect(PAGE).toContain("<PeriodKpis");
