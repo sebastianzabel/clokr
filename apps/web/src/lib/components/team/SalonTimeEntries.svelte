@@ -2,13 +2,18 @@
   // Issue #85 D-09 — the Salonansicht of `/team/time-entries`: every entry recorded in one salon
   // for the shown month, grouped by day and person. Presentation only (the server decides what is
   // visible) and per-entry details only — it sums nothing, by design (see salon-time-entries.ts).
+  // Issue #853 (owner review): one table for the month, in the column pattern of the person view.
   // Mountable: no `$app` import, no request; the page loads the data and passes the status.
   import { format } from "date-fns";
-  import type { SalonViewDay, SalonViewStatus } from "$lib/team/salon-time-entries";
+  import type { SalonViewDay, SalonViewEntry, SalonViewStatus } from "$lib/team/salon-time-entries";
   import { salonNameLabel } from "$lib/salons/page-scope";
   import SalonScopeLabel from "./SalonScopeLabel.svelte";
   import { TRAVEL_TEXTS, isTravelRow, travelRouteLabel } from "$lib/time-entries/travel-entry-form";
   import Skeleton from "$components/ui/Skeleton.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import { fmtMin } from "$lib/utils/format-minutes";
+  import { weekdayDateLabel } from "$lib/team/zeiten-day-rows";
 
   interface Props {
     days: SalonViewDay[];
@@ -20,15 +25,43 @@
 
   let { days, status, capReached = false, salonName = null }: Props = $props();
 
+  // A type alias, because DataTable's row generic wants an index-signature-compatible type.
+  type EntryRow = {
+    id: string;
+    day: string;
+    dayLabel: string;
+    name: string;
+    entry: SalonViewEntry;
+  };
+
+  // Issue #853 (owner review): the pattern of the person view - one table, Tag first, then the
+  // person, the times, the stored break and the working time as H:MM, a quiet status chip; no row
+  // is tinted. Still per entry and without any sum (#85).
+  const COLUMNS: DataTableColumn[] = [
+    { key: "day", label: "Tag", primary: true },
+    { key: "name", label: "Person" },
+    { key: "times", label: "Zeiten" },
+    { key: "break", label: "Pause", align: "end" },
+    { key: "work", label: "Netto", align: "end" },
+    { key: "state", label: "Status", align: "end" },
+  ];
+
+  const rows = $derived<EntryRow[]>(
+    days.flatMap((day) =>
+      day.persons.flatMap((person) =>
+        person.entries.map((entry) => ({
+          id: entry.id,
+          day: day.dateKey,
+          dayLabel: weekdayDateLabel(day.dateKey),
+          name: person.name,
+          entry,
+        })),
+      ),
+    ),
+  );
+
   function time(iso: string): string {
     return format(new Date(iso), "HH:mm");
-  }
-
-  function hoursMinutes(minutes: number | null): string {
-    if (minutes === null) return "—";
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return `${h}:${String(m).padStart(2, "0")}`;
   }
 </script>
 
@@ -60,46 +93,38 @@
     {#if salonName}
       <SalonScopeLabel label={salonNameLabel(salonName)} />
     {/if}
-    {#each days as day (day.dateKey)}
-      <section class="card salon-view-day">
-        <h3 class="salon-view-day-title">{day.label}</h3>
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Mitarbeiter</th>
-                <th>Beginn</th>
-                <th>Ende</th>
-                <th>Pause</th>
-                <th>Arbeitszeit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each day.persons as person (person.employeeId)}
-                {#each person.entries as entry (entry.id)}
-                  <tr>
-                    <td
-                      >{person.name}{#if isTravelRow(entry)}
-                        <span class="badge badge-gray">{TRAVEL_TEXTS.badge}</span>
-                        <span class="salon-view-route">{travelRouteLabel(entry)}</span>{/if}</td
-                    >
-                    <td>{time(entry.startTime)}</td>
-                    <td>{entry.endTime ? time(entry.endTime) : "offen"}</td>
-                    <td>{entry.breakMinutes} min</td>
-                    <td>
-                      {hoursMinutes(entry.workingMinutes)}
-                      {#if entry.isInvalid}
-                        <span class="badge badge-gray">ungültig</span>
-                      {/if}
-                    </td>
-                  </tr>
-                {/each}
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    {/each}
+    <DataTable
+      columns={COLUMNS}
+      {rows}
+      rowKey={(row) => row.id}
+      caption={salonName ? `Einträge in ${salonName}` : "Einträge im Salon"}
+    >
+      {#snippet cell(row, column)}
+        {@const entry = row.entry}
+        {#if column.key === "day"}
+          {row.dayLabel}
+        {:else if column.key === "name"}
+          {row.name}{#if isTravelRow(entry)}
+            <Chip>{TRAVEL_TEXTS.badge}</Chip>
+            <span class="salon-view-route">{travelRouteLabel(entry)}</span>{/if}
+        {:else if column.key === "times"}
+          {entry.endTime
+            ? `${time(entry.startTime)}–${time(entry.endTime)}`
+            : `ab ${time(entry.startTime)}`}
+        {:else if column.key === "break"}
+          <!-- a running entry's stored break is not final yet and is never shown -->
+          {entry.endTime && entry.breakMinutes > 0 ? fmtMin(entry.breakMinutes) : "–"}
+        {:else if column.key === "work"}
+          {entry.workingMinutes === null ? "–" : fmtMin(entry.workingMinutes)}
+        {:else if column.key === "state"}
+          {#if !entry.endTime}
+            <Chip>offen</Chip>
+          {:else if entry.isInvalid}
+            <Chip tone="warn">ungültig</Chip>
+          {/if}
+        {/if}
+      {/snippet}
+    </DataTable>
   {/if}
 </div>
 
@@ -108,15 +133,6 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
-  }
-  .salon-view-day {
-    padding: 1rem;
-  }
-  .salon-view-day-title {
-    margin: 0 0 0.75rem;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text);
   }
   .salon-view-route {
     display: inline-block;

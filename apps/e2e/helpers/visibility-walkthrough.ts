@@ -63,6 +63,11 @@ export interface VisibilityWalkthrough {
   title: string;
   /** App path opened after sign-in. */
   path: string;
+  /**
+   * Optional setup through the API, run once per test right after the throwaway tenant exists and
+   * before the page is opened (#853: the Team pages need people, requests or entries to show).
+   */
+  seed?: (context: { request: APIRequestContext; tenant: TestTenant }) => Promise<void>;
   /** Optional wait until the page is interactive (runs before the first step). */
   ready?: (page: Page) => Promise<void>;
   steps: WalkthroughStep[];
@@ -131,6 +136,7 @@ export function defineVisibilityWalkthrough(w: VisibilityWalkthrough): void {
           if (shotsDir) mkdirSync(shotsDir, { recursive: true });
           await page.setViewportSize(viewport);
           await signInForWalkthrough(page, request, tenant, mode);
+          await w.seed?.({ request, tenant });
           await page.goto(w.path);
           // Anti-vacuity: the cell under test really is in the theme it claims.
           await expect(page.locator("html")).toHaveAttribute("data-mode", mode);

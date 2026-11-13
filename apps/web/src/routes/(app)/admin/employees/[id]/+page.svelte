@@ -21,7 +21,8 @@
   import SalonAssignmentsSection from "$lib/components/employees/SalonAssignmentsSection.svelte";
   import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
   import { localCalendarDay } from "$lib/employees/employment-state";
-  import { detailHeadSub, homeSalonIdOn, salonNameOf } from "$lib/employees/detail-head";
+  import { detailHeadSub, salonNameOf } from "$lib/employees/detail-head";
+  import { homeSalonIdOn } from "$lib/employees/salon-assignments";
   import type { SalonAssignment, SalonRef } from "$lib/employees/salon-assignments";
   import type { PersonEmployee } from "$lib/employees/person-form";
   import type { VacationEntitlement } from "$lib/employees/urlaub-form";

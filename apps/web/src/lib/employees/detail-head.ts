@@ -1,29 +1,13 @@
 /**
  * Issue #854 (owner review of the Personen detail) - the head of the employee detail as in the
  * prototype: avatar, name and ONE sub line „<Personalnummer> · <Stammsalon> · seit <Eintrittsdatum>“.
- * Display only: the Stammsalon comes from the person's stored salon assignments (the API decides
+ * Display only: the Stammsalon comes from the person's stored salon assignments through
+ * `homeSalonIdOn()` of `$lib/employees/salon-assignments` (#853, the one display rule) (the API decides
  * them, `GET /employees/:id/salon-assignments`), the employment state from `employmentState()`; a
  * part that is unknown or unreadable is left out, nothing is guessed.
  */
 import { employmentState } from "$lib/employees/employment-state";
-import type { SalonAssignment, SalonRef } from "$lib/employees/salon-assignments";
-
-/** The Stammsalon id on a calendar day (`YYYY-MM-DD`), or null when no HOME row covers the day. */
-export function homeSalonIdOn(
-  assignments: readonly Pick<SalonAssignment, "kind" | "salonId" | "validFrom" | "validUntil">[],
-  day: string,
-): string | null {
-  const covering = assignments.filter(
-    (a) =>
-      a.kind === "HOME" &&
-      a.validFrom.slice(0, 10) <= day &&
-      (a.validUntil === null || a.validUntil.slice(0, 10) >= day),
-  );
-  if (covering.length === 0) return null;
-  // Two covering rows would be a data error the API prevents; the newest start wins for display.
-  covering.sort((a, b) => b.validFrom.localeCompare(a.validFrom));
-  return covering[0].salonId;
-}
+import type { SalonRef } from "$lib/employees/salon-assignments";
 
 /** The name of a salon id, or null when the list does not hold it (unreadable or unknown). */
 export function salonNameOf(salons: readonly SalonRef[], salonId: string | null): string | null {

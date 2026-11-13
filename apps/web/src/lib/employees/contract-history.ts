@@ -38,6 +38,15 @@ export const MODEL_LABELS: Record<string, string> = {
   SHIFT_BASED: "Nach Schichtplan",
 };
 
+/**
+ * Issue #853 (D-853-14) - the German label of a schedule type, read from the same table as the
+ * contract history. „–“ for no contract or an unknown type. (`/admin/employees` keeps its own
+ * copy until #854 moves it here.)
+ */
+export function scheduleModelLabel(type: string | null | undefined): string {
+  return type && Object.hasOwn(MODEL_LABELS, type) ? MODEL_LABELS[type] : "–";
+}
+
 function formatNumber(n: number): string {
   return n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 }

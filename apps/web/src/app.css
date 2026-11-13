@@ -52,10 +52,14 @@ h6 {
 /* Inline links in body text — must be distinguishable from surrounding text. A whole list row or
    table cell that is a link (.list-link of ListRow, .team-grid__link of the team week, #846; .hub-row
    of a hub list, #847) is no
-   inline text link: its row is the affordance. */
+   inline text link: its row is the affordance. The tab of a PageTabs strip in link mode (#853) is a
+   tab, not a link, and looks like every other tab; a `.row-action` („Öffnen“ in a table row, #853) is
+   a quiet action whose row already says it is clickable. */
 a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):not(
     .sidebar-brand
-  ):not(.mehr-item):not(.list-link):not(.team-grid__link):not(.hub-row) {
+  ):not(.mehr-item):not(.list-link):not(.team-grid__link):not(.hub-row):not(.page-tab):not(
+    .row-action
+  ) {
   text-decoration-line: underline;
   text-decoration-color: var(--brand);
   text-underline-offset: 2px;
@@ -63,7 +67,9 @@ a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-us
 }
 a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):not(
     .sidebar-brand
-  ):not(.mehr-item):not(.list-link):not(.team-grid__link):not(.hub-row):hover {
+  ):not(.mehr-item):not(.list-link):not(.team-grid__link):not(.hub-row):not(.page-tab):not(
+    .row-action
+  ):hover {
   text-decoration-color: var(--brand);
 }
 
@@ -2801,7 +2807,8 @@ button.approval-row:disabled {
 .shift-grid {
   display: grid;
   grid-template-columns: 160px repeat(7, 1fr);
-  gap: 2px;
+  /* #853 (owner review): 1 px lines like every other table of the app, not 2 px. */
+  gap: 1px;
   background: var(--line);
   border-radius: var(--r-control);
   overflow: hidden;

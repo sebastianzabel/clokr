@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** Shown instead of the decision buttons on the caller's own request (the dialog and the task row). */
+  export const SELF_APPROVAL_TEXT = "Eigene Anträge können nicht selbst genehmigt werden.";
+</script>
+
 <script lang="ts">
   /**
    * LeaveReviewDialog — Phase 255 (GitHub issue #255).
@@ -21,7 +26,10 @@
    * free of that import. Reintroducing it later silently deletes that gain for every future test
    * of this file.
    */
-  import Modal from "$components/ui/Modal.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte";
   import AttestFields from "./AttestFields.svelte";
@@ -33,6 +41,7 @@
   } from "$lib/phorest/appointmentCollisions";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import { salonContext, showSalonOptions } from "$stores/salon-context"; // Issue #853: salon names, one module (#82)
   import { leaveDecided } from "$lib/feedback/action-messages"; // #846 D-03: every decision is acknowledged
   import {
     LEAVE_TYPE_OPTIONS,
@@ -52,6 +61,17 @@
     type LeaveReviewRequest,
     type LeaveOverlapEntry,
   } from "$lib/leave/leave-review";
+  import {
+    NO_SHIFTS_TEXT,
+    reviewResultToast,
+    shiftLines,
+    vacationBeforeAfter,
+    type DirectDecision,
+    type RangeShift,
+  } from "$lib/leave/review-facts"; // Issue #853 (S-29, D-853-08)
+  import { mapVacationBalance, type VacationEntitlementRow } from "$lib/leave/vacation-balance";
+  import { deriveVacationSummary } from "$lib/leave/vacation-summary";
+  import { homeSalonIdOn, type SalonAssignment } from "$lib/employees/salon-assignments";
   import Skeleton from "$components/ui/Skeleton.svelte";
 
   interface Props {
@@ -63,9 +83,25 @@
     currentEmployeeId: string | null;
     /** D-02: the page-specific reload after a successful review (each page loads different data). */
     onReviewed: () => void | Promise<void>;
+    /**
+     * Issue #853 (D-853-08): what the caller may read, passed in by the page (this file imports no
+     * auth store). Each default is false: a fact line is shown only when its flag is set AND the
+     * API answers; the API stays the guard, a missing permission only omits the line.
+     */
+    canReadEntitlement?: boolean;
+    canReadShifts?: boolean;
+    canReadEmployee?: boolean;
   }
 
-  let { open = $bindable(), request, currentEmployeeId, onReviewed }: Props = $props();
+  let {
+    open = $bindable(),
+    request,
+    currentEmployeeId,
+    onReviewed,
+    canReadEntitlement = false,
+    canReadShifts = false,
+    canReadEmployee = false,
+  }: Props = $props();
 
   // ── Local state ──────────────────────────────────────────────────────────
   let note = $state("");
@@ -76,6 +112,23 @@
   let attestPresent = $state(false);
   let attestFrom = $state("");
   let attestTo = $state("");
+
+  // ── Issue #853 (D-853-08): optional decision facts ──────────────────────────
+  // `null` = not shown (flag off, not loaded yet, or the read was refused). A refusal or a network
+  // error omits the line silently; no error text is ever rendered for these lines.
+  let homeSalonId = $state<string | null>(null);
+  // The name comes from the salon context store (the only module that reads /me/context, #82),
+  // gated by its one rule `showSalonOptions` (#64): a salon outside the caller's reach is not in
+  // its list, so the line is omitted for it.
+  let homeSalonName = $derived(
+    showSalonOptions($salonContext)
+      ? ($salonContext.salons.find((x) => x.id === homeSalonId)?.name ?? null)
+      : null,
+  );
+  let vacationFact = $state<{ label: string; value: string } | null>(null);
+  let shiftFactLines = $state<string[] | null>(null);
+  // The request the facts belong to; a late answer for another request is discarded (T-853-15).
+  let factsFor: string | null = null;
 
   // ── Phase 87: appointment-collision warn-and-confirm on APPROVE (D-05) ─────
   let collisionOpen = $state(false);
@@ -122,6 +175,67 @@
     }
   });
 
+  // Issue #853 (D-853-08): the optional facts. One effect per open request; each read runs only
+  // behind its own flag, and every answer is compared with the request id it was asked for.
+  $effect(() => {
+    homeSalonId = null;
+    vacationFact = null;
+    shiftFactLines = null;
+    if (!open || !request) {
+      factsFor = null;
+      return;
+    }
+    const rid = request.id;
+    const employeeId = request.employeeId;
+    const startDate = request.startDate;
+    const endDate = request.endDate;
+    const status = request.status;
+    const days = Number(request.days);
+    const isVacation = request.typeCode === "VACATION";
+    const wantEmployee = canReadEmployee;
+    const wantEntitlement = canReadEntitlement && isVacation;
+    const wantShifts = canReadShifts;
+    factsFor = rid;
+    const current = () => factsFor === rid;
+
+    if (wantEmployee) {
+      api
+        .get<{ assignments: SalonAssignment[] }>(`/employees/${employeeId}/salon-assignments`)
+        .then((assigned) => {
+          if (current()) homeSalonId = homeSalonIdOn(assigned.assignments, startDate);
+        })
+        .catch(() => {});
+    }
+
+    if (wantEntitlement) {
+      const year = startDate.slice(0, 4);
+      api
+        .get<VacationEntitlementRow[]>(`/leave/entitlements/${employeeId}?year=${year}`)
+        .then((rows) => {
+          if (!current()) return;
+          const balance = mapVacationBalance(rows.find((r) => r.typeCode === "VACATION"));
+          const fact = vacationBeforeAfter({
+            remaining: deriveVacationSummary(balance, 0).remaining,
+            days,
+            status,
+            startDate,
+            endDate,
+          });
+          if (fact) vacationFact = { label: fact.label, value: fact.value };
+        })
+        .catch(() => {});
+    }
+
+    if (wantShifts) {
+      api
+        .get<RangeShift[]>(`/shifts/range?from=${startDate}&to=${endDate}&employeeId=${employeeId}`)
+        .then((rows) => {
+          if (current()) shiftFactLines = shiftLines(rows);
+        })
+        .catch(() => {});
+    }
+  });
+
   // ── Helpers ──────────────────────────────────────────────────────────────
   function typeName(code: CalendarTypeCode): string {
     return LEAVE_TYPE_OPTIONS.find((t) => t.code === code)?.label ?? code;
@@ -136,14 +250,60 @@
   let approvedOverlap = $derived(overlap.filter((o) => o.status === "APPROVED"));
   let isCancellationReview = $derived(request?.status === "CANCELLATION_REQUESTED");
   let isSelfApproval = $derived(request !== null && request.employeeId === currentEmployeeId);
+  // Issue #853 (D-853-09): a rejection needs a reason. UI-only guard; the API stays as it is.
+  let reasonMissing = $derived(note.trim() === "");
+  let personName = $derived(
+    request ? `${request.employee.firstName} ${request.employee.lastName}` : "",
+  );
   let isDecidable = $derived(
     request !== null &&
       (request.status === "PENDING" || request.status === "CANCELLATION_REQUESTED"),
   );
 
   // ── Mutation ─────────────────────────────────────────────────────────────
-  async function submitReview(status: "APPROVED" | "REJECTED") {
-    if (!request) return;
+  /**
+   * Issue #853-19: the decision of a task row, without the dialog being opened. The page sets
+   * `request` to the row's request first; this runs EXACTLY the path of the dialog's buttons
+   * (`submitReview`: appointment-collision warning on a leave approval, `runReview`: the PATCH, the
+   * sick-leave attest write, the toast, the reload, the limit-exception hand-over), so a row decision
+   * and a dialog decision can never differ. The attest fields are initialised from the request like
+   * the open-effect does, so a sick-leave approval writes back exactly what is stored.
+   *
+   * A rejection needs its reason (D-853-09): the row asks for it in a `ReasonDialog` and passes it in;
+   * an empty reason is refused here a second time. With `toastErrors: false` the caller shows the
+   * refusal itself (the reason dialog keeps it inline).
+   */
+  export async function decide(
+    status: "APPROVED" | "REJECTED",
+    reason?: string,
+    options?: { toastErrors?: boolean },
+  ): Promise<DirectDecision> {
+    const req = request;
+    if (!req) return { ok: false, handedOver: false, message: "Kein Antrag ausgewählt." };
+    if (isSelfApproval) return { ok: false, handedOver: false, message: SELF_APPROVAL_TEXT };
+    if (!isDecidable) {
+      return { ok: false, handedOver: false, message: "Antrag bereits entschieden." };
+    }
+    const text = reason?.trim() ?? "";
+    if (status === "REJECTED" && text === "") {
+      return { ok: false, handedOver: false, message: "Bitte nenne einen Grund." };
+    }
+    note = text;
+    error = "";
+    attestPresent = req.attestPresent ?? false;
+    attestFrom = req.attestValidFrom ?? "";
+    attestTo = req.attestValidTo ?? "";
+    const outcome = await submitReview(status, options?.toastErrors ?? true);
+    if (outcome === "done") return { ok: true };
+    if (outcome === "handover") return { ok: false, handedOver: true };
+    return { ok: false, handedOver: false, message: error || "Fehler" };
+  }
+
+  async function submitReview(
+    status: "APPROVED" | "REJECTED",
+    toastErrors = true,
+  ): Promise<"done" | "failed" | "handover"> {
+    if (!request) return "failed";
     // Pre-check only a genuine leave APPROVAL. A CANCELLATION_REQUESTED review shares this
     // "APPROVED" path, but approving a cancellation makes the employee present again — booked
     // appointments are a reason TO cancel, not a risk of proceeding — so the collision warning
@@ -161,14 +321,24 @@
         // two Modal instances, their `inert`-on-siblings logic would fight over focus).
         open = false;
         collisionOpen = true;
-        return;
+        return "handover";
       }
       if (summary === null) {
         // Fail-open: proceed with the approval, surface a non-blocking notice.
         toasts.error(COLLISION_UNAVAILABLE_TOAST);
       }
     }
-    await runReview(status, { id: request.id, typeCode: request.typeCode });
+    // A new decision supersedes an exception step left over from an earlier refused one.
+    pendingException = null;
+    const ok = await runReview(
+      status,
+      { id: request.id, typeCode: request.typeCode },
+      undefined,
+      toastErrors,
+    );
+    if (ok) return "done";
+    // The server asked for a limit exception: the reason dialog took over.
+    return pendingException !== null ? "handover" : "failed";
   }
 
   // Confirm handler for the collision dialog on the approve path. Throws on failure so
@@ -209,6 +379,7 @@
     status: "APPROVED" | "REJECTED",
     ctx: { id: string; typeCode: CalendarTypeCode },
     extra?: { limitException?: { reason: string } },
+    toastErrors = true,
   ): Promise<boolean> {
     saving = true;
     error = "";
@@ -231,10 +402,15 @@
           attestValidTo: attestPresent && attestTo ? attestTo : null,
         });
       }
+      // #846 D-03 / #853 S-29: ONE acknowledgement once the server answered. It names person,
+      // decision and period, never the leave type (sick leave is health data).
+      toasts.success(
+        period
+          ? leaveDecided(personName, period.start, period.end, status, isCancellationReview)
+          : reviewResultToast(status, personName, isCancellationReview),
+      );
       open = false;
       pendingApprove = null;
-      if (period)
-        toasts.success(leaveDecided(typeName(ctx.typeCode), period.start, period.end, status));
       await onReviewed();
       return true;
     } catch (e: unknown) {
@@ -257,7 +433,7 @@
       error = apiErr?.data?.error ?? apiErr?.message ?? "Fehler";
       // If the review Modal was already closed (collision-confirm path), the inline error above
       // is not visible — surface it via a toast instead.
-      if (!open) toasts.error(error);
+      if (!open && toastErrors) toasts.error(error);
       return false;
     } finally {
       saving = false;
@@ -271,7 +447,7 @@
        (matches CLAUDE.md's leave-cancellation flow contract). The same component renders both
        states because the multi-step flow is owned by the same modal in this codebase. -->
 {#if request}
-  <Modal
+  <Dialog
     bind:open
     eyebrow={isCancellationReview ? "Stornierung" : "Antrag"}
     title={isCancellationReview ? "Stornierungsantrag prüfen" : "Antrag prüfen"}
@@ -280,42 +456,67 @@
       data-testid={isCancellationReview ? "leave-cancel-approval-modal" : "leave-approval-modal"}
       style="display: contents"
     >
-      <!-- Request details -->
-      <div
-        class="review-grid"
+      <!-- Issue #853: the facts of the decision, first -->
+      <dl
+        class="facts"
         data-testid={isCancellationReview
           ? "leave-cancel-approval-modal-summary"
           : "leave-approval-modal-summary"}
       >
-        <div class="review-field">
-          <span class="review-label">Mitarbeiter</span>
-          <span class="review-value">{request.employee.firstName} {request.employee.lastName}</span>
+        <div class="fact">
+          <dt>Person</dt>
+          <dd>{personName}</dd>
         </div>
-        <div class="review-field">
-          <span class="review-label">Art</span>
-          <span class="review-value">{typeName(request.typeCode)}</span>
+        <div class="fact">
+          <dt>Art</dt>
+          <dd>{typeName(request.typeCode)}</dd>
         </div>
-        <div class="review-field">
-          <span class="review-label">Zeitraum</span>
-          <span class="review-value">{fmtDate(request.startDate)} – {fmtDate(request.endDate)}</span
-          >
+        <div class="fact">
+          <dt>Zeitraum</dt>
+          <dd>{fmtDate(request.startDate)} – {fmtDate(request.endDate)}</dd>
         </div>
-        <div class="review-field">
-          <span class="review-label">Umfang</span>
-          <span class="review-value"
-            >{leaveDaysLabel(Number(request.days), request.halfDay, request.typeCode)}</span
-          >
+        <div class="fact">
+          <dt>Umfang</dt>
+          <dd>{leaveDaysLabel(Number(request.days), request.halfDay, request.typeCode)}</dd>
         </div>
-        {#if request.note}
-          <div class="review-field review-field--full">
-            <span class="review-label">Anmerkung Mitarbeiter</span>
-            <span class="review-value">„{request.note}"</span>
+        {#if homeSalonName}
+          <div class="fact" data-testid="review-fact-home-salon">
+            <dt>Stammsalon</dt>
+            <dd>{homeSalonName}</dd>
           </div>
         {/if}
-      </div>
+        {#if vacationFact}
+          <div class="fact" data-testid="review-fact-vacation">
+            <dt>{vacationFact.label}</dt>
+            <dd>{vacationFact.value}</dd>
+          </div>
+        {/if}
+        {#if shiftFactLines}
+          <div class="fact fact--full" data-testid="review-fact-shifts">
+            <dt>Schichten im Zeitraum</dt>
+            <dd>
+              {#if shiftFactLines.length === 0}
+                {NO_SHIFTS_TEXT}
+              {:else}
+                <ul class="shift-lines">
+                  {#each shiftFactLines as line, i (i)}
+                    <li>{line}</li>
+                  {/each}
+                </ul>
+              {/if}
+            </dd>
+          </div>
+        {/if}
+        {#if request.note}
+          <div class="fact fact--full">
+            <dt>Anmerkung Mitarbeiter</dt>
+            <dd>„{request.note}"</dd>
+          </div>
+        {/if}
+      </dl>
 
       <!-- Overlapping colleagues -->
-      <div class="overlap-box review-section">
+      <section class="overlap-box review-section">
         <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
         {#if loadingOverlap}
           <Skeleton shape="line" />
@@ -326,21 +527,20 @@
             {#each approvedOverlap as o (o.id)}
               <div class="overlap-row">
                 <span class="overlap-name">{o.employeeName}</span>
-                <span class="chip">{o.typeName ?? NEUTRAL_CHIP_LABEL}</span>
+                <Chip>{o.typeName ?? NEUTRAL_CHIP_LABEL}</Chip>
                 <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
               </div>
             {/each}
           </div>
         {/if}
-      </div>
+      </section>
 
       {#if showsBurlgSection7Notice(request.typeCode)}
-        <div class="callout">
-          <span class="ico" aria-hidden="true">⚖</span>
-          <p>
+        <div class="review-section">
+          <Note tone="info">
             <b>BUrlG § 7:</b> Urlaubsantrag muss zeitnah entschieden werden — gewährter Urlaub muss im
             laufenden Jahr gewährt werden, andernfalls verfällt er gem. § 7 Abs. 3 zum 31.03. des Folgejahres.
-          </p>
+          </Note>
         </div>
       {/if}
 
@@ -356,24 +556,29 @@
         </div>
       {/if}
 
-      <!-- Review note -->
-      <div class="form-group review-section">
-        <label class="form-label" for="review-note">Anmerkung (optional)</label>
-        <input
-          id="review-note"
-          data-testid={isCancellationReview
-            ? "leave-cancel-approval-modal-reason"
-            : "leave-approval-modal-reason"}
-          type="text"
-          bind:value={note}
-          class="form-input"
-          placeholder="Grund für Ablehnung o.ä."
-        />
+      <!-- Review note: the reason is required for a rejection (Issue #853, D-853-09) -->
+      <div class="review-section">
+        <FormField label="Begründung" help="Pflicht beim Ablehnen">
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              data-testid={isCancellationReview
+                ? "leave-cancel-approval-modal-reason"
+                : "leave-approval-modal-reason"}
+              type="text"
+              bind:value={note}
+              class="form-input"
+              placeholder="Grund für Ablehnung o.ä."
+              aria-describedby={describedBy}
+              aria-invalid={invalid ? "true" : undefined}
+            />
+          {/snippet}
+        </FormField>
       </div>
 
       {#if error}
-        <div class="alert alert-error review-error" role="alert">
-          <span>⚠</span><span>{error}</span>
+        <div class="review-error" role="alert">
+          <Note tone="bad">{error}</Note>
         </div>
       {/if}
     </div>
@@ -395,15 +600,19 @@
       <span class="spacer"></span>
       {#if isSelfApproval}
         <p class="text-muted self-approval-note" data-testid="leave-approval-modal-self-block">
-          Eigene Anträge können nicht selbst genehmigt werden.
+          {SELF_APPROVAL_TEXT}
         </p>
       {:else if isDecidable}
+        {#if reasonMissing}
+          <p class="text-muted reason-hint" id="review-reason-hint">Bitte nenne einen Grund.</p>
+        {/if}
         {#if isCancellationReview}
           <button
             data-testid="leave-cancel-approval-modal-reject"
-            class="btn btn-ghost"
+            class="btn btn-secondary"
             onclick={() => submitReview("REJECTED")}
-            disabled={saving}
+            disabled={saving || reasonMissing}
+            aria-describedby={reasonMissing ? "review-reason-hint" : undefined}
           >
             {saving ? "…" : "Stornierung ablehnen"}
           </button>
@@ -418,9 +627,10 @@
         {:else}
           <button
             data-testid="leave-approval-modal-reject"
-            class="btn btn-danger"
+            class="btn btn-secondary"
             onclick={() => submitReview("REJECTED")}
-            disabled={saving}
+            disabled={saving || reasonMissing}
+            aria-describedby={reasonMissing ? "review-reason-hint" : undefined}
           >
             {saving ? "…" : "Ablehnen"}
           </button>
@@ -437,7 +647,7 @@
         <span class="footer-note">Antrag bereits entschieden.</span>
       {/if}
     {/snippet}
-  </Modal>
+  </Dialog>
 {/if}
 
 <!-- Phase 87: appointment-collision warning (approve) -->
@@ -471,96 +681,89 @@
 {/if}
 
 <style>
-  /* ── Review Grid — copied from team/leave/+page.svelte, NOT cut (D-16): that page's § 9 confirm
-     modal, Korrektur modal and standalone Attest-erfassen modal also render .review-* elements
-     and are explicitly out of this phase's scope, so these six rules stay duplicated in both
-     files rather than being moved out of the page. Do not delete them from the page. */
-  .review-grid {
+  /* The facts are a plain definition list on the dialog surface (Issue #853); no bespoke box. */
+  .facts {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 0.75rem 1.5rem;
-    background: var(--sunk);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    padding: 1rem 1.25rem;
+    gap: var(--s-3) var(--s-6);
+    margin: 0;
   }
-  .review-field {
+  .fact {
     display: flex;
     flex-direction: column;
-    gap: 0.125rem;
+    gap: 2px;
+    min-width: 0;
   }
-  .review-field--full {
+  .fact--full {
     grid-column: 1 / -1;
   }
-  .review-label {
-    font-size: 0.75rem;
+  .fact dt {
+    font-size: var(--fs-sm);
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     color: var(--text-2);
   }
-  .review-value {
-    font-size: 0.9375rem;
+  .fact dd {
+    margin: 0;
+    font-size: var(--fs-base);
     font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+  .shift-lines {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 9.5rem;
+    overflow-y: auto;
   }
   .review-section {
-    margin-top: 1.25rem;
+    margin-top: var(--s-5);
   }
   .review-error {
-    margin-top: 0.75rem;
+    margin-top: var(--s-3);
   }
 
-  /* ── Overlap — exclusive to this dialog on both former pages (RESEARCH.md § Scoped Styles). */
-  .overlap-box {
-    background: var(--sunk);
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-    padding: 0.875rem 1rem;
-  }
+  /* Overlap — exclusive to this dialog (RESEARCH.md § Scoped Styles). */
   .overlap-title {
-    font-size: 0.8125rem;
+    font-size: var(--fs-sm);
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     color: var(--text-2);
-    margin: 0 0 0.5rem;
+    margin: 0 0 var(--s-2);
   }
   .overlap-empty {
-    font-size: 0.9375rem;
+    font-size: var(--fs-base);
     margin: 0;
   }
   .overlap-list {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: var(--s-2);
   }
   .overlap-row {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--s-3);
     flex-wrap: wrap;
-    font-size: 0.9375rem;
+    font-size: var(--fs-base);
   }
   .overlap-name {
     font-weight: 600;
   }
   .overlap-dates {
-    font-family: var(--font-ui);
-    font-size: 0.875rem;
+    font-size: var(--fs-sm);
     margin-left: auto;
   }
-  .self-approval-note {
-    font-size: 0.875rem;
+  .self-approval-note,
+  .reason-hint {
+    font-size: var(--fs-sm);
     margin: 0 auto 0 0;
   }
-  /* Value from inbox/+page.svelte:1121-1124 (D-04 — the inbox footer wins). */
   .footer-note {
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     color: var(--text-2);
   }
 
   @media (max-width: 700px) {
-    .review-grid {
+    .facts {
       grid-template-columns: 1fr;
     }
     .overlap-dates {

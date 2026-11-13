@@ -7,20 +7,47 @@
   // renderer: which shift lands in which bucket stays the API's rule, and the only write is the
   // unchanged POST /shifts/:id/restore (restores a removed shift, clears the mark of a marked one).
   //
+  // Issue #853 (D-853-18): the fourth tab of Dienstplan - the v2 head with the link tabs, the date
+  // window in one row and the notices as one List. The old filter card, notice card and hand-built
+  // list markup are replaced, not wrapped.
+  //
   // Default window: 30 days back .. 60 days forward, adjustable with two date inputs.
 
   import { onMount } from "svelte";
   import { api } from "$api/client";
+  import { authStore } from "$stores/auth";
+  import { tenantFeatures } from "$stores/tenant-features";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import TeamSection from "$lib/components/team/TeamSection.svelte";
   import { pageLabel } from "$lib/nav/page-labels";
+  import { rosterTabs } from "$lib/nav/routes";
+  import PageTabs from "$components/ui/PageTabs.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import List from "$components/ui/List.svelte";
+  import ListRow from "$components/ui/ListRow.svelte";
+  import Chip from "$components/ui/Chip.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import ErrorState from "$components/ui/ErrorState.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import {
     buildShiftNotices,
     NOTICE_KINDS,
     type ConflictsResponse,
+    type NoticeKind,
     type ShiftNotice,
   } from "$lib/shifts/shift-notices";
+
+  // The four roster tabs are the link tabs of the route table (D-853-05).
+  const rosterTabsList = $derived(
+    rosterTabs($authStore.user, { availabilityEnabled: $tenantFeatures.availabilityEnabled }),
+  );
+
+  const KIND_TONE: Record<NoticeKind, "bad" | "warn"> = {
+    removed: "bad",
+    marked: "warn",
+    "week-overbooked": "warn",
+  };
 
   let notices = $state<ShiftNotice[]>([]);
   let loading = $state(true);
@@ -75,63 +102,72 @@
   <title>{pageLabel("/shifts/conflicts")} – Clokr</title>
 </svelte:head>
 
-<PageHead eyebrow={pageLabel("/shifts")} title={pageLabel("/shifts/conflicts")} />
+<PageHead
+  title={pageLabel("/shifts/conflicts")}
+  sub="Schichten, die automatisch entfernt wurden oder noch einmal geprüft werden sollten."
+/>
+<PageTabs tabs={rosterTabsList} tab="/team/dienstplan/konflikte" tabsLabel="Dienstplan" />
 
-<section class="page">
-  <div class="card-animate filter-card">
-    <label class="filter-field">
-      <span class="filter-label">Von</span>
-      <input
-        type="date"
-        class="form-input"
-        bind:value={fromDate}
-        onchange={load}
-        disabled={loading}
-      />
-    </label>
-    <label class="filter-field">
-      <span class="filter-label">Bis</span>
-      <input
-        type="date"
-        class="form-input"
-        bind:value={toDate}
-        onchange={load}
-        disabled={loading}
-      />
-    </label>
+<div class="page">
+  <!-- The window of the list: two dates and the reload, one row. -->
+  <div class="notice-window">
+    <FormField label="Von">
+      {#snippet field({ id, describedBy })}
+        <input
+          {id}
+          aria-describedby={describedBy}
+          type="date"
+          class="form-input"
+          bind:value={fromDate}
+          onchange={load}
+          disabled={loading}
+        />
+      {/snippet}
+    </FormField>
+    <FormField label="Bis">
+      {#snippet field({ id, describedBy })}
+        <input
+          {id}
+          aria-describedby={describedBy}
+          type="date"
+          class="form-input"
+          bind:value={toDate}
+          onchange={load}
+          disabled={loading}
+        />
+      {/snippet}
+    </FormField>
+    <button type="button" class="btn btn-secondary" onclick={load} disabled={loading}>
+      Aktualisieren
+    </button>
   </div>
 
-  {#if loadError}
-    <div class="callout error">{loadError}</div>
-  {/if}
-
-  <section class="card-animate notice-card" aria-label="Hinweise">
-    {#if loading}
+  <TeamSection title="Hinweise zur Schichtplanung">
+    {#if loadError}
+      <ErrorState message={loadError} onRetry={load} retrying={loading} />
+    {:else if loading}
       <Skeleton shape="row" count={3} />
-    {:else if notices.length === 0 && !loadError}
-      <p class="empty">Keine Hinweise im Zeitraum. Alles passt.</p>
+    {:else if notices.length === 0}
+      <EmptyState icon="calendar" title="Keine Hinweise im Zeitraum" description="Alles passt." />
     {:else}
-      <ul class="notice-list" data-testid="shift-notice-list">
+      <List ariaLabel="Hinweise zur Schichtplanung" testId="shift-notice-list">
         {#each notices as n (n.key)}
-          <li class="notice-row" data-testid="shift-notice" data-kind={n.kind}>
-            <div class="notice-date">{n.dateLabel}</div>
-            <div class="notice-main">
-              <div class="notice-person">
-                {n.person}
-                {#if n.detail}<span class="notice-detail">{n.detail}</span>{/if}
-              </div>
-              <div class="notice-reason">
-                <span class="badge {n.kind === 'removed' ? 'badge-red' : 'badge-yellow'}"
-                  >{NOTICE_KINDS[n.kind].badge}</span
-                >
-                <span>{n.reason}</span>
-                <details class="notice-info">
-                  <summary aria-label="Erklärung: {NOTICE_KINDS[n.kind].badge}">i</summary>
-                  <p>{NOTICE_KINDS[n.kind].explanation}</p>
-                </details>
-              </div>
-            </div>
-            <div class="notice-action">
+          <ListRow
+            variant="task"
+            testId="shift-notice"
+            kind={n.kind}
+            title={n.person}
+            subtitle={n.detail ? `${n.dateLabel} · ${n.detail}` : n.dateLabel}
+          >
+            {#snippet meta()}
+              <Chip tone={KIND_TONE[n.kind]}>{NOTICE_KINDS[n.kind].badge}</Chip>
+              <span class="notice-reason">{n.reason}</span>
+              <details class="notice-info">
+                <summary aria-label="Erklärung: {NOTICE_KINDS[n.kind].badge}">i</summary>
+                <p>{NOTICE_KINDS[n.kind].explanation}</p>
+              </details>
+            {/snippet}
+            {#snippet actions()}
               {#if n.action.type === "restore"}
                 <button
                   type="button"
@@ -144,103 +180,29 @@
               {:else}
                 <a class="btn btn-ghost btn-sm" href={n.action.href}>{n.action.label}</a>
               {/if}
-            </div>
-          </li>
+            {/snippet}
+          </ListRow>
         {/each}
-      </ul>
+      </List>
     {/if}
-  </section>
-</section>
+  </TeamSection>
+</div>
 
 <style>
-  .filter-card {
+  /* The window of the list: the two dates and the reload on one row, aligned on the field bottoms. */
+  .notice-window {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--s-4);
-    align-items: end;
-    padding: var(--s-6);
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-card);
-  }
-
-  .filter-field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-1);
-  }
-
-  .filter-label {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text-2);
-  }
-
-  .notice-card {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: var(--r-card);
-    padding: var(--s-6);
-  }
-
-  .empty {
-    margin: 0;
-    color: var(--text-2);
-  }
-
-  .notice-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .notice-row {
-    display: grid;
-    grid-template-columns: 11rem 1fr auto;
-    align-items: start;
+    align-items: flex-end;
     gap: var(--s-3);
-    padding: var(--s-3) 0;
-    border-top: 1px solid var(--line);
-    color: var(--text);
-  }
-  .notice-row:first-child {
-    border-top: 0;
-  }
-
-  .notice-date {
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .notice-main {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-1);
-    min-width: 0;
-  }
-
-  .notice-person {
-    font-weight: 600;
-  }
-
-  .notice-detail {
-    margin-left: var(--s-2);
-    font-weight: 400;
-    color: var(--text-2);
-    font-size: 0.875rem;
   }
 
   .notice-reason {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--s-2);
     color: var(--text-2);
-    font-size: 0.875rem;
+    font-size: var(--fs-sm);
   }
 
+  /* The explanation behind (i): the opened text takes its own line under the reason. */
   .notice-info summary {
     display: inline-flex;
     align-items: center;
@@ -249,7 +211,7 @@
     height: 1.25rem;
     border: 1px solid var(--line);
     border-radius: 50%;
-    font-size: 0.75rem;
+    font-size: var(--fs-xs);
     cursor: pointer;
     list-style: none;
   }
@@ -263,19 +225,6 @@
     margin: var(--s-2) 0 0;
     max-width: 60ch;
     color: var(--text-2);
-  }
-
-  .notice-action {
-    white-space: nowrap;
-  }
-
-  @media (max-width: 720px) {
-    .notice-row {
-      grid-template-columns: 1fr;
-      gap: var(--s-2);
-    }
-    .notice-action .btn {
-      width: 100%;
-    }
+    font-size: var(--fs-sm);
   }
 </style>

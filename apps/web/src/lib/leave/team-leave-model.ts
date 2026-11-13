@@ -57,6 +57,31 @@ export function overviewPersons(
     });
 }
 
+/**
+ * The default circle of the Übersicht (Issue #853, D-853-12, S-13): the leader's own reach. A row
+ * stays when it is the caller's own, when the person is on the reach-narrowed roster, or when at
+ * least one of its bars is unmasked (`typeCode !== null` - the server only names a type to a
+ * reader whose reach covers the person). A row whose bars are all masked and whose person is not
+ * on the roster is somebody else's salon and is left out until `all` („Alle Salons“) is set.
+ *
+ * Presentation only: it hides rows the server already masked, never unmasks anything, and reads no
+ * role or permission. A whole-tenant reader gets no masked rows, so nothing is dropped for them.
+ */
+export function inLeaderReach(
+  rows: readonly TimelinePerson[],
+  rosterIds: ReadonlySet<string> | readonly string[],
+  all: boolean,
+): TimelinePerson[] {
+  if (all) return [...rows];
+  const roster: ReadonlySet<string> = Array.isArray(rosterIds)
+    ? new Set<string>(rosterIds)
+    : (rosterIds as ReadonlySet<string>);
+  return rows.filter(
+    (row) =>
+      row.isOwn || roster.has(row.employeeId) || row.bars.some((bar) => bar.typeCode !== null),
+  );
+}
+
 interface HasIdAndCreation {
   id: string;
   createdAt: string;

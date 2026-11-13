@@ -155,7 +155,7 @@ test.describe("Hinweise zur Schichtplanung (Issue #850)", () => {
     await page.getByRole("button", { name: /anmelden/i }).click();
     await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
     await page.goto("/shifts/planning");
-    const label = page.locator(".week-pager-label");
+    const label = page.getByTestId("planning-week-label");
     await expect(label).toHaveText(/^KW \d{1,2} · \d{1,2}\..*–/);
     expect(await label.innerText()).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
@@ -204,9 +204,11 @@ defineVisibilityWalkthrough({
       name: "Wochenlabel",
       act: async (page) => {
         // the loaded week names both days ("KW 46 · 9.–15. Nov."), not only its start
-        await expect(page.locator(".week-pager-label")).toHaveText(/^KW \d{1,2} · \d{1,2}\..*–/);
+        await expect(page.getByTestId("planning-week-label")).toHaveText(
+          /^KW \d{1,2} · \d{1,2}\..*–/,
+        );
       },
-      target: (page) => page.locator(".week-pager-label"),
+      target: (page) => page.getByTestId("planning-week-label"),
     },
   ],
 });

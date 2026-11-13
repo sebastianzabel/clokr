@@ -41,12 +41,13 @@ describe("page-labels: the table", () => {
 
 describe("page-labels: nav labels (Sidebar, Mehr sheet, crumb)", () => {
   // #844: three areas instead of seven groups; the hub children are no rail entries any more
-  it("covers at least the 18 rail entries of the admin persona (non-vacuity)", () => {
+  // 17 since #853: the team availability is a tab of Dienstplan and no rail entry any more
+  it("covers at least the 17 rail entries of the admin persona (non-vacuity)", () => {
     const admin = (personas as Record<string, string[]>).ADMIN;
     const items = visibleNavSections({ permissions: admin }, { availabilityEnabled: true }).flatMap(
       (s) => s.items,
     );
-    expect(items.length).toBeGreaterThanOrEqual(18);
+    expect(items.length).toBeGreaterThanOrEqual(17);
   });
 
   for (const [persona, permissions] of allPersonas) {

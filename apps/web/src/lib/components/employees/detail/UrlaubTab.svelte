@@ -20,6 +20,7 @@
     changes      bindable, the number of unsaved changes (the page sums it into markUnsaved)
 -->
 <script lang="ts">
+  import { formatDays } from "$lib/leave/review-facts"; // #853-19: day figures with a decimal comma
   import { untrack } from "svelte";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
@@ -90,8 +91,8 @@
     },
     ...(entitlement
       ? [
-          { label: "Genommen", value: entitlement.usedDays, unit: "Tage" },
-          { label: "Übertrag", value: entitlement.carriedOverDays, unit: "Tage" },
+          { label: "Genommen", value: formatDays(entitlement.usedDays), unit: "Tage" },
+          { label: "Übertrag", value: formatDays(entitlement.carriedOverDays), unit: "Tage" },
         ]
       : []),
   ]);

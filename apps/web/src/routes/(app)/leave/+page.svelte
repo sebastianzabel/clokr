@@ -54,6 +54,7 @@
   } from "$lib/leave/vacation-summary";
   import { resolveChipVisual, isDrawnInCalendar } from "$lib/leave/team-calendar-visibility"; // Phase 262 / 303, Issue #446 (D-04)
   import { leaveDaysLabel, calendarDaysUnit } from "$lib/leave/leave-days-label"; // Issue #595 (D-04)
+  import { formatDays } from "$lib/leave/review-facts"; // Issue #853-19: day figures with a decimal comma, never a raw float
   import {
     calendarDayLoad,
     calendarRangeQuery,
@@ -958,7 +959,7 @@
   let balanceItems = $derived<KpiItem[]>([
     {
       label: vacationCardLabel(vacSummaryPlanned),
-      value: vacRemaining === null ? "–" : vacRemaining,
+      value: vacRemaining === null ? "–" : formatDays(vacRemaining),
       unit: (vacRemaining ?? 0) === 1 ? "Tag" : "Tage",
       delta: vacationBalance
         ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
@@ -967,7 +968,7 @@
     {
       // `used` counts approved days still ahead as well, so the label says so.
       label: "Genommen & genehmigt",
-      value: vacationBalance ? vacSummaryUsed : "–",
+      value: vacationBalance ? formatDays(vacSummaryUsed) : "–",
       unit: vacSummaryUsed === 1 ? "Tag" : "Tage",
       explanation: nextVacation
         ? `nächster: ${shortDate(nextVacation.startDate)}–${shortDate(nextVacation.endDate)}`
@@ -975,7 +976,9 @@
     },
     {
       label: "Verfällt",
-      value: !vacationBalance ? "–" : carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0,
+      value: !vacationBalance
+        ? "–"
+        : formatDays(carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0),
       unit: (carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0) === 1 ? "Tag" : "Tage",
       explanation: carryDeadlineAhead
         ? `Übertrag verfällt am ${shortDate(carryDeadlineAhead)}${carryDeadlineAhead.slice(0, 4)}`
@@ -983,7 +986,7 @@
     },
     {
       label: "Krankheitstage",
-      value: sickDaysYear === null ? "–" : sickDaysYear,
+      value: sickDaysYear === null ? "–" : formatDays(sickDaysYear),
       unit: calendarDaysUnit(sickDaysYear ?? 0),
       explanation: `in ${calYear}`,
     },
@@ -1459,8 +1462,8 @@
                     >
                       {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
                         ? "+"
-                        : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
-                        >{:else}{adjBadge.delta}{/if} Tag(e)
+                        : "−"}{#if adjBadge.bold}<strong>{formatDays(adjBadge.delta)}</strong
+                        >{:else}{formatDays(adjBadge.delta)}{/if} Tag(e)
                     </span>
                   {/if}
                   {#if req.daysProvisional}

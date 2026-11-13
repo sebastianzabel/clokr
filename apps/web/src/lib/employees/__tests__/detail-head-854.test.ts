@@ -1,40 +1,8 @@
 // Issue #854 (owner review of the Personen detail) - the head's sub line „<Personalnummer> ·
-// <Stammsalon> · seit <Eintritt>“ from the stored record and the stored salon assignments.
+// <Stammsalon> · seit <Eintritt>“ from the stored record (the Stammsalon rule itself is
+// `homeSalonIdOn()` of #853, proven by home-salon-on-853.test.ts).
 import { describe, expect, it } from "vitest";
-import { detailHeadSub, homeSalonIdOn, salonNameOf } from "$lib/employees/detail-head";
-
-const HOME_OLD = {
-  kind: "HOME" as const,
-  salonId: "s-old",
-  validFrom: "2025-01-01",
-  validUntil: "2026-09-30",
-};
-const HOME_NEW = {
-  kind: "HOME" as const,
-  salonId: "s-new",
-  validFrom: "2026-10-01",
-  validUntil: null,
-};
-const DEPLOYMENT = {
-  kind: "DEPLOYMENT" as const,
-  salonId: "s-dep",
-  validFrom: "2026-01-01",
-  validUntil: null,
-};
-
-describe("homeSalonIdOn", () => {
-  it("is the HOME row covering the day; a deployment never counts", () => {
-    const rows = [DEPLOYMENT, HOME_OLD, HOME_NEW];
-    expect(homeSalonIdOn(rows, "2026-11-12")).toBe("s-new");
-    expect(homeSalonIdOn(rows, "2026-09-30")).toBe("s-old");
-    expect(homeSalonIdOn([DEPLOYMENT], "2026-11-12")).toBeNull();
-  });
-
-  it("is null before the first and after the last HOME row", () => {
-    expect(homeSalonIdOn([HOME_OLD], "2024-12-31")).toBeNull();
-    expect(homeSalonIdOn([HOME_OLD], "2026-10-01")).toBeNull();
-  });
-});
+import { detailHeadSub, salonNameOf } from "$lib/employees/detail-head";
 
 describe("salonNameOf", () => {
   it("names a known salon and is null for an unknown or missing id", () => {

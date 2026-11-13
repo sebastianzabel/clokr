@@ -316,6 +316,7 @@ export default defineConfig({
         /verwalten-uebersicht-847\.spec\.ts/,
         /shift-notices-850\.spec\.ts/,
         /verwalten-854\.spec\.ts/,
+        /team-pages-853\.spec\.ts/,
       ],
       use: {
         ...devices["Desktop Chrome"],

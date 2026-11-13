@@ -33,6 +33,7 @@ describe("parseTeamLeaveState", () => {
       requestId: null,
       salonId: null,
       year: null,
+      allSalons: false,
     });
   });
 
@@ -50,6 +51,7 @@ describe("parseTeamLeaveState", () => {
       requestId: ID,
       salonId: ID2,
       year: null,
+      allSalons: false,
     });
   });
 
@@ -186,6 +188,7 @@ describe("teamLeaveSearch / myLeaveSearch", () => {
     requestId: null,
     salonId: null,
     year: null,
+    allSalons: false,
   };
 
   it("writes the keys in the stable order tab, zoom, datum, status, request", () => {
@@ -220,11 +223,34 @@ describe("teamLeaveSearch / myLeaveSearch", () => {
               requestId,
               salonId: null,
               year: null,
+              allSalons: false,
             };
             expect(parseTeamLeaveState(q(teamLeaveSearch(state)), TODAY)).toEqual(state);
             combinations++;
           }
     expect(combinations).toBe(72);
+  });
+
+  it("kreis=alle (Issue #853, D-853-12) is parsed only for the literal value and written last, only when set", () => {
+    expect(parseTeamLeaveState(q("kreis=alle"), TODAY).allSalons).toBe(true);
+    for (const kreis of ["", "ALLE", "1", "true", "alle%20", "salon", "__proto__"]) {
+      expect(parseTeamLeaveState(q(`kreis=${kreis}`), TODAY).allSalons, kreis).toBe(false);
+    }
+    expect(parseTeamLeaveState(q(""), TODAY).allSalons).toBe(false);
+    expect(teamLeaveSearch({ ...base, allSalons: true })).toBe(
+      "tab=planung&zoom=jahr&datum=2026-01-01&kreis=alle",
+    );
+    expect(teamLeaveSearch({ ...base, tab: "antraege", status: "PENDING", allSalons: true })).toBe(
+      "tab=antraege&zoom=jahr&datum=2026-01-01&status=PENDING&kreis=alle",
+    );
+    const state: TeamLeaveState = { ...base, allSalons: true };
+    expect(parseTeamLeaveState(q(teamLeaveSearch(state)), TODAY)).toEqual(state);
+  });
+
+  it("/leave (Mein Bereich) neither reads nor writes kreis=alle", () => {
+    const state = parseMyLeaveState(q("kreis=alle"), TODAY);
+    expect(state).not.toHaveProperty("allSalons");
+    expect(myLeaveSearch(state)).toBe(`tab=kalender&zoom=monat&datum=${TODAY}`);
   });
 
   it("round-trips the four tabs of Mein Bereich", () => {

@@ -1,6 +1,10 @@
 <script lang="ts">
   // Issue #843 (D-843-01 block 10): `variant` is additive. noData / noMatches supply a default title,
   // sentence and action label; every explicit prop still wins and the output without a variant is unchanged.
+  import type { Snippet } from "svelte";
+
+  // Issue #853 (D-853-10): `action` is additive. When given it is rendered in place of the action
+  // button (the Zeiten empty state shows the person picker there); without it nothing changes.
   interface Props {
     icon?: string;
     title?: string;
@@ -8,6 +12,7 @@
     actionLabel?: string;
     onaction?: () => void;
     variant?: "noData" | "noMatches";
+    action?: Snippet;
   }
 
   const VARIANT_DEFAULTS = {
@@ -26,6 +31,7 @@
     actionLabel: actionLabelProp,
     onaction,
     variant,
+    action,
   }: Props = $props();
 
   const defaults = $derived(variant ? VARIANT_DEFAULTS[variant] : undefined);
@@ -101,7 +107,9 @@
   {#if description}
     <p class="empty-state-description">{description}</p>
   {/if}
-  {#if actionLabel && onaction}
+  {#if action}
+    <div class="empty-state-custom-action">{@render action()}</div>
+  {:else if actionLabel && onaction}
     <button class="btn btn-primary btn-sm empty-state-action" onclick={onaction}>
       {actionLabel}
     </button>
@@ -142,5 +150,10 @@
 
   .empty-state-action {
     margin-top: 0.5rem;
+  }
+
+  .empty-state-custom-action {
+    margin-top: 0.5rem;
+    max-width: 100%;
   }
 </style>

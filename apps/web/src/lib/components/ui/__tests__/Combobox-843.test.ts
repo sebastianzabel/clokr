@@ -135,4 +135,11 @@ describe("Combobox - source", () => {
     expect(comboboxSource).not.toMatch(/toLowerCase|toLocaleLowerCase/);
     expect(comboboxSource).not.toMatch(/\{@html/);
   });
+
+  // Issue #853: bits-ui copies the computed z-index of the CONTENT onto the floating wrapper (inline
+  // style), so a value only on the wrapper class leaves the list under the Dialog it was opened from.
+  it("carries its stacking value (above the Dialog's 1500/1501) on the content element", () => {
+    const content = comboboxSource.match(/\.cb-content\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(content).toMatch(/z-index:\s*1600/);
+  });
 });

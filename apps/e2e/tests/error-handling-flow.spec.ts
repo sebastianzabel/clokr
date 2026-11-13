@@ -222,14 +222,21 @@ test.describe("Error Handling + UX Plausibility", () => {
   // mobile (and the personal Verfügbarkeit, which shares its label with the admin one) are the
   // reason this exists; the redirect-only /admin/special-leave is in no navigation at all.
   test("navigation offers the same targets on every device profile", async ({ page }) => {
-    const targets: { route: string; heading: string; name: string }[] = [
+    // `entry` is the rail item that stands for the page: the page itself, except for a tab of Dienstplan
+    // (#853), which the rail and the crumb represent by its parent.
+    const targets: { route: string; entry?: string; heading: string; name: string }[] = [
       // #844: the three areas; Phorest and Protokoll are hub pages behind System and Daten
       { route: "/ich/dienstplan", heading: "Ich", name: "Dienstplan" },
-      { route: "/team/verfuegbarkeit", heading: "Team", name: "Verfügbarkeit" },
+      {
+        route: "/team/verfuegbarkeit",
+        entry: "/team/dienstplan",
+        heading: "Team",
+        name: "Dienstplan",
+      },
       { route: "/verwalten/system", heading: "Verwalten", name: "System" },
       { route: "/verwalten/daten", heading: "Verwalten", name: "Daten" },
     ];
-    for (const { route, heading, name } of targets) {
+    for (const { route, entry = route, heading, name } of targets) {
       await page.goto(route);
       const sidebar = page.getByRole("complementary", { name: "Hauptnavigation", exact: true });
       await expect(page.locator("h1").first()).toBeVisible();
@@ -241,7 +248,7 @@ test.describe("Error Handling + UX Plausibility", () => {
         scope = page.getByRole("dialog", { name: "Weitere Navigation" });
       }
       const group = scope.getByRole("navigation", { name: heading, exact: true });
-      const link = group.locator(`a[href="${route}"]`);
+      const link = group.locator(`a[href="${entry}"]`);
       await expect(link, `${route}: listed under ${heading}`).toHaveCount(1);
       await expect(link).toHaveAccessibleName(name);
       await expect(link, `${route}: marked as the page`).toHaveAttribute("aria-current", "page");

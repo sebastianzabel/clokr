@@ -71,7 +71,8 @@ describe("BottomTabBar — current location (#515)", () => {
     // Since #83 the admin items behind „Mehr“ are permission-gated (since #844 by the route table), so the
     // fixture also holds the right its Personen page needs. Without team-overview:read the Salon tab is skipped,
     // so the team variant shows Aufgaben · Mein Tag · Abwesend · Mehr (#844, D-844-13).
-    signInAs([...ALL_TEAM_PERMISSIONS, "employee:read:ZUGEWIESEN"]);
+    // #853 (D-853-15): Verwalten › Personen shows in the navigation for whoever edits persons.
+    signInAs([...ALL_TEAM_PERMISSIONS, "employee:read:ZUGEWIESEN", "employee:update:ZUGEWIESEN"]);
   });
 
   it("marks a primary route as the page and leaves Mehr unmarked, named exactly Mehr", () => {

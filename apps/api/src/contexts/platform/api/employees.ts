@@ -64,7 +64,11 @@ import {
   exitVacationOverUseWarning, // Issue #447 (D-08) — the one over-use warning string
 } from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435; issue #436; issue #447 (E-4 resolved)
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
-import { fillHomeGapBeforeHireDate, readTenantTimezone } from "../facade/salon-assignments";
+import {
+  fillHomeGapBeforeHireDate,
+  homeSalonsForDays,
+  readTenantTimezone,
+} from "../facade/salon-assignments";
 import { salonExistsInForeignTenant } from "../facade/salons";
 import { auditSalonAssignmentEvent } from "../salon-assignment-audit";
 import { dayToDate, tenantLocalDay, toAssignmentDto } from "../salon-assignment-rules";
@@ -428,7 +432,54 @@ function maskOvertimeAccount<A extends { balanceHours: unknown }>(
  * (`includeAnonymized`) is still read as before and zod strips it; a malformed salon id answers
  * 400 through the global error handler.
  */
-const employeeListQuerySchema = z.object({ salonId: z.string().uuid().optional() });
+const employeeListQuerySchema = z.object({
+  salonId: z.string().uuid().optional(),
+  // Issue #853: opt-in fields of the Team › Personen directory. Without it the response is the
+  // frozen one of #85/#547 (whole-tenant callers byte-identical, `whole-tenant-frozen-85`).
+  include: z.enum(["directory"]).optional(),
+});
+
+/**
+ * Issue #853 — the two directory fields of Team › Personen for rows the caller ALREADY reads:
+ * the Stammsalon of the tenant-local today (the Unterbau's own batched resolution, parity with
+ * `homeSalonAt`; an attribution of a person, never a count of leave - registered in
+ * `leave-limits-one-place-836`) and the distinct names of the person's stored roles (names only:
+ * no scope, no permission, no assignment id). Only ids handed in are read.
+ */
+async function directoryFields(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  rows: readonly { id: string; userId: string }[],
+): Promise<{ homeSalonIds: Map<string, string | null>; roleNames: Map<string, string[]> }> {
+  const today = tenantLocalDay(new Date(), await readTenantTimezone(db, tenantId));
+  const homeByEmployee = await homeSalonsForDays(
+    db,
+    tenantId,
+    rows.map((r) => r.id),
+    today,
+    today,
+  );
+  const homeSalonIds = new Map(
+    rows.map((r) => [r.id, homeByEmployee.get(r.id)?.get(today) ?? null] as const),
+  );
+
+  const roleRows = await db.roleAssignment.findMany({
+    where: { tenantId, userId: { in: rows.map((r) => r.userId) } },
+    select: { userId: true, accessRole: { select: { name: true, tenantId: true } } },
+  });
+  const names = new Map<string, Set<string>>();
+  for (const row of roleRows) {
+    // A system role (tenantId null) or a role of this tenant; never another tenant's role name.
+    if (row.accessRole.tenantId !== null && row.accessRole.tenantId !== tenantId) continue;
+    const set = names.get(row.userId) ?? new Set<string>();
+    set.add(row.accessRole.name);
+    names.set(row.userId, set);
+  }
+  const roleNames = new Map(
+    [...names].map(([userId, set]) => [userId, [...set].sort((a, b) => a.localeCompare(b, "de"))]),
+  );
+  return { homeSalonIds, roleNames };
+}
 
 /**
  * Issue #558 D-01 — byte-identical with the dashboard's `TEAM_SALON_NOT_FOUND` and the Salonansicht
@@ -685,7 +736,7 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
       const personIds = await resolvePersonScopedEmployeeIds(app.prisma, tenantId, readReach);
 
       // Issue #558 D-01: validate the chosen salon before any employee row is read.
-      const { salonId } = employeeListQuerySchema.parse(req.query);
+      const { salonId, include } = employeeListQuerySchema.parse(req.query);
       const salon = await resolveSalonInReach(app.prisma, tenantId, readReach, salonId);
       if (!salon.ok) return reply.code(404).send(SALON_NOT_FOUND);
 
@@ -738,9 +789,27 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
         employees.map((e) => e.userId),
       );
 
+      // Issue #853 (opt-in `include=directory`, Team › Personen): Stammsalon of today and the names
+      // of the stored roles, ONLY for the rows above - which are already the caller's reach (#547) -
+      // so neither field names a person, salon or role outside it. The default response is unchanged.
+      const directory =
+        include === "directory"
+          ? await directoryFields(
+              app.prisma,
+              tenantId,
+              employees.map((e) => ({ id: e.id, userId: e.userId })),
+            )
+          : null;
+
       return employees.map((e) => {
         return {
           ...e,
+          ...(directory
+            ? {
+                homeSalonId: directory.homeSalonIds.get(e.id) ?? null,
+                roleNames: directory.roleNames.get(e.userId) ?? [],
+              }
+            : {}),
           user: userWithFormRole(e.user, formRoles.get(e.userId) ?? null),
           overtimeAccount: maskOvertimeAccount(balanceVisibleFor, e.id, e.overtimeAccount),
           workSchedule: e.workSchedules[0] ?? null,
