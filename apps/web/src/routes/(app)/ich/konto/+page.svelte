@@ -336,7 +336,9 @@
       {#if overtime && showFreeDays(overtime)}
         <Note tone="info">
           <span data-testid="konto-free-days"
-            >Das sind {freeDaysLabel(overtime.freeDaysEquivalent ?? 0)}.</span
+            >Aus deinem bestätigten Guthaben sind das {freeDaysLabel(
+              overtime.freeDaysEquivalent ?? 0,
+            )}.</span
           >
           <a
             class="btn btn-outline btn-sm"

@@ -8,17 +8,13 @@ import {
 } from "../free-days";
 
 describe("showFreeDays (Issue #605)", () => {
-  it("shows for a positive saldo with a served figure", () => {
-    expect(showFreeDays({ balanceHours: 12.5, freeDaysEquivalent: 1.6 })).toBe(true);
+  it("shows when the API served a figure, even with a negative live total (confirmed > 0)", () => {
+    expect(showFreeDays({ freeDaysEquivalent: 1.6 })).toBe(true);
   });
-  it("hides for saldo <= 0", () => {
-    expect(showFreeDays({ balanceHours: 0, freeDaysEquivalent: 1.6 })).toBe(false);
-    expect(showFreeDays({ balanceHours: -3, freeDaysEquivalent: 1.6 })).toBe(false);
-  });
-  it("hides when the API serves no figure (track-only, no leave type, no daily Soll)", () => {
-    expect(showFreeDays({ balanceHours: 12, freeDaysEquivalent: null })).toBe(false);
-    expect(showFreeDays({ balanceHours: 12 })).toBe(false);
-    expect(showFreeDays({ balanceHours: 12, freeDaysEquivalent: 0 })).toBe(false);
+  it("hides when the API serves no figure, even with a positive live total (confirmed <= 0, track-only, no leave type, no daily Soll)", () => {
+    expect(showFreeDays({ freeDaysEquivalent: null })).toBe(false);
+    expect(showFreeDays({})).toBe(false);
+    expect(showFreeDays({ freeDaysEquivalent: 0 })).toBe(false);
     expect(showFreeDays(null)).toBe(false);
   });
 });

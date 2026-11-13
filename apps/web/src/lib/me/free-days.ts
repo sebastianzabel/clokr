@@ -11,15 +11,18 @@ export const OVERTIME_COMP_REQUEST_HREF = `/ich/abwesenheiten?antrag=${OVERTIME_
 
 /** The one answer fields the Konto page reads for the conversion. */
 export interface FreeDaysAnswer {
-  balanceHours: number;
   freeDaysEquivalent?: number | null;
 }
 
-/** The conversion and the button show only for a positive saldo with a served, positive figure. */
+/**
+ * The conversion and the button show exactly when the API served a positive figure. Since the owner
+ * decision of 13.11.2026 the figure is converted from the CONFIRMED balance (the source the
+ * Überstundenausgleich booking gate reads), so the live total plays no part here.
+ */
 export function showFreeDays(overtime: FreeDaysAnswer | null | undefined): boolean {
   if (!overtime) return false;
   const days = overtime.freeDaysEquivalent;
-  return overtime.balanceHours > 0 && typeof days === "number" && days > 0;
+  return typeof days === "number" && days > 0;
 }
 
 /** „etwa 1,5 freie Tage“: one decimal, decimal comma. */

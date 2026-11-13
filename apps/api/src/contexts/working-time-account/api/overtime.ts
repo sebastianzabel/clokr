@@ -331,26 +331,37 @@ export async function overtimeRoutes(app: FastifyInstance) {
         employee?.tenant?.config?.maxNegativeBalanceMinutes,
       );
 
-      // Issue #605: the saldo in free days, only while an Überstundenausgleich leave type exists for
-      // the tenant (the type is looked up by code, never by name). `null` = nothing to offer: saldo
-      // ≤ 0, track-only contract, no daily Soll, or no such leave type. The web renders this and
-      // computes nothing of its own.
+      // Issue #605 (owner decision 13.11.2026): the free days are converted from the CONFIRMED
+      // balance (closed months) - the SAME `getConfirmedCarryOver` source the OVERTIME_COMP booking
+      // gate reads - so the days shown can always be requested. The live total plays no part. The
+      // leave type is looked up by code, never by name. `null` = nothing to offer: confirmed
+      // balance <= 0, track-only contract, no daily Soll, or no such leave type. The web renders
+      // this and computes nothing of its own.
       let freeDays: ReturnType<typeof freeDaysEquivalent> = null;
-      if (balanceMinutes > 0) {
-        const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-        freeDays = freeDaysEquivalent({
-          balanceMinutes,
-          schedule,
-          tz,
-          todayDay: dateStrInTz(new Date(), tz),
-          defaultWorkDays: employee.tenant?.config?.defaultWorkDays,
-        });
-        if (
-          freeDays &&
-          !(await getLeaveTypeByCode(app.prisma, employee.tenantId, "OVERTIME_COMP"))
-        ) {
-          freeDays = null;
+      try {
+        const gateConfirmed = await getConfirmedCarryOver(
+          app.prisma,
+          employeeId,
+          employee.tenantId,
+        );
+        if (gateConfirmed.minutes > 0) {
+          const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+          freeDays = freeDaysEquivalent({
+            balanceMinutes: gateConfirmed.minutes,
+            schedule,
+            tz,
+            todayDay: dateStrInTz(new Date(), tz),
+            defaultWorkDays: employee.tenant?.config?.defaultWorkDays,
+          });
+          if (
+            freeDays &&
+            !(await getLeaveTypeByCode(app.prisma, employee.tenantId, "OVERTIME_COMP"))
+          ) {
+            freeDays = null;
+          }
         }
+      } catch (err) {
+        app.log.warn({ err, employeeId }, "GET /overtime: free-days conversion failed, omitted");
       }
 
       return {

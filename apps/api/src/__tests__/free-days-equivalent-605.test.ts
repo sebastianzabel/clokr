@@ -176,16 +176,62 @@ describe("GET /api/v1/overtime/:employeeId freeDaysEquivalent (Issue #605)", () 
 
   it("serves days and the daily Soll for a positive saldo (8 h contract -> 480 min)", async () => {
     const body = await read();
-    const balanceMinutes = Math.round(body.balanceHours * 60);
-    expect(balanceMinutes).toBeGreaterThan(0);
+    // confirmed carry 4800 min = 80 h = 10 days of 480 min, whatever the live total is
+    expect(body.confirmedMinutes).toBe(4800);
     expect(body.freeDaysDailySollMinutes).toBe(480);
-    expect(body.freeDaysEquivalent).toBe(Math.round((balanceMinutes / 480) * 10) / 10);
+    expect(body.freeDaysEquivalent).toBe(10);
   });
 
-  it("serves null for a saldo <= 0", async () => {
+  it("uses the confirmed balance: a negative live total still shows the confirmed days", async () => {
+    await setCarry(480);
+    // open-month Soll without entries drives the live total below zero
+    const body = await read();
+    expect(body.balanceHours).toBeLessThan(0);
+    expect(body.freeDaysEquivalent).toBe(1);
+  });
+
+  it("serves null when the confirmed balance is <= 0 even though the live total is positive", async () => {
+    await setCarry(0);
+    await app.prisma.overtimeAccount.update({
+      where: { employeeId: data.employee.id },
+      data: { balanceHours: 50 },
+    });
+    // a positive live total without a confirmed one: opening-month entries of 12 h per day
+    for (const d of [
+      "2026-08-03",
+      "2026-08-04",
+      "2026-08-05",
+      "2026-08-06",
+      "2026-08-07",
+      "2026-08-10",
+      "2026-08-11",
+      "2026-08-12",
+    ]) {
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(d + "T00:00:00Z"),
+          startTime: new Date(d + "T05:00:00Z"),
+          endTime: new Date(d + "T18:00:00Z"),
+          breakMinutes: 30,
+          type: "WORK",
+          salonId: data.salonId,
+        },
+      });
+    }
+    try {
+      const body = await read();
+      expect(body.balanceHours).toBeGreaterThan(0);
+      expect(body.confirmedMinutes).toBe(0);
+      expect(body.freeDaysEquivalent).toBeNull();
+    } finally {
+      await app.prisma.timeEntry.deleteMany({ where: { employeeId: data.employee.id } });
+    }
+  });
+
+  it("serves null for a confirmed balance <= 0", async () => {
     await setCarry(-4800);
     const body = await read();
-    expect(body.balanceHours).toBeLessThanOrEqual(0);
     expect(body.freeDaysEquivalent).toBeNull();
     expect(body.freeDaysDailySollMinutes).toBeNull();
   });
