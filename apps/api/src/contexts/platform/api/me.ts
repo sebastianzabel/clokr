@@ -5,21 +5,30 @@ import { API_KEY_SUBJECT_PREFIX, accessContextFromRequest } from "../access-cont
 import { contextSalonIds, ownRoleNames } from "../facade/role-assignments";
 import { isMultiSalonTenant, listSalons } from "../facade/salons";
 import { packagesForDisplay } from "../tenant-packages";
+import { PERSONAL_EMAIL_OPT_OUT_FIELDS } from "../notification-email-policy";
+import { LEGACY_UI_THEME_IDS, UI_THEME_IDS, normalizeUiTheme, type UiThemeId } from "../ui-theme";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
-const skinEnum = z.enum(["editorial", "modern"]);
-const themeEnum = z.enum(["pflaume", "nacht", "wald", "schiefer"]);
+// Issue #842 (D-842-18): the theme input accepts the three current ids and the retired ones
+// (a stale tab may still send them); the transform stores the mapped id. The retired skin and
+// density keys are gone from the schema: z.object strips unknown keys, so a stale tab's
+// skin/density PUT is an empty merge, never a 400.
+const themeInput = z.enum([...UI_THEME_IDS, ...LEGACY_UI_THEME_IDS]).transform(normalizeUiTheme);
 const modeEnum = z.enum(["light", "dark"]);
-const densityEnum = z.enum(["comfortable", "compact"]);
 const languageEnum = z.enum(["de", "en"]);
 
+// Issue #602 (Phase 851): the e-mail groups the person switched off (the tenant toggle fields of the
+// "toggle" policies; never an "always" type). The whole list is replaced on every write.
+const emailOptOutInput = z
+  .array(z.enum(PERSONAL_EMAIL_OPT_OUT_FIELDS))
+  .max(PERSONAL_EMAIL_OPT_OUT_FIELDS.length);
+
 const updatePreferencesSchema = z.object({
-  skin: skinEnum.optional(),
-  theme: themeEnum.optional(),
+  theme: themeInput.optional(),
   mode: modeEnum.optional(),
-  density: densityEnum.optional(),
   language: languageEnum.optional(),
+  emailOptOut: emailOptOutInput.optional(),
 });
 
 // Phase 110 (D-10/AK-10): the version string is echoed back to the client and stored, so it is
@@ -31,19 +40,17 @@ const updateReleaseNotesSeenSchema = z.object({
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface UiPreferences {
-  skin: z.infer<typeof skinEnum>;
-  theme: z.infer<typeof themeEnum>;
+  theme: UiThemeId;
   mode: z.infer<typeof modeEnum>;
-  density: z.infer<typeof densityEnum>;
   language: z.infer<typeof languageEnum>;
+  emailOptOut: z.infer<typeof emailOptOutInput>;
 }
 
 const DEFAULT_PREFERENCES: UiPreferences = {
-  skin: "editorial",
   theme: "pflaume",
   mode: "light",
-  density: "comfortable",
   language: "de",
+  emailOptOut: [],
 };
 
 /**
@@ -54,21 +61,18 @@ function mergePreferences(stored: unknown): UiPreferences {
   if (!stored || typeof stored !== "object") return { ...DEFAULT_PREFERENCES };
   const partial = stored as Record<string, unknown>;
   return {
-    skin: skinEnum.safeParse(partial.skin).success
-      ? (partial.skin as UiPreferences["skin"])
-      : DEFAULT_PREFERENCES.skin,
-    theme: themeEnum.safeParse(partial.theme).success
-      ? (partial.theme as UiPreferences["theme"])
-      : DEFAULT_PREFERENCES.theme,
+    theme: normalizeUiTheme(partial.theme),
     mode: modeEnum.safeParse(partial.mode).success
       ? (partial.mode as UiPreferences["mode"])
       : DEFAULT_PREFERENCES.mode,
-    density: densityEnum.safeParse(partial.density).success
-      ? (partial.density as UiPreferences["density"])
-      : DEFAULT_PREFERENCES.density,
     language: languageEnum.safeParse(partial.language).success
       ? (partial.language as UiPreferences["language"])
       : DEFAULT_PREFERENCES.language,
+    emailOptOut: Array.isArray(partial.emailOptOut)
+      ? [...new Set(partial.emailOptOut)].filter((v): v is UiPreferences["emailOptOut"][number] =>
+          (PERSONAL_EMAIL_OPT_OUT_FIELDS as readonly unknown[]).includes(v),
+        )
+      : [],
   };
 }
 
@@ -117,8 +121,8 @@ export async function meRoutes(app: FastifyInstance) {
 
       // Issue #392: a single atomic jsonb merge instead of findUnique -> JS merge -> update.
       // The old sequence read the row, merged the patch in JS, then wrote the WHOLE merged
-      // object back — so when several partial PUTs (e.g. skin/mode/theme from selectModern() on
-      // /admin/themes) land within milliseconds of each other, a later write that read the
+      // object back — so when several partial PUTs from different tabs
+      // land within milliseconds of each other, a later write that read the
       // pre-earlier-write row overwrites an already-persisted key with its stale value (lost
       // update). A single UPDATE ... SET "uiPreferences" = ... || patch takes the row lock and,
       // under READ COMMITTED, re-evaluates against the latest committed row, so concurrent
@@ -227,7 +231,7 @@ export async function meRoutes(app: FastifyInstance) {
         where: { id: req.user.tenantId },
         select: { id: true, name: true },
       });
-      if (!tenant) return reply.code(404).send({ error: "Mandant nicht gefunden" });
+      if (!tenant) return reply.code(404).send({ error: "Unternehmen nicht gefunden" });
 
       // D-05: nothing reads this context back — a later view passes at most a `salonId`
       // parameter that the target endpoint validates itself.

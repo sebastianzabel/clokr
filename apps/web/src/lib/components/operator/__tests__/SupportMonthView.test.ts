@@ -66,7 +66,7 @@ function month(overrides: Partial<SupportEmployeeMonth> = {}): SupportEmployeeMo
 }
 
 function mount(value: SupportEmployeeMonth) {
-  renderWithTheme(SupportMonthView, { month: value }, "nacht");
+  renderWithTheme(SupportMonthView, { month: value }, "salz");
 }
 
 afterEach(() => {

@@ -3642,12 +3642,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       // einen Anspruch verwehren, den § 9 kraft Gesetzes gewährt. Der Vorgang kann
       // wieder eröffnet werden, sobald eine gültige AU vorliegt.
       if (credit.employee.userId) {
+        // Issue #602: the notice names the period of the case, like the § 9 notices before it.
+        const rangeLabel = `${formatDateDe(credit.overlapStart)} – ${formatDateDe(credit.overlapEnd)}`;
         await app.notify({
           userId: credit.employee.userId,
           type: "SECTION9_CREDIT_REJECTED",
           title: "AU abgelehnt — Urlaubstage bleiben angerechnet",
           message:
-            `Die eingereichte AU wurde abgelehnt: ${body.reason}. Die Urlaubstage bleiben ` +
+            `Die eingereichte AU für ${rangeLabel} wurde abgelehnt: ${body.reason}. Die Urlaubstage bleiben ` +
             `vorerst angerechnet. Sobald eine gültige AU vorliegt, kann der Vorgang erneut ` +
             `geöffnet werden.`,
           link: "/leave",
@@ -3750,7 +3752,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           type: "SECTION9_AU_PENDING_EMPLOYEE",
           title: "AU nachreichen — Urlaubstage stehen auf dem Spiel",
           message:
-            `Für ${rangeLabel} liegt eine Krankmeldung während Ihres genehmigten Urlaubs vor. ` +
+            `Für ${rangeLabel} liegt eine Krankmeldung während deines genehmigten Urlaubs vor. ` +
             `Ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet (§ 9 BUrlG).`,
           link: "/leave",
           tenantId: credit.employee.tenantId,

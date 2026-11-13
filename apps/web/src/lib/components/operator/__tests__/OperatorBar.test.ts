@@ -34,7 +34,7 @@ function mount(props: Record<string, unknown> = {}) {
   const result = renderWithTheme(
     OperatorBar,
     { remainingMs: 872_000, displayName: "Beispiel Betreiber", onLogout, ...props },
-    "nacht",
+    "salz",
   );
   return { onLogout, ...result };
 }

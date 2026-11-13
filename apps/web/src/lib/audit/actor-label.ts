@@ -1,3 +1,5 @@
+import { actorKindLabel } from "./labels";
+
 /**
  * Who a tenant audit row is shown as (Phase 89, D-09a/D-15).
  *
@@ -8,8 +10,8 @@
 
 export type AuditActorLabel =
   | { kind: "user"; text: string }
-  | { kind: "operator"; text: "Betreiber" }
-  | { kind: "system"; text: "System" };
+  | { kind: "operator"; text: string }
+  | { kind: "system"; text: string };
 
 type AuditActorSource = {
   user: { email: string } | null;
@@ -26,6 +28,7 @@ function actorType(newValue: unknown): string | null {
 
 export function auditActorLabel(log: AuditActorSource): AuditActorLabel {
   if (log.user?.email) return { kind: "user", text: log.user.email };
-  if (actorType(log.newValue) === "OPERATOR") return { kind: "operator", text: "Betreiber" };
-  return { kind: "system", text: "System" };
+  if (actorType(log.newValue) === "OPERATOR")
+    return { kind: "operator", text: actorKindLabel("operator") };
+  return { kind: "system", text: actorKindLabel("system") };
 }

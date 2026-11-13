@@ -1047,7 +1047,8 @@ function extractWriteRoutes(relFile: string, prefix: string): string[] {
 // retro-entry-requests.ts — 12 total. A changed registration idiom (e.g. a route built from a
 // variable path instead of a string literal) would silently yield fewer matches instead of
 // failing loudly, which is exactly what this input proof exists to catch.
-const MEASURED_WRITE_ROUTE_COUNT = 12;
+// +1 2026-11-09 (Issue #596): POST /:id/break, the running break.
+const MEASURED_WRITE_ROUTE_COUNT = 13;
 
 /**
  * "METHOD /full/path" -> the (file, test title) pairs that assert on that route's AuditLog
@@ -1084,6 +1085,13 @@ const TIME_ENTRY_WRITE_PATH_AUDIT_TESTS: Record<string, { file: string; title: s
       file: "apps/api/src/services/clock/__tests__/audit-actor.integration.test.ts",
       title:
         "Block D — /:id/clock-out with JWT → CLOCK_OUT row with userId, createdAt window, oldValue.endTime null, newValue.endTime set",
+    },
+  ],
+  "POST /api/v1/time-entries/:id/break": [
+    {
+      file: "apps/api/src/__tests__/break-state-596.test.ts",
+      title:
+        "POST /:id/break writes BREAK_START and BREAK_APPEND audit rows with actor and before/after",
     },
   ],
   "POST /api/v1/time-entries/:id/breaks": [

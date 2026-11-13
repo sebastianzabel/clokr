@@ -52,11 +52,20 @@ describe("Issue #840 E-02 - the Offen tab is not bound to the current year", () 
     expect(body).toContain("pendingRequests = openList");
   });
 
-  it("[derive] „Offen“ and its badge/KPI come from the all-years list, the other tabs stay year-bound", () => {
+  it("[derive] the open rows and their KPI cell come from the all-years list, the decided rows stay year-bound", () => {
     expect(INBOX).toMatch(/let openRequests = \$derived\(\s*pendingRequests\.filter\(/);
     expect(INBOX).toContain('requests.filter((r) => r.status === "APPROVED")');
     expect(INBOX).toContain('requests.filter((r) => r.status === "REJECTED")');
-    expect(INBOX).toContain('if (tab === "open") return openRequests;');
+    // One task list takes the open rows next to the decided ones; the „Offen“ view keeps only the open.
+    expect(INBOX).toContain("leave: [...openRequests, ...approvedRequests, ...rejectedRequests]");
+    expect(INBOX).toContain('rowsForView(allTaskRows, "offen")');
+    expect(INBOX).toContain('taskView.ansicht === "offen" ? openTaskRows : decidedTaskRows');
+  });
+
+  it("[URL] type and view live in the URL state; the deep-link keys stay with the one parser", () => {
+    expect(INBOX).toContain("ansicht: oneOf([");
+    expect(INBOX).toContain('typ: oneOf(["alle", ...TASK_KIND_VALUES]');
+    expect(INBOX.split("parseInboxDeepLink(").length - 1).toBe(1);
   });
 
   it("[reload] a decision reloads both lists through the one loader", () => {

@@ -280,6 +280,9 @@ describe("anonymization clears the remaining person-authored free texts (#718)",
       retroReasons: 1,
       retroReviewNotes: 1,
       overtimePlanNotes: 1,
+      // Issue #599: the person has no month-correction request in this fixture.
+      monthCorrectionReasons: 0,
+      monthCorrectionReviewNotes: 0,
       shiftNotes: 1,
       availabilityNotes: 1,
     });

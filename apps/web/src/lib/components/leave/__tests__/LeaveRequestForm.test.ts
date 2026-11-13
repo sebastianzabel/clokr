@@ -166,6 +166,46 @@ describe("LeaveRequestForm", () => {
     expect(screen.queryByTestId("leave-form-no-entitlement")).toBeNull();
   });
 
+  // Issue #853-19: a balance that is the result of a float subtraction must never reach the screen
+  // as 19.990000000000002 (30 - 10.01, 19.99 - 1). Every figure of the box is a day count with a
+  // decimal comma and at most two decimals.
+  it("VACATION balance box: float arithmetic is shown rounded, with the German decimal comma", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/leave/entitlements/")) {
+        return Promise.resolve([
+          entitlementRow({
+            totalDays: 30,
+            carriedOverDays: 0,
+            effectiveCarryOverDays: 0,
+            usedDays: 10.01,
+            provisionalUsedDays: 0.1 + 0.2, // 0.30000000000000004
+          }),
+        ]);
+      }
+      return defaultGetImpl(path);
+    });
+    const { container } = renderForm();
+    // 30 - 10.01 = 19.990000000000002 in floating point.
+    expect(30 - 10.01).not.toBe(19.99);
+    await waitFor(() => expect(screen.getByText("19,99 Tage")).toBeTruthy());
+    expect(screen.getByText("30 Tage")).toBeTruthy();
+    // Genommen (bestätigt) = used - provisional, and the provisional line itself.
+    expect(screen.getByText("− 9,71 Tage")).toBeTruthy();
+    expect(screen.getByText("− 0,3 Tage")).toBeTruthy();
+
+    // One workday requested: "Verbleibend" = 19.99 - 1 = 18.990000000000002 in floating point.
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2026-10-05" },
+    });
+    await fireEvent.input(screen.getByTestId("leave-form-to"), {
+      target: { value: "2026-10-05" },
+    });
+    await waitFor(() => expect(screen.getByText("18,99 Tage")).toBeTruthy());
+    // No raw float anywhere in the box.
+    expect(container.textContent ?? "").not.toMatch(/\d\.\d{3,}/);
+    expect(container.textContent ?? "").not.toMatch(/\d\.\d+ Tage/);
+  });
+
   // ── OVERTIME_COMP balance box ────────────────────────────────────────────────────────────────
   it("OVERTIME_COMP: fetches /leave/overtime-balance scoped to employeeId and renders Guthaben", async () => {
     renderForm();
@@ -797,5 +837,52 @@ describe("LeaveRequestForm — #840 G-9 layout and eyebrow", () => {
       const media = style.slice(style.indexOf("@media (max-width: 480px)"));
       expect(media).toMatch(/\.form-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
     });
+  });
+});
+
+// Issue #853 (D-853-12, S-15) - „Abwesenheit eintragen“ asks „Für wen?“ first: with
+// `deferUntilPerson` the form shows only the picker until a person is chosen. The scoped CSS that
+// hides the rest is not injected into jsdom (see whats-new-stacking.test.ts), so the contract
+// pinned here is the marker attribute the rule keys on and the DOM order it relies on.
+describe("LeaveRequestForm — #853 deferUntilPerson", () => {
+  const picker = createRawSnippet(() => ({
+    render: () =>
+      '<div class="form-group"><label class="form-label" for="create-emp">Für wen?</label><select id="create-emp" class="form-input"></select></div>',
+  }));
+  const awaiting = () => screen.getByTestId("leave-form").hasAttribute("data-awaiting-person");
+
+  it("a create without a person is marked as awaiting one, the picker is the first field", () => {
+    renderForm({ personPicker: picker, deferUntilPerson: true, employeeId: "" });
+    expect(awaiting()).toBe(true);
+    const who = document.querySelector('[data-form-row="who"]')!;
+    expect(who.firstElementChild?.querySelector("#create-emp")).toBeTruthy();
+    expect(who.querySelector("#f-type")).toBeTruthy();
+  });
+
+  it("with a person chosen the form is no longer marked", () => {
+    renderForm({ personPicker: picker, deferUntilPerson: true, employeeId: EMPLOYEE_ID });
+    expect(awaiting()).toBe(false);
+  });
+
+  it("without the prop nothing changes, also without a person (the default is off)", () => {
+    renderForm({ personPicker: picker, employeeId: "" });
+    expect(awaiting()).toBe(false);
+  });
+
+  it("an edit is never awaiting a person", () => {
+    renderForm({
+      personPicker: picker,
+      deferUntilPerson: true,
+      employeeId: "",
+      editingRequest: {
+        id: "req-9",
+        typeCode: "VACATION",
+        startDate: "2026-11-01",
+        endDate: "2026-11-03",
+        halfDay: false,
+        note: "",
+      },
+    });
+    expect(awaiting()).toBe(false);
   });
 });

@@ -306,9 +306,15 @@ describe("vacationCardDelta", () => {
     expect(vacationCardDelta(24, 0)).toBe("von 24 gesamt");
   });
 
-  it("renders half-days as plain JS numbers (no formatter is introduced)", () => {
+  it("renders half-days with the German decimal comma (Issue #853-19: the one day number format)", () => {
     expect(vacationCardDelta(25.5, 2.5)).toBe(
-      "von 28 gesamt (25.5 Anspruch + 2.5 Übertrag Vorjahr)",
+      "von 28 gesamt (25,5 Anspruch + 2,5 Übertrag Vorjahr)",
+    );
+  });
+
+  it("rounds a float sum instead of printing it (0.1 + 0.2 carry-over)", () => {
+    expect(vacationCardDelta(24, 0.1 + 0.2)).toBe(
+      "von 24,3 gesamt (24 Anspruch + 0,3 Übertrag Vorjahr)",
     );
   });
 
@@ -419,13 +425,14 @@ describe("every year-changing path reloads the figures (D-02, issue #122)", () =
 
   it("shows a loading state instead of the previous year's numbers while refetching (D-03)", () => {
     expect(PAGE).toContain("let vacSummaryLoading = $state(true)");
-    // Whitespace-robust on purpose: prettier owns the line breaks around the {#if}.
-    const sites = [...PAGE.matchAll(/\{@render vacStats\(\)\}/g)];
-    expect(sites.length).toBe(2);
-    for (const site of sites) {
-      expect(PAGE.slice(Math.max(0, site.index - 160), site.index)).toContain("vacSummaryLoading");
-    }
-    expect((PAGE.match(/\{@render vacStatsSkeleton\(\)\}/g) ?? []).length).toBe(2);
+    // #851: the figures live in the Kennzahlenleiste; while the year's balance is being fetched
+    // (`vacationBalance = null` first), every vacation cell reads „–“, never the left year's value.
+    expect(fnBody("async function loadVacationSummary(")).toContain("vacationBalance = null;");
+    const items = PAGE.slice(PAGE.indexOf("let balanceItems = $derived<KpiItem[]>(["));
+    // #853-19: the day figures go through formatDays (decimal comma), never a raw float.
+    expect(items).toContain('value: vacRemaining === null ? "–" : formatDays(vacRemaining)');
+    expect(items).toContain('value: vacationBalance ? formatDays(vacSummaryUsed) : "–"');
+    expect(items).toMatch(/value: !vacationBalance\s+\? "–"\s+:/);
   });
 });
 

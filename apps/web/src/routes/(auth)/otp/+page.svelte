@@ -1,4 +1,9 @@
 <script lang="ts">
+  import AuthFrame from "$lib/components/auth/AuthFrame.svelte";
+  import FormField from "$lib/components/ui/FormField.svelte";
+  import Note from "$lib/components/ui/Note.svelte";
+  import Spinner from "$lib/components/ui/Spinner.svelte";
+  import { homeHref } from "$lib/nav/routes";
   import { preventDefault } from "svelte/legacy";
 
   import { onMount } from "svelte";
@@ -42,7 +47,7 @@
 
       sessionStorage.removeItem("otp_userId");
       authStore.login(res.accessToken, res.refreshToken, res.user);
-      goto(next ?? "/dashboard");
+      goto(next ?? homeHref(res.user)); // #844 (Z-02): the start page of the person
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Ungültiger Code";
       if (msg.includes("abgelaufen")) {
@@ -79,43 +84,26 @@
 </script>
 
 <svelte:head>
-  <title>2FA-Code – Clokr</title>
+  <title>Code eingeben – Clokr</title>
 </svelte:head>
 
-<div class="login-page">
-  <div class="login-card">
-    <div class="login-logo">
-      <img
-        src="/clokr-icon.png"
-        alt="Clokr"
-        class="login-logo-img"
-        width="64"
-        height="64"
-        style="max-width: 64px;"
-      />
-      <h1 class="login-title">Zwei-Faktor-Authentifizierung</h1>
-      <p class="login-subtitle">Wir haben dir einen Code an deine E-Mail-Adresse geschickt.</p>
-    </div>
+<AuthFrame
+  title="Code eingeben"
+  subtitle="Wir haben dir einen Code an deine E-Mail-Adresse geschickt."
+>
+  <form onsubmit={preventDefault(handleVerify)} class="auth-form">
+    {#if error}
+      <div role="alert"><Note tone="bad">{error}</Note></div>
+    {/if}
+    {#if resendSuccess}
+      <div role="status"><Note tone="ok">Wir haben dir einen neuen Code geschickt.</Note></div>
+    {/if}
 
-    <form onsubmit={preventDefault(handleVerify)} class="login-form">
-      {#if error}
-        <div class="alert alert-error" role="alert">
-          <span>⚠</span>
-          <span>{error}</span>
-        </div>
-      {/if}
-      {#if resendSuccess}
-        <div class="alert alert-success" role="alert">
-          <span>✓</span>
-          <span>Code erneut gesendet.</span>
-        </div>
-      {/if}
-
-      <div class="form-group">
-        <label class="form-label" for="otp-code">6-stelliger Code</label>
+    <FormField label="6-stelliger Code">
+      {#snippet field({ id, describedBy, invalid })}
         <!-- svelte-ignore a11y_autofocus -->
         <input
-          id="otp-code"
+          {id}
           type="text"
           inputmode="numeric"
           pattern="[0-9]*"
@@ -126,135 +114,43 @@
           class="form-input otp-input"
           placeholder="000000"
           autocomplete="one-time-code"
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
         />
-      </div>
+      {/snippet}
+    </FormField>
 
+    <button
+      type="submit"
+      disabled={loading || code.length !== 6}
+      class="btn btn-primary auth-submit"
+    >
+      {#if loading}<Spinner size={16} label="Code wird geprüft" />{/if}
+      Bestätigen
+    </button>
+  </form>
+
+  {#snippet footer()}
+    <div class="otp-resend">
+      <span>Code nicht bekommen?</span>
       <button
-        type="submit"
-        disabled={loading || code.length !== 6}
-        class="btn btn-primary login-submit"
+        type="button"
+        class="btn btn-ghost btn-sm"
+        onclick={handleResend}
+        disabled={resending}
       >
-        {#if loading}
-          <span class="login-spinner"></span>
-          Prüfen…
-        {:else}
-          Bestätigen
-        {/if}
+        {#if resending}<Spinner size={14} label="Code wird gesendet" />{/if}
+        Code noch einmal senden
       </button>
-    </form>
-
-    <div class="otp-footer">
-      <p class="login-footer">Code nicht erhalten?</p>
-      <button class="btn btn-ghost btn-sm" onclick={handleResend} disabled={resending}>
-        {resending ? "Senden…" : "Code erneut senden"}
-      </button>
-      <a href="/login" class="back-link">Zurück zur Anmeldung</a>
     </div>
-  </div>
-</div>
+    <a href="/login" class="auth-link">Zurück zur Anmeldung</a>
+  {/snippet}
+</AuthFrame>
 
 <style>
-  .login-page {
-    min-height: 100dvh;
-    background-color: var(--bg-subtle);
+  .otp-resend {
     display: flex;
     align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
-  }
-
-  .login-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-lg);
-    padding: 2.5rem;
-    width: 100%;
-    max-width: 420px;
-  }
-
-  .login-logo {
-    text-align: center;
-    margin-bottom: 2rem;
-  }
-  .login-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--brand);
-    margin-bottom: 0.375rem;
-  }
-  .login-subtitle {
-    font-size: 0.9375rem;
-    color: var(--text-muted);
-  }
-
-  .login-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1.125rem;
-  }
-
-  .login-submit {
-    width: 100%;
-    padding: 0.7rem 1.25rem;
-    font-size: 1rem;
-    margin-top: 0.25rem;
-  }
-
-  .login-spinner {
-    display: inline-block;
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-top-color: #fff;
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .otp-footer {
-    text-align: center;
-    margin-top: 1.5rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .login-footer {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    margin: 0;
-  }
-
-  .back-link {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    text-decoration: underline;
-  }
-
-  .alert {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-radius: var(--r-md);
-    font-size: 0.875rem;
-  }
-
-  .alert-error {
-    background: #fef2f2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
-  }
-  .alert-success {
-    background: #f0fdf4;
-    color: #166534;
-    border: 1px solid #bbf7d0;
+    gap: var(--s-2);
   }
 </style>

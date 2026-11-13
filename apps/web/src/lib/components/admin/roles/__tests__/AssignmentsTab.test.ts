@@ -121,9 +121,7 @@ async function mount(canReadRoles = true, salonsLoaded = true) {
 }
 
 function personBlock(name: string): HTMLElement {
-  return screen
-    .getByText(name, { selector: ".assignments-name" })
-    .closest(".assignments-person") as HTMLElement;
+  return screen.getByText(name, { selector: ".assignments-name" }).closest("tr") as HTMLElement;
 }
 
 async function openGrant(name = "Probe Eins") {
@@ -231,7 +229,8 @@ describe("AssignmentsTab (Issue #83)", () => {
     );
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).queryByText("Salon nicht mehr aktiv")).toBeNull();
-    expect(within(dialog).getByText("Salons werden geladen …")).toBeInTheDocument();
+    // #843 D-843-07: the salon list loading state is the Skeleton status, not a text
+    expect(within(dialog).getByRole("status", { name: "Wird geladen" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Speichern" })).toBeDisabled();
   });
 
@@ -339,6 +338,8 @@ describe("AssignmentsTab (Issue #83)", () => {
     expect(source).toContain("<PersonRoleAssignments");
     expect(source).not.toContain("<AssignmentDialog");
     expect(source).not.toContain("<ConfirmDialog");
-    expect(source).toMatch(/<Section[^>]*animate=\{false\}/);
+    // Issue #854: one DataTable row per person, no hand-built table.
+    expect(source).toContain("<DataTable");
+    expect(source).not.toContain('class="data-table"');
   });
 });

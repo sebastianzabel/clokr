@@ -1,7 +1,9 @@
-// Issue #836 (D-06, AC-2, AC-10, AC-11) - the /admin/leave-limits page, pinned from its source: a
-// route page cannot be mounted (no `$app` alias), see admin-shifts-coverage-salon-647.test.ts for
-// the precedent. The pure rules (validation, payload, preset) are tested in
-// lib/leave-limits/__tests__.
+// Issue #836 (D-06, AC-2, AC-10, AC-11) - the leave-limits UI, pinned from its source. Since #854 (plan 13) it
+// is the „Urlaubsgrenzen & Sperren“ tab of Regeln › Abwesenheiten (`UrlaubsgrenzenPanel.svelte`); the old page
+// file /admin/leave-limits is gone and both of its URLs are aliases. The behaviour is also mounted in
+// components/admin/abwesenheiten/__tests__/urlaubsgrenzen-854.test.ts; this file keeps the source pins of the
+// #836 rules the panel must never lose (the web counts nothing, names only what the API returns). The pure
+// rules (validation, payload, preset) are tested in lib/leave-limits/__tests__.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,26 +19,35 @@ function readRouteFile(relativeFromHere: string, relativeFromCwd: string): strin
 }
 
 const PAGE = readRouteFile(
-  "../routes/(app)/admin/leave-limits/+page.svelte",
-  "src/routes/(app)/admin/leave-limits/+page.svelte",
+  "../lib/components/admin/abwesenheiten/UrlaubsgrenzenPanel.svelte",
+  "src/lib/components/admin/abwesenheiten/UrlaubsgrenzenPanel.svelte",
 );
 
-/** The rule `<Modal>` element: from its opening tag to the first `</Modal>`. */
+/** The rule `<Dialog>` element: from its opening tag to the first `</Dialog>`. */
 function ruleModal(): string {
-  const start = PAGE.indexOf("<Modal");
-  expect(start, "rule Modal not found").toBeGreaterThan(-1);
-  const end = PAGE.indexOf("</Modal>", start);
-  expect(end, "rule Modal is not closed").toBeGreaterThan(start);
+  const start = PAGE.indexOf("<Dialog");
+  expect(start, "rule Dialog not found").toBeGreaterThan(-1);
+  const end = PAGE.indexOf("</Dialog>", start);
+  expect(end, "rule Dialog is not closed").toBeGreaterThan(start);
   return PAGE.slice(start, end);
 }
 
-describe("Issue #836 - /admin/leave-limits", () => {
-  it("[vacuity gate] the page source is read", () => {
+describe("Issue #836 - Urlaubsgrenzen & Sperren (tab of Abwesenheiten, #854)", () => {
+  it("[vacuity gate] the panel source is read", () => {
     expect(PAGE.length).toBeGreaterThan(5_000);
     expect(ruleModal().length).toBeGreaterThan(500);
   });
 
-  it("shows the fixed legal hint inside the rule Modal (AC-11)", () => {
+  it("the old page file is gone and no route page still carries the UI", () => {
+    expect(() =>
+      readRouteFile(
+        "../routes/(app)/admin/leave-limits/+page.svelte",
+        "src/routes/(app)/admin/leave-limits/+page.svelte",
+      ),
+    ).toThrow();
+  });
+
+  it("shows the fixed legal hint inside the rule Dialog (AC-11)", () => {
     expect(PAGE).toContain("LEAVE_LIMIT_LEGAL_HINT");
     expect(ruleModal()).toContain("{LEAVE_LIMIT_LEGAL_HINT}");
   });
@@ -52,7 +63,9 @@ describe("Issue #836 - /admin/leave-limits", () => {
 
   it("sends the body through ruleFormPayload and saves only by the Speichern button (AC-2)", () => {
     expect(PAGE).toContain("ruleFormPayload(form)");
-    expect(ruleModal()).toContain("onclick={saveRule}");
+    // The Dialog's form submits through the footer button; there is no save on blur or change.
+    expect(ruleModal()).toContain("void saveRule()");
+    expect(ruleModal()).toContain('type="submit" form="leave-limit-form"');
     expect(ruleModal()).toContain("Speichern");
     expect(PAGE).not.toContain("onblur=");
     expect(PAGE).not.toMatch(/onchange=\{[^}]*(api\.|[Ss]ave[A-Z])/);
@@ -70,7 +83,13 @@ describe("Issue #836 - /admin/leave-limits", () => {
   });
 
   it("shows change controls only where the API says canManage", () => {
-    expect(PAGE).toMatch(/\{#if rule\.canManage\}[^]*?openEdit\(rule\)[^]*?askRemove\(rule\)/);
+    expect(PAGE).toMatch(/\{#if row\.canManage\}[^]*?openEdit\(row\)[^]*?askRemove\(row\)/);
+  });
+
+  it("counts nothing and names no person itself: it renders what the API returns (T-854-32)", () => {
+    // No parallel-leave count of its own (#836: the kernel is the API's) and no person fields in the panel.
+    expect(PAGE).not.toMatch(/parallelLeaveLoad|hiddenCount|firstName|lastName|employeeId/);
+    expect(PAGE).not.toMatch(/\.reduce\(|\.filter\(/);
   });
 
   it("reads and writes only through the leave-limits API module, never a raw path", () => {
@@ -80,13 +99,13 @@ describe("Issue #836 - /admin/leave-limits", () => {
     expect(PAGE).not.toContain("api.delete(");
   });
 
-  it("the nav label equals the page title and the title map entry", () => {
-    // Issue #574: the page H1 reads the one page-name table (or still spells the same name)
-    expect(PAGE).toMatch(
-      /title=(?:"Urlaubsgrenzen & Sperren"|\{pageLabel\("\/admin\/leave-limits"\)\})/,
-    );
-    expect(readRouteFile("../lib/nav/page-labels.ts", "src/lib/nav/page-labels.ts")).toContain(
-      '"/admin/leave-limits": "Urlaubsgrenzen & Sperren"',
-    );
+  it("the tab is registered as a section and a tab of the Abwesenheiten page under that name", () => {
+    expect(PAGE).toContain("Urlaubsgrenzen & Sperren");
+    expect(
+      readRouteFile("../lib/settings/abwesenheiten.ts", "src/lib/settings/abwesenheiten.ts"),
+    ).toMatch(/value: "urlaubsgrenzen",\s+label: "Urlaubsgrenzen & Sperren"/);
+    expect(
+      readRouteFile("../lib/settings/settings-pages.ts", "src/lib/settings/settings-pages.ts"),
+    ).toMatch(/id: "abwesenheiten-urlaubsgrenzen"[^}]*source: "\/admin\/leave-limits"/);
   });
 });

@@ -3,7 +3,7 @@
  * written, and the ONE place the redirect targets of the old URLs are decided:
  *
  *   /team/leave?tab=uebersicht|antraege|planung&zoom=jahr|quartal|monat&datum=YYYY-MM-DD
- *               [&status=<STATUS>][&request=<uuid>]
+ *               [&status=<STATUS>][&request=<uuid>][&kreis=alle]
  *   /leave?tab=kalender|antraege|team|planung&zoom=…&datum=…[&status=<STATUS>][&request=<uuid>]
  *
  * `salonId=<uuid>` and `year=<YYYY>` are read (the #835 planner deep link and the notification
@@ -48,7 +48,12 @@ export interface LeaveAreaState<Tab extends string> {
   year: number | null;
 }
 
-export type TeamLeaveState = LeaveAreaState<TeamLeaveTab>;
+/**
+ * `allSalons` (Issue #853, D-853-12): the „Alle Salons“ choice of the Übersicht, written as
+ * `kreis=alle`. Only the literal `alle` switches it on; any other value is the default circle (the
+ * leader's reach). /leave has no such choice, so `MyLeaveState` does not carry it.
+ */
+export type TeamLeaveState = LeaveAreaState<TeamLeaveTab> & { allSalons: boolean };
 export type MyLeaveState = LeaveAreaState<MyLeaveTab>;
 
 const TEAM_TABS: readonly TeamLeaveTab[] = ["uebersicht", "antraege", "planung"];
@@ -143,7 +148,10 @@ function parseAreaState<Tab extends string>(
 
 /** Tab, zoom, anchor day and filters of `/team/leave`; every unknown or invalid value is a default. */
 export function parseTeamLeaveState(params: URLSearchParams, today: string): TeamLeaveState {
-  return parseAreaState(params, today, TEAM_TABS, TEAM_DEFAULT_TAB, TEAM_DEFAULT_ZOOM);
+  return {
+    ...parseAreaState(params, today, TEAM_TABS, TEAM_DEFAULT_TAB, TEAM_DEFAULT_ZOOM),
+    allSalons: params.get("kreis") === "alle",
+  };
 }
 
 /** Tab, zoom, anchor day and filters of `/leave` (Mein Bereich). */
@@ -163,7 +171,8 @@ function areaSearch(state: LeaveAreaState<string>): string {
 }
 
 export function teamLeaveSearch(state: TeamLeaveState): string {
-  return areaSearch(state);
+  // `kreis=alle` goes after the existing keys and only when set (Issue #853).
+  return state.allSalons ? `${areaSearch(state)}&kreis=alle` : areaSearch(state);
 }
 
 export function myLeaveSearch(state: MyLeaveState): string {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Modal from "$components/ui/Modal.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
 
   interface Props {
@@ -47,19 +47,15 @@
   // double-fire onCancel via the open-transition $effect below.
   let confirming = $state(false);
   // Snapshot of the previous `open` value so $effect can detect a true→false
-  // transition (Modal.svelte sets `open = false` directly on ESC + backdrop
-  // click without invoking any callback — we observe that change here).
+  // transition.
   let prevOpen = $state(open);
 
-  // M-01 fix (Phase 76.13 UI-V19-05): Modal.svelte sets open=false directly on
-  // ESC / backdrop click without invoking any cancel callback. We observe the
-  // open transition here so parent state (e.g. /admin/employees/[id] tracking-
-  // exemption toggle) can revert. `confirming` is set in handleConfirm AFTER
-  // the awaited onConfirm() resolves, so a successful confirm path does NOT
-  // double-fire onCancel. `pending` guard: if Modal closes while a confirm is
-  // in-flight (ESC at the same instant as click), the confirm semantically
-  // "wins" and we suppress onCancel — the parent only learns the outcome via
-  // its own onConfirm resolution path.
+  // M-01 fix (Phase 76.13 UI-V19-05): every way of closing (Cancel button, Escape,
+  // backdrop click) converges on `open = false` without a callback of its own. We
+  // observe that transition here so parent state (e.g. /admin/employees/[id]
+  // tracking-exemption toggle) can revert. `confirming` is set in handleConfirm
+  // AFTER the awaited onConfirm() resolves, so a successful confirm path does NOT
+  // double-fire onCancel.
   $effect(() => {
     if (prevOpen && !open) {
       if (!confirming && !pending) {
@@ -70,6 +66,17 @@
     }
     prevOpen = open;
   });
+
+  /**
+   * Issue #843 (D-843-16): the Dialog block reports the user-driven closings (Escape on the
+   * document, a click on the scrim) through the open binding. While a confirm is in flight they
+   * are refused outright - the dialog stays open - so the pending confirm "wins" exactly like the
+   * disabled Cancel button; otherwise they take the one cancel path of the Cancel button.
+   */
+  function setOpen(next: boolean) {
+    if (!next && pending) return;
+    open = next;
+  }
 
   async function handleConfirm() {
     if (pending) return;
@@ -100,7 +107,7 @@
   }
 </script>
 
-<Modal bind:open {title}>
+<Dialog bind:open={() => open, setOpen} {title}>
   {#if description}
     <p class="confirm-description">{description}</p>
   {/if}
@@ -119,7 +126,7 @@
       {confirmLabel}
     </button>
   {/snippet}
-</Modal>
+</Dialog>
 
 <style>
   .confirm-description {

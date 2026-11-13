@@ -9,6 +9,7 @@
   Props:
     salons  - the tenant's salons as read from GET /salons, or null when not available
     value   - bindable salon id; "" = nothing chosen
+    error   - optional message of the guided create flow (Issue #854), shown under the select
 -->
 <script lang="ts">
   import {
@@ -20,9 +21,10 @@
   interface Props {
     salons: SalonRef[] | null;
     value?: string;
+    error?: string;
   }
 
-  let { salons, value = $bindable("") }: Props = $props();
+  let { salons, value = $bindable(""), error }: Props = $props();
 
   let options = $derived(salons === null ? [] : homeSalonOptions(salons));
   let offered = $derived(offerHomeSalonChoice(salons !== null, options.length));
@@ -31,7 +33,14 @@
 {#if offered}
   <div class="form-group" data-testid="home-salon-field">
     <label class="form-label" for="c-home-salon">Stammsalon</label>
-    <select id="c-home-salon" class="select" bind:value required>
+    <select
+      id="c-home-salon"
+      class="select"
+      bind:value
+      required
+      aria-invalid={error ? "true" : undefined}
+      aria-describedby={error ? "c-home-salon-error" : undefined}
+    >
       <option value="">Bitte wählen</option>
       {#each options as salon (salon.id)}
         <option value={salon.id}>{salon.name}</option>
@@ -40,5 +49,8 @@
     <p class="form-hint">
       Bei mehreren aktiven Salons ist die Angabe des Stammsalons erforderlich.
     </p>
+    {#if error}
+      <p class="form-error" id="c-home-salon-error">{error}</p>
+    {/if}
   </div>
 {/if}

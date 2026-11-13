@@ -118,6 +118,7 @@ export type PrismaModelName =
   | "overtimeAccount"
   | "overtimeTransaction"
   | "overtimePlan"
+  | "monthCorrectionRequest" // Issue #599 — correction request for a closed month
   | "leaveType"
   | "leaveEntitlement"
   | "specialLeaveRule"
@@ -136,6 +137,7 @@ export type PrismaModelName =
   | "operatorAuditLog"
   | "supportAccess" // Issue #93 — time-boxed operator support grant
   | "pushSubscription" // Issue #608 — a user's web-push delivery address
+  | "calendarFeedToken" // Issue #597 — the secret of a person's calendar feed
   | "terminalApiKey"
   | "presenceSource"
   | "presenceDevice"
@@ -173,6 +175,7 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   operatorAuditLog: "platform",
   supportAccess: "platform", // Issue #93 (Phase 93b-01) — SupportAccess, a time-boxed operator support grant, an Unterbau model
   pushSubscription: "platform", // Issue #608 (Phase 608-01) — PushSubscription, a device push address, an Unterbau model
+  calendarFeedToken: "platform", // Issue #597 — CalendarFeedToken, the secret of a person's calendar feed, an Unterbau model
   apiKey: "platform",
   invitation: "platform",
   otpToken: "platform",
@@ -208,11 +211,12 @@ export const MODEL_OWNER: Readonly<Record<PrismaModelName, OwnerArea>> = {
   leaveLimitRule: "absence", // Issue #836 — Urlaubsgrenzen und Urlaubssperren je Salon
   leavePlan: "absence", // Issue #835 — Urlaubsplaner: Plan je Salon und Jahr
   leavePlanWish: "absence", // Issue #835 — Urlaubsplaner: Wunsch einer Person
-  // working-time-account — 5
+  // working-time-account — 6 (Issue #599: + MonthCorrectionRequest, 5 -> 6)
   overtimeAccount: "working-time-account",
   overtimeTransaction: "working-time-account",
   overtimePlan: "working-time-account",
   saldoSnapshot: "working-time-account",
+  monthCorrectionRequest: "working-time-account", // Issue #599 — correction request for a closed month
   openingBalance: "working-time-account",
   // scheduling — 9
   shift: "scheduling",

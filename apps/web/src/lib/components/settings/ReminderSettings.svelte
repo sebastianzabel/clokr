@@ -18,7 +18,7 @@
     type MyReminders,
   } from "$lib/api/reminders";
   import { toasts } from "$stores/toast";
-  import Card from "$components/ui/Card.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
 
   let data = $state<MyReminders | null>(null);
   // One save at a time: a second click while the PATCH runs would race the rollback.
@@ -103,9 +103,7 @@
 </script>
 
 {#if data !== null && rows.length > 0}
-  <Card class="settings-card reminder-card">
-    <h3 class="section-title">Erinnerungen</h3>
-
+  <Section title="Erinnerungen">
     {#each rows as row (row.key)}
       {@const id = `reminder-${row.key}`}
       <div class="reminder-toggle-row">
@@ -123,15 +121,10 @@
     {/each}
 
     <p class="form-hint">{hint}</p>
-  </Card>
+  </Section>
 {/if}
 
 <style>
-  .section-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-  }
   :global(.reminder-card) {
     margin-bottom: 1.5rem;
   }
@@ -152,7 +145,7 @@
     width: 2.75rem;
     height: 1.5rem;
     border-radius: 9999px;
-    background: var(--border);
+    background: var(--line);
     cursor: pointer;
     position: relative;
     transition: background 0.2s;
@@ -166,7 +159,7 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--bg-card);
+    background: var(--card);
     transition: transform 0.2s;
   }
   .reminder-toggle-input:checked {

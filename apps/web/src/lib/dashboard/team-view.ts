@@ -154,6 +154,36 @@ export function teamTrendView(resp: TeamTrendResponse): TeamTrendView {
   };
 }
 
+/** `GET /dashboard/overtime-trend` (Phase 76b): month-end carry-overs and the live team balance. */
+export interface OvertimeTrendResponse {
+  snapshots: { month: string; teamCarryOverMinutes: number }[];
+  currentTeamBalanceMinutes: number;
+}
+
+/**
+ * The team saldo at the end of each shown month, in hours, aligned to the trend window (Issue #895,
+ * moved verbatim from the former dashboard): the last month is the live balance, an earlier month
+ * is its snapshot, a month without a snapshot repeats the previous value (0 at the leading edge).
+ */
+export function overtimeTrendHours(
+  months: ReadonlyArray<{ month: string }>,
+  trend: OvertimeTrendResponse,
+): number[] {
+  // The API returns "YYYY-MM-DD" (the day is always 01); the window is keyed by "YYYY-MM".
+  const snapshotByMonth = new Map<string, number>();
+  for (const s of trend.snapshots) snapshotByMonth.set(s.month.slice(0, 7), s.teamCarryOverMinutes);
+  let lastKnown = 0;
+  return months.map((m, i) => {
+    if (i === months.length - 1) {
+      lastKnown = trend.currentTeamBalanceMinutes / 60;
+    } else {
+      const snap = snapshotByMonth.get(m.month);
+      if (snap !== undefined) lastKnown = snap / 60;
+    }
+    return +lastKnown.toFixed(1);
+  });
+}
+
 /**
  * Issue #85 D-04/D-05: whether any shown day of the team week carries the "worked in another
  * salon" flag. Scoped callers get the flag unfiltered, so the legend follows the data and not

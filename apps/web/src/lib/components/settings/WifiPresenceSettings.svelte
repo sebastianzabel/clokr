@@ -21,8 +21,9 @@
   } from "$lib/api/presence";
   import { lastSeenLabel, pairedViaLabel } from "$lib/presence/device-labels";
   import { toasts } from "$stores/toast";
-  import Card from "$components/ui/Card.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
 
   let enabled = $state(false);
   let devices = $state<MyWifiDevice[]>([]);
@@ -124,9 +125,7 @@
   }
 </script>
 
-<Card animate class="settings-card wifi-card">
-  <h3 class="section-title">Meine Geräte</h3>
-
+<Section title="Stempeln mit dem Handy">
   <!-- GDPR notice - always visible, not dismissible -->
   <div class="alert alert-info wifi-gdpr-note" role="note">
     <svg
@@ -175,7 +174,7 @@
   <!-- Device list -->
   <div class="mac-list">
     {#if loading}
-      <p class="text-muted mac-list-status">Laden…</p>
+      <Skeleton shape="row" count={2} />
     {:else if loadFailed}
       <div class="callout error">
         <p>
@@ -269,7 +268,7 @@
       <p class="form-error" role="alert">{macError}</p>
     {/if}
   </details>
-</Card>
+</Section>
 
 <ConfirmDialog
   bind:open={withdrawOpen}
@@ -281,13 +280,8 @@
 />
 
 <style>
-  .section-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-  }
   :global(.wifi-card) {
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow);
     margin-bottom: 1.5rem;
   }
   .wifi-gdpr-note {
@@ -315,7 +309,7 @@
     width: 2.75rem;
     height: 1.5rem;
     border-radius: 9999px;
-    background: var(--border);
+    background: var(--line);
     cursor: pointer;
     position: relative;
     transition: background 0.2s;
@@ -329,7 +323,7 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--bg-card);
+    background: var(--card);
     transition: transform 0.2s;
   }
   .wifi-toggle-input:checked {
@@ -369,11 +363,11 @@
   }
   .mac-code {
     padding: 0.5rem 0.75rem;
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
-    font-family: var(--font-mono);
+    background: var(--sunk);
+    border-radius: var(--r-control);
+    font-family: var(--font-code);
     font-size: 0.8125rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
   }
   .mac-label-text {
     font-size: 0.8125rem;
@@ -410,7 +404,7 @@
     min-width: 180px;
   }
   .mac-input {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 0.9375rem;
   }
   .form-error {

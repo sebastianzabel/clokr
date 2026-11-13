@@ -85,6 +85,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/utils/prisma-unique-violation.ts": "rahmen", // generic Prisma P2002 target reader; imported by the platform and scheduling contexts, owns no model
   "src/utils/crypto.ts": "rahmen", // generic crypto helper (hashing/encryption), no model, no single owning context
   "src/utils/release-notes.ts": "rahmen", // bakes docs/release-notes/*.md into the image at build time; app-wide, tenant-agnostic, no model
+  "src/utils/csv-cell.ts": "rahmen", // Issue #854 — CSV cell quoting and formula-injection guard shared by the period CSV and the audit CSV; pure, no model
   "src/utils/audit-diff.ts": "rahmen", // generic before/after diff for settings audit rows (Issue #285); pure, no model, imported by the platform and absence settings routes
   "src/utils/client-log-url.ts": "rahmen", // strips query/fragment from client-reported URLs before logging (Issue #610 review WR-02); pure, no model
   "src/utils/code-unit-order.ts": "rahmen", // locale-independent code-unit comparator for stable sorts; pure, no model, imported by the platform and absence contexts
@@ -125,6 +126,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/composition/employee-exit-ports.ts": "komposition", // Issue #615 (D-15) — hands the Unterbau deactivation route the closed-month answer of Arbeitszeitkonto; owns no model, carries no rule of its own
   "src/composition/pdf.ts": "komposition", // pure PDF-layout rendering of pre-computed data; sole caller is reports.ts; no Prisma access, no Fachregel
   "src/composition/pdf-format.ts": "komposition", // Issue #617: pure German number formatting for PDF output (H:MM from minutes, decimal comma, day plurals); no Prisma, no model, no Fachregel - only pdf.ts and reports.ts import it
+  "src/composition/tasks-open.ts": "komposition", // Issue #853 (D-853-21a) — GET /tasks/open: the Aufgaben work queue joins Zeiterfassung's missing-clock-out read with the Unterbau's per-entry reach rule; read-only, owns no model, carries no Fachregel
   "src/composition/activity-sentences.ts": "komposition", // Issue #849 (4): the wording of the "Aktivität" time-entry sentences — presentation only, owns no model, carries no Fachregel
   "src/composition/activity.ts": "komposition", // dashboard "Aktivität" widget backend; ADMIN branch reads AuditLog (platform-owned), EMPLOYEE/MANAGER branch aggregates timeEntry/leaveRequest/saldoSnapshot through facades (Phase 243 D-13, overruling this file's earlier D-17-as-enumeration argument: D-17 was an enumeration, not a criterion — the operative rule is "owns no model, carries no Fachregel", already applied to pdf.ts above; activity.ts owns no model and aggregates across three contexts' facades, so it fits the same bucket)
   "src/composition/data-retention.ts": "komposition", // annual DSGVO/legal retention job driven by TenantConfig.dataRetentionYears; touches TimeEntry/LeaveRequest/Absence with equal weight (3 separate updateMany, no single primary subject) plus an AuditLog purge — no single business context owns a generic cross-context retention policy (Phase 243 D-01/D-13: same substance as the prior unterbau reasoning, verdict changed to komposition, which is what "no context owns it" actually describes)
@@ -133,6 +135,8 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   //    WorkSchedule/PublicHoliday/SchoolHolidayPeriod/AuditLog/ApiKey/Notification ────────────
   "src/contexts/platform/api/api-keys.ts": "unterbau", // writes ApiKey only
   "src/contexts/platform/api/audit-logs.ts": "unterbau", // reads AuditLog only
+  "src/contexts/platform/audit-log-read.ts": "unterbau", // Issue #854 (#583) — the filter parser and where-builder shared by GET /audit-logs and its CSV export; reads AuditLog only
+  "src/contexts/platform/audit-csv.ts": "unterbau", // Issue #854 (#583) — pure CSV formatting of AuditLog rows with the shared German labels; no Prisma, no rule
   "src/contexts/platform/api/support-accesses.ts": "unterbau", // Issue #93: tenant view of SupportAccess
   "src/contexts/platform/api/auth.ts": "unterbau", // writes OtpToken/RefreshToken/User
   "src/contexts/platform/api/avatars.ts": "unterbau", // writes Employee.avatarUrl only
@@ -167,6 +171,7 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/platform/facade/holiday-resolution.ts": "unterbau", // Phase 71b (issue #71) — builds holiday sets from Salon/PublicHoliday, Unterbau models; reads no TimeEntry
   "src/contexts/platform/salon-assignment-rules.ts": "unterbau", // Phase 67b (issue #67) — pure day/weekday/period rules for EmployeeSalonAssignment, an Unterbau model per ADR 0002
   "src/contexts/platform/salon-assignment-audit.ts": "unterbau", // Phase 67b (issue #67) — shared WR-01 audit helper for EmployeeSalonAssignment, an Unterbau model per ADR 0002
+  "src/contexts/platform/ui-theme.ts": "unterbau", // Phase 842 (Issue #842) — theme id mapping for User.uiPreferences (an Unterbau model); pure, no Prisma call
   "src/contexts/platform/access-role.ts": "unterbau", // Phase 73b (#73): role = permission bundle, writes/reads AccessRole only — an Unterbau model
   "src/contexts/platform/access-context.ts": "unterbau", // Phase 77b (Issue #77) — AccessContext + its two constructors + employeeScopeFor(); pure module, no Prisma call
   "src/contexts/platform/access-context-error.ts": "unterbau", // Phase 77b (Issue #77) — AccessContextError + requireTenantId(); zero-import leaf, pure module, no Prisma call
@@ -352,6 +357,11 @@ export const CONTEXT_AREA_BY_FILE: Readonly<Record<string, ContextArea>> = {
   "src/contexts/absence/leave-plan/planner-read.ts": "abwesenheiten", // Issue #835 - the live planner read (population, gesetzt/beantragt rows, wishes, conflict flag, type masking, holidays); reads LeavePlanWish and CompanyShutdown, leave and Absence rows only through the absence facades
   "src/contexts/absence/leave-plan/day-load.ts": "abwesenheiten", // Issue #835 - plannerDayLoad - the planner's per-day count read from leaveLimitLoadView with the wishes as candidates; counts nothing itself
   "src/contexts/absence/leave-plan/forecast.ts": "abwesenheiten", // Issue #835 - plannerForecast - the entitlement forecast of one person (remaining days minus PENDING minus the wishes priced by resolveLeaveDays); read-only, creates or heals no entitlement row
+  "src/contexts/platform/calendar-feed-token.ts": "unterbau", // Issue #597 — the calendar-feed token (generate, hash, issue/rotate, revoke, resolve); writes CalendarFeedToken
+  "src/contexts/platform/api/me-calendar-feed.ts": "unterbau", // Issue #597 — own calendar-feed token routes under /me/calendar-feed
+  "src/composition/calendar-feed.ts": "komposition", // Issue #597 — the public ICS feed of one person, reads every context through its index
+  "src/contexts/working-time-account/api/month-corrections.ts": "arbeitszeitkonto", // Issue #599 — correction requests for a day of a closed month (create, read, decide, withdraw); writes MonthCorrectionRequest and OvertimeTransaction
+  "src/contexts/working-time-account/booked-month-corrections.ts": "arbeitszeitkonto", // Issue #599 — the one read of booked month corrections for the saldo core (accountCorrections)
   "src/contexts/absence/leave-calendar-visibility.ts": "abwesenheiten", // Issue #835 - pure - canSeeLeaveType, the calendar's one type-visibility rule (moved out of api/leave.ts, second caller is the planner read)
   "src/contexts/absence/entitlement-audit.ts": "abwesenheiten", // Issue #445 — system-initiated LeaveEntitlement AuditLog rows (append only)
   "src/contexts/absence/find-karenz-overrun-days.ts": "abwesenheiten", // §5 EFZG Karenztage over LeaveRequest

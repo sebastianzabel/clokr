@@ -28,11 +28,12 @@
  */
 import { visualTest as test, expect } from "./visual.setup";
 import { seedDeterministicTenant, ANCHOR_DATE } from "../fixtures/visual-seed";
+import type { Locator, Page } from "@playwright/test";
 
 // Track the seed result across the test lifecycle so afterEach can drop the
 // tenant. Using an outer Map keyed by testInfo.testId avoids leakage between
 // parallel workers (each worker has its own module state).
-const seedByTest = new Map<string, { tenantId: string; apiBaseUrl: string }>();
+const seedByTest = new Map<string, { tenantId: string; apiBaseUrl: string; accessToken: string }>();
 
 test.beforeEach(async ({ page, request }, testInfo) => {
   // Freeze "now" at 2025-06-16T08:00:00Z (Mon) so every component reading
@@ -50,6 +51,7 @@ test.beforeEach(async ({ page, request }, testInfo) => {
   seedByTest.set(testInfo.testId, {
     tenantId: seed.tenantId,
     apiBaseUrl: process.env.E2E_API_BASE ?? "http://localhost:4001",
+    accessToken: seed.auth.accessToken,
   });
 
   await page.addInitScript(({ accessToken, refreshToken, user }) => {
@@ -80,6 +82,22 @@ test.afterEach(async ({ request }, testInfo) => {
   });
 });
 
+/**
+ * Issue #845: the parts of Ich › Mein Tag whose text follows the server's real date (the visual
+ * seed freezes only the browser clock): the Stundenkonto value with its line below, and the titles
+ * and subtitles of the „Für dich“ rows.
+ */
+function realDateMasks(page: Page): Locator[] {
+  const saldo = page.getByTestId("kpi-saldo");
+  const forYou = page.getByRole("list", { name: "Für dich", exact: true });
+  return [
+    saldo.locator(".kpi-value"),
+    saldo.locator(".kpi-explanation"),
+    forYou.locator(".list-title"),
+    forYou.locator(".list-subtitle"),
+  ];
+}
+
 test.describe("Phase 75 — Visual baselines", () => {
   test("01 — Dashboard", async ({ page }) => {
     await page.goto("/dashboard");
@@ -94,9 +112,13 @@ test.describe("Phase 75 — Visual baselines", () => {
     // Issue #588 (P-13): the card "Salden" shows figures the server computes against the real
     // date (the visual seed freezes only the browser clock), so its names order, values and median
     // move every day. The mask keeps the card's frame, heading and position in the comparison.
+    // Issue #845: Mein Tag shows two more figures the server computes against the real date — the
+    // Stundenkonto (saldo through yesterday) and the missing days under „Für dich“ (the newest
+    // workdays without an entry). Same reasoning as P-13: the values are masked, the KPI cell, the
+    // rows, their chips and buttons stay in the comparison.
     await expect(page).toHaveScreenshot("01-dashboard.png", {
       fullPage: true,
-      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values")],
+      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values"), ...realDateMasks(page)],
     });
   });
 
@@ -143,7 +165,23 @@ test.describe("Phase 75 — Visual baselines", () => {
     await expect(page).toHaveScreenshot("06-schichtplan-wochen-grid.png", { fullPage: true });
   });
 
-  test("07 — Admin Mitarbeiter Liste", async ({ page }) => {
+  test("07 — Admin Mitarbeiter Liste", async ({ page, request }, testInfo) => {
+    // #854: the shared person table names each person's Stammsalon. The fixture tenant's salon is
+    // called after the per-run tenant id („Test test-<hex>“), whose letters change the column width
+    // from run to run; this test's own tenant gets a fixed salon name first (through the API, like
+    // the seed), so the snapshot is deterministic.
+    const ctx = seedByTest.get(testInfo.testId);
+    expect(ctx, "the seeded tenant of this test").toBeDefined();
+    const headers = { authorization: `Bearer ${ctx!.accessToken}` };
+    const list = await request.get(`${ctx!.apiBaseUrl}/api/v1/salons`, { headers });
+    expect(list.ok(), `GET /salons (${list.status()})`).toBe(true);
+    const { salons } = (await list.json()) as { salons: { id: string }[] };
+    expect(salons.length, "the fixture tenant has one salon").toBe(1);
+    const renamed = await request.patch(`${ctx!.apiBaseUrl}/api/v1/salons/${salons[0].id}`, {
+      headers,
+      data: { name: "Salon Visual" },
+    });
+    expect(renamed.ok(), `PATCH /salons/:id (${renamed.status()})`).toBe(true);
     await page.goto("/admin/employees");
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
     await page.waitForLoadState("networkidle");
@@ -151,7 +189,7 @@ test.describe("Phase 75 — Visual baselines", () => {
     // (employeeNumber: `A-{tenantId.slice(-4)}`, last-login timestamp,
     // email with random hex) is excluded — only the 4 deterministic
     // VIS-001..VIS-004 employees remain in the snapshot.
-    await page.getByTestId("admin-employees-search").fill("VIS");
+    await page.getByRole("searchbox", { name: "Name oder Nummer" }).fill("VIS");
     // Re-anchor on the page after debounce so the filtered table is rendered
     // before the screenshot fires.
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
@@ -183,9 +221,37 @@ test.describe("Phase 75 — Visual baselines", () => {
     await page.waitForLoadState("networkidle");
     // Mask chart.js <canvas> (non-deterministic rasterization) — see test 01 — and the figures of
     // the card "Salden" (Issue #588, P-13: they move with the server's real date).
+    // Issue #845: the real-date figures of Mein Tag — see test 01.
     await expect(page).toHaveScreenshot("10-mobile-dashboard.png", {
       fullPage: true,
-      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values")],
+      mask: [page.locator("canvas"), page.getByTestId("team-saldo-values"), ...realDateMasks(page)],
     });
+  });
+
+  // Issue #843 (D-843-04): the example page of the design-system blocks. One screenshot per
+  // theme x mode frame (six); the page reads no API data. The baselines are taken from the CI
+  // artifact (plan 843-36), never from a local render.
+  test("11 — Bausteine", async ({ page }) => {
+    await page.goto("/admin/bausteine");
+    await expect(page.locator('[data-testid="bausteine-page"]')).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    // The frames are taller than the viewport, so an element screenshot scrolls the page, and the
+    // sticky chrome (the Topbar, the SaveBar of the form demo) lands inside each image at an offset
+    // that depends on that scroll position. For this test only the chrome sits in the flow: the
+    // product behaviour is untouched, the six frames just no longer depend on where the page was
+    // scrolled to when the screenshot fired.
+    await page.addStyleTag({
+      content: ".topbar, .save-bar { position: static !important; }",
+    });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    // Soft: a changed frame must not hide the state of the frames after it, so one CI run reports
+    // (and the artifact carries) every frame that differs. The test still fails on any mismatch.
+    for (const theme of ["pflaume", "salz", "petrol"]) {
+      for (const mode of ["light", "dark"]) {
+        await expect
+          .soft(page.getByTestId(`bausteine-frame-${theme}-${mode}`))
+          .toHaveScreenshot(`11-bausteine-${theme}-${mode}.png`);
+      }
+    }
   });
 });

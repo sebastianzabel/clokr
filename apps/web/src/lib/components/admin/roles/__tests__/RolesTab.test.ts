@@ -79,8 +79,6 @@ const TEAM = {
 };
 
 let roles: (typeof ADMIN)[] = [];
-// jsdom has no scrollIntoView; the spy also proves the reveal in the #692 block below.
-const scrollSpy = vi.fn();
 
 function fourEyes() {
   return new ApiError(409, FOUR_EYES_MSG, {
@@ -90,9 +88,6 @@ function fourEyes() {
 }
 
 beforeEach(() => {
-  scrollSpy.mockReset();
-  Element.prototype.scrollIntoView =
-    scrollSpy as unknown as typeof Element.prototype.scrollIntoView;
   apiGet.mockReset();
   apiPost.mockReset();
   apiPatch.mockReset();
@@ -145,7 +140,9 @@ describe("RolesTab (Issue #83)", () => {
       }),
     );
     expect(apiPost).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(row("Probe-Rolle").className).toContain("roles-row-active"));
+    // Issue #854: the editor is a Dialog; a saved role closes it and shows up in the table.
+    await waitFor(() => expect(screen.queryByLabelText("Name der Rolle")).toBeNull());
+    expect(row("Probe-Rolle")).toBeInTheDocument();
   });
 
   it("a system role opens visibly locked: inputs disabled, explanation shown, copy enabled", async () => {
@@ -318,8 +315,9 @@ describe("RolesTab (Issue #83)", () => {
     await ticked("Testbeschriftung Eins");
     await fireEvent.click(within(row("Admin")).getByRole("button", { name: "Ansehen" }));
     expect(await screen.findByText("Änderungen verwerfen?")).toBeInTheDocument();
+    const dialogs = screen.getAllByRole("dialog");
     await fireEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "Abbrechen" }),
+      within(dialogs[dialogs.length - 1]).getByRole("button", { name: "Abbrechen" }),
     );
     expect(screen.getByLabelText("Name der Rolle")).toHaveValue("Teamleitung");
     expect(screen.getByLabelText("Testbeschriftung Eins")).toBeChecked();
@@ -332,35 +330,51 @@ describe("RolesTab (Issue #83)", () => {
   });
 });
 
-// Issue #692 — the editor opens below the table; opening it must scroll it into view and focus it.
-describe("RolesTab reveals the editor (Issue #692)", () => {
-  it("control: without a click nothing is scrolled", async () => {
+// Issue #692 / #854 — the editor used to open below the table, out of sight. It is a Dialog now, so
+// it is in view by construction; the e2e walkthrough (role-editor-visibility-710) proves it in a browser.
+describe("RolesTab shows the editor as a dialog (Issues #692, #854)", () => {
+  it("control: without a click there is no editor", async () => {
     await mount();
-    expect(scrollSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("Neue Rolle scrolls the editor into view and focuses the name field", async () => {
+  it("Neue Rolle opens the editor dialog with the name field marked for autofocus", async () => {
     await mount();
     await fireEvent.click(screen.getByRole("button", { name: "Neue Rolle" }));
-    const name = await screen.findByLabelText("Name der Rolle");
-    await waitFor(() => expect(scrollSpy).toHaveBeenCalledTimes(1));
-    expect(scrollSpy.mock.calls[0][0]).toMatchObject({ block: "start" });
-    expect(document.activeElement).toBe(name);
+    const dialog = await screen.findByRole("dialog", { name: "Rollen-Editor" });
+    expect(dialog.querySelector("#role-editor-form")).not.toBeNull();
+    expect(within(dialog).getByLabelText("Name der Rolle")).toHaveAttribute("data-autofocus");
   });
 
-  it("Ansehen on a locked system role focuses the editor wrapper instead", async () => {
+  it("Ansehen on a locked system role opens the dialog; no field is marked for autofocus", async () => {
     await mount();
     await fireEvent.click(within(row("Admin")).getByRole("button", { name: "Ansehen" }));
-    await waitFor(() => expect(scrollSpy).toHaveBeenCalledTimes(1));
-    const editor = screen.getByLabelText("Rollen-Editor");
-    expect(document.activeElement).toBe(editor);
+    const dialog = await screen.findByRole("dialog", { name: "Rollen-Editor" });
+    expect(within(dialog).getByLabelText("Name der Rolle")).not.toHaveAttribute("data-autofocus");
   });
 
-  it("Bearbeiten on an own role focuses the name field", async () => {
+  it("Bearbeiten on an own role opens the dialog on that role", async () => {
     await mount();
     await fireEvent.click(within(row("Teamleitung")).getByRole("button", { name: "Bearbeiten" }));
-    await waitFor(() => expect(scrollSpy).toHaveBeenCalledTimes(1));
-    expect(document.activeElement).toBe(screen.getByLabelText("Name der Rolle"));
+    const dialog = await screen.findByRole("dialog", { name: "Rollen-Editor" });
+    expect(within(dialog).getByLabelText("Name der Rolle")).toHaveValue("Teamleitung");
+  });
+
+  it("closing a clean editor needs no question; closing a dirty one asks first", async () => {
+    await mount();
+    await fireEvent.click(within(row("Teamleitung")).getByRole("button", { name: "Bearbeiten" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Schließen" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await fireEvent.click(within(row("Teamleitung")).getByRole("button", { name: "Bearbeiten" }));
+    await ticked("Testbeschriftung Eins");
+    await fireEvent.click(screen.getByRole("button", { name: "Schließen" }));
+    expect(await screen.findByText("Änderungen verwerfen?")).toBeInTheDocument();
+    const dialogs = screen.getAllByRole("dialog");
+    await fireEvent.click(
+      within(dialogs[dialogs.length - 1]).getByRole("button", { name: "Verwerfen" }),
+    );
+    await waitFor(() => expect(screen.queryByLabelText("Name der Rolle")).toBeNull());
   });
 });
 

@@ -36,7 +36,7 @@ describe("Phase 76-01 sanity: Svelte 5 + jsdom + testing-library", () => {
 
   it("renderWithTheme propagates data-theme to document.body (D-06)", () => {
     const children = createRawSnippet(() => ({ render: () => `<span>y</span>` }));
-    renderWithTheme(Card, { children }, "nacht");
-    expect(document.body.getAttribute("data-theme")).toBe("nacht");
+    renderWithTheme(Card, { children }, "salz");
+    expect(document.body.getAttribute("data-theme")).toBe("salz");
   });
 });

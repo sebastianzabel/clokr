@@ -85,7 +85,7 @@ beforeAll(() => {
 
 describe("TenantTable", () => {
   it("renders one row per tenant with a link to the tenant page", () => {
-    renderWithTheme(TenantTable, { tenants: [ACTIVE, OFF], page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: [ACTIVE, OFF], page: 1, pageSize: 25 }, "salz");
     expect(rows()).toBe(2);
     const link = byId("op-tenant-link-t-active");
     expect(link).toHaveAttribute("href", "/betreiber/mandanten/t-active");
@@ -94,7 +94,7 @@ describe("TenantTable", () => {
   });
 
   it("shows the Bundesland label and the date as dd.MM.yyyy", () => {
-    renderWithTheme(TenantTable, { tenants: [ACTIVE, OFF], page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: [ACTIVE, OFF], page: 1, pageSize: 25 }, "salz");
     expect(byId("op-tenant-row-t-active")).toHaveTextContent("Niedersachsen");
     expect(byId("op-tenant-row-t-off")).toHaveTextContent("Bayern");
     expect(byId("op-tenant-row-t-active")).toHaveTextContent("05.01.2026");
@@ -102,7 +102,7 @@ describe("TenantTable", () => {
   });
 
   it("marks an active tenant Aktiv with no reason line", () => {
-    renderWithTheme(TenantTable, { tenants: [ACTIVE, OFF], page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: [ACTIVE, OFF], page: 1, pageSize: 25 }, "salz");
     const status = byId("op-tenant-status-t-active");
     expect(status).toHaveAttribute("data-state", "active");
     expect(status).toHaveTextContent("Aktiv");
@@ -110,7 +110,7 @@ describe("TenantTable", () => {
   });
 
   it("marks a deactivated tenant Deaktiviert and shows its reason line", () => {
-    renderWithTheme(TenantTable, { tenants: [ACTIVE, OFF], page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: [ACTIVE, OFF], page: 1, pageSize: 25 }, "salz");
     const status = byId("op-tenant-status-t-off");
     expect(status).toHaveAttribute("data-state", "deactivated");
     expect(status).toHaveTextContent("Deaktiviert");
@@ -119,14 +119,14 @@ describe("TenantTable", () => {
 
   it("omits the reason line when a deactivated tenant has no reason", () => {
     const bare = tenant({ id: "t-bare", deactivatedAt: "2026-03-01T08:00:00.000Z" });
-    renderWithTheme(TenantTable, { tenants: [bare], page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: [bare], page: 1, pageSize: 25 }, "salz");
     expect(byId("op-tenant-status-t-bare")).toHaveAttribute("data-state", "deactivated");
     expect(byId("op-tenant-row-t-bare")).not.toHaveTextContent("Grund:");
   });
 
   it("shows 25 rows on page 1 and 5 on page 2 for 30 tenants", () => {
     const list = many(30);
-    renderWithTheme(TenantTable, { tenants: list, page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: list, page: 1, pageSize: 25 }, "salz");
     expect(rows()).toBe(25);
     expect(byId("op-tenants-pagination")).not.toBeNull();
     expect(byId("op-tenant-row-t-0")).not.toBeNull();
@@ -134,7 +134,7 @@ describe("TenantTable", () => {
   });
 
   it("shows the remaining 5 tenants on page 2", () => {
-    renderWithTheme(TenantTable, { tenants: many(30), page: 2, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: many(30), page: 2, pageSize: 25 }, "salz");
     expect(rows()).toBe(5);
     expect(byId("op-tenant-row-t-25")).not.toBeNull();
     expect(byId("op-tenant-row-t-29")).not.toBeNull();
@@ -142,13 +142,13 @@ describe("TenantTable", () => {
   });
 
   it("renders no pagination for 25 tenants or fewer", () => {
-    renderWithTheme(TenantTable, { tenants: many(25), page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: many(25), page: 1, pageSize: 25 }, "salz");
     expect(rows()).toBe(25);
     expect(byId("op-tenants-pagination")).toBeNull();
   });
 
   it("offers the page sizes 25, 50 and 100 and the Mandant labels", () => {
-    renderWithTheme(TenantTable, { tenants: many(30), page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: many(30), page: 1, pageSize: 25 }, "salz");
     const select = document.querySelector<HTMLSelectElement>("select.pag-select");
     expect(select).not.toBeNull();
     expect([...(select as HTMLSelectElement).options].map((o) => o.value)).toEqual([
@@ -160,7 +160,7 @@ describe("TenantTable", () => {
   });
 
   it("has a screen-reader caption and the eight column headers", () => {
-    renderWithTheme(TenantTable, { tenants: [ACTIVE], page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: [ACTIVE], page: 1, pageSize: 25 }, "salz");
     const table = byId("op-tenants-table") as HTMLElement;
     expect(table.querySelector("caption")).toHaveTextContent("Mandanten");
     const headers = [...table.querySelectorAll("thead th")].map((th) => th.textContent?.trim());
@@ -177,7 +177,7 @@ describe("TenantTable", () => {
   });
 
   it("is styled: the table differs from a control element with an invented class", () => {
-    renderWithTheme(TenantTable, { tenants: [ACTIVE], page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: [ACTIVE], page: 1, pageSize: 25 }, "salz");
     const table = byId("op-tenants-table") as HTMLElement;
     const control = document.createElement("table");
     control.className = "no-such-class-89";
@@ -188,7 +188,7 @@ describe("TenantTable", () => {
 
   it("renders a 200-character name whole (the list clamps it by CSS, never by truncating text)", () => {
     const long = tenant({ id: "t-long", name: "N".repeat(200) });
-    renderWithTheme(TenantTable, { tenants: [long], page: 1, pageSize: 25 }, "nacht");
+    renderWithTheme(TenantTable, { tenants: [long], page: 1, pageSize: 25 }, "salz");
     expect(byId("op-tenant-link-t-long")).toHaveTextContent("N".repeat(200));
   });
 
@@ -207,7 +207,7 @@ describe("TenantTable", () => {
   describe("metric columns (Issue #90)", () => {
     it("shows salons, employees and the last activity from the metrics", () => {
       const metrics = new Map([metric("t-active")]);
-      renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "nacht");
+      renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "salz");
       expect(byId("op-tenant-salons-t-active")).toHaveTextContent("2 / 3");
       expect(byId("op-tenant-salons-t-active")).toHaveTextContent("2 von 3 aktiv");
       expect(byId("op-tenant-employees-t-active")).toHaveTextContent("7");
@@ -216,7 +216,7 @@ describe("TenantTable", () => {
 
     it("shows Keine Anmeldung when the tenant never signed in", () => {
       const metrics = new Map([metric("t-active", { lastActivityAt: null })]);
-      renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "nacht");
+      renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "salz");
       expect(byId("op-tenant-activity-t-active")).toHaveTextContent("Keine Anmeldung");
     });
 
@@ -228,7 +228,7 @@ describe("TenantTable", () => {
       renderWithTheme(
         TenantTable,
         { tenants: [ACTIVE, OFF], metrics, page: 1, pageSize: 25 },
-        "nacht",
+        "salz",
       );
       const badge = byId("op-tenant-inactive-t-active");
       expect(badge).toHaveTextContent("Inaktiv");
@@ -237,7 +237,7 @@ describe("TenantTable", () => {
     });
 
     it("shows dashes and no badge for a tenant without metrics", () => {
-      renderWithTheme(TenantTable, { tenants: [ACTIVE], page: 1, pageSize: 25 }, "nacht");
+      renderWithTheme(TenantTable, { tenants: [ACTIVE], page: 1, pageSize: 25 }, "salz");
       for (const id of ["salons", "employees", "activity"]) {
         expect(byId(`op-tenant-${id}-t-active`)?.textContent?.replace(/\s+/g, " ").trim()).toMatch(
           /–$/,
@@ -248,7 +248,7 @@ describe("TenantTable", () => {
 
     it("gives every metric cell a label element for the stacked view", () => {
       const metrics = new Map([metric("t-active")]);
-      renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "nacht");
+      renderWithTheme(TenantTable, { tenants: [ACTIVE], metrics, page: 1, pageSize: 25 }, "salz");
       const labels = ["salons", "employees", "activity"].map((id) => {
         const label = byId(`op-tenant-${id}-t-active`)?.querySelector(".m-label");
         expect(label).toHaveAttribute("aria-hidden", "true");

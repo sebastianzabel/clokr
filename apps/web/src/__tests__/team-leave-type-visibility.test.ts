@@ -167,8 +167,11 @@ describe("team leave page — one shared visibility decision (Phase 257)", () =>
     // LEAVE_TYPE_OPTIONS, never the HOLIDAY-including LEAVE_TYPES) still covers all four.
     // #840 D-840-10: the legend loop moved into <LeaveLegend> (the page hands over the codes), so
     // two page loops remain: list-filter select and Korrektur-modal select.
-    it("C1: exactly two LEAVE_TYPE_OPTIONS loops on the page — list-filter select, Korrektur-modal select", () => {
-      expect((PAGE.match(/\{#each LEAVE_TYPE_OPTIONS as /g) ?? []).length).toBe(2);
+    // #853 (853-13): the list-filter select became the Art filter of the table toolbar, whose
+    // options are mapped from the same table - still two feeds, one as a loop, one as a map.
+    it("C1: exactly two LEAVE_TYPE_OPTIONS feeds on the page — Art filter of the toolbar, Korrektur-modal select", () => {
+      expect((PAGE.match(/\{#each LEAVE_TYPE_OPTIONS as /g) ?? []).length).toBe(1);
+      expect((PAGE.match(/LEAVE_TYPE_OPTIONS\.map\(/g) ?? []).length).toBe(1);
     });
 
     it("C1b: the shared create/edit dialog carries the fourth loop", () => {

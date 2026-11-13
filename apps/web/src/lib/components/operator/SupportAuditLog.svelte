@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import Pagination from "$components/ui/Pagination.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { formatOperatorDateTime } from "$lib/operator/labels";
   import { auditActor, flattenAuditValue, windowError } from "$lib/operator/support-audit";
   import type { SupportAuditPage, SupportEmployee } from "$lib/operator/types";
@@ -123,10 +124,7 @@
 
   {#if loading}
     <div aria-busy="true" data-testid="op-support-audit-loading">
-      <span class="sr-only" role="status">Wird geladen …</span>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
-      <div class="skeleton row"></div>
+      <Skeleton shape="row" count={3} />
     </div>
   {:else if errorText !== ""}
     <div class="alert alert-error" role="alert" data-testid="op-support-audit-error">
@@ -246,7 +244,7 @@
   }
 
   .problem {
-    color: var(--bad-text);
+    color: var(--bad);
   }
 
   .message {
@@ -254,15 +252,10 @@
     font-size: 16px;
   }
 
-  .row {
-    height: 48px;
-    margin-bottom: 8px;
-  }
-
   .empty {
     margin: 0;
     font-size: 16px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .entries {
@@ -271,15 +264,15 @@
     margin: 0;
     padding: 0;
     list-style: none;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
   }
 
   .entry {
     padding: 12px 16px;
     min-width: 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .entry:last-child {
@@ -296,7 +289,7 @@
 
   .when {
     font-variant-numeric: tabular-nums;
-    color: var(--text-muted);
+    color: var(--text-2);
     font-size: 13px;
   }
 
@@ -310,7 +303,7 @@
 
   .who {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .text {
@@ -319,10 +312,10 @@
   }
 
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-code);
     font-size: 13px;
     font-weight: 400;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
   }
 
@@ -359,7 +352,7 @@
   .none {
     margin: 0;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .pairs {
@@ -377,7 +370,7 @@
   }
 
   .pair dt {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .pair dd {
@@ -388,7 +381,6 @@
 
   /* The server's redaction marker: present, readable, and visibly not a stored value. */
   .redacted {
-    color: var(--text-muted);
-    font-style: italic;
+    color: var(--text-2);
   }
 </style>

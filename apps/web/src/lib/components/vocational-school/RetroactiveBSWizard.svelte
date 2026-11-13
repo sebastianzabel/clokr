@@ -293,7 +293,7 @@
     margin: var(--s-3) 0 0;
     font-size: 14px;
     line-height: 1.55;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .bulk-row {
@@ -317,9 +317,9 @@
     justify-content: space-between;
     gap: var(--s-3);
     padding: var(--s-2) var(--s-3);
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
   }
 
   .conflict-day {
@@ -335,7 +335,7 @@
   }
 
   .conflict-date {
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .override-warning {
@@ -343,7 +343,7 @@
     padding: var(--s-3);
     background: var(--warn-soft);
     border: 1.5px solid var(--warn-soft);
-    border-radius: var(--r-md);
+    border-radius: var(--r-control);
     color: var(--warn);
     font-size: 13px;
     line-height: 1.5;

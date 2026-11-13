@@ -99,7 +99,7 @@ function mount(options: MountOptions = {}) {
       onPage,
       onRetry,
     },
-    "nacht",
+    "salz",
   );
   return { onApply, onPage, onRetry };
 }

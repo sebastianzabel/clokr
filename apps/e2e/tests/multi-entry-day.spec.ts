@@ -204,6 +204,8 @@ test.describe("several entries on one day (Issue #70)", () => {
     // first entry's end.
     await expect(page.getByTestId(`calendar-cell-${dayTwo}`)).toContainText("4:00");
     await page.getByTestId(`calendar-cell-${dayTwo}`).click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     await expect(modal).toBeVisible();
     await expect(page.locator("[role='dialog'] .modal-eyebrow").first()).toContainText(
       "Eintrag bearbeiten",
@@ -225,6 +227,8 @@ test.describe("several entries on one day (Issue #70)", () => {
     const cell = page.getByTestId(`calendar-cell-${dayTwo}`);
     await expect(cell).toHaveAttribute("title", "2 Einträge");
     await cell.click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     await expect(modal).toBeHidden();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
     const dayRows = page.locator("tr.row-day-focus");
@@ -232,7 +236,7 @@ test.describe("several entries on one day (Issue #70)", () => {
 
     // b. The list names the salon of each row.
     await expect(page.getByRole("columnheader", { name: "Salon", exact: true })).toBeVisible();
-    const salonCells = page.locator("tr.row-day-focus td[data-testid$='-salon']");
+    const salonCells = page.locator("tr.row-day-focus [data-testid$='-salon']");
     await expect(salonCells).toHaveCount(2);
     const names = (await salonCells.allTextContents()).map((t) => t.trim());
     expect([...names].sort()).toEqual([first.name, second.name].sort());
@@ -257,10 +261,15 @@ test.describe("several entries on one day (Issue #70)", () => {
     await expect(page.locator("tr[data-testid^='time-entry-row-']")).toHaveCount(3);
 
     // e. The cell of the one-entry day still opens that entry for editing, salon preselected.
-    await page.getByTestId("time-entries-view-calendar").click();
+    await page
+      .getByTestId("time-entries-view-tabs")
+      .getByRole("radio", { name: "Kalender" })
+      .click();
     const oneCell = page.getByTestId(`calendar-cell-${dayOne}`);
     await expect(oneCell).not.toHaveAttribute("title", "2 Einträge");
     await oneCell.click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     await expect(modal).toBeVisible();
     await expect(page.locator("[role='dialog'] .modal-eyebrow").first()).toContainText(
       "Eintrag bearbeiten",
@@ -286,6 +295,8 @@ test.describe("several entries on one day (Issue #70)", () => {
 
     // The cell of a day with one entry opens it for editing - no salon field in the dialog.
     await page.getByTestId(`calendar-cell-${day}`).click();
+    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
+    await page.getByTestId("day-sheet-primary").click();
     const modal = page.getByTestId("time-entry-modal");
     await expect(modal).toBeVisible();
     await expect(page.locator("[role='dialog'] .modal-eyebrow").first()).toContainText(
@@ -305,7 +316,7 @@ test.describe("several entries on one day (Issue #70)", () => {
     await page.getByTestId("time-entry-modal-cancel").click();
 
     // The list has no Salon column and no per-day bar.
-    await page.getByTestId("time-entries-view-list").click();
+    await page.getByTestId("time-entries-view-tabs").getByRole("radio", { name: "Liste" }).click();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
     await expect(page.locator("tr[data-testid^='time-entry-row-']")).toHaveCount(1);
     await expect(page.getByRole("columnheader", { name: "Salon", exact: true })).toHaveCount(0);

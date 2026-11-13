@@ -136,6 +136,44 @@ describe("Notification email dispatch (notify.ts sendEmailNotification)", () => 
     expect(sendMailMock).not.toHaveBeenCalled();
   });
 
+  it("(c2) #602: the person's opt-out of a toggle group stops the mail; an 'always' type still goes", async () => {
+    await setConfig({
+      ...SMTP_CONFIGURED,
+      emailNotificationsEnabled: true,
+      emailOnLeaveRequest: true,
+    });
+    await app.prisma.user.update({
+      where: { id: data.adminUser.id },
+      data: { uiPreferences: { emailOptOut: ["emailOnLeaveRequest"] } },
+    });
+    try {
+      await app.notify({
+        userId: data.adminUser.id,
+        type: "LEAVE_REQUEST",
+        title: "Neuer Urlaubsantrag",
+        message: "Max Test hat einen Urlaubsantrag gestellt.",
+        tenantId: data.tenant.id,
+      });
+      await flush();
+      expect(sendMailMock).not.toHaveBeenCalled();
+
+      // Positive control: the same person, another type of the "always" policy, is still mailed.
+      await app.notify({
+        userId: data.adminUser.id,
+        type: "ACCOUNT_LOCKED",
+        title: "Konto gesperrt",
+        message: "Zu viele Anmeldeversuche.",
+        tenantId: data.tenant.id,
+      });
+      await vi.waitFor(() => expect(sendMailMock).toHaveBeenCalledTimes(1));
+    } finally {
+      await app.prisma.user.update({
+        where: { id: data.adminUser.id },
+        data: { uiPreferences: {} },
+      });
+    }
+  });
+
   it("(d) MISSING_ENTRIES now honors emailOnMissingEntries — OFF = no send", async () => {
     // Regression lock for the historical key fix (was MISSING_ENTRY, never matched).
     await setConfig({

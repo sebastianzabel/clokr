@@ -5,9 +5,15 @@
   person scope (D-03) — a hint, never a block; the API stays the authority.
   Draft mode (Issue #580, D-580-03): with `onDraft` the dialog stores nothing — it hands the chosen
   role and scope back (the create dialog posts them once the person exists).
+  Rebuilt on the Dialog and FormField blocks in Issue #854. The role is a native select inside FormField:
+  the list is short and a native control stays usable without script; the scope stays a radio group
+  with the checkbox lists below it.
 -->
 <script lang="ts">
-  import Modal from "$components/ui/Modal.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
   import { toasts } from "$stores/toast";
   import { ApiError } from "$api/client";
   import {
@@ -145,25 +151,41 @@
   }
 </script>
 
-<Modal bind:open eyebrow={personName} title={prefill ? "Zuweisung ändern" : "Rolle zuweisen"}>
-  <div class="assignment-form">
+<Dialog bind:open eyebrow={personName} title={prefill ? "Zuweisung ändern" : "Rolle zuweisen"}>
+  <form
+    id="assignment-form"
+    class="assignment-form"
+    novalidate
+    onsubmit={(event) => {
+      event.preventDefault();
+      void save();
+    }}
+  >
     {#if errorText}
-      <div class="callout error" role="alert">{errorText}</div>
+      <div role="alert"><Note tone="bad">{errorText}</Note></div>
     {/if}
 
-    <div class="form-group">
-      <label class="form-label" for="assignment-role">Rolle</label>
-      <select id="assignment-role" class="form-input" bind:value={roleId}>
-        <option value="">Rolle wählen</option>
-        {#each roles as role (role.id)}
-          <option value={role.id}>{role.isSystem ? `${role.name} (Systemrolle)` : role.name}</option
-          >
-        {/each}
-      </select>
-    </div>
+    <FormField label="Rolle">
+      {#snippet field({ id, describedBy, invalid })}
+        <select
+          {id}
+          class="form-input"
+          bind:value={roleId}
+          aria-invalid={invalid ? "true" : undefined}
+          aria-describedby={describedBy}
+        >
+          <option value="">Rolle wählen</option>
+          {#each roles as role (role.id)}
+            <option value={role.id}
+              >{role.isSystem ? `${role.name} (Systemrolle)` : role.name}</option
+            >
+          {/each}
+        </select>
+      {/snippet}
+    </FormField>
 
     <fieldset class="assignment-scope">
-      <legend class="form-label">Geltungsbereich</legend>
+      <legend class="assignment-legend">Geltungsbereich</legend>
       <label class="assignment-choice">
         <input type="radio" name="assignment-scope" value="TENANT" bind:group={scopeType} />
         <span>{SCOPE_TENANT_LABEL}</span>
@@ -180,9 +202,9 @@
 
     {#if scopeType === "SALONS"}
       <fieldset class="assignment-list">
-        <legend class="form-label">Salons</legend>
+        <legend class="assignment-legend">Salons</legend>
         {#if !salonsLoaded}
-          <p class="form-hint">Salons werden geladen …</p>
+          <Skeleton shape="row" count={2} />
         {:else}
           {#each salons as salon (salon.id)}
             <label class="assignment-choice">
@@ -205,7 +227,7 @@
             </label>
           {/each}
           {#if salons.length === 0 && unknownSalonIds.length === 0}
-            <p class="form-hint">Keine aktiven Salons verfügbar.</p>
+            <p class="assignment-empty">Keine aktiven Salons verfügbar.</p>
           {/if}
         {/if}
       </fieldset>
@@ -213,7 +235,7 @@
 
     {#if scopeType === "PERSONS"}
       <fieldset class="assignment-list">
-        <legend class="form-label">Personen</legend>
+        <legend class="assignment-legend">Personen</legend>
         <input
           class="form-input"
           type="search"
@@ -246,46 +268,58 @@
     {/if}
 
     {#if showMandantHint}
-      <div class="callout brand" role="note">
+      <Note tone="info">
         Diese Rolle enthält Rechte, die nur bei einer Zuweisung für das ganze Unternehmen wirken.
         Für Salons oder Personen gelten diese Rechte nicht.
-      </div>
+      </Note>
     {/if}
-  </div>
+  </form>
 
   {#snippet footer()}
-    <button type="button" class="btn btn-ghost" onclick={() => (open = false)}>Abbrechen</button>
-    <button type="button" class="btn btn-primary" disabled={!canSave} onclick={save}>
+    <button type="button" class="btn btn-secondary" onclick={() => (open = false)}>Abbrechen</button
+    >
+    <button type="submit" form="assignment-form" class="btn btn-primary" disabled={!canSave}>
       {draftMode ? "Übernehmen" : "Speichern"}
     </button>
   {/snippet}
-</Modal>
+</Dialog>
 
 <style>
   .assignment-form {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--s-4);
   }
   .assignment-scope,
   .assignment-list {
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 12px 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    padding: var(--s-3) var(--s-4);
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--s-2);
   }
   .assignment-list {
     max-height: 260px;
     overflow-y: auto;
   }
+  .assignment-legend {
+    padding: 0 var(--s-1);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text-2);
+  }
+  .assignment-empty {
+    margin: 0;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
   .assignment-choice {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 14px;
+    gap: var(--s-2);
+    font-size: var(--fs-base);
     color: var(--text);
     min-height: 32px;
   }

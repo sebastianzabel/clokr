@@ -24,6 +24,18 @@ const DETAIL = readRouteFile(
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
 
+// Since Issue #854 (plan 854-20) the Person tab is a component of its own.
+const PERSON_TAB = readRouteFile(
+  "../lib/components/employees/detail/PersonTab.svelte",
+  "src/lib/components/employees/detail/PersonTab.svelte",
+);
+
+// Plan 854-21: the contract half of the Vertrag tab (form, timeline, Nachtrag) is a component too.
+const VERTRAG_TAB = readRouteFile(
+  "../lib/components/employees/detail/VertragTab.svelte",
+  "src/lib/components/employees/detail/VertragTab.svelte",
+);
+
 describe("/admin/employees/[id] - tabs follow permissions (Issue #86, D-04)", () => {
   it("imports employeeDetailTabs and derives its tab list from it", () => {
     expect(DETAIL).toMatch(
@@ -34,8 +46,12 @@ describe("/admin/employees/[id] - tabs follow permissions (Issue #86, D-04)", ()
   });
 
   it("restores the hash only for a tab of the derived list and hands that list to the layout", () => {
-    expect(DETAIL).toMatch(/tabs\.some\(\(t\) => t\.id === hash\)/);
-    expect(DETAIL).toMatch(/\{tabs\}|tabs=\{tabs\}/);
+    // #854: the hash is read by the one allow-list rule against the VISIBLE ids (aliases map the
+    // former ids onto them), and the layout gets exactly the derived list.
+    expect(DETAIL).toMatch(
+      /tabFromHash\(\s*\$page\.url\.hash,\s*tabs\.map\(\(t\) => t\.id\),\s*DETAIL_TAB_ALIASES,?\s*\)/,
+    );
+    expect(DETAIL).toMatch(/tabs=\{tabs\.map\(/);
     expect(DETAIL).not.toMatch(/tabs=\{TABS\}/);
   });
 
@@ -58,50 +74,80 @@ const LIST = readRouteFile(
   "../routes/(app)/admin/employees/+page.svelte",
   "src/routes/(app)/admin/employees/+page.svelte",
 );
+// Since Issue #854 the create form is the guided dialog; the page only mounts it.
+const CREATE_DIALOG = readRouteFile(
+  "../lib/components/employees/CreatePersonDialog.svelte",
+  "src/lib/components/employees/CreatePersonDialog.svelte",
+);
+const CREATE_MODEL = readRouteFile(
+  "../lib/employees/create-person.ts",
+  "src/lib/employees/create-person.ts",
+);
 
 describe("/admin/employees/[id] - employment on today's model (Issue #86, D-01)", () => {
-  it("renders the read-only Vertragsverlauf from contractHistoryRows(contractHistory)", () => {
-    expect(DETAIL).toMatch(
+  it("renders the read-only Vertragsverlauf from contractHistoryRows(history)", () => {
+    expect(VERTRAG_TAB).toMatch(
       /import \{[^}]*\bcontractHistoryRows\b[^}]*\} from "\$lib\/employees\/contract-history"/,
     );
-    expect(DETAIL).toMatch(/title="Vertragsverlauf"/);
-    expect(DETAIL).toMatch(/contractHistoryRows\(contractHistory\)/);
+    expect(VERTRAG_TAB).toMatch(/title="Vertragsverlauf"|>Vertragsverlauf</);
+    expect(VERTRAG_TAB).toMatch(/contractHistoryRows\(history\)/);
+    // The e2e hook of the timeline survives, and the page mounts the tab instead of owning a history.
+    expect(VERTRAG_TAB).toContain('data-testid="contract-history"');
+    expect(DETAIL).toContain("<VertragTab");
+    expect(DETAIL).not.toContain("contractHistoryRows");
   });
 
   it("words the exit date as the end of the employment and says the access stays active", () => {
-    expect(DETAIL).toContain("Austrittsdatum (optional)");
-    expect(DETAIL).toMatch(/beendet\s+das\s+Beschäftigungsverhältnis/);
-    expect(DETAIL).toMatch(/bleibt\s+mit\s+allen\s+Daten\s+sichtbar/);
-    expect(DETAIL).toMatch(
+    expect(PERSON_TAB).toContain('label="Austrittsdatum"');
+    expect(PERSON_TAB).toMatch(/Optional\.\s+Bei\s+gesetztem\s+Datum/);
+    expect(PERSON_TAB).toMatch(/beendet\s+das\s+Beschäftigungsverhältnis/);
+    expect(PERSON_TAB).toMatch(/bleibt\s+mit\s+allen\s+Daten\s+sichtbar/);
+    expect(PERSON_TAB).toMatch(
       /Zugang\s+zur\s+App\s+bleibt\s+aktiv,\s+bis\s+er\s+gesondert\s+gesperrt\s+wird/,
     );
   });
 });
 
+// #854 (owner review): the list renders the shared PersonenTable over the rows of personen-model.ts,
+// whose ONE status decision reads employmentState(); the employment state is the status chip
+// („Austritt geplant“, „Ausgeschieden“), not a filter of its own.
+const PERSONEN_MODEL = readRouteFile(
+  "../lib/team/personen-model.ts",
+  "src/lib/team/personen-model.ts",
+);
+const PERSONEN_URL = readRouteFile(
+  "../lib/team/personen-url-state.ts",
+  "src/lib/team/personen-url-state.ts",
+);
+
 describe("/admin/employees - employment state and filter (Issue #86, AC-86-6)", () => {
   it("shows the label from employmentState and never reads a display string", () => {
     expect(LIST).toMatch(
+      /import \{[^}]*\bpersonenRows\b[^}]*\} from "\$lib\/team\/personen-model"/,
+    );
+    expect(LIST).toContain("<PersonenTable");
+    expect(PERSONEN_MODEL).toMatch(
       /import \{[^}]*\bemploymentState\b[^}]*\} from "\$lib\/employees\/employment-state"/,
     );
-    expect(LIST).toMatch(/employmentState\([^)]*exitDate/);
+    expect(PERSONEN_MODEL).toMatch(/employmentState\(person\.exitDate, today\)/);
+    // the branch is taken on the kind (a control value), never on the label
+    expect(PERSONEN_MODEL).toMatch(/employment\.kind === "ENDED"/);
+    expect(PERSONEN_MODEL).toMatch(/employment\.kind === "EXIT_PLANNED"/);
+    expect(PERSONEN_MODEL).not.toMatch(/\.label ===/);
   });
 
-  it("offers the Beschäftigung select with the four options and filters by kind only", () => {
-    expect(LIST).toMatch(/aria-label="Nach Beschäftigung filtern"/);
-    for (const label of [
-      "Alle Beschäftigungen",
-      "Beschäftigt",
-      "Austritt geplant",
-      "Ausgeschieden",
-    ]) {
-      expect(LIST, label).toContain(label);
+  it("names the two employment states in the status chip", () => {
+    for (const label of ["Austritt geplant", "Ausgeschieden"]) {
+      expect(PERSONEN_MODEL, label).toContain(`label: "${label}"`);
     }
-    expect(LIST).toMatch(/filterEmployment/);
-    expect(LIST).toMatch(/employmentState\([^)]*\)\.kind/);
   });
 
-  it("lists ended employees by default (the filter starts on Alle)", () => {
-    expect(LIST).toMatch(/let filterEmployment = \$state<[^>]*>\(""\)/);
+  it("lists ended employees by default (the status filter starts on alle)", () => {
+    expect(LIST).toMatch(/verwaltenPersonenUrlSchema as personenUrlSchema/);
+    expect(PERSONEN_URL).toMatch(
+      /verwaltenPersonenUrlSchema = \{\s*\.\.\.personenUrlSchema,\s*status: oneOf\(\["aktiv", "alle"\] as const, "alle"\)/,
+    );
+    expect(LIST).toMatch(/status: "alle", vertrag: "", salon: ""/);
   });
 });
 
@@ -121,10 +167,17 @@ describe("/admin/employees/[id] - no day-level data (Issue #86, AC-86-3, T-86b-1
   });
 });
 
-const MONTH_CLOSE = readRouteFile(
-  "../routes/(app)/admin/month-close/+page.svelte",
-  "src/routes/(app)/admin/month-close/+page.svelte",
-);
+// #854 (plan 854-26): the page and its MonthStatusTable together are the month close's render and
+// write sites; the pins below judge their joined source.
+const MONTH_CLOSE =
+  readRouteFile(
+    "../routes/(app)/admin/month-close/+page.svelte",
+    "src/routes/(app)/admin/month-close/+page.svelte",
+  ) +
+  readRouteFile(
+    "../lib/components/admin/monatsabschluss/MonthStatusTable.svelte",
+    "src/lib/components/admin/monatsabschluss/MonthStatusTable.svelte",
+  );
 const TEAM_TIMES = readRouteFile(
   "../routes/(app)/team/time-entries/+page.svelte",
   "src/routes/(app)/team/time-entries/+page.svelte",
@@ -180,30 +233,50 @@ describe("/team/time-entries - guards itself by its own permission (Issue #86, A
     // no request between the start of onMount and the guard
     expect(TEAM_TIMES.slice(onMount, guard)).not.toMatch(/api\./);
     expect(TEAM_TIMES).toMatch(/mayOpenTeamPage\("\/team\/leave"/);
-    expect(TEAM_TIMES).toContain('"/dashboard"');
+    // #844: the fallback is the team absences under their new URL, else the person's start page
+    expect(TEAM_TIMES).toContain('"/team/abwesenheiten"');
+    expect(TEAM_TIMES).toContain("homeHref($authStore.user)");
   });
 });
 
 describe("/admin/employees - Stammsalon in the create form (Issue #86, AC-86-1)", () => {
-  it("reads GET /salons only for a caller with salon:read", () => {
-    expect(LIST).toMatch(/salonAdminRights\(\$authStore\.user\)\.canRead/);
-    expect(LIST).toMatch(/if \(!canReadSalons\) \{\s*createSalons = null;\s*return;/);
-    expect(LIST).toMatch(/api\.get<\{ salons: SalonRef\[\] \}>\("\/salons"\)/);
+  it("[vacuity gate] the page mounts the dialog and the dialog source is loaded", () => {
+    expect(LIST).toContain("<CreatePersonDialog");
+    expect(CREATE_DIALOG.length).toBeGreaterThan(8_000);
+    expect(CREATE_MODEL.length).toBeGreaterThan(3_000);
   });
 
-  it("renders the field, blocks the submit while a required Stammsalon is missing and refreshes the list when the dialog opens", () => {
-    expect(LIST).toMatch(/<HomeSalonField salons=\{createSalons\} bind:value=\{cHomeSalonId\} \/>/);
-    expect(LIST).toMatch(/createBlockedByHomeSalon[\s\S]{0,160}offerHomeSalonChoice\(true,/);
-    expect(LIST).toMatch(
-      /disabled=\{creating \|\| createBlockedByUsualWorkDays \|\| createBlockedByHomeSalon\}/,
+  it("reads GET /salons only for a caller with salon:read", () => {
+    expect(CREATE_DIALOG).toMatch(/salonAdminRights\(\$authStore\.user\)\.canRead/);
+    expect(CREATE_DIALOG).toMatch(/if \(!canReadSalons\) \{\s*salons = null;\s*return;/);
+    expect(CREATE_DIALOG).toMatch(/api\.get<\{ salons: SalonRef\[\] \}>\("\/salons"\)/);
+  });
+
+  it("renders the field, requires a Stammsalon before the step is left and re-reads the list whenever the dialog opens", () => {
+    expect(CREATE_DIALOG).toMatch(
+      /<HomeSalonField \{salons\} bind:value=\{draft\.homeSalonId\} error=\{errors\.homeSalonId\} \/>/,
     );
-    expect(LIST).toMatch(/cHomeSalonId = "";\s*void loadCreateSalons\(\);/);
+    expect(CREATE_DIALOG).toMatch(
+      /homeSalonRequired:\s*salons !== null && offerHomeSalonChoice\(true,/,
+    );
+    expect(CREATE_MODEL).toMatch(/ctx\.homeSalonRequired && draft\.homeSalonId === ""/);
+    expect(CREATE_DIALOG).toMatch(/untrack\(reset\)/);
+    expect(CREATE_DIALOG).toMatch(/void loadSalons\(\);/);
   });
 
   it("sends homeSalonId only through homeSalonPayload and shows the server's German error", () => {
-    expect(LIST).toMatch(/Object\.assign\(payload, homeSalonPayload\(cHomeSalonId\)\)/);
-    expect(LIST).not.toMatch(/homeSalonId:/);
-    expect(LIST).toMatch(/createError = e instanceof Error \? e\.message : "Fehler beim Anlegen"/);
-    expect(LIST).toMatch(/\{#if createError\}\s*<div class="callout error">\{createError\}<\/div>/);
+    expect(CREATE_MODEL).toMatch(
+      /Object\.assign\(payload, homeSalonPayload\(draft\.homeSalonId\)\)/,
+    );
+    // the body builder never spells the key itself (the draft field of the same name is not the body)
+    expect(
+      CREATE_MODEL.slice(CREATE_MODEL.indexOf("export function employeeCreatePayload")),
+    ).not.toMatch(/homeSalonId:/);
+    expect(CREATE_DIALOG).toMatch(
+      /submitError = e instanceof Error \? e\.message : "Fehler beim Anlegen"/,
+    );
+    expect(CREATE_DIALOG).toMatch(
+      /\{#if submitError\}\s*<div role="alert"><Note tone="bad">\{submitError\}<\/Note><\/div>/,
+    );
   });
 });

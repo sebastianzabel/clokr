@@ -23,7 +23,8 @@ const ROUTE = readSource(
   "src/routes/(app)/settings/geraet-koppeln/+page.svelte",
 );
 // Issue #574: the top bar's page label comes from the one page-name table
-const LAYOUT = readSource("../lib/nav/page-labels.ts", "src/lib/nav/page-labels.ts");
+// #844: page names live in the route table (page-labels.ts reads it)
+const LAYOUT = readSource("../lib/nav/routes.ts", "src/lib/nav/routes.ts");
 const COMPONENT = readSource(
   "../lib/components/settings/DevicePairing.svelte",
   "src/lib/components/settings/DevicePairing.svelte",
@@ -58,7 +59,7 @@ describe("pairing route (source pins)", () => {
   });
 
   it("the page label of the top bar names the page", () => {
-    expect(LAYOUT).toContain('"/settings/geraet-koppeln": "Handy koppeln"');
+    expect(LAYOUT).toMatch(/label: "Handy koppeln"[^}]*file: "\/settings\/geraet-koppeln"/);
   });
 });
 

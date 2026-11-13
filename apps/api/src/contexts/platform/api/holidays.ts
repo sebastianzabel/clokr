@@ -61,7 +61,7 @@ async function resolveHolidaySalon(
       ok: false,
       status: 400,
       body: {
-        error: "Bitte einen Salon angeben — der Mandant hat mehrere aktive Salons.",
+        error: "Bitte einen Salon angeben — das Unternehmen hat mehrere aktive Salons.",
         code: "SALON_REQUIRED",
       },
     };

@@ -228,6 +228,20 @@ describe("resolveAdjustmentBadge", () => {
     expect(badge.tooltip).toBe("Alt: 5 Tage → Neu: 3 Tage · Auslöser: Roster-Planung · 27.08.2026");
   });
 
+  it("rounds the delta and words the tooltip days with the day formatter (Issue #853-19)", () => {
+    const badge = resolveAdjustmentBadge({
+      oldDays: 5.4,
+      newDays: 5.5,
+      direction: "up",
+      at: "2026-08-27T14:36:00.000Z",
+    })!;
+    expect(5.5 - 5.4).not.toBe(0.1); // 0.09999999999999964
+    expect(badge.delta).toBe(0.1);
+    expect(badge.tooltip).toBe(
+      "Alt: 5,4 Tage → Neu: 5,5 Tage · Auslöser: Roster-Planung · 27.08.2026",
+    );
+  });
+
   it("formats a date-only 'at' string (no time component) identically to a full ISO datetime", () => {
     const fromDateOnly = resolveAdjustmentBadge({
       oldDays: 1,
@@ -322,9 +336,11 @@ describe("leave route source — Urlaubskonto confirmed-consumption label (Phase
     );
   });
 
-  it("leaves the confirmed-days value expression untouched", () => {
+  it("leaves the confirmed-days arithmetic untouched (Issue #853-19: only wrapped in the day formatter)", () => {
+    // The subtraction itself is the G-03 value; since #853-19 its result goes through the one day
+    // formatter, so a float such as 10.01 - 0.3 never reaches the screen unrounded.
     expect(URLAUBSKONTO_MARKUP).toContain(
-      "{vacationBalance.used - vacationBalance.provisionalUsed}",
+      "{formatDayCount(vacationBalance.used - vacationBalance.provisionalUsed)}",
     );
   });
 });

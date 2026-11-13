@@ -508,6 +508,16 @@ describe("load row", () => {
     expect(screen.getByTestId("day-load-2027-03-10").textContent?.trim()).toBe("3");
   });
 
+  // Issue #853 (owner review): the count is a number in every zoom, also in narrow day columns where
+  // the row used to show only a coloured pill.
+  it("shows the count as a number even in a narrow day column", () => {
+    renderPlan({ load: loadDay, columnWidthPx: 8 });
+    expect(screen.getByTestId("day-load-2027-03-10").textContent?.trim()).toBe("3");
+    expect(screen.getByTestId("day-load-2027-03-10").getAttribute("style") ?? "").not.toContain(
+      "--tl-load-share",
+    );
+  });
+
   it("marks only the keys of `exceeded`, with their tooltip", () => {
     renderPlan({ load: loadDay });
     expect(screen.getByTestId("day-load-2027-03-10").dataset.exceeded).toBe("false");

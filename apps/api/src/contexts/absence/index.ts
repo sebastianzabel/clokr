@@ -179,6 +179,8 @@ export {
 // `apps/api/scripts/context-boundary-import-exceptions.json`).
 export { loadBsSlotOverrides, loadBsSlotOverridesForMany } from "./load-bs-slot-overrides"; // Issue #696 — bulk variant
 export { DISPLAY_NAME, isSickLeaveTypeCode, withHalfDayMarker } from "./leave-type";
+// Issue #597: the one ICS writer, read by the composition-layer calendar feed („Mein Dienstplan“).
+export { generateICal, addOneDay, type ICalEvent } from "./ical";
 // Issue #746 — withHalfDayMarker: the one half-day wording (reports day rows + iCal feeds)
 // Issue #84 (D-14) — the one sick-day counting rule; consumed by composition/reports.ts and composition/dashboard.ts
 export { sickLeaveDayCounts } from "./sick-leave-days";

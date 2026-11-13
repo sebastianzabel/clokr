@@ -1,4 +1,5 @@
 <script lang="ts">
+  import BrandLogo from "$lib/components/brand/BrandLogo.svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
@@ -39,7 +40,7 @@
 
 <main id="main-content" class="op-signin-page" data-testid="op-signin-page">
   <div class="op-brand">
-    <img src="/clokr-wordmark.png" alt="Clokr" class="op-wordmark" height="32" />
+    <BrandLogo size={30} />
     <span class="badge badge-purple">Betreiber</span>
   </div>
 
@@ -73,7 +74,7 @@
     justify-content: center;
     gap: 24px;
     padding: 16px;
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 
   .op-brand {
@@ -83,19 +84,14 @@
     gap: 12px;
   }
 
-  .op-wordmark {
-    height: 32px;
-    width: auto;
-  }
-
   .op-card {
     width: 100%;
     max-width: 420px;
     padding: 32px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    box-shadow: var(--shadow-pop);
   }
 
   .op-card-head {
@@ -104,7 +100,7 @@
 
   .op-card-title {
     margin: 0 0 4px;
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 22px;
     font-weight: 400;
     line-height: 1.2;
@@ -114,7 +110,7 @@
   .op-card-sub {
     margin: 0;
     font-size: 14px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   @media (max-width: 400px) {

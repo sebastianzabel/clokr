@@ -50,8 +50,8 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
 
-    // The v1.5 dashboard hero is the `.timer-card` (replaces the old `.clock-btn`).
-    const timerCard = page.locator(".timer-card").first();
+    // Since #845 the clock is the Stage of Ich › Mein Tag (replaces the v1.5 `.timer-card`).
+    const timerCard = page.getByTestId("mein-tag-stage");
     await expect(timerCard).toBeVisible();
 
     const box = await timerCard.boundingBox();
@@ -77,7 +77,8 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
 
     // Admin sees the full overflow nav — at minimum these manager + admin items
     // are present in the sheet.
-    for (const label of ["Aufgaben", "Team-Zeiten", "Mitarbeitende", "Protokoll"]) {
+    for (const label of ["Aufgaben", "Zeiten", "Personen", "Daten"]) {
+      // #844 areas
       await expect(sheet.getByText(label, { exact: false }).first()).toBeVisible();
     }
 
@@ -94,9 +95,9 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
     const sheet = page.locator(".mehr-sheet");
     await expect(sheet).toBeVisible();
 
-    await sheet.getByText("Mitarbeitende", { exact: false }).first().click();
-    await page.waitForURL("**/admin/employees", { timeout: 10_000 });
-    await expect(page).toHaveURL(/admin\/employees/);
+    await sheet.getByText("Personen", { exact: true }).first().click();
+    await page.waitForURL("**/verwalten/personen", { timeout: 10_000 });
+    await expect(page).toHaveURL(/verwalten\/personen/);
 
     await screenshotPage(page, "flow-mobile-admin-employees");
   });

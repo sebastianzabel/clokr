@@ -547,7 +547,7 @@ describe("salon admin page lifecycle (#563-05)", () => {
       });
       expect(res.statusCode, res.body).toBe(409);
       expect(JSON.parse(res.body)).toEqual({
-        error: "Der letzte aktive Salon eines Mandanten kann nicht deaktiviert werden.",
+        error: "Der letzte aktive Salon eines Unternehmens kann nicht deaktiviert werden.",
       });
       const fresh = await app.prisma.salon.findUniqueOrThrow({ where: { id: solo.salonId } });
       expect(fresh.isActive).toBe(true);

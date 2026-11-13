@@ -1,562 +1,751 @@
+<!--
+  Verwalten › Daten › Export (Issue #593, #854, D-854-12/-13/-22): the one page that STARTS a DATEV export - the
+  whole company for a month (`GET /reports/datev`) or one person (`GET /reports/datev/employee`) - and where the
+  other files are reachable: the times and absences of a period as CSV (`GET /reports/period/csv`), the
+  Monatsexport as PDF (`GET /reports/monthly-export/pdf`) and the iCal files of the leave area.
+
+  Before a month that is not closed is exported, a warning says so (advisory: the API decides, the button stays
+  usable). „Letzte Exporte“ lists the company's recent `EXPORT` audit rows in German words (only with
+  `audit-log:read`). The DATEV numbers (Berater-, Mandantennummer and the four Lohnarten) are set here and only
+  here (registry section `export-datev-einrichtung`); the save sends exactly those six keys and the page keeps
+  no copy of the other settings (#878).
+
+  The DATEV file is never narrowed by a salon (§ 41 EStG, CLAUDE.md "Two report documents"): there is no salon
+  choice on this page. The rules (hint, history, preselection) live in `$lib/export/export-centre`.
+-->
 <script lang="ts">
   import { pageLabel } from "$lib/nav/page-labels";
-  import { onMount } from "svelte";
-  import { toasts } from "$stores/toast";
+  import { onMount, untrack } from "svelte";
+  import { page } from "$app/stores";
+  import { api } from "$api/client";
+  import { downloadFromApi } from "$api/download";
   import { authStore } from "$stores/auth";
   import { markUnsaved } from "$stores/unsaved";
-  import { api } from "$api/client";
-  import ToolPage from "$lib/components/admin/ToolPage.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
+  import { toasts } from "$stores/toast";
+  import { salonContext, showSalonOptions } from "$stores/salon-context";
+  import { hasPermission } from "$lib/permissions";
+  import { addMonths, compareMonths } from "$lib/reports/period-state";
+  import { periodAbsencesCsvPath, periodCsvPath, type YearMonth } from "$lib/reports/period-report";
+  import { countChanges, pickSection } from "$lib/settings/section-state";
+  import { settingsSection } from "$lib/settings/settings-pages";
+  import {
+    csvPeriodProblem,
+    exportHistoryRows,
+    exportPreselection,
+    monthName,
+    openMonthHint,
+    wholeNumberProblem,
+    type ExportHistoryRow,
+    type ExportLogLike,
+  } from "$lib/export/export-centre";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import SettingsGroup from "$lib/components/admin/settings/SettingsGroup.svelte";
+  import Combobox from "$components/ui/Combobox.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import List from "$components/ui/List.svelte";
+  import ListRow from "$components/ui/ListRow.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import PeriodPicker from "$components/ui/PeriodPicker.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
 
-  // Issue #593: only formats that work are offered here. The PDF documents live under
-  // „Berichte“, the iCal feed under „Abwesenheiten“; the former „Bald“ tiles are gone.
-  type ExportFormat = "datev";
+  const user = $derived($authStore.user);
+  const canReadMonthClose = $derived(hasPermission(user, "month-close:read:ZUGEWIESEN"));
+  const canReadAudit = $derived(hasPermission(user, "audit-log:read:ZUGEWIESEN"));
+  const canPickPerson = $derived(hasPermission(user, "employee:read:ZUGEWIESEN"));
+  const canReadTeamLeave = $derived(hasPermission(user, "leave-request:read:ZUGEWIESEN"));
+  const canEditSettings = $derived(hasPermission(user, "tenant-settings:update:ZUGEWIESEN"));
 
-  // ── Tabs (Phase 58: separate "run an export" from "configure Lohnarten") ───
-  const TABS = [
-    { id: "export", label: "Export erstellen" },
-    { id: "konfiguration", label: "Konfiguration" },
-  ];
-  let activeTab = $state<string>("export");
+  // ── The months: browser-local "today" (the API judges by the tenant zone) ──
+  const now = new Date();
+  const thisMonth: YearMonth = { year: now.getFullYear(), month: now.getMonth() + 1 };
+  const lastMonth = addMonths(thisMonth, -1);
 
-  let format: ExportFormat = $state("datev");
-  let exporting = $state(false);
-  let lastExportLabel: string | null = $state(null);
+  // A link may preselect person and month (`?person=&year=&month=`); every malformed value is dropped.
+  const preselection = untrack(() => exportPreselection($page.url));
+  const preselectedMonth: YearMonth | null =
+    preselection.year !== null && preselection.month !== null
+      ? { year: preselection.year, month: preselection.month }
+      : null;
 
-  // ── DATEV Lohnartennummern (moved from /admin/system in Phase 58) ──────────
+  /** The month of the DATEV file and the Monatsexport; never later than the current month. */
+  let exportMonth = $state<YearMonth>(
+    preselectedMonth !== null && compareMonths(preselectedMonth, thisMonth) <= 0
+      ? preselectedMonth
+      : lastMonth,
+  );
+  let personId = $state(preselection.personId ?? "");
+
+  /** The period of the CSV files. */
+  let csvFrom = $state<YearMonth>(lastMonth);
+  let csvTo = $state<YearMonth>(lastMonth);
+  const csvProblem = $derived(csvPeriodProblem(csvFrom, csvTo, thisMonth));
+
+  const mm = (ym: YearMonth) => String(ym.month).padStart(2, "0");
+
+  // ── The hint before an open month ──
+  // The status of every month of a year, loaded once per year. Without `month-close:read` (or after a failed
+  // read) nothing is requested or shown: there is neither a hint nor an error.
+  let statusByYear = $state<Record<number, Record<number, string>>>({});
+
+  async function loadYearStatus(year: number) {
+    if (statusByYear[year] !== undefined) return;
+    // Claimed first, so a quick second change of month does not request the same year twice.
+    statusByYear[year] = {};
+    try {
+      const res = await api.get<{ months: { month: number; status: string }[] }>(
+        `/overtime/close-month/year-status?year=${year}`,
+      );
+      statusByYear[year] = Object.fromEntries(res.months.map((m) => [m.month, m.status]));
+    } catch {
+      // Advisory only: the export itself is decided by the API.
+    }
+  }
+
+  $effect(() => {
+    const year = exportMonth.year;
+    if (canReadMonthClose) untrack(() => void loadYearStatus(year));
+  });
+
+  const monthHint = $derived(
+    openMonthHint(
+      canReadMonthClose ? statusByYear[exportMonth.year]?.[exportMonth.month] : undefined,
+      exportMonth.year,
+      exportMonth.month,
+    ),
+  );
+
+  // ── The downloads ──
+  let busy = $state<string | null>(null);
+
+  async function download(key: string, path: string, fallbackFilename: string, done: string) {
+    if (busy !== null) return;
+    busy = key;
+    try {
+      await downloadFromApi(path, fallbackFilename);
+      toasts.success(done);
+      void loadHistory();
+    } catch (e: unknown) {
+      // A refused export carries a German explanation (e.g. the missing Berater- or Mandantennummer, or the
+      // personnel numbers the DATEV format cannot take) - show it, not a status code.
+      toasts.error(e instanceof Error ? e.message : "Der Export ist fehlgeschlagen.");
+    } finally {
+      busy = null;
+    }
+  }
+
+  const exportYear = $derived(exportMonth.year);
+
+  function exportDatev() {
+    return download(
+      "datev",
+      `/reports/datev?year=${exportMonth.year}&month=${exportMonth.month}`,
+      `DATEV_${exportYear}_${mm(exportMonth)}.txt`,
+      "Die DATEV-Datei wurde heruntergeladen.",
+    );
+  }
+
+  function exportDatevPerson() {
+    if (personId === "") return;
+    return download(
+      "datev-person",
+      `/reports/datev/employee?employeeId=${encodeURIComponent(personId)}&year=${exportMonth.year}&month=${exportMonth.month}`,
+      `DATEV_${exportYear}_${mm(exportMonth)}_Person.txt`,
+      "Die DATEV-Datei der Person wurde heruntergeladen.",
+    );
+  }
+
+  function exportTimesCsv() {
+    if (csvProblem !== null) return;
+    return download(
+      "csv-times",
+      periodCsvPath(csvFrom, csvTo, null),
+      "zeiten.csv",
+      "Die Datei mit den Zeiten wurde heruntergeladen.",
+    );
+  }
+
+  function exportAbsencesCsv() {
+    if (csvProblem !== null) return;
+    return download(
+      "csv-absences",
+      periodAbsencesCsvPath(csvFrom, csvTo, null),
+      "abwesenheiten.csv",
+      "Die Datei mit den Abwesenheiten wurde heruntergeladen.",
+    );
+  }
+
+  function exportMonthlyPdf() {
+    return download(
+      "monthly-pdf",
+      `/reports/monthly-export/pdf?year=${exportMonth.year}&month=${exportMonth.month}`,
+      `Monatsexport_${exportYear}_${mm(exportMonth)}.pdf`,
+      "Das Monatsexport wurde heruntergeladen.",
+    );
+  }
+
+  function exportIcal(kind: "team" | "personal") {
+    return download(
+      `ical-${kind}`,
+      `/leave/ical/${kind}`,
+      kind === "team" ? "clokr-team-abwesenheiten.ics" : "clokr-abwesenheiten.ics",
+      "Die Kalenderdatei wurde heruntergeladen.",
+    );
+  }
+
+  // ── The person for the single-person DATEV file (reach-scoped `GET /employees`) ──
+  type PersonOption = { id: string; firstName: string; lastName: string; employeeNumber: string };
+  let people = $state<PersonOption[]>([]);
+
+  async function loadPeople() {
+    try {
+      people = await api.get<PersonOption[]>("/employees");
+    } catch {
+      // The picker then offers nobody; the whole-company export is unaffected.
+      people = [];
+    }
+  }
+
+  const personItems = $derived.by(() => {
+    const items = people
+      .map((p) => ({ value: p.id, label: `${p.lastName}, ${p.firstName} (${p.employeeNumber})` }))
+      .sort((a, b) => a.label.localeCompare(b.label, "de"));
+    // A person named by a link but not in the offered list stays visible.
+    if (personId !== "" && !items.some((item) => item.value === personId)) {
+      items.push({ value: personId, label: "Ausgewählte Person" });
+    }
+    return items;
+  });
+
+  // ── „Letzte Exporte“ ──
+  type Loaded<T> =
+    { status: "loading" } | { status: "ready"; data: T } | { status: "failed"; message: string };
+  let history = $state<Loaded<ExportHistoryRow[]>>({ status: "loading" });
+
+  async function loadHistory() {
+    if (!canReadAudit) return;
+    try {
+      // The newest 200 EXPORT rows (the list's maximum page), narrowed to this page's kinds by their
+      // type code; the list shows the first EXPORT_HISTORY_SIZE of them.
+      const res = await api.get<{ logs: ExportLogLike[] }>("/audit-logs?action=EXPORT&limit=200");
+      history = { status: "ready", data: exportHistoryRows(res.logs) };
+    } catch (e: unknown) {
+      history = {
+        status: "failed",
+        message:
+          e instanceof Error ? e.message : "Die letzten Exporte konnten nicht geladen werden.",
+      };
+    }
+  }
+
+  // ── DATEV-Einrichtung (registry section `export-datev-einrichtung`) ──
   interface DatevConfig {
     datevNormalstundenNr?: number;
     datevUrlaubNr?: number;
     datevKrankNr?: number;
     datevSonderurlaubNr?: number;
-    // Issue #256 (Befund 3) — no default: null means "not configured", and the export
-    // refuses to run rather than shipping the old hardcoded 0/0.
+    // No default: null means "not configured", and the export refuses to run (409) rather than shipping 0/0.
     datevBeraterNr?: number | null;
     datevMandantenNr?: number | null;
-    [k: string]: unknown;
   }
-  let datevNormalstundenNr = $state(100);
-  let datevUrlaubNr = $state(300);
-  let datevKrankNr = $state(200);
-  let datevSonderurlaubNr = $state(302);
-  let datevBeraterNr = $state<number | null>(null);
-  let datevMandantenNr = $state<number | null>(null);
+  type DatevValues = {
+    datevBeraterNr: number | null;
+    datevMandantenNr: number | null;
+    datevNormalstundenNr: number | null;
+    datevUrlaubNr: number | null;
+    datevKrankNr: number | null;
+    datevSonderurlaubNr: number | null;
+  };
+
+  const datevFrom = (c: DatevConfig): DatevValues => ({
+    datevBeraterNr: typeof c.datevBeraterNr === "number" ? c.datevBeraterNr : null,
+    datevMandantenNr: typeof c.datevMandantenNr === "number" ? c.datevMandantenNr : null,
+    datevNormalstundenNr: Number(c.datevNormalstundenNr ?? 100),
+    datevUrlaubNr: Number(c.datevUrlaubNr ?? 300),
+    datevKrankNr: Number(c.datevKrankNr ?? 200),
+    datevSonderurlaubNr: Number(c.datevSonderurlaubNr ?? 302),
+  });
+
+  let datev = $state<DatevValues>(datevFrom({}));
+  let datevSnapshot = $state<DatevValues>(datevFrom({}));
   let datevSaving = $state(false);
-  let datevSaved = $state(false);
-  let datevError = $state("");
-  // Hold the full /settings/work payload so we don't partial-overwrite on save.
-  let _gOtherFields: Record<string, unknown> | null = $state(null);
-
-  // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
-  function snap(...values: unknown[]): string {
-    return JSON.stringify(values);
-  }
-
-  let datevSnapshot = $state("");
-  let datevDirty = $derived(
-    snap(
-      datevBeraterNr,
-      datevMandantenNr,
-      datevNormalstundenNr,
-      datevUrlaubNr,
-      datevKrankNr,
-      datevSonderurlaubNr,
-    ) !== datevSnapshot,
-  );
-
-  // Gate the registration on "the baseline has been taken" (WR-01). loadDatev swallows its error
-  // ("non-blocking: keep defaults"), and saveDatev then provably cannot write at all
-  // (`if (!_gOtherFields) return;`) — a "Nicht gespeichert" marker on a page whose save button is
-  // a no-op would be a lie, and the guard would trap the user on it.
+  let datevLoadError = $state("");
+  // Gated on "the baseline has been taken": a failed load must not arm the navigation guard on a page whose
+  // save provably cannot write.
   let snapshotsReady = $state(false);
 
-  // Issue #256 (Befund 3): the export is refused (HTTP 409) while either number is unset.
-  // Say so up front instead of letting the operator discover it at download time.
-  let kanzleiMissing = $derived(
-    snapshotsReady && (datevBeraterNr == null || datevMandantenNr == null),
+  const datevKeys = settingsSection("export-datev-einrichtung")
+    .keys as readonly (keyof DatevValues)[];
+  const datevChanges = $derived(countChanges(datevSnapshot, datev, datevKeys));
+
+  const datevProblems = $derived({
+    datevBeraterNr: wholeNumberProblem("Berater-Nr.", datev.datevBeraterNr, {
+      min: 1,
+      max: 9999999,
+      optional: true,
+    }),
+    datevMandantenNr: wholeNumberProblem("Mandantennummer", datev.datevMandantenNr, {
+      min: 1,
+      max: 99999,
+      optional: true,
+    }),
+    datevNormalstundenNr: wholeNumberProblem("Normalstunden", datev.datevNormalstundenNr, {
+      min: 1,
+      max: 9999,
+    }),
+    datevUrlaubNr: wholeNumberProblem("Urlaub", datev.datevUrlaubNr, { min: 1, max: 9999 }),
+    datevKrankNr: wholeNumberProblem("Krank / AU", datev.datevKrankNr, { min: 1, max: 9999 }),
+    datevSonderurlaubNr: wholeNumberProblem("Sonderurlaub", datev.datevSonderurlaubNr, {
+      min: 1,
+      max: 9999,
+    }),
+  });
+  const datevErrorCount = $derived(Object.values(datevProblems).filter((p) => p !== null).length);
+
+  // The saved numbers decide the hint, not the draft: the API refuses the export while either is unset.
+  const kanzleiMissing = $derived(
+    snapshotsReady &&
+      (datevSnapshot.datevBeraterNr === null || datevSnapshot.datevMandantenNr === null),
   );
 
   $effect(() => {
-    markUnsaved("admin-export", snapshotsReady && datevDirty);
+    markUnsaved("admin-export", snapshotsReady && datevChanges > 0);
     return () => markUnsaved("admin-export", false);
   });
 
   async function loadDatev() {
     try {
       const cfg = await api.get<DatevConfig>("/settings/work");
-      datevNormalstundenNr = Number(cfg.datevNormalstundenNr ?? 100);
-      datevUrlaubNr = Number(cfg.datevUrlaubNr ?? 300);
-      datevKrankNr = Number(cfg.datevKrankNr ?? 200);
-      datevSonderurlaubNr = Number(cfg.datevSonderurlaubNr ?? 302);
-      // `?? null` rather than Number(): Number(null) is 0, which is exactly the
-      // unusable placeholder Issue #256 removed.
-      datevBeraterNr = typeof cfg.datevBeraterNr === "number" ? cfg.datevBeraterNr : null;
-      datevMandantenNr = typeof cfg.datevMandantenNr === "number" ? cfg.datevMandantenNr : null;
-      _gOtherFields = cfg as Record<string, unknown>;
-      datevSnapshot = snap(
-        datevBeraterNr,
-        datevMandantenNr,
-        datevNormalstundenNr,
-        datevUrlaubNr,
-        datevKrankNr,
-        datevSonderurlaubNr,
-      );
+      datev = datevFrom(cfg);
+      datevSnapshot = datevFrom(cfg);
       snapshotsReady = true;
-    } catch {
-      // non-blocking: keep defaults
+    } catch (e: unknown) {
+      datevLoadError =
+        e instanceof Error ? e.message : "Die DATEV-Einrichtung konnte nicht geladen werden.";
     }
   }
 
   async function saveDatev() {
-    if (!_gOtherFields) return;
+    if (!snapshotsReady || datevErrorCount > 0) return;
     datevSaving = true;
-    datevError = "";
-    datevSaved = false;
     try {
-      await api.put("/settings/work", {
-        ..._gOtherFields,
-        datevNormalstundenNr,
-        datevUrlaubNr,
-        datevKrankNr,
-        datevSonderurlaubNr,
-        // `?? null` keeps a cleared input an explicit "not configured" — the API accepts
-        // null for these two (CLAUDE.md's Zod .optional()/.nullable() gotcha).
-        datevBeraterNr: datevBeraterNr ?? null,
-        datevMandantenNr: datevMandantenNr ?? null,
-      });
-      datevSaved = true;
-      // Phase 109 — section is clean again
-      datevSnapshot = snap(
-        datevBeraterNr,
-        datevMandantenNr,
-        datevNormalstundenNr,
-        datevUrlaubNr,
-        datevKrankNr,
-        datevSonderurlaubNr,
+      // Exactly the six keys of the registry section: a cleared Berater- or Mandantennummer is an explicit
+      // null ("not configured"), which the API accepts for these two only.
+      await api.put(
+        "/settings/work",
+        pickSection(
+          datev as Record<string, unknown>,
+          settingsSection("export-datev-einrichtung").keys,
+        ),
       );
-      setTimeout(() => (datevSaved = false), 3000);
+      datevSnapshot = $state.snapshot(datev);
+      toasts.success("DATEV-Einrichtung gespeichert.");
     } catch (e: unknown) {
-      datevError = e instanceof Error ? e.message : "Fehler";
+      toasts.error(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
     } finally {
       datevSaving = false;
     }
   }
 
-  // Period options: last 12 months (excluding current) as { value: 'YYYY-MM', label: 'Monat YYYY' }
-  const now = new Date();
-  const periods = Array.from({ length: 12 }, (_, i) => {
-    const d = new Date(now.getFullYear(), now.getMonth() - i - 1, 1);
-    const y = d.getFullYear();
-    const m = d.getMonth() + 1;
-    return {
-      value: `${y}-${String(m).padStart(2, "0")}`,
-      label: d.toLocaleDateString("de-DE", { month: "long", year: "numeric" }),
-      year: y,
-      month: m,
-    };
-  });
-  let period = $state(periods[0].value);
-  const selectedPeriod = $derived(periods.find((p) => p.value === period) ?? periods[0]);
-
-  // Display-only export parameter — never persisted, a label on this one download.
-  // Issue #256 (Befund 3): two further inputs used to sit here, styled and labelled like
-  // the Berater- und Mandantennummer but initialised from hardcoded literals and wired to
-  // nothing. They were removed, not kept: the real, TenantConfig-backed pair now lives in
-  // the Konfiguration tab, and two editable fields of the same name with different
-  // behaviour on one page would be worse than the bug this ticket started from.
-  let taxOffice = $state("Steuerkanzlei · Standardberater");
-
-  // Step indicator: period (0) → employees (1) → format (2) → generate (3)
-  // Since period and employees are pre-selected by default, we start at step 2 (format ready).
-  // Step advances to 3 after a successful export.
-  const exportStep = $derived(lastExportLabel ? 3 : format ? 2 : period ? 1 : 0);
-
-  async function doExport() {
-    exporting = true;
-    try {
-      const token = $authStore.accessToken;
-      const res = await fetch(
-        `/api/v1/reports/datev?year=${selectedPeriod.year}&month=${selectedPeriod.month}`,
-        {
-          credentials: "include",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        },
-      );
-      if (!res.ok) {
-        // Issue #256: a 409 carries a German explanation (missing Berater-/Mandantennummer).
-        // Showing "Export fehlgeschlagen (409)" instead would hide the one thing the
-        // operator needs to know.
-        let message = `Export fehlgeschlagen (${res.status})`;
-        try {
-          const payload = (await res.json()) as { error?: string };
-          if (payload?.error) message = payload.error;
-        } catch {
-          // non-JSON body: keep the status-code fallback
-        }
-        throw new Error(message);
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `DATEV_LODAS_${selectedPeriod.value}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      lastExportLabel = `${selectedPeriod.label} · ${new Date().toLocaleString("de-DE")}`;
-      toasts.success("DATEV-CSV erstellt");
-    } catch (e: unknown) {
-      toasts.error(e instanceof Error ? e.message : "Export fehlgeschlagen");
-    } finally {
-      exporting = false;
-    }
+  function discardDatev() {
+    datev = $state.snapshot(datevSnapshot);
   }
+
+  const multiSalon = $derived(showSalonOptions($salonContext));
 
   onMount(() => {
     void loadDatev();
+    void loadHistory();
+    if (untrack(() => canPickPerson)) void loadPeople();
   });
 </script>
 
-<svelte:head><title>{pageLabel("/admin/export")} – Clokr</title></svelte:head>
+<svelte:head>
+  <title>{pageLabel("/admin/export")} – Clokr</title>
+</svelte:head>
 
-<ToolPage
-  eyebrow="Daten"
-  title={pageLabel("/admin/export")}
-  sub="Lohnabrechnungs-Daten für DATEV exportieren"
-  tabs={TABS}
-  bind:activeTab
-  steps={activeTab === "export" ? ["Zeitraum", "Mitarbeiter", "Format", "Generieren"] : undefined}
-  currentStep={exportStep}
-  animate
->
-  {#snippet form()}
-    {#if activeTab === "konfiguration"}
-      <Section
-        title="Berater-, Mandanten- und Lohnartennummern"
-        sub="Pflichtangaben und Lohnart-Zuordnung für DATEV LODAS — wirkt sich auf alle generierten Exporte aus."
-        dirty={datevDirty}
-      >
-        {#if datevError}
-          <div class="alert alert-error" role="alert">
-            <span>⚠</span><span>{datevError}</span>
-          </div>
-        {/if}
-        {#if datevSaved}
-          <div class="alert alert-success" role="alert">
-            <span>✓</span><span><span translate="no">DATEV</span>-Konfiguration gespeichert.</span>
-          </div>
-        {/if}
+<div data-testid="admin-export-page" style="display: contents;">
+  <PageHead
+    title={pageLabel("/admin/export")}
+    sub="Hier lädst du die Lohndaten für DATEV, Zeiten, Abwesenheiten, das Monatsexport und Kalenderdateien herunter."
+  />
 
-        <div class="lohnart-grid">
-          <div class="form-group">
-            <label class="form-label" for="datev-berater">Berater-Nr.</label>
-            <input
-              id="datev-berater"
-              type="number"
-              min="1"
-              max="9999999"
-              step="1"
-              bind:value={datevBeraterNr}
-              class="form-input"
-            />
-            <p class="form-hint">
-              Nummer der Steuerkanzlei im <span translate="no">DATEV</span>-Kopf. Ohne sie wird der
-              Export abgelehnt.
-            </p>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="datev-mandant">Mandanten-Nr.</label>
-            <input
-              id="datev-mandant"
-              type="number"
-              min="1"
-              max="99999"
-              step="1"
-              bind:value={datevMandantenNr}
-              class="form-input"
-            />
-            <p class="form-hint">
-              Nummer dieses Mandanten bei der Kanzlei. Ohne sie lässt sich die Datei keinem
-              Mandanten zuordnen.
-            </p>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="datev-normal">Normalstunden</label>
-            <input
-              id="datev-normal"
-              type="number"
-              min="1"
-              max="9999"
-              step="1"
-              bind:value={datevNormalstundenNr}
-              class="form-input"
-            />
-            <p class="form-hint">LODAS-Lohnart für reguläre Arbeitsstunden.</p>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="datev-urlaub">Urlaub</label>
-            <input
-              id="datev-urlaub"
-              type="number"
-              min="1"
-              max="9999"
-              step="1"
-              bind:value={datevUrlaubNr}
-              class="form-input"
-            />
-            <p class="form-hint">Lohnart für genommene Urlaubstage.</p>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="datev-krank">Krank / AU</label>
-            <input
-              id="datev-krank"
-              type="number"
-              min="1"
-              max="9999"
-              step="1"
-              bind:value={datevKrankNr}
-              class="form-input"
-            />
-            <p class="form-hint">Lohnart für entgeltfortzahlungspflichtige Krankheitstage.</p>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="datev-sonder" translate="no">Sonderurlaub</label>
-            <input
-              id="datev-sonder"
-              type="number"
-              min="1"
-              max="9999"
-              step="1"
-              bind:value={datevSonderurlaubNr}
-              class="form-input"
-            />
-            <p class="form-hint">Lohnart für Sonderurlaub nach § 616 BGB / Tarif.</p>
-          </div>
-        </div>
+  <section class="settings-group" aria-labelledby="export-datev-title">
+    <h2 class="settings-group-title" id="export-datev-title">DATEV-Lohnexport</h2>
+    <p class="settings-group-desc">
+      Die Datei für die Lohnbuchhaltung, für alle Personen eines Monats oder für eine einzelne
+      Person.
+    </p>
 
-        {#snippet footer()}
-          <button
-            class="btn btn-primary"
-            onclick={saveDatev}
-            disabled={datevSaving || !_gOtherFields}
-          >
-            {datevSaving ? "Speichert…" : "Speichern"}
-          </button>
-        {/snippet}
-      </Section>
-    {:else}
-      <div class="export-grid">
-        <!-- Configure (col-7) -->
-        <div class="col-7">
-          <!-- No `dirty=` prop here on purpose: taxOffice/period/
-               format are parameters of a single download, never persisted (Phase 109, D-01) — an
-               "unsaved" marker for them would be noise, and a navigation guard would train the
-               operator to click through the dialog. -->
-          <Section title="Export konfigurieren" sub="Format · Zeitraum · Empfänger">
-            {#if kanzleiMissing}
-              <div class="alert alert-error" role="alert">
-                <span>⚠</span>
-                <span>
-                  Berater- und Mandantennummer fehlen. Der <span translate="no">DATEV</span>-Export
-                  wird abgelehnt, bis beide im Reiter „Konfiguration“ hinterlegt sind.
-                </span>
-              </div>
-            {/if}
-            <div class="field field-format">
-              <span class="field-label">Format</span>
-              <div class="format-picker">
-                <button
-                  type="button"
-                  class="format-tile"
-                  class:active={format === "datev"}
-                  onclick={() => (format = "datev")}
-                >
-                  <div class="format-name" translate="no">DATEV-LODAS</div>
-                  <div class="format-meta">Lohnabrechnung · <span class="tabular">.csv</span></div>
-                </button>
-              </div>
-            </div>
+    <PeriodPicker
+      label={monthName(exportMonth)}
+      eyebrow="Abrechnungsmonat"
+      testIdPrefix="export-month"
+      prevLabel="Vorheriger Monat"
+      nextLabel="Nächster Monat"
+      nextDisabled={compareMonths(exportMonth, thisMonth) >= 0}
+      onPrev={() => (exportMonth = addMonths(exportMonth, -1))}
+      onNext={() => (exportMonth = addMonths(exportMonth, 1))}
+    />
 
-            <div class="field-row">
-              <label class="field">
-                <span class="field-label">Zeitraum</span>
-                <select class="select" bind:value={period}>
-                  {#each periods as p (p.value)}<option value={p.value}>{p.label}</option>{/each}
-                </select>
-              </label>
-              <label class="field">
-                <span class="field-label">Beratungsbüro</span>
-                <input class="input" bind:value={taxOffice} />
-              </label>
-            </div>
-
-            {#snippet footer()}
-              <span class="foot-meta">
-                {#if lastExportLabel}
-                  Letzter Export: <b>{lastExportLabel}</b>
-                {:else}
-                  Noch kein Export in dieser Sitzung
-                {/if}
-              </span>
-              <span class="spacer"></span>
-              <button class="btn btn-primary" onclick={doExport} disabled={exporting}>
-                {exporting ? "Erstelle…" : "Export erstellen"}
-              </button>
-            {/snippet}
-          </Section>
-        </div>
-
-        <!-- Preview (col-5) -->
-        <div class="col-5">
-          <Section title="Vorschau" sub="DATEV-LODAS · {selectedPeriod.label}">
-            <pre class="csv-preview"><span class="csv-section">[Allgemein]</span>
-Ziel=LODAS
-Version_SST=1.0
-Version_DB=15.70
-BeraterNr={datevBeraterNr ?? "— nicht hinterlegt —"}
-MandantenNr={datevMandantenNr ?? "— nicht hinterlegt —"}
-Datumsformat=TTMMJJJJ
-Stringbegrenzer='
-
-<span class="csv-section">[Satzbeschreibung]</span>
-20;u_lod_bwd_buchung_stunden;pnr#bwd;abrechnung_zeitraum#bwd;la_eigene#bwd;stunden#bwd
-21;u_lod_bwd_buchung_tage;pnr#bwd;abrechnung_zeitraum#bwd;la_eigene#bwd;tage#bwd
-
-<span class="csv-section">[Bewegungsdaten]</span>
-20;PersNr;01{String(selectedPeriod.month).padStart(2, "0")}{selectedPeriod.year};Lohnart;Stunden
-… wird beim Export erzeugt</pre>
-            <p class="foot-meta preview-note">
-              Schreibgeschützte Vorschau — Signatur wird beim Export erzeugt.
-            </p>
-          </Section>
-        </div>
+    {#if monthHint}
+      <div data-testid="export-open-month-hint"><Note tone="warn">{monthHint}</Note></div>
+    {/if}
+    {#if kanzleiMissing}
+      <div data-testid="export-kanzlei-missing">
+        <Note tone="warn">
+          Berater-Nr. und Mandantennummer fehlen. Der DATEV-Export wird abgelehnt, bis beide unter
+          <a href="#datev-einrichtung">DATEV-Einrichtung</a> hinterlegt sind.
+        </Note>
       </div>
     {/if}
-  {/snippet}
-</ToolPage>
+
+    <div class="export-actions">
+      <button
+        type="button"
+        class="btn btn-primary"
+        onclick={exportDatev}
+        disabled={busy !== null}
+        data-testid="export-datev"
+      >
+        {#if busy === "datev"}<Spinner size={14} label="Datei wird erstellt" />{/if}
+        Alle Personen exportieren
+      </button>
+    </div>
+
+    {#if canPickPerson}
+      <FormField
+        label="Einzelne Person"
+        help="Die Datei enthält nur diese Person im gewählten Monat."
+      >
+        {#snippet field({ id, describedBy })}
+          <Combobox
+            items={personItems}
+            bind:value={personId}
+            label="Einzelne Person"
+            placeholder="Person wählen"
+            {id}
+            {describedBy}
+          />
+        {/snippet}
+      </FormField>
+      <div class="export-actions">
+        <button
+          type="button"
+          class="btn btn-outline"
+          onclick={exportDatevPerson}
+          disabled={busy !== null || personId === ""}
+          data-testid="export-datev-person"
+        >
+          {#if busy === "datev-person"}<Spinner size={14} label="Datei wird erstellt" />{/if}
+          Person exportieren
+        </button>
+      </div>
+    {:else}
+      <Note tone="info">
+        Um die Datei einer einzelnen Person zu erstellen, musst du Personen sehen dürfen.
+      </Note>
+    {/if}
+  </section>
+
+  <section class="settings-group" aria-labelledby="export-csv-title">
+    <h2 class="settings-group-title" id="export-csv-title">Zeiten und Abwesenheiten (CSV)</h2>
+    <p class="settings-group-desc">
+      Eine Zeile pro Person für den gewählten Zeitraum, höchstens 12 Monate, mit Semikolon getrennt.
+    </p>
+
+    <div class="export-periods">
+      <PeriodPicker
+        label={monthName(csvFrom)}
+        eyebrow="Von"
+        testIdPrefix="export-csv-from"
+        prevLabel="Vorheriger Monat (Von)"
+        nextLabel="Nächster Monat (Von)"
+        nextDisabled={compareMonths(csvFrom, thisMonth) >= 0}
+        onPrev={() => (csvFrom = addMonths(csvFrom, -1))}
+        onNext={() => (csvFrom = addMonths(csvFrom, 1))}
+      />
+      <PeriodPicker
+        label={monthName(csvTo)}
+        eyebrow="Bis"
+        testIdPrefix="export-csv-to"
+        prevLabel="Vorheriger Monat (Bis)"
+        nextLabel="Nächster Monat (Bis)"
+        nextDisabled={compareMonths(csvTo, thisMonth) >= 0}
+        onPrev={() => (csvTo = addMonths(csvTo, -1))}
+        onNext={() => (csvTo = addMonths(csvTo, 1))}
+      />
+    </div>
+    {#if csvProblem}
+      <div role="alert"><Note tone="bad">{csvProblem}</Note></div>
+    {/if}
+
+    <div class="export-actions">
+      <button
+        type="button"
+        class="btn btn-outline"
+        onclick={exportTimesCsv}
+        disabled={busy !== null || csvProblem !== null}
+        data-testid="export-csv-times"
+      >
+        {#if busy === "csv-times"}<Spinner size={14} label="Datei wird erstellt" />{/if}
+        Zeiten als CSV
+      </button>
+      <button
+        type="button"
+        class="btn btn-outline"
+        onclick={exportAbsencesCsv}
+        disabled={busy !== null || csvProblem !== null}
+        data-testid="export-csv-absences"
+      >
+        {#if busy === "csv-absences"}<Spinner size={14} label="Datei wird erstellt" />{/if}
+        Abwesenheiten als CSV
+      </button>
+    </div>
+  </section>
+
+  <section class="settings-group" aria-labelledby="export-pdf-title">
+    <h2 class="settings-group-title" id="export-pdf-title">Monatsexport (PDF)</h2>
+    <p class="settings-group-desc">
+      Die lesbare Fassung des DATEV-Exports: alle Personen eines Monats, ohne Tagesliste. Der Monat
+      ist der Abrechnungsmonat von oben ({monthName(exportMonth)}).
+    </p>
+    {#if multiSalon}
+      <Note tone="info">
+        Das Monatsexport enthält alle Salons. Für einen einzelnen Salon exportierst du es unter
+        <a href="/verwalten/berichte">{pageLabel("/reports")}</a>.
+      </Note>
+    {/if}
+    <div class="export-actions">
+      <button
+        type="button"
+        class="btn btn-outline"
+        onclick={exportMonthlyPdf}
+        disabled={busy !== null}
+        data-testid="export-monthly-pdf"
+      >
+        {#if busy === "monthly-pdf"}<Spinner size={14} label="Datei wird erstellt" />{/if}
+        Monatsexport herunterladen
+      </button>
+    </div>
+  </section>
+
+  <section class="settings-group" aria-labelledby="export-ical-title">
+    <h2 class="settings-group-title" id="export-ical-title">Kalender (iCal)</h2>
+    <p class="settings-group-desc">
+      Abwesenheiten als Kalenderdatei für Outlook, Google Kalender oder Apple Kalender.
+    </p>
+    <div class="export-actions">
+      {#if canReadTeamLeave}
+        <button
+          type="button"
+          class="btn btn-outline"
+          onclick={() => exportIcal("team")}
+          disabled={busy !== null}
+          data-testid="export-ical-team"
+        >
+          {#if busy === "ical-team"}<Spinner size={14} label="Datei wird erstellt" />{/if}
+          Team-Abwesenheiten
+        </button>
+      {/if}
+      <button
+        type="button"
+        class="btn btn-outline"
+        onclick={() => exportIcal("personal")}
+        disabled={busy !== null}
+        data-testid="export-ical-personal"
+      >
+        {#if busy === "ical-personal"}<Spinner size={14} label="Datei wird erstellt" />{/if}
+        Meine Abwesenheiten
+      </button>
+    </div>
+  </section>
+
+  <section class="settings-group" aria-labelledby="export-history-title">
+    <h2 class="settings-group-title" id="export-history-title">Letzte Exporte</h2>
+    <p class="settings-group-desc">Die 20 neuesten Exporte deines Unternehmens.</p>
+    {#if !canReadAudit}
+      <Note tone="info">Die letzten Exporte siehst du mit dem Recht, das Protokoll zu lesen.</Note>
+    {:else if history.status === "loading"}
+      <Skeleton shape="row" count={3} />
+    {:else if history.status === "failed"}
+      <div role="alert"><Note tone="bad">{history.message}</Note></div>
+    {:else if history.data.length === 0}
+      <Note tone="info">Es gibt noch keinen Export.</Note>
+    {:else}
+      <List ariaLabel="Letzte Exporte">
+        {#each history.data as row (row.id)}
+          <ListRow title={row.kind} subtitle={row.scope} avatar={false}>
+            {#snippet trailing()}
+              <span class="export-when">{row.when} · {row.who}</span>
+            {/snippet}
+          </ListRow>
+        {/each}
+      </List>
+    {/if}
+  </section>
+
+  <SettingsGroup
+    id="datev-einrichtung"
+    title="DATEV-Einrichtung"
+    description="Berater-Nr., Mandantennummer und die Lohnarten für DATEV LODAS. Die Nummern gelten für jede erzeugte Datei."
+    changes={datevChanges}
+    errors={datevErrorCount}
+    saving={datevSaving}
+    saveLabel="DATEV-Einrichtung speichern"
+    onSave={saveDatev}
+    onDiscard={discardDatev}
+  >
+    {#if datevLoadError}
+      <div role="alert"><Note tone="bad">{datevLoadError}</Note></div>
+    {:else if !snapshotsReady}
+      <Skeleton shape="card" lines={3} />
+    {:else}
+      {#if !canEditSettings}
+        <Note tone="info"
+          >Die Nummern kannst du nur ändern, wenn du die Einstellungen ändern darfst.</Note
+        >
+      {/if}
+      <FormField
+        label="Berater-Nr."
+        help="Nummer der Steuerkanzlei im DATEV-Kopf. Ohne sie wird der Export abgelehnt."
+        error={datevProblems.datevBeraterNr ?? undefined}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            type="number"
+            min="1"
+            max="9999999"
+            step="1"
+            class="form-input"
+            bind:value={datev.datevBeraterNr}
+            disabled={!canEditSettings || datevSaving}
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+          />
+        {/snippet}
+      </FormField>
+      <FormField
+        label="Mandantennummer"
+        help="Nummer dieses Unternehmens bei der Kanzlei. Ohne sie lässt sich die Datei keinem Unternehmen zuordnen."
+        error={datevProblems.datevMandantenNr ?? undefined}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            type="number"
+            min="1"
+            max="99999"
+            step="1"
+            class="form-input"
+            bind:value={datev.datevMandantenNr}
+            disabled={!canEditSettings || datevSaving}
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+          />
+        {/snippet}
+      </FormField>
+      <FormField
+        label="Normalstunden"
+        help="Lohnart für reguläre Arbeitsstunden."
+        error={datevProblems.datevNormalstundenNr ?? undefined}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            type="number"
+            min="1"
+            max="9999"
+            step="1"
+            class="form-input"
+            bind:value={datev.datevNormalstundenNr}
+            disabled={!canEditSettings || datevSaving}
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+          />
+        {/snippet}
+      </FormField>
+      <FormField
+        label="Urlaub"
+        help="Lohnart für genommene Urlaubstage."
+        error={datevProblems.datevUrlaubNr ?? undefined}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            type="number"
+            min="1"
+            max="9999"
+            step="1"
+            class="form-input"
+            bind:value={datev.datevUrlaubNr}
+            disabled={!canEditSettings || datevSaving}
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+          />
+        {/snippet}
+      </FormField>
+      <FormField
+        label="Krank / AU"
+        help="Lohnart für entgeltfortzahlungspflichtige Krankheitstage."
+        error={datevProblems.datevKrankNr ?? undefined}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            type="number"
+            min="1"
+            max="9999"
+            step="1"
+            class="form-input"
+            bind:value={datev.datevKrankNr}
+            disabled={!canEditSettings || datevSaving}
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+          />
+        {/snippet}
+      </FormField>
+      <FormField
+        label="Sonderurlaub"
+        help="Lohnart für Sonderurlaub nach § 616 BGB oder Tarif."
+        error={datevProblems.datevSonderurlaubNr ?? undefined}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            type="number"
+            min="1"
+            max="9999"
+            step="1"
+            class="form-input"
+            bind:value={datev.datevSonderurlaubNr}
+            disabled={!canEditSettings || datevSaving}
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+          />
+        {/snippet}
+      </FormField>
+    {/if}
+  </SettingsGroup>
+</div>
 
 <style>
-  .export-grid {
-    display: grid;
-    grid-template-columns: 7fr 5fr;
-    gap: var(--s-5);
-  }
-
-  .field-format {
-    margin-top: 12px;
-  }
-  .format-picker {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 10px;
-  }
-  .format-tile {
-    padding: 18px 14px;
-    border-radius: var(--r-md);
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    text-align: left;
-    cursor: pointer;
+  .export-actions {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    transition:
-      background 160ms var(--ease),
-      border-color 160ms var(--ease),
-      transform 160ms var(--ease);
-  }
-  .format-tile.active {
-    border: 1.5px solid var(--brand-light);
-    background: var(--brand-soft);
-  }
-  .format-tile:hover {
-    transform: translateY(-1px);
-  }
-  .format-name {
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--text);
-  }
-  .format-meta {
-    font-size: 11.5px;
-    color: var(--text-muted);
+    flex-wrap: wrap;
+    gap: var(--s-2);
   }
 
-  .field-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-    margin-top: 14px;
-  }
-  .field {
+  .export-periods {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .field-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--text-muted);
+    flex-wrap: wrap;
+    gap: var(--s-3);
   }
 
-  .foot-meta {
-    color: var(--text-muted);
-    font-size: 12.5px;
-  }
-
-  .preview-note {
-    margin-top: var(--s-3);
-  }
-
-  .csv-preview {
-    background: var(--bg-subtle);
-    border-radius: var(--r-sm);
-    padding: 12px 14px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--text-muted);
-    line-height: 1.7;
-    overflow-x: auto;
-    margin: 8px 0 0;
-    white-space: pre;
-  }
-
-  .csv-section {
-    color: var(--brand-light);
-  }
-
-  @media (max-width: 900px) {
-    .export-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  @media (max-width: 720px) {
-    .format-picker {
-      grid-template-columns: 1fr;
-    }
-    .field-row {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* ── Lohnartennummern grid (Konfiguration tab) ──────────────────────────── */
-  .lohnart-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--s-5) var(--s-6);
-    max-width: 720px;
-  }
-  .lohnart-grid .form-group {
-    margin: 0;
-  }
-
-  @media (max-width: 720px) {
-    .lohnart-grid {
-      grid-template-columns: 1fr;
-    }
+  .export-when {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    white-space: nowrap;
   }
 </style>

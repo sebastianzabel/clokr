@@ -1,10 +1,13 @@
 <script lang="ts">
+  // Issue #843 (D-843-16): ReasonDialog adds the Begründung field to ConfirmDialog, which renders
+  // through the Dialog block. It carries no overlay markup and no key handling of its own: Escape,
+  // backdrop and the pending guard are ConfirmDialog's.
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
 
   interface Props {
     /** Bindable open state. Parent owns the boolean (`$state(false)`). */
     open: boolean;
-    /** Serif H3 title rendered in the modal header. */
+    /** Serif H3 title rendered in the dialog header. */
     title: string;
     /** Optional descriptive body text under the title. */
     description?: string;

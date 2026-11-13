@@ -18,9 +18,28 @@ const DETAIL = readRouteFile(
   "../routes/(app)/admin/employees/[id]/+page.svelte",
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
+// Since Issue #854 (plan 854-20) the roles live in the Zugang tab component and the Stammdaten saves
+// in the Person tab component.
+const ZUGANG_TAB = readRouteFile(
+  "../lib/components/employees/detail/ZugangTab.svelte",
+  "src/lib/components/employees/detail/ZugangTab.svelte",
+);
+const PERSON_TAB = readRouteFile(
+  "../lib/components/employees/detail/PersonTab.svelte",
+  "src/lib/components/employees/detail/PersonTab.svelte",
+);
 const LIST = readRouteFile(
   "../routes/(app)/admin/employees/+page.svelte",
   "src/routes/(app)/admin/employees/+page.svelte",
+);
+// Since Issue #854 the create form is the guided dialog; its body comes from the create-person model.
+const CREATE_DIALOG = readRouteFile(
+  "../lib/components/employees/CreatePersonDialog.svelte",
+  "src/lib/components/employees/CreatePersonDialog.svelte",
+);
+const CREATE_MODEL = readRouteFile(
+  "../lib/employees/create-person.ts",
+  "src/lib/employees/create-person.ts",
 );
 
 /** The body of `function <name>` (balanced braces). */
@@ -38,13 +57,20 @@ function fnBody(source: string, name: string): string {
 
 describe("/admin/employees/[id] — Berechtigungen (#580)", () => {
   it("[vacuity gate] both pages are loaded", () => {
-    expect(DETAIL.length).toBeGreaterThan(100_000);
+    // #854: the page is a shell over the tab components (plan 854-22); the floor only proves the read.
+    expect(DETAIL.length).toBeGreaterThan(8_000);
     expect(LIST.length).toBeGreaterThan(20_000);
   });
 
-  const start = DETAIL.indexOf('tab === "berechtigungen"');
-  const end = DETAIL.indexOf('tab === "danger"');
-  const tab = DETAIL.slice(start, end);
+  // The Zugang tab holds the roles first, then the login and the deletion groups (#854).
+  const start = ZUGANG_TAB.indexOf('aria-labelledby="{uid}-roles"');
+  const end = ZUGANG_TAB.indexOf('aria-labelledby="{uid}-login"');
+  const tab = ZUGANG_TAB.slice(start, end);
+
+  it("the page mounts the Zugang tab for the employee", () => {
+    expect(DETAIL).toContain('tab === "zugang"');
+    expect(DETAIL).toContain("<ZugangTab");
+  });
 
   it("renders the block for the employee's user, with a change handler", () => {
     expect(start).toBeGreaterThan(-1);
@@ -63,49 +89,66 @@ describe("/admin/employees/[id] — Berechtigungen (#580)", () => {
   it("no longer sends a role with the Stammdaten and has no select state", () => {
     expect(DETAIL).not.toMatch(/\beRole\b|roleForSave|initialFormRole|id="e-role"/);
     expect(DETAIL).not.toContain("Administrator");
-    expect(fnBody(DETAIL, "saveStammdaten")).not.toMatch(/\brole\b/);
+    for (const name of ["saveIdentity", "saveStructure", "saveEmployment"]) {
+      expect(fnBody(PERSON_TAB, name), name).not.toMatch(/\brole\b/);
+    }
   });
 
   it("loads the assignments only with role-assignment:manage", () => {
-    expect(DETAIL).toContain("listRoleAssignments(");
-    expect(DETAIL).toMatch(/if \(!userId \|\| !canAssignRoles\) return;/);
+    expect(ZUGANG_TAB).toContain("listRoleAssignments(");
+    expect(ZUGANG_TAB).toMatch(/if \(!userId \|\| !rights\.canAssignRoles\) return;/);
   });
 
   it("never re-initialises the form after an assignment change", () => {
-    expect(fnBody(DETAIL, "onRoleAssignmentsChanged")).not.toContain("initFields(");
+    expect(fnBody(ZUGANG_TAB, "onRoleAssignmentsChanged")).not.toContain("initFields(");
   });
 });
 
-describe("/admin/employees — the Rolle column (#580)", () => {
-  it("shows every stored assignment through the shared formatter", () => {
-    expect(LIST).toContain('from "$lib/roles/assignment-label"');
-    expect(LIST).toContain("assignmentLabel(assignment, assignmentCtx)");
-    expect(LIST).toContain("{NO_ASSIGNMENT_LABEL}");
+describe("/admin/employees — the Rollen column (#580, #854)", () => {
+  // #854 (owner review): the list shows the same Rollen column as Team › Personen - the names of the
+  // stored roles from the server; the scope of every assignment is shown and changed in the Zugang tab
+  // (PersonRoleAssignments through the shared formatter). The list still asks for no role-name route.
+  it("names the stored roles through the shared table and keeps the scope in the Zugang tab", () => {
+    expect(LIST).toContain("<PersonenTable");
     expect(LIST).not.toContain("/role-assignments/role-names");
+    expect(LIST).not.toContain("assignmentLabel(");
+    const ZUGANG = readFileSync(
+      resolve(process.cwd(), "src/lib/components/employees/detail/ZugangTab.svelte"),
+      "utf8",
+    );
+    expect(ZUGANG).toContain("<PersonRoleAssignments");
   });
 });
 
 describe("/admin/employees — create dialog (#580)", () => {
+  it("[vacuity gate] the dialog and the model are loaded", () => {
+    expect(CREATE_DIALOG.length).toBeGreaterThan(8_000);
+    expect(CREATE_MODEL.length).toBeGreaterThan(3_000);
+  });
+
   it("sends no role with the new person and has no role select", () => {
-    const payload = LIST.slice(
-      LIST.indexOf("const payload"),
-      LIST.indexOf("Object.assign(payload"),
+    const payload = CREATE_MODEL.slice(
+      CREATE_MODEL.indexOf("const payload"),
+      CREATE_MODEL.indexOf("Object.assign(payload"),
     );
     expect(payload.length).toBeGreaterThan(200);
     expect(payload).not.toMatch(/\brole:/);
-    expect(LIST).not.toMatch(/\bcRole\b|id="c-role"/);
-    expect(LIST).not.toContain("Administrator");
+    expect(CREATE_MODEL).not.toMatch(/\brole\b\s*:/);
+    for (const source of [LIST, CREATE_DIALOG]) {
+      expect(source).not.toMatch(/\bcRole\b|id="c-role"/);
+      expect(source).not.toContain("Administrator");
+    }
   });
 
   it("drafts further roles in the shared block, after the fixed default role", () => {
-    expect(LIST).toContain("bind:drafts={cDrafts}");
-    expect(LIST).toContain("fixedRows={CREATE_FIXED_ROWS}");
-    expect(LIST).toMatch(/roleName: CREATE_DEFAULT_ROLE_NAME, scope: \{ type: "TENANT" \}/);
+    expect(CREATE_DIALOG).toContain("bind:drafts={roleDrafts}");
+    expect(CREATE_DIALOG).toContain("fixedRows={FIXED_ROWS}");
+    expect(CREATE_DIALOG).toMatch(/roleName: CREATE_DEFAULT_ROLE_NAME, scope: \{ type: "TENANT"/);
   });
 
   it("posts the drafts for the created user and hands a refusal over to the tab", () => {
-    expect(LIST).toContain("postAssignmentDrafts(res.userId, drafts)");
-    expect(LIST).toContain("goto(berechtigungenTabHref(res.id))");
+    expect(CREATE_DIALOG).toContain("postAssignmentDrafts(userId, drafts)");
+    expect(CREATE_DIALOG).toContain("goto(berechtigungenTabHref(res.id))");
   });
 
   it("loads the role choices only with role-assignment:manage", () => {
@@ -113,5 +156,11 @@ describe("/admin/employees — create dialog (#580)", () => {
     const guard = body.indexOf("if (!canAssignRoles)");
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(body.indexOf("listAssignablePeople("));
+  });
+
+  it("the page hands the loaded choices to the dialog", () => {
+    expect(LIST).toContain("roles={createRoles}");
+    expect(LIST).toContain("mandantRoleIds={createMandantRoleIds}");
+    expect(LIST).toContain("roleChoicesFailed={createRoleChoicesFailed}");
   });
 });

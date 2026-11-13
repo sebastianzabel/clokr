@@ -15,7 +15,7 @@ described in [docs/PROCESS.md](docs/PROCESS.md).
 ## Setup
 
 ```bash
-git clone https://github.com/sebastianzabel/clokr.git
+git clone https://github.com/getclokr/clokr.git
 cd clokr
 pnpm install
 

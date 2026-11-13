@@ -103,11 +103,8 @@ export function showsParentalReductionAction(
 }
 
 /**
- * Formats a day count the German way (decimal comma, no trailing zeros) — no existing helper in
- * `lib/leave/` does this (grepped; `vacation-balance.ts`'s `formatGermanDate` is a date, not a
- * number formatter), so this is a new, minimal one. `30` -> `"30"`, `7.5` -> `"7,5"`.
+ * A day count the German way (decimal comma, at most two decimals, no trailing zeros). The one
+ * implementation lives in `review-facts.ts` (Issue #853-19); it is re-exported here so the callers
+ * of this module keep their import. `30` -> `"30"`, `7.5` -> `"7,5"`.
  */
-export function formatDays(n: number): string {
-  const rounded = Math.round(n * 100) / 100;
-  return rounded.toString().replace(".", ",");
-}
+export { formatDays } from "./review-facts";

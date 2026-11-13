@@ -130,23 +130,20 @@ test.describe("Month-close gap acknowledgement (UX-01)", () => {
     const monthNum = Number(monthStr);
 
     // ── Navigate to month-close admin page ───────────────────────────────────
-    await page.goto("/admin/month-close");
+    // The year is part of the URL (#854): a deep link instead of stepping the PeriodPicker.
+    await page.goto(`/admin/month-close?year=${yearStr}`);
     await expect(page.getByTestId("month-close-page")).toBeVisible();
-
-    // Select the correct year if the page defaulted to a different one
-    const yearSelect = page.getByTestId("month-close-year");
-    if ((await yearSelect.inputValue()) !== yearStr) {
-      await yearSelect.selectOption(yearStr);
-    }
+    await expect(page.getByTestId("month-close-year-label")).toHaveText(yearStr);
     await expect(page.getByTestId(`month-close-row-${monthNum}`)).toBeVisible();
 
-    // ── Expand month detail ──────────────────────────────────────────────────
-    await page.getByTestId(`month-close-row-${monthNum}`).click();
+    // ── Show the persons of the month ────────────────────────────────────────
+    await page.getByTestId(`month-close-row-${monthNum}`).locator("button.dt-primary").click();
 
-    // Wait for detail row to load — the employee "Abschließen" button appears
+    // Wait for the persons table to load — the employee "Abschließen" button appears
     // for both "ready" and (after 76.28) "missing" employees
     const closeBtn = page
-      .locator(`[data-testid="month-close-row-${monthNum}"] ~ tr button:has-text("Abschließen")`)
+      .getByTestId("month-close-detail")
+      .getByRole("button", { name: "Abschließen" })
       .first();
 
     // If detail row for the employee is not rendered yet, wait for it
@@ -193,8 +190,8 @@ test.describe("Month-close gap acknowledgement (UX-01)", () => {
     expect(postBody.employeeId).toBe(employeeId);
 
     // ── Employee row transitions to "Abgeschlossen" ──────────────────────────
-    // After successful close the detail row re-loads and shows "Abgeschlossen" chip
-    await expect(page.locator('[data-testid^="month-close-row-"] .chip-good').first()).toBeVisible({
+    // After a successful close the persons table reloads and shows the "Abgeschlossen" chip
+    await expect(page.getByTestId("month-close-detail").locator(".chip-ok").first()).toBeVisible({
       timeout: 15_000,
     });
   });
@@ -272,23 +269,23 @@ test.describe("Month-close gap acknowledgement (UX-01)", () => {
     const [yearStr, monthStr] = month.split("-");
     const monthNum = Number(monthStr);
 
-    await page.goto("/admin/month-close");
+    await page.goto(`/admin/month-close?year=${yearStr}`);
     await expect(page.getByTestId("month-close-page")).toBeVisible();
+    await expect(page.getByTestId("month-close-year-label")).toHaveText(yearStr);
 
-    const yearSelect = page.getByTestId("month-close-year");
-    if ((await yearSelect.inputValue()) !== yearStr) {
-      await yearSelect.selectOption(yearStr);
-    }
-
-    await page.getByTestId(`month-close-row-${monthNum}`).click();
+    await page.getByTestId(`month-close-row-${monthNum}`).locator("button.dt-primary").click();
 
     // Find and click this specific employee's close button
     // (other employees in the tenant from prior seeding may also be present)
-    const closeButtons = page.locator(
-      `[data-testid="month-close-row-${monthNum}"] ~ tr button:has-text("Abschließen")`,
-    );
+    const closeButtons = page
+      .getByTestId("month-close-detail")
+      .getByRole("button", { name: "Abschließen" });
     // Click the one for emp2 — use the row that contains "Ready Emp"
-    const readyRow = page.locator("tr").filter({ hasText: "Ready" }).filter({ hasText: "Emp" });
+    const readyRow = page
+      .getByTestId("month-close-detail")
+      .locator("tr")
+      .filter({ hasText: "Ready" })
+      .filter({ hasText: "Emp" });
     await readyRow.locator('button:has-text("Abschließen")').click();
 
     // Gap warning must NOT be visible for a no-gap employee

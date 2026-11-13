@@ -425,7 +425,7 @@ describe("salon-context — failures, transitions, races (D-10)", () => {
   it("reset() removes every stored selection, returns to the initial state and drops a late answer", async () => {
     localStorage.setItem(KEY_T1_U1, "s1");
     localStorage.setItem("clokr.salonContext.t2.u9", "ALL");
-    localStorage.setItem("theme", "wald");
+    localStorage.setItem("theme", "petrol");
     const { salonContext } = await freshModule();
     let resolveLate: (v: unknown) => void = () => {};
     apiGet.mockImplementationOnce(() => new Promise((r) => (resolveLate = r)));
@@ -437,6 +437,6 @@ describe("salon-context — failures, transitions, races (D-10)", () => {
     expect(salonContext.peek().salons).toEqual([]);
     expect(localStorage.getItem(KEY_T1_U1)).toBeNull();
     expect(localStorage.getItem("clokr.salonContext.t2.u9")).toBeNull();
-    expect(localStorage.getItem("theme")).toBe("wald");
+    expect(localStorage.getItem("theme")).toBe("petrol");
   });
 });

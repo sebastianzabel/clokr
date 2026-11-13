@@ -120,7 +120,7 @@ export async function notifyShiftLeaveConflicts(
           userId: mgr.id,
           type: "SHIFT_LEAVE_CONFLICT",
           title: `Schicht-Konflikt: ${employeeName.firstName} ${employeeName.lastName}`,
-          message: `Genehmigter Urlaub vom ${dStart} bis ${dEnd} überschneidet sich mit ${conflictingShifts.length} Schicht(en). Bitte überprüfen Sie /shifts.`,
+          message: `Genehmigter Urlaub vom ${dStart} bis ${dEnd} überschneidet sich mit ${conflictingShifts.length} Schicht(en). Bitte prüf die Schichtplanung.`,
           link: "/shifts",
           tenantId,
           relatedType: "LeaveRequest",

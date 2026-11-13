@@ -37,13 +37,16 @@ const SCAN_DIRS = ["src/routes", "src/lib"];
 /** Areas where "Phorest" may be named: the integration is configured and planned there. */
 const PHOREST_ALLOWED = [
   "src/routes/(app)/admin/", // Verwaltung: the integration's own settings page
+  "src/routes/(app)/verwalten/", // Verwaltung (#854): the Regeln pages name the Phorest import
   "src/routes/(app)/shifts/", // Schichtplanung: imported shifts are planned by managers
   "src/routes/(operator)/", // operator console: salon coupling
   "src/lib/components/admin/",
   "src/lib/components/schedule/", // contract fields edited in Verwaltung
+  "src/lib/components/employees/detail/", // the person detail's per-person Phorest buffer (#854), a Verwaltung page
   "src/lib/components/operator/",
   "src/lib/operator/",
-  "src/lib/nav/page-labels.ts", // the admin page name, shown only in the Verwaltung section
+  "src/lib/nav/routes.ts", // the page names (#844): the Phorest entry is shown only under Verwalten › System
+  "src/lib/settings/settings-pages.ts", // the settings registry (#854) names the Phorest page file of its section
 ];
 /** Areas where "Mandant" may be named (D-574-04): the operator console speaks to the operator. */
 const MANDANT_ALLOWED = [
@@ -52,9 +55,19 @@ const MANDANT_ALLOWED = [
   "src/lib/operator/",
   "src/routes/(app)/admin/export/", // DATEV's own field name „Mandantennummer“
 ];
+/**
+ * The shift planning surface (Issue #850): its own jargon (flag, generator, audit trail) is
+ * checked only here, because elsewhere the words may be legitimate (e.g. a feature flag in admin).
+ */
+const SHIFT_PLANNING_AREA = ["src/routes/(app)/shifts/", "src/lib/shifts/"];
+/** `where` for an allow-list: the term is checked everywhere EXCEPT in these areas. */
 /** @param {string[]} areas */
 const inArea = (areas) => (/** @type {string} */ file) =>
   !areas.some((prefix) => file.startsWith(prefix));
+/** `where` for a scoped term: the term is checked ONLY in these areas. */
+/** @param {string[]} areas */
+const onlyIn = (areas) => (/** @type {string} */ file) =>
+  areas.some((prefix) => file.startsWith(prefix));
 
 /**
  * The forbidden terms. `where` narrows a term to part of the app (default: everywhere);
@@ -90,6 +103,24 @@ export const FORBIDDEN_TERMS = [
     re: /phorest/i,
     where: inArea(PHOREST_ALLOWED),
     reason: "„Phorest“ only in Verwaltung, Schichtplanung and the operator console",
+  },
+  {
+    id: "flag",
+    re: /\bflags?\b/i,
+    where: onlyIn(SHIFT_PLANNING_AREA),
+    reason: "use „Hinweis“ / „markiert“ (Schichtplanung)",
+  },
+  {
+    id: "generator",
+    re: /generator/i,
+    where: onlyIn(SHIFT_PLANNING_AREA),
+    reason: "say what happens: „Muster anwenden“ (Schichtplanung)",
+  },
+  {
+    id: "audit-spur",
+    re: /audit[-\s]?spur/i,
+    where: onlyIn(SHIFT_PLANNING_AREA),
+    reason: "say „wird protokolliert“ (Schichtplanung)",
   },
   {
     id: "sie-form",

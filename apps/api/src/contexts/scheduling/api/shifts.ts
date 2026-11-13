@@ -647,7 +647,8 @@ async function assertEmployeeShiftEligible(
   if (sched?.type === "SHIFT_BASED") return null;
   return {
     code: "SHIFT_INVALID_EMPLOYEE_TYPE",
-    message: "Mitarbeiter ist nicht im Schichtsystem (SHIFT_BASED erforderlich).",
+    message:
+      "Mitarbeiter ist nicht im Schichtsystem (Arbeitszeitmodell „Nach Schichtplan“ erforderlich).",
   };
 }
 
@@ -952,8 +953,8 @@ async function notifyLeaveDaysAdjusted(
     const bis = formatDateDe(adj.endDate.toISOString().slice(0, 10));
     const message =
       adj.direction === "down"
-        ? `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage — der Schichtplan für diesen Zeitraum steht.`
-        : `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage. Grund: der Schichtplan für diesen Zeitraum steht.`;
+        ? `Dein Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage — der Schichtplan für diesen Zeitraum steht.`
+        : `Dein Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage. Grund: der Schichtplan für diesen Zeitraum steht.`;
 
     const recipients: Array<{ userId: string; link: string }> = [
       { userId: adj.employeeUserId, link: "/leave" },
@@ -2398,7 +2399,10 @@ export async function shiftRoutes(app: FastifyInstance) {
           // narrowing, byte-identical to today.
           ...(shiftRangeScopeReach ? shiftScopeWhere(shiftRangeScopeReach) : {}),
         },
-        select: { date: true, startTime: true, endTime: true },
+        // Issue #597 (Phase 851): the salon of each shift for „Mein Dienstplan“ (additive field; the
+        // shift's own salon, never the Stammsalon - a Springer sees where each shift takes place). The
+        // web names it from the caller's own salon context (GET /me/context).
+        select: { date: true, startTime: true, endTime: true, salonId: true },
         orderBy: [{ date: "asc" }, { startTime: "asc" }],
       });
 
@@ -2422,6 +2426,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           endTime: s.endTime,
           durationMin: brutto, // unchanged — brutto for TeamCalendar weekly-overview consumers
           durationMinNetto: Math.max(0, brutto - breakMin), // v1.8.9: netto for saldo Soll comparison
+          salonId: s.salonId,
         };
       });
     },

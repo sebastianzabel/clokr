@@ -390,6 +390,46 @@ export async function getInvalidEntries(
   });
 }
 
+// ── Issue #853 (D-853-21a/22) — open entries of past days (missing clock-outs) ───────────────
+
+/**
+ * Issue #853 (D-853-21a) — the tenant's `WORK` entries that were never clocked out: no `endTime`,
+ * non-deleted, dated on a calendar day in `[since, before)`. `before` is the tenant-local today as
+ * a UTC-midnight day, so today's running entry is never a candidate; an entry that the nightly
+ * check already marked invalid (`MISSING_CLOCK_OUT`) is still open and still listed. Both bounds
+ * are calendar days for the `@db.Date` column (Issue #493), never instants.
+ *
+ * Read-only and reach-blind on purpose: the composition caller narrows the rows to the caller's
+ * reach with the Unterbau's `scopedTimeEntryIds` (the one per-entry rule, Issue #85) and never
+ * shows a row that rule did not name. The tenant binds through the employee, so another tenant's
+ * entry is never returned. Oldest day first.
+ */
+export async function findMissingClockOutEntries(
+  db: Prisma.TransactionClient,
+  tenantId: string,
+  range: { before: Date; since: Date },
+) {
+  return db.timeEntry.findMany({
+    where: {
+      employee: { tenantId },
+      deletedAt: null,
+      type: "WORK",
+      endTime: null,
+      date: { gte: range.since, lt: range.before },
+    },
+    select: {
+      id: true,
+      employeeId: true,
+      salonId: true,
+      date: true,
+      startTime: true,
+      isInvalid: true,
+      employee: { select: { firstName: true, lastName: true } },
+    },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }, { id: "asc" }],
+  });
+}
+
 // ── T5 — the "own activity" feed, ordered by createdAt (not date) ───────────────────────────
 
 /**

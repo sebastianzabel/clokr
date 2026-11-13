@@ -8003,3 +8003,84 @@ Tokens, dazu die Rezeptdeklarationen), `leave-looks-840-gaps`, `leave-chip-contr
 Komponententests von `LeaveRequestForm`, `LeaveTypeChip`, `LeaveToolbar`, `LeavePlanningPanel`, `AbsenceTimeline` und
 `LeaveLegend` sowie die angepassten Fixierungen (jede mit `#840 G-n` im Test benannt). Browser:
 `apps/e2e/tests/leave-area-840.spec.ts`, Tests 6 bis 9 (Planung, Zähler/Chips/Inbox-Kopf, Formular, Primärknöpfe).
+
+## AJ — Korrektur abgeschlossener Monate als Kontobewegung (Phase 599, Issue #599)
+
+**Entscheidung (Owner 19.10. und 09.11.2026, Grauzonen auf #599 dokumentiert).** Ein Tag eines abgeschlossenen Monats wird nie
+nachträglich geändert. Eine Person stellt eine Korrekturanfrage (`MonthCorrectionRequest`, Arbeitszeitkonto), eine andere Person mit
+`month-correction:approve:ZUGEWIESEN` über sie entscheidet. Die Genehmigung bucht im laufenden Monat:
+
+- die Journalzeile `OvertimeTransaction` (Typ `CORRECTION`, Verweis auf Anfrage und Tag, `referenceMonth` = Monat des Tages),
+- `correctionMinutes` und `bookingDate` (Tag der Genehmigung, Zeitzone des Mandanten) an der Anfrage.
+
+**Warum nicht nur das Journal.** `OvertimeTransaction` bewegt den Saldo nicht: Der Saldo wird aus Einträgen, Abwesenheiten und
+Snapshots gerechnet, `OvertimeAccount.balanceHours` wird bei jeder Neuberechnung überschrieben. Eine Buchung nur im Journal wäre
+wirkungslos. Deshalb ist die Korrektur eine Kontobewegung im einen Saldo-Kern: `closeEmployeeMonth()` nimmt
+`accountCorrections` (Tag, Minuten) und addiert die Minuten der Tage seines Fensters auf `balanceMinutes`, außerhalb der
+§ 615-Klauseln, ohne Soll und Ist zu ändern — dasselbe Muster wie der Überstundenausgleich (#220). Gelesen wird nur über
+`booked-month-corrections.ts` (ein Person, viele Personen für die #696-Kette). Jeder Produktionsaufrufer übergibt das Feld;
+`month-correction-saldo-callers-599.test.ts` hält das fest (im Typ ist das Feld optional, damit die Kern-Fixtures unverändert bleiben).
+
+**Regeln.** Vier Augen (wer anfragt und um wen es geht, entscheidet nie; Sperre, keine Permission). Reichweite: Stammsalon am
+betroffenen Tag; außerhalb dieselbe 404 wie für eine unbekannte Anfrage. Keine stille Buchung: ist der laufende Monat geschlossen
+(409 `MONTH_LOCKED`) oder führt die Person heute keinen Saldo (Nur erfassen #494, kein Vertrag #780, ausgetreten:
+409 `CORRECTION_NO_SALDO`), wird nicht gebucht. Wie jede Buchung eines Tages wirkt sie ab dem Folgetag im Live-Saldo (#438).
+
+**Unterbau.** Neue Fremdschlüssel nur auf `Employee` (Unterbau, `Restrict`) und innerhalb von Arbeitszeitkonto
+(`OvertimeTransaction`, `Restrict`). Semantikänderung der Systemvorlagen: `month-correction:*` spiegelbildlich zu den
+Zeitnachtrag-Rechten (`20261109180000_month_correction_template_grant`).
+
+**Nachtrag Phase 599 — Systemrollen-Vorlagen (Unterbau-Semantikänderung, Owner-Entscheidung 12.11.2026,
+[Kommentar auf #599](https://github.com/getclokr/clokr/issues/599#issuecomment-6817644873)).** Freigegeben wie vorgeschlagen und so ausgeliefert:
+
+| Vorlage                      | neu                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Admin, Inhaber, Manager      | `month-correction:read:EIGENE`, `read:ZUGEWIESEN`, `create:EIGENE`, `create:ZUGEWIESEN`, `approve:ZUGEWIESEN` |
+| Mitarbeiter                  | `month-correction:read:EIGENE`, `create:EIGENE`                                                               |
+| Salonmanager                 | `month-correction:read:ZUGEWIESEN`, `create:ZUGEWIESEN`, `approve:ZUGEWIESEN`                                 |
+| Personalabteilung, Ausbilder | keine                                                                                                         |
+
+Die Änderung wirkt sofort auf jedes bestehende Konto mit dieser Rolle; Kundenkopien der Vorlagen bleiben unverändert, niemandem
+wird eine Rolle zugewiesen. Die Vier-Augen-Sperre (wer anfragt oder um wen es geht, entscheidet nie) ist keine Permission und gilt
+für jede Rolle. Die reine Datenmigration setzt je Vorlage genau die Vorlage von vorher plus diese Schlüssel (geprüft gegen
+`SYSTEM_ROLE_PERMISSIONS` vor #599: kein Recht entfernt oder geändert), jede Anweisung mit `IS DISTINCT FROM`-Guard und
+`"tenantId" IS NULL`; `month-correction-template-migration-599.test.ts` beweist das am eingecheckten SQL (Form, Wiederholbarkeit,
+Gleichheit mit der Konstante). Konstante, Datenbankzeile, `docs/permissions.md` und die Web-Persona-Fixture ändern sich zusammen.
+
+**Auswirkung auf die Kontexte.** Zeiterfassung: keine (der Zeitnachtrag bleibt für offene Monate, kein `TimeEntry` entsteht).
+Abwesenheiten: keine. Schichtplanung: keine. Arbeitszeitkonto: neues Modell, Routen `/api/v1/month-corrections`, Saldo-Kern-Eingang.
+Kompositionsschicht: keine eigene Regel; Berichte lesen die Wirkung über `computeMonthReportFigures` (Kontobewegung =
+`balanceAdjustmentMinutes`). Unterbau: Vorlagen, Benachrichtigungstypen `MONTH_CORRECTION_REQUESTED`/`_DECIDED`, Anonymisierung
+(Begründung → neutraler Text, Prüfnotiz → null).
+
+## AK — Kalender-Abo „Mein Dienstplan“: ein Token je Person im Unterbau (Phase 597, Issue #597)
+
+**Entscheidung (Grauzonen auf #597 dokumentiert).** Eine Person kann ihre eigenen Schichten, wirksamen Abwesenheiten und die
+Feiertage ihres Arbeitsorts als ICS abonnieren. Kalender-Apps senden keinen Header; das Geheimnis steht deshalb im Link
+(`/api/v1/calendar-feed/dienstplan.ics?token=…`). Das Token (`CalendarFeedToken`, Unterbau) ist 32 Zufallsbytes, gespeichert
+wird nur der SHA-256; es gibt eins je Person, Rotation ersetzt es sofort, Widerruf löscht es. Der Link wird nur in der Antwort
+auf Anlegen/Rotieren genannt.
+
+**Wann der Link nichts mehr liefert.** Bei jedem Abruf prüft `resolveCalendarFeedToken()` (`contexts/platform/calendar-feed-token.ts`,
+die eine Stelle) Nutzer aktiv, Mandant aktiv, Person nicht anonymisiert und die eigenen Leserechte (`shift:read:EIGENE` für
+Schichten, `leave-request:read:EIGENE` für Abwesenheiten). Jeder ungültige Zustand ist dieselbe 404. Deaktivierung,
+Rollenentzug und Anonymisierung beenden den Link also ohne weiteren Schritt; die Anonymisierung löscht das Token zusätzlich.
+
+**Inhalt minimal (Art. 5 Abs. 1 lit. c, Art. 9 DSGVO).** Schichten heißen „Schicht“ und tragen nur Zeit und Salon (keine Notiz,
+keine Bezeichnung, kein Integrationsname, keine Kolleginnen); Abwesenheiten ganztägig, Krankheit neutral „Abwesend“; Feiertage
+mit Namen. Fenster 30 Tage zurück, 180 voraus. Eine Schicht, die genehmigter Urlaub verdrängt, erscheint nicht.
+
+**Abwägung eines geleakten Links.** Wer den Link hat, sieht die eigenen Arbeitszeiten und Abwesenheitstage dieser Person, nichts
+sonst und nichts Schreibendes. Gegenmittel: Rotieren und Widerrufen im Profil, `lastUsedAt` zeigt den letzten Abruf (höchstens
+stündlich aktualisiert, kein Audit je Abruf, weil Kalender-Apps alle paar Minuten abfragen), Ratenbegrenzung 60/Stunde, das Token
+erscheint in keiner Logzeile (`redactCalendarFeedPath`, Route auf Log-Stufe `warn`). Anlegen, Rotieren und Widerrufen sind
+auditiert, ohne Token.
+
+**Ort im Code.** Token und eigene Routen (`/api/v1/me/calendar-feed`) im Unterbau; der öffentliche Feed in der Kompositionsschicht
+(`composition/calendar-feed.ts`), weil er drei Kontexte liest — jeden nur über sein `index.ts`. Der ICS-Schreiber bleibt der eine
+in Abwesenheiten (`ical.ts`, additiv um zeitgebundene Termine und `LOCATION` erweitert).
+
+**Auswirkung auf die Kontexte.** Zeiterfassung: keine (gelesen werden nur die eigenen Arbeitseinträge für die Feiertagsauflösung).
+Abwesenheiten: `ical.ts` additiv erweitert und über `index.ts` exportiert, sonst keine. Schichtplanung: keine. Arbeitszeitkonto:
+keine. Kompositionsschicht: neue Lese-Route ohne eigene Regel. Unterbau: neues Modell `CalendarFeedToken` (Erweiterung, FKs auf
+`Tenant` Restrict und `User` Cascade), Anonymisierung und Int-Refresh löschen die Tokens.

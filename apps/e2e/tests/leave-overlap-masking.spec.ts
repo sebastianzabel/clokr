@@ -99,11 +99,12 @@ async function login(page: Page, email: string) {
   await page.getByLabel("E-Mail").fill(email);
   await page.getByLabel("Passwort", { exact: true }).fill(PW);
   await page.getByRole("button", { name: /anmelden/i }).click();
-  await page.waitForURL("**/dashboard", { timeout: 15_000 });
+  await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 15_000 }); // #844: the start page
 }
 
 /**
- * The What's-New drawer auto-opens after login and swallows pointer events over the page beneath.
+ * The What's-New drawer opens only on click since Issue #576, but an unseen corpus shows an unread
+ * badge, and an open drawer swallows pointer events over the page beneath.
  * It renders only when the release-notes corpus is non-empty (`WhatsNewPanel.svelte:38`), so
  * serving an empty corpus to the browser keeps it out of the way deterministically — dismissing
  * it by click races its entrance animation. Nothing in this phase touches release notes.
@@ -254,7 +255,7 @@ test.describe("Phase 262 — /leave/overlap masks the absence type over the wire
 
     const overlapBody = captureOverlap(page);
     await page.getByTestId(`leave-team-row-${fx.pendingId}-review`).click();
-    await page.waitForURL(/\/inbox\?/);
+    await page.waitForURL(/\/team\/aufgaben\?/);
     await expect(page.getByTestId("leave-approval-modal")).toBeVisible();
     const rows = (await overlapBody) as Array<Record<string, unknown>>;
 

@@ -73,6 +73,8 @@ export const NOTIFICATION_PUSH_POLICY: Record<string, PushPolicy> = {
   LEAVE_DAYS_ADJUSTED:    { push: "send", body: "Es gibt eine Änderung zu einem Urlaubsantrag.", ttlSeconds: TTL_3D },
   RETRO_ENTRY_UPDATED:    { push: "send", body: "Ein Antrag wurde geändert.", ttlSeconds: TTL_3D },
   RETRO_ENTRY_WITHDRAWN:  { push: "send", body: "Ein Antrag wurde geändert.", ttlSeconds: TTL_3D },
+  MONTH_CORRECTION_REQUESTED: { push: "send", body: "Es gibt einen neuen Antrag zur Prüfung.", ttlSeconds: TTL_3D },
+  MONTH_CORRECTION_DECIDED:   { push: "send", body: "Es gibt eine Rückmeldung zu deinem Antrag.", ttlSeconds: TTL_3D },
   PENDING_LEAVE_REMINDER: { push: "send", body: "Es warten Anträge auf deine Prüfung.", ttlSeconds: TTL_24H },
 
   // Account and month close

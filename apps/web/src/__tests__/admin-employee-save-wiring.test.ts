@@ -31,6 +31,45 @@ const PAGE = readRouteFile(
   "src/routes/(app)/admin/employees/[id]/+page.svelte",
 );
 
+// Since Issue #854 (plan 854-20) the Stammdaten live in the Person tab component: three groups with
+// their own SaveBar, snapshot and PATCH, and the § 18 ArbZG exemption with its confirm dialog.
+const PERSON_TAB = readRouteFile(
+  "../lib/components/employees/detail/PersonTab.svelte",
+  "src/lib/components/employees/detail/PersonTab.svelte",
+);
+
+// The Urlaub tab (plan 854-20) owns the vacation form: one group, one snapshot, one PUT.
+const URLAUB_TAB = readRouteFile(
+  "../lib/components/employees/detail/UrlaubTab.svelte",
+  "src/lib/components/employees/detail/UrlaubTab.svelte",
+);
+const URLAUB_MODEL = readRouteFile(
+  "../lib/employees/urlaub-form.ts",
+  "src/lib/employees/urlaub-form.ts",
+);
+
+// The Vertrag tab (plan 854-21) owns the contract form: one group, one snapshot, one PUT with validFrom.
+const VERTRAG_TAB = readRouteFile(
+  "../lib/components/employees/detail/VertragTab.svelte",
+  "src/lib/components/employees/detail/VertragTab.svelte",
+);
+const VERTRAG_MODEL = readRouteFile(
+  "../lib/employees/vertrag-form.ts",
+  "src/lib/employees/vertrag-form.ts",
+);
+
+// The per-person override groups (plan 854-22): Pausendauer and Phorest, each with its own SaveBar.
+const VERTRAG_OVERRIDES = readRouteFile(
+  "../lib/components/employees/detail/VertragOverrides.svelte",
+  "src/lib/components/employees/detail/VertragOverrides.svelte",
+);
+
+// The Berufsschule section (plan 854-22): the patterns (one PUT) and the person's slots (one PATCH).
+const BERUFSSCHULE = readRouteFile(
+  "../lib/components/employees/detail/BerufsschuleSection.svelte",
+  "src/lib/components/employees/detail/BerufsschuleSection.svelte",
+);
+
 // The plan's reference slicer (`vacation-summary.test.ts:47-55`) finds a function's end by
 // searching for the next "\n  }" (a two-space-indented closing brace) after the marker. That
 // heuristic breaks on this page: several save functions take an optional object-typed
@@ -39,7 +78,8 @@ const PAGE = readRouteFile(
 // function body even starts, so the naive slice would end before reaching anything inside the
 // real body. `fnBody` here instead tracks paren/brace depth so a parameter type's braces can
 // never be mistaken for the function body's closing brace.
-function fnBody(marker: string): string {
+function fnBody(marker: string, source: string = PAGE): string {
+  const PAGE = source;
   const start = PAGE.indexOf(marker);
   expect(start, `marker not found: ${marker}`).toBeGreaterThan(-1);
 
@@ -72,19 +112,19 @@ function fnBody(marker: string): string {
 }
 
 describe("D-08/AK-10 — Vertragsdaten mit validFrom stay button-gated", () => {
-  it("saveSchedule is wired via onclick=, never onchange=", () => {
-    expect(PAGE).toContain("onclick={saveSchedule}");
-    expect(PAGE).not.toContain("onchange={saveSchedule}");
+  it("the contract group saves through its SaveBar, never through a change handler", () => {
+    expect(VERTRAG_TAB).toContain("onSave={() => save()}");
+    expect(VERTRAG_TAB).not.toContain("onchange={save}");
+    expect(VERTRAG_TAB).not.toMatch(/onchange=\{\(\) => save\(/);
+    // The page no longer owns any contract save.
+    expect(PAGE).not.toContain("saveSchedule");
   });
 
-  it("the saveSchedule chain actually writes validFrom — not a same-named stub", () => {
-    // `saveSchedule()` is a thin wrapper (`return doSaveSchedule()`); pinning "validFrom"
-    // directly on its own body would prove nothing (it isn't there — it's one call deeper).
-    // Trace the real chain instead: saveSchedule -> doSaveSchedule -> buildSchedulePayload,
-    // where `validFrom: eValidFrom` is actually assembled into the PUT body.
-    expect(fnBody("async function saveSchedule")).toContain("doSaveSchedule");
-    expect(fnBody("async function doSaveSchedule")).toContain("buildSchedulePayload");
-    expect(fnBody("function buildSchedulePayload")).toContain("validFrom");
+  it("the save chain actually writes validFrom — not a same-named stub", () => {
+    // `save()` hands the values to buildSchedulePayload, where `validFrom` is assembled into the PUT body.
+    expect(fnBody("async function save", VERTRAG_TAB)).toContain("buildSchedulePayload(values");
+    expect(fnBody("export function buildSchedulePayload", VERTRAG_MODEL)).toContain("validFrom");
+    expect(fnBody("async function save", VERTRAG_TAB)).toContain("`/settings/work/${employeeId}`");
   });
 
   // N-04 (Triage-Kommentar, 26.08.2026): "Autosave nur für Einstellungen, die sofort gelten.
@@ -94,27 +134,58 @@ describe("D-08/AK-10 — Vertragsdaten mit validFrom stay button-gated", () => {
 });
 
 describe("N-02 — every save path on this page is already button-gated", () => {
-  const BUTTON_GATED = [
-    "saveStammdaten",
-    "saveSchedule",
-    "savePausendauer",
-    "savePhorestPuffer",
-    "saveBsSlotEmp",
-    "savePatterns",
-    "saveVacation",
-  ] as const;
+  it("the page owns no save of its own any more: every write sits in a tab component", () => {
+    expect(PAGE).not.toMatch(/async function save\w+/);
+    expect(PAGE).not.toContain("api.put(");
+    expect(PAGE).not.toContain("api.patch(");
+  });
 
-  it.each(BUTTON_GATED)("%s is wired via onclick=, never onchange=", (name) => {
-    expect(PAGE).toContain(`onclick={${name}}`);
-    expect(PAGE).not.toContain(`onchange={${name}}`);
+  it("the Berufsschule groups save through their SaveBar, never through a change handler", () => {
+    for (const name of ["savePatterns", "saveSlots"]) {
+      expect(BERUFSSCHULE, name).toContain(`onSave={${name}}`);
+      expect(BERUFSSCHULE, name).not.toContain(`onchange={${name}}`);
+    }
+    // the slots send exactly their own four keys (#878), the patterns replace the list in one PUT
+    const slots = fnBody("async function saveSlots", BERUFSSCHULE);
+    expect(slots).toContain("pickSection(");
+    expect(slots).toContain("BS_SLOT_KEYS");
+    expect(slots).toContain("api.patch");
+    expect(fnBody("async function savePatterns", BERUFSSCHULE)).toContain("api.put<");
+  });
+
+  it("the override groups save through their SaveBar, never through a change handler", () => {
+    for (const name of ["savePause", "savePhorest"]) {
+      expect(VERTRAG_OVERRIDES, name).toContain(`onSave={${name}}`);
+      expect(VERTRAG_OVERRIDES, name).not.toContain(`onchange={${name}}`);
+      // each group sends exactly its own keys (#878), never a spread of the record
+      expect(fnBody(`async function ${name}`, VERTRAG_OVERRIDES), name).toContain("pickSection(");
+      expect(fnBody(`async function ${name}`, VERTRAG_OVERRIDES), name).toContain("api.patch");
+    }
+    expect(fnBody("async function savePause", VERTRAG_OVERRIDES)).toContain("PAUSE_KEYS");
+    expect(fnBody("async function savePhorest", VERTRAG_OVERRIDES)).toContain("PHOREST_KEYS");
+  });
+
+  it("the Urlaub tab saves through its SaveBar, never through a change handler", () => {
+    expect(URLAUB_TAB).toContain("onSave={saveVacation}");
+    expect(URLAUB_TAB).not.toContain("onchange={saveVacation}");
+    expect(fnBody("async function saveVacation", URLAUB_TAB)).toContain("vacationBody");
+  });
+
+  it("the Person tab groups save through their SaveBar, never through a change handler", () => {
+    for (const name of ["saveIdentity", "saveStructure", "saveEmployment"]) {
+      expect(PERSON_TAB, name).toContain(`onSave={${name}}`);
+      expect(PERSON_TAB, name).not.toContain(`onchange={${name}}`);
+      expect(fnBody(`async function ${name}`, PERSON_TAB), name).toContain("patchEmployee");
+    }
   });
 
   it("the § 18 ArbZG exemption toggle stays confirm-gated — the PATCH fires only on confirm", () => {
-    expect(PAGE).toContain("onchange={onExemptToggleChange}");
-    expect(PAGE).toContain("onConfirm={confirmExemptToggle}");
+    expect(PERSON_TAB).toContain("onchange={onExemptToggleChange}");
+    expect(PERSON_TAB).toContain("onConfirm={confirmExemptToggle}");
     // The change handler itself must only stage the intent and open the dialog; the actual
     // api.patch() must live in confirmExemptToggle, never here.
-    expect(fnBody("function onExemptToggleChange")).not.toContain("api.patch");
+    expect(fnBody("function onExemptToggleChange", PERSON_TAB)).not.toContain("api.patch");
+    expect(fnBody("async function confirmExemptToggle", PERSON_TAB)).toContain("api.patch");
   });
 });
 
@@ -131,28 +202,43 @@ describe("AK-02 — no text/number input writes inline on this page", () => {
 
   it("returns the empty array today and must stay empty", () => {
     expect(textOrNumberInputHandlers(PAGE)).toEqual([]);
+    // [anti-vacuity] the Person tab does hold text and number inputs, and none writes inline.
+    expect(PERSON_TAB.match(/type="(?:text|number)"/g)?.length ?? 0).toBeGreaterThan(3);
+    expect(textOrNumberInputHandlers(PERSON_TAB)).toEqual([]);
+    expect(VERTRAG_TAB.match(/type="(?:text|number)"/g)?.length ?? 0).toBeGreaterThan(3);
+    expect(textOrNumberInputHandlers(VERTRAG_TAB)).toEqual([]);
   });
 });
 
 describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
-  const FLAGS = [
-    "stammdatenDirty",
-    "scheduleDirty",
-    "pausendauerDirty",
-    "phorestPufferDirty",
-    "patternsDirty",
-    "bsSlotEmpDirty",
-    "vacationDirty",
-  ] as const;
-
-  it.each(FLAGS)("%s is derived from a snapshot", (name) => {
-    expect(PAGE).toContain(`let ${name} = $derived(`);
+  it("every group counts its changes against its own snapshot, the page keeps no snapshot", () => {
+    expect(PAGE).not.toMatch(/Snapshot\s*=\s*snap\(/);
+    expect(PAGE).not.toMatch(/Dirty\s*=\s*\$derived\(/);
+    expect(BERUFSSCHULE).toContain("patternChangeCount(saved, drafts)");
+    expect(BERUFSSCHULE).toContain("countChanges(slotSnapshot, slots, BS_SLOT_KEYS)");
+    expect(VERTRAG_OVERRIDES).toContain("countChanges(pauseSnapshot, pause, PAUSE_KEYS)");
+    expect(VERTRAG_OVERRIDES).toContain("countChanges(phorestSnapshot, phorest, PHOREST_KEYS)");
   });
 
   // Issue #580 removed the footer of the Berechtigungen tab: role assignments save in their own
-  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1), so seven footer Sections remain.
-  it("all seven footer Sections receive a dirty prop", () => {
-    expect((PAGE.match(/dirty=\{/g) ?? []).length).toBe(7);
+  // dialog (docs/ADMIN_STRUCTURE.md §3.2.1). Since #854 every tab and override group owns its groups
+  // and reports its change count (`bind:changes`); no footer Section is left on this page.
+  it("no footer Section is left on the page", () => {
+    expect(PAGE).not.toContain("dirty={");
+    expect(PAGE).not.toMatch(/<Section\b/);
+  });
+
+  it("the Person, Vertrag and Urlaub tabs' unsaved changes are summed into the one registration", () => {
+    expect(PAGE).toContain("bind:changes={personChanges}");
+    expect(PAGE).toContain("bind:changes={vertragChanges}");
+    expect(PAGE).toContain("bind:changes={vacationChanges}");
+    expect(PAGE).toContain("bind:changes={overrideChanges}");
+    expect(PAGE).toContain("bind:changes={berufsschuleChanges}");
+    expect(PAGE).toContain("overrideChanges > 0");
+    expect(PAGE).toContain("berufsschuleChanges > 0");
+    expect(PAGE).toContain("vertragChanges > 0");
+    expect(PAGE).toMatch(/let anyUnsaved = \$derived\(\s*personChanges > 0/);
+    expect(PAGE).toContain("vacationChanges > 0");
   });
 
   it("registers under its own id and de-registers on unmount", () => {
@@ -160,7 +246,7 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     expect(PAGE).toContain('return () => markUnsaved("admin-employee-detail", false)');
   });
 
-  // WR-01: every snapshot starts as "" and only gets its baseline at the end of onMount's try.
+  // WR-01: the page hydrates at the end of onMount's try (the tabs take their baselines from it).
   // The early `if (empRes.status === "rejected") { loadError = …; return; }` skips that block, so
   // registering the bare `anyUnsaved` traps the operator on a stale bookmark to a deleted employee
   // behind a discard dialog — on a page that renders only an error and shows no marker.
@@ -169,12 +255,12 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     expect(PAGE).toContain("let snapshotsReady = $state(false)");
   });
 
-  it("WR-01: snapshotsReady is set only after the last baseline snapshot, inside the try", () => {
-    const iVacation = PAGE.indexOf("vacationSnapshot = snap(vacYear");
+  it("WR-01: snapshotsReady is set only after the record is hydrated, inside the try", () => {
+    const iVacation = PAGE.indexOf("tenantBreakConfig = cfgRes.status");
     const iReady = PAGE.indexOf("snapshotsReady = true");
     const iCatch = PAGE.indexOf('loadError = "Fehler beim Laden des Mitarbeiters."');
     expect(iVacation).toBeGreaterThan(-1);
-    // After the last snapshot assignment...
+    // After the last hydration of page state...
     expect(iReady).toBeGreaterThan(iVacation);
     // ...and before the catch, i.e. still inside the try that a load failure short-circuits.
     expect(iReady).toBeLessThan(iCatch);
@@ -190,12 +276,19 @@ describe("D-11/D-12 — unsaved markers on admin/employees/[id]", () => {
     expect(onchangeWrites).toEqual([]);
   });
 
-  it("AK-10: the Arbeitszeitmodell snapshot covers validFrom (N-04 — Wert und Stichtag sind eine Entscheidung)", () => {
-    const slice = PAGE.slice(
-      PAGE.indexOf("let scheduleDirty"),
-      PAGE.indexOf("let scheduleDirty") + 600,
-    );
-    expect(slice).toContain("validFrom");
+  it("AK-10: the contract snapshot covers validFrom (N-04 — Wert und Stichtag sind eine Entscheidung)", () => {
+    expect(VERTRAG_TAB).toContain("countChanges(snapshot, values, CONTRACT_KEYS)");
+    const keys = VERTRAG_MODEL.slice(VERTRAG_MODEL.indexOf("export const CONTRACT_KEYS"));
+    expect(keys.slice(0, keys.indexOf("]"))).toContain('"validFrom"');
+  });
+
+  it("T-109-26: the contract snapshot is re-taken only after the PUT succeeded", () => {
+    const body = fnBody("async function save", VERTRAG_TAB);
+    const put = body.indexOf("api.put<");
+    const retake = body.indexOf("snapshot = snapshotOfValues()");
+    expect(put).toBeGreaterThan(-1);
+    expect(retake).toBeGreaterThan(put);
+    expect(body.indexOf("finally")).toBeGreaterThan(retake);
   });
 
   it("T-109-26: no snapshot reset is the first statement of a finally block", () => {
@@ -217,77 +310,80 @@ describe("Issue #435 — server-driven vacation values", () => {
     expect(PAGE).not.toMatch(/30\s*\*\s*eWorkingDays/);
   });
 
-  it("eVacSuggestion is derived from the server's regularDays, not a local formula", () => {
-    const line = PAGE.split("\n").find((l) => l.includes("let eVacSuggestion = $derived("));
-    expect(line, "eVacSuggestion derivation not found").toBeDefined();
+  it("the suggestion is derived from the server's regularDays, not a local formula", () => {
+    expect(URLAUB_TAB).not.toMatch(/30\s*\*\s*eWorkingDays/);
+    const line = URLAUB_TAB.split("\n").find((l) => l.includes("const suggestion = $derived("));
+    expect(line, "suggestion derivation not found").toBeDefined();
     expect(line).toContain("regularDays");
   });
 
-  it("the Stammdaten snapshot covers eAnnualVacationDays (D-13)", () => {
-    const idx = PAGE.indexOf("let stammdatenDirty = $derived(");
-    expect(idx, "stammdatenDirty derivation not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 400);
-    expect(slice).toContain("eAnnualVacationDays");
+  it("the Person tab's change count covers annualVacationDays (D-13)", () => {
+    // The employment group counts its keys against its snapshot; annualVacationDays is one of them.
+    expect(PERSON_TAB).toContain("countChanges(snapshot, values, EMPLOYMENT_KEYS)");
+    const model = readRouteFile(
+      "../lib/employees/person-form.ts",
+      "src/lib/employees/person-form.ts",
+    );
+    const keys = model.slice(model.indexOf("export const EMPLOYMENT_KEYS"));
+    expect(keys.slice(0, keys.indexOf("]"))).toContain('"annualVacationDays"');
   });
 });
 
 describe("Issue #451 D-09 — carry-over reason select/note stay button-gated and snapshotted", () => {
+  /** The element opened by `<tag` after the FormField labelled `label`, up to its close. */
+  function controlAfter(label: string, tag: "select" | "textarea"): string | undefined {
+    const from = URLAUB_TAB.indexOf(`label="${label}"`);
+    if (from < 0) return undefined;
+    return URLAUB_TAB.slice(from).match(new RegExp(`<${tag}\\b[\\s\\S]*?</${tag}>`))?.[0];
+  }
+
   it("the Übertragsgrund select carries no onchange=/oninput= handler", () => {
-    const tag = PAGE.match(/<select\s+id="e-vac-reason"[\s\S]*?<\/select>/)?.[0];
-    expect(tag, "#e-vac-reason select not found").toBeDefined();
+    const tag = controlAfter("Übertragsgrund", "select");
+    expect(tag, "Übertragsgrund select not found").toBeDefined();
     expect(tag).not.toMatch(/on(?:change|input)=\{/);
   });
 
   it("the Notiz zum Übertrag textarea carries no onchange=/oninput= handler", () => {
-    const tag = PAGE.match(/<textarea\s+id="e-vac-reason-note"[\s\S]*?<\/textarea>/)?.[0];
-    expect(tag, "#e-vac-reason-note textarea not found").toBeDefined();
+    const tag = controlAfter("Notiz zum Übertrag", "textarea");
+    expect(tag, "Notiz textarea not found").toBeDefined();
     expect(tag).not.toMatch(/on(?:change|input)=\{/);
   });
 
-  // The vacation section snapshots eVacReason/eVacReasonNote via a SECOND snap() call
-  // (vacationReasonSnapshot) rather than appending them to the existing `vacationSnapshot =
-  // snap(vacYear, ...)` call — appending would push that line past the 100-col print width and
-  // Prettier would wrap it, breaking the WR-01 pin above (`vacationSnapshot = snap(vacYear`).
-  // All three sites (onMount baseline, saveVacation re-take, vacationDirty) must carry BOTH
-  // snap() calls.
-  it("the onMount baseline takes both vacation snapshots", () => {
-    const idx = PAGE.indexOf(
-      "vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);\n",
-    );
-    expect(idx, "onMount vacationSnapshot baseline not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 600);
-    expect(slice).toContain("vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);");
+  // The vacation group counts reason and note against its snapshot together with the amounts, and
+  // the body carries them change-only against what the server last confirmed (#445 D-16).
+  it("the change count covers the reason and the note", () => {
+    expect(URLAUB_TAB).toContain("countChanges(snapshot, values, VACATION_KEYS)");
+    const keys = URLAUB_MODEL.slice(URLAUB_MODEL.indexOf("export const VACATION_KEYS"));
+    const list = keys.slice(0, keys.indexOf("]"));
+    expect(list).toContain('"carryOverReason"');
+    expect(list).toContain('"carryOverNote"');
   });
 
-  it("saveVacation re-takes both vacation snapshots on the success path", () => {
-    const idx = PAGE.indexOf("async function saveVacation()");
-    expect(idx, "saveVacation not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 1200);
-    expect(slice).toContain(
-      "vacationSnapshot = snap(vacYear, eVacTotal, eVacCarried, eVacDeadline);",
-    );
-    expect(slice).toContain("vacationReasonSnapshot = snap(eVacReason, eVacReasonNote);");
+  it("saveVacation re-takes the snapshot and the confirmed pair only on the success path", () => {
+    const body = fnBody("async function saveVacation", URLAUB_TAB);
+    const put = body.indexOf("api.put(");
+    expect(put).toBeGreaterThan(-1);
+    for (const retake of ["loadedReason = values.carryOverReason", "snapshot = { ...values }"]) {
+      expect(body.indexOf(retake), retake).toBeGreaterThan(put);
+    }
+    expect(body.indexOf("finally")).toBeGreaterThan(body.indexOf("snapshot = { ...values }"));
   });
 
-  it("vacationDirty compares against both snapshots", () => {
-    const idx = PAGE.indexOf("let vacationDirty = $derived(");
-    expect(idx, "vacationDirty derivation not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 300);
-    expect(slice).toContain("vacationSnapshot");
-    expect(slice).toContain("vacationReasonSnapshot");
-    expect(slice).toContain("eVacReason");
-    expect(slice).toContain("eVacReasonNote");
+  it("the body is built change-only against the confirmed pair", () => {
+    expect(fnBody("async function saveVacation", URLAUB_TAB)).toContain(
+      "{ reason: loadedReason, note: loadedNote }",
+    );
+    expect(URLAUB_MODEL).toContain("carryOverReasonPatch(loaded,");
   });
 
   it("a legacy stored value is shown read-only via a disabled option, never silently dropped", () => {
-    expect(PAGE).toContain("disabled selected");
-    expect(PAGE).toContain("carryOverReasonLabel(eVacReason)");
+    expect(URLAUB_TAB).toContain("disabled selected");
+    expect(URLAUB_TAB).toContain("carryOverReasonLabel(values.carryOverReason)");
   });
 
-  it("the Notiz textarea shows the carryOverReasonHint below it", () => {
-    const idx = PAGE.indexOf('id="e-vac-reason-note"');
-    expect(idx, "#e-vac-reason-note not found").toBeGreaterThan(-1);
-    const slice = PAGE.slice(idx, idx + 400);
-    expect(slice).toContain("eVacReasonHint");
+  it("the Notiz field shows the carry-over hint with it", () => {
+    const idx = URLAUB_TAB.indexOf('label="Notiz zum Übertrag"');
+    expect(idx, "Notiz field not found").toBeGreaterThan(-1);
+    expect(URLAUB_TAB.slice(idx, idx + 300)).toContain("hint");
   });
 });

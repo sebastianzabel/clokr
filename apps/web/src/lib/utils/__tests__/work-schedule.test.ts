@@ -31,6 +31,7 @@ import {
   buildUsualWorkDaysBackfillPayload,
   type WorkScheduleLike,
 } from "../work-schedule";
+import { buildSchedulePayload, contractValuesOf } from "$lib/employees/vertrag-form";
 
 // Helper to build a minimal WorkScheduleLike — fills in the *Hours
 // / workDays / monthlyHours fields with defaults so each test only
@@ -376,9 +377,9 @@ describe("buildUsualWorkDaysBackfillPayload (Issue #481 R6)", () => {
 });
 
 // Phase 107 gap closure (G-01/G-02, issue #94 follow-up, 107-UAT.md) — hoisted
-// to module scope so this ONE disk read is shared by the AC-FE-01 guard below
-// and the new G-01/G-02 blocks appended at the end of this file. Do not add a
-// second reader.
+// to module scope so these disk reads are shared by the guards below. Do not add a
+// second reader. Since Issue #854 (plan 854-21) the contract form lives in the Vertrag tab
+// component and its model; the page keeps only the override sections.
 const ROUTE_SOURCE = readFileSync(
   path.join(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -386,34 +387,49 @@ const ROUTE_SOURCE = readFileSync(
   ),
   "utf-8",
 );
+const TAB_SOURCE = readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../components/employees/detail/VertragTab.svelte",
+  ),
+  "utf-8",
+);
+const MODEL_SOURCE = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../../employees/vertrag-form.ts"),
+  "utf-8",
+);
 
 // Phase 107 gap closure (G-01/G-02) — assertions are scoped to ONE schedule-type
-// branch each, because after this plan BOTH the FLEXTIME and the MONTHLY_HOURS
-// branch legitimately carry aria-label="Arbeitstage" (same concept, only one
-// branch renders at a time — see 107-09-PLAN.md <terminology_decision>). A
-// whole-file indexOf would silently assert against whichever comes first.
-const FLEXTIME_BRANCH = ROUTE_SOURCE.slice(
-  ROUTE_SOURCE.indexOf('{:else if eType === "FLEXTIME"}'),
-  ROUTE_SOURCE.indexOf('{:else if eType === "MONTHLY_HOURS"}'),
+// branch each, because BOTH the FLEXTIME and the MONTHLY_HOURS branch legitimately
+// carry the group "Arbeitstage" (same concept, only one branch renders at a time —
+// see 107-09-PLAN.md <terminology_decision>). A whole-file indexOf would silently
+// assert against whichever comes first.
+const FLEXTIME_BRANCH = TAB_SOURCE.slice(
+  TAB_SOURCE.indexOf('{:else if type === "FLEXTIME"}'),
+  TAB_SOURCE.indexOf('{:else if type === "MONTHLY_HOURS"}'),
 );
-const MONTHLY_HOURS_BRANCH = ROUTE_SOURCE.slice(
-  ROUTE_SOURCE.indexOf('{:else if eType === "MONTHLY_HOURS"}'),
-  ROUTE_SOURCE.indexOf("<!-- SHIFT_BASED -->"),
+const MONTHLY_HOURS_BRANCH = TAB_SOURCE.slice(
+  TAB_SOURCE.indexOf('{:else if type === "MONTHLY_HOURS"}'),
+  TAB_SOURCE.indexOf("{:else}", TAB_SOURCE.indexOf('{:else if type === "MONTHLY_HOURS"}')),
 );
 
 // Phase 107 (AC-FE-01, issue #94) — the 2026-06-04-style regression guard for
-// THIS bug: reads the route file's actual source off disk (precedent:
+// THIS bug: reads the contract form's actual source off disk (precedent:
 // KontoSaldoCard.test.ts's COMPONENT_SOURCE) so a reintroduction of the
 // canonical-order weekday guess fails this suite even though it lives in
 // markup, not in a unit under test elsewhere in this file.
 describe("employee form source — canonical.slice absence (Phase 107 AC-FE-01)", () => {
   it("the employee form no longer derives a weekday set from a number via canonical.slice", () => {
     expect(ROUTE_SOURCE).not.toContain("canonical.slice");
+    expect(TAB_SOURCE).not.toContain("canonical.slice");
+    expect(MODEL_SOURCE).not.toContain("canonical.slice");
   });
 
-  it("the old shared 'Arbeitstage/Woche' field id is gone; the SHIFT_BASED variant writes eContractWorkDays", () => {
+  it("the old shared 'Arbeitstage/Woche' field id is gone; the SHIFT_BASED variant writes contractWorkDays", () => {
     expect(ROUTE_SOURCE).not.toContain('id="e-workdays"');
-    expect(ROUTE_SOURCE).toContain("eContractWorkDays");
+    expect(TAB_SOURCE).not.toContain('id="e-workdays"');
+    expect(TAB_SOURCE).toContain("values.contractWorkDays");
+    expect(MODEL_SOURCE).toContain("contractWorkDays");
   });
 });
 
@@ -422,41 +438,40 @@ describe("employee form — FLEXTIME Arbeitstage vs. Kerntage (Phase 107 gap G-0
     expect(FLEXTIME_BRANCH.length).toBeGreaterThan(0);
   });
 
-  it('carries exactly one aria-label="Arbeitstage" group', () => {
-    const matches = FLEXTIME_BRANCH.match(/aria-label="Arbeitstage"/g) ?? [];
+  it('carries exactly one weekday group with the legend "Arbeitstage"', () => {
+    const matches = FLEXTIME_BRANCH.match(/legend="Arbeitstage"/g) ?? [];
     expect(matches).toHaveLength(1);
   });
 
-  it("Arbeitstage renders BEFORE the Kernarbeitszeit (optional) heading — the authoritative control is no longer nested inside it", () => {
-    expect(FLEXTIME_BRANCH.indexOf('aria-label="Arbeitstage"')).toBeLessThan(
-      FLEXTIME_BRANCH.indexOf("Kernarbeitszeit (optional)"),
+  it("Arbeitstage renders BEFORE the core time (optional) fields — the authoritative control is no longer nested inside them", () => {
+    expect(FLEXTIME_BRANCH.indexOf('legend="Arbeitstage"')).toBeLessThan(
+      FLEXTIME_BRANCH.indexOf("Kernzeitbeginn (optional)"),
     );
   });
 
-  it("Kerntage stays inside the Kernarbeitszeit (optional) section", () => {
-    expect(FLEXTIME_BRANCH.indexOf("Kernarbeitszeit (optional)")).toBeLessThan(
-      FLEXTIME_BRANCH.indexOf('aria-label="Kerntage"'),
+  it("Kerntage stays after the core time fields", () => {
+    expect(FLEXTIME_BRANCH.indexOf("Kernzeitende (optional)")).toBeLessThan(
+      FLEXTIME_BRANCH.indexOf('legend="Kerntage (optional)"'),
     );
   });
 
   it("Arbeitstage carries a hint naming its two consequences", () => {
     expect(FLEXTIME_BRANCH).toContain(
-      "Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Soll-Verteilung.",
+      "Die vertraglich festgelegten Arbeitstage steuern Urlaubsverbrauch und Soll-Verteilung.",
     );
   });
 
-  it("Kerntage carries a hint stating it affects neither Soll nor Urlaub, placed after the Kerntage chips", () => {
-    const hint = "Nur zur Information — wirkt sich weder auf das Soll noch auf den Urlaub aus.";
+  it("Kerntage carries a hint stating it affects neither Soll nor Urlaub, placed with the Kerntage group", () => {
+    const hint = "Nur zur Information – wirkt sich weder auf das Soll noch auf den Urlaub aus.";
     expect(FLEXTIME_BRANCH).toContain(hint);
     expect(FLEXTIME_BRANCH.indexOf(hint)).toBeGreaterThan(
-      FLEXTIME_BRANCH.indexOf('aria-label="Kerntage"'),
+      FLEXTIME_BRANCH.indexOf('legend="Kerntage (optional)"'),
     );
   });
 
   it("the old do-what-not-why hint is gone", () => {
-    expect(FLEXTIME_BRANCH).not.toContain(
-      "Wählen Sie die vertraglich festgelegten Arbeitstage aus.",
-    );
+    expect(FLEXTIME_BRANCH).not.toContain("die vertraglich festgelegten Arbeitstage aus.");
+    expect(ROUTE_SOURCE).not.toContain("Wählen Sie die vertraglich festgelegten Arbeitstage aus.");
   });
 });
 
@@ -465,37 +480,32 @@ describe("employee form — MONTHLY_HOURS Arbeitstage (Phase 107 gap G-02)", () 
     expect(MONTHLY_HOURS_BRANCH.length).toBeGreaterThan(0);
   });
 
-  it("the string 'Feste Arbeitstage' no longer exists anywhere in the route source", () => {
+  it("the string 'Feste Arbeitstage' no longer exists anywhere in the contract form or the page", () => {
     expect(ROUTE_SOURCE).not.toContain("Feste Arbeitstage");
+    expect(TAB_SOURCE).not.toContain("Feste Arbeitstage");
   });
 
-  it("the chip row is labelled Arbeitstage (not Feste Arbeitstage)", () => {
-    expect(MONTHLY_HOURS_BRANCH).toContain('<span class="form-label">Arbeitstage</span>');
-  });
-
-  it("the chip group is a labelled role=group, structurally identical to the FLEXTIME one", () => {
-    expect(MONTHLY_HOURS_BRANCH).toContain('aria-label="Arbeitstage"');
-    expect(MONTHLY_HOURS_BRANCH).toContain('role="group"');
+  it("the weekday group is labelled Arbeitstage (not Feste Arbeitstage)", () => {
+    expect(MONTHLY_HOURS_BRANCH).toContain('legend="Arbeitstage"');
+    expect(MONTHLY_HOURS_BRANCH).toContain("bind:value={values.monthlyWorkDays}");
   });
 
   it("carries a hint naming Urlaubsverbrauch and Urlaubsanspruch as its consequences (closes D-27 for the fourth type)", () => {
     expect(MONTHLY_HOURS_BRANCH).toContain(
-      "Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Urlaubsanspruch.",
+      "Die vertraglich festgelegten Arbeitstage steuern Urlaubsverbrauch und Urlaubsanspruch.",
     );
   });
 
-  it("the Stunden/Monat hint no longer claims 'Keine festen Wochentage', which the chip row below it contradicts", () => {
+  it("the Stunden/Monat hint no longer claims 'Keine festen Wochentage', which the weekday group below it contradicts", () => {
     expect(MONTHLY_HOURS_BRANCH).not.toContain("Keine festen Wochentage");
   });
 
   it("the Stunden/Monat hint keeps only the true half: no daily targets", () => {
-    expect(MONTHLY_HOURS_BRANCH).toContain(
-      "Soll wird monatlich berechnet — es gibt keine Tagesziele.",
-    );
+    expect(MONTHLY_HOURS_BRANCH).toContain("es gibt keine Tagesziele");
   });
 });
 
-// G-01/G-02 are presentation-only. The MONTHLY_HOURS chips write workDays
+// G-01/G-02 are presentation-only. The MONTHLY_HOURS weekdays write workDays
 // INDIRECTLY: they set mondayHours…sundayHours to 1/0, and the server derives
 // workDays from exactly those via normalizeWorkDays()
 // (apps/api/src/contexts/platform/api/settings.ts:1034). Changing the write path here
@@ -504,59 +514,62 @@ describe("employee form — MONTHLY_HOURS Arbeitstage (Phase 107 gap G-02)", () 
 // These assertions are the guard. If one of them ever fails, the change is wrong; do
 // not relax the assertion.
 describe("employee form — schedule payload is unchanged by the G-01/G-02 presentation fix", () => {
-  it("all seven day-hours ternaries in buildSchedulePayload() are byte-identical", () => {
-    expect(ROUTE_SOURCE).toContain(
-      'mondayHours: eType === "FIXED_SCHEDULE" ? eMon : eMonWd ? 1 : 0,',
+  const DAY_FIELDS = [
+    ["sundayHours", 0],
+    ["mondayHours", 1],
+    ["tuesdayHours", 2],
+    ["wednesdayHours", 3],
+    ["thursdayHours", 4],
+    ["fridayHours", 5],
+    ["saturdayHours", 6],
+  ] as const;
+
+  const monthly = (days: number[]) =>
+    buildSchedulePayload({
+      ...contractValuesOf(null, "2026-12-01"),
+      type: "MONTHLY_HOURS",
+      monthlyHours: 20,
+      monthlyWorkDays: days,
+    }) as Record<string, unknown>;
+
+  it("all seven day-hours fields of a MONTHLY_HOURS contract are 1/0 flags of the ticked weekdays", () => {
+    for (const [field, index] of DAY_FIELDS) {
+      const only = monthly([index]);
+      expect(only[field], `${field} ticked alone`).toBe(1);
+      for (const [other] of DAY_FIELDS.filter(([, i]) => i !== index)) {
+        expect(only[other], `${other} while only ${field} is ticked`).toBe(0);
+      }
+    }
+  });
+
+  it("the model keeps the day-hours ternary and the buildContractWorkDaysPayload spread", () => {
+    const model = MODEL_SOURCE.replace(/\s+/g, " ");
+    expect(model).toContain(
+      "fixed ? (values.days[DAY_VALUE_KEYS[index]] ?? 0) : flagged.has(index) ? 1 : 0",
     );
-    expect(ROUTE_SOURCE).toContain(
-      'tuesdayHours: eType === "FIXED_SCHEDULE" ? eTue : eTueWd ? 1 : 0,',
-    );
-    expect(ROUTE_SOURCE).toContain(
-      'wednesdayHours: eType === "FIXED_SCHEDULE" ? eWed : eWedWd ? 1 : 0,',
-    );
-    expect(ROUTE_SOURCE).toContain(
-      'thursdayHours: eType === "FIXED_SCHEDULE" ? eThu : eThuWd ? 1 : 0,',
-    );
-    expect(ROUTE_SOURCE).toContain(
-      'fridayHours: eType === "FIXED_SCHEDULE" ? eFri : eFriWd ? 1 : 0,',
-    );
-    expect(ROUTE_SOURCE).toContain(
-      'saturdayHours: eType === "FIXED_SCHEDULE" ? eSat : eSatWd ? 1 : 0,',
-    );
-    expect(ROUTE_SOURCE).toContain(
-      'sundayHours: eType === "FIXED_SCHEDULE" ? eSun : eSunWd ? 1 : 0,',
+    expect(model).toContain(
+      "...buildContractWorkDaysPayload(values.type, values.workDays, values.contractWorkDays),",
     );
   });
 
-  it("the buildContractWorkDaysPayload spread is unchanged", () => {
-    expect(ROUTE_SOURCE).toContain(
-      "...buildContractWorkDaysPayload(eType, eWorkDays, eContractWorkDays),",
-    );
-  });
-
-  it("the relabelled MONTHLY_HOURS chips still write the same seven booleans", () => {
-    expect(MONTHLY_HOURS_BRANCH).toContain("(eMonWd = !eMonWd)");
-    expect(MONTHLY_HOURS_BRANCH).toContain("(eTueWd = !eTueWd)");
-    expect(MONTHLY_HOURS_BRANCH).toContain("(eWedWd = !eWedWd)");
-    expect(MONTHLY_HOURS_BRANCH).toContain("(eThuWd = !eThuWd)");
-    expect(MONTHLY_HOURS_BRANCH).toContain("(eFriWd = !eFriWd)");
-    expect(MONTHLY_HOURS_BRANCH).toContain("(eSatWd = !eSatWd)");
-    expect(MONTHLY_HOURS_BRANCH).toContain("(eSunWd = !eSunWd)");
+  it("a FIXED_SCHEDULE still writes its own day hours, not flags", () => {
+    const body = buildSchedulePayload({
+      ...contractValuesOf(null, "2026-12-01"),
+      days: { mon: 7.5, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 },
+    }) as Record<string, unknown>;
+    expect(body.mondayHours).toBe(7.5);
+    expect(body.tuesdayHours).toBe(0);
   });
 });
 
-// Phase 107 Plan 10 (deferred-items.md item 2) — all five chip/segment groups
-// on this tab (Arbeitszeitmodell, FLEXTIME Arbeitstage, FLEXTIME Kerntage,
-// MONTHLY_HOURS Arbeitstage, BS-Modus) now share one markup shape.
+// Phase 107 Plan 10 (deferred-items.md item 2) — all chip/segment groups on this tab now
+// share one markup shape: a labelled group, never a bare <label> without a control.
 describe("employee form — group controls carry no orphan <label> (deferred-items item 2)", () => {
-  it('no bare <label class="form-label"> (without a for attribute) remains in the route', () => {
-    // A <label> may only reference a form control. Every chip/segment group on
-    // this tab is a set of <button>s inside a role-carrying container, so the
-    // accessible name lives on the container's aria-label and the visible text
-    // is a <span>. Re-adding a bare <label class="form-label"> here reintroduces
-    // the a11y_label_has_associated_control finding recorded in deferred-items.md
-    // item 2.
+  it('no bare <label class="form-label"> (without a for attribute) remains in the route or the tab', () => {
+    // Re-adding a bare <label class="form-label"> reintroduces the
+    // a11y_label_has_associated_control finding recorded in deferred-items.md item 2.
     expect(ROUTE_SOURCE).not.toContain('<label class="form-label">');
+    expect(TAB_SOURCE).not.toContain('<label class="form-label">');
   });
 });
 

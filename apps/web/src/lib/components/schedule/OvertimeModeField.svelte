@@ -10,9 +10,18 @@
     onchange: (v: Mode) => void;
     /** Select id; the hint id derives from it. Defaults to the id the admin page has always used. */
     id?: string;
+    /** Read-only for a caller without the right to change the contract. */
+    disabled?: boolean;
   }
 
-  let { type, monthlyHours, value, onchange, id = "e-overtime-mode" }: Props = $props();
+  let {
+    type,
+    monthlyHours,
+    value,
+    onchange,
+    id = "e-overtime-mode",
+    disabled = false,
+  }: Props = $props();
 
   // Display only (Issue #494 R5, D-05): the lock shows TRACK_ONLY but never writes it back,
   // so a stored CARRY_FORWARD survives typing 0 and then a real value again.
@@ -26,7 +35,7 @@
     class="form-input"
     aria-describedby={locked ? `${id}-hint` : undefined}
     value={locked ? "TRACK_ONLY" : value}
-    disabled={locked}
+    disabled={locked || disabled}
     onchange={(e) => {
       if (!locked) onchange(e.currentTarget.value as Mode);
     }}

@@ -1,168 +1,93 @@
 /**
- * Which `/admin` route a user may open (Issue #83, D-10/D-12/D-16) — the ONE place the web decides
- * it. Sidebar, BottomTabBar, CommandPalette and the admin layout guard read this module.
+ * Which page a user may open (Issue #83, D-10/D-12/D-16; since #844 D-06 for every page of the route table) —
+ * the ONE place the web decides it. Sidebar, BottomTabBar, CommandPalette, the admin and Verwalten layout guards
+ * and the Team guard read this module, which reads the permissions of the route table (`routes.ts`).
  *
- * Every entry is derived from the API guards its page calls (the comment names the guard). An
- * entry's `requires` is a list of alternatives, each alternative a set of keys that must ALL be
- * held, because some pages load several reads at once (D-12). Fail-closed: an unmapped path or an
- * empty alternative grants nothing. A UX gate only — the API's 403 stays the authority.
+ * Every entry's `requires` is a list of alternatives, each alternative a set of keys that must ALL be held,
+ * because some pages load several reads at once (D-12); each table line names the API guard its page calls.
+ * Fail-closed: an unmapped path or an empty alternative grants nothing. A UX gate only — the API's 403 stays the
+ * authority. `routes-844.test.ts` pins that #844 kept every pre-#844 alternative unchanged.
  */
-import { hasPermission, type PermissionHolder } from "$lib/permissions";
-import { activeNavHref, matchesRoute } from "$lib/nav/active-route";
-import { pageLabel, type PageHref } from "$lib/nav/page-labels";
+import type { PermissionHolder } from "$lib/permissions";
+import { matchesRoute } from "$lib/nav/active-route";
+import {
+  APP_ROUTES,
+  LEGACY_ROUTE_REDIRECTS,
+  holdsAlternatives,
+  mayOpenPath,
+  visibleRoute,
+  type PermissionAlternatives,
+  type RouteOptions,
+} from "$lib/nav/routes";
 
-export type PermissionAlternatives = readonly (readonly string[])[];
+export { holdsAlternatives };
+export type { PermissionAlternatives };
 
 export interface AdminRoutePermission {
   href: string;
+  /** The route file (pre-#844 URL); absent for a page created by #844. */
+  file?: string;
   requires: PermissionAlternatives;
-  /** False for alias routes that only redirect (not shown in any navigation). */
+  /** False for sub-pages, alias routes and internal tool pages (not shown in the rail). */
   inNav: boolean;
-  /** Group, label and icon of a navigable route (docs/ADMIN_STRUCTURE.md §1). */
-  nav?: { group: string; label: string; icon: string };
+  /** An internal tool page (#843): reachable by URL behind its guard, never listed in a navigation,
+   *  the command palette or the start-page redirect. */
+  internal?: true;
 }
 
-const Z = (resourceAction: string) => `${resourceAction}:ZUGEWIESEN`;
-
-/** One navigable route: group, icon and the alternatives (each an all-of key set). The label is
- *  the page's name from page-labels.ts (Issue #574), never spelled here. */
-function navRoute(
-  href: PageHref,
-  group: string,
-  icon: string,
-  ...requires: string[][]
-): AdminRoutePermission {
-  return { href, requires, inNav: true, nav: { group, label: pageLabel(href), icon } };
-}
-
-/** An alias route that only redirects; never shown in a navigation. */
-function aliasRoute(href: string, ...requires: string[][]): AdminRoutePermission {
-  return { href, requires, inNav: false };
-}
-
-// Each line names the API guard(s) its page calls.
+/** Every permission-gated page of the route table plus the redirect-only aliases, keyed by the new href. */
 export const ADMIN_ROUTE_PERMISSIONS: readonly AdminRoutePermission[] = [
-  // GET /employees
-  navRoute("/admin/employees", "PERSONAL", "users", [Z("employee:read")]),
-  // no read guard; the page's writes decide (PUT /settings/work, /settings/leave-types)
-  navRoute(
-    "/admin/vacation",
-    "PERSONAL",
-    "umbrella",
-    [Z("tenant-settings:update")],
-    [Z("leave-config:manage")],
+  ...APP_ROUTES.flatMap((route) =>
+    Array.isArray(route.requires)
+      ? [
+          {
+            href: route.href,
+            file: route.file,
+            requires: route.requires,
+            inNav: route.inNav,
+            ...(route.internal ? { internal: true as const } : {}),
+          },
+        ]
+      : [],
   ),
-  // writes /company-shutdowns
-  navRoute("/admin/shutdowns", "PERSONAL", "calendar", [Z("company-shutdown:manage")]),
-  // GET /leave/limits (handler checks: leave-limit:manage or leave-request:approve)
-  navRoute(
-    "/admin/leave-limits",
-    "PERSONAL",
-    "umbrella",
-    [Z("leave-limit:manage")],
-    [Z("leave-request:approve")],
-  ),
-  // Promise.all of templates/coverage, week, patterns
-  navRoute("/admin/shifts", "PLANUNG", "grid", [
-    Z("shift-config:manage"),
-    Z("shift:read"),
-    Z("shift-pattern:read"),
-  ]),
-  // GET /employees plus GET/PUT /employees/:id/availability
-  navRoute(
-    "/admin/availability",
-    "PLANUNG",
-    "calendar-check",
-    [Z("employee:read"), Z("availability:read")],
-    [Z("employee:read"), Z("availability:update")],
-  ),
-  // GET /salons (writes: salon:manage, decided by the API, hidden via salonAdminRights)
-  navRoute("/admin/salons", "PLANUNG", "store", [Z("salon:read")]),
-  // GET /overtime/close-month/status
-  navRoute("/admin/month-close", "COMPLIANCE", "lock", [Z("month-close:read")]),
-  // GET /audit-logs
-  navRoute("/admin/audit", "COMPLIANCE", "shield", [Z("audit-log:read")]),
-  // GET /support-accesses (the end action's extra permission is checked in the page; the API decides)
-  navRoute("/admin/support-access", "COMPLIANCE", "shield", [Z("audit-log:read")]),
-  // POST /imports/employees, POST /imports/time-entries
-  navRoute("/admin/import", "DATEN", "upload", [Z("employee:import")], [Z("time-entry:import")]),
-  // GET /reports/datev
-  navRoute("/admin/export", "DATEN", "download", [Z("report:export")]),
-  // tabs: settings, terminals, API keys
-  navRoute(
-    "/admin/system",
-    "SYSTEM",
-    "settings",
-    [Z("tenant-settings:read")],
-    [Z("tenant-settings:update")],
-    [Z("terminal:manage")],
-    [Z("api-key:manage")],
-  ),
-  // no API guard (writes /me/preferences); grouped with the tenant settings
-  navRoute(
-    "/admin/themes",
-    "SYSTEM",
-    "palette",
-    [Z("tenant-settings:read")],
-    [Z("tenant-settings:update")],
-  ),
-  // /presence-sources
-  navRoute("/admin/integrations", "SYSTEM", "wifi", [Z("presence-source:manage")]),
-  // /integrations/phorest
-  navRoute("/admin/phorest", "SYSTEM", "calendar", [Z("integration:manage")]),
-  // GET /roles, GET /role-assignments
-  navRoute("/admin/roles", "SYSTEM", "key", [Z("role:read")], [Z("role-assignment:manage")]),
-  // aliases that redirect to a route above
-  aliasRoute("/admin/special-leave", [Z("tenant-settings:update")], [Z("leave-config:manage")]),
-  aliasRoute("/admin/wifi-presence", [Z("presence-source:manage")]),
+  ...LEGACY_ROUTE_REDIRECTS.map((alias) => ({
+    href: alias.href,
+    requires: alias.requires,
+    inNav: false,
+  })),
 ];
 
-const HREFS = ADMIN_ROUTE_PERMISSIONS.map((entry) => entry.href);
-
-/** True iff some non-empty alternative is held completely. */
-export function holdsAlternatives(
-  user: PermissionHolder | null | undefined,
-  requires: PermissionAlternatives,
-): boolean {
-  return requires.some(
-    (alternative) => alternative.length > 0 && alternative.every((key) => hasPermission(user, key)),
-  );
-}
-
-/** The map entry a pathname belongs to (longest matching href), or null. */
-export function adminRouteFor(pathname: string): AdminRoutePermission | null {
-  const href = activeNavHref(HREFS, pathname);
-  return ADMIN_ROUTE_PERMISSIONS.find((entry) => entry.href === href) ?? null;
-}
-
+/** A Verwalten page (new URL) or an old `/admin` URL. */
 export function isAdminHref(href: string): boolean {
-  return matchesRoute("/admin", href);
+  return matchesRoute("/verwalten", href) || matchesRoute("/admin", href);
 }
 
-/** The first navigable admin route the user may open, or null. */
+/** The first visible Verwalten entry the user may open, or null (the old `/admin` landing used it). */
 export function firstAccessibleAdminHref(user: PermissionHolder | null | undefined): string | null {
   return (
-    ADMIN_ROUTE_PERMISSIONS.find((entry) => entry.inNav && holdsAlternatives(user, entry.requires))
-      ?.href ?? null
+    APP_ROUTES.find(
+      (route) =>
+        route.area === "verwalten" &&
+        route.inNav &&
+        route.href !== "/verwalten" &&
+        visibleRoute(user, route, { availabilityEnabled: true }),
+    )?.href ?? null
   );
 }
 
+/** May `user` open `pathname` (a new URL, a sub-path of one, or a redirect-only alias)? */
 export function canAccessAdminPath(
   user: PermissionHolder | null | undefined,
   pathname: string,
 ): boolean {
-  if (pathname === "/admin" || pathname === "/admin/") {
-    return firstAccessibleAdminHref(user) !== null;
-  }
-  const entry = adminRouteFor(pathname);
-  return entry !== null && holdsAlternatives(user, entry.requires);
+  return mayOpenPath(user, pathname);
 }
 
 export type AdminGuardDecision = "wait" | "allow" | "deny";
 
 /**
- * D-16: a session cached before the permission list existed (#378) waits for the refresh instead
- * of being denied; no user is denied.
+ * The guard's decision for `pathname`: "wait" while the permission list is not loaded yet (a stale session from
+ * before Phase 378 has none — the layout loads it, never denies on a missing list), "allow" or "deny".
  */
 export function adminGuardDecision(
   user: PermissionHolder | null | undefined,
@@ -173,53 +98,18 @@ export function adminGuardDecision(
   return canAccessAdminPath(user, pathname) ? "allow" : "deny";
 }
 
-// ── Admin navigation (Phase 83, #83) ──────────────────────────────────────────
-
 export interface AdminNavItem {
   href: string;
   label: string;
   icon: string;
 }
 
-export interface AdminNavGroup {
-  label: string;
-  items: AdminNavItem[];
-}
-
-/**
- * The five admin groups of docs/ADMIN_STRUCTURE.md §1, derived from the route map above (one list,
- * so a route and its nav item cannot drift apart). Sidebar and the mobile Mehr sheet show the same
- * items; each is filtered by the route map.
- */
-export const ADMIN_NAV_GROUPS: readonly AdminNavGroup[] = ADMIN_ROUTE_PERMISSIONS.reduce<
-  AdminNavGroup[]
->((groups, entry) => {
-  if (!entry.inNav || !entry.nav) return groups;
-  const item = { href: entry.href, label: entry.nav.label, icon: entry.nav.icon };
-  const last = groups[groups.length - 1];
-  if (last && last.label === entry.nav.group) last.items.push(item);
-  else groups.push({ label: entry.nav.group, items: [item] });
-  return groups;
-}, []);
-
-/** The admin groups the user may open; a group whose items are all hidden is dropped. */
-export function visibleAdminNavGroups(
-  user: PermissionHolder | null | undefined,
-  options: { availabilityEnabled: boolean },
-): AdminNavGroup[] {
-  return ADMIN_NAV_GROUPS.map((group) => ({
-    label: group.label,
-    items: group.items.filter(
-      (item) =>
-        (options.availabilityEnabled || item.href !== "/admin/availability") &&
-        canAccessAdminPath(user, item.href),
-    ),
-  })).filter((group) => group.items.length > 0);
-}
-
+/** The Verwalten rail entries the user may open (hubs only when a child is open). */
 export function visibleAdminNavItems(
   user: PermissionHolder | null | undefined,
-  options: { availabilityEnabled: boolean },
+  options: RouteOptions,
 ): AdminNavItem[] {
-  return visibleAdminNavGroups(user, options).flatMap((group) => group.items);
+  return APP_ROUTES.filter(
+    (route) => route.area === "verwalten" && route.inNav && visibleRoute(user, route, options),
+  ).map(({ href, label, icon }) => ({ href, label, icon }));
 }

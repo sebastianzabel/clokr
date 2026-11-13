@@ -80,7 +80,11 @@ export type ConflictReason =
   // Issue #70 (D-10/D-11): the instant of a START lies inside or before a closed entry of the
   // employee, a re-open would end after the event instant, or the database refused an overlap
   // (exclusion constraint). Nothing is written. Resolver-produced, never by `decide()`.
-  | "ENTRY_OVERLAP";
+  | "ENTRY_OVERLAP"
+  // Issue #596: the break state of an open entry
+  | "ALREADY_ON_BREAK"
+  | "NOT_ON_BREAK"
+  | "ACTIVITY_SHARES_EXCEED";
 
 export type ClockState =
   | { kind: "NO_OPEN_ENTRY" }
@@ -100,4 +104,35 @@ export type ClockResolution =
   | { kind: "CONSOLIDATED"; entry: TimeEntry; breakId: string; audit: { id: string } }
   | { kind: "CONFIRMED"; entryId: string; audit: { id: string } }
   | { kind: "DEBOUNCE_NOOP" } // D-02: 60s double-tap guard — STOP within 60s of START is a NO-OP
+  | { kind: "CONFLICT"; reason: ConflictReason };
+
+// ── Issue #596 (#845): the running break as a server state ────────────────────────────────────────
+
+/** Start or end the running break of the caller's open entry. */
+export type BreakAction = "START" | "END";
+
+export type BreakEvent = {
+  tenantId: string;
+  employeeId: string;
+  entryId: string;
+  action: BreakAction;
+  timestamp: Date;
+  actor: Actor;
+};
+
+/** The facts of an entry the break decision reads. */
+export type BreakEntryState = {
+  endTime: Date | null;
+  breakStartedAt: Date | null;
+  isLocked: boolean;
+};
+
+export type BreakDecision =
+  | { kind: "BREAK_START" }
+  | { kind: "BREAK_END"; startedAt: Date }
+  | { kind: "CONFLICT"; reason: ConflictReason };
+
+export type BreakResolution =
+  | { kind: "BREAK_STARTED"; entry: TimeEntry; audit: { id: string } }
+  | { kind: "BREAK_ENDED"; entry: TimeEntry; breakId: string | null; audit: { id: string } }
   | { kind: "CONFLICT"; reason: ConflictReason };

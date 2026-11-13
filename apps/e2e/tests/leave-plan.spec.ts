@@ -56,7 +56,7 @@ async function loginAsTenantAdmin(page: Page, tenant: TestTenant): Promise<void>
   await page.getByLabel("E-Mail").fill(`admin@${tenant.tenantId}.test`);
   await page.getByLabel("Passwort", { exact: true }).fill(PASSWORD);
   await page.getByRole("button", { name: /anmelden/i }).click();
-  await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+  await page.waitForURL(/\/(ich|team|verwalten)(\/|$)/, { timeout: 10_000 }); // #844: the start page
 }
 
 async function createEmployee(

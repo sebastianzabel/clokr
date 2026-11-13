@@ -246,7 +246,7 @@ export function parseHygieneArgs(argv) {
       "exclude-title": { type: "string", default: "" },
       owner: { type: "string", default: "sebastianzabel" },
       project: { type: "string", default: "1" },
-      repo: { type: "string", default: process.env.GITHUB_REPOSITORY ?? "sebastianzabel/clokr" },
+      repo: { type: "string", default: process.env.GITHUB_REPOSITORY ?? "getclokr/clokr" },
     },
   });
   return {

@@ -55,8 +55,17 @@ const BUILDER_FILE = "lib/dashboard/team-charts.ts";
 /** The files that draw a chart, measured 18.10.2026 on the tree of #591-01. */
 const EXPECTED_CHART_FILES = [
   "lib/components/dashboard/TeamSaldoCard.svelte",
-  "routes/(app)/dashboard/+page.svelte",
+  // Issue #895: the three team trends live on Verwalten › Berichte (tab „Verläufe“); the start
+  // pages draw no chart (no-start-page-chart-854.test.ts).
+  "lib/components/reports/TeamTrendsTab.svelte",
 ];
+/**
+ * Builders that no page draws. Issue #846 reserved the three team trends here while they had no
+ * page; #895 gave them one (TeamTrendsTab), so the register is EMPTY and G3 requires that every
+ * builder of the runtime table is drawn somewhere. A builder that loses its page again must be
+ * deleted, not parked here.
+ */
+const RESERVED_FOR_895: readonly string[] = [];
 /**
  * Walk floor: 281 non-test `.ts`/`.svelte` files measured on 18.10.2026, minus about 5 %. The
  * literal is the floor (the vacuity gate only reads a numeric literal as proof).
@@ -207,9 +216,9 @@ function hasHandBuiltReportUrl(text: string): boolean {
 
 // ── Runtime table (G4) ─────────────────────────────────────────────────────────────────────────
 
+// #842 D-842-26: brandLight left the chart theme, so the fixture no longer carries it.
 const STUB_THEME: ChartTheme = {
   brand: "S-brand",
-  brandLight: "S-brandLight",
   brandTint: "S-brandTint",
   neutral: "S-neutral",
   sick: "S-sick",
@@ -413,8 +422,10 @@ describe("Issue #591 - one chart style (D-591-5)", () => {
     expect(offenders, `a chart is built inline or by an unknown function: ${offenders}`).toEqual(
       [],
     );
-    expect([...used].sort()).toEqual(Object.keys(RUNTIME_TABLE).sort());
-    expect([...exported].sort()).toEqual(Object.keys(RUNTIME_TABLE).sort());
+    const table = Object.keys(RUNTIME_TABLE).sort();
+    expect(RESERVED_FOR_895, "the #895 reservation is spent").toEqual([]);
+    expect([...used].sort()).toEqual(table);
+    expect([...exported].sort()).toEqual(table);
   });
 
   it("G4: every builder titles its value axis, never smooths and draws what its descriptor says", () => {
@@ -466,7 +477,8 @@ describe("Issue #591 - one chart style (D-591-5)", () => {
   it("G5: every canvas is labelled from its descriptor and carries role=img", () => {
     const svelteFiles = FILES.filter((f) => f.rel.endsWith(".svelte"));
     const tags = svelteFiles.flatMap((f) => canvasTags(f.text).map((tag) => ({ rel: f.rel, tag })));
-    expect(tags.length).toBeGreaterThanOrEqual(4);
+    // #846: one chart component remains (TeamSaldoCard); every chart file owns a canvas (below)
+    expect(tags.length).toBeGreaterThanOrEqual(1);
     const offenders = tags.flatMap(({ rel, tag }) => {
       const problem = canvasProblem(tag);
       return problem === null ? [] : [`${rel}: ${problem}`];

@@ -230,8 +230,9 @@ describe("Issue #78 (D-12) — AuditLog rows are mutated only at two justified, 
 // the audit-log API's read-only status explicitly — this block adds that direct, named assertion.
 const AUDIT_LOGS_ROUTE_FILE = "apps/api/src/contexts/platform/api/audit-logs.ts";
 // Measured 2026-09-26 (Phase 78b Plan 03): exactly 2 `app.get(` registrations, 0 of any other
-// HTTP-method registration.
-const EXPECTED_GET_REGISTRATIONS = 2;
+// HTTP-method registration. 3 since Issue #583 (Phase 854): `GET /audit-logs/export` is a third
+// read; the file still registers nothing that writes.
+const EXPECTED_GET_REGISTRATIONS = 3;
 const WRITE_METHOD_RE = /\bapp\s*\.\s*(post|put|patch|delete|route)\s*\(/g;
 const GET_METHOD_RE = /\bapp\s*\.\s*get\s*\(/g;
 

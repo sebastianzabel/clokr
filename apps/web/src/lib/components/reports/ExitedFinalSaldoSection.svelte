@@ -3,6 +3,7 @@
   // saldo stays visible here until a manager closes that month. The server chose the rows, their
   // order and their bound; this component displays them and says how many are not shown.
   import Icon from "$components/Icon.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import {
     exitDateLabel,
     exitedMoreCount,
@@ -26,90 +27,79 @@
   let more = $derived(exitedMoreCount(total, rows.length));
   // Issue #588 (D-588-4): the forecast header names the window the rows really have.
   let forecastHeader = $derived(forecastColumnLabel(rows));
+
+  // DataTable's row type is a string-keyed record; the interface of the overview row has no index
+  // signature, so the shown rows carry the intersection.
+  type TableRow = ExitedOverviewRow & Record<string, unknown>;
+
+  const columns = $derived<DataTableColumn[]>([
+    { key: "name", label: "Mitarbeiter", primary: true },
+    { key: "employeeNumber", label: "Nr." },
+    { key: "exitDate", label: "Austritt am" },
+    { key: "confirmed", label: "Abgeschlossen", align: "end" },
+    { key: "open", label: forecastHeader, align: "end" },
+    { key: "total", label: "Gesamt", align: "end" },
+  ]);
 </script>
+
+{#snippet cell(row: TableRow, column: DataTableColumn)}
+  {@const cells = teamSaldoCells(row)}
+  {#if column.key === "name"}
+    {row.name}
+  {:else if column.key === "employeeNumber"}
+    {row.employeeNumber}
+  {:else if column.key === "exitDate"}
+    <span data-testid="exit-date">{exitDateLabel(row.exitDate)}</span>
+  {:else if column.key === "confirmed"}
+    <span data-testid="saldo-cell-confirmed" title={cells.confirmed.title}
+      >{cells.confirmed.text}</span
+    >
+  {:else if column.key === "open"}
+    <span data-testid="saldo-cell-open" title={cells.open.title}>{cells.open.text}</span>
+    {#if row.rosterIncomplete}
+      <span class="roster-dot" data-testid="saldo-roster-badge">
+        <Icon name="circle-fill" size={6} title="Restmonat noch nicht vollständig verplant" />
+      </span>
+    {/if}
+  {:else if column.key === "total"}
+    <span data-testid="saldo-cell-total" title={cells.total.title}>{cells.total.text}</span>
+  {/if}
+{/snippet}
 
 {#if rows.length > 0 || total > 0}
   <section class="exited-section" data-testid="exited-final-saldo">
-    <h3 class="exited-title">Ausgetreten, offener Endsaldo ({total})</h3>
-    <p class="exited-hint">
+    <h3 class="settings-group-title">Ausgetreten, offener Endsaldo ({total})</h3>
+    <p class="settings-group-desc">
       Der Endsaldo ist bestätigt, sobald der Austrittsmonat abgeschlossen ist.
     </p>
     {#if asOfNote}
-      <p class="exited-hint" data-testid="exited-as-of">{asOfNote}</p>
+      <p class="settings-group-desc" data-testid="exited-as-of">{asOfNote}</p>
     {/if}
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Mitarbeiter</th>
-            <th>Nr.</th>
-            <th>Austritt am</th>
-            <th class="numeric">Abgeschlossen</th>
-            <th class="numeric">{forecastHeader}</th>
-            <th class="numeric">Gesamt</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each rows as row (row.id)}
-            {@const cells = teamSaldoCells(row)}
-            <tr>
-              <td>{row.name}</td>
-              <td>{row.employeeNumber}</td>
-              <td data-testid="exit-date">{exitDateLabel(row.exitDate)}</td>
-              <td class="numeric" data-testid="saldo-cell-confirmed" title={cells.confirmed.title}>
-                {cells.confirmed.text}
-              </td>
-              <td class="numeric" data-testid="saldo-cell-open" title={cells.open.title}>
-                {cells.open.text}
-                {#if row.rosterIncomplete}
-                  <span class="roster-dot" data-testid="saldo-roster-badge">
-                    <Icon
-                      name="circle-fill"
-                      size={6}
-                      title="Restmonat noch nicht vollständig verplant"
-                    />
-                  </span>
-                {/if}
-              </td>
-              <td class="numeric" data-testid="saldo-cell-total" title={cells.total.title}>
-                {cells.total.text}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    {#if rows.length > 0}
+      <DataTable
+        {columns}
+        rows={rows as TableRow[]}
+        rowKey={(row) => row.id}
+        {cell}
+        caption="Ausgetreten mit offenem Endsaldo"
+      />
+    {/if}
     {#if more > 0}
-      <p class="exited-more" data-testid="exited-more">und {more} weitere</p>
+      <p class="settings-group-desc exited-more" data-testid="exited-more">und {more} weitere</p>
     {/if}
   </section>
 {/if}
 
 <style>
   .exited-section {
-    margin-top: 1.5rem;
-  }
-
-  .exited-title {
-    margin: 0 0 0.25rem;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .exited-hint,
-  .exited-more {
-    margin: 0 0 0.75rem;
-    font-size: 0.875rem;
-    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    margin-top: var(--s-4);
   }
 
   .exited-more {
-    margin: 0.75rem 0 0;
-  }
-
-  .numeric {
-    text-align: right;
+    margin-top: 0;
   }
 
   .roster-dot {

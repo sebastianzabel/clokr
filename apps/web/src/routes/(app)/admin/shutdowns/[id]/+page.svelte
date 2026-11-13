@@ -1,43 +1,32 @@
 <script lang="ts">
+  import { showDetailCrumb } from "$lib/nav/detail-crumb";
   import { pageLabel } from "$lib/nav/page-labels";
-  import { api } from "$api/client";
+  import { api, ApiError } from "$api/client";
   import { toasts } from "$stores/toast";
   import { markUnsaved } from "$stores/unsaved";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { onMount } from "svelte";
-  import { format } from "date-fns";
-  import { de } from "date-fns/locale";
-  import ListDetail from "$lib/components/admin/ListDetail.svelte";
-  import Section from "$lib/components/admin/Section.svelte";
-  import DangerZone from "$lib/components/admin/DangerZone.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
-  import Modal from "$components/ui/Modal.svelte";
-
-  // ── Types ──────────────────────────────────────────────────────────────────
-  interface Employee {
-    id: string;
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-  }
-
-  interface ShutdownException {
-    id: string;
-    employeeId: string;
-    reason: string | null;
-    employee: Employee;
-  }
-
-  interface CompanyShutdown {
-    id: string;
-    name: string;
-    startDate: string;
-    endDate: string;
-    deductsFromVacation: boolean;
-    notes: string | null;
-    exceptions: ShutdownException[];
-  }
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
+  import EmptyState from "$components/ui/EmptyState.svelte";
+  import FormField from "$components/ui/FormField.svelte";
+  import Note from "$components/ui/Note.svelte";
+  import Skeleton from "$components/ui/Skeleton.svelte";
+  import SettingsGroup from "$lib/components/admin/settings/SettingsGroup.svelte";
+  import ToggleField from "$lib/components/admin/settings/ToggleField.svelte";
+  import {
+    SHUTDOWN_NAME_MAX,
+    dayCountLabel,
+    formatShutdownDate,
+    shutdownFieldMessages,
+    type CompanyShutdown,
+    type ShutdownEmployee,
+    type ShutdownException,
+  } from "$lib/settings/betriebsurlaub";
 
   // ── Loading state ──────────────────────────────────────────────────────────
   let loading = $state(true);
@@ -45,7 +34,9 @@
 
   // ── Data state ─────────────────────────────────────────────────────────────
   let shutdown = $state<CompanyShutdown | null>(null);
-  let allEmployees = $state<Employee[]>([]);
+  // The shutdown's name closes the top bar's path (#854: pages carry no breadcrumb of their own).
+  $effect(() => showDetailCrumb(shutdown?.name ?? null));
+  let allEmployees = $state<ShutdownEmployee[]>([]);
 
   const shutdownId = $derived($page.params.id);
 
@@ -55,11 +46,11 @@
     try {
       const [shutdownsRes, employeesRes] = await Promise.allSettled([
         api.get<CompanyShutdown[]>("/company-shutdowns"),
-        api.get<{ employees?: Employee[] } | Employee[]>("/employees?limit=500"),
+        api.get<{ employees?: ShutdownEmployee[] } | ShutdownEmployee[]>("/employees?limit=500"),
       ]);
 
       if (shutdownsRes.status === "rejected") {
-        loadError = "Fehler beim Laden.";
+        loadError = "Der Betriebsurlaub konnte nicht geladen werden.";
         return;
       }
       const found = shutdownsRes.value.find((s) => s.id === shutdownId);
@@ -82,7 +73,7 @@
         allEmployees = (Array.isArray(d) ? d : d.employees) ?? [];
       }
     } catch {
-      loadError = "Fehler beim Laden.";
+      loadError = "Der Betriebsurlaub konnte nicht geladen werden.";
     } finally {
       loading = false;
     }
@@ -100,7 +91,7 @@
   let formNotes = $state("");
 
   // ── Unsaved-section tracking (Phase 109, D-11/D-12 · AK-06/AK-07) ──────────────
-  // Snapshot comparison rather than per-field oninput flags — same idiom as admin/system.
+  // Snapshot comparison rather than per-field oninput flags - same idiom as admin/system.
   function snap(...values: unknown[]): string {
     return JSON.stringify(values);
   }
@@ -110,8 +101,22 @@
     snap(formName, formStart, formEnd, formDeducts, formNotes) !== shutdownSnapshot,
   );
 
+  // The number of fields that differ from the snapshot (the SaveBar's "N Änderungen").
+  const shutdownChanges = $derived.by(() => {
+    if (shutdownSnapshot === "") return 0;
+    const stored = JSON.parse(shutdownSnapshot) as unknown[];
+    return [formName, formStart, formEnd, formDeducts, formNotes].filter(
+      (value, index) => value !== stored[index],
+    ).length;
+  });
+
+  const messages = $derived(
+    shutdownFieldMessages({ name: formName, startDate: formStart, endDate: formEnd }),
+  );
+  const shutdownErrors = $derived(Object.values(messages).filter((m) => m !== "").length);
+
   // Gate the registration on "the baseline has been taken" (WR-01). onMount returns early on a
-  // failed load AND on a not-found id, both before any field is hydrated — registering an ungated
+  // failed load AND on a not-found id, both before any field is hydrated - registering an ungated
   // dirty flag would arm the navigation guard on a page that shows nothing but an error.
   let snapshotsReady = $state(false);
 
@@ -123,11 +128,24 @@
   // Delete confirm
   let deleteConfirmOpen = $state(false);
 
-  // Exception management
-  let exceptionModalOpen = $state(false);
+  // Exceptions are instant writes from a Dialog and a ConfirmDialog; their drafts are a dialog-dismissal
+  // concern that beforeNavigate never sees, so only the period section is tracked above.
+  let exceptionDialogOpen = $state(false);
   let addExceptionEmpId = $state("");
   let addExceptionReason = $state("");
   let savingException = $state(false);
+  let removeConfirm = $state<{ open: boolean; employeeId: string | null; name: string }>({
+    open: false,
+    employeeId: null,
+    name: "",
+  });
+
+  const exceptionColumns: DataTableColumn[] = [
+    { key: "person", label: "Mitarbeitende", primary: true },
+    { key: "number", label: "Nr." },
+    { key: "reason", label: "Grund" },
+    { key: "actions", label: "Aktionen", align: "end" },
+  ];
 
   // ── Reload ─────────────────────────────────────────────────────────────────
   async function reloadShutdown() {
@@ -137,19 +155,15 @@
       const updated = all.find((s) => s.id === shutdown!.id);
       if (updated) shutdown = updated;
     } catch {
-      // ignore reload errors
+      toasts.error("Die Ausnahmen konnten nicht neu geladen werden. Lade die Seite neu.");
     }
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────
   async function saveShutdown() {
     if (!shutdown) return;
-    if (!formName.trim() || !formStart || !formEnd) {
-      saveError = "Name, Start- und Enddatum sind Pflichtfelder.";
-      return;
-    }
-    if (formStart > formEnd) {
-      saveError = "Startdatum muss vor Enddatum liegen.";
+    if (shutdownErrors > 0) {
+      saveError = "Bitte prüf die markierten Felder.";
       return;
     }
     saving = true;
@@ -160,16 +174,26 @@
         startDate: formStart,
         endDate: formEnd,
         deductsFromVacation: formDeducts,
-        notes: formNotes || undefined,
+        notes: formNotes,
       });
       shutdown = updated;
-      shutdownSnapshot = snap(formName, formStart, formEnd, formDeducts, formNotes); // Phase 109 — section is clean again
+      shutdownSnapshot = snap(formName, formStart, formEnd, formDeducts, formNotes); // the section is clean again
       toasts.success("Betriebsurlaub gespeichert.");
-    } catch {
-      saveError = "Speichern fehlgeschlagen.";
+    } catch (err) {
+      // A refusal of the API is shown as the server worded it.
+      saveError =
+        err instanceof ApiError && err.status >= 400 && err.status < 500
+          ? err.message
+          : "Speichern fehlgeschlagen.";
     } finally {
       saving = false;
     }
+  }
+
+  function discardShutdown() {
+    const stored = JSON.parse(shutdownSnapshot) as [string, string, string, boolean, string];
+    [formName, formStart, formEnd, formDeducts, formNotes] = stored;
+    saveError = "";
   }
 
   // ── Delete ─────────────────────────────────────────────────────────────────
@@ -178,9 +202,11 @@
     try {
       await api.delete(`/company-shutdowns/${shutdown.id}`);
       toasts.success("Betriebsurlaub gelöscht.");
-      goto("/admin/shutdowns");
+      // The shutdown is gone: leave without the unsaved guard asking about the form.
+      shutdownSnapshot = snap(formName, formStart, formEnd, formDeducts, formNotes);
+      await goto("/verwalten/regeln/abwesenheiten#betriebsurlaub");
     } catch {
-      toasts.error("Löschen fehlgeschlagen.");
+      toasts.error("Löschen fehlgeschlagen. Versuche es noch einmal.");
     }
   }
 
@@ -188,7 +214,7 @@
   function openExceptions() {
     addExceptionEmpId = "";
     addExceptionReason = "";
-    exceptionModalOpen = true;
+    exceptionDialogOpen = true;
   }
 
   async function addException() {
@@ -199,35 +225,35 @@
         employeeId: addExceptionEmpId,
         reason: addExceptionReason || undefined,
       });
-      addExceptionEmpId = "";
-      addExceptionReason = "";
+      exceptionDialogOpen = false;
+      toasts.success("Ausnahme hinzugefügt.");
       await reloadShutdown();
     } catch {
-      toasts.error("Ausnahme konnte nicht hinzugefügt werden.");
+      toasts.error(
+        "Ausnahme konnte nicht hinzugefügt werden. Prüfe die Auswahl und versuche es noch einmal.",
+      );
     } finally {
       savingException = false;
     }
   }
 
-  async function removeException(employeeId: string) {
-    if (!shutdown) return;
+  function askRemoveException(ex: ShutdownException) {
+    removeConfirm = {
+      open: true,
+      employeeId: ex.employeeId,
+      name: `${ex.employee.firstName} ${ex.employee.lastName}`,
+    };
+  }
+
+  async function confirmRemoveException() {
+    if (!shutdown || !removeConfirm.employeeId) return;
     try {
-      await api.delete(`/company-shutdowns/${shutdown.id}/exceptions/${employeeId}`);
+      await api.delete(`/company-shutdowns/${shutdown.id}/exceptions/${removeConfirm.employeeId}`);
+      toasts.success("Ausnahme entfernt.");
       await reloadShutdown();
     } catch {
-      toasts.error("Ausnahme konnte nicht entfernt werden.");
+      toasts.error("Ausnahme konnte nicht entfernt werden. Versuche es noch einmal.");
     }
-  }
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  function fmtDate(d: string) {
-    return format(new Date(d), "dd.MM.yyyy", { locale: de });
-  }
-
-  function calcDays(start: string, end: string) {
-    const s = new Date(start);
-    const e = new Date(end);
-    return Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
   }
 
   const availableEmployees = $derived(
@@ -237,329 +263,278 @@
   );
 </script>
 
+<svelte:head>
+  <title>{shutdown ? shutdown.name : pageLabel("/admin/shutdowns")} – Clokr</title>
+</svelte:head>
+
 {#if loading}
-  <div class="page-loading">Laden…</div>
+  <Skeleton shape="card" count={2} lines={3} />
 {:else if loadError || !shutdown}
-  <div class="page-error">{loadError || "Betriebsurlaub nicht gefunden."}</div>
+  <div role="alert"><Note tone="bad">{loadError || "Betriebsurlaub nicht gefunden."}</Note></div>
 {:else}
-  {@const shownShutdown = shutdown}
   <!-- A snippet body loses the `!shutdown` narrowing of the branch above, so it reads this const. -->
-  <ListDetail
-    eyebrow="Personal"
-    title={shutdown.name}
-    sub="Betriebsurlaub bearbeiten"
-    view="detail"
-    crumbs={[
-      { label: pageLabel("/admin/shutdowns"), href: "/admin/shutdowns" },
-      { label: shutdown.name },
-    ]}
+  {@const shownShutdown = shutdown}
+  <PageHead
+    title={shownShutdown.name}
+    sub={`${formatShutdownDate(shownShutdown.startDate)} – ${formatShutdownDate(shownShutdown.endDate)} (${dayCountLabel(shownShutdown.startDate, shownShutdown.endDate)})`}
   >
-    {#snippet tabContent(_tab)}
-      <!-- ── Zeitraum & Einstellungen ──────────────────────────────────────── -->
-      <!-- Exceptions are added/removed through immediate writes from a <Modal>, which is
-           dismissible by ESC and backdrop (Modal.svelte:26,33) — a modal draft is a
-           modal-dismissal concern that beforeNavigate never sees and Section.dirty cannot
-           render for. Only this section's own dirty flag is tracked here. -->
-      <Section title="Betriebsurlaub" sub="Zeitraum und Einstellungen" dirty={shutdownDirty}>
-        {#if saveError}
-          <div class="alert alert-error">{saveError}</div>
-        {/if}
-        <div class="form-group">
-          <label class="form-label" for="sh-name">Bezeichnung *</label>
+    {#snippet actions()}
+      <Chip tone={shownShutdown.deductsFromVacation ? "warn" : "neutral"}>
+        {shownShutdown.deductsFromVacation ? "Zieht vom Urlaubskonto ab" : "Kein Urlaubsabzug"}
+      </Chip>
+    {/snippet}
+  </PageHead>
+
+  <div class="sd-stack">
+    <!-- ── Zeitraum und Einstellungen ───────────────────────────────────────── -->
+    <SettingsGroup
+      title="Zeitraum und Einstellungen"
+      description="Bezeichnung, Zeitraum und ob der Betriebsurlaub vom Urlaubskonto abgezogen wird."
+      changes={shutdownChanges}
+      errors={shutdownErrors}
+      {saving}
+      saveLabel="Betriebsurlaub speichern"
+      onSave={saveShutdown}
+      onDiscard={discardShutdown}
+    >
+      <FormField label="Bezeichnung" required error={messages.name}>
+        {#snippet field({ id, describedBy, invalid })}
           <input
-            id="sh-name"
+            {id}
             class="form-input"
             type="text"
+            maxlength={SHUTDOWN_NAME_MAX}
+            placeholder="z. B. Weihnachtsschließung 2026"
             bind:value={formName}
-            placeholder="z.B. Weihnachtsschließung 2025"
+            disabled={saving}
+            data-testid="shutdown-name"
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
           />
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label" for="sh-start">Startdatum *</label>
-            <input id="sh-start" class="form-input" type="date" bind:value={formStart} />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="sh-end">Enddatum *</label>
-            <input id="sh-end" class="form-input" type="date" bind:value={formEnd} />
-          </div>
-        </div>
-        <div class="form-group">
-          <div class="meta-row">
-            <span class="badge badge-neutral">
-              {calcDays(formStart || shownShutdown.startDate, formEnd || shownShutdown.endDate)} Tage
-            </span>
-            <span class="meta-dates">
-              {fmtDate(formStart || shownShutdown.startDate)} – {fmtDate(
-                formEnd || shownShutdown.endDate,
-              )}
-            </span>
-          </div>
-        </div>
-        <div class="form-group">
-          <label class="checkbox-label">
-            <input type="checkbox" bind:checked={formDeducts} />
-            Vom Urlaubskonto abziehen
-          </label>
-          <p class="form-hint">
-            Wenn aktiv, wird der Betriebsurlaub automatisch vom Jahresurlaub der Mitarbeiter
-            abgezogen (außer bei Ausnahmen).
-          </p>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="sh-notes">Notiz (optional)</label>
+        {/snippet}
+      </FormField>
+      <div class="sd-dates">
+        <FormField label="Startdatum" required error={messages.startDate}>
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              class="form-input"
+              type="date"
+              bind:value={formStart}
+              disabled={saving}
+              data-testid="shutdown-start"
+              aria-invalid={invalid ? "true" : undefined}
+              aria-describedby={describedBy}
+            />
+          {/snippet}
+        </FormField>
+        <FormField label="Enddatum" required error={messages.endDate}>
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              class="form-input"
+              type="date"
+              bind:value={formEnd}
+              disabled={saving}
+              data-testid="shutdown-end"
+              aria-invalid={invalid ? "true" : undefined}
+              aria-describedby={describedBy}
+            />
+          {/snippet}
+        </FormField>
+      </div>
+      <ToggleField
+        bind:checked={formDeducts}
+        label="Vom Urlaubskonto abziehen"
+        help="Der Betriebsurlaub wird automatisch vom Jahresurlaub der Mitarbeitenden abgezogen, außer bei Ausnahmen."
+        disabled={saving}
+        testid="shutdown-deducts"
+      />
+      <FormField label="Notiz">
+        {#snippet field({ id, describedBy })}
           <textarea
-            id="sh-notes"
+            {id}
             class="form-input"
             rows="3"
+            placeholder="Interne Anmerkung (optional)"
             bind:value={formNotes}
-            placeholder="Interne Anmerkung …"
+            disabled={saving}
+            data-testid="shutdown-notes"
+            aria-describedby={describedBy}
           ></textarea>
-        </div>
-        {#snippet footer()}
-          <button class="btn btn-primary btn-sm" onclick={saveShutdown} disabled={saving}>
-            {saving ? "Speichern …" : "Speichern"}
-          </button>
         {/snippet}
-      </Section>
+      </FormField>
+      {#if saveError}
+        <div role="alert"><Note tone="bad">{saveError}</Note></div>
+      {/if}
+    </SettingsGroup>
 
-      <!-- ── Ausnahmen ────────────────────────────────────────────────────────── -->
-      <Section title="Ausnahmen" sub="Mitarbeiter, die vom Betriebsurlaub ausgenommen sind">
-        {#snippet actions()}
-          <button class="btn btn-ghost btn-sm" onclick={openExceptions}
-            >+ Ausnahme hinzufügen</button
+    <!-- ── Ausnahmen ──────────────────────────────────────────────────────────── -->
+    <section class="settings-group" aria-labelledby="shutdown-exceptions-title">
+      <h2 class="settings-group-title" id="shutdown-exceptions-title">Ausnahmen</h2>
+      <p class="settings-group-desc">
+        Mitarbeitende in dieser Liste sind vom Betriebsurlaub ausgenommen; ihr Urlaubskonto wird
+        nicht belastet.
+      </p>
+      <div class="sd-bar">
+        <button type="button" class="btn btn-primary" onclick={openExceptions}>
+          Ausnahme hinzufügen
+        </button>
+      </div>
+      {#if shownShutdown.exceptions.length === 0}
+        <EmptyState
+          icon="users"
+          title="Noch keine Ausnahmen"
+          description="Alle Mitarbeitenden sind vom Betriebsurlaub betroffen."
+        />
+      {:else}
+        <DataTable
+          columns={exceptionColumns}
+          rows={shownShutdown.exceptions}
+          rowKey={(row) => row.id}
+          caption="Ausnahmen vom Betriebsurlaub mit Mitarbeitenden und Grund"
+        >
+          {#snippet cell(row, column)}
+            {#if column.key === "number"}
+              {row.employee.employeeNumber}
+            {:else if column.key === "reason"}
+              {row.reason ?? "–"}
+            {:else if column.key === "actions"}
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm btn-danger"
+                onclick={() => askRemoveException(row)}
+              >
+                Entfernen
+              </button>
+            {:else}
+              {row.employee.firstName}
+              {row.employee.lastName}
+            {/if}
+          {/snippet}
+        </DataTable>
+      {/if}
+    </section>
+
+    <!-- ── Löschen ───────────────────────────────────────────────────────────── -->
+    <section class="settings-group" aria-labelledby="shutdown-delete-title">
+      <h2 class="settings-group-title" id="shutdown-delete-title">Betriebsurlaub löschen</h2>
+      <p class="settings-group-desc">
+        Der Betriebsurlaub wird unwiderruflich gelöscht. Seine Ausnahmen gehen mit.
+      </p>
+      <div>
+        <button
+          type="button"
+          class="btn btn-secondary btn-danger"
+          onclick={() => (deleteConfirmOpen = true)}
+        >
+          Betriebsurlaub löschen
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <ConfirmDialog
+    bind:open={deleteConfirmOpen}
+    title="Betriebsurlaub löschen?"
+    description={`„${shownShutdown.name}“ wird entfernt. Diese Aktion kann nicht rückgängig gemacht werden.`}
+    confirmLabel="Löschen"
+    danger
+    onConfirm={confirmDelete}
+  />
+
+  <ConfirmDialog
+    bind:open={removeConfirm.open}
+    title="Ausnahme entfernen?"
+    description={`${removeConfirm.name} ist danach wieder vom Betriebsurlaub betroffen und ihr oder sein Urlaubskonto wird belastet.`}
+    confirmLabel="Entfernen"
+    danger
+    onConfirm={confirmRemoveException}
+  />
+
+  <!-- ── Dialog: Ausnahme hinzufügen ───────────────────────────────────────── -->
+  <Dialog bind:open={exceptionDialogOpen} title="Ausnahme hinzufügen">
+    <form
+      id="shutdown-exception-form"
+      novalidate
+      class="sd-form"
+      onsubmit={(event) => {
+        event.preventDefault();
+        void addException();
+      }}
+    >
+      <FormField
+        label="Mitarbeitende"
+        required
+        help="Wer hier ausgenommen wird, bekommt den Betriebsurlaub nicht vom Urlaubskonto abgezogen."
+      >
+        {#snippet field({ id, describedBy })}
+          <select
+            {id}
+            class="form-input"
+            bind:value={addExceptionEmpId}
+            data-testid="shutdown-exception-employee"
+            aria-describedby={describedBy}
           >
+            <option value="">– Person wählen –</option>
+            {#each availableEmployees as emp (emp.id)}
+              <option value={emp.id}>{emp.firstName} {emp.lastName} ({emp.employeeNumber})</option>
+            {/each}
+          </select>
         {/snippet}
-
-        {#if shownShutdown.exceptions.length === 0}
-          <p class="text-muted">Noch keine Ausnahmen angelegt.</p>
-        {:else}
-          <div class="table-responsive">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Mitarbeiter</th>
-                  <th>Nr.</th>
-                  <th>Grund</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each shownShutdown.exceptions as ex (ex.id)}
-                  <tr>
-                    <td>{ex.employee.firstName} {ex.employee.lastName}</td>
-                    <td class="text-muted">{ex.employee.employeeNumber}</td>
-                    <td class="text-muted">{ex.reason ?? "–"}</td>
-                    <td>
-                      <button
-                        class="btn btn-ghost btn-sm btn-danger"
-                        onclick={() => removeException(ex.employeeId)}
-                      >
-                        Entfernen
-                      </button>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
-      </Section>
-
-      <!-- ── Danger Zone ───────────────────────────────────────────────────────── -->
-      <DangerZone description="Dieser Betriebsurlaub wird unwiderruflich gelöscht.">
-        {#snippet actions()}
-          <button
-            class="btn btn-ghost btn-sm btn-danger"
-            onclick={() => (deleteConfirmOpen = true)}
-          >
-            Betriebsurlaub löschen
-          </button>
-          <ConfirmDialog
-            bind:open={deleteConfirmOpen}
-            title="Betriebsurlaub löschen?"
-            description={`„${shownShutdown.name}" wird entfernt. Diese Aktion kann nicht rückgängig gemacht werden.`}
-            confirmLabel="Löschen"
-            danger
-            onConfirm={confirmDelete}
+      </FormField>
+      <FormField label="Grund">
+        {#snippet field({ id, describedBy })}
+          <input
+            {id}
+            class="form-input"
+            type="text"
+            placeholder="z. B. Notdienstbereitschaft (optional)"
+            bind:value={addExceptionReason}
+            data-testid="shutdown-exception-reason"
+            aria-describedby={describedBy}
           />
         {/snippet}
-      </DangerZone>
-    {/snippet}
-  </ListDetail>
-
-  <!-- ── Modal: Ausnahme hinzufügen ─────────────────────────────────────────── -->
-  <Modal bind:open={exceptionModalOpen} eyebrow="Ausnahme hinzufügen" title={shutdown.name}>
-    <p class="form-hint">
-      Mitarbeiter in dieser Liste sind vom Betriebsurlaub ausgenommen — ihr Urlaubskonto wird nicht
-      belastet.
-    </p>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label" for="ex-emp">Mitarbeiter</label>
-        <select id="ex-emp" class="form-input" bind:value={addExceptionEmpId}>
-          <option value="">– Mitarbeiter wählen –</option>
-          {#each availableEmployees as emp (emp.id)}
-            <option value={emp.id}>{emp.firstName} {emp.lastName} ({emp.employeeNumber})</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="ex-reason">Grund (optional)</label>
-        <input
-          id="ex-reason"
-          class="form-input"
-          type="text"
-          placeholder="z.B. Notdienstbereitschaft"
-          bind:value={addExceptionReason}
-        />
-      </div>
-    </div>
+      </FormField>
+    </form>
     {#snippet footer()}
-      <button class="btn btn-ghost" onclick={() => (exceptionModalOpen = false)}>Abbrechen</button>
+      <button type="button" class="btn btn-secondary" onclick={() => (exceptionDialogOpen = false)}>
+        Abbrechen
+      </button>
       <button
+        type="submit"
+        form="shutdown-exception-form"
         class="btn btn-primary"
-        onclick={addException}
         disabled={!addExceptionEmpId || savingException}
       >
         {savingException ? "Hinzufügen …" : "Hinzufügen"}
       </button>
     {/snippet}
-  </Modal>
+  </Dialog>
 {/if}
 
 <style>
-  .page-loading,
-  .page-error {
-    padding: var(--s-6);
-    color: var(--text-muted);
-    font-size: 14px;
-  }
-
-  .page-error {
-    color: var(--bad);
-  }
-
-  /* ── Forms ── */
-  .form-group {
-    margin-bottom: var(--s-4);
-  }
-
-  .form-group:last-of-type {
-    margin-bottom: 0;
-  }
-
-  .form-row {
+  .sd-stack {
     display: flex;
-    gap: 1rem;
-    margin-bottom: var(--s-4);
+    flex-direction: column;
+    gap: var(--s-8);
   }
 
-  .form-row .form-group {
-    flex: 1;
-    margin-bottom: 0;
+  .sd-dates {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: var(--s-4);
   }
 
-  .form-hint {
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-    margin: 0.25rem 0 0;
-  }
-
-  .checkbox-label {
+  .sd-bar {
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.9rem;
-    cursor: pointer;
+    justify-content: flex-end;
+    margin-bottom: var(--s-3);
   }
 
-  .meta-row {
+  .sd-form {
     display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-top: 0.25rem;
-  }
-
-  .meta-dates {
-    font-size: 0.875rem;
-    color: var(--text-muted);
-  }
-
-  /* ── Badges ── */
-  .badge {
-    display: inline-block;
-    padding: 0.125rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 500;
-  }
-
-  .badge-neutral {
-    background: var(--bg-subtle);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-  }
-
-  /* ── Table ── */
-  .table-responsive {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .data-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-  }
-
-  .data-table th {
-    text-align: left;
-    padding: 0.625rem 0.75rem;
-    font-weight: 600;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    border-bottom: 2px solid var(--border);
-  }
-
-  .data-table td {
-    padding: 0.75rem;
-    border-bottom: 1px solid var(--border);
-    vertical-align: middle;
-  }
-
-  /* ── Danger button ── */
-  :global(.btn-danger) {
-    color: var(--bad) !important;
-  }
-
-  :global(.btn-danger:hover) {
-    background: var(--bg-subtle) !important;
-  }
-
-  /* ── Alert ── */
-  .alert {
-    padding: 0.75rem 1rem;
-    border-radius: var(--r-sm);
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
-  }
-
-  .alert-error {
-    background: var(--bg-subtle);
-    color: var(--bad);
-    border: 1px solid var(--bad);
-  }
-
-  .text-muted {
-    color: var(--text-muted);
-  }
-
-  @media (max-width: 640px) {
-    .form-row {
-      flex-direction: column;
-    }
+    flex-direction: column;
+    gap: var(--s-4);
   }
 </style>

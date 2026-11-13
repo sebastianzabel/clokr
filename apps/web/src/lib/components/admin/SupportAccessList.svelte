@@ -1,24 +1,29 @@
 <!--
-  SupportAccessList — the tenant's list of operator support accesses (Issue #93, AC-93-7, D-08).
+  SupportAccessList — the tenant's list of operator support accesses (Issue #93, AC-93-7, D-08; rebuilt on the
+  DataTable block in #854).
 
   Display only: the page fetches, this component shows what it is given. Instants are written in the
-  tenant's time zone (`timezone` from the API), never the browser's. Every row is a real link to the
-  detail, so it is keyboard-reachable and nothing is hover-only. The operator's free-text reason is
-  rendered as text (Svelte escaping), never as markup.
+  tenant's time zone (`timezone` from the API), never the browser's. The operator is shown by display
+  name only - never an e-mail or an IP (T-854-64). The operator's free-text reason is rendered as text
+  (Svelte escaping), never as markup. A row opens the detail through the primary cell's button.
 
   Props:
     items, total, timezone — the API's list response
     loading, loadError     — request state (loading starts true on the page)
     page, pageSize         — bindable paging state; onPageChange fires after a change
+    onOpen                 — opens the detail of one access
     onRetry                — called by „Erneut laden“ in the error banner
 -->
 <script lang="ts">
+  import Chip from "$components/ui/Chip.svelte";
+  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
+  import Note from "$components/ui/Note.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
   import {
     endedByLabel,
     formatInZone,
-    statusBadgeClass,
+    statusChipTone,
     statusLabel,
     type SupportAccessItem,
   } from "$lib/support-access/labels";
@@ -31,6 +36,7 @@
     loadError: string;
     page?: number;
     pageSize?: number;
+    onOpen: (item: SupportAccessItem) => void;
     onPageChange: () => void;
     onRetry: () => void;
   }
@@ -43,9 +49,18 @@
     loadError,
     page = $bindable(1),
     pageSize = $bindable(25),
+    onOpen,
     onPageChange,
     onRetry,
   }: Props = $props();
+
+  const columns: DataTableColumn[] = [
+    { key: "operatorName", label: "Betreiber", primary: true },
+    { key: "reason", label: "Grund" },
+    { key: "window", label: "Zeitraum" },
+    { key: "status", label: "Status" },
+    { key: "readCount", label: "Abrufe", align: "end" },
+  ];
 
   function windowOf(item: SupportAccessItem): string {
     const end = item.endedAt ?? item.expiresAt;
@@ -55,6 +70,8 @@
   function readsLabel(count: number): string {
     return count === 1 ? "1 Abruf" : `${count} Abrufe`;
   }
+
+  const rows = $derived(items.map((item) => ({ ...item })));
 </script>
 
 <p class="sa-intro">
@@ -64,197 +81,99 @@
 </p>
 
 {#if loadError}
-  <div class="alert alert-error" role="alert">
-    <span>⚠</span>
-    <span>{loadError}</span>
-    <button class="btn btn-outline sm sa-retry" type="button" onclick={onRetry}>
-      Erneut laden
-    </button>
+  <div class="sa-error" role="alert">
+    <Note tone="bad">{loadError}</Note>
+    <button type="button" class="btn btn-secondary" onclick={onRetry}>Erneut laden</button>
   </div>
-{:else if loading}
-  <div class="sa-skeleton" role="status" aria-label="Support-Zugriffe werden geladen">
-    <div class="skeleton sa-skel-row"></div>
-    <div class="skeleton sa-skel-row"></div>
-  </div>
-{:else if items.length === 0}
+{:else if !loading && items.length === 0}
   <EmptyState
     icon="search"
     title="Bisher hat der Betreiber nicht auf die Daten deines Unternehmens zugegriffen."
   />
 {:else}
-  <ul class="sa-list" aria-label="Support-Zugriffe">
-    {#each items as item (item.id)}
-      <li>
-        <a class="sa-row" href="/admin/support-access/{item.id}">
-          <span class="sa-main">
-            <span class="sa-operator">{item.operatorName}</span>
-            <span class="sa-reason">{item.reason}</span>
-          </span>
-          <span class="sa-window">{windowOf(item)}</span>
-          <span class="sa-status">
-            <span class={`${statusBadgeClass(item.status)} sa-badge`}
-              >{statusLabel(item.status)}</span
-            >
-            {#if item.endedBy}
-              <span class="sa-muted">{endedByLabel(item.endedBy)}</span>
-            {/if}
-          </span>
-          <span class="sa-count">{readsLabel(item.readCount)}</span>
-        </a>
-      </li>
-    {/each}
-  </ul>
+  <DataTable
+    {columns}
+    {rows}
+    rowKey={(row) => row.id}
+    caption="Support-Zugriffe, neueste zuerst"
+    {loading}
+    onRowClick={(row) => onOpen(row)}
+    rowTestId={(row) => `support-access-row-${row.id}`}
+  >
+    {#snippet cell(row, column)}
+      {#if column.key === "operatorName"}
+        {row.operatorName}
+      {:else if column.key === "reason"}
+        <span class="sa-reason">{row.reason}</span>
+      {:else if column.key === "window"}
+        <span class="sa-window">{windowOf(row)}</span>
+      {:else if column.key === "status"}
+        <Chip tone={statusChipTone(row.status)}>{statusLabel(row.status)}</Chip>
+        {#if row.endedBy}
+          <span class="sa-muted">{endedByLabel(row.endedBy)}</span>
+        {/if}
+      {:else if column.key === "readCount"}
+        {readsLabel(row.readCount)}
+      {/if}
+    {/snippet}
+  </DataTable>
 
-  <div class="sa-pagination">
-    <Pagination
-      {total}
-      bind:page
-      bind:pageSize
-      pageSizeOptions={[25, 50, 100]}
-      labelSingular="Zugriff"
-      labelPlural="Zugriffe"
-      onChange={onPageChange}
-    />
-  </div>
+  {#if !loading}
+    <div class="sa-pagination">
+      <Pagination
+        {total}
+        bind:page
+        bind:pageSize
+        pageSizeOptions={[25, 50, 100]}
+        labelSingular="Zugriff"
+        labelPlural="Zugriffe"
+        onChange={onPageChange}
+      />
+    </div>
+  {/if}
 {/if}
 
 <style>
-  /* The tinted label text of .badge-yellow / .badge-purple misses 4.5:1 on its own tint (measured 4.25:1 in
-     light and down to 1.93:1 in dark mode): the label takes the body text colour, tint and border stay. */
-  .sa-badge {
-    color: var(--text);
-  }
-
   .sa-intro {
-    margin: 0 0 12px;
-    font-size: 14px;
+    margin: 0 0 var(--s-3);
+    font-size: var(--fs-base);
     line-height: 1.55;
-    color: var(--text-muted);
+    color: var(--text-2);
     max-width: 70ch;
   }
 
-  .sa-retry {
-    margin-left: auto;
-  }
-
-  .sa-skeleton {
+  .sa-error {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    align-items: flex-start;
+    gap: var(--s-3);
   }
 
-  .sa-skel-row {
-    height: 56px;
-    border-radius: var(--r-sm);
-  }
-
-  .sa-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .sa-list li {
-    border-bottom: 1px solid var(--border);
-  }
-
-  .sa-list li:last-child {
-    border-bottom: none;
-  }
-
-  .sa-row {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) auto auto;
-    align-items: center;
-    gap: 16px;
-    padding: 12px 8px;
-    border-radius: var(--r-sm);
-    color: var(--text);
-    /* The global inline-link recipe (app.css, a:not(.btn)...) outweighs a plain class and would underline
-       every text of the row; only the operator name carries the link affordance. */
-    text-decoration-line: none !important;
-    transition: background-color 160ms var(--ease);
-  }
-
-  .sa-row:hover,
-  .sa-row:focus-visible {
-    background: var(--bg-subtle);
-    outline: none;
-  }
-
-  .sa-row:focus-visible {
-    box-shadow: 0 0 0 2px var(--brand);
-  }
-
-  .sa-main {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  .sa-operator {
-    font-weight: 600;
-    text-decoration-line: underline;
-    text-decoration-color: var(--brand-light);
-    text-underline-offset: 2px;
-    text-decoration-thickness: 1px;
-  }
-
-  .sa-row:hover .sa-operator,
-  .sa-row:focus-visible .sa-operator {
-    text-decoration-color: var(--brand);
-  }
-
+  /* A reason is free text of the operator: it wraps and is cut after two lines instead of
+     widening the table. */
   .sa-reason {
-    font-size: 13px;
-    color: var(--text-muted);
-    overflow-wrap: anywhere;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    min-width: 12rem;
+    max-width: 28rem;
   }
 
   .sa-window {
-    font-size: 13px;
     font-variant-numeric: tabular-nums;
   }
 
-  .sa-status {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-  }
-
   .sa-muted {
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .sa-count {
-    font-size: 13px;
-    color: var(--text-muted);
-    white-space: nowrap;
-    text-align: right;
+    margin-left: var(--s-2);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
   }
 
   .sa-pagination {
-    margin-top: 12px;
-  }
-
-  @media (max-width: 720px) {
-    .sa-row {
-      grid-template-columns: minmax(0, 1fr) auto;
-      row-gap: 6px;
-    }
-
-    .sa-main {
-      grid-column: 1 / -1;
-    }
+    margin-top: var(--s-3);
   }
 </style>

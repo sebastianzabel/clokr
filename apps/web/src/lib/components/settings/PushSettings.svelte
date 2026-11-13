@@ -26,7 +26,7 @@
   import { pushErrorMessage } from "$lib/push/error-message";
   import { pushSupport, type PushSupport } from "$lib/push/support";
   import { toasts } from "$stores/toast";
-  import Card from "$components/ui/Card.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
 
   let enabled = $state(false);
   let publicKey = $state<string | null>(null);
@@ -191,9 +191,7 @@
 </script>
 
 {#if enabled}
-  <Card class="settings-card push-card">
-    <h3 class="section-title">Push-Benachrichtigungen</h3>
-
+  <Section title="Push-Benachrichtigungen">
     {#if support === "ios-needs-install"}
       <div class="alert alert-info push-note" role="note">
         <span
@@ -287,15 +285,10 @@
         </button>
       </div>
     {/if}
-  </Card>
+  </Section>
 {/if}
 
 <style>
-  .section-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-  }
   :global(.push-card) {
     margin-bottom: 1.5rem;
   }
@@ -328,7 +321,7 @@
     align-items: center;
     gap: 0.5rem 0.75rem;
     min-height: 44px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .push-device-label {
     font-size: 0.9375rem;

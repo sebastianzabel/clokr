@@ -1,12 +1,16 @@
 import { api } from "$api/client";
+import type { Theme } from "$stores/theme";
 
 /** Server shape — matches apps/api/src/contexts/platform/api/me.ts merged defaults. */
+/** Issue #602: the e-mail groups a person may switch off (the server's PERSONAL_EMAIL_OPT_OUT_FIELDS). */
+export type EmailOptOutField =
+  "emailOnLeaveDecision" | "emailOnRetroEntry" | "emailOnMissingEntries" | "emailOnLeaveRequest";
+
 export interface UiPreferences {
-  skin: "editorial" | "modern";
-  theme: "pflaume" | "nacht" | "wald" | "schiefer";
+  theme: Theme;
   mode: "light" | "dark";
-  density: "comfortable" | "compact";
   language: "de" | "en";
+  emailOptOut: EmailOptOutField[];
 }
 
 export type UiPreferencesPartial = Partial<UiPreferences>;

@@ -93,6 +93,7 @@
  * The helper assumes the employee exists and has a non-null userId. Callers
  * are expected to validate that before opening the transaction.
  */
+import { deleteCalendarFeedTokensOfUser } from "./calendar-feed-token"; // Issue #597
 import type { Prisma } from "@clokr/db";
 import {
   clearEntryNotesForEmployee,
@@ -105,7 +106,10 @@ import { anonymizeSection9CreditsForEmployee } from "../absence"; // Phase 100B 
 import { anonymizeAbsencesForEmployee } from "../absence"; // Phase 100B Plan 12 — F3
 import { anonymizeLeaveRequestsForEmployee } from "../absence"; // Phase 100B Plan 13 — F3
 import { clearSchedulingNotesForEmployee } from "../scheduling"; // Issue #718
-import { clearOvertimePlanNotesForEmployee } from "../working-time-account"; // Issue #718
+import {
+  clearOvertimePlanNotesForEmployee, // Issue #718
+  clearMonthCorrectionTextsForEmployee, // Issue #599
+} from "../working-time-account";
 import { redactAuditFreeTextOfPerson, type AuditRedactionResult } from "./audit-freetext-redaction"; // Issue #512
 import { redactMacAuditOfPerson, type MacAuditResult } from "./audit-mac-redaction"; // Issue #820
 import { removeRoleAssignmentsOfUser, type RemovedRoleAssignment } from "./facade/role-assignments";
@@ -145,6 +149,9 @@ export interface AnonymizeEmployeeResult {
     retroReasons: number;
     retroReviewNotes: number;
     overtimePlanNotes: number;
+    /** Issue #599 */
+    monthCorrectionReasons: number;
+    monthCorrectionReviewNotes: number;
     shiftNotes: number;
     availabilityNotes: number;
   };
@@ -249,6 +256,8 @@ export async function anonymizeEmployeeData(
 
   // Issue #718: Überstundenplan-, Schicht- and Verfügbarkeitsnotizen (person-authored free text).
   const overtimePlanNotes = await clearOvertimePlanNotesForEmployee(tx, employeeId);
+  // Issue #599: the reason and review note of month-correction requests (rows and bookings stay).
+  const monthCorrection = await clearMonthCorrectionTextsForEmployee(tx, employeeId);
   const scheduling = await clearSchedulingNotesForEmployee(tx, employeeId);
 
   // Notizen in Abwesenheiten anonymisieren + Dokument-Pfad entfernen
@@ -292,6 +301,8 @@ export async function anonymizeEmployeeData(
   await tx.otpToken.deleteMany({ where: { userId } });
   await tx.refreshToken.deleteMany({ where: { userId } });
   await tx.pushSubscription.deleteMany({ where: { userId } });
+  // Issue #597: the calendar-feed token is a credential of the person, not a record.
+  await deleteCalendarFeedTokensOfUser(tx, employee.tenantId, userId);
   await deletePairingCodesOfUser(tx, userId, employee.tenantId);
 
   return {
@@ -300,6 +311,12 @@ export async function anonymizeEmployeeData(
     clearedDeviceIdentifiers: { wifiMacs: employee.wifiMacs.length, presenceDevices },
     auditRedaction,
     macAuditRedaction,
-    clearedFreeText: { leaveReviewNotes, ...retro, overtimePlanNotes, ...scheduling },
+    clearedFreeText: {
+      leaveReviewNotes,
+      ...retro,
+      overtimePlanNotes,
+      ...monthCorrection,
+      ...scheduling,
+    },
   };
 }

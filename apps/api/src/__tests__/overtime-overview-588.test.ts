@@ -43,6 +43,7 @@ interface OverviewRow {
   snapshots: unknown[];
   hasRecordedTime?: boolean;
   trackOnly?: boolean | null;
+  noContract?: boolean | null;
   unconfirmedMonths?: number | null;
 }
 interface Overview {
@@ -370,6 +371,46 @@ describe("Issue #588 - overtime overview: facts for the team saldo figures", () 
       const spy = vi.spyOn(app.prisma.timeEntry, "groupBy");
       await overview(d.adminToken);
       expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("no contract (Issue #911)", () => {
+    it("flags a person without a valid WorkSchedule row and no one with a contract", async () => {
+      const withContract = await person("nc1");
+      const without = await person("nc2");
+      // Contract valid only from the future: no row valid at the Stichtag, the tenant default
+      // fallback applies to the saldo but is no contract.
+      await app.prisma.workSchedule.updateMany({
+        where: { employeeId: without.employeeId },
+        data: { validFrom: new Date("2027-01-01T00:00:00.000Z") },
+      });
+      const body = await overview(d.adminToken);
+      const byId = new Map(body.employees.map((r) => [r.id, r]));
+      expect(byId.get(withContract.employeeId)?.noContract).toBe(false);
+      const row = byId.get(without.employeeId) as OverviewRow;
+      expect(row.noContract).toBe(true);
+      // The saldo is the personal endpoint's, untouched by the flag.
+      const personal = await withClock(d.adminToken, async (t) => {
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/overtime/${without.employeeId}`,
+          headers: { authorization: `Bearer ${t}` },
+        });
+        expect(res.statusCode).toBe(200);
+        return JSON.parse(res.body) as { balanceHours: number; confirmedMinutes: number };
+      });
+      expect(row.balanceHours).toBe(personal.balanceHours);
+      expect(row.confirmedMinutes).toBe(personal.confirmedMinutes);
+    });
+
+    it("reports null for a person without a live saldo", async () => {
+      const exempt = await person("nc3");
+      await app.prisma.employee.update({
+        where: { id: exempt.employeeId },
+        data: { isTimeTrackingExempt: true },
+      });
+      const body = await overview(d.adminToken);
+      expect(body.employees.find((r) => r.id === exempt.employeeId)?.noContract).toBeNull();
     });
   });
 

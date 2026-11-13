@@ -85,7 +85,7 @@ function mount(options: MountOptions = {}) {
       defaultSalon: options.defaultSalon ?? null,
       onSubmit,
     },
-    "nacht",
+    "salz",
   );
   return { onSubmit };
 }

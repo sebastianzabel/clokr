@@ -235,6 +235,29 @@ describe("GET /api/v1/shifts/range", () => {
     await app.prisma.shift.deleteMany({ where: { id: { in: [s1.id, s2.id] } } });
   });
 
+  // ── 2b. Issue #597: each row names the shift's own salon ───────────────────
+  it("names the salon of each shift (Mein Dienstplan, #597)", async () => {
+    const s1 = await app.prisma.shift.create({
+      data: {
+        employeeId: data.employee.id,
+        salonId: data.salonId,
+        date: new Date("2025-06-12T00:00:00Z"),
+        startTime: "09:00",
+        endTime: "17:00",
+      },
+    });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/shifts/range?from=2025-06-12&to=2025-06-12&employeeId=${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as Array<{ date: string; salonId: string }>;
+    expect(body).toHaveLength(1);
+    expect(body[0]).toMatchObject({ date: "2025-06-12", salonId: data.salonId });
+    await app.prisma.shift.delete({ where: { id: s1.id } });
+  });
+
   // ── 3. Tenant scoping ─────────────────────────────────────────────────────
   it("does not return shifts from a different tenant", async () => {
     // The other-tenant shift (2025-05-01, otherEmployeeId) was created in beforeAll.

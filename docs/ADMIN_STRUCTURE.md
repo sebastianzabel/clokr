@@ -12,7 +12,73 @@
 
 ## 1. Navigation Hierarchy
 
-### 1.1 The 5 Groups
+### 1.1 Three areas: Ich · Team · Verwalten (Issue #844)
+
+Since #844 the app has **three areas** (owner decisions Z-01…Z-03, design concept § 2) instead of the former
+„Mein Bereich“, „Team“ and five admin groups. Every navigable page is one entry of the route table
+`apps/web/src/lib/nav/routes.ts` — URL, area, name (= menu entry = H1 = crumb), icon, page width (`read` 1120 px
+or `full` 2400 px), permission alternatives and the route file it renders. The Sidebar, the mobile „Mehr“ sheet,
+the tab bar, the crumb, the command palette, the guards and the start page read that table and nothing else.
+
+```
+Ich         Mein Tag · Zeiten · Abwesenheiten · Dienstplan          (Profil in the avatar menu)
+Team        Heute im Salon · Aufgaben · Zeiten · Abwesenheiten · Dienstplan · Verfügbarkeit
+Verwalten   Übersicht · Personen · Salons · Regeln · Monatsabschluss · Berichte · Daten · System
+              Regeln: Arbeitszeit & Verträge · Abwesenheiten · Dienstplan · Monatsabschluss · Benachrichtigungen & E-Mail
+              Daten:  CSV-Import · Export · Protokoll · Support-Zugriffe
+              System: Allgemein · Branding & Themes · Integrationen · Phorest · Rollen & Rechte
+```
+
+Regeln, Daten and System are **hub pages** (`HubPage.svelte`) that list the pages behind them; their children are
+no rail entries. The settings were regrouped by topic behind the hubs with #854 (§ 1.1.1); „Konto“ (Ich) follows
+with #594, Team › Personen with #851.
+
+### 1.1.1 Verwalten after #854 (design system v2)
+
+Every Verwalten page is built from the #843 blocks (`PageHead`, `PageTabs`, `DataTable`, `SettingsGroup`, `SaveBar`,
+`Dialog`, `KpiStrip`, …). Two guards enforce it for EVERY route file and area component, with no list of exceptions:
+`verwalten-pages-blocks-854.test.ts` (no page-own chrome, no legacy shell import, the head names the page by its table
+label) and `section-titles-854.test.ts` (sentence-case section titles). The ratchet register
+`lint-ui-classes-route-ratchet.json` holds no #854 entry.
+
+| Area / page                                      | Structure                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Personen** `/verwalten/personen`               | List with selection and bulk actions; guided create `Dialog` (Person → Salon & Rolle → Vertrag → Zugang); detail `/admin/employees/[id]` with the tabs Person · Vertrag (contract timeline, per-person overrides) · Urlaub · Salons · Zugang (sign-in, role, deactivation with a last working day, anonymisation)                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Salons** `/verwalten/salons`                   | List; detail with the tabs Stammdaten · Öffnungszeiten · Feiertage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Regeln** `/verwalten/regeln`                   | Five themes, each a page of `SettingsGroup` sections with ONE `SaveBar` per section: **Arbeitszeit & Verträge** (Pausen, Rückwirkende Einträge, Arbeitstage, Gleitzeit, Berufsschule, Standard-Arbeitszeit, Überstunden, ArbZG-Prüfung, Offene Einträge) · **Abwesenheiten** (panel tabs Urlaub · Sonderurlaub · Übertrag · Betriebsurlaub · Urlaubsgrenzen & Sperren) · **Dienstplan** (Schichtvorlagen, Bedarfsregeln, Wochenmuster, Schichten und Öffnungszeiten, Verfügbarkeiten, Berufsschule und Schichten, Schicht-Erinnerungen) · **Monatsabschluss** (the two closing settings; the close itself is `/verwalten/monatsabschluss`) · **Benachrichtigungen & E-Mail** (E-Mail-Server, E-Mail-Benachrichtigungen, Erinnerungen) |
+| **Monatsabschluss** `/verwalten/monatsabschluss` | The close workflow: stepper, months and persons tables                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Berichte** `/verwalten/berichte`               | `PageTabs` over the period state (`reports/period-state.ts`): Heute · the period tables as `DataTable`s · Verläufe (the three team trends and the saldo card, #895); drill-downs link into Daten › Export                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Daten** `/verwalten/daten`                     | CSV-Import (operation page) · **Export** (the one page that starts every export: DATEV, CSV, PDF, iCal, history, setup) · **Protokoll** (tabs Protokoll · Aufbewahrung; filters by period and affected person, CSV export of the filtered list, German action and entity labels from `packages/types/audit-labels.json`) · Support-Zugriffe                                                                                                                                                                                                                                                                                                                                                                                           |
+| **System** `/verwalten/system`                   | Allgemein (Unternehmen & Region, Zwei-Faktor, Passwort-Richtlinie, Sitzungen) · Branding & Themes · Integrationen (WLAN, NFC-Terminals, API-Schlüssel) · Phorest · Rollen & Rechte (tabs Rollen · Zuweisungen)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+
+**One place per setting.** `apps/web/src/lib/settings/settings-pages.ts` (the settings registry) assigns every
+writable tenant setting to ONE section of ONE page: the keys the section sends, its endpoint, the file that renders
+it and the permission alternatives that open it. `settings-pages-854.test.ts` reads the registry together with the
+sources and the Zod schemas of the API and fails on a key in two sections, a key the API schema would strip
+(`vocationalSchoolAutoCleanupShifts` was exactly that bug), a save that sends a foreign field or a spread (#878), a
+section on a page that is not a final Verwalten page, and a page gate that is not the union of its sections.
+
+**Permissions (D-854-05).** A section keeps the permission alternatives of the page it came from. A page that
+received sections from several old pages opens under the UNION of their alternatives (`pageAlternatives`), and each
+section is shown only to those who held its old gate (`mayOpenSection`). The API's 403 stays the authority. Because
+of the union a role that could open only one of the merged old pages (e.g. a manager with the leave permissions) now
+opens the page shell, with only the tabs and sections it may see.
+
+**URLs and files.** New URLs (`/ich/…`, `/team/…`, `/verwalten/…`) render the existing route files through the
+`reroute` hook (`src/hooks.ts`); the files stay under `routes/(app)/admin/…` etc. An old URL redirects with 308
+to its new one (`routes/(app)/+layout.ts`), so bookmarks and e-mail or push links keep working. A new page that has
+no file yet (a hub, Heute im Salon) lives at its new URL.
+
+**Start page (Z-02).** Heute im Salon for whoever may open it (`team-overview:read`); Verwalten › Übersicht for an
+administration role (a Verwalten entry, no access to the team's time records — e.g. the Personalabteilung); Mein Tag
+for everyone else. Decided by `homeHref()` from permissions only.
+
+### 1.2 History: the five admin groups (until #844)
+
+The notes below describe the structure before #844 and stay for traceability; the routes they name are the route
+files, which since #844 are opened under their new URLs.
+
+#### The 5 Groups
 
 The admin sidebar is divided into **5 named groups**. Section labels are UPPERCASE, letter-spaced, and **visual-only** — they are never clickable. Each group contains 2–5 leaf entries.
 
@@ -59,34 +125,35 @@ These 5 groups and their exact entries are the authoritative target structure fo
 
 > **Note (Issue #836):** „Urlaubsgrenzen & Sperren“ (`/admin/leave-limits`, a list whose only form is a rule `<Modal>`) is the fourth PERSONAL entry — how many people of a salon may be on leave at the same time, and leave blackouts. It is visible with `leave-limit:manage` or `leave-request:approve`; changing a rule needs `leave-limit:manage` and the API decides per rule (`canManage`). The page has its own salon selection, so the header salon is not a filter here. The PERSONAL group went from 3 to 4 entries, within the §1.3 maximum.
 
-### 1.2 Group → Pages Mapping
+#### Group → Pages Mapping
 
-| Group      | Sidebar label            | Route                 | Was (if renamed)                                                                        |
-| ---------- | ------------------------ | --------------------- | --------------------------------------------------------------------------------------- |
-| PERSONAL   | Mitarbeitende            | /admin/employees      | —                                                                                       |
-| PERSONAL   | Urlaubsverwaltung        | /admin/vacation       | — (global view + Sonderurlaubs-Typen tab; per-MA editor moved to /admin/employees/[id]) |
-| PERSONAL   | Betriebsurlaub           | /admin/shutdowns      | —                                                                                       |
-| PERSONAL   | Urlaubsgrenzen & Sperren | /admin/leave-limits   | — (new in Issue #836)                                                                   |
-| PLANUNG    | Schichteinstellungen     | /admin/shifts         | —                                                                                       |
-| PLANUNG    | Verfügbarkeit            | /admin/availability   | —                                                                                       |
-| PLANUNG    | Salons                   | /admin/salons         | — (new in Issue #563)                                                                   |
-| COMPLIANCE | Monatsabschluss          | /admin/month-close    | —                                                                                       |
-| COMPLIANCE | Protokoll                | /admin/audit          | —                                                                                       |
-| COMPLIANCE | Support-Zugriffe         | /admin/support-access | — (new in Issue #93)                                                                    |
-| DATEN      | CSV-Import               | /admin/import         | —                                                                                       |
-| DATEN      | DATEV-Export             | /admin/export         | —                                                                                       |
-| SYSTEM     | Allgemein                | /admin/system         | — (feature flags + defaults; theme picker moved to Branding)                            |
-| SYSTEM     | Branding & Themes        | /admin/themes         | —                                                                                       |
-| SYSTEM     | Integrationen            | /admin/integrations   | /admin/wifi-presence (renamed in Phase 52; 301 redirect — see §8)                       |
-| SYSTEM     | Phorest                  | /admin/phorest        | — (extracted out of /admin/system in Phase 85.1-03; D-10)                               |
-| SYSTEM     | Rollen & Rechte          | /admin/roles          | — (new in Phase 83, #83)                                                                |
+| Group      | Sidebar label            | Route                 | Was (if renamed)                                                                                |
+| ---------- | ------------------------ | --------------------- | ----------------------------------------------------------------------------------------------- |
+| PERSONAL   | Mitarbeitende            | /admin/employees      | —                                                                                               |
+| PERSONAL   | Urlaubsverwaltung        | /admin/vacation       | — (global view + Sonderurlaubs-Typen tab; per-MA editor moved to /admin/employees/[id])         |
+| PERSONAL   | Betriebsurlaub           | /admin/shutdowns      | —                                                                                               |
+| PERSONAL   | Urlaubsgrenzen & Sperren | /admin/leave-limits   | — (new in Issue #836)                                                                           |
+| PLANUNG    | Schichteinstellungen     | /admin/shifts         | —                                                                                               |
+| PLANUNG    | Verfügbarkeit            | /admin/availability   | —                                                                                               |
+| PLANUNG    | Salons                   | /admin/salons         | — (new in Issue #563)                                                                           |
+| COMPLIANCE | Monatsabschluss          | /admin/month-close    | —                                                                                               |
+| COMPLIANCE | Protokoll                | /admin/audit          | —                                                                                               |
+| COMPLIANCE | Support-Zugriffe         | /admin/support-access | — (new in Issue #93)                                                                            |
+| DATEN      | CSV-Import               | /admin/import         | —                                                                                               |
+| DATEN      | DATEV-Export             | /admin/export         | —                                                                                               |
+| SYSTEM     | Allgemein                | /admin/system         | — (feature flags + defaults; theme picker moved to Branding)                                    |
+| SYSTEM     | Branding & Themes        | /admin/themes         | — (3 themes Pflaume, Salz, Petrol × Hell/Dunkel, Sprache; personal preference, saved instantly) |
+| SYSTEM     | Integrationen            | /admin/integrations   | /admin/wifi-presence (renamed in Phase 52; 301 redirect — see §8)                               |
+| SYSTEM     | Phorest                  | /admin/phorest        | — (extracted out of /admin/system in Phase 85.1-03; D-10)                                       |
+| SYSTEM     | Rollen & Rechte          | /admin/roles          | — (new in Phase 83, #83)                                                                        |
 
 ### 1.3 Section Label Rules
 
-- Section group labels are rendered in **UPPERCASE** with `letter-spacing: 0.08em` (or `text-transform: uppercase; letter-spacing: 0.08em`).
-- Section labels are **never clickable** — they are decorative grouping headers only. Do not wrap them in `<a>` or `<button>`.
-- Each group contains a **maximum of 5 entries**. If a new feature would push a group past 5 entries, either create a new group or consolidate existing entries.
-- Section labels live in the sidebar (Phase 51 responsibility). They do NOT appear as page headings.
+- The rail shows one heading per area („Ich“, „Team“, „Verwalten“, #844); headings are **never clickable**.
+- A person sees only the areas with a visible entry (Z-01: one role, one area). Every entry of a role must fit
+  the rail without scrolling at 1440×900 and 1024×768 (`navigation-v2.spec.ts`); a new entry that breaks this
+  goes behind a hub instead.
+- Area headings live in the rail; on a page the area is the eyebrow of the heading and the first part of the crumb.
 
 ### 1.4 Nav Label ↔ Page H1 Matching Rule
 
@@ -110,8 +177,10 @@ Any mismatch between sidebar label and PageHead title is a **Regulatorium violat
 Every admin route has exactly one entry in `apps/web/src/lib/nav/admin-route-permissions.ts`: a list
 of alternatives, each a set of permissions that must all be held, derived from the API guards its
 page calls. The Sidebar, the mobile „Mehr“ sheet, the command palette and the admin route guard read
-it. An item the user may not open is not shown, and its URL redirects to `/dashboard`. A new admin
-route without an entry fails `admin-route-permissions.test.ts`.
+it. An item the user may not open is not shown, and its URL redirects to the person's start page. Since #844 the
+alternatives live in the route table (`routes.ts`), which `admin-route-permissions.ts` reads; `routes-844.test.ts`
+pins every pre-#844 alternative unchanged. A new admin route without an entry fails
+`admin-route-permissions.test.ts`.
 
 ## 2. Page Templates
 
@@ -706,6 +775,14 @@ The **Kritische Aktionen** card (component `DangerZone`) is a distinct card sect
 
 ### 3.2 Per-Card Save (No Global Save Bar)
 
+> **Since #854 (Verwalten pages):** the save control of a settings section is the `SaveBar` block, **one per
+> section, never across tabs and never page-wide**. A section collects the values of ALL its controls (toggles
+> included), shows the bar only while it holds unsaved changes and sends one request with exactly its own registry
+> keys (`pickSection(…, settingsSection(id).keys)`), which writes one audit row per section. The instant-save
+> toggles of the old pages therefore wait for the section's `SaveBar`; § 3.2.1's classification still decides
+> controls OUTSIDE a settings section (lists, dialogs, single-value actions). The text below describes the
+> `Section` footer button of the pre-#854 pages and stays for the operator console and the availability pages.
+
 Admin settings pages use a **per-card save pattern** — each `<Section>` has its own save button in the `footer` snippet. There is NO global save bar at the top or bottom of the page.
 
 This follows the Linear and GitHub patterns: save actions are scoped to their card, so saving "Company Settings" does not affect "Feature Toggles".
@@ -804,6 +881,22 @@ The create dialog collects further assignments as drafts and posts them through 
 once the person exists; drafts are modal state like every other field of that dialog, so the
 employee list stays outside the unsaved registry.
 
+**The section button is the `SaveBar` block (Issue #843).** The form-group rule above is implemented once as
+`apps/web/src/lib/components/ui/SaveBar.svelte`: it is hidden at zero changes, otherwise it reads „Nicht
+gespeichert · n Änderungen · n Fehler“ with „Verwerfen“ and a save button whose label says what happens
+(„Vertrag speichern“, never a bare „OK“). The save button is disabled while `errors > 0` or while a save is
+running; the German phrase and the `canSave` rule live only in `save-bar.ts`. A page that adopts it passes the
+change and error counts it derives from its own snapshot comparison (D-11 below) and keeps the success-path
+re-snapshot; the block replaces the markup, not the audit or the unsaved registry. Existing `Section` footers
+stay valid until their page ticket migrates them.
+
+**A write that touches many records uses `BulkPreviewDialog` (Issue #843, #582).** `SaveBar` (or the page's
+own button) hands off to `apps/web/src/lib/components/ui/BulkPreviewDialog.svelte`: a wide dialog that shows the
+count („Betrifft 12 Personen“), the list of affected records and the effective date („Gilt ab …“) taken from the
+server's preview, with „Abbrechen“ and a confirm button that says what happens. The block computes no date and
+no candidate set; the server's preview and its fingerprint decide (§ 3 NachwG, #568). First adopter:
+`admin/BulkApplyDialog.svelte`.
+
 **Instant-save handler shape.** `toggleWifi()`
 (`apps/web/src/routes/(app)/settings/+page.svelte:113-125`) is the reference: `await` the
 request, write back the _server's_ value, then `toasts.success(...)`; in `catch`, revert the
@@ -900,7 +993,7 @@ location, `admin/roles` — `admin-roles` — keeps its marker in the role edito
 | `admin/month-close`                                                     | `selectedYear`/`statusFilter` are filters; `unlockReason`/`gapAcknowledged` are one-shot confirmations inside modals; the writes (`close-month`, `unlock-month`) are operations, not form state             |
 | `admin/import`                                                          | an operation (paste CSV → `POST /imports/:mode`), nothing is held as a setting                                                                                                                              |
 | `admin/integrations`                                                    | no update endpoint exists; the single write creates a NEW API key and the two inputs clear afterwards                                                                                                       |
-| `admin/themes`                                                          | no write path and no bound form state                                                                                                                                                                       |
+| `admin/themes`                                                          | no write path and no bound form state (the writes are instant personal preferences: theme, mode, language; there is no tenant-wide default theme)                                                           |
 | `admin/availability` (list)                                             | list view — no write path                                                                                                                                                                                   |
 | `admin/salons` (list)                                                   | list view — no form state; writes happen on the detail page                                                                                                                                                 |
 | `admin/audit/[id]`                                                      | detail view — no write path                                                                                                                                                                                 |
@@ -1184,4 +1277,9 @@ All 16 admin pages, their template assignment, migration phase, and requirement 
 
 ---
 
-_Regulatorium version: v1.6.2 · Last updated: 2026-08-03 · Owned by: Phase 50 executor + v1.6.1 audit closing pass + Phase 85.1-03 (Phorest tab extraction) · Next update: when the next admin-area change lands_
+> **Appendix A is historical.** It lists the pre-#844 admin pages and their migration phases. The current Verwalten
+> structure is § 1.1 and § 1.1.1; the route table `apps/web/src/lib/nav/routes.ts` is the one source of page names.
+
+---
+
+_Regulatorium version: v1.6.2 · Last updated: 2026-08-03 (§ 1.1.1 and § 3.2 updated for #854, 2026-11-12) · Owned by: Phase 50 executor + v1.6.1 audit closing pass + Phase 85.1-03 (Phorest tab extraction) · Next update: when the next admin-area change lands_

@@ -461,7 +461,7 @@ describe("POST /phorest/test + GET /phorest/staff resolve the coupling per salon
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body)).toEqual({
-      error: "Bitte einen Salon angeben — der Mandant hat mehrere Phorest-Kopplungen.",
+      error: "Bitte einen Salon angeben — das Unternehmen hat mehrere Phorest-Kopplungen.",
       code: "SALON_REQUIRED",
     });
   });
@@ -595,7 +595,7 @@ describe("POST /phorest/test + GET /phorest/staff resolve the coupling per salon
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body)).toEqual({
-      error: "Bitte einen Salon angeben — der Mandant hat mehrere Phorest-Kopplungen.",
+      error: "Bitte einen Salon angeben — das Unternehmen hat mehrere Phorest-Kopplungen.",
       code: "SALON_REQUIRED",
     });
   });

@@ -84,7 +84,7 @@
           {#each group.wishes as wish (wish.id)}
             <li class="wish-item" data-testid="wish-item-{wish.id}">
               <div class="wish-main">
-                <span class="wish-dates font-mono">
+                <span class="wish-dates">
                   {fmtDate(wish.startDate)} – {fmtDate(wish.endDate)}
                 </span>
                 {#if wish.halfDay}<span class="wish-half">halber Tag</span>{/if}
@@ -140,9 +140,9 @@
   }
 
   .wish-group {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
     padding: 0.75rem 1rem;
   }
 
@@ -167,7 +167,7 @@
     flex-direction: column;
     gap: 0.5rem;
     padding-top: 0.75rem;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
   }
 
   .wish-item:first-child {
@@ -189,7 +189,7 @@
 
   .wish-half {
     font-size: 0.8125rem;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .wish-actions {

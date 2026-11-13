@@ -55,20 +55,12 @@ describe("Phase 205 — the dashboard team grid branches on stable leave-type co
     expect(DASHBOARD).not.toContain('day.reason === "Berufsschule"');
   });
 
-  it("branches on day.leaveTypeCode / day.absenceType for the four renamable types", () => {
-    expect(DASHBOARD).toContain('day.leaveTypeCode === "SICK"');
-    expect(DASHBOARD).toContain('day.leaveTypeCode === "SICK_CHILD"');
-    expect(DASHBOARD).toContain('day.leaveTypeCode === "MATERNITY"');
-    expect(DASHBOARD).toContain('day.leaveTypeCode === "PARENTAL"');
-  });
-
-  // Declared scope extension (see this plan's SUMMARY): the two `day.reason === "Berufsschule"`
-  // comparisons (the `cell-badge--bs` class binding and the graduation-cap branch) are also
-  // converted, even though `VOCATIONAL_SCHOOL`/Berufsschule was never one of the guard's four
-  // tracked literals — leaving it on `reason` would mix two identity models in one `{#if}` chain,
-  // and DISPLAY_NAME's own docblock marks it "DISPLAY TEXT ONLY … never compare against a value
-  // here".
-  it("branches on day.absenceType === 'VOCATIONAL_SCHOOL' for the Berufsschule badge/icon (declared scope extension)", () => {
-    expect(DASHBOARD).toContain('day.absenceType === "VOCATIONAL_SCHOOL"');
+  // Issue #846 (D-02): the team-week cell no longer picks an icon per type — an absence is a chip
+  // whose TEXT is the server's reason (display only). So there is no type branch left to key on a
+  // code, and the finding's invariant is pinned directly: `day.reason` is rendered, never compared.
+  it("renders day.reason as the chip text only, and nowhere compares it", () => {
+    expect(DASHBOARD).toContain("{day.reason ?? DAY_STATUS_LABEL.absent}");
+    expect(DASHBOARD).not.toMatch(/day\.reason\s*(===|!==|==|!=)/);
+    expect(DASHBOARD).not.toMatch(/\.includes\(\s*day\.reason/);
   });
 });

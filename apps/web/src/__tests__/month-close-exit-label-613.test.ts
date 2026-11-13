@@ -20,12 +20,15 @@ function readRouteFile(relativeFromHere: string, relativeFromCwd: string): strin
   }
 }
 
+// #854 (plan 854-26): the page keeps the status shape; the persons list with the label moved into
+// MonthStatusTable, the shapes into lib/month-close/types.ts. The pins read the files that own them.
 const PAGE = readRouteFile(
-  "../routes/(app)/admin/month-close/+page.svelte",
-  "src/routes/(app)/admin/month-close/+page.svelte",
+  "../lib/components/admin/monatsabschluss/MonthStatusTable.svelte",
+  "src/lib/components/admin/monatsabschluss/MonthStatusTable.svelte",
 );
+const TYPES = readRouteFile("../lib/month-close/types.ts", "src/lib/month-close/types.ts");
 
-describe("/admin/month-close - exit date label (Issue #613)", () => {
+describe("/admin/month-close (MonthStatusTable) - exit date label (Issue #613)", () => {
   it("the page source is non-empty (the pins below are not vacuous)", () => {
     expect(PAGE.length).toBeGreaterThan(1000);
   });
@@ -37,11 +40,11 @@ describe("/admin/month-close - exit date label (Issue #613)", () => {
   });
 
   it("declares the additive exitDate on the status row", () => {
-    expect(PAGE).toMatch(/exitDate\?: string \| null/);
+    expect(TYPES).toMatch(/exitDate\?: string \| null/);
   });
 
-  it("renders the label of emp.exitDate in a gray badge, only when it is non-null", () => {
-    expect(PAGE).toMatch(/exitLabel\(emp\.exitDate\)/);
-    expect(PAGE).toMatch(/class="badge badge-gray"/);
+  it("renders the label of emp.exitDate in a neutral Chip, only when it is non-null", () => {
+    expect(PAGE).toMatch(/\{#if exitLabel\(emp\.exitDate\)\}/);
+    expect(PAGE).toMatch(/<Chip tone="neutral">\{exitLabel\(emp\.exitDate\)\}<\/Chip>/);
   });
 });

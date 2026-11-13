@@ -42,10 +42,11 @@ const EXEMPT_PAGES: ReadonlyArray<{
     reason: "configuration picker: every employee must be selectable (D-11)",
   },
   {
-    page: "admin/shutdowns",
-    file: "(app)/admin/shutdowns/+page.svelte",
-    loads: "/employees",
-    reason: "configuration picker: a company shutdown applies to employees of every salon (D-11)",
+    // The list left the route file with #854 (plan 854-12): it is the Betriebsurlaub tab of Abwesenheiten.
+    page: "BetriebsurlaubPanel",
+    file: "../lib/components/admin/abwesenheiten/BetriebsurlaubPanel.svelte",
+    loads: "/company-shutdowns",
+    reason: "configuration list: a company shutdown applies to employees of every salon (D-11)",
   },
   {
     page: "admin/shutdowns/[id]",
@@ -54,14 +55,16 @@ const EXEMPT_PAGES: ReadonlyArray<{
     reason: "configuration picker: exceptions may name any employee (D-11)",
   },
   {
-    page: "admin/phorest",
-    file: "(app)/admin/phorest/+page.svelte",
+    // The mapping picker left the route file with #854 (plan 854-16): it is the connection panel of System › Phorest.
+    page: "PhorestConnectionPanel",
+    file: "../lib/components/admin/phorest/PhorestConnectionPanel.svelte",
     loads: "/employees",
     reason: "mapping picker: the Phorest staff mapping needs every employee (D-11)",
   },
   {
-    page: "admin/integrations",
-    file: "(app)/admin/integrations/+page.svelte",
+    // The page body left its route file with #854 (plan 854-14): it is the WLAN-Anwesenheit tab of Integrationen.
+    page: "PresenceSourcesPanel",
+    file: "../lib/components/admin/integrationen/PresenceSourcesPanel.svelte",
     loads: "/employees",
     reason: "tenant configuration, not a person view (D-11)",
   },
@@ -87,8 +90,9 @@ const EXEMPT_PAGES: ReadonlyArray<{
       "work queue that follows the caller's shift:read reach on the server since #645 (all three buckets); a header salon filter is not its fix, the page lists every conflict the caller may see",
   },
   {
-    page: "admin/leave-limits",
-    file: "(app)/admin/leave-limits/+page.svelte",
+    // The page left its route file with #854 (plan 854-13): it is the Urlaubsgrenzen tab of Abwesenheiten.
+    page: "UrlaubsgrenzenPanel",
+    file: "../lib/components/admin/abwesenheiten/UrlaubsgrenzenPanel.svelte",
     loads: "fetchLeaveLimitRules",
     reason:
       "configuration page with its own salon selection; the header salon is not a filter here",
@@ -142,19 +146,6 @@ const EXEMPT_BLOCKS: ReadonlyArray<{
   reason: string;
 }> = [
   {
-    block: "DATEV download",
-    fn: "downloadDatev",
-    loads: "/reports/datev?month=",
-    reason:
-      "the payroll file must stay complete: a salon-narrowed DATEV would silently drop people from payroll (OD-2, § 41 EStG)",
-  },
-  {
-    block: "per-person DATEV download",
-    fn: "downloadEmployeeDatev",
-    loads: "/reports/datev/employee",
-    reason: "a document of one named person; the salon does not change what it contains",
-  },
-  {
     block: "per-person Stundennachweis",
     fn: "downloadEmployeePdf",
     loads: "/reports/monthly/pdf",
@@ -170,10 +161,22 @@ describe("Issue #542 — blocks of Berichte that stay unfiltered", () => {
     // Issue #612: the page shrank when the attendance list and the export cards moved out (measured
     // 47 618 bytes after 612-06); the floor keeps the check non-vacuous.
     expect(REPORTS_PAGE.length).toBeGreaterThan(30_000);
-    expect(EXEMPT_BLOCKS.length).toBeGreaterThanOrEqual(3);
+    // Issue #854: the per-person DATEV block left with its function (the page starts no DATEV file),
+    // so one block remains - the floor follows the removal, it is not relaxed.
+    expect(EXEMPT_BLOCKS.length).toBeGreaterThanOrEqual(1);
     for (const { fn } of EXEMPT_BLOCKS) {
       expect(reportsFunctionBody(fn).length, `function ${fn} not found`).toBeGreaterThan(100);
     }
+  });
+
+  // Issue #854 (D-854-22, AC-7): no DATEV download is started on this page at all - Daten › Export is
+  // the one place, where the payroll file stays complete and is never salon-narrowed (OD-2, § 41
+  // EStG). The per-person drill-down only links there; `export-one-datev-path-854.test.ts` pins that
+  // no other file names a DATEV route.
+  it("the page starts no DATEV download: no DATEV route and no DATEV function", () => {
+    expect(reportsFunctionBody("downloadDatev")).toBe("");
+    expect(reportsFunctionBody("downloadEmployeeDatev")).toBe("");
+    expect(REPORTS_PAGE).not.toContain("/reports/datev");
   });
 
   for (const { block, fn, loads, reason } of EXEMPT_BLOCKS) {

@@ -159,17 +159,8 @@ describe("PeriodRangeDialog — validation", () => {
 });
 
 describe("PeriodRangeDialog — initial focus and presets", () => {
-  it("wide: the „Von“ month select carries data-autofocus and gets the focus", async () => {
+  it("lists the five presets at every width, focuses the pressed one and applies on click", async () => {
     stubMatchMedia(false);
-    renderWithTheme(PeriodRangeDialog, props());
-    const select = field("Von", "Monat");
-    await waitFor(() => expect(select).toHaveAttribute("data-autofocus"));
-    await waitFor(() => expect(document.activeElement).toBe(select));
-    expect(document.querySelectorAll("[data-autofocus]")).toHaveLength(1);
-  });
-
-  it("narrow: lists the five presets, focuses the pressed one and applies on click", async () => {
-    stubMatchMedia(true);
     const p = props();
     renderWithTheme(PeriodRangeDialog, p);
     expect(screen.getByRole("heading", { name: "Schnellauswahl" })).toBeInTheDocument();
@@ -183,25 +174,25 @@ describe("PeriodRangeDialog — initial focus and presets", () => {
     expect(pressed).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => expect(pressed).toHaveAttribute("data-autofocus"));
     await waitFor(() => expect(document.activeElement).toBe(pressed));
-    expect(field("Von", "Monat")).not.toHaveAttribute("data-autofocus");
+    expect(document.querySelectorAll("[data-autofocus]")).toHaveLength(1);
     await fireEvent.click(within(section).getByRole("button", { name: "Vormonat" }));
     expect(p.onApply).toHaveBeenCalledWith(ym(2026, 9), ym(2026, 9));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("narrow: focuses the first preset when none is pressed", async () => {
-    stubMatchMedia(true);
+  it("focuses the first preset when none is pressed", async () => {
+    stubMatchMedia(false);
     renderWithTheme(PeriodRangeDialog, props({ from: ym(2026, 2), to: ym(2026, 4) }));
     const section = screen.getByRole("region", { name: "Schnellauswahl" });
     const first = within(section).getByRole("button", { name: "Dieser Monat" });
     await waitFor(() => expect(document.activeElement).toBe(first));
   });
 
-  it("hides the presets section above 960 px and imports nothing from the app modules", () => {
+  it("is built from the Dialog block and FormFields, imports nothing from the app modules", () => {
     expect(dialogSource).not.toContain("$app/");
-    expect(dialogSource).toMatch(/\.range-presets\s*\{\s*display:\s*none;/);
-    expect(dialogSource).toMatch(
-      /@media \(max-width: 960px\)\s*\{\s*\.range-presets\s*\{\s*display:\s*block;/,
-    );
+    expect(dialogSource).toContain('import Dialog from "$components/ui/Dialog.svelte"');
+    expect(dialogSource).not.toContain("Modal");
+    expect(dialogSource).not.toContain("matchMedia");
+    expect((dialogSource.match(/<FormField\b/g) ?? []).length).toBe(4);
   });
 });

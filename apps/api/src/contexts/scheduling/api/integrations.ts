@@ -218,7 +218,7 @@ async function resolvePhorestCoupling(
       kind: "reject",
       status: 400,
       body: {
-        error: "Bitte einen Salon angeben — der Mandant hat mehrere Phorest-Kopplungen.",
+        error: "Bitte einen Salon angeben — das Unternehmen hat mehrere Phorest-Kopplungen.",
         code: "SALON_REQUIRED",
       },
     };
@@ -648,7 +648,7 @@ export async function integrationRoutes(app: FastifyInstance) {
               ok: false,
               reason: "auth-invalid",
               message:
-                "Verbindung fehlgeschlagen: Zugangsdaten ungültig. Prüfen Sie Benutzername und Passwort.",
+                "Verbindung fehlgeschlagen: Zugangsdaten ungültig. Prüf Benutzername und Passwort.",
             };
           }
           if (err.status === "NETWORK" || err.status === "TIMEOUT") {
@@ -656,7 +656,7 @@ export async function integrationRoutes(app: FastifyInstance) {
               ok: false,
               reason: "unreachable",
               message:
-                "Verbindung fehlgeschlagen: Phorest ist nicht erreichbar. Prüfen Sie Business-/Branch-ID und versuchen Sie es erneut.",
+                "Verbindung fehlgeschlagen: Phorest ist nicht erreichbar. Prüf Business- und Branch-ID und versuch es noch einmal.",
             };
           }
           // Other non-ok HTTP status — surface the status code, never the raw body.
@@ -799,7 +799,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       if (!emp) {
         return reply
           .code(400)
-          .send({ error: "Mitarbeiter nicht gefunden oder gehört nicht zu diesem Mandanten." });
+          .send({ error: "Mitarbeiter nicht gefunden oder gehört nicht zu diesem Unternehmen." });
       }
 
       const existing = await app.prisma.phorestStaffMapping.findUnique({

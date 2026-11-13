@@ -63,7 +63,7 @@ describe("Issue #82 — logout forgets the salon context", () => {
   it("removes every stored selection, keeps the theme, and returns the store to its initial state", async () => {
     localStorage.setItem("clokr.salonContext.t1.u1", "s1");
     localStorage.setItem("clokr.salonContext.t2.u9", "ALL");
-    localStorage.setItem("theme", "wald");
+    localStorage.setItem("theme", "petrol");
     fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(CONTEXT)));
     const { authStore, salonContext } = await freshModules();
 
@@ -74,7 +74,7 @@ describe("Issue #82 — logout forgets the salon context", () => {
     authStore.logout();
     expect(localStorage.getItem("clokr.salonContext.t1.u1")).toBeNull();
     expect(localStorage.getItem("clokr.salonContext.t2.u9")).toBeNull();
-    expect(localStorage.getItem("theme")).toBe("wald");
+    expect(localStorage.getItem("theme")).toBe("petrol");
     expect(salonContext.peek()).toEqual({
       loaded: false,
       tenant: null,

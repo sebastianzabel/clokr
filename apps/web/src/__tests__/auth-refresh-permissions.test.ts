@@ -328,7 +328,7 @@ describe("Phase 408 (#408) — behavioural: loadPermissionsIfMissing() (Task 2, 
 // 403 `{ error: <German text>, code: "NO_ROLE_ASSIGNED" }` (539-09); the web shows the server's
 // text and ends the session on a refused refresh, and branches on neither the text nor the code.
 const NO_ROLE_TEXT =
-  "Ihrem Konto ist keine Rolle zugewiesen. Bitte wenden Sie sich an Ihre Administration.";
+  "Deinem Konto ist keine Rolle zugewiesen. Bitte wende dich an deine Administration.";
 
 describe("Issue #539 — a role-less account is refused with the server's reason", () => {
   it("NR-1: a 401-triggered refresh refused with 403 NO_ROLE_ASSIGNED ends the session like any failed refresh", async () => {

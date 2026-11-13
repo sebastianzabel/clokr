@@ -35,7 +35,7 @@
 
 <div class="pairing-page">
   <PageHead
-    eyebrow="Mein Bereich"
+    eyebrow="Ich"
     title={pageLabel("/settings/geraet-koppeln")}
     accent="koppeln"
     sub="Dein Handy im Salon-WLAN erkennen lassen"

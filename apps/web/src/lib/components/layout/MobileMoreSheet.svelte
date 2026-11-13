@@ -1,9 +1,15 @@
 <script lang="ts">
   import { focusTrap } from "$lib/utils/focus-trap";
   import { versionStore, loadVersion } from "$stores/version";
-  import { hasUnreadReleaseNotes, loadReleaseNotesData, openWhatsNew } from "$stores/release-notes";
+  import {
+    hasUnreadReleaseNotes,
+    loadReleaseNotesData,
+    openWhatsNew,
+    whatsNewEntryLabel,
+  } from "$stores/release-notes";
   import { onMount } from "svelte";
   import { activeNavHref } from "$lib/nav/active-route";
+  import { navCurrentPath } from "$lib/nav/routes";
 
   import type { NavSection } from "$lib/nav/app-nav";
 
@@ -54,7 +60,7 @@
   const currentHref = $derived(
     activeNavHref(
       sections.flatMap((section) => section.items.map((item) => item.href)),
-      currentPath,
+      navCurrentPath(currentPath),
     ),
   );
 
@@ -228,13 +234,13 @@
               type="button"
               class="mehr-version-btn"
               onclick={openWhatsNew}
-              aria-label="Was ist neu in Version {$versionStore}"
+              aria-label={whatsNewEntryLabel($versionStore, $hasUnreadReleaseNotes)}
               title="Was ist neu"
               data-testid="mobile-whats-new"
             >
               <span class="mehr-version-label" translate="no">v{$versionStore}</span>
               {#if $hasUnreadReleaseNotes}
-                <span class="mehr-version-dot" aria-hidden="true"></span>
+                <span class="badge badge-purple mehr-version-badge" aria-hidden="true">Neu</span>
               {/if}
             </button>
           </div>
@@ -262,11 +268,11 @@
   .mehr-sheet {
     width: 100%;
     max-height: 80vh;
-    background: var(--bg-card);
-    border-top-left-radius: var(--r-lg);
-    border-top-right-radius: var(--r-lg);
-    border-top: 1px solid var(--border);
-    box-shadow: var(--shadow-lg);
+    background: var(--card);
+    border-top-left-radius: var(--r-card);
+    border-top-right-radius: var(--r-card);
+    border-top: 1px solid var(--line);
+    box-shadow: var(--shadow-pop);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -280,7 +286,7 @@
     align-items: center;
     justify-content: center;
     padding: 16px 16px 12px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
 
   .mehr-sheet-grabber {
@@ -291,12 +297,12 @@
     width: 36px;
     height: 4px;
     border-radius: 2px;
-    background: var(--border-strong, var(--border));
+    background: var(--line-2, var(--line));
   }
 
   .mehr-sheet-title {
     margin: 0;
-    font-family: var(--font-serif);
+    font-family: var(--font-ui);
     font-size: 18px;
     font-weight: 400;
     color: var(--text);
@@ -309,12 +315,12 @@
     transform: translateY(-50%);
     width: 44px;
     height: 44px;
-    border-radius: var(--r-sm);
+    border-radius: var(--r-control);
     border: 1px solid transparent;
     background: transparent;
     display: grid;
     place-items: center;
-    color: var(--text-muted);
+    color: var(--text-2);
     cursor: pointer;
     transition:
       background 120ms var(--ease),
@@ -322,12 +328,12 @@
   }
 
   .mehr-sheet-close:hover {
-    background: var(--bg-subtle);
+    background: var(--sunk);
     color: var(--text);
   }
 
   .mehr-sheet-close:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
@@ -350,7 +356,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
 
   .mehr-item {
@@ -363,7 +369,7 @@
     padding: 10px 18px;
     color: var(--text);
     text-decoration: none;
-    font-family: var(--font-sans);
+    font-family: var(--font-ui);
     font-size: 14.5px;
     font-weight: 500;
     transition:
@@ -373,11 +379,11 @@
 
   .mehr-item:hover,
   .mehr-item:focus-visible {
-    background: var(--bg-subtle);
+    background: var(--sunk);
   }
 
   .mehr-item:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: -2px;
   }
 
@@ -409,7 +415,7 @@
     place-items: center;
     width: 22px;
     height: 22px;
-    color: var(--text-muted);
+    color: var(--text-2);
     flex-shrink: 0;
   }
 
@@ -429,7 +435,7 @@
      (no --text-xs token exists in tokens.css). */
   .mehr-sheet-version {
     padding: var(--s-3) var(--s-3) var(--s-2);
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     text-align: center;
   }
 
@@ -449,24 +455,21 @@
   }
 
   .mehr-version-btn:focus-visible {
-    outline: 2px solid var(--brand-light);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
   }
 
   .mehr-version-label {
     font-size: 0.75rem;
-    color: var(--text-faint);
+    color: var(--text-3);
     font-feature-settings: "tnum";
     letter-spacing: 0.02em;
   }
 
   /* Mirrors Topbar.svelte's .notif-dot.unread-dot idiom. */
-  .mehr-version-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--brand);
-    flex-shrink: 0;
+  .mehr-version-badge {
+    font-size: 10px;
+    padding: 1px 6px;
   }
 
   @keyframes mehr-fade {

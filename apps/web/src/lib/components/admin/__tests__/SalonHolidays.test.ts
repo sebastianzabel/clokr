@@ -1,8 +1,9 @@
 // Issue #579 - the „Feiertage“ section of the salon detail page, mounted. The page itself cannot be
 // mounted (no `$app` alias), so this mount test is the component's gate: the two lists, the year
 // reload, the add body, client-side refusals, the remove confirmation and the read-only state.
+// Issue #854: the lists are DataTables, adding goes through a Dialog with the DatePicker.
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, screen, waitFor, within } from "@testing-library/svelte";
 
 const get = vi.fn();
 const post = vi.fn();
@@ -44,6 +45,24 @@ const CALENDAR = [
   },
 ];
 
+/** Types a calendar day into the DatePicker's three segments (Tag, Monat, Jahr). */
+async function typeDate(day: string, month: string, year: string) {
+  const [d, m, y] = screen.getAllByRole("spinbutton");
+  for (const [segment, digits] of [
+    [d, day],
+    [m, month],
+    [y, year],
+  ] as const) {
+    segment.focus();
+    for (const digit of digits) await fireEvent.keyDown(segment, { key: digit });
+  }
+}
+
+async function openAddDialog() {
+  await fireEvent.click(screen.getByRole("button", { name: "Feiertag hinzufügen" }));
+  return screen.findByRole("dialog");
+}
+
 function mount(canManage: boolean) {
   return renderWithTheme(SalonHolidays, { salonId: "salon-1", canManage });
 }
@@ -60,8 +79,8 @@ describe("SalonHolidays", () => {
     mount(true);
     await screen.findByText("Salonjubiläum");
     expect(get).toHaveBeenCalledWith(`/holidays?salonId=salon-1&year=${YEAR}`);
-    const manual = screen.getByRole("list", { name: `Zusätzliche Feiertage ${YEAR}` });
-    const statutory = screen.getByRole("list", { name: `Gesetzliche Feiertage ${YEAR}` });
+    const manual = screen.getByRole("table", { name: `Zusätzliche Feiertage ${YEAR}` });
+    const statutory = screen.getByRole("table", { name: `Gesetzliche Feiertage ${YEAR}` });
     expect(manual.textContent).toContain("Salonjubiläum");
     expect(manual.textContent).not.toContain("Neujahr");
     expect(statutory.textContent).toContain("Neujahr");
@@ -79,14 +98,15 @@ describe("SalonHolidays", () => {
     );
   });
 
-  it("posts salonId, date and trimmed name, then reloads", async () => {
+  it("posts salonId, date and trimmed name from the dialog, then reloads and closes it", async () => {
     mount(true);
     await screen.findByText("Salonjubiläum");
-    await fireEvent.input(screen.getByLabelText("Datum"), { target: { value: `${YEAR}-05-02` } });
-    await fireEvent.input(screen.getByLabelText("Bezeichnung"), {
+    const dialog = await openAddDialog();
+    await typeDate("02", "05", String(YEAR));
+    await fireEvent.input(within(dialog).getByLabelText(/^Bezeichnung/), {
       target: { value: "  Betriebsfest " },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Feiertag hinzufügen" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Hinzufügen" }));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     expect(post).toHaveBeenCalledWith("/holidays", {
       salonId: "salon-1",
@@ -95,14 +115,29 @@ describe("SalonHolidays", () => {
     });
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
     expect(success).toHaveBeenCalledWith("Feiertag hinzugefügt.");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("refuses an empty name without calling the API", async () => {
+  it("refuses an empty name without calling the API and keeps the dialog open", async () => {
     mount(true);
     await screen.findByText("Salonjubiläum");
-    await fireEvent.input(screen.getByLabelText("Datum"), { target: { value: `${YEAR}-05-02` } });
-    await fireEvent.click(screen.getByRole("button", { name: "Feiertag hinzufügen" }));
+    const dialog = await openAddDialog();
+    await typeDate("02", "05", String(YEAR));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Hinzufügen" }));
     expect(await screen.findByText("Bitte gib eine Bezeichnung ein.")).toBeTruthy();
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("refuses a missing date without calling the API", async () => {
+    mount(true);
+    await screen.findByText("Salonjubiläum");
+    const dialog = await openAddDialog();
+    await fireEvent.input(within(dialog).getByLabelText(/^Bezeichnung/), {
+      target: { value: "Ohne Datum" },
+    });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Hinzufügen" }));
+    expect(await screen.findByText("Bitte wähle ein Datum.")).toBeTruthy();
     expect(post).not.toHaveBeenCalled();
   });
 
@@ -110,9 +145,12 @@ describe("SalonHolidays", () => {
     post.mockRejectedValue(new ApiError(409, "Für diesen Tag existiert bereits ein Feiertag."));
     mount(true);
     await screen.findByText("Salonjubiläum");
-    await fireEvent.input(screen.getByLabelText("Datum"), { target: { value: `${YEAR}-03-10` } });
-    await fireEvent.input(screen.getByLabelText("Bezeichnung"), { target: { value: "Doppelt" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Feiertag hinzufügen" }));
+    const dialog = await openAddDialog();
+    await typeDate("10", "03", String(YEAR));
+    await fireEvent.input(within(dialog).getByLabelText(/^Bezeichnung/), {
+      target: { value: "Doppelt" },
+    });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Hinzufügen" }));
     expect(await screen.findByText("Für diesen Tag existiert bereits ein Feiertag.")).toBeTruthy();
     expect(post).toHaveBeenCalledTimes(1);
   });
@@ -132,7 +170,19 @@ describe("SalonHolidays", () => {
     await screen.findByText("Salonjubiläum");
     expect(screen.queryByRole("button", { name: "Feiertag hinzufügen" })).toBeNull();
     expect(screen.queryByRole("button", { name: /entfernen/ })).toBeNull();
-    expect(screen.queryByLabelText("Datum")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("says so with an empty state when the salon has no manual holidays", async () => {
+    get.mockResolvedValue([CALENDAR[0]]);
+    mount(true);
+    expect(await screen.findByText("Noch keine eigenen Feiertage")).toBeTruthy();
+    expect(
+      screen.getByText(`Für ${YEAR} sind keine zusätzlichen Feiertage eingetragen.`),
+    ).toBeTruthy();
+    expect(screen.queryByRole("table", { name: `Zusätzliche Feiertage ${YEAR}` })).toBeNull();
+    // The computed holidays stay listed, read-only.
+    expect(screen.getByRole("table", { name: `Gesetzliche Feiertage ${YEAR}` })).toBeTruthy();
   });
 
   it("says so when the calendar cannot be loaded", async () => {

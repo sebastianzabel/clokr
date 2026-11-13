@@ -1,3 +1,4 @@
+import { getBookedMonthCorrections } from "../booked-month-corrections"; // Issue #599
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth";
@@ -1612,6 +1613,14 @@ export async function overtimeRoutes(app: FastifyInstance) {
           unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
         })),
         holidayDateStrings,
+        // Issue #599 — booked corrections of closed months, an account movement of this month.
+        accountCorrections: await getBookedMonthCorrections(
+          app.prisma,
+          employeeId,
+          employee.tenantId,
+          monthFirstDay,
+          monthLastDay,
+        ),
         tenantConfig: tenantConfig
           ? {
               defaultBreakOver6h: tenantConfig.defaultBreakOver6h,

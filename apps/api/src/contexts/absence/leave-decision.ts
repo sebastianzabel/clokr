@@ -179,6 +179,13 @@ export function formatDateDe(d: Date): string {
   return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
 }
 
+/** Issue #602: „vom 21.12.2026“ for one day, „vom 21.12.2026 bis 23.12.2026“ for a range. */
+export function decisionPeriodDe(start: Date, end: Date): string {
+  const a = formatDateDe(start);
+  const b = formatDateDe(end);
+  return a === b ? `vom ${a}` : `vom ${a} bis ${b}`;
+}
+
 export interface DecideInput {
   existing: ReviewableLeaveRequest;
   reviewerUserId: string;
@@ -559,7 +566,7 @@ export async function decidePendingLeaveRequest(
             type: "SECTION9_AU_PENDING_EMPLOYEE",
             title: "AU nachreichen — Urlaubstage stehen auf dem Spiel",
             message:
-              `Für ${rangeLabel} liegt eine Krankmeldung während Ihres genehmigten Urlaubs vor. ` +
+              `Für ${rangeLabel} liegt eine Krankmeldung während deines genehmigten Urlaubs vor. ` +
               `Ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet (§ 9 BUrlG).`,
             link: "/leave",
             tenantId: employeeUser.tenantId,
@@ -801,7 +808,8 @@ export async function decidePendingLeaveRequest(
       userId: requestEmployee.userId,
       type: input.status === "APPROVED" ? "LEAVE_APPROVED" : "LEAVE_REJECTED",
       title: input.status === "APPROVED" ? "Antrag genehmigt" : "Antrag abgelehnt",
-      message: `Ihr ${existing.leaveType.name}-Antrag wurde ${input.status === "APPROVED" ? "genehmigt" : "abgelehnt"}.`,
+      // Issue #602 (Phase 851): the notice names the process and its period.
+      message: `Dein ${existing.leaveType.name}-Antrag ${decisionPeriodDe(existing.startDate, existing.endDate)} wurde ${input.status === "APPROVED" ? "genehmigt" : "abgelehnt"}.`,
       link: `/leave?request=${existing.id}`,
       tenantId: requestEmployee.tenantId,
     });

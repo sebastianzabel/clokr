@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
   import { untrack } from "svelte";
-  import Modal from "$components/ui/Modal.svelte";
+  import BulkPreviewDialog from "$components/ui/BulkPreviewDialog.svelte";
   import { ApiError } from "$api/client";
   import {
     isStalePreviewError,
@@ -119,7 +119,7 @@
     }
   }
 
-  async function confirm() {
+  async function confirmApply() {
     if (!preview || !canConfirm) return;
     const selection: BulkApplySelection = {
       applyEmployeeIds: [...selected].sort(),
@@ -148,8 +148,20 @@
   }
 </script>
 
-<Modal bind:open eyebrow="Auf bestehende Verträge anwenden" title="Vorschau der Vertragsänderungen">
-  <div class="bulk-body">
+<!-- Issue #843 (D-843-01 block 7, D-843-07): the shell, count line, effective-date line, footer and
+     loading Skeleton come from the bulk pattern helper; this dialog keeps its #568 content and rules. -->
+<BulkPreviewDialog
+  bind:open
+  eyebrow="Auf bestehende Verträge anwenden"
+  title="Vorschau der Vertragsänderungen"
+  count={selectedCount}
+  effectiveDate={preview?.effectiveFrom}
+  confirmLabel={saving ? "Wird übernommen…" : "Änderungen übernehmen"}
+  pending={saving}
+  {loading}
+  onConfirm={confirmApply}
+>
+  {#snippet intro()}
     {#if errorText}
       <div class="callout error" role="alert">{errorText}</div>
     {/if}
@@ -157,11 +169,7 @@
       <div class="callout error" role="alert">{staleText}</div>
     {/if}
 
-    {#if preview === null}
-      {#if loading}
-        <p class="form-hint" role="status">Vorschau wird geladen …</p>
-      {/if}
-    {:else}
+    {#if preview !== null}
       <div class="callout brand" role="note">
         Die Änderung gilt nie rückwirkend (§ 3 NachwG). Individuelle Verträge werden nur geändert,
         wenn du sie ausdrücklich ankreuzt.
@@ -181,72 +189,71 @@
           {/each}
         </select>
       </div>
-
-      {#if loading}
-        <p class="form-hint" role="status">Vorschau wird geladen …</p>
-      {/if}
-
-      {#if preview.candidates.length === 0}
-        <div class="bulk-empty">
-          <p class="bulk-empty-title">Keine Verträge zu ändern</p>
-          <p class="form-hint">
-            Kein Vertrag ist betroffen. Mit „Nur Vorgaben speichern“ übernimmst du die neuen
-            Vorgaben, ohne bestehende Verträge anzufassen.
-          </p>
-        </div>
-      {:else}
-        <p class="bulk-summary" role="status">
-          {summaryLine(selectedCount, preview.effectiveFrom)}
-        </p>
-        <ul class="bulk-list">
-          {#each preview.candidates as candidate (candidate.employeeId)}
-            <li>
-              <label class="bulk-row" class:bulk-row-on={selected.has(candidate.employeeId)}>
-                <input
-                  type="checkbox"
-                  aria-label={`${candidate.name} (${candidate.employeeNumber}) ändern`}
-                  checked={selected.has(candidate.employeeId)}
-                  disabled={saving}
-                  onchange={(e) => toggle(candidate.employeeId, e.currentTarget.checked)}
-                />
-                <span class="bulk-row-main">
-                  <span class="bulk-row-head">
-                    <span class="bulk-name">{candidate.name}</span>
-                    <span class="bulk-number">{candidate.employeeNumber}</span>
-                  </span>
-                  <span class="bulk-change"
-                    >{formatContract(candidate.before)} → {formatContract(candidate.after)}</span
-                  >
-                  <span class="badge {BADGE_CLASS[candidate.category]}"
-                    >{CATEGORY_LABELS[candidate.category]}</span
-                  >
-                </span>
-              </label>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-
-      {#if preview.nonCandidates.length > 0}
-        <section class="bulk-skipped" aria-labelledby="bulk-skipped-title">
-          <h4 id="bulk-skipped-title">Nicht betroffen</h4>
-          {#each preview.nonCandidates as group (group.reason)}
-            <div class="bulk-skipped-group">
-              <p class="bulk-skipped-reason">{REASON_LABELS[group.reason]} ({group.count})</p>
-              <p class="bulk-skipped-names">
-                {group.employees.map((e) => e.name).join(", ")}
-              </p>
-            </div>
-          {/each}
-        </section>
-      {/if}
     {/if}
-  </div>
+  {/snippet}
 
-  {#snippet footer()}
-    <button type="button" class="btn btn-ghost" disabled={saving} onclick={() => (open = false)}>
-      Abbrechen
-    </button>
+  {#snippet list()}
+    {#if preview !== null}
+      <div class="bulk-body">
+        {#if preview.candidates.length === 0}
+          <div class="bulk-empty">
+            <p class="bulk-empty-title">Keine Verträge zu ändern</p>
+            <p class="form-hint">
+              Kein Vertrag ist betroffen. Mit „Nur Vorgaben speichern“ übernimmst du die neuen
+              Vorgaben, ohne bestehende Verträge anzufassen.
+            </p>
+          </div>
+        {:else}
+          <p class="bulk-summary" role="status">
+            {summaryLine(selectedCount, preview.effectiveFrom)}
+          </p>
+          <ul class="bulk-list">
+            {#each preview.candidates as candidate (candidate.employeeId)}
+              <li>
+                <label class="bulk-row" class:bulk-row-on={selected.has(candidate.employeeId)}>
+                  <input
+                    type="checkbox"
+                    aria-label={`${candidate.name} (${candidate.employeeNumber}) ändern`}
+                    checked={selected.has(candidate.employeeId)}
+                    disabled={saving}
+                    onchange={(e) => toggle(candidate.employeeId, e.currentTarget.checked)}
+                  />
+                  <span class="bulk-row-main">
+                    <span class="bulk-row-head">
+                      <span class="bulk-name">{candidate.name}</span>
+                      <span class="bulk-number">{candidate.employeeNumber}</span>
+                    </span>
+                    <span class="bulk-change"
+                      >{formatContract(candidate.before)} → {formatContract(candidate.after)}</span
+                    >
+                    <span class="badge {BADGE_CLASS[candidate.category]}"
+                      >{CATEGORY_LABELS[candidate.category]}</span
+                    >
+                  </span>
+                </label>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        {#if preview.nonCandidates.length > 0}
+          <section class="bulk-skipped" aria-labelledby="bulk-skipped-title">
+            <h4 id="bulk-skipped-title">Nicht betroffen</h4>
+            {#each preview.nonCandidates as group (group.reason)}
+              <div class="bulk-skipped-group">
+                <p class="bulk-skipped-reason">{REASON_LABELS[group.reason]} ({group.count})</p>
+                <p class="bulk-skipped-names">
+                  {group.employees.map((e) => e.name).join(", ")}
+                </p>
+              </div>
+            {/each}
+          </section>
+        {/if}
+      </div>
+    {/if}
+  {/snippet}
+
+  {#snippet extraActions()}
     {#if nothingAffected}
       <button
         type="button"
@@ -257,11 +264,8 @@
         {saving ? "Wird gespeichert…" : "Nur Vorgaben speichern"}
       </button>
     {/if}
-    <button type="button" class="btn btn-primary" disabled={!canConfirm} onclick={confirm}>
-      {saving ? "Wird übernommen…" : "Änderungen übernehmen"}
-    </button>
   {/snippet}
-</Modal>
+</BulkPreviewDialog>
 
 <style>
   .bulk-body {
@@ -288,9 +292,9 @@
     align-items: flex-start;
     gap: 12px;
     padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--card);
     cursor: pointer;
   }
   .bulk-row-on {
@@ -322,7 +326,7 @@
   }
   .bulk-number {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .bulk-change {
     font-size: 13px;
@@ -331,8 +335,8 @@
   }
   .bulk-empty {
     padding: 12px 14px;
-    border: 1px dashed var(--border-strong);
-    border-radius: var(--r-md);
+    border: 1px dashed var(--line-2);
+    border-radius: var(--r-control);
   }
   .bulk-empty-title {
     margin: 0 0 4px;
@@ -344,7 +348,7 @@
     margin: 0;
   }
   .bulk-skipped {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
     padding-top: 12px;
     display: flex;
     flex-direction: column;
@@ -354,7 +358,7 @@
     margin: 0;
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-muted);
+    color: var(--text-2);
   }
   .bulk-skipped-group p {
     margin: 0;
@@ -365,7 +369,7 @@
   }
   .bulk-skipped-names {
     font-size: 12px;
-    color: var(--text-muted);
+    color: var(--text-2);
     overflow-wrap: anywhere;
   }
 </style>

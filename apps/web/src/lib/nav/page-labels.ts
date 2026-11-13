@@ -1,69 +1,48 @@
 /**
- * Issue #574 (D-574-09..11) — the ONE place a page's name lives.
+ * Issue #574 (D-574-09..11) — the ONE place a page's name is read; since #844 the names live in the route table
+ * (`routes.ts`) and this module is its name view.
  *
- * The desktop Sidebar and the mobile "Mehr" sheet (through `app-nav.ts`), the Topbar crumb
- * (`labelForPath`), the quick search (CommandPalette) and the H1 of every nav page all read this
- * table, so a page can no longer carry four different names. The names follow `docs/glossar.md`.
- * `page-labels-one-source-574.test.ts` fails on a surface that spells a name itself.
+ * The desktop Sidebar and the mobile "Mehr" sheet (through `app-nav.ts`), the Topbar crumb (`labelForPath`), the
+ * quick search (CommandPalette) and the H1 of every nav page all read it, so a page can no longer carry four
+ * different names. The names follow `docs/glossar.md`. `page-labels-one-source-574.test.ts` fails on a surface
+ * that spells a name itself.
  *
- * Deliberately absent: `/leave/planung` and `/teamcal` — both only redirect since #840
- * (D-840-06) and have no page of their own.
+ * A page names itself by its new URL OR by its route file (the pre-#844 URL, e.g. `pageLabel("/inbox")` in
+ * `routes/(app)/inbox/+page.svelte`): both resolve to the same table entry, so the H1 always equals the menu name.
  */
-import { activeNavHref } from "$lib/nav/active-route";
+import { APP_ROUTES, routeByKey, routeFor } from "$lib/nav/routes";
 
-export const PAGE_LABELS = Object.freeze({
-  "/dashboard": "Übersicht",
-  "/time-entries": "Zeiterfassung",
-  "/leave": "Abwesenheiten",
-  "/availability": "Verfügbarkeit",
-  "/inbox": "Aufgaben",
-  "/team/time-entries": "Team-Zeiten",
-  "/team/leave": "Abwesenheiten",
-  "/shifts": "Schichtplanung",
-  "/reports": "Berichte",
-  "/admin/employees": "Mitarbeitende",
-  "/admin/vacation": "Urlaubsverwaltung",
-  // redirect-only alias (/admin/vacation#sonderurlaub) — carries its target's name
-  "/admin/special-leave": "Urlaubsverwaltung",
-  "/admin/shutdowns": "Betriebsurlaub",
-  "/admin/leave-limits": "Urlaubsgrenzen & Sperren",
-  "/admin/shifts": "Schichteinstellungen",
-  "/admin/availability": "Verfügbarkeit",
-  "/admin/salons": "Salons",
-  "/admin/month-close": "Monatsabschluss",
-  "/admin/audit": "Protokoll",
-  "/admin/support-access": "Support-Zugriffe",
-  "/admin/import": "CSV-Import",
-  "/admin/export": "DATEV-Export",
-  "/admin/system": "Allgemein",
-  "/admin/themes": "Branding & Themes",
-  "/admin/integrations": "Integrationen",
-  // redirect-only alias (Phase 52 rename to /admin/integrations) — carries its target's name
-  "/admin/wifi-presence": "Integrationen",
-  "/admin/phorest": "Phorest",
-  "/admin/roles": "Rollen & Rechte",
-  "/admin": "Administration",
-  "/settings": "Mein Profil",
-  "/settings/geraet-koppeln": "Handy koppeln",
-} as const);
+/** href or route file → page name, for every table entry. */
+export const PAGE_LABELS: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    APP_ROUTES.flatMap((route) =>
+      route.file === undefined
+        ? [[route.href, route.label]]
+        : [
+            [route.href, route.label],
+            [route.file, route.label],
+          ],
+    ),
+  ),
+);
 
-export type PageHref = keyof typeof PAGE_LABELS;
+/** A key of the page-name table: a new href or a route file. */
+export type PageHref = string;
 
-const PAGE_HREFS = Object.keys(PAGE_LABELS);
-
-/** The name of the page `href`. Throws for an href outside the table — a nav entry without a
- *  name must break the unit tests, never render an empty label (fail closed). */
+/** The name of the page `href` (new URL or route file). Throws for an href outside the table — a nav entry
+ *  without a name must break the unit tests, never render an empty label (fail closed). */
 export function pageLabel(href: PageHref): string {
-  const label = (PAGE_LABELS as Record<string, string>)[href];
-  if (label === undefined) {
-    throw new Error(`page-labels: no page name for "${href}" — add it to the page-name table`);
+  const route = routeByKey(href);
+  if (route === null) {
+    throw new Error(
+      `page-labels: no page name for "${href}" — add it to the route table (routes.ts)`,
+    );
   }
-  return label;
+  return route.label;
 }
 
-/** The name of the page `path` belongs to — the longest matching href wins (shared rule,
- *  `active-route.ts`), so `/admin/employees/123` is "Mitarbeitende". "" when no page matches. */
+/** The name of the page `path` belongs to — the longest matching href wins (shared rule, `active-route.ts`),
+ *  so `/verwalten/personen/123` is "Personen". "" when no page matches. */
 export function labelForPath(path: string): string {
-  const key = activeNavHref(PAGE_HREFS, path);
-  return key === null ? "" : (PAGE_LABELS as Record<string, string>)[key];
+  return routeFor(path)?.label ?? "";
 }
