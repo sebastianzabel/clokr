@@ -20,3 +20,18 @@ export function monthStatusOf(closed: boolean): MonthStatus {
 export function monthStatusLabel(closed: boolean): string {
   return MONTH_STATUS_LABEL[monthStatusOf(closed)];
 }
+
+/**
+ * Issue #854 (owner review): the API reports a month that has not ended yet as `future`. The web words it
+ * „Läuft noch“ for the current month and „Zukunft“ for a later one; the API value stays unchanged.
+ */
+export const NOT_ENDED_MONTH_LABEL = {
+  RUNNING: "Läuft noch",
+  LATER: "Zukunft",
+} as const;
+
+/** `today` is a `YYYY-MM-DD` calendar day; the month counts as running when it is today's month. */
+export function notEndedMonthLabel(year: number, month: number, today: string): string {
+  const [y, m] = today.split("-").map(Number);
+  return year === y && month === m ? NOT_ENDED_MONTH_LABEL.RUNNING : NOT_ENDED_MONTH_LABEL.LATER;
+}

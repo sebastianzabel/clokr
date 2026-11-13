@@ -19,7 +19,8 @@
   } from "$lib/month-close/day-lists";
   import { exitLabel } from "$lib/month-close/exit-label";
   import type { EmployeeStatus, MonthStatus } from "$lib/month-close/types";
-  import { MONTH_STATUS_LABEL } from "$lib/saldo/month-status"; // Issue #598: one status wording
+  import { localCalendarDay } from "$lib/employees/employment-state";
+  import { MONTH_STATUS_LABEL, notEndedMonthLabel } from "$lib/saldo/month-status"; // Issue #598: one status wording
 
   interface Props {
     year: number;
@@ -73,7 +74,6 @@
     ready: "Bereit",
     open: MONTH_STATUS_LABEL.OPEN,
     blocked: "Blockiert",
-    future: "Zukunft",
     no_data: "Keine Daten",
   };
 
@@ -84,7 +84,11 @@
     blocked: "warn",
   };
 
-  function statusLabel(status: string): string {
+  // Browser-local calendar day: the web has no tenant-local "today" helper.
+  const today = localCalendarDay();
+
+  function statusLabel(status: string, month: number): string {
+    if (status === "future") return notEndedMonthLabel(year, month, today);
     return STATUS_LABELS[status] ?? status;
   }
 
@@ -171,7 +175,7 @@
         </span>
       {:else if column.key === "status"}
         <Chip tone={statusTone(ms.status)}>
-          {statusLabel(ms.status)} ({ms.closedCount}/{ms.totalCount})
+          {statusLabel(ms.status, ms.month)} ({ms.closedCount}/{ms.totalCount})
         </Chip>
       {:else if column.key === "reason"}
         <span class="mst-reason">{reasonText(ms)}</span>

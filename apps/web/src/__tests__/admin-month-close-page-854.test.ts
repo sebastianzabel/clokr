@@ -166,9 +166,9 @@ describe("Monatsabschluss page (#854)", () => {
   it("writes the status filter to the URL and filters the months", async () => {
     renderWithTheme(Page, {});
     await screen.findByTestId("month-close-row-1");
-    await fireEvent.change(screen.getByRole("combobox", { name: "Status" }), {
-      target: { value: "closed" },
-    });
+    // #854 (owner review): the status filter is a Segment in the year bar.
+    const filter = screen.getByRole("radiogroup", { name: "Status" });
+    await fireEvent.click(within(filter).getByRole("radio", { name: "Abgeschlossen" }));
     expect(screen.getByTestId("month-close-row-1")).toBeTruthy();
     expect(screen.queryByTestId("month-close-row-2")).toBeNull();
     expect(goto).toHaveBeenCalledWith(

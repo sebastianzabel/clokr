@@ -19,6 +19,7 @@
   import ErrorState from "$components/ui/ErrorState.svelte";
   import FormField from "$components/ui/FormField.svelte";
   import KpiStrip from "$components/ui/KpiStrip.svelte";
+  import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import Note from "$components/ui/Note.svelte";
   import PeriodPicker from "$components/ui/PeriodPicker.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
@@ -619,10 +620,11 @@
     </div>
   {/if}
 
+  <!-- The year is the PeriodPicker in the shape of Zeiten (#854 owner review): no eyebrow, „Heute“ jumps to
+       the current year, and the status filter sits in the same row as a Segment. -->
   <div class="mc-controls">
     <PeriodPicker
       label={String(selectedYear)}
-      eyebrow="Jahr"
       testIdPrefix="month-close-year"
       prevLabel="Vorheriges Jahr"
       nextLabel="Nächstes Jahr"
@@ -630,25 +632,23 @@
       nextDisabled={loading || selectedYear >= currentYear}
       onPrev={() => changeYear(-1)}
       onNext={() => changeYear(1)}
-    />
-    <div class="mc-filter">
-      <FormField label="Status">
-        {#snippet field({ id, describedBy })}
-          <select
-            {id}
-            class="form-input"
+      onToday={selectedYear === currentYear
+        ? undefined
+        : () => changeYear(currentYear - selectedYear)}
+    >
+      {#snippet extra()}
+        <div data-testid="month-close-status">
+          <SegmentedControl
+            size="sm"
+            name="month-close-status"
+            ariaLabel="Status"
+            options={filterOptions}
             value={statusFilter}
-            aria-describedby={describedBy}
-            data-testid="month-close-status"
-            onchange={(event) => setStatusFilter(event.currentTarget.value)}
-          >
-            {#each filterOptions as opt (opt.value)}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        {/snippet}
-      </FormField>
-    </div>
+            onchange={setStatusFilter}
+          />
+        </div>
+      {/snippet}
+    </PeriodPicker>
   </div>
 
   {#if loading}
@@ -656,28 +656,31 @@
   {:else if loadError}
     <ErrorState message={loadError} onRetry={loadYearStatus} />
   {:else if loaded}
-    {#if autoCloseHint}
-      <Note tone="brand">{autoCloseHint}</Note>
-    {/if}
-    <KpiStrip items={kpiItems} ariaLabel={`Stand der Monatsabschlüsse ${selectedYear}`} />
-    <MonthStatusTable
-      year={selectedYear}
-      months={monthStatuses}
-      {visibleMonths}
-      filtered={statusFilter !== "all"}
-      onResetFilters={resetFilters}
-      {selectedMonth}
-      {firstActionableMonth}
-      employees={detailEmployees}
-      {detailLoading}
-      busy={closing}
-      {closingEmployee}
-      {unlocking}
-      onSelectMonth={selectMonth}
-      onCloseMonth={openConfirmCloseMonth}
-      onCloseEmployee={openConfirmCloseEmployee}
-      onUnlockEmployee={openUnlockDialog}
-    />
+    <!-- Hint, figures and the month list keep the section distance of the other Verwalten pages. -->
+    <div class="mc-stack">
+      {#if autoCloseHint}
+        <Note tone="brand">{autoCloseHint}</Note>
+      {/if}
+      <KpiStrip items={kpiItems} ariaLabel={`Stand der Monatsabschlüsse ${selectedYear}`} />
+      <MonthStatusTable
+        year={selectedYear}
+        months={monthStatuses}
+        {visibleMonths}
+        filtered={statusFilter !== "all"}
+        onResetFilters={resetFilters}
+        {selectedMonth}
+        {firstActionableMonth}
+        employees={detailEmployees}
+        {detailLoading}
+        busy={closing}
+        {closingEmployee}
+        {unlocking}
+        onSelectMonth={selectMonth}
+        onCloseMonth={openConfirmCloseMonth}
+        onCloseEmployee={openConfirmCloseEmployee}
+        onUnlockEmployee={openUnlockDialog}
+      />
+    </div>
   {/if}
 </div>
 
@@ -810,17 +813,14 @@
 </Dialog>
 
 <style>
-  .mc-filter {
-    min-width: min(100%, 220px);
+  .mc-controls {
+    margin: var(--s-4) 0;
   }
 
-  .mc-controls {
+  .mc-stack {
     display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: var(--s-3) var(--s-6);
-    margin: var(--s-4) 0;
+    flex-direction: column;
+    gap: var(--s-6);
   }
 
   .mc-deferred {
