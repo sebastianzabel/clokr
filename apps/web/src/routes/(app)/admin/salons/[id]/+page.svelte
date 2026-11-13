@@ -12,7 +12,7 @@
   import Chip from "$components/ui/Chip.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import Note from "$components/ui/Note.svelte";
-  import PageTabs from "$components/ui/PageTabs.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import OpeningHoursEditor from "$lib/components/admin/OpeningHoursEditor.svelte";
   import SalonHolidays from "$lib/components/admin/SalonHolidays.svelte";
@@ -235,122 +235,112 @@
   </div>
 {:else if !isCreate && (loadError || !salon)}
   <div role="alert"><Note tone="bad">{loadError || "Salon nicht gefunden."}</Note></div>
-{:else}
-  <PageHead
-    title={salon ? salon.name : "Neuer Salon"}
-    sub={isCreate
-      ? "Name, Adresse und Bundesland des neuen Salons"
-      : "Stammdaten, Öffnungszeiten und Feiertage dieses Salons"}
+{:else if isCreate}
+  <PageHead title="Neuer Salon" sub="Name, Adresse und Bundesland des neuen Salons" />
+  <SalonMasterDataForm
+    salon={null}
+    canEdit={rights.canManage}
+    bind:changes={masterChanges}
+    onCreated={afterCreate}
+  />
+{:else if salon}
+  {@const stored = salon}
+  <!-- Issue #854 (owner review): the same head as Personen › Detail - title and sub line on the
+         left, the three areas as the segment control on the right (PageHeader, tabsLook="segments"). -->
+  <PageHeader
+    title={salon.name}
+    subtitle="Stammdaten, Öffnungszeiten und Feiertage dieses Salons"
+    tabs={[...TABS]}
+    tab={activeTab}
+    onTabChange={selectTab}
+    tabsLook="segments"
+    tabsLabel="Bereiche des Salons"
   >
     {#snippet actions()}
-      {#if salon}
-        <Chip tone={salon.isActive ? "ok" : "neutral"}>{salon.isActive ? "Aktiv" : "Inaktiv"}</Chip>
+      <Chip tone={stored.isActive ? "ok" : "neutral"}>{stored.isActive ? "Aktiv" : "Inaktiv"}</Chip>
+    {/snippet}
+    {#snippet panel(value)}
+      {#if value === "stammdaten"}
+        <div class="salon-panel">
+          <SalonMasterDataForm
+            salon={stored}
+            canEdit={rights.canManage}
+            bind:changes={masterChanges}
+            onSaved={(next) => adopt(next, {})}
+          />
+
+          {#if rights.canManage && !isCreate && stored.isActive}
+            <section class="settings-group" aria-labelledby="salon-deactivate-title">
+              <h2 class="settings-group-title" id="salon-deactivate-title">Salon deaktivieren</h2>
+              <p class="settings-group-desc">
+                Ein deaktivierter Salon bekommt keine neuen Zeiteinträge, Schichten oder
+                Zuordnungen. Verlauf und Auswertungen bleiben erhalten. Der Salon wird nie gelöscht
+                und kann jederzeit wieder aktiviert werden.
+              </p>
+              <div>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-danger"
+                  onclick={() => (deactivateOpen = true)}
+                  disabled={isLastActiveSalon}
+                >
+                  Salon deaktivieren
+                </button>
+                {#if isLastActiveSalon}
+                  <p class="form-hint" id="salon-deactivate-hint">
+                    Der letzte aktive Salon kann nicht deaktiviert werden.
+                  </p>
+                {/if}
+              </div>
+              <ConfirmDialog
+                bind:open={deactivateOpen}
+                title="Salon deaktivieren?"
+                description={`„${stored.name}“ wird deaktiviert und bekommt keine neuen Zeiteinträge, Schichten oder Zuordnungen mehr. Verlauf und Auswertungen bleiben erhalten.`}
+                confirmLabel="Deaktivieren"
+                danger
+                onConfirm={deactivateSalon}
+              />
+            </section>
+          {/if}
+
+          {#if rights.canManage && !isCreate && !stored.isActive}
+            <section class="settings-group" aria-labelledby="salon-activate-title">
+              <h2 class="settings-group-title" id="salon-activate-title">Salon aktivieren</h2>
+              <p class="settings-group-desc">
+                Der Salon steht danach wieder für Zeiteinträge, Schichten und Zuordnungen zur
+                Verfügung. Es gilt die Salonanzahl des gebuchten Pakets.
+              </p>
+              <div>
+                <button type="button" class="btn btn-primary" onclick={() => (activateOpen = true)}>
+                  Salon aktivieren
+                </button>
+              </div>
+              <ConfirmDialog
+                bind:open={activateOpen}
+                title="Salon wieder aktivieren?"
+                description={`„${stored.name}“ wird wieder aktiv und ist für Zeiteinträge, Schichten und Zuordnungen auswählbar.`}
+                confirmLabel="Aktivieren"
+                onConfirm={activateSalon}
+              />
+            </section>
+          {/if}
+        </div>
+      {:else if value === "oeffnungszeiten"}
+        <OpeningHoursEditor
+          bind:days={hours}
+          errors={hoursErrors}
+          idPrefix="salon-hours"
+          disabled={!rights.canManage}
+          changes={hoursChanges}
+          saving={savingHours}
+          onSave={saveHours}
+          onDiscard={discardHours}
+        />
+      {:else if value === "feiertage" && holidaysOpened}
+        <SalonHolidays salonId={stored.id} canManage={holidayRights.canManage} />
       {/if}
     {/snippet}
-  </PageHead>
-
-  {#if isCreate}
-    <SalonMasterDataForm
-      salon={null}
-      canEdit={rights.canManage}
-      bind:changes={masterChanges}
-      onCreated={afterCreate}
-    />
-  {:else if salon}
-    {@const stored = salon}
-    <PageTabs
-      tabs={[...TABS]}
-      tab={activeTab}
-      onTabChange={selectTab}
-      tabsLabel="Bereiche des Salons"
-    >
-      {#snippet panel(value)}
-        {#if value === "stammdaten"}
-          <div class="salon-panel">
-            <SalonMasterDataForm
-              salon={stored}
-              canEdit={rights.canManage}
-              bind:changes={masterChanges}
-              onSaved={(next) => adopt(next, {})}
-            />
-
-            {#if rights.canManage && !isCreate && stored.isActive}
-              <section class="settings-group" aria-labelledby="salon-deactivate-title">
-                <h2 class="settings-group-title" id="salon-deactivate-title">Salon deaktivieren</h2>
-                <p class="settings-group-desc">
-                  Ein deaktivierter Salon bekommt keine neuen Zeiteinträge, Schichten oder
-                  Zuordnungen. Verlauf und Auswertungen bleiben erhalten. Der Salon wird nie
-                  gelöscht und kann jederzeit wieder aktiviert werden.
-                </p>
-                <div>
-                  <button
-                    type="button"
-                    class="btn btn-secondary btn-danger"
-                    onclick={() => (deactivateOpen = true)}
-                    disabled={isLastActiveSalon}
-                  >
-                    Salon deaktivieren
-                  </button>
-                  {#if isLastActiveSalon}
-                    <p class="form-hint" id="salon-deactivate-hint">
-                      Der letzte aktive Salon kann nicht deaktiviert werden.
-                    </p>
-                  {/if}
-                </div>
-                <ConfirmDialog
-                  bind:open={deactivateOpen}
-                  title="Salon deaktivieren?"
-                  description={`„${stored.name}“ wird deaktiviert und bekommt keine neuen Zeiteinträge, Schichten oder Zuordnungen mehr. Verlauf und Auswertungen bleiben erhalten.`}
-                  confirmLabel="Deaktivieren"
-                  danger
-                  onConfirm={deactivateSalon}
-                />
-              </section>
-            {/if}
-
-            {#if rights.canManage && !isCreate && !stored.isActive}
-              <section class="settings-group" aria-labelledby="salon-activate-title">
-                <h2 class="settings-group-title" id="salon-activate-title">Salon aktivieren</h2>
-                <p class="settings-group-desc">
-                  Der Salon steht danach wieder für Zeiteinträge, Schichten und Zuordnungen zur
-                  Verfügung. Es gilt die Salonanzahl des gebuchten Pakets.
-                </p>
-                <div>
-                  <button
-                    type="button"
-                    class="btn btn-primary"
-                    onclick={() => (activateOpen = true)}
-                  >
-                    Salon aktivieren
-                  </button>
-                </div>
-                <ConfirmDialog
-                  bind:open={activateOpen}
-                  title="Salon wieder aktivieren?"
-                  description={`„${stored.name}“ wird wieder aktiv und ist für Zeiteinträge, Schichten und Zuordnungen auswählbar.`}
-                  confirmLabel="Aktivieren"
-                  onConfirm={activateSalon}
-                />
-              </section>
-            {/if}
-          </div>
-        {:else if value === "oeffnungszeiten"}
-          <OpeningHoursEditor
-            bind:days={hours}
-            errors={hoursErrors}
-            idPrefix="salon-hours"
-            disabled={!rights.canManage}
-            changes={hoursChanges}
-            saving={savingHours}
-            onSave={saveHours}
-            onDiscard={discardHours}
-          />
-        {:else if value === "feiertage" && holidaysOpened}
-          <SalonHolidays salonId={stored.id} canManage={holidayRights.canManage} />
-        {/if}
-      {/snippet}
-    </PageTabs>
-  {/if}
+  </PageHeader>
 {/if}
 
 <style>

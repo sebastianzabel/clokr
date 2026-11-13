@@ -107,14 +107,14 @@ describe("DefaultHoursSection - plain save", () => {
   it("shows the stored hours and their sum; the string decimals of the API are read as numbers", () => {
     mount();
     expect(mondayField().value).toBe("8");
-    expect(screen.getByText("40 h")).toBeTruthy();
+    expect(screen.getByText("40:00 h")).toBeTruthy();
     expect(bar()).toBeNull();
   });
 
   it("sends exactly the section's keys, with no bulk key, and never opens the preview", async () => {
     mount();
     await fireEvent.input(mondayField(), { target: { value: "7.5" } });
-    expect(screen.getByText("39,5 h")).toBeTruthy();
+    expect(screen.getByText("39:30 h")).toBeTruthy();
     await fireEvent.click(
       await screen.findByRole("button", { name: "Standard-Arbeitszeit speichern" }),
     );

@@ -394,7 +394,10 @@ describe("salon detail page - section Feiertage (Issue #579)", () => {
       /<SalonHolidays salonId=\{stored\.id\} canManage=\{holidayRights\.canManage\} \/>/,
     );
     // an existing salon only: the tabs (and with them the calendar) are rendered in the edit branch
-    expect(DETAIL).toMatch(/\{:else if salon\}\s*\{@const stored = salon\}\s*<PageTabs/);
+    // #854 (owner review): the tabs are the segment control of PageHeader, as on Personen › Detail.
+    expect(DETAIL).toMatch(
+      /\{:else if salon\}\s*\{@const stored = salon\}[\s\S]*?<PageHeader[\s\S]*?tabsLook="segments"/,
+    );
   });
 
   it("keeps the holiday writes out of the page: only the lifecycle and create posts remain", () => {

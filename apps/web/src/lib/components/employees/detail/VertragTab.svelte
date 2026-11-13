@@ -132,21 +132,11 @@
   const shown = $derived(changeCount > 0 ? liveErrors : {});
 
   const type = $derived(values.type);
-  const workingDays = $derived(
-    (Object.values(values.days) as (number | null)[]).filter((h) => h !== null && h > 0).length,
-  );
-
   // „Gültig ab“ is a choice of months (owner review #854): only month-firsts can be picked, from the
   // first month-first after the hire day to two years ahead; the stored snapshot value is always offered.
   const validFromOptions = $derived(
     monthFirstOptions({ today: todayIso, earliest: hireDate, include: snapshot.validFrom }),
   );
-
-  /** Hours as „H:MM h“ (the prototype's sum row), e.g. 39,5 -> „39:30 h“. */
-  function hoursClock(hours: number): string {
-    const minutes = Math.round(hours * 60);
-    return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")} h`;
-  }
 
   const minijob = $derived(
     minijobHint({
@@ -389,14 +379,13 @@
     </div>
 
     {#if type === "FIXED_SCHEDULE"}
-      <DayGrid bind:value={values.days} label="Wochenstunden je Tag" step={0.5} disabled={!canEdit}>
-        {#snippet summary(sum)}
-          <p class="vt-sum" data-testid="vertrag-workdays-derived">
-            <span>{workingDays} {workingDays === 1 ? "Arbeitstag" : "Arbeitstage"} pro Woche</span>
-            <strong class="vt-sum-value">{hoursClock(sum)}</strong>
-          </p>
-        {/snippet}
-      </DayGrid>
+      <DayGrid
+        bind:value={values.days}
+        label="Wochenstunden je Tag"
+        step={0.5}
+        disabled={!canEdit}
+        sumTestId="vertrag-workdays-derived"
+      />
     {:else if type === "FLEXTIME"}
       <div class="vt-pair">
         <FormField
@@ -773,27 +762,6 @@
     margin: 0;
     font-size: var(--fs-sm);
     color: var(--text-2);
-  }
-
-  /* The tinted sum row under the hours: workdays left, the weekly sum right. */
-  .vt-sum {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--s-3);
-    margin: 0;
-    padding: var(--s-2) var(--s-3);
-    background: var(--sunk);
-    border-radius: var(--r-control);
-    font-size: var(--fs-sm);
-    color: var(--text-2);
-  }
-
-  .vt-sum-value {
-    font-size: var(--fs-base);
-    font-weight: 600;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
   }
 
   /* Two fields side by side (prototype form row), one column on a phone. */

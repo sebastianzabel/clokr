@@ -1,7 +1,6 @@
 // Issue #843 (D-843-01 block 7) - DayGrid: weekday hours with a live sum in German notation.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen } from "@testing-library/svelte";
-import { createRawSnippet } from "svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import DayGrid from "../DayGrid.svelte";
 import * as dayGridModule from "../DayGrid.svelte";
@@ -9,12 +8,14 @@ import * as dayGridModule from "../DayGrid.svelte";
 // #843: plain tsc types a .svelte import by the ambient default-only shim, so the module-script
 // exports are typed by hand here (vitest and svelte-check resolve the real module).
 type DayHours = Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", number | null>;
-const { DAY_KEYS, formatHours, isValidDayHours, sumDayHours } = dayGridModule as unknown as {
-  DAY_KEYS: readonly (keyof DayHours)[];
-  formatHours: (hours: number) => string;
-  isValidDayHours: (hours: number | null) => boolean;
-  sumDayHours: (value: DayHours) => number;
-};
+const { DAY_KEYS, clockHours, isValidDayHours, sumDayHours, workDayCount } =
+  dayGridModule as unknown as {
+    DAY_KEYS: readonly (keyof DayHours)[];
+    clockHours: (hours: number) => string;
+    workDayCount: (value: DayHours) => number;
+    isValidDayHours: (hours: number | null) => boolean;
+    sumDayHours: (value: DayHours) => number;
+  };
 import gridSource from "../DayGrid.svelte?raw";
 
 afterEach(() => cleanup());
@@ -32,10 +33,10 @@ function mount(extra: Record<string, unknown> = {}) {
 
 describe("DayGrid helpers", () => {
   it("formats German decimals", () => {
-    expect(formatHours(39.5)).toBe("39,5 h");
-    expect(formatHours(40)).toBe("40 h");
-    expect(formatHours(0)).toBe("0 h");
-    expect(formatHours(7.25)).toBe("7,25 h");
+    expect(clockHours(39.5)).toBe("39:30 h");
+    expect(clockHours(40)).toBe("40:00 h");
+    expect(clockHours(0)).toBe("0:00 h");
+    expect(clockHours(7.25)).toBe("7:15 h");
   });
 
   it("sums only valid days and rounds float noise away", () => {
@@ -69,14 +70,14 @@ describe("DayGrid", () => {
 
   it("shows the sum 39,5 h for the given week", () => {
     const { container } = mount();
-    expect(container.querySelector(".dg-sum-value")?.textContent).toBe("39,5 h");
+    expect(container.querySelector(".dg-sum-value")?.textContent).toBe("39:30 h");
   });
 
   it("editing a field updates the sum and calls onchange", async () => {
     const onchange = vi.fn();
     const { container } = mount({ onchange });
     await fireEvent.input(screen.getByLabelText("Samstag"), { target: { value: "4" } });
-    expect(container.querySelector(".dg-sum-value")?.textContent).toBe("43,5 h");
+    expect(container.querySelector(".dg-sum-value")?.textContent).toBe("43:30 h");
     expect(onchange).toHaveBeenCalledTimes(1);
     expect(onchange.mock.calls[0][0].sat).toBe(4);
   });
@@ -89,7 +90,7 @@ describe("DayGrid", () => {
     expect(monday.getAttribute("aria-invalid")).toBe("true");
     const error = screen.getByText(/Montag: Gib eine Zahl von 0 bis 24 ein\./);
     expect(monday.getAttribute("aria-describedby")).toBe(error.id);
-    expect(container.querySelector(".dg-sum-value")?.textContent).toBe("31,5 h");
+    expect(container.querySelector(".dg-sum-value")?.textContent).toBe("31:30 h");
   });
 
   it("an emptied field is an error, a negative one too", async () => {
@@ -130,13 +131,14 @@ describe("DayGrid", () => {
     expect(gridSource).not.toContain("{@html");
   });
 
-  it("a summary snippet replaces the „Summe“ line and receives the sum, still in a live region", () => {
-    const summary = createRawSnippet((sum: () => number) => ({
-      render: () => `<p class="custom">${sum()} Stunden</p>`,
-    }));
-    const { container } = mount({ summary });
-    expect(container.querySelector(".dg-sum")).toBeNull();
-    const live = container.querySelector('[aria-live="polite"]');
-    expect(live?.querySelector(".custom")?.textContent).toBe("39.5 Stunden");
+  it("the sum row names the working days and the week as a clock value, in a live region", () => {
+    const { container } = mount({ sumTestId: "dg-test-sum" });
+    const row = screen.getByTestId("dg-test-sum");
+    expect(row.getAttribute("aria-live")).toBe("polite");
+    expect(row.textContent).toContain(`${workDayCount({ ...FULL_WEEK })} Arbeitstage pro Woche`);
+    expect(container.querySelector(".dg-sum-value")?.textContent).toBe("39:30 h");
+    expect(
+      workDayCount({ ...FULL_WEEK, mon: 8, tue: 0, wed: null, thu: 0, fri: 0, sat: 0, sun: 0 }),
+    ).toBe(1);
   });
 });

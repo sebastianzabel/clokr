@@ -62,7 +62,9 @@
     display: flex;
     flex-direction: column;
     gap: var(--s-4);
-    max-width: 44rem;
+    /* 48 rem like the detail form column (#854): the DayGrid's row of seven (from 760 px, D-843-03)
+       fits, so the weekday hours read the same on Regeln and in a person's contract. */
+    max-width: 48rem;
     min-width: 0;
   }
 </style>
