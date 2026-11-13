@@ -8,9 +8,9 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { onMount } from "svelte";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import PageHeader from "$components/ui/PageHeader.svelte";
   import Breadcrumb from "$components/ui/Breadcrumb.svelte";
-  import PageTabs from "$components/ui/PageTabs.svelte";
+  import { avatarIndex, initialsOf } from "$components/ui/ListRow.svelte";
   import Skeleton from "$components/ui/Skeleton.svelte";
   import PersonTab from "$lib/components/employees/detail/PersonTab.svelte";
   import UrlaubTab from "$lib/components/employees/detail/UrlaubTab.svelte";
@@ -20,7 +20,9 @@
   import ZugangTab from "$lib/components/employees/detail/ZugangTab.svelte";
   import SalonAssignmentsSection from "$lib/components/employees/SalonAssignmentsSection.svelte";
   import { tabFromHash, writeTabHash } from "$lib/nav/tab-hash";
-  import { employmentState, localCalendarDay } from "$lib/employees/employment-state";
+  import { localCalendarDay } from "$lib/employees/employment-state";
+  import { detailHeadSub, homeSalonIdOn, salonNameOf } from "$lib/employees/detail-head";
+  import type { SalonAssignment, SalonRef } from "$lib/employees/salon-assignments";
   import type { PersonEmployee } from "$lib/employees/person-form";
   import type { VacationEntitlement } from "$lib/employees/urlaub-form";
   import type { ContractSchedule } from "$lib/employees/vertrag-form";
@@ -50,6 +52,7 @@
     lastName: string;
     employeeNumber?: string;
     nfcCardId?: string | null;
+    hireDate?: string | null;
     exitDate?: string | null;
     classification?: EmployeeClassification;
     coverageWeight?: number | null;
@@ -87,6 +90,9 @@
   let workSchedule = $state<WorkSchedule | null>(null);
   let vacationEntitlement = $state<VacationEntitlement | null>(null);
   let tenantBreakConfig = $state<TenantConfig | null>(null);
+  // The head's Stammsalon (display only, fail-soft: without the reads the part is left out).
+  let salonAssignments = $state<SalonAssignment[]>([]);
+  let salonRefs = $state<SalonRef[]>([]);
 
   const employeeId = $derived($page.params.id ?? "");
 
@@ -99,13 +105,15 @@
     loading = true;
     loadError = "";
     try {
-      const [empRes, schedRes, vacRes, cfgRes] = await Promise.allSettled([
+      const [empRes, schedRes, vacRes, cfgRes, assignRes, salonsRes] = await Promise.allSettled([
         api.get<Employee>(`/employees/${employeeId}`),
         api.get<WorkSchedule>(`/settings/work/${employeeId}`),
         api.get<VacationEntitlement>(
           `/settings/vacation/${employeeId}?year=${new Date().getFullYear()}`,
         ),
         api.get<TenantConfig>(`/settings/work`),
+        api.get<{ assignments: SalonAssignment[] }>(`/employees/${employeeId}/salon-assignments`),
+        api.get<{ salons: SalonRef[] }>("/salons?includeInactive=true"),
       ]);
 
       if (empRes.status === "rejected") {
@@ -116,6 +124,9 @@
       workSchedule = schedRes.status === "fulfilled" ? schedRes.value : null;
       vacationEntitlement = vacRes.status === "fulfilled" ? vacRes.value : null;
       tenantBreakConfig = cfgRes.status === "fulfilled" ? cfgRes.value : null;
+      salonAssignments =
+        assignRes.status === "fulfilled" ? (assignRes.value.assignments ?? []) : [];
+      salonRefs = salonsRes.status === "fulfilled" ? (salonsRes.value.salons ?? []) : [];
       // The record and everything the tabs read are hydrated: the unsaved registration may arm now.
       snapshotsReady = true;
     } catch {
@@ -192,15 +203,20 @@
 
   // ── Derived display ────────────────────────────────────────────────────────
   let displayName = $derived(`${employee?.firstName ?? ""} ${employee?.lastName ?? ""}`.trim());
-  // The head's second line: the employee number and the employment state (Issue #86, D-01). The
-  // state is decided from the exit date and a calendar day, never from a display string.
+  // The head's sub line as in the prototype: „<Personalnummer> · <Stammsalon> · seit <Eintritt>“,
+  // plus the exit state when one is set (Issue #86, D-01; decided from the exit date and a calendar
+  // day, never from a display string).
   let headSub = $derived.by(() => {
-    const state = employmentState(employee?.exitDate, localCalendarDay());
-    const parts: string[] = [];
-    if (employee?.employeeNumber) parts.push(`Personalnummer ${employee.employeeNumber}`);
-    parts.push(state.kind === "EMPLOYED" ? "Beschäftigt" : state.label);
-    return parts.join(" · ");
+    const today = localCalendarDay();
+    return detailHeadSub({
+      employeeNumber: employee?.employeeNumber,
+      homeSalonName: salonNameOf(salonRefs, homeSalonIdOn(salonAssignments, today)),
+      hireDate: employee?.hireDate,
+      exitDate: employee?.exitDate,
+      today,
+    });
   });
+  let avatarColour = $derived(avatarIndex(employee?.id ?? displayName));
 
   // Tenant defaults for the placeholder of the vacation base value (Person tab).
   let tenantDefaultVacationDays = $derived(Number(tenantBreakConfig?.defaultVacationDays) || 30);
@@ -236,14 +252,22 @@
       { label: displayName || "Mitarbeiter" },
     ]}
   />
-  <PageHead title={displayName || "Mitarbeiter"} sub={headSub} />
-
-  <PageTabs
+  <PageHeader
+    title={displayName || "Mitarbeiter"}
+    subtitle={headSub}
     tabs={tabs.map((t) => ({ value: t.id, label: t.label }))}
     tab={activeTab}
     onTabChange={selectTab}
+    tabsLook="segments"
     tabsLabel="Bereiche der Person"
   >
+    {#snippet leading()}
+      <span
+        class="detail-avatar"
+        style="--av: var(--a{avatarColour}); --av-t: var(--a{avatarColour}-t)"
+        aria-hidden="true">{initialsOf(displayName || "Mitarbeiter")}</span
+      >
+    {/snippet}
     {#snippet panel(tab)}
       {#if tab === "person"}
         {#if employee}
@@ -263,6 +287,7 @@
           employee={{ classification }}
           canEdit={canUpdateContract}
           {canDiscardShifts}
+          hireDate={employee?.hireDate}
           bind:changes={vertragChanges}
           onSaved={onContractSaved}
         >
@@ -312,7 +337,7 @@
         {/if}
       {/if}
     {/snippet}
-  </PageTabs>
+  </PageHeader>
 {/if}
 
 <style>
@@ -326,5 +351,19 @@
 
   .page-error {
     color: var(--bad);
+  }
+
+  /* The head avatar: the list's initials and colour pair, one size up (prototype `.av.lg`). */
+  .detail-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--av);
+    color: var(--av-t);
+    font-size: var(--fs-sm);
+    font-weight: 600;
   }
 </style>

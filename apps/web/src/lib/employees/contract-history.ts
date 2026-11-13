@@ -63,7 +63,22 @@ function germanDay(iso: string): string {
   return `${d}.${m}.${y}`;
 }
 
-function extentOf(row: ContractHistoryInput): string {
+/** The extent of one version (or of an unsaved draft of the Vertrag tab): the same words as the list. */
+export function contractExtent(
+  row: Pick<
+    ContractHistoryInput,
+    "type" | "weeklyHours" | "monthlyHours" | "contractWorkDaysPerWeek"
+  >,
+): string {
+  return extentOf(row);
+}
+
+function extentOf(
+  row: Pick<
+    ContractHistoryInput,
+    "type" | "weeklyHours" | "monthlyHours" | "contractWorkDaysPerWeek"
+  >,
+): string {
   switch (row.type) {
     case "FIXED_SCHEDULE":
     case "FLEXTIME": {

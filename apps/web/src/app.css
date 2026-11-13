@@ -1091,6 +1091,27 @@ select.form-input {
   color: var(--text-2);
 }
 
+/* Issue #854 (owner review of the Personen detail): a tab of a detail page is ONE form column
+   (prototype `.form`, 720 px) whose parts sit under a hairline (prototype `.fs`). Every part is its
+   own container, so a field pair inside follows the part's width. The quieter rhythm replaces the
+   wide .settings-group + .settings-group gap inside the column. */
+.detail-form {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.detail-form > * {
+  max-width: 45rem;
+  min-width: 0;
+  container-type: inline-size;
+}
+.detail-form > :not(:first-child),
+.detail-form > .settings-group + .settings-group {
+  margin-top: var(--s-6);
+  padding-top: var(--s-6);
+  border-top: 1px solid var(--line);
+}
+
 .page-header {
   margin-bottom: 2.25rem;
 }

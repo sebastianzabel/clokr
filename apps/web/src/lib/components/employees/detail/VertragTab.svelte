@@ -1,13 +1,17 @@
 <!--
   VertragTab - the contract half of the „Vertrag“ tab of the employee detail (Issue #854, plan 854-21):
 
-    Vertrag                          the work schedule: model, hours, overtime rules and „Gültig ab“
+    Arbeitszeitmodell                the work schedule: model, hours, overtime rules and „Gültig ab“
     Vertragsverlauf                  every contract version as a timeline (GET /settings/work/:id/history)
     Übliche Arbeitstage nachtragen   the Nachtrag of the SHIFT_BASED Angabe on stored rows (#481)
 
-  A contract CHANGE starts on the first of a month (`MONTH_FIRST_ERROR`): „Gültig ab“ is a DatePicker in
-  month-first mode that defaults to the next month-first, so the change succeeds on the first try and
-  nothing is snapped silently (AC-5). The group has ONE SaveBar and one PUT; value and effective day are
+  Owner review (#854): the layout follows the prototype - „Arbeitszeitmodell“ as segments, the hours as a
+  seven-column day grid with a tinted sum row, „Gültig ab“ next to the warning threshold, the history as
+  quiet rows (Gültig / Geplant, and the unsaved change as „Entwurf“) and the SaveBar at the end.
+
+  A contract CHANGE starts on the first of a month (`MONTH_FIRST_ERROR`): „Gültig ab“ is a choice of
+  months (month-firsts only) that defaults to the next month-first, so the change succeeds on the first
+  try and no other day can be picked (AC-5). The group has ONE SaveBar and one PUT; value and effective day are
   one decision (N-04). The server stays the authority for every refusal and its text is shown as it comes
   (`MONTH_FIRST_ERROR`, `WEEKLY_HOURS_MISMATCH` #848, the usualWorkDays rule #481); the 409 with pending
   shifts opens a dialog (the choice follows the `shift:plan` right, the preview is redacted by the API).
@@ -33,23 +37,22 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import Chip from "$components/ui/Chip.svelte";
-  import DatePicker from "$components/ui/DatePicker.svelte";
   import DayGrid from "$components/ui/DayGrid.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
   import FormField from "$components/ui/FormField.svelte";
-  import List from "$components/ui/List.svelte";
-  import ListRow from "$components/ui/ListRow.svelte";
   import Note from "$components/ui/Note.svelte";
+  import SaveBar from "$components/ui/SaveBar.svelte";
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import OvertimeModeField from "$lib/components/schedule/OvertimeModeField.svelte";
   import SettingsGroup from "$lib/components/admin/settings/SettingsGroup.svelte";
   import ToggleField from "$lib/components/admin/settings/ToggleField.svelte";
   import WeekdayPicker from "$lib/components/admin/settings/WeekdayPicker.svelte";
-  import { nextMonthFirst } from "$lib/employees/contract-start";
+  import { monthFirstOptions, nextMonthFirst } from "$lib/employees/contract-start";
   import {
+    MODEL_LABELS,
+    contractExtent,
     contractHistoryRows,
     contractStatus,
-    validityLabel,
     type ContractHistoryInput,
   } from "$lib/employees/contract-history";
   import { localCalendarDay } from "$lib/employees/employment-state";
@@ -85,6 +88,8 @@
     changes?: number;
     onSaved?: (schedule: ContractSchedule) => void;
     today?: string;
+    /** The hire day (stored instant or ISO day): the oldest month „Gültig ab“ offers. */
+    hireDate?: string | null;
     /** The per-person override groups the page renders below the contract (plan 854-22). */
     children?: Snippet;
   }
@@ -100,6 +105,7 @@
     changes = $bindable(),
     onSaved,
     today: todayProp,
+    hireDate,
     children,
   }: Props = $props();
 
@@ -129,6 +135,18 @@
   const workingDays = $derived(
     (Object.values(values.days) as (number | null)[]).filter((h) => h !== null && h > 0).length,
   );
+
+  // „Gültig ab“ is a choice of months (owner review #854): only month-firsts can be picked, from the
+  // first month-first after the hire day to two years ahead; the stored snapshot value is always offered.
+  const validFromOptions = $derived(
+    monthFirstOptions({ today: todayIso, earliest: hireDate, include: snapshot.validFrom }),
+  );
+
+  /** Hours as „H:MM h“ (the prototype's sum row), e.g. 39,5 -> „39:30 h“. */
+  function hoursClock(hours: number): string {
+    const minutes = Math.round(hours * 60);
+    return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")} h`;
+  }
 
   const minijob = $derived(
     minijobHint({
@@ -222,11 +240,32 @@
 
   let history = $state<ContractHistoryInput[]>([]);
   const timeline = $derived(
-    contractHistoryRows(history).map((row) => ({
-      row,
-      status: contractStatus(row, todayIso),
-      validity: validityLabel(row, todayIso),
-    })),
+    contractHistoryRows(history).map((row) => {
+      const status = contractStatus(row, todayIso);
+      return {
+        row,
+        status,
+        // The running version reads „seit …“, every other one „ab …“; an end day „bis …“.
+        when: `${status === "CURRENT" ? "seit" : "ab"} ${germanDay(row.startDay)}`,
+        until: row.endDay ? `bis ${germanDay(row.endDay)}` : null,
+      };
+    }),
+  );
+
+  // The unsaved contract as the top row of the history (prototype „Entwurf“): what a save would add.
+  const draft = $derived(
+    canEdit && changeCount > 0
+      ? {
+          when: values.validFrom ? `ab ${germanDay(values.validFrom)}` : "ab –",
+          model: MODEL_LABELS[values.type] ?? values.type,
+          extent: contractExtent({
+            type: values.type,
+            weeklyHours: plannedWeeklyHours(values),
+            monthlyHours: values.monthlyHours,
+            contractWorkDaysPerWeek: values.contractWorkDays,
+          }),
+        }
+      : null,
   );
 
   async function loadHistory() {
@@ -325,18 +364,10 @@
   }
 </script>
 
-<div class="vertrag-tab">
-  <SettingsGroup
-    id="vertrag-aktuell"
-    title="Vertrag"
-    description="Arbeitszeitmodell, Stunden und Überstunden-Regeln. Jede Änderung wird protokolliert."
-    changes={canEdit ? changeCount : 0}
-    errors={sectionErrors(shown)}
-    {saving}
-    saveLabel="Vertrag speichern"
-    onSave={() => save()}
-    onDiscard={discard}
-  >
+<div class="vertrag-tab detail-form">
+  <section class="settings-group vt-section" id="vertrag-aktuell" aria-labelledby="vt-model-title">
+    <h2 class="settings-group-title" id="vt-model-title">Arbeitszeitmodell</h2>
+
     {#if saveError}
       <div role="alert" data-testid="vertrag-save-error">
         <Note tone="bad">{saveError}</Note>
@@ -344,7 +375,6 @@
     {/if}
 
     <div class="vt-model">
-      <p class="vt-label" id="vt-model-label">Arbeitszeitmodell</p>
       <div class="vt-model-scroll">
         <SegmentedControl
           name="vertrag-model"
@@ -359,39 +389,37 @@
     </div>
 
     {#if type === "FIXED_SCHEDULE"}
-      <div>
-        <DayGrid
-          bind:value={values.days}
-          label="Wochenstunden je Tag"
-          step={0.5}
-          disabled={!canEdit}
-        />
-        <p class="vt-help" data-testid="vertrag-workdays-derived">
-          Die Wochenstunden sind die Summe der Tage. Arbeitstage pro Woche: {workingDays} – das ergibt
-          sich aus den Tagesstunden.
-        </p>
-      </div>
-    {:else if type === "FLEXTIME"}
-      <FormField
-        label="Wochenstunden-Soll"
-        help="Stunden pro Woche, frei auf die Arbeitstage verteilt."
-        error={shown.weeklyHours}
-      >
-        {#snippet field({ id, describedBy, invalid })}
-          <input
-            {id}
-            class="form-input vt-number"
-            type="number"
-            min="0"
-            max="60"
-            step="0.25"
-            bind:value={values.weeklyHours}
-            disabled={!canEdit}
-            aria-invalid={invalid ? "true" : undefined}
-            aria-describedby={describedBy}
-          />
+      <DayGrid bind:value={values.days} label="Wochenstunden je Tag" step={0.5} disabled={!canEdit}>
+        {#snippet summary(sum)}
+          <p class="vt-sum" data-testid="vertrag-workdays-derived">
+            <span>{workingDays} {workingDays === 1 ? "Arbeitstag" : "Arbeitstage"} pro Woche</span>
+            <strong class="vt-sum-value">{hoursClock(sum)}</strong>
+          </p>
         {/snippet}
-      </FormField>
+      </DayGrid>
+    {:else if type === "FLEXTIME"}
+      <div class="vt-pair">
+        <FormField
+          label="Wochenstunden-Soll"
+          help="Stunden pro Woche, frei auf die Arbeitstage verteilt."
+          error={shown.weeklyHours}
+        >
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              class="form-input"
+              type="number"
+              min="0"
+              max="60"
+              step="0.25"
+              bind:value={values.weeklyHours}
+              disabled={!canEdit}
+              aria-invalid={invalid ? "true" : undefined}
+              aria-describedby={describedBy}
+            />
+          {/snippet}
+        </FormField>
+      </div>
       <WeekdayPicker
         bind:value={values.workDays}
         legend="Arbeitstage"
@@ -399,7 +427,7 @@
         disabled={!canEdit}
         testidPrefix="vertrag-workday"
       />
-      <div class="vt-row">
+      <div class="vt-pair">
         <FormField label="Kernzeitbeginn (optional)">
           {#snippet field({ id, describedBy })}
             <input
@@ -433,33 +461,35 @@
         testidPrefix="vertrag-core-day"
       />
     {:else if type === "MONTHLY_HOURS"}
-      <FormField
-        label="Stunden pro Monat"
-        help="Das Soll wird monatlich berechnet, es gibt keine Tagesziele. Leer oder 0: die Zeiten werden nur erfasst."
-        error={shown.monthlyHours}
-      >
-        {#snippet field({ id, describedBy, invalid })}
-          <input
-            {id}
-            class="form-input vt-number"
-            type="number"
-            min="0"
-            max="999"
-            step="0.5"
-            bind:value={values.monthlyHours}
-            disabled={!canEdit}
-            aria-invalid={invalid ? "true" : undefined}
-            aria-describedby={describedBy}
-          />
-        {/snippet}
-      </FormField>
-      <OvertimeModeField
-        type={values.type}
-        monthlyHours={values.monthlyHours}
-        value={values.overtimeMode}
-        onchange={(mode) => (values.overtimeMode = mode)}
-        disabled={!canEdit}
-      />
+      <div class="vt-pair">
+        <FormField
+          label="Stunden pro Monat"
+          help="Das Soll wird monatlich berechnet, es gibt keine Tagesziele. Leer oder 0: die Zeiten werden nur erfasst."
+          error={shown.monthlyHours}
+        >
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              class="form-input"
+              type="number"
+              min="0"
+              max="999"
+              step="0.5"
+              bind:value={values.monthlyHours}
+              disabled={!canEdit}
+              aria-invalid={invalid ? "true" : undefined}
+              aria-describedby={describedBy}
+            />
+          {/snippet}
+        </FormField>
+        <OvertimeModeField
+          type={values.type}
+          monthlyHours={values.monthlyHours}
+          value={values.overtimeMode}
+          onchange={(mode) => (values.overtimeMode = mode)}
+          disabled={!canEdit}
+        />
+      </div>
       <WeekdayPicker
         bind:value={values.monthlyWorkDays}
         legend="Arbeitstage"
@@ -468,47 +498,49 @@
         testidPrefix="vertrag-workday"
       />
     {:else}
-      <FormField
-        label="Wochenstunden-Soll"
-        help="Der Schichtplan ist führend; das Soll wird wöchentlich als Gesamtstunden erfasst."
-        required
-        error={shown.weeklyHours}
-      >
-        {#snippet field({ id, describedBy, invalid })}
-          <input
-            {id}
-            class="form-input vt-number"
-            type="number"
-            min="1"
-            max="60"
-            step="0.5"
-            bind:value={values.weeklyHours}
-            disabled={!canEdit}
-            aria-invalid={invalid ? "true" : undefined}
-            aria-describedby={describedBy}
-          />
-        {/snippet}
-      </FormField>
-      <FormField
-        label="Arbeitstage pro Woche"
-        help="Vertragliche Anzahl Arbeitstage pro Woche. Welche Wochentage das konkret sind, bestimmt der Schichtplan – nicht dieses Feld."
-        error={shown.contractWorkDays}
-      >
-        {#snippet field({ id, describedBy, invalid })}
-          <input
-            {id}
-            class="form-input vt-number"
-            type="number"
-            min="1"
-            max="7"
-            step="1"
-            bind:value={values.contractWorkDays}
-            disabled={!canEdit}
-            aria-invalid={invalid ? "true" : undefined}
-            aria-describedby={describedBy}
-          />
-        {/snippet}
-      </FormField>
+      <div class="vt-pair">
+        <FormField
+          label="Wochenstunden-Soll"
+          help="Der Schichtplan ist führend; das Soll wird wöchentlich als Gesamtstunden erfasst."
+          required
+          error={shown.weeklyHours}
+        >
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              class="form-input"
+              type="number"
+              min="1"
+              max="60"
+              step="0.5"
+              bind:value={values.weeklyHours}
+              disabled={!canEdit}
+              aria-invalid={invalid ? "true" : undefined}
+              aria-describedby={describedBy}
+            />
+          {/snippet}
+        </FormField>
+        <FormField
+          label="Arbeitstage pro Woche"
+          help="Vertragliche Anzahl Arbeitstage pro Woche. Welche Wochentage das konkret sind, bestimmt der Schichtplan – nicht dieses Feld."
+          error={shown.contractWorkDays}
+        >
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              class="form-input"
+              type="number"
+              min="1"
+              max="7"
+              step="1"
+              bind:value={values.contractWorkDays}
+              disabled={!canEdit}
+              aria-invalid={invalid ? "true" : undefined}
+              aria-describedby={describedBy}
+            />
+          {/snippet}
+        </FormField>
+      </div>
       <WeekdayPicker
         bind:value={values.usualWorkDays}
         legend="Übliche Arbeitstage (Pflicht)"
@@ -519,7 +551,28 @@
       />
     {/if}
 
-    <div class="vt-row">
+    <div class="vt-pair">
+      <FormField
+        label="Gültig ab"
+        required
+        help="Vertragswechsel gelten ab dem Monatsersten."
+        error={shown.validFrom}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <select
+            {id}
+            class="form-input"
+            bind:value={values.validFrom}
+            disabled={!canEdit}
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          >
+            {#each validFromOptions as option (option.value)}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        {/snippet}
+      </FormField>
       <FormField
         label="Überstunden-Warnschwelle"
         help="Stunden, ab denen das Überstundenkonto eine Warnung zeigt."
@@ -528,7 +581,7 @@
         {#snippet field({ id, describedBy, invalid })}
           <input
             {id}
-            class="form-input vt-number"
+            class="form-input"
             type="number"
             min="0"
             max="500"
@@ -550,53 +603,55 @@
     {#if minijob}
       <Note tone="warn">{minijobHintText(minijob, "save")}</Note>
     {/if}
+  </section>
 
-    <FormField
-      label="Gültig ab"
-      required
-      help="Vertragswechsel gelten ab dem Monatsersten. Vorbelegt ist der nächste Monatserste."
-      error={shown.validFrom}
-    >
-      {#snippet field({ id, describedBy, invalid })}
-        <DatePicker
-          bind:value={values.validFrom}
-          label="Gültig ab"
-          monthFirstOnly
-          disabled={!canEdit}
-          {id}
-          {describedBy}
-          {invalid}
-        />
-      {/snippet}
-    </FormField>
-  </SettingsGroup>
-
-  {#if timeline.length > 0}
-    <section class="settings-group" aria-labelledby="vt-history-title">
+  {#if timeline.length > 0 || draft}
+    <section class="settings-group vt-section" aria-labelledby="vt-history-title">
       <h2 class="settings-group-title" id="vt-history-title">Vertragsverlauf</h2>
-      <p class="settings-group-desc">
-        Jede Vertragsänderung gilt ab dem Monatsersten; frühere Verträge bleiben erhalten.
-      </p>
-      <div data-testid="contract-history">
-        <List ariaLabel="Vertragsverlauf">
-          {#each timeline as item (item.row.id)}
-            <ListRow
-              avatar={false}
-              title={`${item.row.model} · ${item.row.extent}`}
-              subtitle={item.validity}
-            >
-              {#snippet trailing()}
-                {#if item.status === "CURRENT"}
-                  <Chip tone="brand">Aktuell</Chip>
-                {:else if item.status === "PLANNED"}
-                  <Chip tone="info">Geplant</Chip>
-                {/if}
-              {/snippet}
-            </ListRow>
-          {/each}
-        </List>
-      </div>
+      <ul class="vt-history" data-testid="contract-history" aria-label="Vertragsverlauf">
+        {#if draft}
+          <li class="vt-history-row vt-history-row--draft" data-testid="contract-history-draft">
+            <span class="vt-history-when">{draft.when}</span>
+            <span class="vt-history-what"><strong>{draft.model}</strong> · {draft.extent}</span>
+            <Chip tone="brand">Entwurf</Chip>
+          </li>
+        {/if}
+        {#each timeline as item (item.row.id)}
+          <li class="vt-history-row">
+            <span class="vt-history-when">{item.when}</span>
+            <span class="vt-history-what">
+              <strong>{item.row.model}</strong> · {item.row.extent}{#if item.until}<span
+                  class="vt-history-until"
+                >
+                  · {item.until}</span
+                >{/if}
+            </span>
+            {#if item.status === "CURRENT"}
+              <Chip tone="ok">Gültig</Chip>
+            {:else if item.status === "PLANNED"}
+              <Chip tone="info">Geplant</Chip>
+            {:else}
+              <span aria-hidden="true"></span>
+            {/if}
+          </li>
+        {/each}
+      </ul>
     </section>
+  {/if}
+
+  <!-- The contract's SaveBar closes the tab's contract part, after the history (prototype): the draft
+       row above shows what the save would add. -->
+  {#if canEdit && changeCount > 0}
+    <div class="vt-savebar">
+      <SaveBar
+        changes={changeCount}
+        errors={sectionErrors(shown)}
+        {saving}
+        saveLabel="Vertrag speichern"
+        onSave={() => save()}
+        onDiscard={discard}
+      />
+    </div>
   {/if}
 
   {#if missingUsual.length > 0}
@@ -687,10 +742,18 @@
 </Dialog>
 
 <style>
-  .vertrag-tab {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-8);
+  /* The SaveBar sits right under the history, without a hairline of its own. */
+  .vertrag-tab > .vt-savebar:not(:first-child) {
+    margin-top: var(--s-4);
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  /* The wrapper (not the bar inside it) sticks to the bottom of the view while the tab is in it. */
+  .vt-savebar {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
   }
 
   .vt-model {
@@ -698,13 +761,6 @@
     flex-direction: column;
     gap: var(--s-2);
     min-width: 0;
-  }
-
-  .vt-label {
-    margin: 0;
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    color: var(--text-2);
   }
 
   /* Four labelled segments are wider than a phone: scroll inside the field instead of the page. */
@@ -719,14 +775,75 @@
     color: var(--text-2);
   }
 
-  .vt-number {
-    max-width: 12rem;
+  /* The tinted sum row under the hours: workdays left, the weekly sum right. */
+  .vt-sum {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s-3);
+    margin: 0;
+    padding: var(--s-2) var(--s-3);
+    background: var(--sunk);
+    border-radius: var(--r-control);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
   }
 
-  .vt-row {
+  .vt-sum-value {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Two fields side by side (prototype form row), one column on a phone. */
+  .vt-pair {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
     gap: var(--s-4);
+  }
+
+  @container (min-width: 520px) {
+    .vt-pair {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  /* Quiet history rows: start day, model and extent, status chip. */
+  .vt-history {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .vt-history-row {
+    display: grid;
+    grid-template-columns: 7.5rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-2) 0;
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-base);
+  }
+
+  .vt-history-row:first-child {
+    border-top: 0;
+  }
+
+  .vt-history-when {
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vt-history-what {
+    min-width: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  .vt-history-until {
+    color: var(--text-2);
   }
 
   .vt-orphan-list {

@@ -1,6 +1,7 @@
-// Issue #854 (plan 854-21) - the Vertrag tab of the employee detail, mounted: the contract change with a
-// month-first-only „Gültig ab“ (default: the next month-first), the PUT body per model, the server's
-// refusals as text, the pending-shift dialog, the Minijob hint, the timeline and the Nachtrag.
+// Issue #854 (plan 854-21, owner review) - the Vertrag tab of the employee detail, mounted: the contract
+// change with a month-first-only „Gültig ab“ (a choice of months, default: the next month-first), the PUT
+// body per model, the server's refusals as text, the pending-shift dialog, the Minijob hint, the history
+// (Gültig / Geplant / Entwurf) and the Nachtrag.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/svelte";
 
@@ -57,6 +58,7 @@ type Props = Partial<{
   canDiscardShifts: boolean;
   onSaved: (s: ContractSchedule) => void;
   today: string;
+  hireDate: string | null;
 }>;
 
 function mount(props: Props = {}) {
@@ -71,11 +73,13 @@ function mount(props: Props = {}) {
   });
 }
 
-function segmentTexts(): string[] {
-  const field = document.querySelector('[aria-label="Gültig ab"]') as HTMLElement;
-  return Array.from(field.querySelectorAll('[role="spinbutton"]')).map(
-    (el) => el.textContent ?? "",
-  );
+function validFromSelect(): HTMLSelectElement {
+  return screen.getByRole("combobox", { name: "Gültig ab" }) as HTMLSelectElement;
+}
+
+function selectedMonth(): string {
+  const select = validFromSelect();
+  return select.options[select.selectedIndex]?.textContent ?? "";
 }
 
 beforeEach(() => {
@@ -88,18 +92,30 @@ beforeEach(() => {
 describe("VertragTab - the form", () => {
   it("shows the stored contract, no SaveBar, and „Gültig ab“ at the next month-first", () => {
     mount();
-    expect(screen.getByRole("heading", { name: "Vertrag" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Arbeitszeitmodell" })).toBeTruthy();
     expect(
       screen.getByRole("radio", { name: "Feste Arbeitszeit" }).getAttribute("aria-checked"),
     ).toBe("true");
     expect((screen.getByLabelText("Montag") as HTMLInputElement).value).toBe("8");
-    expect(segmentTexts()).toEqual(["01", "12", "2026"]);
+    expect(validFromSelect().value).toBe("2026-12-01");
+    expect(selectedMonth()).toBe("Dezember 2026");
     expect(screen.queryByRole("region", { name: "Speicherleiste" })).toBeNull();
   });
 
   it("offers the next month-first even on the 1st (never the day it is entered)", () => {
     mount({ today: "2026-12-01" });
-    expect(segmentTexts()).toEqual(["01", "01", "2027"]);
+    expect(validFromSelect().value).toBe("2027-01-01");
+    expect(selectedMonth()).toBe("Januar 2027");
+  });
+
+  it("the hours sit in a row of seven with the tinted sum row: workdays left, H:MM right", async () => {
+    mount();
+    const sum = screen.getByTestId("vertrag-workdays-derived");
+    expect(sum.textContent).toContain("5 Arbeitstage pro Woche");
+    expect(sum.textContent).toContain("40:00 h");
+    await fireEvent.input(screen.getByLabelText("Samstag"), { target: { value: "3.5" } });
+    await waitFor(() => expect(sum.textContent).toContain("43:30 h"));
+    expect(sum.textContent).toContain("6 Arbeitstage pro Woche");
   });
 
   it("an edit counts one change and the PUT carries the day sum and the default start", async () => {
@@ -130,20 +146,18 @@ describe("VertragTab - the form", () => {
     expect(apiGet).toHaveBeenCalledTimes(2);
   });
 
-  it("a „Gültig ab“ that is not a month-first is named and blocks the save (no snapping)", async () => {
-    mount();
-    const day = document.querySelector(
-      '[aria-label="Gültig ab"] [role="spinbutton"]',
-    ) as HTMLElement;
-    day.focus();
-    await fireEvent.keyDown(day, { key: "ArrowUp" });
-    expect(
-      await screen.findByText(/Vertragswechsel gelten ab dem Monatsersten\. Wähle/),
-    ).toBeTruthy();
-    expect(segmentTexts()[0]).toBe("02");
-    const save = screen.getByRole("button", { name: "Vertrag speichern" }) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
-    expect(apiPut).not.toHaveBeenCalled();
+  it("„Gültig ab“ offers month-firsts only, from the hire month on, and the chosen month is sent", async () => {
+    mount({ hireDate: "2026-10-19T00:00:00.000Z" });
+    const options = Array.from(validFromSelect().options).map((o) => o.value);
+    // The first month-first after the hire day; no other day of a month can be picked at all.
+    expect(options[0]).toBe("2026-11-01");
+    expect(options.every((value) => /^\d{4}-\d{2}-01$/.test(value))).toBe(true);
+    await fireEvent.change(validFromSelect(), { target: { value: "2027-02-01" } });
+    const bar = await screen.findByRole("region", { name: "Speicherleiste" });
+    expect(bar.textContent).toContain("1 Änderung");
+    await fireEvent.click(within(bar).getByRole("button", { name: "Vertrag speichern" }));
+    await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(1));
+    expect(apiPut.mock.calls[0][1]).toMatchObject({ validFrom: "2027-02-01" });
   });
 
   it("Verwerfen restores the stored contract and the default start", async () => {
@@ -347,20 +361,45 @@ describe("VertragTab - Minijob hint (D-854-08)", () => {
 });
 
 describe("VertragTab - the timeline", () => {
-  it("lists every version newest first with its validity and where it stands", async () => {
+  it("lists every version newest first with its start, extent and where it stands", async () => {
     mount();
     const timeline = await screen.findByTestId("contract-history");
     const rows = within(timeline).getAllByRole("listitem");
     expect(rows).toHaveLength(3);
-    expect(rows[0].textContent).toContain("Monatsstunden");
-    expect(rows[0].textContent).toContain("ab 01.12.2026 · geplant");
+    expect(rows[0].textContent).toContain("ab 01.12.2026");
+    expect(rows[0].textContent).toContain("Monatsstunden · 40 Std./Monat");
     expect(rows[0].textContent).toContain("Geplant");
-    expect(rows[1].textContent).toContain("Feste Arbeitszeit");
-    expect(rows[1].textContent).toContain("ab 01.06.2026 · bis 30.11.2026");
-    expect(rows[1].textContent).toContain("Aktuell");
-    expect(rows[2].textContent).toContain("ab 01.01.2025 · bis 31.05.2026");
-    expect(rows[2].textContent).not.toContain("Aktuell");
+    expect(rows[1].textContent).toContain("seit 01.06.2026");
+    expect(rows[1].textContent).toContain("Feste Arbeitszeit · 40 Std./Woche");
+    expect(rows[1].textContent).toContain("bis 30.11.2026");
+    expect(rows[1].textContent).toContain("Gültig");
+    expect(rows[2].textContent).toContain("ab 01.01.2025");
+    expect(rows[2].textContent).toContain("bis 31.05.2026");
+    expect(rows[2].textContent).not.toContain("Gültig");
+    expect(rows[2].textContent).not.toContain("Geplant");
     expect(screen.getByRole("heading", { name: "Vertragsverlauf" })).toBeTruthy();
+  });
+
+  it("an unsaved change is the top row „Entwurf“ until it is saved or discarded", async () => {
+    mount();
+    const timeline = await screen.findByTestId("contract-history");
+    await fireEvent.input(screen.getByLabelText("Montag"), { target: { value: "6" } });
+    const draft = await within(timeline).findByTestId("contract-history-draft");
+    expect(within(timeline).getAllByRole("listitem")[0]).toBe(draft);
+    expect(draft.textContent).toContain("ab 01.12.2026");
+    expect(draft.textContent).toContain("Feste Arbeitszeit · 38 Std./Woche");
+    expect(draft.textContent).toContain("Entwurf");
+    await fireEvent.click(screen.getByRole("button", { name: "Verwerfen" }));
+    await waitFor(() =>
+      expect(within(timeline).queryByTestId("contract-history-draft")).toBeNull(),
+    );
+    expect(within(timeline).getAllByRole("listitem")).toHaveLength(3);
+  });
+
+  it("shows no draft row without the right to change the contract", async () => {
+    mount({ canEdit: false });
+    const timeline = await screen.findByTestId("contract-history");
+    expect(within(timeline).queryByTestId("contract-history-draft")).toBeNull();
   });
 
   it("is hidden fail-soft when the history cannot be read", async () => {

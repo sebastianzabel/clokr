@@ -429,9 +429,9 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
     await expect(mondayHours).toBeVisible();
     const before = Number(await mondayHours.inputValue());
     await mondayHours.fill(String(before - 2));
-    // #854: „Gültig ab“ is a month-first-only DatePicker; typing the next month-first replaces the
-    // default (which already is that day), so the change succeeds on the first try.
-    await typeDay(contractPanel.locator('[aria-label="Gültig ab"]'), nextFirst);
+    // #854 (owner review): „Gültig ab“ is a choice of months (month-firsts only); choosing the next
+    // month-first keeps the default (which already is that day), so the change succeeds on the first try.
+    await contractPanel.getByRole("combobox", { name: "Gültig ab" }).selectOption(nextFirst);
     await contractPanel.getByRole("button", { name: "Vertrag speichern" }).click();
     await expect(
       page.getByText(`Vertrag gespeichert · gilt ab ${deDate(nextFirst)}`),
