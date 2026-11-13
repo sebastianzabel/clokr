@@ -302,13 +302,19 @@ describe("Issue #588 - personal saldo endpoints say how many months are unclosed
       "openMonthMinutes",
     ];
 
-    it("each answer is its merge-base key set plus exactly unconfirmedMonths", async () => {
+    it("each answer is its merge-base key set plus exactly unconfirmedMonths (and, for /overtime, the #605 free-days fields)", async () => {
       const p = c.C1;
       expect(Object.keys(await dashboardOf(p)).sort()).toEqual(
         [...BASE_DASHBOARD, "unconfirmedMonths"].sort(),
       );
       expect(Object.keys(await overtimeOf(p)).sort()).toEqual(
-        [...BASE_OVERTIME, "unconfirmedMonths"].sort(),
+        // Issue #605 adds two further additive fields to GET /overtime/:employeeId (free days).
+        [
+          ...BASE_OVERTIME,
+          "unconfirmedMonths",
+          "freeDaysEquivalent",
+          "freeDaysDailySollMinutes",
+        ].sort(),
       );
       expect(Object.keys(await balanceOf(p)).sort()).toEqual(
         [...BASE_BALANCE, "unconfirmedMonths"].sort(),
