@@ -314,8 +314,10 @@
     box-shadow: none;
   }
 
-  /* Without a head the segments still keep their distance to the panel. */
+  /* Without a head the segments still keep their distance to the panel and stay as wide as their
+     options (a list page: Berichte, Protokoll). */
   .page-tabs--segments > .page-tab-strip {
+    width: fit-content;
     margin-bottom: var(--s-6);
   }
 
