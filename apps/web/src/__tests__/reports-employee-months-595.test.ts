@@ -42,8 +42,11 @@ describe("Issue #595 Plan 02 - /reports employee month table comes from the serv
 
   it("chooses the chip text from the row status: Abgeschlossen for closed, Offen for open", () => {
     expect(PAGE).toMatch(/closed: r\.status === "closed"/);
-    expect(PAGE).toContain('<Chip tone="ok">Abgeschlossen</Chip>');
-    expect(PAGE).toContain('<Chip tone="warn">Offen</Chip>');
+    // Issue #598: the two words come from the one month-status source (pinned to "Abgeschlossen" /
+    // "Offen" in month-status-one-place-598.test.ts).
+    expect(PAGE).toContain('from "$lib/saldo/month-status"');
+    expect(PAGE).toContain('<Chip tone="ok">{MONTH_STATUS_LABEL.CLOSED}</Chip>');
+    expect(PAGE).toContain('<Chip tone="warn">{MONTH_STATUS_LABEL.OPEN}</Chip>');
     expect(PAGE).not.toContain("Gesperrt");
   });
 

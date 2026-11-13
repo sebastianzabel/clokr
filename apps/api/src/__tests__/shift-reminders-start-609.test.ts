@@ -62,7 +62,9 @@ describe("shift start reminder - the tracer (AC-1, D-04, D-06, D-08, D-09)", () 
     expect(notice.relatedType).toBe("Shift");
     expect(notice.relatedId).toBe(p.shiftId);
     expect(notice.title).toBe("Schicht begonnen");
-    expect(notice.message).toBe("Deine Schicht hat um 9:00 begonnen. Jetzt einstempeln?");
+    expect(notice.message).toBe(
+      "Deine Schicht am 10.11.2026 hat um 9:00 begonnen. Jetzt einstempeln?",
+    );
   });
 
   it("sends nothing before the offset has passed (09:14)", async () => {
@@ -241,7 +243,9 @@ describe("shift start reminder - overnight, DST and time zone (AC-5, D-03)", () 
     await tick(nextDay(TEST_DAY), "00:10");
     const notice = await soleNotification(app.prisma, { where: { userId: p.userId, type: START } });
     expect(notice.relatedId).toBe(p.shiftId);
-    expect(notice.message).toBe("Deine Schicht hat um 23:30 begonnen. Jetzt einstempeln?");
+    expect(notice.message).toBe(
+      "Deine Schicht am 10.11.2026 hat um 23:30 begonnen. Jetzt einstempeln?",
+    );
   });
 
   it("a 09:00 shift on the spring-forward day is reminded at 09:15 local, not at 08:15", async () => {

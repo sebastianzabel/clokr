@@ -62,6 +62,15 @@ export type MonthSaldoDay = {
   date: string;
   /** carryOverIn + balanceMinutes for days 1..D (§615, from closeEmployeeMonth) */
   cumulativeSaldoMinutes: number;
+  /**
+   * Issue #594: the day's own share of the month - Soll, Ist and saldo of day D minus those of day
+   * D-1, both from the same to-date closeEmployeeMonth run the cumulative series uses, so the days
+   * of a month sum to its header figures. Absent on the single terminal entry of a closed month (the
+   * stored snapshot holds no days and is never recomputed). A track-only month owes no saldo (0).
+   */
+  expectedMinutes?: number;
+  workedMinutes?: number;
+  balanceMinutes?: number;
 };
 
 export type MonthSaldoResult = {
@@ -858,6 +867,11 @@ export async function computeMonthSaldo(
     days.push({
       date: dayStr,
       cumulativeSaldoMinutes: trackOnlyMonth ? 0 : carryOverIn + dayResult.balanceMinutes,
+      expectedMinutes: dayResult.expectedMinutes - (lastDayResult?.expectedMinutes ?? 0),
+      workedMinutes: dayResult.workedMinutes - (lastDayResult?.workedMinutes ?? 0),
+      balanceMinutes: trackOnlyMonth
+        ? 0
+        : dayResult.balanceMinutes - (lastDayResult?.balanceMinutes ?? 0),
     });
 
     lastDayResult = dayResult;

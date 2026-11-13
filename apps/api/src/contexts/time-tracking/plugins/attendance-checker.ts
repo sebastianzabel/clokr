@@ -216,6 +216,11 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           });
           const dayThreshold = resolveMissingEntriesDays(cfg);
           const cutoffDate = addDaysUtc(new Date(), -dayThreshold);
+          // Issue #602: the notices name the period. It starts at the calendar day the entry query
+          // below compares against (Prisma casts the instant to its UTC date part for the
+          // @db.Date column), so the named day is exactly the first day that counted.
+          const [cy, cm, cd] = cutoffDate.toISOString().slice(0, 10).split("-");
+          const sinceDe = `${cd}.${cm}.${cy}`;
 
           // Find all active employees for this tenant
           const employees = await app.prisma.employee.findMany({
@@ -267,7 +272,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               userId: emp.user.id,
               type: "MISSING_ENTRIES",
               title: "Fehlende Zeiteinträge",
-              message: `Du hast seit ${dayThreshold} Tagen keine Zeiteinträge erfasst.`,
+              message: `Du hast seit dem ${sinceDe} (${dayThreshold} Tage) keine Zeiteinträge erfasst.`,
               link: "/time-entries",
             });
 
@@ -312,7 +317,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                 userId: mgr.user.id,
                 type: "MISSING_ENTRIES",
                 title: "Fehlende Zeiteinträge",
-                message: `${emp.firstName} ${emp.lastName} hat seit ${dayThreshold} Tagen keine Zeiteinträge erfasst.`,
+                message: `${emp.firstName} ${emp.lastName} hat seit dem ${sinceDe} (${dayThreshold} Tage) keine Zeiteinträge erfasst.`,
                 link: "/time-entries",
               });
             }

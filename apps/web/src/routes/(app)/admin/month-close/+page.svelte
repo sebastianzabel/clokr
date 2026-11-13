@@ -40,6 +40,7 @@
     YearStatusResponse,
   } from "$lib/month-close/types";
   import { int, oneOf, urlState } from "$lib/table/url-state";
+  import { MONTH_STATUS_LABEL } from "$lib/saldo/month-status"; // Issue #598: one status wording
 
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -61,7 +62,7 @@
   const filterOptions = [
     { value: "all", label: "Alle" },
     { value: "open", label: "Offen / Fehlend" },
-    { value: "closed", label: "Abgeschlossen" },
+    { value: "closed", label: MONTH_STATUS_LABEL.CLOSED },
     { value: "actionable", label: "Handlungsbedarf" },
   ];
 
@@ -184,7 +185,7 @@
 
   const kpiItems = $derived([
     {
-      label: "Abgeschlossen",
+      label: MONTH_STATUS_LABEL.CLOSED,
       value: monthStatuses.filter((ms) => ms.status === "closed").length,
       explanation: "Monate dieses Jahres",
     },
@@ -194,7 +195,7 @@
       explanation: "Alle Personen bereit",
     },
     {
-      label: "Offen",
+      label: MONTH_STATUS_LABEL.OPEN,
       value: monthStatuses.filter((ms) => ["open", "partial"].includes(ms.status)).length,
       explanation: "Noch nicht abgeschlossen",
     },

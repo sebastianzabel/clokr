@@ -58,6 +58,7 @@
   import type { TodayAttendanceData } from "$lib/reports/today-attendance"; // Issue #612
   import { partitionOvertimeOverview } from "$lib/reports/overtime-overview-sections"; // Issue #613
   import { fmtBalance } from "$lib/utils/format-minutes"; // Issue #588
+  import { MONTH_STATUS_LABEL } from "$lib/saldo/month-status"; // Issue #598: one status wording
   import {
     buildEmployeeMonthRows,
     type EmployeeMonthRow,
@@ -688,7 +689,7 @@
   }
 
   const empKpiItems = $derived<KpiItem[]>([
-    { label: "Abgeschlossen", value: String(kpiClosedMonths), unit: "Monate" },
+    { label: MONTH_STATUS_LABEL.CLOSED, value: String(kpiClosedMonths), unit: "Monate" },
     { label: "Soll", value: fmtHoursFromMin(kpiTotalExpectedMin), unit: "h" },
     { label: "Ist", value: fmtHoursFromMin(kpiTotalWorkedMin), unit: "h" },
     { label: "Saldo", value: fmtBalance(kpiTotalBalanceMin), unit: "h" },
@@ -853,9 +854,9 @@
     <b>{row.label}</b>
   {:else if column.key === "status"}
     {#if row.closed}
-      <Chip tone="ok">Abgeschlossen</Chip>
+      <Chip tone="ok">{MONTH_STATUS_LABEL.CLOSED}</Chip>
     {:else}
-      <Chip tone="warn">Offen</Chip>
+      <Chip tone="warn">{MONTH_STATUS_LABEL.OPEN}</Chip>
     {/if}
   {:else if column.key === "pdf"}
     <button

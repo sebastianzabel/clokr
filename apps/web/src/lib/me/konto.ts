@@ -26,7 +26,10 @@ export interface OpenMonthSaldo {
   standMinutes: number | null;
 }
 
-export type MonthStatus = "CLOSED" | "OPEN" | "RUNNING";
+import { MONTH_STATUS_LABEL, type MonthStatus } from "$lib/saldo/month-status";
+
+// Issue #598: the status wording lives in $lib/saldo/month-status; re-exported for the page.
+export { MONTH_STATUS_LABEL, type MonthStatus };
 
 export interface KontoMonthRow {
   key: string;
@@ -61,13 +64,6 @@ export function monthLabel(year: number, month: number): string {
   return `${MONTHS[month - 1]} ${year}`;
 }
 
-/** The one status wording of a month (#598: every month has the same name everywhere). */
-export const MONTH_STATUS_LABEL: Record<MonthStatus, string> = {
-  CLOSED: "Abgeschlossen",
-  OPEN: "Offen",
-  RUNNING: "Bis gestern",
-};
-
 /**
  * Closed months from the snapshots plus the open months after the last close, newest first. A month
  * that is both closed and fetched as open is taken from the snapshot (the stored figures win).
@@ -75,7 +71,6 @@ export const MONTH_STATUS_LABEL: Record<MonthStatus, string> = {
 export function kontoMonthRows(
   snapshots: readonly KontoSnapshot[],
   open: readonly OpenMonthSaldo[],
-  today: { year: number; month: number },
 ): KontoMonthRow[] {
   const rows = new Map<string, KontoMonthRow>();
   for (const s of snapshots) {
@@ -97,7 +92,6 @@ export function kontoMonthRows(
   for (const m of open) {
     const key = `${m.year}-${String(m.month).padStart(2, "0")}`;
     if (rows.has(key) || m.closed) continue;
-    const running = m.year === today.year && m.month === today.month;
     rows.set(key, {
       key,
       year: m.year,
@@ -107,7 +101,7 @@ export function kontoMonthRows(
       istMinutes: m.workedMinutes,
       diffMinutes: m.balanceMinutes,
       standMinutes: m.standMinutes,
-      status: running ? "RUNNING" : "OPEN",
+      status: "OPEN",
       closedAt: null,
     });
   }
@@ -137,4 +131,48 @@ export function openMonthsAfter(
     }
   }
   return out;
+}
+
+/** One day of GET /overtime/month-saldo (#594: with the day's own Soll, Ist and saldo). */
+export interface MonthSaldoDay {
+  date: string;
+  cumulativeSaldoMinutes: number;
+  expectedMinutes?: number;
+  workedMinutes?: number;
+  balanceMinutes?: number;
+}
+
+export interface KontoDayRow {
+  date: string;
+  label: string;
+  sollMinutes: number;
+  istMinutes: number;
+  diffMinutes: number;
+  standMinutes: number;
+}
+
+const WEEKDAYS = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+
+/**
+ * Issue #594: the days of an open month for Ich › Konto, read from the account's own day shares
+ * (never derived here). A day without Soll, without time and without a saldo step (a free weekend)
+ * is left out; a closed month's single terminal entry carries no shares and yields no rows.
+ */
+export function kontoDayRows(days: readonly MonthSaldoDay[]): KontoDayRow[] {
+  const rows: KontoDayRow[] = [];
+  for (const d of days) {
+    if (d.expectedMinutes == null || d.workedMinutes == null || d.balanceMinutes == null) continue;
+    if (d.expectedMinutes === 0 && d.workedMinutes === 0 && d.balanceMinutes === 0) continue;
+    const [y, m, day] = d.date.split("-").map(Number);
+    const weekday = WEEKDAYS[new Date(y, m - 1, day).getDay()];
+    rows.push({
+      date: d.date,
+      label: `${weekday} ${String(day).padStart(2, "0")}.${String(m).padStart(2, "0")}.`,
+      sollMinutes: d.expectedMinutes,
+      istMinutes: d.workedMinutes,
+      diffMinutes: d.balanceMinutes,
+      standMinutes: d.cumulativeSaldoMinutes,
+    });
+  }
+  return rows;
 }

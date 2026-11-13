@@ -247,10 +247,11 @@ describe("PersonDrilldown - the month series", () => {
       "160:00",
       "160:00",
       "+2:15",
-      expect.stringContaining("Prognose"),
+      expect.stringContaining("Offen"),
     ]);
-    expect(within(rows[0]).getByText("Bestätigt")).toHaveClass("chip");
-    expect(within(rows[1]).getByText("Prognose")).toHaveClass("chip");
+    // Issue #598: the month's status reads like on Zeiten and Konto.
+    expect(within(rows[0]).getByText("Abgeschlossen")).toHaveClass("chip");
+    expect(within(rows[1]).getByText("Offen")).toHaveClass("chip");
   });
 
   it("selects the last month by default and moves the selection on a click", async () => {
@@ -289,6 +290,8 @@ describe("PersonDrilldown - the month series", () => {
     const cells = within(screen.getByRole("table", { name: /Monate/ })).getAllByRole("cell");
     expect(cells[1]).toHaveTextContent("—");
     expect(cells[4]).toHaveTextContent("ohne Soll");
+    // The remark stands next to the month's status, it never replaces it (#598).
+    expect(cells[4]).toHaveTextContent("Offen");
   });
 
   it("a new period (new row) resets the selection to its last month", async () => {
@@ -462,6 +465,38 @@ describe("PersonDrilldown - the day list (only with time-entry:read)", () => {
       Array.from(rows[1].querySelectorAll("td"))[0].querySelector(".drill-repeat"),
     ).not.toBeNull();
     expect(table.textContent).not.toMatch(/Summe|Gesamt/);
+  });
+
+  it("each day of the list opens that day in Team-Zeiten (#594)", async () => {
+    renderWithTheme(PersonDrilldown, props());
+    const table = await screen.findByRole("table", { name: /Tage im September 2026/ });
+    const links = within(table).getAllByRole("link");
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link.getAttribute("href")).toMatch(
+        /^\/team\/time-entries\?employeeId=emp-1&date=2026-09-\d{2}$/,
+      );
+    }
+    // one link per day, never per entry
+    const hrefs = links.map((l) => l.getAttribute("href"));
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+  });
+
+  it("reads the calendar day of an ISO date as the API serves it (label and link)", async () => {
+    const iso = (d: string) => `${d}T00:00:00.000Z`;
+    renderWithTheme(
+      PersonDrilldown,
+      props({
+        loadDayEntries: vi
+          .fn()
+          .mockResolvedValue(ENTRIES.map((e) => ({ ...e, date: iso(e.date) }))),
+      }),
+    );
+    const table = await screen.findByRole("table", { name: /Tage im September 2026/ });
+    expect(within(table).queryByText(/NaN|undefined/)).toBeNull();
+    const first = within(table).getAllByRole("link")[0];
+    expect(first).toHaveTextContent(/^(Mo|Di|Mi|Do|Fr|Sa|So) \d{2}\.09\.$/);
+    expect(first.getAttribute("href")).toMatch(/&date=2026-09-\d{2}$/);
   });
 
   it("an empty month says so", async () => {

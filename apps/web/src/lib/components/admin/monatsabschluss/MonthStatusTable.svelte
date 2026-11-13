@@ -19,6 +19,7 @@
   } from "$lib/month-close/day-lists";
   import { exitLabel } from "$lib/month-close/exit-label";
   import type { EmployeeStatus, MonthStatus } from "$lib/month-close/types";
+  import { MONTH_STATUS_LABEL } from "$lib/saldo/month-status"; // Issue #598: one status wording
 
   interface Props {
     year: number;
@@ -67,10 +68,10 @@
   const NOT_OPENABLE = ["future", "no_data"];
 
   const STATUS_LABELS: Record<string, string> = {
-    closed: "Abgeschlossen",
+    closed: MONTH_STATUS_LABEL.CLOSED,
     partial: "Teilweise",
     ready: "Bereit",
-    open: "Offen",
+    open: MONTH_STATUS_LABEL.OPEN,
     blocked: "Blockiert",
     future: "Zukunft",
     no_data: "Keine Daten",
@@ -230,7 +231,7 @@
         {:else if column.key === "status"}
           <span class="mst-chips">
             {#if emp.status === "closed"}
-              <Chip tone="ok">Abgeschlossen</Chip>
+              <Chip tone="ok">{MONTH_STATUS_LABEL.CLOSED}</Chip>
             {:else if emp.status === "ready"}
               <Chip tone="brand">Bereit</Chip>
             {:else}

@@ -31,6 +31,7 @@
   import { withheldReason } from "$lib/reports/period-table";
   import { exportHref } from "$lib/export/export-centre"; // D-854-22: the one export page
   import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588 (amendment 7)
+  import { monthStatusLabel } from "$lib/saldo/month-status"; // Issue #598: one status wording
   import { isTravelRow, travelRouteLabel } from "$lib/time-entries/travel-entry-form";
   import { fmtMin } from "$lib/utils/format-minutes";
 
@@ -103,11 +104,14 @@
     return min === null ? DASH : fmtHoursDe(min, { signed });
   }
 
-  function monthStatus(m: PeriodMonth): { label: string; tone: "ok" | "neutral" } {
-    if (!m.labelled) return { label: "ohne Soll", tone: "neutral" };
-    return m.confirmed
-      ? { label: "Bestätigt", tone: "ok" }
-      : { label: "Prognose", tone: "neutral" };
+  // Issue #598: the month's status is worded like on Zeiten and Konto (closed or open); a month
+  // without a Soll keeps that remark, it is a fact about the figures, not a status.
+  function monthStatus(m: PeriodMonth): { label: string; tone: "ok" | "neutral"; noSoll: boolean } {
+    return {
+      label: monthStatusLabel(m.confirmed),
+      tone: m.confirmed ? "ok" : "neutral",
+      noSoll: !m.labelled,
+    };
   }
 
   // DataTable's row type is a string-keyed record; the interfaces of the period answer have no index
@@ -204,8 +208,14 @@
     });
   });
 
+  // The API serves a `@db.Date` as an ISO timestamp ("2026-11-02T00:00:00.000Z"); the calendar day is
+  // its first ten characters (the UTC date part, as Prisma stores it).
+  function calendarDay(date: string): string {
+    return date.slice(0, 10);
+  }
+
   function dayLabel(date: string): string {
-    const [y, m, d] = date.split("-").map(Number);
+    const [y, m, d] = calendarDay(date).split("-").map(Number);
     return `${WEEKDAYS[new Date(y, m - 1, d).getDay()]} ${pad(d)}.${pad(m)}.`;
   }
 
@@ -229,8 +239,20 @@
 
   // The date is printed on the first entry of a day only.
   const firstOfDayIds = $derived(
-    new Set(entries.filter((e, i) => i === 0 || entries[i - 1].date !== e.date).map((e) => e.id)),
+    new Set(
+      entries
+        .filter((e, i) => i === 0 || calendarDay(entries[i - 1].date) !== calendarDay(e.date))
+        .map((e) => e.id),
+    ),
   );
+
+  // Issue #594: every day of the list opens that day in Team-Zeiten (the same page and reach as the
+  // month link below; the list itself is only rendered with time-entry:read).
+  function dayHref(date: string): string {
+    return row
+      ? `/team/time-entries?employeeId=${encodeURIComponent(row.employeeId)}&date=${calendarDay(date)}`
+      : "";
+  }
 
   const teamHref = $derived(
     row && selected
@@ -307,12 +329,14 @@
   {:else if column.key === "status"}
     {@const status = monthStatus(m)}
     <Chip tone={status.tone}>{status.label}</Chip>
+    {#if status.noSoll}<span class="drill-sub">ohne Soll</span>{/if}
   {/if}
 {/snippet}
 
 {#snippet dayCell(e: DayRow, column: DataTableColumn)}
   {#if column.key === "date"}
-    {#if firstOfDayIds.has(e.id)}{dayLabel(e.date)}{:else}<span class="drill-repeat"></span>{/if}
+    {#if firstOfDayIds.has(e.id)}<a class="drill-link" href={dayHref(e.date)}>{dayLabel(e.date)}</a
+      >{:else}<span class="drill-repeat"></span>{/if}
   {:else if column.key === "time"}
     {span(e)}
     {#if e.endTime === null}<Chip tone="neutral">läuft</Chip>{/if}
