@@ -66,7 +66,7 @@ describe("day-close reminder - the rule (AC-3, D-04)", () => {
     expect(first.relatedType).toBe("EmployeeDay");
     expect(first.relatedId).toBe(`${p.employeeId}:${TEST_DAY}`);
     expect(first.title).toBe("Zeit fehlt");
-    expect(first.message).toBe("Heute fehlt noch deine Zeit. Trag sie jetzt ein.");
+    expect(first.message).toBe("Für den 10.11.2026 fehlt noch deine Zeit. Trag sie jetzt ein.");
 
     await tick(TEST_DAY, "20:05");
     await app.prisma.notification.update({

@@ -148,7 +148,7 @@ describe("/reports period area (Issue #612) - one period control, no old selects
     expect(PAGE).not.toContain('label="Mitarbeiter"');
     expect(PAGE).not.toContain('label="Kritische Salden"');
     expect(PAGE).not.toContain('label="Urlaub genutzt"');
-    expect(PAGE).toContain('<KPIStat label="Abgeschlossen"');
+    expect(PAGE).toContain("<KPIStat label={MONTH_STATUS_LABEL.CLOSED}"); // #598: one status wording
     expect(PAGE).toContain("<PeriodKpis");
   });
 

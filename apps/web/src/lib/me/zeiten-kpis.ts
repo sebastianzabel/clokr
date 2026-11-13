@@ -3,6 +3,7 @@
 // recorded breaks and the server's day-check map): nothing is computed here, so the figures stay the
 // ones MonatSaldoCard showed (#125 one-source count, #433 MONTHLY_HOURS Soll, #495 no-Soll contract).
 import { fmtBalance, fmtMin } from "$lib/utils/format-minutes";
+import { monthStatusLabel } from "$lib/saldo/month-status"; // Issue #598: one status wording
 
 /** The fields of KpiStrip's item this module fills (a structural subset; a plain .ts module cannot
  *  import a type from a .svelte file under `tsc`). */
@@ -118,6 +119,10 @@ export function zeitenStatus(locked: boolean): {
   explanation: string;
 } {
   return locked
-    ? { label: "Abgeschlossen", tone: "ok", explanation: "Werte sind final" }
-    : { label: "Offen", tone: "info", explanation: "Abschluss durch die Salonleitung" };
+    ? { label: monthStatusLabel(true), tone: "ok", explanation: "Werte sind final" }
+    : {
+        label: monthStatusLabel(false),
+        tone: "info",
+        explanation: "Abschluss durch die Salonleitung",
+      };
 }

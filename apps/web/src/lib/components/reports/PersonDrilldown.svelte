@@ -23,6 +23,7 @@
   } from "$lib/reports/period-report";
   import { withheldReason } from "$lib/reports/period-table";
   import { forecastLabel } from "$lib/saldo/forecast-label"; // Issue #588 (amendment 7)
+  import { monthStatusLabel } from "$lib/saldo/month-status"; // Issue #598: one status wording
   import { isTravelRow, travelRouteLabel } from "$lib/time-entries/travel-entry-form";
   import { fmtMin } from "$lib/utils/format-minutes";
 
@@ -97,9 +98,10 @@
     return min === null ? DASH : fmtHoursDe(min, { signed });
   }
 
-  function monthStatus(m: PeriodMonth): { label: string; good: boolean } {
-    if (!m.labelled) return { label: "ohne Soll", good: false };
-    return m.confirmed ? { label: "Bestätigt", good: true } : { label: "Prognose", good: false };
+  // Issue #598: the month's status is worded like on Zeiten and Konto (closed or open); a month
+  // without a Soll keeps that remark, it is a fact about the figures, not a status.
+  function monthStatus(m: PeriodMonth): { label: string; good: boolean; noSoll: boolean } {
+    return { label: monthStatusLabel(m.confirmed), good: m.confirmed, noSoll: !m.labelled };
   }
 
   // ── The closing saldo (P-13) ─────────────────────────────────────────────────────
@@ -177,8 +179,14 @@
     });
   });
 
+  // The API serves a `@db.Date` as an ISO timestamp ("2026-11-02T00:00:00.000Z"); the calendar day is
+  // its first ten characters (the UTC date part, as Prisma stores it).
+  function calendarDay(date: string): string {
+    return date.slice(0, 10);
+  }
+
   function dayLabel(date: string): string {
-    const [y, m, d] = date.split("-").map(Number);
+    const [y, m, d] = calendarDay(date).split("-").map(Number);
     return `${WEEKDAYS[new Date(y, m - 1, d).getDay()]} ${pad(d)}.${pad(m)}.`;
   }
 
@@ -201,7 +209,15 @@
   }
 
   function firstOfDay(list: DayEntry[], i: number): boolean {
-    return i === 0 || list[i - 1].date !== list[i].date;
+    return i === 0 || calendarDay(list[i - 1].date) !== calendarDay(list[i].date);
+  }
+
+  // Issue #594: every day of the list opens that day in Team-Zeiten (the same page and reach as the
+  // month link below; the list itself is only rendered with time-entry:read).
+  function dayHref(date: string): string {
+    return row
+      ? `/team/time-entries?employeeId=${encodeURIComponent(row.employeeId)}&date=${calendarDay(date)}`
+      : "";
   }
 
   const teamHref = $derived(
@@ -354,6 +370,7 @@
                   >
                   <td>
                     <span class="chip" class:chip-good={status.good}>{status.label}</span>
+                    {#if status.noSoll}<span class="drill-sub">ohne Soll</span>{/if}
                   </td>
                 </tr>
               {/each}
@@ -414,7 +431,8 @@
               {#each entries as e (e.id)}
                 <li>
                   <span>
-                    {dayLabel(e.date)} · {span(e)} · Pause {fmtMin(e.breakMinutes)} · {workText(e)} h
+                    <a class="drill-link" href={dayHref(e.date)}>{dayLabel(e.date)}</a> · {span(e)} ·
+                    Pause {fmtMin(e.breakMinutes)} · {workText(e)} h
                   </span>
                   {#if e.endTime === null}<span class="chip">läuft</span>{/if}
                   {#if e.isInvalid}
@@ -442,7 +460,11 @@
                 <tbody>
                   {#each entries as e, i (e.id)}
                     <tr>
-                      <td>{firstOfDay(entries, i) ? dayLabel(e.date) : ""}</td>
+                      <td>
+                        {#if firstOfDay(entries, i)}<a class="drill-link" href={dayHref(e.date)}
+                            >{dayLabel(e.date)}</a
+                          >{/if}
+                      </td>
                       <td>
                         {span(e)}
                         {#if e.endTime === null}<span class="chip">läuft</span>{/if}

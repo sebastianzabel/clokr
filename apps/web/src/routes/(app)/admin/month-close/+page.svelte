@@ -18,6 +18,7 @@
     missingDaysText,
   } from "$lib/month-close/day-lists";
   import { exitLabel } from "$lib/month-close/exit-label";
+  import { MONTH_STATUS_LABEL } from "$lib/saldo/month-status"; // Issue #598: one status wording
 
   interface MissingEmployee {
     employeeName: string;
@@ -257,7 +258,7 @@
   const filterOptions = [
     { value: "all", label: "Alle" },
     { value: "open", label: "Offen / Fehlend" },
-    { value: "closed", label: "Abgeschlossen" },
+    { value: "closed", label: MONTH_STATUS_LABEL.CLOSED },
     { value: "actionable", label: "Handlungsbedarf" },
   ];
 
@@ -493,13 +494,13 @@
   function statusLabel(status: string): string {
     switch (status) {
       case "closed":
-        return "Abgeschlossen";
+        return MONTH_STATUS_LABEL.CLOSED;
       case "partial":
         return "Teilweise";
       case "ready":
         return "Bereit";
       case "open":
-        return "Offen";
+        return MONTH_STATUS_LABEL.OPEN;
       case "blocked":
         return "Blockiert";
       case "future":
@@ -908,7 +909,7 @@
                                         {#if emp.status === "closed"}
                                           <span class="chip chip-good">
                                             <span class="dot"></span>
-                                            Abgeschlossen
+                                            {MONTH_STATUS_LABEL.CLOSED}
                                           </span>
                                         {:else if emp.status === "ready"}
                                           <span class="chip chip-brand">
