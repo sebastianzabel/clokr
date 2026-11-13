@@ -122,6 +122,49 @@ describe("countUp", () => {
     expect(node.textContent).toBe("40 h");
   });
 
+  // Owner 13.11.2026: only whole numbers and one-decimal figures are counted.
+  it("writes a duration (H:MM) and a figure with two decimals at once", () => {
+    stubMatchMedia(false);
+    vi.useFakeTimers();
+    const raf = vi.fn((cb: FrameRequestCallback) => setTimeout(() => cb(performance.now()), 16));
+    vi.stubGlobal("requestAnimationFrame", raf);
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+    const hm = (n: number) =>
+      `${Math.floor(n / 60)}:${String(Math.round(n) % 60).padStart(2, "0")}`;
+    const duration = document.createElement("span");
+    countUp(duration, { value: 18730, format: hm });
+    expect(duration.textContent).toBe("312:10");
+    const precise = document.createElement("span");
+    countUp(precise, { value: 3.25 });
+    expect(precise.textContent).toBe("3.25");
+    expect(raf).not.toHaveBeenCalled();
+  });
+
+  it("shows intermediate values only at the target's precision", () => {
+    stubMatchMedia(false);
+    vi.useFakeTimers();
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) =>
+      setTimeout(() => cb(performance.now()), 16),
+    );
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+    const whole = document.createElement("span");
+    countUp(whole, { value: 24 });
+    const oneDecimal = document.createElement("span");
+    countUp(oneDecimal, { value: 3.5 });
+    const seenWhole: string[] = [];
+    const seenDecimal: string[] = [];
+    for (let t = 0; t < COUNT_MS + 32; t += 16) {
+      vi.advanceTimersByTime(16);
+      seenWhole.push(whole.textContent ?? "");
+      seenDecimal.push(oneDecimal.textContent ?? "");
+    }
+    expect(seenWhole.length).toBeGreaterThan(5);
+    expect(seenWhole.every((x) => /^\d+$/.test(x))).toBe(true);
+    expect(seenDecimal.every((x) => /^\d+(\.\d)?$/.test(x))).toBe(true);
+    expect(whole.textContent).toBe("24");
+    expect(oneDecimal.textContent).toBe("3.5");
+  });
+
   it("destroy cancels the pending frame, so nothing is written afterwards", () => {
     stubMatchMedia(false);
     vi.useFakeTimers();

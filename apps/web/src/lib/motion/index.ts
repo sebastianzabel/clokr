@@ -76,10 +76,27 @@ function write(node: HTMLElement, text: string): void {
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
 /**
+ * Decimal places of a counted figure: 0 or 1 (owner 13.11.2026). A target with more precision,
+ * or one shown as a time of day or duration ("312:10", "+12:45"), is not counted at all - its
+ * intermediate values read like a live recalculation.
+ */
+function countableDecimals(target: number, text: string): 0 | 1 | null {
+  if (text.includes(":")) return null;
+  if (Number.isInteger(target)) return 0;
+  if (Number.isInteger(Math.round(target * 10 * 1e6) / 1e6)) return 1;
+  return null;
+}
+
+function roundTo(n: number, decimals: 0 | 1): number {
+  return decimals === 0 ? Math.round(n) : Math.round(n * 10) / 10;
+}
+
+/**
  * Counts the element's text up to `format(value)` over COUNT_MS (ease-out). The final text is
  * ALWAYS exactly `format(value)` - no intermediate figure stays on screen or with assistive
- * technology (T-843-11). Reduced motion, a non-numeric value and a missing requestAnimationFrame
- * write the final text at once.
+ * technology (T-843-11). Reduced motion, a non-numeric value, a figure that is not countable
+ * (`countableDecimals`) and a missing requestAnimationFrame write the final text at once; an
+ * intermediate value is rounded to the target's own precision (whole number or one decimal).
  */
 export function countUp(node: HTMLElement, initial: CountUpParams) {
   let params = initial;
@@ -94,9 +111,14 @@ export function countUp(node: HTMLElement, initial: CountUpParams) {
   const run = () => {
     cancel();
     const target = params.value;
+    const decimals =
+      typeof target === "number" && Number.isFinite(target)
+        ? countableDecimals(target, finalText(params))
+        : null;
     const instant =
       typeof target !== "number" ||
       !Number.isFinite(target) ||
+      decimals === null ||
       get(reducedMotion) ||
       typeof requestAnimationFrame !== "function";
     if (instant) {
@@ -118,7 +140,7 @@ export function countUp(node: HTMLElement, initial: CountUpParams) {
         write(node, finalText(params));
         return;
       }
-      const current = from + (target - from) * easeOutCubic(progress);
+      const current = roundTo(from + (target - from) * easeOutCubic(progress), decimals);
       shown = current;
       write(node, formatted(params, current));
       frame = requestAnimationFrame(step);
