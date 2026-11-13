@@ -205,51 +205,53 @@
       </div>
     {/if}
 
-    <FormField
-      label="Pause ab 6 Stunden (Min)"
-      help="ArbZG-Minimum: 30 Min"
-      error={pauseShown.breakOver6hOverride}
-    >
-      {#snippet field({ id, describedBy, invalid })}
-        <input
-          {id}
-          class="form-input vo-number"
-          type="number"
-          min="30"
-          max="120"
-          step="1"
-          bind:value={pause.breakOver6hOverride}
-          placeholder={under18 ? "60 Min — nach § 11 JArbSchG" : `Standard: ${default6h} Min`}
-          disabled={!canEdit || savingPause}
-          data-testid="pausendauer-over6h"
-          aria-invalid={invalid ? "true" : undefined}
-          aria-describedby={describedBy}
-        />
-      {/snippet}
-    </FormField>
+    <div class="vo-pair">
+      <FormField
+        label="Pause ab 6 Stunden (Min)"
+        help="ArbZG-Minimum: 30 Min"
+        error={pauseShown.breakOver6hOverride}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            class="form-input"
+            type="number"
+            min="30"
+            max="120"
+            step="1"
+            bind:value={pause.breakOver6hOverride}
+            placeholder={under18 ? "60 Min — nach § 11 JArbSchG" : `Standard: ${default6h} Min`}
+            disabled={!canEdit || savingPause}
+            data-testid="pausendauer-over6h"
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          />
+        {/snippet}
+      </FormField>
 
-    <FormField
-      label="Pause ab 9 Stunden (Min)"
-      help="ArbZG-Minimum: 45 Min"
-      error={pauseShown.breakOver9hOverride}
-    >
-      {#snippet field({ id, describedBy, invalid })}
-        <input
-          {id}
-          class="form-input vo-number"
-          type="number"
-          min="45"
-          max="180"
-          step="1"
-          bind:value={pause.breakOver9hOverride}
-          placeholder={under18 ? "60 Min — nach § 11 JArbSchG" : `Standard: ${default9h} Min`}
-          disabled={!canEdit || savingPause}
-          data-testid="pausendauer-over9h"
-          aria-invalid={invalid ? "true" : undefined}
-          aria-describedby={describedBy}
-        />
-      {/snippet}
-    </FormField>
+      <FormField
+        label="Pause ab 9 Stunden (Min)"
+        help="ArbZG-Minimum: 45 Min"
+        error={pauseShown.breakOver9hOverride}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            class="form-input"
+            type="number"
+            min="45"
+            max="180"
+            step="1"
+            bind:value={pause.breakOver9hOverride}
+            placeholder={under18 ? "60 Min — nach § 11 JArbSchG" : `Standard: ${default9h} Min`}
+            disabled={!canEdit || savingPause}
+            data-testid="pausendauer-over9h"
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          />
+        {/snippet}
+      </FormField>
+    </div>
   </SettingsGroup>
 </div>
 
@@ -271,53 +273,67 @@
       </div>
     {/if}
 
-    <FormField label="Vorbereitungszeit (Min)" error={phorestShown.phorestPrepMinutesOverride}>
-      {#snippet field({ id, describedBy, invalid })}
-        <input
-          {id}
-          class="form-input vo-number"
-          type="number"
-          min="0"
-          max="30"
-          step="1"
-          bind:value={phorest.phorestPrepMinutesOverride}
-          placeholder={`Standard: ${defaultPrep} Min`}
-          disabled={!canEdit || savingPhorest}
-          data-testid="phorest-puffer-prep"
-          aria-invalid={invalid ? "true" : undefined}
-          aria-describedby={describedBy}
-        />
-      {/snippet}
-    </FormField>
+    <div class="vo-pair">
+      <FormField label="Vorbereitungszeit (Min)" error={phorestShown.phorestPrepMinutesOverride}>
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            class="form-input"
+            type="number"
+            min="0"
+            max="30"
+            step="1"
+            bind:value={phorest.phorestPrepMinutesOverride}
+            placeholder={`Standard: ${defaultPrep} Min`}
+            disabled={!canEdit || savingPhorest}
+            data-testid="phorest-puffer-prep"
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          />
+        {/snippet}
+      </FormField>
 
-    <FormField label="Nachbereitungszeit (Min)" error={phorestShown.phorestWrapupMinutesOverride}>
-      {#snippet field({ id, describedBy, invalid })}
-        <input
-          {id}
-          class="form-input vo-number"
-          type="number"
-          min="0"
-          max="30"
-          step="1"
-          bind:value={phorest.phorestWrapupMinutesOverride}
-          placeholder={`Standard: ${defaultWrapup} Min`}
-          disabled={!canEdit || savingPhorest}
-          data-testid="phorest-puffer-wrapup"
-          aria-invalid={invalid ? "true" : undefined}
-          aria-describedby={describedBy}
-        />
-      {/snippet}
-    </FormField>
+      <FormField label="Nachbereitungszeit (Min)" error={phorestShown.phorestWrapupMinutesOverride}>
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            class="form-input"
+            type="number"
+            min="0"
+            max="30"
+            step="1"
+            bind:value={phorest.phorestWrapupMinutesOverride}
+            placeholder={`Standard: ${defaultWrapup} Min`}
+            disabled={!canEdit || savingPhorest}
+            data-testid="phorest-puffer-wrapup"
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          />
+        {/snippet}
+      </FormField>
+    </div>
   </SettingsGroup>
 </div>
 
 <style>
-  /* The test hook wrappers add no box of their own. */
+  /* The test hook wrappers are the tab's sections (the Vertrag tab draws the hairline between them);
+     each is its own container, so the field pair follows the section's width. */
   .vo-wrap {
-    display: contents;
+    container-type: inline-size;
+    min-width: 0;
   }
 
-  .vo-number {
-    max-width: 12rem;
+  /* Two fields side by side (the prototype's form row), one column on a phone. */
+  .vo-pair {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--s-4);
+  }
+
+  @container (min-width: 520px) {
+    .vo-pair {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 </style>

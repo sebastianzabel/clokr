@@ -247,7 +247,7 @@
   );
 </script>
 
-<div class="zugang-tab">
+<div class="zugang-tab detail-form">
   <section class="settings-group" aria-labelledby="{uid}-roles">
     <h2 class="settings-group-title" id="{uid}-roles">Rollen</h2>
     <p class="settings-group-desc">Welche Rollen diese Person in welchem Bereich hat.</p>
@@ -444,12 +444,6 @@
 {/if}
 
 <style>
-  .zugang-tab {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-8);
-  }
-
   .zugang-facts {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));

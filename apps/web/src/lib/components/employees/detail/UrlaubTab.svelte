@@ -133,7 +133,7 @@
     <Note tone="info">Der Urlaubsanspruch dieser Person konnte nicht geladen werden.</Note>
   </div>
 {:else}
-  <div class="urlaub-tab">
+  <div class="urlaub-tab detail-form">
     <KpiStrip items={kpis} ariaLabel="Urlaubsanspruch {year}" />
 
     <SettingsGroup
@@ -146,27 +146,46 @@
       onSave={saveVacation}
       onDiscard={discard}
     >
-      <FormField
-        label="Urlaubstage gesamt"
-        help={`Leer lassen für den automatischen Wert (${suggestion.toLocaleString("de-DE", { maximumFractionDigits: 2 })}).`}
-        error={shown.totalDays}
-      >
-        {#snippet field({ id, describedBy, invalid })}
-          <input
-            {id}
-            class="form-input urlaub-number"
-            type="number"
-            min="0"
-            max="365"
-            step="0.01"
-            bind:value={values.totalDays}
-            placeholder={String(suggestion)}
-            disabled={!canEdit}
-            aria-invalid={invalid ? "true" : undefined}
-            aria-describedby={describedBy}
-          />
-        {/snippet}
-      </FormField>
+      <div class="urlaub-pair">
+        <FormField
+          label="Urlaubstage gesamt"
+          help={`Leer lassen für den automatischen Wert (${suggestion.toLocaleString("de-DE", { maximumFractionDigits: 2 })}).`}
+          error={shown.totalDays}
+        >
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              class="form-input"
+              type="number"
+              min="0"
+              max="365"
+              step="0.01"
+              bind:value={values.totalDays}
+              placeholder={String(suggestion)}
+              disabled={!canEdit}
+              aria-invalid={invalid ? "true" : undefined}
+              aria-describedby={describedBy}
+            />
+          {/snippet}
+        </FormField>
+
+        <FormField label="Resturlaub Vorjahr" required error={shown.carriedOverDays}>
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              class="form-input"
+              type="number"
+              min="0"
+              max="365"
+              step="0.5"
+              bind:value={values.carriedOverDays}
+              disabled={!canEdit}
+              aria-invalid={invalid ? "true" : undefined}
+              aria-describedby={describedBy}
+            />
+          {/snippet}
+        </FormField>
+      </div>
       {#if belowMinimum}
         <Note tone="bad">
           Unter dem gesetzlichen Mindesturlaub – das Speichern wird abgelehnt, sofern sich der Wert
@@ -174,59 +193,44 @@
         </Note>
       {/if}
 
-      <FormField label="Resturlaub Vorjahr" required error={shown.carriedOverDays}>
-        {#snippet field({ id, describedBy, invalid })}
-          <input
-            {id}
-            class="form-input urlaub-number"
-            type="number"
-            min="0"
-            max="365"
-            step="0.5"
-            bind:value={values.carriedOverDays}
-            disabled={!canEdit}
-            aria-invalid={invalid ? "true" : undefined}
-            aria-describedby={describedBy}
-          />
-        {/snippet}
-      </FormField>
+      <div class="urlaub-pair">
+        <FormField label="Resturlaub verfällt am" help="Leer lassen für die globale Einstellung.">
+          {#snippet field({ id, describedBy, invalid })}
+            <DatePicker
+              bind:value={values.carryOverDeadline}
+              label="Resturlaub verfällt am"
+              {id}
+              {describedBy}
+              {invalid}
+              disabled={!canEdit}
+            />
+          {/snippet}
+        </FormField>
 
-      <FormField label="Resturlaub verfällt am" help="Leer lassen für die globale Einstellung.">
-        {#snippet field({ id, describedBy, invalid })}
-          <DatePicker
-            bind:value={values.carryOverDeadline}
-            label="Resturlaub verfällt am"
-            {id}
-            {describedBy}
-            {invalid}
-            disabled={!canEdit}
-          />
-        {/snippet}
-      </FormField>
-
-      <FormField label="Übertragsgrund">
-        {#snippet field({ id, describedBy })}
-          <select
-            {id}
-            class="form-input"
-            bind:value={() => values.carryOverReason ?? "", setReason}
-            disabled={!canEdit}
-            aria-describedby={describedBy}
-          >
-            <option value="">Kein Grund</option>
-            {#each CARRY_OVER_REASON_OPTIONS as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-            {#if values.carryOverReason !== null && !CARRY_OVER_REASON_OPTIONS.some((o) => o.value === values.carryOverReason)}
-              <!-- Issue #451 (D-09): a legacy stored value (e.g. OPERATIONAL) is shown, read-only,
+        <FormField label="Übertragsgrund">
+          {#snippet field({ id, describedBy })}
+            <select
+              {id}
+              class="form-input"
+              bind:value={() => values.carryOverReason ?? "", setReason}
+              disabled={!canEdit}
+              aria-describedby={describedBy}
+            >
+              <option value="">Kein Grund</option>
+              {#each CARRY_OVER_REASON_OPTIONS as option (option.value)}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+              {#if values.carryOverReason !== null && !CARRY_OVER_REASON_OPTIONS.some((o) => o.value === values.carryOverReason)}
+                <!-- Issue #451 (D-09): a legacy stored value (e.g. OPERATIONAL) is shown, read-only,
                    instead of being silently replaced by „Kein Grund“. -->
-              <option value={values.carryOverReason} disabled selected
-                >{carryOverReasonLabel(values.carryOverReason)}</option
-              >
-            {/if}
-          </select>
-        {/snippet}
-      </FormField>
+                <option value={values.carryOverReason} disabled selected
+                  >{carryOverReasonLabel(values.carryOverReason)}</option
+                >
+              {/if}
+            </select>
+          {/snippet}
+        </FormField>
+      </div>
 
       <FormField
         label="Notiz zum Übertrag"
@@ -251,13 +255,18 @@
 {/if}
 
 <style>
-  .urlaub-tab {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-8);
+  /* Two fields side by side (the prototype's form row), one column on a phone; the group is the
+     container (.detail-form). */
+  .urlaub-pair {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--s-4);
   }
 
-  .urlaub-number {
-    max-width: 12rem;
+  @container (min-width: 520px) {
+    .urlaub-pair {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 </style>

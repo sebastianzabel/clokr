@@ -269,7 +269,7 @@
   );
 </script>
 
-<div class="person-tab">
+<div class="person-tab detail-form">
   <SettingsGroup
     title="Persönliche Daten"
     description="Name, Mitarbeiter-Nr., Geburtsdatum und NFC-Karte."
@@ -280,85 +280,86 @@
     onSave={saveIdentity}
     onDiscard={discardIdentity}
   >
-    <FormField label="Vorname" required error={identityShown.firstName}>
-      {#snippet field({ id, describedBy, invalid })}
-        <input
-          {id}
-          class="form-input"
-          type="text"
-          bind:value={values.firstName}
-          disabled={!canEdit}
-          aria-invalid={invalid ? "true" : undefined}
-          aria-describedby={describedBy}
-        />
-      {/snippet}
-    </FormField>
+    <div class="pt-grid">
+      <FormField label="Vorname" required error={identityShown.firstName}>
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            class="form-input"
+            type="text"
+            bind:value={values.firstName}
+            disabled={!canEdit}
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          />
+        {/snippet}
+      </FormField>
 
-    <FormField label="Nachname" required error={identityShown.lastName}>
-      {#snippet field({ id, describedBy, invalid })}
-        <input
-          {id}
-          class="form-input"
-          type="text"
-          bind:value={values.lastName}
-          disabled={!canEdit}
-          aria-invalid={invalid ? "true" : undefined}
-          aria-describedby={describedBy}
-        />
-      {/snippet}
-    </FormField>
+      <FormField label="Nachname" required error={identityShown.lastName}>
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            class="form-input"
+            type="text"
+            bind:value={values.lastName}
+            disabled={!canEdit}
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          />
+        {/snippet}
+      </FormField>
 
-    <FormField label="Mitarbeiter-Nr." required error={identityShown.employeeNumber}>
-      {#snippet field({ id, describedBy, invalid })}
-        <input
-          {id}
-          class="form-input"
-          type="text"
-          bind:value={values.employeeNumber}
-          disabled={!canEdit}
-          aria-invalid={invalid ? "true" : undefined}
-          aria-describedby={describedBy}
-        />
-      {/snippet}
-    </FormField>
+      <FormField label="Mitarbeiter-Nr." required error={identityShown.employeeNumber}>
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            class="form-input"
+            type="text"
+            bind:value={values.employeeNumber}
+            disabled={!canEdit}
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          />
+        {/snippet}
+      </FormField>
 
-    <FormField
-      label="Geburtsdatum"
-      help="Optional. Für Personen unter 18 Jahren gelten bei den Pausen die Regeln nach § 11 JArbSchG: mehr als 4,5 Stunden 30 Min, mehr als 6 Stunden 60 Min."
-    >
-      {#snippet field({ id, describedBy, invalid })}
-        <DatePicker
-          bind:value={values.birthDate}
-          label="Geburtsdatum"
-          {id}
-          {describedBy}
-          {invalid}
-          disabled={!canEdit}
-        />
-      {/snippet}
-    </FormField>
+      <FormField
+        label="NFC-Karten-ID"
+        help="Optional. Ermöglicht das Stempeln per NFC-Karte."
+        error={identityShown.nfcCardId}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            class="form-input"
+            type="text"
+            bind:value={values.nfcCardId}
+            placeholder="z. B. NFC-A1B2C3D4"
+            disabled={!canEdit}
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          />
+        {/snippet}
+      </FormField>
+      <FormField
+        label="Geburtsdatum"
+        help="Optional. Für Personen unter 18 Jahren gelten bei den Pausen die Regeln nach § 11 JArbSchG: mehr als 4,5 Stunden 30 Min, mehr als 6 Stunden 60 Min."
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <DatePicker
+            bind:value={values.birthDate}
+            label="Geburtsdatum"
+            {id}
+            {describedBy}
+            {invalid}
+            disabled={!canEdit}
+          />
+        {/snippet}
+      </FormField>
+    </div>
     {#if azubiMissingBirthDate}
       <Note tone="warn">{MISSING_BIRTH_DATE_HINT}</Note>
     {/if}
-
-    <FormField
-      label="NFC-Karten-ID"
-      help="Optional. Ermöglicht das Stempeln per NFC-Karte."
-      error={identityShown.nfcCardId}
-    >
-      {#snippet field({ id, describedBy, invalid })}
-        <input
-          {id}
-          class="form-input"
-          type="text"
-          bind:value={values.nfcCardId}
-          placeholder="z. B. NFC-A1B2C3D4"
-          disabled={!canEdit}
-          aria-invalid={invalid ? "true" : undefined}
-          aria-describedby={describedBy}
-        />
-      {/snippet}
-    </FormField>
   </SettingsGroup>
 
   <SettingsGroup
@@ -371,48 +372,50 @@
     onSave={saveStructure}
     onDiscard={discardStructure}
   >
-    <FormField label="Personalkategorie">
-      {#snippet field({ id, describedBy })}
-        <select
-          {id}
-          class="form-input"
-          bind:value={values.classification}
-          onchange={onClassificationChange}
-          disabled={!canEdit}
-          aria-describedby={describedBy}
-        >
-          {#each CLASSIFICATION_OPTIONS as option (option)}
-            <option value={option}>{CLASSIFICATION_LABELS[option]}</option>
-          {/each}
-        </select>
-      {/snippet}
-    </FormField>
-
-    <div class="person-override">
-      <FormField label="Schicht-Gewicht" error={structureShown.coverageWeight}>
-        {#snippet field({ id, describedBy, invalid })}
-          <input
+    <div class="pt-grid">
+      <FormField label="Personalkategorie">
+        {#snippet field({ id, describedBy })}
+          <select
             {id}
             class="form-input"
-            type="number"
-            min="0"
-            max="9.99"
-            step="0.05"
-            bind:value={values.coverageWeight}
+            bind:value={values.classification}
+            onchange={onClassificationChange}
             disabled={!canEdit}
-            aria-invalid={invalid ? "true" : undefined}
             aria-describedby={describedBy}
-          />
+          >
+            {#each CLASSIFICATION_OPTIONS as option (option)}
+              <option value={option}>{CLASSIFICATION_LABELS[option]}</option>
+            {/each}
+          </select>
         {/snippet}
       </FormField>
-      {#if coverageOverridden && canEdit}
-        <div class="person-override-row">
-          <Chip tone="warn">Manuell überschrieben</Chip>
-          <button type="button" class="btn btn-ghost btn-sm" onclick={resetCoverage}>
-            Auf Standard zurück
-          </button>
-        </div>
-      {/if}
+
+      <div class="person-override">
+        <FormField label="Schicht-Gewicht" error={structureShown.coverageWeight}>
+          {#snippet field({ id, describedBy, invalid })}
+            <input
+              {id}
+              class="form-input"
+              type="number"
+              min="0"
+              max="9.99"
+              step="0.05"
+              bind:value={values.coverageWeight}
+              disabled={!canEdit}
+              aria-invalid={invalid ? "true" : undefined}
+              aria-describedby={describedBy}
+            />
+          {/snippet}
+        </FormField>
+        {#if coverageOverridden && canEdit}
+          <div class="person-override-row">
+            <Chip tone="warn">Manuell überschrieben</Chip>
+            <button type="button" class="btn btn-ghost btn-sm" onclick={resetCoverage}>
+              Auf Standard zurück
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
 
     <div class="person-override">
@@ -442,47 +445,49 @@
     onSave={saveEmployment}
     onDiscard={discardEmployment}
   >
-    <FormField
-      label="Austrittsdatum"
-      help="Optional. Bei gesetztem Datum wird der Jahresurlaub anteilig berechnet (§ 5 Abs. 2 BUrlG). Die Person bleibt mit allen Daten sichtbar, der Zugang zur App bleibt aktiv, bis er gesondert gesperrt wird."
-    >
-      {#snippet field({ id, describedBy, invalid })}
-        <DatePicker
-          bind:value={values.exitDate}
-          label="Austrittsdatum"
-          {id}
-          {describedBy}
-          {invalid}
-          disabled={!canEdit}
-        />
-      {/snippet}
-    </FormField>
+    <div class="pt-grid">
+      <FormField
+        label="Austrittsdatum"
+        help="Optional. Bei gesetztem Datum wird der Jahresurlaub anteilig berechnet (§ 5 Abs. 2 BUrlG). Die Person bleibt mit allen Daten sichtbar, der Zugang zur App bleibt aktiv, bis er gesondert gesperrt wird."
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <DatePicker
+            bind:value={values.exitDate}
+            label="Austrittsdatum"
+            {id}
+            {describedBy}
+            {invalid}
+            disabled={!canEdit}
+          />
+        {/snippet}
+      </FormField>
 
-    <FormField
-      label="Urlaubstage pro Jahr (5-Tage-Woche)"
-      help="Leer = Azubi-Standard für Auszubildende, sonst Unternehmensstandard (beides unter Regeln › Abwesenheiten). Gilt für künftige Urlaubsjahre; bestehende Ansprüche änderst du im Tab Urlaub (mit Protokoll)."
-      error={employmentShown.annualVacationDays}
-    >
-      {#snippet field({ id, describedBy, invalid })}
-        <input
-          {id}
-          class="form-input"
-          type="number"
-          min="0.5"
-          max="365"
-          step="0.01"
-          bind:value={values.annualVacationDays}
-          placeholder={vacationBaseDefaultPlaceholder(
-            values.classification,
-            tenantDefaultVacationDays,
-            tenantDefaultApprenticeVacationDays,
-          )}
-          disabled={!canEdit}
-          aria-invalid={invalid ? "true" : undefined}
-          aria-describedby={describedBy}
-        />
-      {/snippet}
-    </FormField>
+      <FormField
+        label="Urlaubstage pro Jahr (5-Tage-Woche)"
+        help="Leer = Azubi-Standard für Auszubildende, sonst Unternehmensstandard (beides unter Regeln › Abwesenheiten). Gilt für künftige Urlaubsjahre; bestehende Ansprüche änderst du im Tab Urlaub (mit Protokoll)."
+        error={employmentShown.annualVacationDays}
+      >
+        {#snippet field({ id, describedBy, invalid })}
+          <input
+            {id}
+            class="form-input"
+            type="number"
+            min="0.5"
+            max="365"
+            step="0.01"
+            bind:value={values.annualVacationDays}
+            placeholder={vacationBaseDefaultPlaceholder(
+              values.classification,
+              tenantDefaultVacationDays,
+              tenantDefaultApprenticeVacationDays,
+            )}
+            disabled={!canEdit}
+            aria-invalid={invalid ? "true" : undefined}
+            aria-describedby={describedBy}
+          />
+        {/snippet}
+      </FormField>
+    </div>
     {#if belowMinimum}
       <Note tone="bad">
         Unter dem gesetzlichen Mindesturlaub von {vacationMinimum.days.toLocaleString("de-DE", {
@@ -521,10 +526,19 @@
 </div>
 
 <style>
-  .person-tab {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-8);
+  /* The prototype's form rows: two fields side by side once the group is wide enough, one column on
+     a phone. The group is the container, so the rule follows its width, not the viewport's. */
+  .pt-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--s-4);
+  }
+
+  @container (min-width: 520px) {
+    .pt-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
   .person-override {
