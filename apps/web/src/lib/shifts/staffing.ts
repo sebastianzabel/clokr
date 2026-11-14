@@ -62,3 +62,17 @@ export const STAFFING_EXPLANATION =
   "Gezählt werden eingeplante Personen, die an dem Tag verfügbar sind. Wer in Ausbildung ist, kann " +
   "je nach Einstellung nur halb zählen. Die Mindestbesetzung kommt aus den Bedarfsregeln des Dienstplans; " +
   "ohne eigene Regel gelten 2 Personen.";
+
+/**
+ * The roster legend entries that name a problem. A shortfall (`under`) and a shift inside
+ * approved leave (`conflict`) are different things and never share a word or a colour
+ * (Issue #950): "Konflikt" is reserved for the shift in approved leave.
+ */
+export const ROSTER_LEGEND_PROBLEMS = {
+  under: staffingLegendUnder(),
+  conflict: "Konflikt",
+} as const;
+
+function staffingLegendUnder(): string {
+  return `${staffingStatusText("under")} besetzt`;
+}

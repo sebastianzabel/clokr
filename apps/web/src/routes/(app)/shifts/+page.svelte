@@ -2,6 +2,7 @@
   import { homeHref, rosterTabs } from "$lib/nav/routes";
   import { pageLabel } from "$lib/nav/page-labels";
   import {
+    ROSTER_LEGEND_PROBLEMS,
     STAFFING_EXPLANATION,
     staffingFigure,
     staffingStatusText,
@@ -1892,7 +1893,8 @@
           {/if}
           <ul class="sp-legend" aria-label="Legende">
             <li><span class="sp-key sp-key--shift"></span>Schicht</li>
-            <li><span class="sp-key sp-key--conflict"></span>Konflikt</li>
+            <li><span class="sp-key sp-key--under"></span>{ROSTER_LEGEND_PROBLEMS.under}</li>
+            <li><span class="sp-key sp-key--conflict"></span>{ROSTER_LEGEND_PROBLEMS.conflict}</li>
             <li>
               <span class="sp-key" style:background="var({leaveTypeColor('VACATION').fill})"
               ></span>Urlaub
@@ -2543,7 +2545,9 @@
   .sp-staff--ok .sp-staff-num {
     color: var(--ok);
   }
-  .sp-staff--under .sp-staff-fill,
+  .sp-staff--under .sp-staff-fill {
+    background: var(--bad);
+  }
   .sp-staff--warn .sp-staff-fill {
     background: var(--warn);
   }
@@ -2787,6 +2791,9 @@
   }
   .sp-key--conflict {
     background: var(--warn);
+  }
+  .sp-key--under {
+    background: var(--bad);
   }
   .sp-key--school {
     background: var(--info);
