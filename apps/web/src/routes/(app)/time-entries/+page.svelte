@@ -94,6 +94,12 @@
   import { de } from "date-fns/locale";
   import { retroWindowHint } from "$lib/time-entries/retro-window-hint"; // Issue #849 (5)
   import {
+    breakWriteFields,
+    dialogBreakMinutes,
+    dialogNetMinutes,
+    slotMinutes,
+  } from "$lib/time-entries/entry-dialog-figures"; // Issue #943
+  import {
     getDayExpectedMinutes,
     monthlyHoursWorkDays,
     monthlyHoursDailyRateMinutes,
@@ -353,22 +359,18 @@
   let formHasEnd = $state(true);
   let formBreaks = $state<{ start: string; end: string }[]>([]);
   let formBreakTotal = $derived(
-    formBreaks.reduce((sum, b) => {
-      if (!b.start || !b.end) return sum;
-      const [sh, sm] = b.start.split(":").map(Number);
-      const [eh, em] = b.end.split(":").map(Number);
-      const diff = eh * 60 + em - (sh * 60 + sm);
-      return sum + (diff > 0 ? diff : 0);
-    }, 0),
+    formBreaks.reduce((sum, b) => sum + slotMinutes(b.start, b.end), 0),
   );
-  let formNetMin = $derived.by(() => {
-    if (!formHasEnd || !formStart || !formEnd) return null;
-    const [sh, sm] = formStart.split(":").map(Number);
-    const [eh, em] = formEnd.split(":").map(Number);
-    const gross = eh * 60 + em - (sh * 60 + sm);
-    if (gross <= 0) return 0;
-    return Math.max(0, gross - formBreakTotal);
+  // Issue #943: an entry with only a legacy flat break opens without slots; the dialog still counts
+  // that amount (display and day-check preview), so it shows the list's figures. The save payload
+  // goes through `breakWriteFields`.
+  let formBreakInput = $derived({
+    slots: formBreaks,
+    storedBreakRowCount: editEntry?.breaks?.length ?? 0,
+    storedBreakMinutes: editEntry?.breakMinutes ?? 0,
   });
+  let formBreakShown = $derived(dialogBreakMinutes(formBreakInput));
+  let formNetMin = $derived(dialogNetMinutes(formStart, formEnd, formHasEnd, formBreakShown));
   let formNote = $state("");
   // Issue #70 (D-07, D-12): salon options and the salon field exist only where the #64 rule
   // holds (more than one active salon, more than one reachable). The options are the salons the
@@ -1470,8 +1472,7 @@
           date: formDate,
           startTime: startISO,
           endTime: endISO,
-          breakMinutes: formBreakTotal,
-          breaks: breaksPayload,
+          ...breakWriteFields(formBreakInput, breaksPayload),
           note: formNote || null,
           salonId: formSalonPayload,
         });
@@ -1480,8 +1481,7 @@
           date: formDate,
           startTime: startISO,
           endTime: endISO,
-          breakMinutes: formBreakTotal,
-          breaks: breaksPayload,
+          ...breakWriteFields(formBreakInput, breaksPayload),
           note: formNote || null,
           salonId: formSalonPayload,
         });
@@ -1658,8 +1658,7 @@
           date: formDate,
           startTime: startISO,
           endTime: endISO,
-          breakMinutes: formBreakTotal,
-          breaks: breaksPayload,
+          ...breakWriteFields(formBreakInput, breaksPayload),
           note: formNote || null,
           salonId: formSalonPayload,
           reason: retroReason,
@@ -1673,7 +1672,7 @@
           reason: retroReason,
           startTime: formStart,
           endTime: formEnd,
-          breakMinutes: formBreakTotal > 0 ? formBreakTotal : undefined,
+          breakMinutes: formBreakShown > 0 ? formBreakShown : undefined,
         });
         closeModal();
         toasts.success("Antrag wurde eingereicht. Ein Manager wird deinen Antrag prüfen.");
@@ -1945,7 +1944,7 @@
           startISO,
           endISO,
           breaks: breaksPayload,
-          breakMinutes: formBreakTotal,
+          breakMinutes: formBreakShown,
           salonId: formSalonPayload,
         });
       } catch {
@@ -3295,8 +3294,8 @@
             </p>
           </div>
           <p class="retro-times-hint text-muted">
-            Vorgeschlagene Zeiten: {formStart}–{formEnd}{#if formBreakTotal > 0}
-              · Pause: {formBreakTotal} Min.{/if}
+            Vorgeschlagene Zeiten: {formStart}–{formEnd}{#if formBreakShown > 0}
+              · Pause: {formBreakShown} Min.{/if}
           </p>
           <div class="form-group">
             <label class="form-label" for="retro-reason-field">Begründung (Pflichtfeld) *</label>
