@@ -9,9 +9,9 @@
  */
 import { breakFindingMonthCloseHint, type MonthCloseHint } from "$lib/breaks/day-break-violation";
 
-/** Shown once on the page when any row was withheld. */
+/** Short rights line next to a row with withheld days (Issue #947: no longer one page-wide note). */
 export const DAY_DETAILS_WITHHELD_HINT =
-  "Tagesangaben sind nur mit Leserecht auf Zeiteinträge sichtbar; die Anzahl bleibt.";
+  "Die Tage siehst du nur mit Leserecht auf die Zeiteinträge, die Anzahl bleibt.";
 
 /** The fields of a status row, a year-status `missing[]` entry or a deferred employee. */
 export interface DayListRow {

@@ -126,14 +126,22 @@
     color: var(--text-2);
   }
 
-  /* Narrow container: only the active step keeps its label, the dots and connectors stay. */
+  /* Narrow container (Issue #947): every step keeps its name; the steps wrap onto a second row
+     instead of hiding their labels, and the connectors shrink. */
   @container (max-width: 759.98px) {
-    .cs-step:not(.cs-step--active) .cs-label {
-      display: none;
+    .cs-list {
+      flex-wrap: wrap;
+      row-gap: var(--s-2);
+    }
+
+    .cs-label {
+      white-space: normal;
+      font-size: var(--fs-sm);
     }
 
     .cs-connector {
-      width: var(--s-4);
+      width: var(--s-3);
+      margin-right: var(--s-1);
     }
   }
 </style>

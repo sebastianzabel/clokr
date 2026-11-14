@@ -208,9 +208,9 @@ describe("/admin/month-close - withheld day lists render as counts (Issue #86, D
     expect(MONTH_CLOSE).not.toMatch(/breakFindingMonthCloseHint\(/);
   });
 
-  it("shows the one neutral hint when any row was withheld", () => {
-    expect(MONTH_CLOSE).toMatch(/anyDayDetailsWithheld\(/);
-    expect(MONTH_CLOSE).toContain("DAY_DETAILS_WITHHELD_HINT");
+  it("names the next step beside the affected row instead of one page-wide hint (Issue #947)", () => {
+    expect(MONTH_CLOSE).toMatch(/closesBlind\(/);
+    expect(MONTH_CLOSE).not.toContain("DAY_DETAILS_WITHHELD_HINT");
   });
 
   it("decides confirmGaps by the count, never by the array", () => {
