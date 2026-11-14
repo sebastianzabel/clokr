@@ -112,7 +112,8 @@
      *  component's own entitlement fetch is independent of any page-level KPI strip's fetch of
      *  the same data (Phase 415: two independent reads of the same endpoint, not a shared
      *  writer — see the component doc comment) — kept in the same YEAR to still show identical
-     *  figures. */
+     *  figures. Issue #940: once a start date is chosen, the account of THAT date's year is read
+     *  instead (a January request shows the next year's carry-over and deadline). */
     entitlementYear?: number;
     /** Page-specific reload after a successful create/edit. A create answered with limit
      *  warnings (Issue #836) passes them along; the request itself is already saved. */
@@ -207,6 +208,11 @@
   // ── Helpers ──────────────────────────────────────────────────────────────
   function typeName(code: CalendarTypeCode): string {
     return LEAVE_TYPE_OPTIONS.find((t) => t.code === code)?.label ?? code;
+  }
+
+  /** Today as a local `YYYY-MM-DD` (a carry-over deadline is only news while it lies ahead). */
+  function localToday(): string {
+    return format(new Date(), "yyyy-MM-dd");
   }
 
   function fmtDate(iso: string): string {
@@ -313,12 +319,12 @@
         vacationBalance = mapVacationBalance(vac);
       } catch {
         // Issue #258/#122 hardening, carried over from `/leave`'s former loadBalanceForType():
-        // clear ONLY when `entitlementYear` moved while this request was in flight — otherwise a
+        // clear ONLY when the balance year moved while this request was in flight — otherwise a
         // stale error for a superseded year would wipe the current year's already-successful
         // value. `year` is the value this call was made with (closure-captured); comparing it
-        // against the LIVE `entitlementYear` prop is the same check the original made against
-        // `calYear`.
-        if (year !== entitlementYear) vacationBalance = null;
+        // against the LIVE `balanceYear` (Issue #940: the request's start year, else
+        // `entitlementYear`) is the same check the original made against `calYear`.
+        if (year !== balanceYear) vacationBalance = null;
       } finally {
         vacationBalanceLoading = false;
       }
@@ -457,8 +463,13 @@
       scheduleHoursPreview();
     }
   });
+  // Issue #940: the account of the year the request starts in (a January request reads the next
+  // year's carry-over and deadline); without a start date the page's year.
+  const balanceYear = $derived(
+    /^\d{4}-/.test(formStart) ? Number(formStart.slice(0, 4)) : entitlementYear,
+  );
   $effect(() => {
-    if (open) loadBalanceForType(formType, employeeId, entitlementYear);
+    if (open) loadBalanceForType(formType, employeeId, balanceYear);
   });
   // § 8 BUrlG / EFZG §3-4: partial incapacity to work does not exist — half-day sick leave is
   // rejected by the server at all write paths, so the checkbox is disabled and any already-set
@@ -863,7 +874,12 @@
                 <div class="balance-row">
                   <span class="balance-label">
                     Übertrag Vorjahr
-                    {#if vacationBalance.carryOverDeadline}
+                    <!-- Issue #940: a deadline is shown only while it lies ahead; a passed one
+                         without a Hinweis keeps the carry-over (EuGH C-684/16), said so. -->
+                    {#if vacationBalance.carryOverKeptWithoutNotice > 0}
+                      <span class="balance-meta">(Frist abgelaufen, ohne Hinweis kein Verfall)</span
+                      >
+                    {:else if vacationBalance.carryOverDeadline && vacationBalance.carryOverDeadline.slice(0, 10) >= localToday()}
                       <span class="balance-meta"
                         >(verfällt {fmtDate(vacationBalance.carryOverDeadline)})</span
                       >
@@ -876,7 +892,7 @@
                 <span class="balance-label"
                   >{vacationBalance.provisionalUsed > 0
                     ? "Verbraucht (bestätigt)"
-                    : "Genommen"}</span
+                    : "Genommen & genehmigt"}</span
                 >
                 <span class="balance-value"
                   >− {formatDayCount(vacationBalance.used - vacationBalance.provisionalUsed)}</span

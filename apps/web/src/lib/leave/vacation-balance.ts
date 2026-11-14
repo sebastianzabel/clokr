@@ -49,6 +49,9 @@ export interface VacationBalance {
   // message string extracted from the row, never a client-side re-derivation of the text or the
   // underlying pro-rata figure. `null` (never `undefined`) when there is nothing to show.
   exitOverUseWarningMessage: string | null;
+  // Issue #940: carry-over days still counted after the deadline only because no Hinweis was
+  // issued (EuGH C-684/16) — decided by the server's Resturlaub facade, 0 when not the case.
+  carryOverKeptWithoutNotice: number;
 }
 
 /** Shape of one row of `GET /leave/entitlements/:employeeId` for the VACATION type. */
@@ -69,6 +72,8 @@ export interface VacationEntitlementRow {
   // Issue #447 (D-08): absent on a non-VACATION row or pre-#447 cached shape; `null` when the
   // server decided there is nothing to warn about for this row.
   exitOverUseWarning?: { used: number; entitlement: number; message: string } | null;
+  // Issue #451 (D-07): the Resturlaub facade's answer, VACATION row only (Issue #940 reads one field).
+  vacationBalance?: { carryOverKeptWithoutNoticeDays?: number } | null;
 }
 
 /**
@@ -92,6 +97,7 @@ export function mapVacationBalance(
     carryOverDeadline: vac.carryOverDeadline,
     section9Movements: vac.section9Movements ?? [],
     exitOverUseWarningMessage: vac.exitOverUseWarning?.message ?? null,
+    carryOverKeptWithoutNotice: Number(vac.vacationBalance?.carryOverKeptWithoutNoticeDays ?? 0),
   };
 }
 

@@ -92,6 +92,7 @@ function balance(total: number, used: number, carryOver: number): VacationBalanc
     carryOverDeadline: null,
     section9Movements: [],
     exitOverUseWarningMessage: null,
+    carryOverKeptWithoutNotice: 0,
   };
 }
 

@@ -153,8 +153,14 @@
   }
 
   const anyAtRisk = $derived(yearRows.some((r) => !r.missingEntitlement && atRisk(r) > 0));
+  // Issue #940: a carry-over past its deadline that still counts (no Hinweis, EuGH C-684/16).
+  const kept = (row: PeriodVacationRow) => row.carryOverKeptWithoutNoticeDays ?? 0;
+  const anyKept = $derived(yearRows.some((r) => !r.missingEntitlement && kept(r) > 0));
 
   function verfallLine(row: PeriodVacationRow): string {
+    if (kept(row) > 0 && row.carryOverDeadline) {
+      return `Frist ${fmtDateDe(row.carryOverDeadline)} vorbei, ohne Hinweis kein Verfall`;
+    }
     const days = atRisk(row);
     if (days <= 0) return DASH;
     return row.carryOverDeadline
@@ -361,7 +367,7 @@
       description="In deiner Reichweite war im gewählten Zeitraum niemand beschäftigt. Wähl oben einen anderen Zeitraum."
     />
   {:else}
-    {#if anyAtRisk}
+    {#if anyAtRisk || anyKept}
       <div data-testid="vacation-eugh-callout">
         <Note tone="warn">
           Hinweispflicht: Mitarbeiter müssen gemäß EuGH C-684/16 ausdrücklich auf verfallenden

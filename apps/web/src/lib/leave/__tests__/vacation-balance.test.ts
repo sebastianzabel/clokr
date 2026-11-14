@@ -297,7 +297,9 @@ const URLAUBSKONTO_MARKUP = URLAUBSKONTO_BLOCK.replace(/<!--[\s\S]*?-->/g, "");
 // are still asserted as one contiguous expression.
 const URLAUBSKONTO_MARKUP_FLAT = URLAUBSKONTO_MARKUP.replace(/\s+/g, " ");
 
-const LABEL_TERNARY = 'vacationBalance.provisionalUsed > 0 ? "Verbraucht (bestätigt)" : "Genommen"';
+// Issue #940: the confirmed figure includes approved days still ahead, so it is labelled like /leave.
+const LABEL_TERNARY =
+  'vacationBalance.provisionalUsed > 0 ? "Verbraucht (bestätigt)" : "Genommen & genehmigt"';
 const VORLAEUFIG_GUARD = "{#if vacationBalance.provisionalUsed > 0}";
 
 /** Occurrence count without regex escaping (the labels contain parentheses). */
@@ -350,12 +352,12 @@ describe("leave route source — Urlaubskonto confirmed-consumption label (Phase
  * source pin above is what keeps this mirror honest: it asserts the real
  * template expression, so this table cannot silently drift from what renders. */
 const labelFor = (provisionalUsed: number) =>
-  provisionalUsed > 0 ? "Verbraucht (bestätigt)" : "Genommen";
+  provisionalUsed > 0 ? "Verbraucht (bestätigt)" : "Genommen & genehmigt";
 
 describe("Urlaubskonto label rule — UAT fixtures (Phase 107 G-03)", () => {
   it.each([
     // Observed in the Phase 107 UAT browser pass (107-UAT.md test 3):
-    [0, "Genommen"], // 3-row card: 12 / −3 / 9, no vorläufig row
+    [0, "Genommen & genehmigt"], // 3-row card: 12 / −3 / 9, no vorläufig row
     [5, "Verbraucht (bestätigt)"], // 4-row card: 30 / −6 / −5 muted / 19
     [8, "Verbraucht (bestätigt)"], // 4-row card: 24 / −0 / −8 muted / 16
   ])("provisionalUsed=%i renders the label %s", (provisionalUsed, expected) => {

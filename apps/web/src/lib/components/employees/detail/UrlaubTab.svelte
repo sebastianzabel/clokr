@@ -3,7 +3,8 @@
   vacation entitlement of one year as one settings group with its own SaveBar
   (`PUT /settings/vacation/:employeeId`), and the entitlement figures as a KpiStrip.
 
-  The figures come from the server: the regular entitlement (classification-aware base value from
+  The figures come from the server: the balance (Verfügbar, Genommen, Genehmigt, Resturlaub) is the
+  Resturlaub facade's answer (#451, Issue #940), labelled like the Urlaubsübersicht; the regular entitlement (classification-aware base value from
   resolveVacationBaseDays(), Issue #482, scaled to the contract workdays, hire-year pro-rata applied)
   and the statutory minimum (Issue #435, D-14). The client computes no entitlement. The carry-over
   reason and note are sent change-only against what the server last confirmed (#445 D-16), so an
@@ -40,6 +41,8 @@
   } from "$lib/employees/urlaub-form";
   import { CARRY_OVER_REASON_OPTIONS, carryOverReasonLabel } from "$lib/leave/carry-over-reason";
   import { countChanges, sectionErrors } from "$lib/settings/section-state";
+  import { fmtDateDe } from "$lib/reports/period-format";
+  import { formatDayCount } from "$lib/leave/leave-days-label";
 
   interface Props {
     employeeId: string;
@@ -64,6 +67,7 @@
   // The server's own figures; a missing answer reads as 0 and the form is not offered then.
   const suggestion = $derived(entitlement?.regularDays ?? 0);
   const minimum = $derived(entitlement?.statutoryMinimumDays ?? 0);
+  const balance = $derived(entitlement?.balance ?? null);
 
   const changeCount = $derived(countChanges(snapshot, values, VACATION_KEYS));
   $effect(() => {
@@ -89,14 +93,36 @@
       value: minimum,
       unit: "Tage",
     },
-    ...(entitlement
+    ...(balance
       ? [
-          { label: "Genommen", value: entitlement.usedDays, format: formatDays, unit: "Tage" },
+          // Issue #940: the facade's figures under the Urlaubsübersicht's own column names.
           {
-            label: "Übertrag",
-            value: entitlement.carriedOverDays,
+            label: "Verfügbar",
+            value: balance.availableDays,
             format: formatDays,
             unit: "Tage",
+            explanation: `Anspruch + wirksamer Übertrag (${formatDays(balance.carriedOverEffectiveDays)})`,
+          },
+          {
+            label: "Genommen",
+            value: balance.takenDays,
+            format: formatDays,
+            unit: "Tage",
+            explanation: `bis ${fmtDateDe(balance.splitAsOf)}`,
+          },
+          {
+            label: "Genehmigt",
+            value: balance.approvedUpcomingDays,
+            format: formatDays,
+            unit: "Tage",
+            explanation: "noch nicht genommen",
+          },
+          {
+            label: "Resturlaub",
+            value: balance.remainingDays,
+            format: formatDays,
+            unit: "Tage",
+            explanation: "Verfügbar − Genommen − Genehmigt",
           },
         ]
       : []),
@@ -141,6 +167,15 @@
 {:else}
   <div class="urlaub-tab detail-form">
     <KpiStrip items={kpis} ariaLabel="Urlaubsanspruch {year}" />
+    {#if balance && balance.carryOverKeptWithoutNoticeDays > 0 && entitlement.carryOverDeadline}
+      <div data-testid="urlaub-carry-kept">
+        <Note tone="info">
+          Der Übertrag ({formatDayCount(balance.carryOverKeptWithoutNoticeDays)}) zählt weiter,
+          obwohl die Frist am {fmtDateDe(String(entitlement.carryOverDeadline).slice(0, 10))} abgelaufen
+          ist: Ohne dokumentierten Hinweis auf den drohenden Verfall verfällt Urlaub nicht (EuGH C-684/16).
+        </Note>
+      </div>
+    {/if}
 
     <SettingsGroup
       title="Urlaubsanspruch {year}"

@@ -12,6 +12,12 @@ These rules MUST be followed when implementing or modifying vacation/leave carry
 - **§ 7 Abs. 3 Übertragung**: Vacation MUST be taken in the current calendar year. Carry-over to the next year ONLY with valid reason (illness, maternity, parental leave, operational necessity, other documented reason). Carried-over days expire by **March 31** of the following year (configurable per tenant) unless an extended, documented deadline protects them.
 - **Langzeitkrankheit**: Carry-over up to 15 months (EuGH C-214/10 "KHS")
 - **Hinweispflicht** (EuGH C-684/16): Employer must proactively warn employees about expiring vacation. Without warning, vacation does NOT expire automatically.
+  A carry-over whose deadline has passed without a documented Hinweis (`CARRYOVER_WARNED`) therefore
+  stays in „Verfügbar“ (BAG 19.02.2019 – 9 AZR 423/16). The Resturlaub facade names these days as
+  `carryOverKeptWithoutNoticeDays` (Issue #940) — `0` while the deadline lies ahead, without a deadline
+  or once a Hinweis exists — so every reader (Urlaubsübersicht, the person's Urlaub tab, the leave
+  dialog) says why instead of showing a passed deadline as „verfällt“ or a bare „—“. A passed deadline
+  is never shown as a future lapse.
 
 ## Regular Yearly Entitlement (Issue #445)
 
@@ -138,7 +144,8 @@ segment, not from whichever contract happened to be current when the row was las
   created with the regular entitlement (see above) before the check runs.
 - Cancellation approval reverses BOTH years with the same chronological attribution and
   recomputes the NEXT year's carry-over — never a single-year decrement.
-- Self-heal (`GET /leave/entitlements`, `GET /reports/leave-overview`) recomputes each year's
+- Self-heal (`GET /leave/entitlements`, `GET /reports/leave-overview`, and since Issue #940 the
+  person's Urlaub tab `GET /settings/vacation/:employeeId`) recomputes each year's
   `usedDays` from its own counted window: APPROVED and CANCELLATION_REQUESTED requests (leave
   stays active until a cancellation is approved) overlapping that year, attributed the same
   chronological way for a cross-year request; CONFIRMED § 9 credits are attributed by the same

@@ -28,6 +28,17 @@ const ENTITLEMENT: VacationEntitlement = {
   carryOverNote: null,
   regularDays: 30,
   statutoryMinimumDays: 20,
+  balance: {
+    availableDays: 31,
+    carriedOverEffectiveDays: 3,
+    carryOverKeptWithoutNoticeDays: 0,
+    atRiskDays: 0,
+    takenDays: 2,
+    approvedUpcomingDays: 4,
+    pendingDays: 0,
+    remainingDays: 25,
+    splitAsOf: "2026-11-13",
+  },
 };
 
 function mount(props: Partial<{ entitlement: VacationEntitlement | null; canEdit: boolean }> = {}) {
@@ -52,13 +63,39 @@ describe("UrlaubTab", () => {
     for (const label of [
       "Regulärer Anspruch 2026",
       "Gesetzlicher Mindesturlaub",
+      "Verfügbar",
       "Genommen",
-      "Übertrag",
+      "Genehmigt",
+      "Resturlaub",
     ]) {
       expect(within(strip).getByText(label)).toBeTruthy();
     }
     expect(screen.getByRole("heading", { name: "Urlaubsanspruch 2026" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Speicherleiste" })).toBeNull();
+  });
+
+  // Issue #940: the tab shows the Resturlaub facade's split, not the stored usedDays as „Genommen“.
+  it("shows the facade's taken/approved split under the Urlaubsübersicht's words", () => {
+    mount();
+    const strip = screen.getByRole("group", { name: "Urlaubsanspruch 2026" });
+    expect(strip.textContent).toContain("bis 13.11.2026");
+    expect(strip.textContent).toContain("noch nicht genommen");
+    expect(strip.textContent).toContain("Anspruch + wirksamer Übertrag (3)");
+    expect(screen.queryByTestId("urlaub-carry-kept")).toBeNull();
+  });
+
+  it("says why a carry-over past its deadline still counts (no Hinweis, EuGH C-684/16)", () => {
+    mount({
+      entitlement: {
+        ...ENTITLEMENT,
+        carryOverDeadline: "2026-03-31T23:59:59.000Z",
+        balance: { ...ENTITLEMENT.balance!, carryOverKeptWithoutNoticeDays: 3 },
+      },
+    });
+    const note = screen.getByTestId("urlaub-carry-kept");
+    expect(note.textContent).toContain("3 Tage");
+    expect(note.textContent).toContain("31.03.2026");
+    expect(note.textContent).toContain("EuGH C-684/16");
   });
 
   it("an amount edit counts 1 change and saves the PUT without the unchanged reason and note", async () => {

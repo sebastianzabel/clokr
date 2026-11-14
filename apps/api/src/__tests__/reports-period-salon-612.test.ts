@@ -85,6 +85,8 @@ type MonthlyRow = { employeeId: string; workedHours: number; sickDays: number } 
 // change, added to the recording, nothing else changed. Derived from the fixture's leave rows:
 // PX: SICK 10.-20.06. = 11 calendar days; PX VACATION 18.-19.06. (Thu, Fri) = 2 Arbeitstage;
 // PA: VACATION 12.06. (Fri) = 1 Arbeitstag; PB and PN have no leave. Σ VACATION = 3 = the block below.
+// Issue #940: every vacation row additionally carries the facade's carryOverKeptWithoutNoticeDays
+// (0 here: no carry-over) - a deliberate additive key, nothing else changed.
 const GOLDEN_UNFILTERED: unknown = {
   envelopeKeys: ["absences", "from", "kpis", "months", "rows", "to", "vacation"],
   kpiKeys: [
@@ -337,6 +339,7 @@ const GOLDEN_UNFILTERED: unknown = {
       pendingDays: 0,
       remainingDays: 29,
       atRiskDays: 0,
+      carryOverKeptWithoutNoticeDays: 0,
       carryOverDeadline: null,
       lastWarningSentAt: null,
       missingEntitlement: false,
@@ -356,6 +359,7 @@ const GOLDEN_UNFILTERED: unknown = {
       pendingDays: 0,
       remainingDays: 30,
       atRiskDays: 0,
+      carryOverKeptWithoutNoticeDays: 0,
       carryOverDeadline: null,
       lastWarningSentAt: null,
       missingEntitlement: false,
@@ -375,6 +379,7 @@ const GOLDEN_UNFILTERED: unknown = {
       pendingDays: 0,
       remainingDays: 30,
       atRiskDays: 0,
+      carryOverKeptWithoutNoticeDays: 0,
       carryOverDeadline: null,
       lastWarningSentAt: null,
       missingEntitlement: false,
@@ -394,6 +399,7 @@ const GOLDEN_UNFILTERED: unknown = {
       pendingDays: 0,
       remainingDays: 28,
       atRiskDays: 0,
+      carryOverKeptWithoutNoticeDays: 0,
       carryOverDeadline: null,
       lastWarningSentAt: null,
       missingEntitlement: false,

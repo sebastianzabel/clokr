@@ -363,6 +363,22 @@ describe("VacationAbsenceTab - the Verfall column", () => {
     );
   });
 
+  // Issue #940: a passed deadline without a Hinweis keeps the carry-over; the cell says so.
+  it("names a carry-over kept after its deadline (no Hinweis) instead of a dash, with the callout", () => {
+    const kept = vrow("A", {
+      atRiskDays: 0,
+      carriedOverDays: 24,
+      carriedOverEffectiveDays: 24,
+      carryOverKeptWithoutNoticeDays: 24,
+      carryOverDeadline: "2026-03-31",
+    });
+    renderWithTheme(VacationAbsenceTab, props({ vacation: vacation([year(2026, [kept])]) }));
+    expect(verfallCell().textContent).toContain(
+      "Frist 31.03.2026 vorbei, ohne Hinweis kein Verfall",
+    );
+    expect(screen.queryByTestId("vacation-eugh-callout")).not.toBeNull();
+  });
+
   it("shows the EuGH callout when any row is at risk, and not otherwise", () => {
     const { unmount } = renderWithTheme(
       VacationAbsenceTab,
