@@ -1449,7 +1449,7 @@ jobs:
       # event, is a pass. In the merge queue the matrix must succeed.
       - name: Accept the skipped matrix on pull_request
         if: github.event_name == 'pull_request' && needs.docker.result == 'skipped'
-        run: echo "docker matrix skipped on pull_request — it runs in the merge queue (Issue #933)."
+        run: echo "docker matrix skipped on pull_request - it runs in the merge queue, see Issue 933."
 
       - name: Assert the docker matrix succeeded
         if: needs.docker.result != 'success' && !(github.event_name == 'pull_request' && needs.docker.result == 'skipped')
