@@ -130,6 +130,33 @@ segment, not from whichever contract happened to be current when the row was las
   date, the hire/exit month-span counter, the full-entitlement-year decision) — they no longer
   depend on the server process's local timezone.
 
+## Hire Date Changed (Issue #961)
+
+A changed `Employee.hireDate` (Unterbau) is answered by Abwesenheiten in ONE function,
+`syncVacationEntitlementsForHireDateChange()` (`apps/api/src/contexts/absence/hire-date-entitlements.ts`),
+called invariant-carrying inside the `PATCH /employees/:id` transaction (ADR 0002 Entscheidung 10, same as the
+#447 exit-year sync):
+
+- **Later, with leave before it: refused.** A non-deleted request (`PENDING`, `APPROVED`,
+  `CANCELLATION_REQUESTED`, any leave type) starting before the new tenant-local hire day, or a row of a
+  year before the new hire year with used days, answers 409 `LEAVE_BEFORE_HIRE_DATE`; nothing is
+  committed. Requested or taken days never disappear silently — they are cancelled or corrected first.
+- **Years before the new hire year count nothing.** Every row of such a year (any leave type) is set to
+  `totalDays` 0 and `carriedOverDays` 0; nothing is deleted. This applies to past-year and human-written
+  rows too: without employment there is no entitlement (§ 1, § 4, § 5 BUrlG), and the #447/#450 guards
+  protect values computed from correct inputs — here the input itself was wrong. The audit row keeps the
+  old value.
+- **The affected years are recomputed through the regular formula** (`resolveRegularVacationDays`):
+  every existing VACATION row from the earlier to the later hire year plus one (the § 4 waiting period can
+  reach into the next year), except a row a human ever wrote (`hasHumanVacationWrite`).
+- **Earlier:** the rows employee creation would have created (new hire year, current year) are created
+  when missing; no intermediate year is invented.
+- **Carry-over:** recomputed year by year through `recalculateCarryOver` (never creating a row), so a
+  carry from a now-void year disappears.
+
+Every change is audited with the acting user and the reason „Eintrittsdatum geändert“. Rows written before
+the fix: `apps/api/scripts/audit-961-entitlements-before-hire.ts` (read-only, ids and counts).
+
 ## Cross-Year Booking
 
 - A vacation request spanning two calendar years (e.g. 28 Dec – 9 Jan) is split between the two

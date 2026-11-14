@@ -62,6 +62,10 @@ import {
   daysDiffer, // Issue #435 code review (WR-01) — reused by the PATCH "did annualVacationDays change" guard
   syncExitYearVacationEntitlement, // Issue #447 (D-07) — recomputes an exit-year row on exitDate set/change
   exitVacationOverUseWarning, // Issue #447 (D-08) — the one over-use warning string
+  syncVacationEntitlementsForHireDateChange, // Issue #961 — entitlement rows follow a changed hire date
+  LeaveBeforeHireDateError, // Issue #961 — refusal of a later hire date with leave before it
+  LEAVE_BEFORE_HIRE_DATE_MESSAGE, // Issue #961
+  LEAVE_BEFORE_HIRE_DATE_CODE, // Issue #961
 } from "../../absence"; // Phase 100B Plan 10 — A11 (Issue #205 reroute) / F3; Plan 11 — F3; Plan 12 — F3; Plan 13 — F3; issue #246, E-6; issue #416; issue #435; issue #436; issue #447 (E-4 resolved)
 // Phase 67b Plan 03 (issue #67, D-22/D-07/D-24) — the Stammsalon lifecycle helpers.
 import {
@@ -1288,6 +1292,36 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
             );
           }
 
+          // Issue #961 — invariant-carrying (ADR 0002 Entscheidung 10), like the #447 sync above:
+          // the entitlement rows follow the new hire date inside this transaction; leave before a
+          // later hire date refuses the whole change (LeaveBeforeHireDateError, 409 below).
+          if (
+            body.hireDate !== undefined &&
+            tz !== null &&
+            employee.hireDate.getTime() !== updatedEmp.hireDate.getTime()
+          ) {
+            await syncVacationEntitlementsForHireDateChange(
+              tx,
+              {
+                employeeId: id,
+                tenantId: req.user.tenantId,
+                oldHireDate: employee.hireDate,
+                newHireDate: updatedEmp.hireDate,
+                newHireDay: tenantLocalDay(updatedEmp.hireDate, tz),
+                currentYear: Number(tenantLocalDay(new Date(), tz).slice(0, 4)),
+              },
+              (entry) =>
+                app.audit({
+                  action: entry.action,
+                  entity: "LeaveEntitlement",
+                  entityId: entry.entityId,
+                  oldValue: entry.oldValue,
+                  tx,
+                  ...requestAuditFields(req, entry.newValue as object | undefined),
+                }),
+            );
+          }
+
           if (body.hireDate !== undefined && tz !== null) {
             const gapOutcome = await fillHomeGapBeforeHireDate(
               tx,
@@ -1342,6 +1376,11 @@ export async function employeeRoutes(app: FastifyInstance, opts: EmployeeRoutesO
         }
         if (err instanceof RoleLockoutError) {
           return reply.code(409).send({ error: ROLE_LOCKOUT_MESSAGE });
+        }
+        if (err instanceof LeaveBeforeHireDateError) {
+          return reply
+            .code(409)
+            .send({ error: LEAVE_BEFORE_HIRE_DATE_MESSAGE, code: LEAVE_BEFORE_HIRE_DATE_CODE });
         }
         if (err instanceof RoleDemotionBlockedError) {
           // Issue #357 sub-fix B: name the surviving assignments so the admin knows what to
