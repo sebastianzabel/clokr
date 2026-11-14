@@ -2925,17 +2925,16 @@ button.approval-row:disabled {
 
 /* ── Phase 47: Drag & Drop modifiers ─────────────────────────────────────── */
 
-/* Drop target: empty shift-cell highlighted while a template is being dragged
-   over the grid. Applied on the cell wrapper via class:sp-cell--drop-target. */
+/* Drop target: an empty shift cell. Issue #923: quiet at rest; the dashed outline and the tint
+   appear only while a template is dragged over this very cell (.sp-cell--drop-hover). */
 .sp-cell--drop-target {
-  outline: 2px dashed var(--brand);
-  outline-offset: -2px;
-  background: color-mix(in srgb, var(--brand) 8%, transparent);
   transition: background 0.12s var(--ease);
 }
 
 .sp-cell--drop-hover {
-  background: color-mix(in srgb, var(--brand) 18%, transparent);
+  outline: 2px dashed var(--brand);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
 }
 
 /* Template chip dragging state — emitted by use:dndzone via .item picked */

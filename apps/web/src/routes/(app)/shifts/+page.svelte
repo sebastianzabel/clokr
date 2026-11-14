@@ -15,6 +15,7 @@
   import { salonContext } from "$stores/salon-context";
   import { tenantFeatures } from "$stores/tenant-features";
   import { closedDaysFor, type SalonOpeningHoursEntry } from "$lib/shifts/closed-days";
+  import { leaveTypeColor, ABSENT, type LeaveColor } from "$lib/leave/leave-colors"; // Issue #923
   import { hasPermission } from "$lib/permissions"; // Phase 378 (#378)
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
@@ -1112,32 +1113,78 @@
     const dow = jsDow === 0 ? 6 : jsDow - 1;
     return closedView.days.has(dow);
   }
+  // Issue #923 — the tooltip of a shift pill (grid and day view); plain words, no emoji.
+  function shiftTitle(s: Shift, iso: string): string {
+    if (isPastDay(iso)) return "Schicht in der Vergangenheit (nur lesen)";
+    if (s.conflictsWithLeave) return "Konflikt mit Urlaub – bitte überprüfen oder entfernen";
+    return "Klicken zum Bearbeiten, ziehen zum Verschieben";
+  }
+  // Issue #923 — the staffing bar: share of the Mindestbesetzung that is covered (0–100).
+  function staffFillPct(c: CoverageEntry): number {
+    if (c.minStaff <= 0) return 100;
+    return Math.max(0, Math.min(100, (c.effectiveStaff / c.minStaff) * 100));
+  }
+  // Issue #923 — Geplant vs. Vertrag in the person cell: balanced, under or over the contract.
+  function deltaKind(diff: number): "ok" | "under" | "over" {
+    if (Math.abs(diff) <= 0.5) return "ok";
+    return diff < 0 ? "under" : "over";
+  }
+  function classificationLabel(c: string): string {
+    const lower = c.toLowerCase();
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  }
+  // Issue #923 — the day the phone day view shows: the picked one if it lies in the week, else
+  // today if it lies in the week, else the Monday.
+  let pickedDay: string | null = $state(null);
+  const dayIso = $derived.by(() => {
+    if (!week) return "";
+    const days = week.weekDays.map((d) => d.slice(0, 10));
+    if (pickedDay && days.includes(pickedDay)) return pickedDay;
+    return days.find((d) => isToday(d)) ?? days[0];
+  });
   function shiftLabel(s: Shift): string {
     const start = s.startTime.slice(0, 5);
     const end = s.endTime.slice(0, 5);
     return `${start}–${end}`;
   }
 
-  // Availability label (DE) + emoji
+  // Availability label (DE). Issue #923: no emoji; the colour comes from availColor().
   function availLabel(a: AvailabilityEntry["availability"]): string {
     switch (a) {
       case "vacation":
-        return "🏖 Urlaub";
+        return "Urlaub";
       case "sick":
-        return "🤒 Krank";
+        return "Krank";
       case "special":
-        return "📌 Sonder";
-      // Phase 63 D-20: lock icon makes the "non-droppable" affordance obvious.
+        return "Sonderurlaub";
       case "vocational_school":
-        return "🔒 Berufsschule";
+        return "Berufsschule";
       case "other":
-        return "⚪ Abwesend";
+        return "Abwesend";
       case "unavailable":
-        return "✕ Nicht verfügbar";
+        return "Nicht verfügbar";
       case "preferred":
-        return "★ Bevorzugt";
+        return "Bevorzugt";
       default:
         return "";
+    }
+  }
+
+  // Issue #923: an absence on the roster wears the same colour pair as on the absence timeline
+  // (`leave-colors.ts`, the one mapping). Berufsschule is no leave type and keeps the info role;
+  // the two availability wishes („Nicht verfügbar“, „Bevorzugt“) are no absence and stay neutral.
+  function availColor(a: AvailabilityEntry["availability"]): LeaveColor | null {
+    switch (a) {
+      case "vacation":
+        return leaveTypeColor("VACATION");
+      case "sick":
+        return leaveTypeColor("SICK");
+      case "special":
+        return leaveTypeColor("SPECIAL");
+      case "other":
+        return ABSENT;
+      default:
+        return null;
     }
   }
 
@@ -1427,6 +1474,81 @@
   <title>{pageLabel("/shifts")} – Clokr</title>
 </svelte:head>
 
+{#snippet staffing(iso: string)}
+  {@const c = coverageByDate.get(iso)}
+  {@const closed = isClosedDay(iso)}
+  {#if c}
+    <!-- Issue #923: the staffing of a day sits under its header (bar + "x / y"). Red only for a
+         real shortfall on an open day; a closed day is never understaffed (#853 owner review). -->
+    <div
+      class="sp-staff"
+      class:sp-staff--ok={!closed && c.coverageStatus === "ok"}
+      class:sp-staff--under={!closed && c.coverageStatus === "under"}
+      class:sp-staff--warn={!closed && c.coverageStatus === "supervision-missing"}
+      class:sp-staff--closed={closed}
+      title={staffingTooltip(c)}
+    >
+      <span class="sp-staff-bar" aria-hidden="true">
+        <span class="sp-staff-fill" style:width="{staffFillPct(c)}%"></span>
+      </span>
+      <span class="sp-staff-num" data-testid="staffing-figure">{staffingFigure(c)}</span>
+      {#if !closed && c.coverageStatus === "supervision-missing"}
+        <span class="sp-coverage-note">{staffingStatusText(c.coverageStatus)}</span>
+      {:else if !closed}
+        <span class="sr-only">{staffingStatusText(c.coverageStatus)}</span>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet whoInfo(u: Employee)}
+  {@const sr = sollRowByEmp.get(u.id)}
+  <div class="who-cell-main">
+    <div class="name">{u.firstName} {u.lastName}</div>
+    <div class="sp-who-meta">
+      {#if u.classification}
+        <span class="role">{classificationLabel(u.classification)}</span>
+      {/if}
+      {#if sr}
+        {@const reductionH = sr.leaveH + sr.absenceH}
+        {@const kind = deltaKind(sr.diff)}
+        <span
+          class="sp-hours"
+          aria-label="Geplant / Vertrag für {u.firstName} {u.lastName}: {formatHours(
+            sr.assignedH,
+          )} von {formatHours(sr.contractSollH)} Stunden"
+          title="{u.firstName} {u.lastName}: geplant {formatHours(sr.assignedH)}h ({formatHours(
+            sr.shiftH,
+          )}h Schicht{sr.bsH > 0
+            ? ` + ${formatHours(sr.bsH)}h Berufsschule`
+            : ''}), Vertrag {formatHours(sr.contractSollH)}h{reductionH > 0
+            ? ` (${formatHours(sr.weeklyH)}h − ${formatHours(reductionH)}h Urlaub/Abwesenheit)`
+            : ''}, Abweichung {sr.diff >= 0 ? '+' : ''}{formatHours(sr.diff)}h"
+        >
+          {formatHours(sr.assignedH)} / {formatHours(sr.contractSollH)} h
+        </span>
+        <span class="sp-delta sp-delta--{kind}">
+          {kind === "ok" ? "±0" : sr.diff > 0 ? "+" : "−"}{kind === "ok"
+            ? ""
+            : formatHours(Math.abs(sr.diff))} h
+        </span>
+        {#if sr.underCoverage}
+          <span class="sr-only">{formatHours(sr.gapH)} Stunden weniger geplant als im Vertrag</span>
+        {/if}
+      {/if}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet availBadge(av: AvailabilityEntry["availability"])}
+  {@const col = availColor(av)}
+  <span
+    class={availClass(av)}
+    class:sp-avail-badge--leave={col !== null}
+    style:--sp-fill={col ? `var(${col.fill})` : undefined}>{availLabel(av)}</span
+  >
+{/snippet}
+
 <!-- Phase 75-02 (D-01): data-testid surface for the Schichtplanung visual baseline.
      Matches the Phase 73-04/-05 convention (`<surface>-page`). -->
 <div class="page" data-testid="shifts-page">
@@ -1533,58 +1655,58 @@
           </p>
         </div>
       {:else}
-        {#if closedView.hint}
-          <p class="form-hint sp-hours-hint" role="status">{closedView.hint}</p>
-        {/if}
         {#if week.sollUnavailableReason === "SALON_FILTER"}
           <div class="callout info" role="status" data-testid="shifts-soll-unavailable">
             <p>{SALON_SOLL_NOT_ATTRIBUTABLE_NOTE}</p>
           </div>
         {/if}
+        <!-- Issue #923: one row per person (Geplant / Vertrag sits in the person cell), the staffing
+             of a day sits under its header, quiet empty and closed cells. -->
         <div class="shift-grid">
-          <div class="head">Person</div>
+          <div class="head sp-head-person">
+            <span>Person · Geplant / Vertrag</span>
+            <span class="sp-head-staff">
+              Besetzung
+              <span
+                class="sp-info"
+                role="img"
+                aria-label="Erklärung: {STAFFING_EXPLANATION}"
+                title={STAFFING_EXPLANATION}
+                data-testid="staffing-info">i</span
+              >
+            </span>
+          </div>
           {#each week.weekDays as d, i (d)}
-            <div class="head" class:today-col={isToday(d)}>
-              <div>{DOW[i]}</div>
-              <div class="head-date">
-                {fmtDayHeader(d)}
+            <div class="head sp-head-day" class:today-col={isToday(d)}>
+              <div class="sp-day">
+                <span class="sp-dow">{DOW[i]}</span>
+                <span class="head-date">{fmtDayHeader(d)}.</span>
+                {#if isToday(d)}<span class="sp-today">Heute</span>{/if}
               </div>
+              {@render staffing(d.slice(0, 10))}
             </div>
           {/each}
 
           {#each shiftEmployees as u (u.id)}
             <div class="who-cell">
-              <div class="who-cell-main">
-                <div class="name">{u.firstName} {u.lastName}</div>
-                {#if u.classification}
-                  <div class="role">{u.classification.toLowerCase()}</div>
-                {/if}
-              </div>
-              <!-- Phase 65 follow-up: Berufsschultag insertion lives in the
-                   template strip drag chip — no row-action menu needed. -->
+              {@render whoInfo(u)}
             </div>
             {#each week.weekDays as d (d)}
               {@const iso = d.slice(0, 10)}
               {@const s = shiftsByEmpDate.get(`${u.id}::${iso}`)}
               {@const av = availabilityByEmpDate.get(`${u.id}::${iso}`) ?? "available"}
               {@const cellKey = `${u.id}::${iso}`}
-              <!-- v1.7.4 hotfix — schoolHoliday marker. BS-Absence wins display
-                   priority (av === "vocational_school" path renders BS, not
-                   Ferien), but on empty days the Ferien badge surfaces so
-                   managers see why an AZUBI is absent during school break.
-                   Guard: only AZUBI rows ever get a holiday marker — the API
-                   already filters (BBiG §15), this is defense-in-depth. -->
+              <!-- v1.7.4 hotfix — schoolHoliday marker, AZUBI rows only (BBiG §15, defense-in-depth;
+                   the API already filters). A BS absence wins display priority. -->
               {@const holiday = isAzubi(u)
                 ? schoolHolidayByEmpDate.get(`${u.id}::${iso}`)
                 : undefined}
               {#if s}
-                <!-- Occupied cell: drag-source for the shift pill, NOT a drop-target.
-                     Drops onto occupied cells are rejected client-side via
-                     handleShiftMove (mirrors server's uniqueness constraint).
-                     Phase 47.2 — past dates are read-only: dragDisabled + tooltip. -->
+                <!-- Occupied cell: drag-source for the shift pill, NOT a drop-target (drops onto an
+                     occupied cell are rejected in handleShiftMove). Past dates are read-only. -->
                 <div
                   class="shift-cell sp-cell sp-cell--drop-blocked"
-                  class:sp-cell--unavailable={av !== "available"}
+                  class:sp-cell--today={isToday(d)}
                   class:sp-cell--past={isPastDay(iso)}
                   use:dndzone={{
                     items: shiftCellItems(cellKey),
@@ -1603,21 +1725,18 @@
                       class:sp-shift-pill--conflict={s.conflictsWithLeave}
                       data-shift-drag-id={item.id}
                       onclick={() => openEditShift(s)}
-                      title={isPastDay(iso)
-                        ? "Schicht in der Vergangenheit (nur lesen)"
-                        : s.conflictsWithLeave
-                          ? "⚠ Konflikt mit Urlaub — bitte überprüfen oder entfernen"
-                          : "Klicken zum Bearbeiten, ziehen zum Verschieben"}
+                      title={shiftTitle(s, iso)}
                     >
-                      {#if s.conflictsWithLeave}
-                        <span aria-hidden="true">⚠ </span>
-                      {/if}
                       {shiftLabel(s)}
+                      {#if s.conflictsWithLeave}
+                        <span class="sp-mark" aria-hidden="true">!</span>
+                        <span class="sr-only">Konflikt mit Urlaub</span>
+                      {/if}
                     </button>
                   {/each}
                 </div>
               {:else if isClosedDay(iso)}
-                <!-- Phase 47.5 — Closed-day cell: visually marked, no drop-target. -->
+                <!-- Phase 47.5 — closed day: hatched, no drop-target. -->
                 <div
                   class="shift-cell sp-cell sp-cell--closed"
                   title={`${closedView.salonName ?? "Der Salon"} ist an diesem Tag geschlossen`}
@@ -1625,47 +1744,39 @@
                   <span class="sp-closed-label">geschlossen</span>
                 </div>
               {:else if av !== "available"}
-                <!-- 260601-g8l: vocational_school cells are click-to-remove for
-                     ADMIN/MANAGER. For EMPLOYEE (and other availability buckets)
-                     the cell stays a plain non-interactive label — role="button"
-                     and tabindex are conditionally omitted so screen readers
-                     don't announce a misleading affordance. The dndzone wrapper
-                     is INTENTIONALLY not added here — drop-targeting was already
-                     rejected client-side in onCellFinalize (Phase 63 D-20), so
-                     keeping this branch as a passive cell preserves the existing
-                     drag-to-add semantics untouched. -->
+                <!-- 260601-g8l: a vocational_school cell is click-to-remove for holders of the right;
+                     every other availability is a passive label (drop-targeting is rejected in
+                     onCellFinalize, Phase 63 D-20). -->
                 {#if av === "vocational_school" && canRemoveVs}
                   <div
-                    class="shift-cell sp-cell sp-cell--unavailable sp-cell--vs-removable"
+                    class="shift-cell sp-cell sp-cell--absent sp-cell--vs-removable"
+                    class:sp-cell--today={isToday(d)}
                     role="button"
                     tabindex={0}
                     title="Berufsschultag entfernen"
                     onclick={() => onVocationalSchoolCellClick(u.id, iso)}
                     onkeydown={(e) => onVocationalSchoolCellKeydown(e, u.id, iso)}
                   >
-                    <span class={availClass(av)}>{availLabel(av)}</span>
+                    {@render availBadge(av)}
                   </div>
                 {:else}
-                  <div class="shift-cell sp-cell sp-cell--unavailable">
-                    <span class={availClass(av)}>{availLabel(av)}</span>
+                  <div class="shift-cell sp-cell sp-cell--absent" class:sp-cell--today={isToday(d)}>
+                    {@render availBadge(av)}
                   </div>
                 {/if}
               {:else if isPastDay(iso)}
-                <!-- Phase 47.2 — Past day, empty: no drag-target, no assign. -->
+                <!-- Phase 47.2 — past day, empty: nothing to plan, nothing drawn. -->
                 <div
                   class="shift-cell sp-cell off sp-cell--past"
                   title="Vergangenheit – nicht änderbar"
-                >
-                  <span class="sp-past-dash" aria-hidden="true">—</span>
-                </div>
+                ></div>
               {:else}
-                <!-- Empty available cell: drop-target only, NOT a drag-source.
-                     v1.7.4 hotfix — when the day falls in a SchoolHolidayPeriod
-                     the cell is tinted (sp-cell--holiday) + a small "Ferien"
-                     badge surfaces with the holiday name as tooltip. Cell stays
-                     a drop-target — Ferien is informational, not blocking. -->
+                <!-- Empty open cell: drop-target only. Its button stays in the tab order and shows
+                     „+ Schicht“ on hover and focus (Issue #923). A school-holiday day is tinted and
+                     badged; it stays a drop-target (informational, not blocking). -->
                 <div
                   class="shift-cell sp-cell off sp-cell--drop-target"
+                  class:sp-cell--today={isToday(d)}
                   class:sp-cell--drop-hover={cellItems(cellKey).length === 1}
                   class:sp-cell--holiday={holiday}
                   use:dndzone={{
@@ -1687,110 +1798,110 @@
                   <button
                     type="button"
                     class="sp-cell-empty"
+                    class:sp-cell-empty--pending={dropPending === cellKey}
                     onclick={() => onCellClick(u.id, iso)}
                     aria-label="Schicht zuweisen"
                     disabled={dropPending === cellKey}
                   >
-                    {dropPending === cellKey ? "speichere …" : "frei"}
+                    <span class="sp-add"
+                      >{dropPending === cellKey ? "speichere …" : "+ Schicht"}</span
+                    >
                   </button>
                   {#each cellItems(cellKey) as item (item.id)}
-                    <!-- Hidden placeholder while drag is hovering; svelte-dnd-action
-                         renders the actual ghost in the document body via
-                         .dnd-action-dragged-el. -->
+                    <!-- Hidden placeholder while a drag hovers; svelte-dnd-action draws the ghost in
+                         the body via .dnd-action-dragged-el. -->
                     <span style="display: none" data-dropped-id={item.id}></span>
                   {/each}
                 </div>
               {/if}
             {/each}
-            {#if sollRowByEmp.has(u.id)}
-              {@const sr = sollRowByEmp.get(u.id)!}
-              {@const reductionH = sr.leaveH + sr.absenceH}
-              <div
-                class="sp-soll-label"
-                aria-label="Geplant / Vertrag für {u.firstName} {u.lastName}"
+          {/each}
+        </div>
+
+        <!-- Issue #923: below 760 px the week is a day view (pick a day, see its people). No drag
+             and drop there; a tap opens the same dialogs. -->
+        <section class="sp-dayview" aria-label="Tagesansicht">
+          <div class="sp-daypick" role="group" aria-label="Tag wählen">
+            {#each week.weekDays as d, i (d)}
+              {@const iso = d.slice(0, 10)}
+              {@const c = coverageByDate.get(iso)}
+              {@const short = !!c && !isClosedDay(iso) && c.coverageStatus !== "ok"}
+              <button
+                type="button"
+                class="sp-daybtn"
+                aria-pressed={dayIso === iso}
+                aria-label="{DOW[i]} {fmtDayHeader(d)}.{short ? ', Besetzung unvollständig' : ''}"
+                onclick={() => (pickedDay = iso)}
               >
-                <div
-                  class="sp-soll-sublabel"
-                  title="Vertrag der Woche abzüglich Urlaub, Abwesenheit und Feiertagen. Berufsschule zählt als geplante Zeit."
-                >
-                  ↳ Geplant / Vertrag
+                <small>{DOW[i]}</small>
+                <b>{new Date(d).getDate()}</b>
+                <span class="sp-daydot" class:sp-daydot--short={short} aria-hidden="true"></span>
+              </button>
+            {/each}
+          </div>
+          <div class="sp-daylist">
+            <div class="sp-dayhead">
+              <span>
+                {DOW[week.weekDays.findIndex((d) => d.slice(0, 10) === dayIso)]}
+                {fmtDayHeader(dayIso)}.
+              </span>
+              {@render staffing(dayIso)}
+            </div>
+            {#each shiftEmployees as u (u.id)}
+              {@const s = shiftsByEmpDate.get(`${u.id}::${dayIso}`)}
+              {@const av = availabilityByEmpDate.get(`${u.id}::${dayIso}`) ?? "available"}
+              <div class="sp-dayrow">
+                {@render whoInfo(u)}
+                <div class="sp-daywhat">
+                  {#if s}
+                    <button
+                      type="button"
+                      class="shift-pill sp-shift-pill"
+                      class:sp-shift-pill--conflict={s.conflictsWithLeave}
+                      onclick={() => openEditShift(s)}
+                      title={shiftTitle(s, dayIso)}
+                    >
+                      {shiftLabel(s)}
+                      {#if s.conflictsWithLeave}
+                        <span class="sp-mark" aria-hidden="true">!</span>
+                        <span class="sr-only">Konflikt mit Urlaub</span>
+                      {/if}
+                    </button>
+                  {:else if isClosedDay(dayIso)}
+                    <span class="sp-closed-label">geschlossen</span>
+                  {:else if av !== "available"}
+                    {@render availBadge(av)}
+                  {:else if !isPastDay(dayIso)}
+                    <button
+                      type="button"
+                      class="btn btn-secondary sm"
+                      onclick={() => onCellClick(u.id, dayIso)}
+                    >
+                      + Schicht
+                    </button>
+                  {/if}
                 </div>
               </div>
-              <div
-                class="sp-soll-cell sp-soll-cell--{sr.klass}"
-                class:sp-soll-cell--under-coverage={sr.underCoverage}
-                title="{u.firstName} {u.lastName}: geplant {formatHours(
-                  sr.assignedH,
-                )}h ({formatHours(sr.shiftH)}h Schicht{sr.bsH > 0
-                  ? ` + ${formatHours(sr.bsH)}h Berufsschule`
-                  : ''}), Vertrag {formatHours(sr.contractSollH)}h{reductionH > 0
-                  ? ` (${formatHours(sr.weeklyH)}h − ${formatHours(
-                      reductionH,
-                    )}h Urlaub/Abwesenheit)`
-                  : ''}, Abweichung {sr.diff >= 0 ? '+' : ''}{formatHours(sr.diff)}h"
-              >
-                <span class="sp-soll-num">Geplant {formatHours(sr.assignedH)}h</span>
-                {#if reductionH > 0}
-                  <span class="sp-soll-soll">
-                    / Vertrag {formatHours(sr.contractSollH)}h
-                    <small class="sp-soll-reduction">
-                      ({formatHours(sr.weeklyH)}h − {formatHours(reductionH)}h Urlaub/Abwesenheit)
-                    </small>
-                  </span>
-                {:else}
-                  <span class="sp-soll-soll">/ Vertrag {formatHours(sr.contractSollH)}h</span>
-                {/if}
-                <span class="sp-soll-diff">
-                  {sr.diff >= 0 ? "+" : "−"}{formatHours(Math.abs(sr.diff))}h
-                </span>
-                {#if sr.underCoverage}
-                  <span
-                    class="sp-soll-under-coverage"
-                    aria-label="Zu wenig geplant: {u.firstName} {u.lastName}"
-                  >
-                    ↓ {formatHours(sr.gapH)}h weniger geplant als im Vertrag
-                  </span>
-                {/if}
-              </div>
-            {/if}
-          {/each}
-
-          <!-- Besetzung row (Issue #850): "x / y" against the Mindestbesetzung, explanation behind (i) -->
-          <div class="sp-coverage-label">
-            Besetzung
-            <span
-              class="sp-info"
-              role="img"
-              aria-label="Erklärung: {STAFFING_EXPLANATION}"
-              title={STAFFING_EXPLANATION}
-              data-testid="staffing-info">i</span
-            >
+            {/each}
           </div>
-          {#each week.weekDays as d (d)}
-            {@const iso = d.slice(0, 10)}
-            {@const c = coverageByDate.get(iso)}
-            {@const closed = isClosedDay(iso)}
-            <!-- Issue #853 (owner review): only the figure x / y. Red only for a real shortfall on an
-                 open day; a closed day is never understaffed. The status word stays for screen
-                 readers and in the tooltip, never as a coloured cell. -->
-            <div
-              class="sp-coverage-cell"
-              class:sp-coverage-cell--under={!closed && c?.coverageStatus === "under"}
-              class:sp-coverage-cell--closed={closed}
-              title={staffingTooltip(c)}
-            >
-              {#if c}
-                <div class="sp-coverage-num" data-testid="staffing-figure">{staffingFigure(c)}</div>
-                {#if !closed && c.coverageStatus === "supervision-missing"}
-                  <span class="sp-coverage-note">{staffingStatusText(c.coverageStatus)}</span>
-                {:else if !closed}
-                  <span class="sr-only">{staffingStatusText(c.coverageStatus)}</span>
-                {/if}
-              {:else}
-                <span class="sp-coverage-num">—</span>
-              {/if}
-            </div>
-          {/each}
+        </section>
+
+        <div class="sp-grid-foot">
+          {#if closedView.hint}
+            <p class="sp-hours-hint" role="status">{closedView.hint}</p>
+          {/if}
+          <ul class="sp-legend" aria-label="Legende">
+            <li><span class="sp-key sp-key--shift"></span>Schicht</li>
+            <li><span class="sp-key sp-key--conflict"></span>Konflikt</li>
+            <li>
+              <span class="sp-key" style:background="var({leaveTypeColor('VACATION').fill})"
+              ></span>Urlaub
+            </li>
+            <li>
+              <span class="sp-key sp-key--school"></span>Berufsschule
+            </li>
+            <li><span class="sp-key sp-key--closed"></span>geschlossen</li>
+          </ul>
         </div>
       {/if}
     </div>
@@ -2133,41 +2244,6 @@
     color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
-  /* The week grid is the one surface of the page: a framed grid, full width, no card around it. */
-  .week-surface {
-    min-width: 0;
-    overflow-x: auto;
-    border: 1px solid var(--line);
-    border-radius: var(--r-control);
-  }
-  .week-body {
-    min-width: 0;
-  }
-  /* Narrow screens scroll the framed grid sideways instead of squeezing the shift pills to "0…". */
-  @media (max-width: 760px) {
-    .week-body .shift-grid {
-      min-width: 1000px;
-    }
-  }
-  .state-msg {
-    padding: 40px;
-    text-align: center;
-    color: var(--text-2);
-  }
-  .head-date {
-    font-weight: 700;
-    font-size: 14px;
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--text);
-    margin-top: 2px;
-  }
-
-  /* Per-cell availability dimming + badges */
-  .sp-cell--unavailable {
-    background: var(--sunk);
-    opacity: 0.85;
-  }
 
   /* v1.7.4 hotfix — Schulferien marker on empty (drop-target) cells.
      Light blue tint via --shift-blue (existing v1.5 token) at low opacity,
@@ -2194,46 +2270,6 @@
     pointer-events: none;
     z-index: 1;
   }
-  /* Hide the badge on narrow viewports — the cell tint alone communicates
-     Schulferien without crowding the assign affordance. Tooltip still works. */
-  @media (max-width: 720px) {
-    .sp-holiday-badge {
-      display: none;
-    }
-  }
-  .sp-avail-badge {
-    display: inline-block;
-    padding: 4px 8px;
-    border-radius: var(--r-pill);
-    font-size: 11.5px;
-    font-weight: 500;
-    background: var(--card);
-    color: var(--text-2);
-    border: 1px solid var(--line);
-  }
-  .sp-avail-badge--vacation {
-    color: var(--brand);
-    border-color: var(--brand-soft);
-  }
-  .sp-avail-badge--sick {
-    color: var(--bad);
-    border-color: var(--bad);
-  }
-  .sp-avail-badge--special {
-    color: var(--warn);
-    border-color: var(--warn);
-  }
-  .sp-avail-badge--other {
-    color: var(--text-2);
-  }
-  /* Phase 63 D-20 — brand-tinted Berufsschule badge with lock icon. v1.5
-     tokens only; renders inside the existing .sp-cell--unavailable cell. */
-  .sp-avail-badge--vocational-school {
-    background: var(--brand-soft);
-    color: var(--brand);
-    border-color: var(--line);
-    font-weight: 600;
-  }
 
   /* 260601-g8l — Click-to-remove affordance for BS-Tag cells (ADMIN/MANAGER).
      Pointer cursor + focus-visible ring; the badge inside still uses the
@@ -2258,79 +2294,6 @@
     flex: 1;
   }
 
-  /* Empty-cell button (renders as text "frei" but is keyboard-focusable) */
-  .sp-cell-empty {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    color: var(--text-2);
-    font-size: 13px;
-    padding: 6px 10px;
-    width: 100%;
-    height: 100%;
-    border-radius: var(--r-control);
-  }
-  .sp-cell-empty:hover {
-    background: var(--sunk);
-    color: var(--text);
-  }
-
-  .sp-shift-pill {
-    border: none;
-    cursor: pointer;
-    transition: opacity 0.12s var(--ease);
-  }
-  .sp-shift-pill:hover {
-    opacity: 0.78;
-  }
-  /* Phase 43-04: shift marked conflictsWithLeave by the reverse-hook */
-  .sp-shift-pill--conflict {
-    outline: 2px solid var(--bad);
-    outline-offset: -2px;
-    background: color-mix(in srgb, var(--bad) 18%, transparent);
-    color: var(--text);
-    font-weight: 700;
-  }
-
-  /* Coverage heatmap row */
-  .sp-coverage-label {
-    grid-column: 1;
-    font-weight: 600;
-    font-size: 12.5px;
-    color: var(--text-2);
-    padding: 12px 8px;
-    border-top: 1px solid var(--line);
-    background: var(--card);
-  }
-  .sp-coverage-cell {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    padding: 10px 6px;
-    border-top: 1px solid var(--line);
-    text-align: center;
-    font-size: 12px;
-    color: var(--text-2);
-    background: var(--card);
-  }
-  .sp-coverage-cell--under {
-    color: var(--bad);
-  }
-  .sp-coverage-cell--closed {
-    color: var(--text-3);
-  }
-  .sp-coverage-num {
-    font-family: var(--font-ui);
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-  }
-  /* A shortfall is told by the colour and by weight; the word is in the tooltip and for screen
-     readers (owner review of #853: only the figure is shown). */
-  .sp-coverage-cell--under .sp-coverage-num {
-    font-weight: 700;
-  }
   .sp-coverage-note {
     font-size: 11px;
     color: var(--text-2);
@@ -2464,139 +2427,6 @@
     margin-bottom: 12px;
   }
 
-  /* Phase 45: SHIFT_BASED Soll-Row */
-  .sp-soll-label {
-    background: var(--card);
-    padding: 8px 8px 12px;
-    border-top: 2px solid var(--line-2);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
-  .sp-soll-label .name {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .sp-soll-sublabel {
-    margin-top: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
-  }
-  .sp-soll-cell {
-    grid-column: 2 / -1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    padding: 8px 16px;
-    border-radius: var(--r-control);
-    border-top: 2px solid var(--line-2);
-    font-size: 13px;
-  }
-  .sp-soll-num {
-    font-family: var(--font-ui);
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    font-size: 12.5px;
-  }
-  .sp-soll-soll {
-    font-family: var(--font-ui);
-    font-variant-numeric: tabular-nums;
-    font-size: 12.5px;
-    color: var(--text-2);
-  }
-  .sp-soll-diff {
-    font-family: var(--font-ui);
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    font-size: 12.5px;
-  }
-  .sp-soll-cell--ok {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-  .sp-soll-cell--warn {
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-  .sp-soll-cell--bad {
-    background: var(--bad-soft);
-    color: var(--bad);
-  }
-  /* Phase 76.23 — Unterdeckung (per-employee under-coverage vs contract Soll).
-     Visually distinct from the per-day Coverage row (.sp-coverage-cell--under)
-     which signals demand-slot Unterbesetzung (D-06). Uses --warn accent with a
-     left border accent so the operator distinguishes "this employee is under-rostered
-     vs their contract" from "this time-slot has too few people". */
-  .sp-soll-cell--under-coverage {
-    border-left: 3px solid var(--warn);
-    flex-wrap: wrap;
-    gap: 8px 12px;
-  }
-  .sp-soll-under-coverage {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--warn);
-    background: var(--warn-soft);
-    border-radius: var(--r-control);
-    padding: 2px 8px;
-    margin-top: 2px;
-    font-family: var(--font-ui);
-    font-variant-numeric: tabular-nums;
-  }
-  @media (max-width: 640px) {
-    .sp-soll-label,
-    .sp-soll-cell {
-      display: none;
-    }
-  }
-
-  /* Phase 47.5 — Closed-day cells: striped background + label */
-  .sp-cell--closed {
-    background: repeating-linear-gradient(
-      45deg,
-      var(--sunk),
-      var(--sunk) 6px,
-      transparent 6px,
-      transparent 12px
-    );
-    cursor: not-allowed;
-  }
-  .sp-cell--closed .sp-closed-label {
-    display: block;
-    text-align: center;
-    color: var(--text-2);
-    font-size: 0.8125rem;
-    user-select: none;
-  }
-
-  /* Phase 47.2 — Past day cells: visually dimmed, not interactive */
-  .sp-cell--past {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-  .sp-cell--past .sp-past-dash {
-    display: block;
-    text-align: center;
-    color: var(--text-2);
-    font-size: 1.25rem;
-    user-select: none;
-  }
-  .sp-cell--past .sp-shift-pill {
-    cursor: default;
-  }
-
-  /* Issue #563 — hint above the grid when several salons are shown and none is chosen */
-  .sp-hours-hint {
-    margin: 0 0 8px;
-  }
-
   /* Phase 47.1 — Empty roster callout when no SHIFT_BASED employees */
   .sp-empty-shift-roster {
     padding: 24px;
@@ -2617,5 +2447,435 @@
   .sp-empty-sub a {
     color: var(--brand);
     text-decoration: underline;
+  }
+  /* ── Issue #923: the week grid on v2 ─────────────────────────────────────────── */
+  .week-surface {
+    min-width: 0;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    background: var(--card);
+  }
+  .week-body {
+    min-width: 0;
+  }
+  .week-body .shift-grid {
+    grid-template-columns: minmax(210px, 1.3fr) repeat(7, minmax(112px, 1fr));
+    min-width: 1020px;
+    border-radius: 0;
+  }
+  .head {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    text-align: left;
+    padding: 10px 12px 9px;
+  }
+  .sp-head-person {
+    justify-content: space-between;
+    font-weight: 500;
+  }
+  .sp-head-staff {
+    display: inline-flex;
+    align-items: center;
+  }
+  .sp-day {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: var(--fs-th);
+    font-weight: 500;
+    color: var(--text-2);
+  }
+  .head-date {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .today-col .sp-day,
+  .today-col .head-date {
+    color: var(--brand);
+  }
+  .sp-today {
+    margin-left: auto;
+    align-self: center;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    padding: 0 7px;
+    border-radius: var(--r-pill);
+    background: var(--brand);
+    color: var(--brand-ink);
+  }
+  .shift-grid .head.today-col {
+    background: var(--brand-tint);
+  }
+
+  /* Staffing under the day header: a bar and the figure x / y. */
+  .sp-staff {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text-2);
+  }
+  .sp-staff-bar {
+    flex: 1;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--sunk);
+    overflow: hidden;
+  }
+  .sp-staff-fill {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--line-2);
+  }
+  .sp-staff-num {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .sp-staff--ok .sp-staff-fill {
+    background: var(--ok);
+  }
+  .sp-staff--ok .sp-staff-num {
+    color: var(--ok);
+  }
+  .sp-staff--under .sp-staff-fill,
+  .sp-staff--warn .sp-staff-fill {
+    background: var(--warn);
+  }
+  .sp-staff--under .sp-staff-num {
+    color: var(--bad);
+  }
+  .sp-staff--warn .sp-staff-num {
+    color: var(--warn);
+  }
+  .sp-staff--closed {
+    color: var(--text-3);
+  }
+  .sp-coverage-note {
+    font-size: 11px;
+    color: var(--warn);
+    white-space: nowrap;
+  }
+
+  /* The person cell carries Geplant / Vertrag. */
+  .shift-grid .who-cell {
+    flex-direction: row;
+    align-items: center;
+    padding: 10px 12px;
+  }
+  .sp-who-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+  }
+  .sp-who-meta .role::after {
+    content: "·";
+    margin-left: 6px;
+  }
+  .sp-who-meta .role:last-child::after {
+    content: none;
+  }
+  .sp-hours {
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .sp-delta {
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.5;
+    padding: 0 7px;
+    border-radius: var(--r-pill);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .sp-delta--ok {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  .sp-delta--under {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  .sp-delta--over {
+    background: var(--info-soft);
+    color: var(--info);
+  }
+
+  /* Day cells */
+  .shift-grid .shift-cell {
+    min-height: 60px;
+    place-items: stretch;
+    align-content: start;
+    position: relative;
+  }
+  .shift-grid .shift-cell.sp-cell--today {
+    background: var(--brand-tint);
+  }
+  .sp-cell--closed,
+  .shift-grid .shift-cell.sp-cell--closed {
+    background: repeating-linear-gradient(-45deg, var(--sunk) 0 6px, var(--card) 6px 12px);
+    cursor: not-allowed;
+    place-items: center;
+    align-content: center;
+  }
+  .sp-closed-label {
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+    user-select: none;
+  }
+  .sp-cell--past {
+    cursor: not-allowed;
+  }
+  .sp-cell--past .sp-shift-pill {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  /* The one shift chip (grid and day view). */
+  .sp-shift-pill {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 0;
+    border-left: 3px solid var(--brand);
+    border-radius: 8px;
+    padding: 6px 8px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    text-align: left;
+    cursor: pointer;
+    transition: box-shadow 0.12s var(--ease);
+  }
+  .sp-shift-pill:hover {
+    box-shadow: var(--shadow);
+  }
+  .sp-shift-pill:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  .sp-shift-pill--conflict {
+    background: var(--warn-soft);
+    border-left-color: var(--warn);
+    color: var(--text);
+    padding-right: 28px;
+  }
+  .sp-mark {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    translate: 0 -50%;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--warn);
+    color: var(--card);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  /* Absence in a cell: the colour pair of leave-colors.ts (set by the availBadge snippet). */
+  .sp-avail-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border-radius: 8px;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    background: var(--sunk);
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+  /* The soft form of the colour pair (as in the approved mockup): a light tint of the fill with
+     the fill as text. */
+  .sp-avail-badge--leave {
+    background: color-mix(in srgb, var(--sp-fill) 14%, var(--card));
+    color: var(--sp-fill);
+  }
+  .sp-avail-badge--vocational-school {
+    background: var(--info-soft);
+    color: var(--info);
+  }
+  .sp-avail-badge--leave::before,
+  .sp-avail-badge--vocational-school::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* Empty open cell: the whole cell is the button; „+ Schicht“ shows on hover and focus. */
+  .sp-cell-empty {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    padding: 6px;
+  }
+  .sp-add {
+    opacity: 0;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--brand);
+    border: 1px dashed var(--brand);
+    border-radius: 8px;
+    padding: 5px 9px;
+    transition: opacity 0.15s var(--ease);
+  }
+  .sp-cell-empty:hover .sp-add,
+  .sp-cell-empty:focus-visible .sp-add,
+  .sp-cell-empty--pending .sp-add,
+  .sp-cell--drop-hover .sp-add {
+    opacity: 1;
+  }
+  .sp-cell-empty:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: -2px;
+  }
+
+  /* Hint and legend below the grid. */
+  .sp-grid-foot {
+    padding: 10px 14px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px 16px;
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+  }
+  .sp-hours-hint {
+    margin: 0;
+  }
+  .sp-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin: 0 0 0 auto;
+    padding: 0;
+    list-style: none;
+  }
+  .sp-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .sp-key {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+  }
+  .sp-key--shift {
+    background: var(--brand);
+  }
+  .sp-key--conflict {
+    background: var(--warn);
+  }
+  .sp-key--school {
+    background: var(--info);
+  }
+  .sp-key--closed {
+    background: repeating-linear-gradient(-45deg, var(--line-2) 0 2px, transparent 2px 4px);
+  }
+
+  /* Phone: a day view instead of the seven-day grid. */
+  .sp-dayview {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+  }
+  .sp-daypick {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+  }
+  .sp-daybtn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 0 7px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--card);
+    cursor: pointer;
+  }
+  .sp-daybtn small {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+  .sp-daybtn b {
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .sp-daybtn[aria-pressed="true"] {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: var(--brand-ink);
+  }
+  .sp-daybtn[aria-pressed="true"] small {
+    color: var(--brand-ink);
+  }
+  .sp-daydot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+  .sp-daydot--short {
+    background: var(--warn);
+  }
+  .sp-daylist {
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    overflow: hidden;
+  }
+  .sp-dayhead {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--sunk);
+    font-weight: 600;
+  }
+  .sp-dayrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--line);
+  }
+  .sp-dayrow .who-cell-main {
+    flex: 1;
+  }
+  .sp-daywhat {
+    flex: none;
+    display: flex;
+    justify-content: flex-end;
+  }
+  @media (max-width: 760px) {
+    .week-body .shift-grid {
+      display: none;
+    }
+    .sp-dayview {
+      display: flex;
+    }
   }
 </style>
