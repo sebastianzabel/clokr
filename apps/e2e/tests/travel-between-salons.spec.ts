@@ -207,8 +207,13 @@ test.describe("a trip between two salons (Issue #92)", () => {
     const cell = page.getByTestId(`calendar-cell-${day}`);
     await expect(cell).toHaveAttribute("title", "2 Einträge");
     await cell.click();
-    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
-    await page.getByTestId("day-sheet-primary").click();
+    // #935: the day panel next to the month lists both entries; the list shows the day focused.
+    await expect(
+      page
+        .getByTestId("time-entries-day-detail")
+        .locator("[data-testid^='day-panel-entry-'][data-testid$='-menu']"),
+    ).toHaveCount(2);
+    await page.getByTestId("time-entries-view-tabs").getByRole("radio", { name: "Liste" }).click();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
     await expect(page.locator("tr[data-testid^='time-entry-row-']")).toHaveCount(2);
 

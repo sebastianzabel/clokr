@@ -2,7 +2,7 @@
 // claims no saldo (#495), a closed month reads as confirmed, the day-check findings are counted
 // as the server gave them.
 import { describe, expect, it } from "vitest";
-import { zeitenKpis, zeitenStatus, type ZeitenMonthFigures } from "../zeiten-kpis";
+import { ownZeitenKpis, zeitenKpis, zeitenStatus, type ZeitenMonthFigures } from "../zeiten-kpis";
 
 const month: ZeitenMonthFigures = {
   sollToDateMin: 32 * 60,
@@ -58,5 +58,39 @@ describe("zeitenKpis", () => {
   it("claims no day count its source does not have (#125)", () => {
     const [worked] = zeitenKpis({ ...base, month: { ...month, workdaysSoFar: null } });
     expect(worked.explanation).toBe("bis gestern");
+  });
+});
+
+// Issue #935: the own page words the same figures as Ist, Soll and Differenz (mockup 14.11.2026).
+describe("ownZeitenKpis", () => {
+  it("names Ist, Soll bis gestern and Differenz with the page's own figures", () => {
+    const [ist, soll, diff] = ownZeitenKpis({ ...base, runningCount: 1 });
+    expect(ist).toMatchObject({ label: "Ist", value: "33:55", unit: "h" });
+    expect(ist.explanation).toBe("4 Arbeitstage · 1 Eintrag läuft");
+    expect(soll).toMatchObject({ label: "Soll bis gestern", value: "32:00", unit: "h" });
+    expect(diff).toMatchObject({ label: "Differenz", value: "+1:55", unit: "h" });
+    expect(diff.explanation).toBe("Prognose · Monat offen");
+  });
+
+  it("is the same saldo figure zeitenKpis shows, never a new computation", () => {
+    const [, saldo] = zeitenKpis(base);
+    const [, , diff] = ownZeitenKpis(base);
+    expect(diff.value).toBe(saldo.value);
+  });
+
+  it("claims no Soll and no Differenz for a contract without Soll (#495)", () => {
+    const [, soll, diff] = ownZeitenKpis({
+      ...base,
+      month: { ...month, noSollTarget: true, saldoMin: null, sollToDateMin: 0 },
+    });
+    expect(soll.value).toBe("—");
+    expect(diff.value).toBe("—");
+  });
+
+  it("reads a closed month as the whole month, confirmed", () => {
+    const [, soll, diff] = ownZeitenKpis({ ...base, locked: true });
+    expect(soll.label).toBe("Soll");
+    expect(soll.explanation).toBe("ganzer Monat");
+    expect(diff.explanation).toBe("Bestätigt · Monat abgeschlossen");
   });
 });
