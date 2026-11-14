@@ -160,7 +160,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(box).not.toBeNull();
       await hoursCanvas.click({ position: { x: box!.width * 0.9, y: box!.height * 0.45 } });
 
-      await page.waitForURL(/\/verwalten\/berichte\?from=(\d{4}-\d{2})&to=\1&tab=zeiten/);
+      await page.waitForURL(/\/team\/berichte\?from=(\d{4}-\d{2})&to=\1&tab=zeiten/);
       expect(new URL(page.url()).searchParams.get("to")).toBe(lastMonth);
       const [year, month] = lastMonth.split("-").map(Number);
       await expect(page.getByTestId("reports-period-label")).toContainText(
@@ -183,7 +183,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       expect(href).toMatch(/^\/reports\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub$/);
 
       await sickLink.click();
-      await page.waitForURL(/\/verwalten\/berichte\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
+      await page.waitForURL(/\/team\/berichte\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
       // #844: the link's /reports URL redirects to Verwalten › Berichte and keeps its whole query
       expect(page.url()).toContain(href.replace(/^\/reports\?/, "/team/berichte?"));
     });
@@ -204,7 +204,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
         // #844: the test ids stay those of the route files, the URLs are the new ones
         { testid: "nav-time-entries", url: /\/ich\/zeiten$/ },
         { testid: "nav-leave", url: /\/ich\/abwesenheiten$/ },
-        { testid: "nav-reports", url: /\/verwalten\/berichte$/ },
+        { testid: "nav-reports", url: /\/team\/berichte$/ },
         { testid: "nav-dashboard", url: /\/ich\/tag$/ },
       ];
 
