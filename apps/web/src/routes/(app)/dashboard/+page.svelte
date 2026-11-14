@@ -115,6 +115,14 @@
   } from "$lib/dashboard/mein-tag"; // Issue #845
   import { isTravelRow } from "$lib/time-entries/travel-entry-form";
   import {
+    openEarlierEntry,
+    openEarlierEntryText,
+    endEntryHref,
+    entryDay,
+    OPEN_ENTRY_WINDOW_DAYS,
+    type OpenEarlierEntry,
+  } from "$lib/time-entries/open-earlier-entry"; // Issue #942
+  import {
     attendanceBand,
     attendanceFilterOf,
     filterAttendance,
@@ -578,6 +586,9 @@
   let myWeekScheduleType = $state<string | null>(null);
   let nextShift = $state<NextShift | null>(null);
   let recentEntries = $state<ClockDayEntry[]>([]);
+  // Issue #942: an own entry of an EARLIER day that was never clocked out. Today's clock state
+  // stays per day (`day` above); this only adds the hint on the stage.
+  let openEarlier = $state<OpenEarlierEntry | null>(null);
   let meinTagLoaded = $state(false);
 
   async function loadMeinTag(today: string) {
@@ -586,6 +597,10 @@
     const weekAhead = format(addDays(base, 7), "yyyy-MM-dd");
     const twoWeeksBack = format(addDays(base, -14), "yyyy-MM-dd");
     const yesterday = format(addDays(base, -1), "yyyy-MM-dd");
+    // Issue #942: the past-entries read reaches back as far as the team's „Ausstempeln fehlt“
+    // tasks (OPEN_TASKS_WINDOW_DAYS = 62) so an older open entry is found; „Letzte Tage“ keep
+    // their two weeks.
+    const openWindowStart = format(addDays(base, -OPEN_ENTRY_WINDOW_DAYS), "yyyy-MM-dd");
     // „Letzte Tage“ reach back two weeks: the day series of this and the previous month
     const months = [base, addDays(base, -14)].map((d) => ({
       y: d.getFullYear(),
@@ -607,7 +622,7 @@
         ),
         api.get<MyShiftWeek>(`/shifts/my-week?date=${today}`),
         api.get<MyShiftWeek>(`/shifts/my-week?date=${weekAhead}`),
-        api.get<ClockDayEntry[]>(`/time-entries?from=${twoWeeksBack}&to=${yesterday}`),
+        api.get<ClockDayEntry[]>(`/time-entries?from=${openWindowStart}&to=${yesterday}`),
         ...monthKeys.map((k) =>
           canOvertime
             ? api.get<{ days: { date: string; cumulativeSaldoMinutes: number }[] }>(
@@ -635,8 +650,11 @@
     );
     recentEntries =
       recentR.status === "fulfilled"
-        ? recentR.value.filter((e) => e.endTime !== null && !isTravelRow(e))
+        ? recentR.value.filter(
+            (e) => e.endTime !== null && !isTravelRow(e) && entryDay(e) >= twoWeeksBack,
+          )
         : [];
+    openEarlier = recentR.status === "fulfilled" ? openEarlierEntry(recentR.value, today) : null;
     cumulativeByDate = new Map(
       saldoR.flatMap((r) =>
         r.status === "fulfilled"
@@ -1317,6 +1335,7 @@
 
   // ── Issue #845: the stage view model (D-02, D-03, D-845-01/02/08) ─────────────────────────────
   let todayIso = $derived(format(currentTime, "yyyy-MM-dd"));
+  let openEarlierText = $derived(openEarlier ? openEarlierEntryText(openEarlier, todayIso) : null);
   // Issue #596 (#845): the day goal is today's Soll of the working-time account (its core, served by
   // GET /dashboard), never a fixed 8 h; 0 or no answer = no goal today.
   let goalMin = $derived.by((): number | null => {
@@ -1825,6 +1844,21 @@
               {/if}
             {/snippet}
           </Stage>
+          {#if openEarlier && openEarlierText}
+            <!-- Issue #942: an own entry of an earlier day is still open. Today's clock stays as it
+               is (the resolver decides per day, #70); the action opens the Zeiten edit dialog. -->
+            <div class="mt-open-earlier" data-testid="mein-tag-open-earlier">
+              <Note tone="warn">
+                <strong>{openEarlierText.title}</strong>
+                {openEarlierText.detail}
+              </Note>
+              <a
+                class="btn btn-primary btn-sm"
+                href={endEntryHref(openEarlier)}
+                data-testid="mein-tag-open-earlier-end">Ende eintragen</a
+              >
+            </div>
+          {/if}
           {#if showEntryList}
             {#if entryCount}
               <p class="mt-quiet mt-entry-count">{entryCount.replaceAll(" ", "\u00A0")}</p>
@@ -2511,6 +2545,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
     font-variant-numeric: tabular-nums;
+  }
+  /* Issue #942: the hint of an open entry of an earlier day, below the stage */
+  .mt-open-earlier {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2) var(--s-3);
+    margin-top: var(--s-3);
+  }
+  .mt-open-earlier :global(.note) {
+    flex: 1 1 260px;
+    margin: 0;
   }
   /* Phone: the stage stays compact so the Kennzahlen reach the first screen (D-01, AC 390×844). */
   @media (max-width: 759.98px) {

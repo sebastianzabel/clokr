@@ -15,6 +15,7 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { test, expect } from "../fixtures";
 import type { TestTenant } from "../fixtures";
+import { zonedInstant } from "../helpers/tenant-zone";
 
 const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4001";
 const PASSWORD = "test1234";
@@ -134,5 +135,44 @@ test.describe("phone (AC-1)", () => {
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow).toBeLessThanOrEqual(0);
+  });
+});
+
+test.describe("an open entry of an earlier day (Issue #942)", () => {
+  const TZ = "Europe/Berlin";
+  test.use({ timezoneId: TZ });
+
+  test("Mein Tag names it, keeps today's clock and opens its edit dialog in Zeiten", async ({
+    page,
+    request,
+    tenant,
+  }) => {
+    // Three days back: older than yesterday (the resolver looks back one day only) and well inside
+    // the retro window; a fixed start far from midnight keeps it away from the #922 day change.
+    const [y, m, d] = new Date()
+      .toLocaleDateString("sv-SE", { timeZone: TZ })
+      .split("-")
+      .map(Number);
+    const back = new Date(Date.UTC(y, m - 1, d - 3));
+    const day = back.toISOString().slice(0, 10);
+    const res = await request.post(`${API_BASE}/api/v1/time-entries`, {
+      headers: { "content-type": "application/json", Authorization: `Bearer ${tenant.adminToken}` },
+      data: { date: day, startTime: zonedInstant(day, "09:15", TZ).toISOString(), breakMinutes: 0 },
+    });
+    expect(res.status(), `record an open entry on ${day} (${await res.text()})`).toBe(201);
+
+    await signIn(page, request, tenant);
+    await page.goto("/ich/tag");
+    const hint = page.getByTestId("mein-tag-open-earlier");
+    await expect(hint).toContainText(
+      /Dein Eintrag vom \S+, \d{1,2}\.\d{1,2}\. ist noch offen – seit 09:15\./,
+    );
+    await expect(hint).toContainText("Einstempeln beginnt heute einen neuen Eintrag");
+    // today's own clock state is unchanged
+    await expect(page.getByTestId("clock-state")).toHaveText("Noch nicht eingestempelt");
+
+    await page.getByTestId("mein-tag-open-earlier-end").click();
+    await expect(page).toHaveURL(new RegExp(`/ich/zeiten\\?date=${day}&end=`));
+    await expect(page.getByRole("dialog")).toContainText("Eintrag bearbeiten");
   });
 });

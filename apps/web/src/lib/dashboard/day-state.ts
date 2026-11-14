@@ -80,6 +80,8 @@ export type DayStateKind = "running" | "finished" | "idle";
 /** The subset of a GET /api/v1/time-entries row this module needs. */
 export interface ClockDayEntry extends TravelRowFields {
   id: string;
+  /** Issue #942 — the entry's own calendar day (`@db.Date`, ISO) as GET /time-entries sends it. */
+  date?: string | null;
   startTime: string; // full ISO instant
   endTime: string | null; // full ISO instant or null
   breakMinutes?: number | null;
