@@ -3487,8 +3487,12 @@
       background 160ms var(--ease);
     position: relative;
   }
-  .cal-cell:not(.cal-other):hover {
-    border-color: var(--brand);
+  /* Issue #927: a calm hover in the Zeiten grid — a light tint, the line keeps its colour, so a
+     resting cursor never reads as a selected or marked day. (Scoped to this page; the shared
+     app.css rule stays as it is.) */
+  .te-cal .cal-cell:not(.cal-other):not(:disabled):hover {
+    border-color: var(--line);
+    background: var(--hover);
   }
   :global(.cal-cell.cal-today) {
     outline: 1.5px solid var(--brand);
