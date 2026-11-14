@@ -717,6 +717,13 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   the statutory floor is applied afterwards by the regular-entitlement formula. A settings or
   classification change writes no row by itself; new years, the #445 zero heal and the audited
   #447/#450 recomputes read the current value. No reader rebuilds the chain.
+- **A changed hire date moves the entitlement rows in one place (Issue #961).**
+  `syncVacationEntitlementsForHireDateChange()` (`contexts/absence/hire-date-entitlements.ts`), invariant-carrying in
+  the `PATCH /employees/:id` transaction: leave (pending or effective) before a LATER hire date is a 409
+  `LEAVE_BEFORE_HIRE_DATE`; rows of years before the new hire year are set to 0 (never deleted, also past-year and
+  human rows), the affected years are recomputed through `resolveRegularVacationDays`, an earlier hire date creates
+  the missing rows employee creation would have created, and the carry-over chain is recomputed — all audited with the
+  reason „Eintrittsdatum geändert“. Details `docs/burlg-carryover.md`; Bestand `scripts/audit-961-entitlements-before-hire.ts`.
 - **Parallel leave per salon is counted in one place (Issue #836).** `parallelLeaveLoad()` (the pure
   kernel) and `evaluateLeaveLimits()` (the checker) in `contexts/absence/leave-limits/` — deliberately NOT
   re-exported from `contexts/absence/index.ts` (import-cycle cap 22), callers in Abwesenheiten import the

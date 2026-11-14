@@ -222,6 +222,13 @@ export {
   leaveDaysByCodeWithin, // Issue #451 (D-01) — Erweiterung, additive; consumed by composition/reports.ts (the DATEV export)
 } from "./leave-days";
 export type { LeaveDaysForCode } from "./leave-days"; // Issue #451 (D-01)
+export {
+  syncVacationEntitlementsForHireDateChange, // Issue #961 — Erweiterung, additive; the reaction to a changed hire date, consumed by platform/api/employees.ts
+  LeaveBeforeHireDateError, // Issue #961 — the refusal of a later hire date with leave before it
+  LEAVE_BEFORE_HIRE_DATE_MESSAGE, // Issue #961 — the German 409 text
+  LEAVE_BEFORE_HIRE_DATE_CODE, // Issue #961 — the 409 control value
+  ENTITLEMENT_REASON_HIRE_DATE_CHANGED, // Issue #961 — the matching audit reason
+} from "./hire-date-entitlements";
 export { checkJArbSchG } from "./jarbschg";
 // Under-18 decision of the JArbSchG rules (§ 9 Berufsschule block, § 11 break regime).
 export { isMinorAtDate } from "./minor-at-date"; // Issue #511 (D-05) — the age decision of the § 11 JArbSchG break regime

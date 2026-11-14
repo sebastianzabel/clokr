@@ -471,7 +471,13 @@ export async function recalculateCarryOver(
   employeeId: string,
   leaveTypeId: string,
   year: number,
-  options: { createIfMissing?: boolean } = {},
+  options: {
+    createIfMissing?: boolean;
+    // Issue #961: a caller inside a request (the hire-date change) attributes the carry-over
+    // audit to the acting user and names its own reason; absent = the system audit as before.
+    audit?: (entry: EntitlementAuditEntry) => Promise<void>;
+    reason?: string;
+  } = {},
 ): Promise<void> {
   const prevYear = year - 1;
   const prev = await prisma.leaveEntitlement.findUnique({
@@ -520,12 +526,13 @@ export async function recalculateCarryOver(
       : { carriedOverDays: remaining, carryOverDeadline: deadline },
   });
   if (daysDiffer(Number(cur.carriedOverDays), remaining)) {
-    await writeEntitlementAudit(prisma, {
+    const entry: EntitlementAuditEntry = {
       action: "UPDATE",
       entityId: cur.id,
       oldValue: { carriedOverDays: Number(cur.carriedOverDays) },
-      newValue: { carriedOverDays: remaining, reason: CARRY_OVER_RECALC_REASON },
-    });
+      newValue: { carriedOverDays: remaining, reason: options.reason ?? CARRY_OVER_RECALC_REASON },
+    };
+    await (options.audit ? options.audit(entry) : writeEntitlementAudit(prisma, entry));
   }
 }
 
