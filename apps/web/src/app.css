@@ -1508,6 +1508,34 @@ textarea.form-input {
 .cal-cell:disabled {
   cursor: default;
 }
+/* Issue #928: the compact month (the personal Abwesenheiten calendar). A modifier of the canonical
+   recipe, joined cells on one card instead of separate tiles, lower rows. */
+.cal-grid--compact {
+  gap: 0;
+  padding: 0;
+}
+.cal-grid--compact .cal-cell {
+  min-height: 62px;
+  padding: 6px 6px 4px;
+  gap: 3px;
+  border: 0;
+  border-radius: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.cal-grid--compact .cal-cell:nth-child(7n) {
+  border-right: 0;
+}
+.cal-grid--compact .cal-cell:not(.cal-other):hover {
+  /* Joined cells share their lines: a hover tints the day, it never recolours a shared border. */
+  border-color: var(--line);
+  background: var(--hover);
+}
+.cal-grid--compact .cal-dow {
+  text-align: left;
+  font-weight: 500;
+  padding: 8px 6px;
+}
 .cal-cell:not(.cal-other):hover {
   border-color: var(--brand);
 }

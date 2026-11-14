@@ -12,8 +12,9 @@
   import PageHeader from "$components/ui/PageHeader.svelte";
   import { isEffectiveLeaveStatus } from "$lib/leave/effective-leave-statuses";
   import Card from "$components/ui/Card.svelte";
-  import KpiStrip, { type KpiItem } from "$components/ui/KpiStrip.svelte";
-  import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
+  import type { KpiItem } from "$components/ui/KpiStrip.svelte";
+  import List from "$components/ui/List.svelte";
+  import ListRow from "$components/ui/ListRow.svelte";
   import TableToolbar, { type ToolbarFilter } from "$components/ui/TableToolbar.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import { matchesSearch } from "$lib/table/search";
@@ -26,7 +27,7 @@
   import LeavePlanControls from "$lib/components/leave/LeavePlanControls.svelte"; // Issue #840 (G-6)
   import AbsenceTimeline from "$lib/components/leave/timeline/AbsenceTimeline.svelte"; // Issue #840 (E-05)
   import AbsenceList from "$lib/components/leave/timeline/AbsenceList.svelte"; // Issue #840 (D-840-11)
-  import { CALENDAR_LEGEND_STYLES, legendFrom } from "$lib/leave/leave-colors";
+  import { CALENDAR_LEGEND_STYLES, legendFrom, leaveTypeColor } from "$lib/leave/leave-colors";
   import { warningSentences } from "$lib/leave-limits/sentences";
   import CalendarDayDetail from "$lib/components/leave/CalendarDayDetail.svelte"; // Phase 303-03 (#265's pattern)
   // Phase 415 (#415): the shared create/edit dialog — replaces this page's own copy of the
@@ -955,19 +956,11 @@
     return `${Number(d)}.${Number(m)}.`;
   }
 
-  // Issue #851 (D-851-04, prototype): the four figures of the Kennzahlenleiste. Resturlaub keeps the
-  // tested wording (vacationCardLabel / vacationCardDelta), the others read the same summary
-  // (deriveVacationSummary) and the sick-day kernel (#595) - nothing is recomputed here.
+  // Issue #928 (v2, owner-approved mockup): Resturlaub is the ONE big figure of the page (label and
+  // „von … gesamt“ line stay the tested vacationCardLabel / vacationCardDelta); the other figures are
+  // the quiet facts below it. They read the same summary (deriveVacationSummary) and the sick-day
+  // kernel (#595) - nothing is recomputed here. „Verfällt“ shows only while a carry-over is at risk.
   let balanceItems = $derived<KpiItem[]>([
-    {
-      label: vacationCardLabel(vacSummaryPlanned),
-      value: vacRemaining === null ? "–" : vacRemaining,
-      format: formatDays,
-      unit: (vacRemaining ?? 0) === 1 ? "Tag" : "Tage",
-      delta: vacationBalance
-        ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
-        : undefined,
-    },
     {
       // `used` counts approved days still ahead as well, so the label says so.
       label: "Genommen & genehmigt",
@@ -978,15 +971,17 @@
         ? `nächster: ${shortDate(nextVacation.startDate)}–${shortDate(nextVacation.endDate)}`
         : "kein Urlaub geplant",
     },
-    {
-      label: "Verfällt",
-      value: !vacationBalance ? "–" : carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0,
-      format: formatDays,
-      unit: (carryDeadlineAhead ? vacSummaryCarryOverRemaining : 0) === 1 ? "Tag" : "Tage",
-      explanation: carryDeadlineAhead
-        ? `Übertrag verfällt am ${shortDate(carryDeadlineAhead)}${carryDeadlineAhead.slice(0, 4)}`
-        : "kein Übertrag offen",
-    },
+    ...(vacationBalance && carryDeadlineAhead && vacSummaryCarryOverRemaining > 0
+      ? [
+          {
+            label: "Verfällt",
+            value: vacSummaryCarryOverRemaining,
+            format: formatDays,
+            unit: vacSummaryCarryOverRemaining === 1 ? "Tag" : "Tage",
+            explanation: `Übertrag verfällt am ${shortDate(carryDeadlineAhead)}${carryDeadlineAhead.slice(0, 4)}`,
+          },
+        ]
+      : []),
     {
       label: "Krankheitstage",
       value: sickDaysYear === null ? "–" : sickDaysYear,
@@ -995,6 +990,119 @@
       explanation: `in ${calYear}`,
     },
   ]);
+  function factValue(item: KpiItem): string {
+    return typeof item.value === "number" && item.format
+      ? item.format(item.value)
+      : String(item.value);
+  }
+
+  // The bar under the big figure: genommen & genehmigt / beantragt / frei, from the same summary.
+  let vacBar = $derived.by(() => {
+    if (!vacationBalance) return null;
+    const used = Math.max(0, vacSummaryUsed);
+    const planned = Math.max(0, vacSummaryPlanned);
+    const free = Math.max(0, vacSummaryLeft);
+    const sum = used + planned + free;
+    if (sum <= 0) return null;
+    return { used, planned, free, sum };
+  });
+
+  // ── Compact dates (Issue #928): „14.–18. Dez.“, „6. Okt. – 2. Nov.“, „12. Juni“ ────────────
+  const MONTH_SHORT = [
+    "Jan.",
+    "Feb.",
+    "März",
+    "Apr.",
+    "Mai",
+    "Juni",
+    "Juli",
+    "Aug.",
+    "Sept.",
+    "Okt.",
+    "Nov.",
+    "Dez.",
+  ];
+  const MONTH_LONG = [
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
+  ];
+  function compactRange(startIso: string, endIso: string): string {
+    const [sy, sm, sd] = startIso.slice(0, 10).split("-").map(Number);
+    const [ey, em, ed] = endIso.slice(0, 10).split("-").map(Number);
+    if (sy === ey && sm === em && sd === ed) return `${sd}. ${MONTH_SHORT[sm - 1]}`;
+    if (sy === ey && sm === em) return `${sd}.–${ed}. ${MONTH_SHORT[sm - 1]}`;
+    const yearSuffix = sy !== ey ? ` ${sy}` : "";
+    return `${sd}. ${MONTH_SHORT[sm - 1]}${yearSuffix} – ${ed}. ${MONTH_SHORT[em - 1]}${sy !== ey ? ` ${ey}` : ""}`;
+  }
+  function dayBadge(iso: string): { month: string; day: number } {
+    const [, m, d] = iso.slice(0, 10).split("-").map(Number);
+    return { month: MONTH_SHORT[m - 1], day: d };
+  }
+
+  // „Als Nächstes“ beside the month: the caller's own coming absences (still running or ahead),
+  // effective or waiting for a decision, earliest first.
+  let upcomingRequests = $derived(
+    myRequests
+      .filter(
+        (r) =>
+          r.endDate.slice(0, 10) >= today &&
+          (r.status === "PENDING" || isEffectiveLeaveStatus(r.status)),
+      )
+      .sort((x, y) => x.startDate.localeCompare(y.startDate))
+      .slice(0, 4),
+  );
+
+  // The Team tab's empty state names the month when one is shown.
+  let teamEmptyText = $derived(
+    activePeriod.zoom === "monat"
+      ? `Im ${MONTH_LONG[Number(urlState.datum.slice(5, 7)) - 1]} ist niemand aus deinem Team weg.`
+      : "In diesem Zeitraum ist niemand aus deinem Team weg.",
+  );
+
+  /** Places an opened „…“ menu or popover below its button, above every clipping container. */
+  function placeMenu(event: Event) {
+    const details = event.currentTarget as HTMLDetailsElement;
+    if (!details.open) return;
+    const button = details.querySelector("summary")?.getBoundingClientRect();
+    const panel = details.querySelector<HTMLElement>("[data-menu-panel]");
+    if (!button || !panel) return;
+    const width = panel.offsetWidth || 180;
+    panel.style.top = `${button.bottom + 6}px`;
+    panel.style.left = `${Math.max(8, Math.min(button.right - width, window.innerWidth - width - 8))}px`;
+  }
+  /** Escape closes an open menu or popover and returns the focus to its button. */
+  function menuKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    for (const d of document.querySelectorAll<HTMLDetailsElement>(
+      "details.lv-menu[open], details.lv-pop[open]",
+    )) {
+      d.removeAttribute("open");
+      d.querySelector("summary")?.focus();
+    }
+  }
+  /** A click outside closes every open menu and popover of the page. */
+  function closeMenusOutside(event: MouseEvent) {
+    for (const d of document.querySelectorAll<HTMLDetailsElement>(
+      "details.lv-menu[open], details.lv-pop[open]",
+    )) {
+      if (!d.contains(event.target as Node)) d.removeAttribute("open");
+    }
+  }
+
+  /** Closes the „…“ menu a menu item sits in (a native details element). */
+  function closeMenu(event: Event) {
+    (event.currentTarget as HTMLElement | null)?.closest("details")?.removeAttribute("open");
+  }
 
   // ── iCal-Download ────────────────────────────────────────────────────────
   let icalDownloading = $state(false);
@@ -1078,18 +1186,12 @@
     filterLeaveType = "";
   }
 
-  const MY_REQ_COLUMNS: DataTableColumn[] = [
-    { key: "type", label: "Art", primary: true },
-    { key: "period", label: "Zeitraum" },
-    { key: "days", label: "Tage", align: "end" },
-    { key: "status", label: "Status" },
-    { key: "note", label: "Anmerkung" },
-    { key: "actions", label: "Aktionen", align: "end" },
-  ];
-
   let pagedMyRequests = $derived(
     filteredMyRequests.slice((myReqPage - 1) * myReqPageSize, myReqPage * myReqPageSize),
   );
+  // Issue #928: coming requests on top, past ones below a quiet divider (within the shown page).
+  let pagedUpcoming = $derived(pagedMyRequests.filter((r) => r.endDate.slice(0, 10) >= today));
+  let pagedPast = $derived(pagedMyRequests.filter((r) => r.endDate.slice(0, 10) < today));
 
   $effect(() => {
     filteredMyRequests.length;
@@ -1101,7 +1203,136 @@
   <title>{pageLabel("/leave")} – Clokr</title>
 </svelte:head>
 
-<svelte:window onmouseup={handleDayMouseUp} />
+<svelte:window onmouseup={handleDayMouseUp} onclick={closeMenusOutside} onkeydown={menuKeydown} />
+
+<!-- Issue #928: one row per own request (Art, compact dates, days, status, „…“ menu). The row,
+     status and action test ids are the ones the table had. -->
+{#snippet requestRow(req: LeaveRequest)}
+  {@const isOwn = req.employeeId === $authStore.user?.employeeId}
+  {@const canEdit = isOwn && req.status === "PENDING"}
+  {@const canCancel = isOwn && req.status === "APPROVED"}
+  {@const noteText =
+    req.status === "REJECTED" && req.reviewNote
+      ? `Begründung: ${req.reviewNote}`
+      : (req.note ?? "")}
+  <ListRow
+    avatar={false}
+    wrap
+    title={typeName(req.typeCode)}
+    subtitle="{compactRange(req.startDate, req.endDate)} · {leaveDaysLabel(
+      Number(req.days),
+      req.halfDay,
+      req.typeCode,
+    )}"
+    context={noteText || undefined}
+    testId={`leave-mine-row-${req.id}`}
+    rowId={`request-${req.id}`}
+    highlight={highlightRequestId === req.id}
+  >
+    {#snippet leading()}
+      <span
+        class="lv-type-dot"
+        style:background="var({leaveTypeColor(req.typeCode).fill})"
+        aria-hidden="true"
+      ></span>
+    {/snippet}
+    {#snippet meta()}
+      {#if req.lastDaysAdjustment}
+        {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
+        <!-- Phase 107-07 (D-19/D-21): persistent, always the latest adjustment only. -->
+        <span
+          class={adjBadge.badgeClass}
+          data-testid={`leave-mine-row-${req.id}-adjustment-badge`}
+          title={adjBadge.tooltip}
+        >
+          {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
+            ? "+"
+            : "−"}{#if adjBadge.bold}<strong>{formatDays(adjBadge.delta)}</strong
+            >{:else}{formatDays(adjBadge.delta)}{/if} Tag(e)
+        </span>
+      {/if}
+      {#if req.daysProvisional}
+        <!-- Phase 107-07 (D-12): --warn tone - a provisional request is fully valid. -->
+        <span
+          class="badge badge-yellow"
+          data-testid={`leave-mine-row-${req.id}-provisional-badge`}
+          title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
+        >
+          Vorläufig
+        </span>
+      {/if}
+      {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+        <span
+          class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
+          title={req.attestPresent ? "Attest liegt vor." : KARENZ_BADGE_TOOLTIP}
+        >
+          {req.attestPresent ? "Attest" : "Kein Attest"}
+        </span>
+      {/if}
+      <!-- Phase 104-10 (D-29): § 9 status; the text carries the meaning, not colour alone. -->
+      {#if req.section9Status === "AU_PENDING"}
+        <span class="badge badge-yellow" data-testid="section9-list-badge">AU ausstehend</span>
+      {:else if req.section9Status === "CONFIRMED"}
+        <span class="badge badge-gray" data-testid="section9-list-badge">§ 9 gutgeschrieben</span>
+      {:else if req.section9Status === "REJECTED"}
+        <span class="badge badge-gray" data-testid="section9-list-badge">AU abgelehnt</span>
+      {/if}
+    {/snippet}
+    {#snippet trailing()}
+      <span class="lv-row-end">
+        <span
+          class="badge {statusClass(req.status)}"
+          data-testid={`leave-mine-row-${req.id}-status-badge`}>{statusLabel(req.status)}</span
+        >
+        {#if canEdit || canCancel}
+          <!-- An open request can be changed or withdrawn, an approved one cancelled (the server
+               decides; the menu offers exactly what the status allows). -->
+          <details class="lv-menu" ontoggle={placeMenu}>
+            <summary
+              class="lv-menu-btn"
+              aria-label="Aktionen für {typeName(req.typeCode)} {compactRange(
+                req.startDate,
+                req.endDate,
+              )}">…</summary
+            >
+            <div class="lv-menu-panel" data-menu-panel role="group" aria-label="Aktionen">
+              {#if canEdit}
+                <button
+                  type="button"
+                  data-testid={`leave-mine-row-${req.id}-edit`}
+                  onclick={(e) => {
+                    closeMenu(e);
+                    openEditForm(req);
+                  }}>Bearbeiten</button
+                >
+                <button
+                  type="button"
+                  class="lv-menu-danger"
+                  data-testid={`leave-mine-row-${req.id}-withdraw`}
+                  onclick={(e) => {
+                    closeMenu(e);
+                    openCancelDialog(req);
+                  }}>Zurückziehen</button
+                >
+              {/if}
+              {#if canCancel}
+                <button
+                  type="button"
+                  class="lv-menu-danger"
+                  data-testid={`leave-mine-row-${req.id}-cancel`}
+                  onclick={(e) => {
+                    closeMenu(e);
+                    openCancelDialog(req);
+                  }}>Stornieren</button
+                >
+              {/if}
+            </div>
+          </details>
+        {/if}
+      </span>
+    {/snippet}
+  </ListRow>
+{/snippet}
 
 <!-- Phase 73-04 (D-05): `data-testid="leave-page"` is the stable surface anchor.
      Wrapped via `display:contents` so the marker contributes nothing to layout
@@ -1114,6 +1345,42 @@
     subtitle="Urlaub, Krankmeldungen und deine Wünsche für die Urlaubsplanung"
   >
     {#snippet actions()}
+      <!-- Issue #928: the former export box is a quiet button with a small popover (both .ics
+           downloads, unchanged). -->
+      <details class="lv-pop" data-testid="leave-ical" ontoggle={placeMenu}>
+        <summary class="btn btn-ghost btn-sm">Kalender exportieren</summary>
+        <div class="lv-pop-panel" data-menu-panel role="group" aria-label="Kalender exportieren">
+          <p class="lv-pop-hint">
+            Als .ics-Datei für Outlook, Google Kalender oder Apple Kalender.
+          </p>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            onclick={(e) => {
+              closeMenu(e);
+              void downloadIcal("personal");
+            }}
+            disabled={icalDownloading}
+            aria-busy={icalDownloading}
+          >
+            {#if icalDownloading}<Spinner />{/if}
+            Meine Abwesenheiten
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            onclick={(e) => {
+              closeMenu(e);
+              void downloadIcal("team");
+            }}
+            disabled={icalDownloading}
+            aria-busy={icalDownloading}
+          >
+            {#if icalDownloading}<Spinner />{/if}
+            Team-Abwesenheiten
+          </button>
+        </div>
+      </details>
       {#if !showForm}
         <button
           data-testid="leave-report-sick"
@@ -1138,9 +1405,56 @@
   <!-- ── Kennzahlen — Phase 851 (prototype): Resturlaub, Genommen, Verfällt, Krankheitstage. The
        hours account lives in Ich › Konto now (#594), so this page shows no saldo. `Resturlaub` keeps its
        one meaning (Phase 114, RU-01/02/04): label from vacationCardLabel(). -->
-  <div data-testid="leave-balance">
-    <KpiStrip ariaLabel="Urlaub und Krankheitstage" items={balanceItems} />
-  </div>
+  <section
+    class="lv-balance card"
+    data-testid="leave-balance"
+    aria-label="Urlaub und Krankheitstage"
+  >
+    <div class="lv-balance-main">
+      <div class="lv-balance-figure">
+        <span class="lv-balance-label">{vacationCardLabel(vacSummaryPlanned)}</span>
+        <span class="lv-balance-big"
+          >{vacRemaining === null ? "–" : formatDays(vacRemaining)}<span class="lv-balance-unit"
+            >{(vacRemaining ?? 0) === 1 ? "Tag" : "Tage"}</span
+          ></span
+        >
+        {#if vacationBalance}
+          <span class="lv-balance-sub"
+            >{vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)}</span
+          >
+        {/if}
+      </div>
+      {#if vacBar}
+        <div class="lv-bar-wrap">
+          <div class="lv-bar" aria-hidden="true">
+            <span class="lv-bar-used" style:flex-grow={vacBar.used}></span>
+            <span class="lv-bar-planned" style:flex-grow={vacBar.planned}></span>
+            <span class="lv-bar-free" style:flex-grow={vacBar.free}></span>
+          </div>
+          <ul class="lv-bar-legend">
+            <li>
+              <span class="lv-key lv-key--used"></span>{formatDays(vacBar.used)} genommen &amp; genehmigt
+            </li>
+            <li>
+              <span class="lv-key lv-key--planned"></span>{formatDays(vacBar.planned)} beantragt
+            </li>
+            <li><span class="lv-key lv-key--free"></span>{formatDays(vacBar.free)} frei</li>
+          </ul>
+        </div>
+      {/if}
+    </div>
+    <dl class="lv-facts">
+      {#each balanceItems as item (item.label)}
+        <div class="lv-fact">
+          <dt>{item.label}</dt>
+          <dd>
+            <strong>{factValue(item)} {item.unit ?? ""}</strong>
+            {#if item.explanation}<span class="lv-fact-note">{item.explanation}</span>{/if}
+          </dd>
+        </div>
+      {/each}
+    </dl>
+  </section>
 
   <!-- ── The one toolbar: tabs, period, zoom (Issue #840, E-01, D-840-13) ─────────────────── -->
   <!-- The KPI cards above stay on every tab. The tab ids are the URL's (`tab=`); the test ids keep
@@ -1154,7 +1468,9 @@
     {activeTab}
     onTabChange={selectTab}
     period={activePeriod}
-    zooms={activeTab === "team" || activeTab === "planung" ? TIMELINE_ZOOMS : []}
+    zooms={activeTab === "team" || (activeTab === "planung" && planControls !== null)
+      ? TIMELINE_ZOOMS
+      : []}
     zoom={activeZoom}
     onZoomChange={(zoom) => void navigate({ zoom }, true)}
     onShift={(step) =>
@@ -1213,116 +1529,116 @@
       <!-- The entitlement figures of the viewed year; a year switch shows the skeleton, never the
            numbers of the year just left (issue #122). -->
 
-      <div class="cal-section card card-animate">
-        <!-- Wochentag-Header -->
-        <div class="cal-grid cal-header-row">
-          {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
-            <div class="cal-dow">{wd}</div>
-          {/each}
-        </div>
-
-        <!-- Tage -->
-        {#if calLoading}
-          <div class="cal-grid">
-            {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+      <div class="lv-cal-layout">
+        <div class="cal-section card card-animate">
+          <!-- Wochentag-Header -->
+          <div class="cal-grid cal-grid--compact cal-header-row">
+            {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
+              <div class="cal-dow">{wd}</div>
+            {/each}
           </div>
-        {:else}
-          <div class="cal-grid">
-            {#each calDays as day (day.dateStr)}
-              {@const entries = calMap.get(day.dateStr) ?? []}
-              {@const holidays = entries.filter((e) => e.isHoliday)}
-              {@const dayAbsences = entries.filter((e) => isDrawnInCalendar(e))}
-              {@const isHoliday = holidays.length > 0}
-              {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
-              <div
-                class="cal-cell"
-                class:cal-current={day.isCurrentMonth}
-                class:cal-other={!day.isCurrentMonth}
-                class:cal-today={day.isToday}
-                class:cal-weekend={day.isWeekend && day.isCurrentMonth}
-                class:cal-holiday={isHoliday && day.isCurrentMonth}
-                class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
-                role={day.isCurrentMonth ? "button" : undefined}
-                tabindex={day.isCurrentMonth ? 0 : undefined}
-                onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
-                onmouseenter={() => handleDayMouseEnter(day.dateStr)}
-                onkeydown={(e) => {
-                  if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
-                    e.preventDefault();
-                    pendingInitialStart = day.dateStr;
-                    pendingInitialEnd = day.dateStr;
-                    editingRequest = null;
-                    showForm = true;
-                  }
-                }}
-              >
-                <span class="cal-day-num">{day.dayNum}</span>
-                {#if isHoliday && day.isCurrentMonth}
-                  <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
-                    {holidays[0].firstName}
-                  </div>
-                {/if}
-                <div class="cal-chips">
-                  {#each Array(calLanes.totalLanes) as _, laneIdx (laneIdx)}
-                    {@const e = dayAbsences.find((a) => calLanes.laneById.get(a.id) === laneIdx)}
-                    {#if e}
-                      {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
-                      {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
-                      {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
-                      <!-- #840 (E-03): every bar here is the caller's own (`scope=own`), so the type is always theirs
+
+          <!-- Tage -->
+          {#if calLoading}
+            <div class="cal-grid cal-grid--compact">
+              {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+            </div>
+          {:else}
+            <div class="cal-grid cal-grid--compact">
+              {#each calDays as day (day.dateStr)}
+                {@const entries = calMap.get(day.dateStr) ?? []}
+                {@const holidays = entries.filter((e) => e.isHoliday)}
+                {@const dayAbsences = entries.filter((e) => isDrawnInCalendar(e))}
+                {@const isHoliday = holidays.length > 0}
+                {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
+                <div
+                  class="cal-cell"
+                  class:cal-current={day.isCurrentMonth}
+                  class:cal-other={!day.isCurrentMonth}
+                  class:cal-today={day.isToday}
+                  class:cal-weekend={day.isWeekend && day.isCurrentMonth}
+                  class:cal-holiday={isHoliday && day.isCurrentMonth}
+                  class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
+                  role={day.isCurrentMonth ? "button" : undefined}
+                  tabindex={day.isCurrentMonth ? 0 : undefined}
+                  onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
+                  onmouseenter={() => handleDayMouseEnter(day.dateStr)}
+                  onkeydown={(e) => {
+                    if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
+                      e.preventDefault();
+                      pendingInitialStart = day.dateStr;
+                      pendingInitialEnd = day.dateStr;
+                      editingRequest = null;
+                      showForm = true;
+                    }
+                  }}
+                >
+                  <span class="cal-day-num">{day.dayNum}</span>
+                  {#if isHoliday && day.isCurrentMonth}
+                    <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
+                      {holidays[0].firstName}
+                    </div>
+                  {/if}
+                  <div class="cal-chips">
+                    {#each Array(calLanes.totalLanes) as _, laneIdx (laneIdx)}
+                      {@const e = dayAbsences.find((a) => calLanes.laneById.get(a.id) === laneIdx)}
+                      {#if e}
+                        {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
+                        {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
+                        {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                        <!-- #840 (E-03): every bar here is the caller's own (`scope=own`), so the type is always theirs
                          to see; the flag is false on purpose, which makes a row that is not theirs
                          (it cannot arrive) render neutral instead of naming a type. -->
-                      {@const _vis = resolveChipVisual(e, false)}
-                      <!-- Phase 104-10 (D-28/D-29): the § 9 marker only applies to the SPECIFIC
+                        {@const _vis = resolveChipVisual(e, false)}
+                        <!-- Phase 104-10 (D-28/D-29): the § 9 marker only applies to the SPECIFIC
                          days the server named in section9Days — a multi-day bar can be
                          partially marked. -->
-                      {@const _section9OnDay = !!(
-                        e.section9 && e.section9Days?.includes(day.dateStr)
-                      )}
-                      <div
-                        class="cal-chip"
-                        class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
-                        class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
-                        class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
-                        class:cal-chip--pending={e.status === "PENDING" ||
-                          e.status === "CANCELLATION_REQUESTED"}
-                        class:cal-chip--own={e.isOwn}
-                        class:cal-chip--section9-superseded={_section9OnDay &&
-                          e.section9 === "SUPERSEDED"}
-                        style:background={_vis.background}
-                        style:color={_vis.textColor}
-                        title="{e.firstName} {e.lastName}{_vis.typeLabel
-                          ? ' · ' + _vis.typeLabel
-                          : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
-                      >
-                        {#if _showLabel}
-                          <span class="cal-chip-name">{e.firstName}</span>
-                          <span class="cal-chip-type">{_vis.chipLabel}</span>
-                        {/if}
-                        {#if _section9OnDay && (e.section9 === "CONFIRMED" || e.section9 === "AU_PENDING")}
-                          {@const _isConfirmedSection9 = e.section9 === "CONFIRMED"}
-                          <span
-                            class="section9-chip-badge"
-                            class:section9-chip-badge--pending={!_isConfirmedSection9}
-                            data-testid="section9-cell-badge"
-                            title={_isConfirmedSection9
-                              ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet"
-                              : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet"}
-                          >
-                            <span class="sr-only"
-                              >{_isConfirmedSection9
-                                ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet: "
-                                : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet: "}</span
-                            >{_isConfirmedSection9 ? "§ 9" : "AU"}
-                          </span>
-                        {/if}
-                      </div>
-                    {:else}
-                      <div class="cal-chip-placeholder"></div>
-                    {/if}
-                  {/each}
-                </div>
-                <!-- Tap target for the day-detail sheet (#303, D-09). Shown only below 700px —
+                        {@const _section9OnDay = !!(
+                          e.section9 && e.section9Days?.includes(day.dateStr)
+                        )}
+                        <div
+                          class="cal-chip"
+                          class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
+                          class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
+                          class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
+                          class:cal-chip--pending={e.status === "PENDING" ||
+                            e.status === "CANCELLATION_REQUESTED"}
+                          class:cal-chip--own={e.isOwn}
+                          class:cal-chip--section9-superseded={_section9OnDay &&
+                            e.section9 === "SUPERSEDED"}
+                          style:background={_vis.background}
+                          style:color={_vis.textColor}
+                          title="{e.firstName} {e.lastName}{_vis.typeLabel
+                            ? ' · ' + _vis.typeLabel
+                            : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
+                        >
+                          {#if _showLabel}
+                            <span class="cal-chip-type">{_vis.chipLabel}</span>
+                          {/if}
+                          {#if _section9OnDay && (e.section9 === "CONFIRMED" || e.section9 === "AU_PENDING")}
+                            {@const _isConfirmedSection9 = e.section9 === "CONFIRMED"}
+                            <span
+                              class="section9-chip-badge"
+                              class:section9-chip-badge--pending={!_isConfirmedSection9}
+                              data-testid="section9-cell-badge"
+                              title={_isConfirmedSection9
+                                ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet"
+                                : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet"}
+                            >
+                              <span class="sr-only"
+                                >{_isConfirmedSection9
+                                  ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet: "
+                                  : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet: "}</span
+                              >{_isConfirmedSection9 ? "§ 9" : "AU"}
+                            </span>
+                          {/if}
+                        </div>
+                      {:else}
+                        <div class="cal-chip-placeholder"></div>
+                      {/if}
+                    {/each}
+                  </div>
+                  <!-- Tap target for the day-detail sheet (#303, D-09). Shown only below 700px —
                    see `.cal-day-tap` in the style block — because that is where the bar's type
                    label leaves the screen and where no finger can open a `title` tooltip.
                    UNLIKE #265's whole-cell trigger on /team/leave, this is a CORNER target
@@ -1332,64 +1648,64 @@
                    of that primary action and — because mousedown still bubbles — fire both the
                    sheet and the new-request modal. Propagation is stopped below on both
                    mousedown and keydown so this trigger cannot co-fire either handler. -->
-                {#if dayAbsences.length > 0}
-                  <button
-                    type="button"
-                    class="cal-day-tap"
-                    data-testid="leave-cal-day-tap"
-                    aria-label="Abwesenheiten am {fmtDate(day.dateStr)} anzeigen"
-                    onclick={() => openDayDetail(day.dateStr)}
-                    onmousedown={(e) => e.stopPropagation()}
-                    onkeydown={(e) => e.stopPropagation()}
-                  >
-                    <span class="cal-day-tap-hint" aria-hidden="true">i</span>
-                  </button>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
+                  {#if dayAbsences.length > 0}
+                    <button
+                      type="button"
+                      class="cal-day-tap"
+                      data-testid="leave-cal-day-tap"
+                      aria-label="Abwesenheiten am {fmtDate(day.dateStr)} anzeigen"
+                      onclick={() => openDayDetail(day.dateStr)}
+                      onmousedown={(e) => e.stopPropagation()}
+                      onkeydown={(e) => e.stopPropagation()}
+                    >
+                      <span class="cal-day-tap-hint" aria-hidden="true">i</span>
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
 
-        <!-- Legend: the one component; the types are the ones this calendar paints (#840, D-840-10). -->
-        <LeaveLegend
-          typeCodes={calLegend.typeCodes}
-          styles={calLegend.styles}
-          markings={{ holiday: true }}
-          holidayLook="calendar"
-        />
-      </div>
+          <!-- Legend: the one component; the types are the ones this calendar paints (#840, D-840-10). -->
+          <LeaveLegend
+            typeCodes={calLegend.typeCodes}
+            styles={calLegend.styles}
+            markings={{ holiday: true }}
+            holidayLook="calendar"
+          />
+        </div>
 
-      <!-- iCal-Download -->
-      <div class="ical-section">
-        <div class="ical-header">
-          <span class="ical-icon">📥</span>
-          <div>
-            <p class="ical-title">Kalender exportieren</p>
-            <p class="ical-desc">
-              Abwesenheiten als .ics-Datei herunterladen (Outlook, Google Calendar, Apple Kalender)
-            </p>
-          </div>
-        </div>
-        <div class="ical-actions">
-          <button
-            class="btn btn-ghost btn-sm"
-            onclick={() => downloadIcal("personal")}
-            disabled={icalDownloading}
-            aria-busy={icalDownloading}
-          >
-            {#if icalDownloading}<Spinner />{/if}
-            Meine Abwesenheiten
-          </button>
-          <button
-            class="btn btn-ghost btn-sm"
-            onclick={() => downloadIcal("team")}
-            disabled={icalDownloading}
-            aria-busy={icalDownloading}
-          >
-            {#if icalDownloading}<Spinner />{/if}
-            Team-Abwesenheiten
-          </button>
-        </div>
+        <!-- Issue #928: the caller's coming absences beside the month (phone: below it). -->
+        <section class="lv-next card card-animate" aria-labelledby="lv-next-title">
+          <h2 class="lv-next-title" id="lv-next-title">Als Nächstes</h2>
+          {#if upcomingRequests.length === 0}
+            <p class="lv-next-empty">Gerade ist nichts geplant.</p>
+          {:else}
+            <List ariaLabel="Deine nächsten Abwesenheiten" testId="leave-next">
+              {#each upcomingRequests as req (req.id)}
+                {@const badge = dayBadge(req.startDate)}
+                <ListRow
+                  avatar={false}
+                  title="{typeName(req.typeCode)} · {leaveDaysLabel(
+                    Number(req.days),
+                    req.halfDay,
+                    req.typeCode,
+                  )}"
+                  subtitle={compactRange(req.startDate, req.endDate)}
+                >
+                  {#snippet leading()}
+                    <span class="lv-date" aria-hidden="true"
+                      ><small>{badge.month}</small><b>{badge.day}</b></span
+                    >
+                  {/snippet}
+                  {#snippet trailing()}
+                    <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
+                  {/snippet}
+                </ListRow>
+              {/each}
+            </List>
+          {/if}
+        </section>
       </div>
     </div>
   {/if}
@@ -1425,120 +1741,28 @@
           </div>
         {:else}
           <div data-testid="leave-mine-table">
-            <DataTable
-              caption="Meine Anträge {calYear}"
-              columns={MY_REQ_COLUMNS}
-              rows={pagedMyRequests}
-              rowKey={(req) => req.id}
-              rowTestId={(req) => `leave-mine-row-${req.id}`}
-              rowId={(req) => `request-${req.id}`}
-              rowHighlight={(req) => highlightRequestId === req.id}
-              filtered={filteredMyRequests.length === 0}
-              onResetFilters={resetMyReqFilters}
-            >
-              {#snippet cell(req, column)}
-                {@const isOwn = req.employeeId === $authStore.user?.employeeId}
-                {#if column.key === "type"}
-                  {typeName(req.typeCode)}
-                {:else if column.key === "period"}
-                  {req.startDate === req.endDate
-                    ? fmtDate(req.startDate)
-                    : `${fmtDate(req.startDate)} – ${fmtDate(req.endDate)}`}
-                {:else if column.key === "days"}
-                  {leaveDaysLabel(Number(req.days), req.halfDay, req.typeCode)}
-                {:else if column.key === "status"}
-                  <span
-                    class="badge {statusClass(req.status)}"
-                    data-testid={`leave-mine-row-${req.id}-status-badge`}
-                    >{statusLabel(req.status)}</span
-                  >
-                  {#if req.lastDaysAdjustment}
-                    {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
-                    <!-- Phase 107-07 (D-19/D-21): persistent — NOT tied to the triggering
-                           bell-notification's read/dismissed state, always the latest
-                           adjustment only. Reading order: status, then this, then Vorläufig
-                           (UI-SPEC §Visual Hierarchy — this reports something that
-                           happened, Vorläufig only a standing condition). -->
-                    <span
-                      class={adjBadge.badgeClass}
-                      data-testid={`leave-mine-row-${req.id}-adjustment-badge`}
-                      title={adjBadge.tooltip}
-                    >
-                      {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
-                        ? "+"
-                        : "−"}{#if adjBadge.bold}<strong>{formatDays(adjBadge.delta)}</strong
-                        >{:else}{formatDays(adjBadge.delta)}{/if} Tag(e)
-                    </span>
-                  {/if}
-                  {#if req.daysProvisional}
-                    <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
-                           provisional request is fully valid and payable today. -->
-                    <span
-                      class="badge badge-yellow"
-                      data-testid={`leave-mine-row-${req.id}-provisional-badge`}
-                      title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
-                    >
-                      Vorläufig
-                    </span>
-                  {/if}
-                  {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                    <span
-                      class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
-                      title={req.attestPresent ? "Attest liegt vor." : KARENZ_BADGE_TOOLTIP}
-                    >
-                      {req.attestPresent ? "Attest" : "Kein Attest"}
-                    </span>
-                  {/if}
-                  <!-- Phase 104-10 (D-29): § 9 status alongside the existing SICK badge —
-                         also shown on the overlapping VACATION row so a manager can see the
-                         case from either side. Text label carries the meaning, not colour
-                         alone (Phase-97 UAT lesson). -->
-                  {#if req.section9Status === "AU_PENDING"}
-                    <span class="badge badge-yellow" data-testid="section9-list-badge">
-                      AU ausstehend
-                    </span>
-                  {:else if req.section9Status === "CONFIRMED"}
-                    <span class="badge badge-gray" data-testid="section9-list-badge">
-                      § 9 gutgeschrieben
-                    </span>
-                  {:else if req.section9Status === "REJECTED"}
-                    <span class="badge badge-gray" data-testid="section9-list-badge">
-                      AU abgelehnt
-                    </span>
-                  {/if}
-                {:else if column.key === "note"}
-                  <span class="note-cell text-muted">
-                    {#if req.status === "REJECTED" && req.reviewNote}
-                      <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
-                    {:else}
-                      {req.note ?? "—"}
-                    {/if}
-                  </span>
-                {:else}
-                  <div class="action-cell__group">
-                    {#if isOwn && req.status === "PENDING"}
-                      <button
-                        data-testid={`leave-mine-row-${req.id}-edit`}
-                        class="btn btn-sm btn-ghost"
-                        onclick={() => openEditForm(req)}>Bearbeiten</button
-                      >
-                      <button
-                        data-testid={`leave-mine-row-${req.id}-withdraw`}
-                        class="btn btn-sm btn-ghost text-red"
-                        onclick={() => openCancelDialog(req)}>Zurückziehen</button
-                      >
-                    {/if}
-                    {#if isOwn && req.status === "APPROVED"}
-                      <button
-                        data-testid={`leave-mine-row-${req.id}-cancel`}
-                        class="btn btn-sm btn-ghost text-red"
-                        onclick={() => openCancelDialog(req)}>Stornieren</button
-                      >
-                    {/if}
-                  </div>
-                {/if}
-              {/snippet}
-            </DataTable>
+            {#if filteredMyRequests.length === 0}
+              <EmptyState
+                icon="search"
+                title="Keine passenden Anträge"
+                description="Passe die Suche oder die Filter an."
+              />
+            {/if}
+            {#if pagedUpcoming.length > 0}
+              <List ariaLabel="Kommende Anträge {calYear}" testId="leave-mine-upcoming">
+                {#each pagedUpcoming as req (req.id)}
+                  {@render requestRow(req)}
+                {/each}
+              </List>
+            {/if}
+            {#if pagedPast.length > 0}
+              <p class="lv-divider">Vergangen</p>
+              <List ariaLabel="Vergangene Anträge {calYear}" testId="leave-mine-past">
+                {#each pagedPast as req (req.id)}
+                  {@render requestRow(req)}
+                {/each}
+              </List>
+            {/if}
             <Pagination
               total={filteredMyRequests.length}
               bind:page={myReqPage}
@@ -1554,18 +1778,19 @@
   {#if activeTab === "team"}
     <div role="tabpanel" id="leave-panel-team" aria-labelledby="leave-tab-team">
       <div class="card card-animate overview-card" data-testid="leave-team-overview">
-        <LeaveLegend
-          typeCodes={teamLegend.typeCodes}
-          styles={teamLegend.styles}
-          markings={teamLegend.markings}
-          closedHint={teamLegend.closedHint}
-        />
+        <!-- Issue #928: the legend explains bars, so it shows only when there are some. -->
+        {#if teamRows.length > 0}
+          <LeaveLegend
+            typeCodes={teamLegend.typeCodes}
+            styles={teamLegend.styles}
+            markings={teamLegend.markings}
+            closedHint={teamLegend.closedHint}
+          />
+        {/if}
         {#if teamRows.length === 0 && teamLoading}
           <Skeleton shape="block" height="240px" />
         {:else if teamRows.length === 0}
-          <p class="overview-empty" data-testid="leave-team-empty">
-            Keine Abwesenheiten in diesem Zeitraum.
-          </p>
+          <p class="overview-empty" data-testid="leave-team-empty">{teamEmptyText}</p>
         {:else if isMobile}
           <AbsenceList rows={teamRows} period={activePeriod} holidays={teamHolidays} />
         {:else}
@@ -1712,22 +1937,9 @@
   .text-red {
     color: var(--bad);
   }
-  .note-cell {
-    display: inline-block;
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 
   /* Issue #442 — flex layout lives on the inner wrapper, never on the td itself, so the cell
      keeps display: table-cell and lines up with the rest of the row even when empty. */
-  .action-cell__group {
-    display: flex;
-    gap: 0.25rem;
-    align-items: center;
-    flex-wrap: wrap;
-  }
 
   /* ── Buttons ──────────────────────────────────────────────────────── */
   .btn-danger {
@@ -1951,13 +2163,6 @@
     outline-offset: -2px;
     opacity: 0.9;
   }
-  .cal-chip-name {
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 60px;
-  }
   .cal-chip-type {
     font-size: 0.6875rem;
     opacity: 0.85;
@@ -2028,48 +2233,8 @@
     font-size: 0.75rem;
   }
   /* ── iCal ────────────────────────────────────────────────────────── */
-  .ical-section {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    background: var(--sunk);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 0.875rem 1.25rem;
-    margin-bottom: 1.25rem;
-    flex-wrap: wrap;
-  }
-  .ical-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex: 1;
-    min-width: 0;
-  }
-  .ical-icon {
-    font-size: 1.25rem;
-    flex-shrink: 0;
-  }
-  .ical-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    margin: 0;
-    color: var(--text);
-  }
-  .ical-desc {
-    font-size: 0.8125rem;
-    color: var(--text-2);
-    margin: 0;
-  }
   /* Wraps and may shrink to its widest button: at 320 px the two buttons side by side were
      wider than the page (Issue #564). */
-  .ical-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    min-width: 0;
-  }
 
   /* ── Responsive ───────────────────────────────────────────────────── */
   @media (max-width: 700px) {
@@ -2149,6 +2314,303 @@
   @media (max-width: 480px) {
     .form-grid {
       grid-template-columns: 1fr;
+    }
+  }
+  /* ── Issue #928: Resturlaub as the one big figure, the facts quiet below ─────────────────── */
+  .lv-balance {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    padding: var(--s-5) var(--s-6);
+  }
+  .lv-balance-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: var(--s-4) var(--s-8);
+  }
+  .lv-balance-figure {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .lv-balance-label {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+  .lv-balance-big {
+    font-size: 40px;
+    font-weight: 600;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+  .lv-balance-unit {
+    font-size: 17px;
+    font-weight: 500;
+    margin-left: 6px;
+    color: var(--text-2);
+  }
+  .lv-balance-sub {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+  .lv-bar-wrap {
+    flex: 1 1 320px;
+    max-width: 520px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .lv-bar {
+    display: flex;
+    gap: 3px;
+    height: 8px;
+  }
+  .lv-bar span {
+    flex-basis: 0;
+    border-radius: 4px;
+    min-width: 0;
+  }
+  .lv-bar-used,
+  .lv-key--used {
+    background: var(--text-3);
+  }
+  .lv-bar-planned,
+  .lv-key--planned {
+    background: var(--brand);
+  }
+  .lv-bar-free,
+  .lv-key--free {
+    background: var(--ok);
+  }
+  .lv-bar-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .lv-bar-legend li {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .lv-key {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+  }
+  .lv-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 28px;
+    margin: 0;
+    padding-top: var(--s-3);
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-sm);
+  }
+  .lv-fact {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .lv-fact dt {
+    color: var(--text-2);
+  }
+  .lv-fact dd {
+    margin: 0;
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .lv-fact dd strong {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .lv-fact-note {
+    color: var(--text-3);
+    font-size: var(--fs-xs);
+  }
+
+  /* ── Head: the export popover (native details) ───────────────────────────────────────────── */
+  .lv-pop {
+    position: relative;
+  }
+  .lv-pop > summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  .lv-pop > summary::-webkit-details-marker {
+    display: none;
+  }
+  .lv-pop-panel {
+    position: fixed;
+    z-index: 30;
+    width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow-pop);
+  }
+  .lv-pop-hint {
+    margin: 0;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    line-height: 1.45;
+  }
+
+  /* ── Kalender: the month and „Als Nächstes“ ──────────────────────────────────────────────── */
+  .lv-cal-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr);
+    gap: var(--s-5);
+    align-items: start;
+  }
+  .lv-cal-layout .cal-section {
+    margin-bottom: 0;
+  }
+  .lv-next {
+    padding: var(--s-4) 0 0;
+    overflow: hidden;
+  }
+  .lv-next-title {
+    margin: 0 var(--s-4) var(--s-3);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .lv-next-empty {
+    margin: 0 var(--s-4) var(--s-4);
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+  }
+  .lv-date {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    background: var(--sunk);
+    line-height: 1.1;
+  }
+  .lv-date small {
+    font-size: 10.5px;
+    color: var(--text-2);
+  }
+  .lv-date b {
+    font-size: 16px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Anträge: one row per request ─────────────────────────────────────────────────────────── */
+  .lv-type-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+  }
+  .lv-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: var(--s-4) 0 var(--s-2);
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+  }
+  .lv-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
+  .lv-row-end {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .lv-menu {
+    position: relative;
+  }
+  .lv-menu-btn {
+    list-style: none;
+    display: inline-grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--text-2);
+    font-weight: 700;
+  }
+  .lv-menu-btn::-webkit-details-marker {
+    display: none;
+  }
+  .lv-menu-btn:hover,
+  .lv-menu[open] .lv-menu-btn {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .lv-menu-btn:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  .lv-menu-panel {
+    position: fixed;
+    z-index: 30;
+    min-width: 170px;
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow-pop);
+  }
+  .lv-menu-panel button {
+    text-align: left;
+    background: none;
+    border: 0;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font: inherit;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .lv-menu-panel button:hover,
+  .lv-menu-panel button:focus-visible {
+    background: var(--hover);
+  }
+  .lv-menu-panel .lv-menu-danger {
+    color: var(--bad);
+  }
+
+  @media (max-width: 1100px) {
+    .lv-cal-layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 760px) {
+    .lv-balance {
+      padding: var(--s-4);
+    }
+    .lv-balance-big {
+      font-size: 34px;
+    }
+    .lv-facts {
+      flex-direction: column;
     }
   }
 </style>
