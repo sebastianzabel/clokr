@@ -264,84 +264,31 @@ describe("#442 — /team/leave source pin", () => {
   });
 });
 
-// ── Group B: /leave (own requests) ──────────────────────────────────────────
-// Issue #851 (D-851-04): the own-requests table is the DataTable block now. The <td> belongs to the
-// block (DataTable.svelte), the flex wrapper of the action column to the page. Both style blocks are
-// injected, the markup is the block's own table DOM, so the #442 property is measured on what renders.
-const DATA_TABLE = readRepoFile(
-  "../lib/components/ui/DataTable.svelte",
-  "src/lib/components/ui/DataTable.svelte",
-);
-
-function leaveStyleBlock(): string {
-  return `${styleBlockOf(DATA_TABLE)}\n${styleBlockOf(LEAVE_PAGE)}`;
-}
-
-function leaveTableMarkup(): string {
-  return `
-    <div class="dt-root"><div class="dt-scroll">
-    <table class="data-table dt-table">
-      <tbody>
-        <tr>
-          <td data-label="Art" class="dt-primary-cell">Row with action</td>
-          <td data-label="Aktionen" class="dt-end">
-            <div class="action-cell__group">
-              <button class="btn btn-sm btn-ghost">Bearbeiten</button>
-            </div>
-          </td>
-        </tr>
-        <tr>
-          <td data-label="Art" class="dt-primary-cell">Row without action</td>
-          <td data-label="Aktionen" class="dt-end">
-            <div class="action-cell__group"></div>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    </div></div>
-  `;
-}
-
-describe.each([PHONE_WIDTH, DESKTOP_WIDTH])(
-  "#442 — /leave action cell at %ipx (measured)",
-  (width) => {
-    it("the action td of the DataTable stays table-cell, with and without an action", () => {
-      probeAt(width, cssForViewport(leaveStyleBlock(), width));
-      document.body.innerHTML = leaveTableMarkup();
-      const cells = document.querySelectorAll('td[data-label="Aktionen"]');
-      expect(cells.length).toBe(2);
-      cells.forEach((cell) => {
-        expect(getComputedStyle(cell).display).toBe("table-cell");
-      });
-    });
-
-    it("the inner .action-cell__group carries the flex layout", () => {
-      probeAt(width, cssForViewport(leaveStyleBlock(), width));
-      document.body.innerHTML = leaveTableMarkup();
-      const group = document.querySelector(".action-cell__group")!;
-      expect(getComputedStyle(group).display).toBe("flex");
-    });
-  },
-);
-
-describe("#442 — /leave style blocks really loaded — anti-vacuity", () => {
-  it("both the DataTable and the page rules are in the injected block", () => {
-    const block = leaveStyleBlock();
-    expect(block).toContain(".dt-table");
-    expect(block).toContain(".action-cell__group {");
+// Issue #928: /leave (Mein Bereich) has no table any more — its own requests are rows of the List
+// block and a row's actions sit in the row's „…“ menu, so the #442 table-cell property has nothing
+// to act on there. What #442 protected (every row action stays reachable, nothing breaks the row
+// layout) is pinned on the new structure instead.
+describe("#442 / #928 — /leave row actions live in the row menu, no table", () => {
+  it("the page renders no DataTable and no table markup of its own", () => {
+    expect(LEAVE_PAGE).not.toContain("<DataTable");
+    expect(LEAVE_PAGE).not.toMatch(/<td[\s>]/);
+    expect(LEAVE_PAGE).not.toContain("action-cell__group");
   });
-});
 
-describe("#442 — /leave source pin", () => {
-  it("the action column of the DataTable wraps its content in a single div.action-cell__group", () => {
-    const start = LEAVE_PAGE.indexOf('{:else}\n                  <div class="action-cell__group">');
-    expect(start, "action column branch found").toBeGreaterThan(-1);
-    const end = LEAVE_PAGE.indexOf("{/if}\n              {/snippet}", start);
-    const cellBody = LEAVE_PAGE.slice(start, end);
-    expect(cellBody.match(/<div class="action-cell__group">/g) ?? []).toHaveLength(1);
-    expect(cellBody).toContain(`leave-mine-row-\${req.id}-edit`);
-    expect(cellBody).toContain(`leave-mine-row-\${req.id}-withdraw`);
-    expect(cellBody).toContain(`leave-mine-row-\${req.id}-cancel`);
+  it("the three row actions keep their test ids inside the one menu panel, by status", () => {
+    const start = LEAVE_PAGE.indexOf('<div class="lv-menu-panel"');
+    expect(start, "menu panel found").toBeGreaterThan(-1);
+    const end = LEAVE_PAGE.indexOf("</details>", start);
+    const panel = LEAVE_PAGE.slice(start, end);
+    expect(panel).toContain(`leave-mine-row-\${req.id}-edit`);
+    expect(panel).toContain(`leave-mine-row-\${req.id}-withdraw`);
+    expect(panel).toContain(`leave-mine-row-\${req.id}-cancel`);
+    // An open request is changed or withdrawn, an approved one cancelled — never both offers.
+    expect(LEAVE_PAGE).toContain('{@const canEdit = isOwn && req.status === "PENDING"}');
+    expect(LEAVE_PAGE).toContain('{@const canCancel = isOwn && req.status === "APPROVED"}');
+    expect(panel.indexOf("{#if canEdit}")).toBeLessThan(panel.indexOf("-withdraw"));
+    expect(panel.indexOf("{#if canCancel}")).toBeLessThan(panel.indexOf("-cancel"));
+    expect(panel.indexOf("{#if canCancel}")).toBeGreaterThan(panel.indexOf("-withdraw"));
   });
 });
 

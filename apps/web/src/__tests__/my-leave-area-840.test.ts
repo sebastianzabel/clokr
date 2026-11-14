@@ -121,8 +121,9 @@ describe("Issue #840 E-01 - one page, one toolbar", () => {
     expect(PAGE).toContain(
       'activeTab === "kalender" ? "monat" : activeTab === "antraege" ? "jahr" : urlState.zoom',
     );
-    expect(PAGE).toContain(
-      'zooms={activeTab === "team" || activeTab === "planung" ? TIMELINE_ZOOMS : []}',
+    // #928: Planung shows the zoom only while a plan is open (no plan, nothing to zoom).
+    expect(PAGE).toMatch(
+      /zooms=\{activeTab === "team" \|\| \(activeTab === "planung" && planControls !== null\)\s+\? TIMELINE_ZOOMS\s+: \[\]\}/,
     );
     // The defaults per tab come from the one parser (area-tabs): working views a month, Planung a quarter.
     const today = "2026-09-16";

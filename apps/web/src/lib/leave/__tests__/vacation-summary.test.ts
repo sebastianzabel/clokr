@@ -428,19 +428,20 @@ describe("every year-changing path reloads the figures (D-02, issue #122)", () =
     // #851: the figures live in the Kennzahlenleiste; while the year's balance is being fetched
     // (`vacationBalance = null` first), every vacation cell reads „–“, never the left year's value.
     expect(fnBody("async function loadVacationSummary(")).toContain("vacationBalance = null;");
+    // #928: Resturlaub is the one big figure of the balance block, the other figures its quiet
+    // facts. While the year's balance is being fetched every figure still reads „–“ (or is not
+    // shown at all), never the left year's value; the day figures still go through formatDays.
+    expect(PAGE).toContain('{vacRemaining === null ? "–" : formatDays(vacRemaining)}');
     const items = PAGE.slice(PAGE.indexOf("let balanceItems = $derived<KpiItem[]>(["));
-    // #853-19: the day figures go through formatDays (decimal comma), never a raw float.
-    // Since the count-up (13.11.2026) the cell takes the NUMBER plus `format: formatDays`, so the
-    // text is the same decimal-comma string at rest while the figure can count up.
-    expect(items).toContain(
-      'value: vacRemaining === null ? "–" : vacRemaining,\n      format: formatDays,',
-    );
     expect(items).toContain(
       'value: vacationBalance ? vacSummaryUsed : "–",\n      format: formatDays,',
     );
+    // „Verfällt“ only exists while a balance is loaded and a carry-over is at risk.
     expect(items).toMatch(
-      /value: !vacationBalance \? "–" : carryDeadlineAhead \? vacSummaryCarryOverRemaining : 0,\s+format: formatDays,/,
+      /\.\.\.\(vacationBalance && carryDeadlineAhead && vacSummaryCarryOverRemaining > 0\s+\?\s+\[\s+\{\s+label: "Verfällt",\s+value: vacSummaryCarryOverRemaining,\s+format: formatDays,/,
     );
+    // The bar under the figure is drawn only from a loaded balance.
+    expect(PAGE).toContain("if (!vacationBalance) return null;");
   });
 });
 
