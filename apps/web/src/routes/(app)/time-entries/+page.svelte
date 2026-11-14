@@ -63,7 +63,6 @@
   import MonthBar from "$components/ui/MonthBar.svelte";
   import DataTable, { type DataTableColumn } from "$components/ui/DataTable.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
-  import DaySheet from "$lib/components/me/DaySheet.svelte";
   import MonthCorrectionDialog from "$lib/components/me/MonthCorrectionDialog.svelte";
   import {
     correctionForDay,
@@ -80,7 +79,7 @@
   import Chip from "$components/ui/Chip.svelte";
   import EntryRowMenu from "$lib/components/time-entries/EntryRowMenu.svelte"; // Issue #927
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
-  import { zeitenKpis, zeitenStatus } from "$lib/me/zeiten-kpis";
+  import { ownZeitenKpis, zeitenStatus } from "$lib/me/zeiten-kpis";
   import Modal from "$components/ui/Modal.svelte";
   import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import {
@@ -1160,9 +1159,6 @@
     }
   }
 
-  let sheetOpen = $state(false);
-  let sheetDay = $state<CalDay | null>(null);
-
   // Issue #927 — below 760 px the calendar is a mini month: a tap picks the day and its entries
   // show below the month (no sheet). Wider screens keep the day sheet.
   let isPhone = $state(false);
@@ -1176,14 +1172,12 @@
     return () => mq.removeEventListener("change", onChange);
   });
   const phoneDay = $derived(calendarDays.find((d) => d.dateStr === selectedDate) ?? null);
+  // Issue #935: the desktop shows the chosen day in a panel next to the month (no sheet any more).
+  // Phone and desktop share ONE selected day; `sheetDay` keeps its name for the correction flow.
+  const sheetDay = $derived(phoneDay && phoneDay.isCurrentMonth ? phoneDay : null);
 
   function onCellClick(day: string) {
-    if (isPhone) {
-      selectedDate = day;
-      return;
-    }
-    sheetDay = calendarDays.find((d) => d.dateStr === day) ?? null;
-    sheetOpen = true;
+    selectedDate = day;
   }
 
   const sheetRows = $derived(sheetDay ? rowsOfDay(sheetDay.dateStr) : []);
@@ -1236,7 +1230,7 @@
   );
 
   $effect(() => {
-    if (sheetOpen && sheetLocked && !correctionsLoaded) {
+    if (sheetDay && sheetLocked && !correctionsLoaded) {
       correctionsLoaded = true;
       void listOwnMonthCorrections()
         .then((list) => (ownCorrections = list))
@@ -1268,6 +1262,35 @@
       openAdd(day);
     }
   }
+
+  // Issue #935 — the contextual action of the chosen day in the desktop panel. It keeps the test id of
+  // the former sheet action (`day-sheet-primary`); every branch runs an existing path: a closed month
+  // the correction request, an open entry its edit, an empty day the add form, a day with entries
+  // the add form for a further entry (salon options, #70) or else the former cell click.
+  const panelAction = $derived.by((): { label: string; run: () => void } | null => {
+    const day = sheetDay;
+    if (!day || isExempt || day.isBeforeHire) return null;
+    if (sheetLocked)
+      return sheetPrimary.label && sheetPrimary.enabled
+        ? { label: sheetPrimary.label, run: onSheetPrimary }
+        : null;
+    if (day.isFuture) return null;
+    const open = sheetRows.find((e) => !e.endTime);
+    if (open) return { label: "Ende eintragen", run: () => openEdit(open) };
+    if (sheetRows.length === 0)
+      return { label: "Zeit nachtragen", run: () => openAdd(day.dateStr) };
+    if (multiEntryUi)
+      return { label: "+ Weitere Zeit an diesem Tag", run: () => openAdd(day.dateStr) };
+    return { label: "Bearbeiten", run: () => void runCellAction(day.dateStr) };
+  });
+  // The day's own difference, exactly the figure its calendar cell shows (no new arithmetic).
+  const panelDiff = $derived.by((): number | null => {
+    const day = sheetDay;
+    if (!day || isShiftBased || isNoDailyTarget || day.expectedMin <= 0 || day.isFuture)
+      return null;
+    if (day.hasEntries) return day.isToday ? null : day.workedMin - day.expectedMin;
+    return -day.expectedMin;
+  });
 
   // The tooltip of a calendar cell: its own reason (holiday, absence, ...) plus the entry count.
   function cellTitle(base: string | undefined, entryCount: number): string | undefined {
@@ -1944,8 +1967,9 @@
   // entries (closed, valid, through yesterday - the same set as Ist); findings come from the
   // server's day check (#80/#511), never from a browser rule.
   let breakMinutesToDate = $derived(entriesToDate.reduce((s, e) => s + (e.breakMinutes ?? 0), 0));
+  // Issue #935: the own page words the same figures as Ist, Soll and Differenz (mockup).
   let zeitenItems = $derived(
-    zeitenKpis({
+    ownZeitenKpis({
       month: monthMetrics,
       locked: monthIsLocked || monthMetrics.closed,
       breakMinutes: breakMinutesToDate,
@@ -2165,7 +2189,7 @@
   {/if}
 
   <!-- Issue #851 (prototype „Zeiten“): four Kennzahlen of the displayed month. The figures are the
-       page's MonthMetrics (#125, #433, #495) - zeitenKpis() only words them; the account total lives
+       page's MonthMetrics (#125, #433, #495) - ownZeitenKpis() only words them (#935); the account total lives
        on /ich/konto. -->
   <div data-testid="time-entries-summary">
     {#if saldoCardState === "loading"}
@@ -2221,217 +2245,343 @@
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}
-    <div class="cal-section te-cal card card-animate" data-testid="calendar">
-      <!-- Wochentage-Header -->
-      <div class="cal-grid cal-header-row">
-        {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
-          <div class="cal-dow">{d}</div>
-        {/each}
-      </div>
-
-      <!-- Tage -->
-      {#if loading}
-        <div class="cal-grid">
-          {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+    <!-- Issue #935: on a desktop the month and the chosen day sit side by side (a container query
+         stacks them below 1100 px); the phone keeps its mini month with the day below it. -->
+    <div class="te-split" class:te-split--desk={!isPhone}>
+      <div class="cal-section te-cal card card-animate" data-testid="calendar">
+        <!-- Wochentage-Header -->
+        <div class="cal-grid cal-header-row" class:cal-grid--compact={!isPhone}>
+          {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
+            <div class="cal-dow">{d}</div>
+          {/each}
         </div>
-      {:else}
-        <div class="cal-grid" data-testid="calendar-grid">
-          {#each calendarDays as day (day.dateStr)}
-            {@const baseTitle = day.isBeforeHire
-              ? "Vor Eintrittsdatum"
-              : isExempt
-                ? "Keine Zeiterfassungs-Pflicht (§ 18 ArbZG)"
-                : day.isHoliday
-                  ? day.holidayName
-                  : day.absenceType
-                    ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-                    : day.isVocationalSchoolNoLeave
-                      ? "Berufsschule – kein Urlaub"
-                      : day.isVocationalSchool
-                        ? "Berufsschule"
-                        : undefined}
-            <button
-              type="button"
-              data-date={day.dateStr}
-              data-testid={`calendar-cell-${day.dateStr}`}
-              class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
-                ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
-                : (day.isVocationalSchool || day.isVocationalSchoolNoLeave) &&
-                    !day.absenceType &&
-                    !day.isHoliday
-                  ? ' cal-abs cal-abs-vocational_school'
-                  : ''}"
-              class:cal-other={!day.isCurrentMonth}
-              class:cal-current={day.isCurrentMonth}
-              class:cal-today={day.isToday}
-              class:cal-weekend={day.isWeekend}
-              class:cal-holiday={day.isHoliday && day.isCurrentMonth}
-              class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
-              class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
-              disabled={day.isBeforeHire || !day.isCurrentMonth || isExempt}
-              title={cellTitle(baseTitle, day.entryCount)}
-              onclick={isExempt ? undefined : () => onCellClick(day.dateStr)}
-            >
-              <span class="cal-day-num">{day.dayNum}</span>
-              <!-- Issue #927: the day's status is a small dot, not a coloured edge or fill. -->
-              {#if day.isCurrentMonth && runningSinceByDate.has(day.dateStr)}
-                <span class="te-dot te-dot--run" aria-hidden="true"></span>
-              {:else if day.isCurrentMonth && (day.status === "ok" || day.status === "today-ok")}
-                <span class="te-dot te-dot--ok" aria-hidden="true"></span>
-              {:else if day.isCurrentMonth && (day.status === "partial" || day.status === "today-partial")}
-                <span class="te-dot te-dot--part" aria-hidden="true"></span>
-              {:else if day.isCurrentMonth && day.status === "missing"}
-                <!-- Same status as the „fehlt“ chip; the mini month (phone) has no room for the chip. -->
-                <span class="te-dot te-dot--miss" aria-hidden="true"></span>
-              {/if}
-              {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
-                {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
-                <span
-                  class="cal-arbzg-mark"
-                  title={arbzgWarnings.map((w) => w.message).join("\n")}
-                  aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
-                  >⚠&#xFE0E;</span
-                >
-              {/if}
-              {#if day.isHoliday && day.isCurrentMonth}
-                <span class="cal-holiday-label">{day.holidayName}</span>
-              {:else if day.absenceType}
-                <span class="cal-abs-type"
-                  >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
-                >
-              {:else if (day.isVocationalSchool || day.isVocationalSchoolNoLeave) && day.isCurrentMonth}
-                <span class="cal-abs-type">Berufsschule</span>
-              {/if}
-              {#if day.isBeforeHire}
-                <span class="day-before-hire">—</span>
-              {:else if day.isCurrentMonth && day.hasEntries}
-                {@const runningSince = runningSinceByDate.get(day.dateStr)}
-                {#if !runningSince || day.workedMin > 0}
-                  <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
+
+        <!-- Tage -->
+        {#if loading}
+          <div class="cal-grid" class:cal-grid--compact={!isPhone}>
+            {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+          </div>
+        {:else}
+          <div class="cal-grid" class:cal-grid--compact={!isPhone} data-testid="calendar-grid">
+            {#each calendarDays as day (day.dateStr)}
+              {@const baseTitle = day.isBeforeHire
+                ? "Vor Eintrittsdatum"
+                : isExempt
+                  ? "Keine Zeiterfassungs-Pflicht (§ 18 ArbZG)"
+                  : day.isHoliday
+                    ? day.holidayName
+                    : day.absenceType
+                      ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
+                      : day.isVocationalSchoolNoLeave
+                        ? "Berufsschule – kein Urlaub"
+                        : day.isVocationalSchool
+                          ? "Berufsschule"
+                          : undefined}
+              <button
+                type="button"
+                data-date={day.dateStr}
+                data-testid={`calendar-cell-${day.dateStr}`}
+                class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
+                  ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
+                  : (day.isVocationalSchool || day.isVocationalSchoolNoLeave) &&
+                      !day.absenceType &&
+                      !day.isHoliday
+                    ? ' cal-abs cal-abs-vocational_school'
+                    : ''}"
+                class:cal-other={!day.isCurrentMonth}
+                class:cal-current={day.isCurrentMonth}
+                class:cal-today={day.isToday}
+                class:cal-weekend={day.isWeekend}
+                class:cal-holiday={day.isHoliday && day.isCurrentMonth}
+                class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
+                class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
+                disabled={day.isBeforeHire || !day.isCurrentMonth || isExempt}
+                title={cellTitle(baseTitle, day.entryCount)}
+                onclick={isExempt ? undefined : () => onCellClick(day.dateStr)}
+              >
+                <span class="cal-day-num">{day.dayNum}</span>
+                <!-- Issue #927: the day's status is a small dot, not a coloured edge or fill. -->
+                {#if day.isCurrentMonth && runningSinceByDate.has(day.dateStr)}
+                  <span class="te-dot te-dot--run" aria-hidden="true"></span>
+                {:else if day.isCurrentMonth && (day.status === "ok" || day.status === "today-ok")}
+                  <span class="te-dot te-dot--ok" aria-hidden="true"></span>
+                {:else if day.isCurrentMonth && (day.status === "partial" || day.status === "today-partial")}
+                  <span class="te-dot te-dot--part" aria-hidden="true"></span>
+                {:else if day.isCurrentMonth && day.status === "missing"}
+                  <!-- Same status as the „fehlt“ chip; the mini month (phone) has no room for the chip. -->
+                  <span class="te-dot te-dot--miss" aria-hidden="true"></span>
                 {/if}
-                {#if runningSince}
-                  <!-- Issue #927: an open entry reads „läuft seit HH:MM“, never „0:00 h“. -->
-                  <span class="te-run">läuft seit {runningSince}</span>
-                  {#if day.dateStr < todayStr}
-                    <span class="te-cell-chip"><Chip tone="warn">Ausstempeln fehlt</Chip></span>
+                {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
+                  {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
+                  <span
+                    class="cal-arbzg-mark"
+                    title={arbzgWarnings.map((w) => w.message).join("\n")}
+                    aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
+                    >⚠&#xFE0E;</span
+                  >
+                {/if}
+                {#if day.isHoliday && day.isCurrentMonth}
+                  <span class="cal-holiday-label">{day.holidayName}</span>
+                {:else if day.absenceType}
+                  <span class="cal-abs-type"
+                    >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
+                  >
+                {:else if (day.isVocationalSchool || day.isVocationalSchoolNoLeave) && day.isCurrentMonth}
+                  <span class="cal-abs-type">Berufsschule</span>
+                {/if}
+                {#if day.isBeforeHire}
+                  <span class="day-before-hire">—</span>
+                {:else if day.isCurrentMonth && day.hasEntries}
+                  {@const runningSince = runningSinceByDate.get(day.dateStr)}
+                  {#if !runningSince || day.workedMin > 0}
+                    <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
                   {/if}
-                {/if}
-                {#if isShiftBased}
-                  <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
+                  {#if runningSince}
+                    <!-- Issue #927: an open entry reads „läuft seit HH:MM“, never „0:00 h“. -->
+                    <span class="te-run">läuft seit {runningSince}</span>
+                    {#if day.dateStr < todayStr}
+                      <!-- Issue #935: the narrow cell says „offen“; the day panel names the problem. -->
+                      <span class="te-cell-chip"
+                        ><Chip tone="warn" title="Ausstempeln fehlt">offen</Chip></span
+                      >
+                    {/if}
+                  {/if}
+                  {#if isShiftBased}
+                    <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
                        a cumulative for this day (past days up to windowEnd). For today-not-yet-worked
                        and future days (no monthSaldoDayMap entry) show ONLY the hours — never fall back
                        to the per-day delta, which would look like a spurious "today penalty". -->
-                  {#if monthSaldoDayMap.has(day.dateStr)}
-                    {@const cum = monthSaldoDayMap.get(day.dateStr)!}
-                    <span class="day-bal {balClass(cum)}"
-                      >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
+                    {#if monthSaldoDayMap.has(day.dateStr)}
+                      {@const cum = monthSaldoDayMap.get(day.dateStr)!}
+                      <span class="day-bal {balClass(cum)}"
+                        >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
+                      >
+                    {/if}
+                  {:else if day.expectedMin > 0 && !isNoDailyTarget && !day.isToday}
+                    {@const b = day.workedMin - day.expectedMin}
+                    <span class="day-bal {balClass(b)}"
+                      >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
                     >
                   {/if}
-                {:else if day.expectedMin > 0 && !isNoDailyTarget && !day.isToday}
-                  {@const b = day.workedMin - day.expectedMin}
-                  <span class="day-bal {balClass(b)}"
-                    >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
-                  >
+                {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
+                  <span class="day-missing">−{fmtMin(day.expectedMin)}</span>
+                  {#if day.status === "missing"}
+                    <span class="te-cell-chip"><Chip tone="warn">fehlt</Chip></span>
+                  {/if}
                 {/if}
-              {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
-                <span class="day-missing">−{fmtMin(day.expectedMin)}</span>
-                {#if day.status === "missing"}
-                  <span class="te-cell-chip"><Chip tone="warn">fehlt</Chip></span>
-                {/if}
-              {/if}
-            </button>
-          {/each}
-        </div>
-      {/if}
-
-      {#if isPhone && phoneDay && phoneDay.isCurrentMonth && !loading}
-        <!-- Issue #927: on a phone the picked day's entries sit below the mini month. -->
-        <section
-          class="te-dayp"
-          aria-label="Einträge am {shortDayLabel(selectedDate)}"
-          data-testid="time-entries-day-panel"
-        >
-          <div class="te-dayp-head">
-            <b>{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", { locale: de })}</b>
-            {#if phoneDay.expectedMin > 0 && !isNoDailyTarget}
-              <span>Soll {fmtMin(phoneDay.expectedMin)} h</span>
-            {/if}
+              </button>
+            {/each}
           </div>
-          {#each rowsOfDay(selectedDate) as e (e.id)}
-            <button
-              type="button"
-              class="te-mrow"
-              class:te-mrow--problem={isStaleOpen(e) || e.isInvalid}
-              disabled={e.isLocked || isExempt}
-              onclick={() => openEdit(e)}
+        {/if}
+
+        {#if isPhone && phoneDay && phoneDay.isCurrentMonth && !loading}
+          <!-- Issue #927: on a phone the picked day's entries sit below the mini month. -->
+          <section
+            class="te-dayp"
+            aria-label="Einträge am {shortDayLabel(selectedDate)}"
+            data-testid="time-entries-day-panel"
+          >
+            <div class="te-dayp-head">
+              <b>{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", { locale: de })}</b>
+              {#if phoneDay.expectedMin > 0 && !isNoDailyTarget}
+                <span>Soll {fmtMin(phoneDay.expectedMin)} h</span>
+              {/if}
+            </div>
+            {#each rowsOfDay(selectedDate) as e (e.id)}
+              <button
+                type="button"
+                class="te-mrow"
+                class:te-mrow--problem={isStaleOpen(e) || e.isInvalid}
+                disabled={e.isLocked || isExempt}
+                onclick={() => openEdit(e)}
+              >
+                <span class="te-mrow-main">
+                  <b>{fmtTime(e.startTime)} – {e.endTime ? fmtTime(e.endTime) : "offen"}</b>
+                  <span
+                    >{e.endTime
+                      ? `${slotNet(e)} · Pause ${fmtBreaks(e)}`
+                      : `läuft seit ${fmtTime(e.startTime)}`} · {sourceLabel(e.source)}</span
+                  >
+                </span>
+                {#if e.isLocked}<Chip tone="neutral">Gesperrt</Chip>
+                {:else if isStaleOpen(e)}<Chip tone="warn">Ausstempeln fehlt</Chip>
+                {:else if e.isInvalid}<Chip tone="warn">Ungültig</Chip>{/if}
+              </button>
+            {:else}
+              <div class="te-mrow te-mrow--static">
+                <span class="te-mrow-main">
+                  <b
+                    >{phoneDay.isHoliday
+                      ? phoneDay.holidayName
+                      : phoneDay.absenceType
+                        ? absenceLabel(phoneDay.absenceType)
+                        : phoneDay.isVocationalSchool
+                          ? "Berufsschule"
+                          : "Keine Zeit erfasst"}</b
+                  >
+                </span>
+                {#if phoneDay.status === "missing"}<Chip tone="warn">fehlt</Chip>{/if}
+              </div>
+            {/each}
+            {#if !isExempt && !phoneDay.isFuture && !phoneDay.isBeforeHire && !rowsOfDay(selectedDate).some((e) => e.isLocked)}
+              <div class="te-dayp-foot">
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  onclick={() => runCellAction(selectedDate)}
+                  >{rowsOfDay(selectedDate).length > 0 ? "Bearbeiten" : "Zeit nachtragen"}</button
+                >
+              </div>
+            {/if}
+          </section>
+        {/if}
+
+        <!-- Legende -->
+        <div class="cal-legend">
+          {#if legendGroups.soll.length > 0}
+            <div class="leg-group">
+              <span class="leg-group-label">Soll-Status</span>
+              {#each legendGroups.soll as e (e.label)}<span class="leg {e.cls}">{e.label}</span
+                >{/each}
+            </div>
+          {/if}
+          {#if legendGroups.abwesenheit.length > 0}
+            <div class="leg-group">
+              <span class="leg-group-label">Abwesenheit</span>
+              {#each legendGroups.abwesenheit as e (e.label)}<span
+                  class="leg {e.cls}"
+                  style:--leg-fill={e.fill ? `var(${e.fill})` : undefined}>{e.label}</span
+                >{/each}
+            </div>
+          {/if}
+          {#if legendGroups.hinweise.length > 0}
+            <div class="leg-group">
+              <span class="leg-group-label">Hinweise</span>
+              {#each legendGroups.hinweise as e (e.label)}<span class="leg {e.cls}">{e.label}</span
+                >{/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+      {#if !isPhone && sheetDay && !loading}
+        <aside
+          class="te-dpanel card"
+          aria-label="Der gewählte Tag"
+          aria-live="polite"
+          data-testid="time-entries-day-detail"
+        >
+          <header class="te-dpanel-head">
+            <h3>{sheetTitle}</h3>
+            {#if sheetDay.isToday}<span>heute</span>{/if}
+          </header>
+          {#if sheetReason}
+            <p class="te-dpanel-reason">{sheetReason}</p>
+          {/if}
+          {#if !isExempt && !sheetDay.isBeforeHire}
+            <div class="te-dpanel-sum">
+              <div>
+                <span>Arbeitszeit</span>
+                <b
+                  >{sheetRows.some((e) => !e.endTime) && sheetDay.workedMin === 0
+                    ? "läuft"
+                    : `${fmtMin(sheetDay.workedMin)} h`}</b
+                >
+              </div>
+              {#if sheetDay.expectedMin > 0 && !isNoDailyTarget}
+                <div><span>Soll</span><b>{fmtMin(sheetDay.expectedMin)} h</b></div>
+              {/if}
+              {#if panelDiff !== null}
+                <div>
+                  <span>Differenz</span>
+                  <b class={balClass(panelDiff)}
+                    >{panelDiff >= 0 ? "+" : "−"}{fmtMin(Math.abs(panelDiff))}</b
+                  >
+                </div>
+              {/if}
+            </div>
+          {/if}
+          {#if sheetLocked}
+            <p class="te-dpanel-note">
+              Dieser Monat ist abgeschlossen. Eine Änderung geht nur noch über eine Korrektur.
+            </p>
+            {#if sheetRequestStatus}
+              <p class="te-dpanel-note">
+                Korrektur: <Chip tone={sheetRequestStatus.tone}>{sheetRequestStatus.label}</Chip>
+              </p>
+            {/if}
+          {/if}
+          {#each sheetRows as e (e.id)}
+            <div
+              class="te-dpanel-ent"
+              class:te-dpanel-ent--problem={isStaleOpen(e) || e.isInvalid}
+              data-testid={`day-panel-entry-${e.id}`}
             >
-              <span class="te-mrow-main">
+              <span class="te-dpanel-main">
                 <b>{fmtTime(e.startTime)} – {e.endTime ? fmtTime(e.endTime) : "offen"}</b>
                 <span
                   >{e.endTime
                     ? `${slotNet(e)} · Pause ${fmtBreaks(e)}`
-                    : `läuft seit ${fmtTime(e.startTime)}`} · {sourceLabel(e.source)}</span
+                    : `läuft seit ${fmtTime(e.startTime)}`} · {sourceLabel(
+                    e.source,
+                  )}{multiEntryUi && e.salonName ? ` · ${e.salonName}` : ""}</span
                 >
               </span>
               {#if e.isLocked}<Chip tone="neutral">Gesperrt</Chip>
               {:else if isStaleOpen(e)}<Chip tone="warn">Ausstempeln fehlt</Chip>
-              {:else if e.isInvalid}<Chip tone="warn">Ungültig</Chip>{/if}
-            </button>
-          {:else}
-            <div class="te-mrow te-mrow--static">
-              <span class="te-mrow-main">
-                <b
-                  >{phoneDay.isHoliday
-                    ? phoneDay.holidayName
-                    : phoneDay.absenceType
-                      ? absenceLabel(phoneDay.absenceType)
-                      : phoneDay.isVocationalSchool
-                        ? "Berufsschule"
-                        : "Keine Zeit erfasst"}</b
+              {:else if isPendingNachtrag(e)}<Chip tone="info">Nachtrag offen</Chip>
+              {:else if e.isInvalid}<Chip tone="warn" title={e.invalidReason ?? undefined}
+                  >Ungültig</Chip
+                >{/if}
+              {#if !e.isLocked && !isExempt}
+                <EntryRowMenu
+                  label="Aktionen für {fmtTime(e.startTime)}"
+                  testId={`day-panel-entry-${e.id}-menu`}
                 >
-              </span>
-              {#if phoneDay.status === "missing"}<Chip tone="warn">fehlt</Chip>{/if}
+                  <button
+                    type="button"
+                    onclick={() => openEdit(e)}
+                    data-testid={`day-panel-entry-${e.id}-edit`}>Bearbeiten</button
+                  >
+                  {#if !isPendingNachtrag(e)}
+                    <button
+                      type="button"
+                      class="te-menu-danger"
+                      onclick={() => openDeleteDialog(e.id)}
+                      data-testid={`day-panel-entry-${e.id}-delete`}>Löschen</button
+                    >
+                  {/if}
+                </EntryRowMenu>
+              {/if}
             </div>
+          {:else}
+            <p class="te-dpanel-none">
+              {sheetDay.isFuture
+                ? "Noch keine Einträge."
+                : sheetDay.status === "missing"
+                  ? "Für diesen Tag ist keine Zeit erfasst."
+                  : "Keine Einträge."}
+            </p>
           {/each}
-          {#if !isExempt && !phoneDay.isFuture && !phoneDay.isBeforeHire && !rowsOfDay(selectedDate).some((e) => e.isLocked)}
-            <div class="te-dayp-foot">
+          {#if panelAction}
+            <footer class="te-dpanel-foot">
               <button
                 type="button"
-                class="btn btn-secondary btn-sm"
-                onclick={() => runCellAction(selectedDate)}
-                >{rowsOfDay(selectedDate).length > 0 ? "Bearbeiten" : "Zeit nachtragen"}</button
+                class="btn btn-sm"
+                class:btn-primary={sheetRows.length === 0 ||
+                  sheetRows.some((e) => !e.endTime) ||
+                  sheetLocked}
+                class:btn-secondary={!(
+                  sheetRows.length === 0 ||
+                  sheetRows.some((e) => !e.endTime) ||
+                  sheetLocked
+                )}
+                onclick={panelAction.run}
+                data-testid="day-sheet-primary">{panelAction.label}</button
               >
-            </div>
+            </footer>
           {/if}
-        </section>
+        </aside>
       {/if}
-
-      <!-- Legende -->
-      <div class="cal-legend">
-        {#if legendGroups.soll.length > 0}
-          <div class="leg-group">
-            <span class="leg-group-label">Soll-Status</span>
-            {#each legendGroups.soll as e (e.label)}<span class="leg {e.cls}">{e.label}</span
-              >{/each}
-          </div>
-        {/if}
-        {#if legendGroups.abwesenheit.length > 0}
-          <div class="leg-group">
-            <span class="leg-group-label">Abwesenheit</span>
-            {#each legendGroups.abwesenheit as e (e.label)}<span
-                class="leg {e.cls}"
-                style:--leg-fill={e.fill ? `var(${e.fill})` : undefined}>{e.label}</span
-              >{/each}
-          </div>
-        {/if}
-        {#if legendGroups.hinweise.length > 0}
-          <div class="leg-group">
-            <span class="leg-group-label">Hinweise</span>
-            {#each legendGroups.hinweise as e (e.label)}<span class="leg {e.cls}">{e.label}</span
-              >{/each}
-          </div>
-        {/if}
-      </div>
     </div>
   {/if}
 
@@ -2730,31 +2880,6 @@
       {/if}
     </div>
   {/if}
-
-  <DaySheet
-    bind:open={sheetOpen}
-    title={sheetTitle}
-    subtitle={sheetRows.find((e) => e.salonName)?.salonName
-      ? `Erfasst in ${sheetRows.find((e) => e.salonName)?.salonName}`
-      : undefined}
-    sollMin={sheetDay && sheetDay.expectedMin > 0 ? sheetDay.expectedMin : null}
-    istMin={sheetDay?.workedMin ?? 0}
-    entries={sheetRows.map((e) => ({
-      id: e.id,
-      from: fmtTime(e.startTime),
-      to: e.endTime ? fmtTime(e.endTime) : "läuft",
-      pause: fmtBreaks(e),
-      net: slotNet(e),
-      salon: multiEntryUi ? (e.salonName ?? null) : null,
-    }))}
-    reason={sheetReason}
-    locked={sheetLocked}
-    future={sheetDay?.isFuture ?? false}
-    primaryLabel={sheetPrimary.label}
-    primaryEnabled={sheetPrimary.enabled}
-    onPrimary={onSheetPrimary}
-    requestStatus={sheetRequestStatus}
-  />
 
   {#if sheetDay}
     <MonthCorrectionDialog
@@ -4250,5 +4375,203 @@
       height: 44px;
       box-shadow: var(--shadow-pop);
     }
+  }
+  /* ── Issue #935: the month and the chosen day side by side (owner-approved mockup) ───────── */
+  .te-split {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5, 20px);
+  }
+  .te-split > .cal-section {
+    margin-bottom: 0;
+  }
+  @media (min-width: 1240px) {
+    .te-split--desk {
+      display: grid;
+      grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr);
+      align-items: start;
+    }
+  }
+  /* The joined month (shared .cal-grid--compact recipe, #928). This page's own .cal-grid/.cal-cell
+     rules (gaps, tiles) win over the shared modifier by scope, so the joined form is restated here
+     for the desktop only; the phone keeps its mini-month tiles. */
+  .te-split--desk > .te-cal {
+    padding: 0;
+    overflow: hidden;
+  }
+  .te-split--desk .cal-grid.cal-grid--compact {
+    gap: 0;
+    padding: 0;
+  }
+  .te-split--desk .cal-grid--compact .cal-cell {
+    border: 0;
+    border-radius: 0;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .te-split--desk .cal-grid--compact .cal-cell:nth-child(7n) {
+    border-right: 0;
+  }
+  .te-split--desk .cal-header-row.cal-grid--compact {
+    border-bottom: 1px solid var(--line);
+  }
+  .te-split--desk .cal-grid--compact .cal-dow {
+    text-align: left;
+    font-weight: 500;
+    padding: 10px 9px;
+  }
+  /* Roomier rows on the desktop. */
+  .te-split--desk .cal-grid--compact .cal-cell {
+    min-height: 74px;
+    padding: 7px 9px;
+    gap: 3px;
+  }
+  .te-split--desk .te-cal .cal-cell.cal-cell--ok,
+  .te-split--desk .te-cal .cal-cell.cal-cell--partial,
+  .te-split--desk .te-cal .cal-cell.cal-cell--missing,
+  .te-split--desk .te-cal .cal-cell.cal-cell--today-ok,
+  .te-split--desk .te-cal .cal-cell.cal-cell--today-partial {
+    border-left: 0;
+  }
+  /* Weekend: only gently muted, never the full pink fill. */
+  .te-split--desk .cal-cell.cal-weekend:not(.cal-other):not(.cal-selected) {
+    background: color-mix(in srgb, var(--sunk) 45%, var(--card)) !important;
+  }
+  /* Today is the filled circle on its number; no ring (the ring means "chosen"). */
+  .te-split--desk .te-cal .cal-cell.cal-today {
+    outline: none;
+    box-shadow: none;
+  }
+  /* The chosen day: a 2 px brand ring on the normal surface (the shared recipe fills it brand). */
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected:not(.cal-other) {
+    background-color: var(--card) !important;
+    box-shadow: inset 0 0 0 2px var(--brand) !important;
+  }
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected:not(.cal-other) .cal-day-num {
+    color: var(--text-2) !important;
+  }
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected.cal-today:not(.cal-other) .cal-day-num {
+    color: var(--brand-ink) !important;
+  }
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected:not(.cal-other) .day-worked,
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected:not(.cal-other) .cal-arbzg-mark {
+    color: var(--text) !important;
+  }
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected:not(.cal-other) .day-bal.pos {
+    color: var(--ok) !important;
+  }
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected:not(.cal-other) .day-bal.neg,
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected:not(.cal-other) .day-missing {
+    color: var(--bad) !important;
+  }
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected:not(.cal-other) .cal-abs-type {
+    color: var(--text-2) !important;
+  }
+  .te-split--desk .cal-grid--compact .cal-cell.cal-selected:not(.cal-other) .cal-holiday-label {
+    color: var(--brand) !important;
+  }
+  /* Hours large in tabular figures, the difference small below. */
+  .te-split--desk .day-worked {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .te-split--desk .day-bal,
+  .te-split--desk .day-missing {
+    font-size: var(--fs-xs);
+    opacity: 1;
+  }
+
+  /* The day panel */
+  .te-dpanel {
+    padding: 0;
+    position: sticky;
+    top: calc(var(--topbar-h, 48px) + 16px);
+  }
+  .te-dpanel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .te-dpanel-head h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .te-dpanel-head span {
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+  }
+  .te-dpanel-reason,
+  .te-dpanel-note {
+    margin: 0;
+    padding: 10px 16px 0;
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+  }
+  .te-dpanel-sum {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .te-dpanel-sum div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+  .te-dpanel-sum b {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .te-dpanel-sum b.pos {
+    color: var(--ok);
+  }
+  .te-dpanel-sum b.neg {
+    color: var(--bad);
+  }
+  .te-dpanel-ent {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .te-dpanel-ent--problem {
+    background: color-mix(in srgb, var(--warn-soft) 45%, var(--card));
+  }
+  .te-dpanel-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .te-dpanel-main b {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .te-dpanel-main span {
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+  }
+  .te-dpanel-none {
+    margin: 0;
+    padding: 14px 16px;
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+  }
+  .te-dpanel-foot {
+    padding: 12px 16px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 </style>

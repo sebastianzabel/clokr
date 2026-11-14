@@ -112,6 +112,79 @@ export function zeitenKpis(input: ZeitenKpiInput): KpiItem[] {
   return [worked, saldo, pauses];
 }
 
+/**
+ * Issue #935 (Zeiten mockup, owner acceptance 14.11.2026): the own page names its figures Ist, Soll
+ * and Differenz. The same figures as `zeitenKpis` (Ist = `istMin`, Soll = `sollToDateMin`, Differenz =
+ * the month saldo `saldoMin` the page already holds) - only the wording and the order change; the
+ * break sum is not a Kennzahl of the own page any more (findings stay in the day-check panels).
+ * Team › Zeiten keeps `zeitenKpis`.
+ */
+export function ownZeitenKpis(input: ZeitenKpiInput): KpiItem[] {
+  const { month, locked, runningCount } = input;
+  const cutoff = locked ? "ganzer Monat" : "bis gestern";
+
+  const ist: KpiItem = {
+    label: "Ist",
+    value: fmtMin(month.istMin),
+    unit: "h",
+    explanation:
+      [
+        month.workdaysSoFar !== null ? daysText(month.workdaysSoFar) : null,
+        runningCount > 0
+          ? runningCount === 1
+            ? "1 Eintrag läuft"
+            : `${runningCount} Einträge laufen`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || cutoff,
+    testId: "zeiten-kpi-worked",
+  };
+
+  const soll: KpiItem = month.noSollTarget
+    ? {
+        label: "Soll",
+        value: "—",
+        explanation: "Zeiterfassung ohne Sollvergleich",
+        testId: "zeiten-kpi-soll",
+      }
+    : {
+        label: locked ? "Soll" : "Soll bis gestern",
+        value: fmtMin(month.sollToDateMin),
+        unit: "h",
+        explanation:
+          [
+            locked ? "ganzer Monat" : null,
+            month.rosterIncomplete ? "Dienstplan unvollständig" : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || undefined,
+        testId: "zeiten-kpi-soll",
+      };
+
+  const diff: KpiItem = month.noSollTarget
+    ? {
+        label: "Differenz",
+        value: "—",
+        explanation: "Zeiterfassung ohne Sollvergleich",
+        testId: "zeiten-kpi-saldo",
+      }
+    : {
+        label: "Differenz",
+        value: month.saldoMin === null ? "—" : fmtBalance(month.saldoMin),
+        unit: month.saldoMin === null ? undefined : "h",
+        explanation: [
+          locked ? "Bestätigt · Monat abgeschlossen" : "Prognose · Monat offen",
+          month.extraNote ?? null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        testId: "zeiten-kpi-saldo",
+      };
+
+  return [ist, soll, diff];
+}
+
 /** The status cell: closed or open, and who closes it (a person never closes their own month). */
 export function zeitenStatus(locked: boolean): {
   label: string;

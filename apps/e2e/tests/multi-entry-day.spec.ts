@@ -155,6 +155,17 @@ async function openMonthOf(page: Page, day: string) {
   await expect(page.getByTestId(`calendar-cell-${day}`)).toBeVisible();
 }
 
+/**
+ * Issue #935: the desktop shows the chosen day next to the month. With salon options its action is
+ * „+ Weitere Zeit an diesem Tag“, so an entry is edited through its „…“ menu in that panel.
+ */
+async function editFirstEntryOfChosenDay(page: Page) {
+  const panel = page.getByTestId("time-entries-day-detail");
+  await expect(panel).toBeVisible();
+  await panel.locator("[data-testid^='day-panel-entry-'][data-testid$='-menu']").first().click();
+  await page.locator("[data-testid^='day-panel-entry-'][data-testid$='-edit']").first().click();
+}
+
 /** The POST of a manual entry; resolves with its HTTP status. */
 function entryPost(page: Page) {
   return page.waitForResponse(
@@ -204,8 +215,8 @@ test.describe("several entries on one day (Issue #70)", () => {
     // first entry's end.
     await expect(page.getByTestId(`calendar-cell-${dayTwo}`)).toContainText("4:00");
     await page.getByTestId(`calendar-cell-${dayTwo}`).click();
-    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
-    await page.getByTestId("day-sheet-primary").click();
+    // #935: the chosen day sits next to the month; its entry is edited from the panel.
+    await editFirstEntryOfChosenDay(page);
     await expect(modal).toBeVisible();
     await expect(page.locator("[role='dialog'] .modal-eyebrow").first()).toContainText(
       "Eintrag bearbeiten",
@@ -227,8 +238,13 @@ test.describe("several entries on one day (Issue #70)", () => {
     const cell = page.getByTestId(`calendar-cell-${dayTwo}`);
     await expect(cell).toHaveAttribute("title", "2 Einträge");
     await cell.click();
-    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
-    await page.getByTestId("day-sheet-primary").click();
+    // #935: the day panel lists both entries; the list view then shows the chosen day focused.
+    await expect(
+      page
+        .getByTestId("time-entries-day-detail")
+        .locator("[data-testid^='day-panel-entry-'][data-testid$='-menu']"),
+    ).toHaveCount(2);
+    await page.getByTestId("time-entries-view-tabs").getByRole("radio", { name: "Liste" }).click();
     await expect(modal).toBeHidden();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
     const dayRows = page.locator("tr.row-day-focus");
@@ -268,8 +284,8 @@ test.describe("several entries on one day (Issue #70)", () => {
     const oneCell = page.getByTestId(`calendar-cell-${dayOne}`);
     await expect(oneCell).not.toHaveAttribute("title", "2 Einträge");
     await oneCell.click();
-    // #599 (Phase 851): a day is read first; the sheet's primary action runs the former click.
-    await page.getByTestId("day-sheet-primary").click();
+    // #935: the entry is edited from the day panel next to the month.
+    await editFirstEntryOfChosenDay(page);
     await expect(modal).toBeVisible();
     await expect(page.locator("[role='dialog'] .modal-eyebrow").first()).toContainText(
       "Eintrag bearbeiten",

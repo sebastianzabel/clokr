@@ -1,5 +1,5 @@
 // Issue #495 — pins that both month pages hand `noSollTarget` to their month figures (the Kennzahlen of
-// zeitenKpis() on both pages: /time-entries since Issue #851, /team/time-entries since the owner review of
+// zeitenKpis() / ownZeitenKpis() (#935) on both pages: /time-entries since Issue #851, /team/time-entries since the owner review of
 // Issue #853; the whole MonthMetrics, noSollTarget included, is handed over) and set it only for a MONTHLY_HOURS contract without monthly hours.
 //
 // This is a source-read PIN, not a behaviour test: route pages cannot be mounted here because
@@ -25,7 +25,8 @@ function readRouteFile(relativeFromHere: string, relativeFromCwd: string): strin
 const PAGES = [
   {
     name: "/time-entries",
-    consumer: "zeitenKpis(",
+    // Issue #935: the own page words the same figures through ownZeitenKpis() (Ist, Soll, Differenz).
+    consumer: "ownZeitenKpis(",
     consumerEnd: "}),",
     passes: "month: monthMetrics,",
     source: readRouteFile(
