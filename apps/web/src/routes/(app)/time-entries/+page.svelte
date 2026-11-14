@@ -103,6 +103,8 @@
   import {
     SKIPPED,
     settled,
+    settledAllowNotFound,
+    isDenied,
     valueOr,
     anyFailed,
     resolveMonthListState,
@@ -249,6 +251,7 @@
   // /overtime/month-saldo/:id FAILED (as opposed to legitimately returning nothing). Routes into
   // MonatSaldoCard's existing error branch instead of being rendered as "noch keine Sollzeit".
   let saldoFetchFailed = $state(false);
+  let noContract = $state(false);
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
@@ -486,6 +489,7 @@
     loading = true;
     error = "";
     saldoFetchFailed = false;
+    noContract = false;
     try {
       const year = calMonth.getFullYear();
       const activeEmpId = ownEmployeeId;
@@ -501,7 +505,7 @@
       ] = await Promise.all([
         api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
         activeEmpId
-          ? settled(api.get<WorkSchedule>(`/settings/work/${activeEmpId}`))
+          ? settledAllowNotFound(api.get<WorkSchedule>(`/settings/work/${activeEmpId}`))
           : Promise.resolve(SKIPPED),
         api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
         activeEmpId
@@ -566,6 +570,8 @@
       // Monat". Now it reaches the summary's error state instead (Issue #851: the account total
       // left this page for /ich/konto, so only the contract read decides it).
       saldoFetchFailed = anyFailed(rawSchedule);
+      // A 404 on the own contract read = no contract stored yet (not an outage).
+      noContract = isDenied(rawSchedule);
       // Phase 97-05 — now consumed by gesamtSaldoStat below. 97-01/97-03 built the "Restmonat
       // unverplant" badge and stored this signal but never wired it into the snippet; fixed
       // here so this page renders identically to Team-Zeiten (97-05 Task 3 wires the same
@@ -1848,6 +1854,7 @@
       hasEmployeeLink,
       fetchFailed: saldoFetchFailed,
       pageError: !!error,
+      noContract,
     }),
   );
   // Issue #511 D-18 — the modal's findings are the server's answer for the PROPOSED entry together
@@ -2116,6 +2123,11 @@
       <Skeleton shape="block" height="96px" />
     {:else if saldoCardState === "error"}
       <ErrorState message="Werte konnten nicht geladen werden." onRetry={loadAll} />
+    {:else if saldoCardState === "no-contract"}
+      <div class="callout info" role="status" data-testid="zeiten-no-contract">
+        Für dich ist noch kein Arbeitsvertrag hinterlegt. Deshalb gibt es hier kein Soll und keinen
+        Saldo. Deine Zeiten kannst du trotzdem erfassen.
+      </div>
     {:else}
       <KpiStrip ariaLabel="Dein Monat in Zahlen" items={zeitenItems}>
         {#snippet extra()}

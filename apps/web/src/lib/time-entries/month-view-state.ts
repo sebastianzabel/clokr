@@ -103,6 +103,23 @@ export function settledAllowDenied<T>(p: Promise<T>): Promise<FetchResult<T>> {
   );
 }
 
+/**
+ * Like `settled`, but ONLY a 404 becomes `DENIED` (Issue: Zeiten error card, 14.11.2026).
+ *
+ * For the own contract read (`GET /settings/work/:ownEmployeeId`) a 404 means one thing: no
+ * contract is stored for this person yet. That is a state of the data, not an outage, and "Erneut
+ * versuchen" can never change it. A 403, a 5xx, a 401 or a network error stays `FAILED`.
+ */
+export function settledAllowNotFound<T>(p: Promise<T>): Promise<FetchResult<T>> {
+  return p.then(
+    (value) => ok(value),
+    (err: unknown) => {
+      const status = err instanceof Error ? (err as { status?: unknown }).status : undefined;
+      return (status === 404 ? DENIED : FAILED) as FetchResult<T>;
+    },
+  );
+}
+
 /** True when at least one of the given fetches was refused by the server. */
 export function isDenied(...results: FetchResult<unknown>[]): boolean {
   return results.some((r) => r.status === "denied");
@@ -167,13 +184,15 @@ export function resolveMonthListState(input: {
   return input.rowCount === 0 ? "empty" : "rows";
 }
 
-export type SaldoCardState = "loading" | "error" | "ready";
+export type SaldoCardState = "loading" | "error" | "no-contract" | "ready";
 
 export function resolveSaldoCardState(input: {
   loading: boolean;
   hasEmployeeLink: boolean;
   fetchFailed: boolean;
   pageError: boolean;
+  /** The own contract read answered 404: no contract is stored for the person yet. */
+  noContract?: boolean;
 }): SaldoCardState {
   // Mirrors MonatSaldoCard.svelte:80 checking `loading` BEFORE `error`, so the card's own
   // precedence and this function's can never disagree.
@@ -184,6 +203,9 @@ export function resolveSaldoCardState(input: {
   // verknüpft"). Do not "improve" this by adding a `noEmployee` prop to the card.
   if (!input.hasEmployeeLink) return "error";
   if (input.fetchFailed || input.pageError) return "error";
+  // A person without any contract has no Soll and no saldo: a calm note, never the error card with
+  // a retry that cannot help, and never "ready" (which would print Soll 0:00 as a fact).
+  if (input.noContract) return "no-contract";
   // "ready" is the state that renders SollIstBar's "noch keine Sollzeit in diesem Monat" when
   // sollToDateMin is 0 — which is why a failed fetch must never reach it.
   return "ready";

@@ -6,6 +6,7 @@ import {
   anyFailed,
   resolveMonthListState,
   resolveSaldoCardState,
+  settledAllowNotFound,
   SKIPPED,
   FAILED,
   DENIED,
@@ -305,5 +306,32 @@ describe("istOnlyMonthMetrics — the refused-read month card", () => {
       workdaysSoFar: 3,
       noSollTarget: true,
     });
+  });
+});
+
+describe("own contract read: a 404 is 'no contract', never the error card", () => {
+  const apiError = (status: number) => Object.assign(new Error("x"), { status });
+
+  it("settledAllowNotFound maps only a 404 to denied", async () => {
+    expect((await settledAllowNotFound(Promise.reject(apiError(404)))).status).toBe("denied");
+    for (const status of [403, 401, 500, 503]) {
+      expect((await settledAllowNotFound(Promise.reject(apiError(status)))).status).toBe("failed");
+    }
+    expect((await settledAllowNotFound(Promise.reject(new TypeError("network")))).status).toBe(
+      "failed",
+    );
+    expect((await settledAllowNotFound(Promise.resolve(1))).status).toBe("ok");
+  });
+
+  it("no contract renders the calm note, a real failure still wins", () => {
+    const base = { loading: false, hasEmployeeLink: true, pageError: false };
+    expect(resolveSaldoCardState({ ...base, fetchFailed: false, noContract: true })).toBe(
+      "no-contract",
+    );
+    expect(resolveSaldoCardState({ ...base, fetchFailed: true, noContract: true })).toBe("error");
+    expect(resolveSaldoCardState({ ...base, fetchFailed: false, noContract: false })).toBe("ready");
+    expect(
+      resolveSaldoCardState({ ...base, loading: true, fetchFailed: false, noContract: true }),
+    ).toBe("loading");
   });
 });
