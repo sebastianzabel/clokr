@@ -1862,10 +1862,10 @@ textarea.form-input {
   cursor: pointer;
   color: var(--text);
   font-family: var(--font-ui);
-  font-weight: 400;
-  font-size: 26px;
-  line-height: 1.1;
-  letter-spacing: 0.005em;
+  /* Issue #929: same compact size as the PeriodPicker label (was 26px). */
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.2;
   padding: 2px 4px;
   border-radius: var(--r-control);
   text-transform: capitalize;
@@ -1916,12 +1916,11 @@ textarea.form-input {
     min-height: 44px;
   }
 }
-/* 26px fits between the arrows from 481 to 640 px. Below that 20px (the
-   .mini-stat .value size) clears the arrows at 360 px; same value and source
-   as the MonthBar primitive's label. */
-@media (max-width: 480px) {
+/* Issue #929: on narrow viewports the title is 17px, the same value as the PeriodPicker label
+   (formerly 26/20/18px), narrower than every former size, so the arrows stay clear. */
+@media (max-width: 640px) {
   .cal-monthbar-title {
-    font-size: 20px;
+    font-size: 17px;
   }
 }
 /* 320 px (Issue #564): at 20px the title plus its picker chevron (measured in the former modern skin) is 172 px wide
@@ -1934,9 +1933,6 @@ textarea.form-input {
   .cal-monthbar.card {
     padding-left: 12px;
     padding-right: 12px;
-  }
-  .cal-monthbar-title {
-    font-size: 18px;
   }
 }
 

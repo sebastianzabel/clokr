@@ -207,41 +207,61 @@
     flex: 0 1 auto;
   }
 
+  /* Issue #929: on a desktop the arrows and the period form ONE compact group (32 px, the
+     control height); "Heute" and the extra slot follow with a gap. The narrow block below
+     restores the 44 px touch targets (WCAG 2.5.5, #553/#564/#648). */
   .month-bar-nav {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    align-items: stretch;
+    gap: 0;
     flex-wrap: nowrap;
   }
 
-  /* 44 px touch target on both axes (WCAG 2.5.5); the global .nav-btn only sets the height. */
   .month-bar-nav .nav-btn {
-    min-width: 44px;
+    min-width: var(--h-control);
+    min-height: var(--h-control);
+    padding: 0;
     justify-content: center;
+    border: 1px solid var(--line-2);
+    box-shadow: none;
+    color: var(--text-2);
+  }
+
+  .month-bar-nav > .nav-btn:first-child {
+    border-radius: var(--r-control) 0 0 var(--r-control);
+  }
+
+  .month-bar-nav > .month-bar-center + .nav-btn {
+    border-radius: 0 var(--r-control) var(--r-control) 0;
   }
 
   .month-bar-center {
     display: flex;
     flex-direction: column;
     align-items: center;
-    min-width: 200px;
+    justify-content: center;
+    min-width: 150px;
+    min-height: var(--h-control);
+    padding: 0 12px;
     text-align: center;
     position: relative;
+    background: var(--card);
+    border-block: 1px solid var(--line-2);
   }
 
   .month-bar-eyebrow {
     font-family: var(--font-ui);
     color: var(--brand);
-    font-size: 13px;
+    font-size: 11px;
     line-height: 1;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
   }
 
   .month-bar-label {
     font-family: var(--font-ui);
-    font-weight: 400;
-    font-size: 26px;
-    line-height: 1.1;
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 1.2;
     color: var(--text);
     text-transform: capitalize;
     min-width: 9ch;
@@ -281,12 +301,25 @@
     color: var(--text);
   }
 
+  /* A quiet but clearly active button (the ghost fill read as disabled). */
   .month-bar-today {
-    margin-left: 4px;
+    margin-left: 8px;
+    align-self: center;
+    min-height: var(--h-control);
+    padding: 0 12px;
+    border: 1px solid var(--line-2);
+    background: var(--card);
+    color: var(--text);
+  }
+
+  .month-bar-today:hover {
+    border-color: var(--brand);
+    color: var(--brand);
   }
 
   .month-bar-extra {
     margin-left: auto;
+    padding-left: 8px;
     display: flex;
     gap: 8px;
     align-items: center;
@@ -328,10 +361,29 @@
     .month-bar-nav {
       display: grid;
       grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+
+    /* Back to separate 44 px arrows on a phone (WCAG 2.5.5). */
+    .month-bar-nav .nav-btn {
+      min-width: 44px;
+      min-height: 44px;
+    }
+
+    .month-bar-nav > .nav-btn:first-child,
+    .month-bar-nav > .month-bar-center + .nav-btn {
+      border-radius: var(--r-control);
     }
 
     .month-bar-center {
       min-width: 0;
+      padding: 0;
+      background: none;
+      border-block: 0;
+    }
+
+    .month-bar-label {
+      font-size: 17px;
     }
 
     .month-bar-today,
@@ -348,28 +400,14 @@
     }
   }
 
-  /* 26px fits between the arrows from 481 to 640 px (clearance >= 45 px). Below that the
-     label is 217 px at 26px and 188 px at 22px, but only ~170 px fit between
-     the arrows inside MonatSaldoCard at 360 px (card padding 28 px). 20px (the
-     .mini-stat .value size in app.css) is 173 px and clears the arrows by 7 px;
-     white-space: nowrap stays (D-02). */
-  @media (max-width: 480px) {
-    .month-bar-label {
-      font-size: 20px;
-    }
-  }
-
-  /* 320 px (Issue #564): at 20px the label (with the picker chevron, 172 px) was
-     wider than the ~146 px between the arrows and overlapped them by up to 13 px. Less side
-     padding and an 18px label clear them. Mirrored by .cal-monthbar in app.css. */
+  /* 320 px (Issue #564): the label (with the picker chevron) must clear the arrows; less side
+     padding keeps the room. Since #929 the narrow label is 17px (it was 26/20/18px), which is
+     narrower than every former size, so the #553/#564 clearance only grows.
+     Mirrored by .cal-monthbar in app.css. */
   @media (max-width: 360px) {
     .month-bar {
       padding-left: 12px;
       padding-right: 12px;
-    }
-
-    .month-bar-label {
-      font-size: 18px;
     }
   }
 </style>
