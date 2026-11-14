@@ -17,6 +17,14 @@
     karenzOverrunTitle,
     missingDaysText,
   } from "$lib/month-close/day-lists";
+  import {
+    WITHHELD_RIGHTS_LINE,
+    closeLabelFor,
+    closesBlind,
+    nextStepText,
+    shortName,
+    withheldGapPersons,
+  } from "$lib/month-close/next-step";
   import { exitLabel } from "$lib/month-close/exit-label";
   import type { EmployeeStatus, MonthStatus } from "$lib/month-close/types";
   import { localCalendarDay } from "$lib/employees/employment-state";
@@ -96,12 +104,6 @@
     return STATUS_TONES[status] ?? "neutral";
   }
 
-  function shortenName(name: string): string {
-    const parts = name.split(" ");
-    if (parts.length >= 2) return `${parts[0]} ${parts[parts.length - 1].charAt(0)}.`;
-    return name;
-  }
-
   function reasonText(ms: MonthStatus): string {
     if (ms.status === "closed" || ms.status === "future") return "–";
     if (ms.status === "no_data") return "Keine Erfassung in diesem Zeitraum";
@@ -113,12 +115,21 @@
     }
     if (ms.status === "open" && ms.missing && ms.missing.length > 0) {
       return ms.missing
-        .map((m) => `${shortenName(m.employeeName)}: ${missingDaysText(m, { short: true })}`)
+        .map((m) => `${shortName(m.employeeName)}: ${missingDaysText(m, { short: true })}`)
         .join("; ");
     }
     if (ms.status === "partial") return `${ms.closedCount} von ${ms.totalCount} abgeschlossen`;
     if (ms.status === "ready") return "Alle Mitarbeiter bereit";
     return "–";
+  }
+
+  /** Issue #947: the persons of an open month whose gap days the reader cannot see. */
+  function withheldOf(ms: MonthStatus) {
+    return ms.status === "open" || ms.status === "partial" ? (ms.missing ?? []) : [];
+  }
+
+  function nextStepOf(ms: MonthStatus): string {
+    return nextStepText(withheldGapPersons(withheldOf(ms)));
   }
 
   const monthColumns: DataTableColumn[] = [
@@ -179,15 +190,23 @@
         </Chip>
       {:else if column.key === "reason"}
         <span class="mst-reason">{reasonText(ms)}</span>
+        {#if ms.month === firstActionableMonth && nextStepOf(ms)}
+          <span class="mst-next" data-testid="month-close-withheld-hint">
+            {nextStepOf(ms)}
+            <span class="mst-rights">{WITHHELD_RIGHTS_LINE}</span>
+          </span>
+        {/if}
       {:else if (ms.status === "ready" || ms.status === "partial" || ms.status === "open") && ms.month === firstActionableMonth}
         <button
           type="button"
-          class="btn btn-primary btn-sm"
+          class={closesBlind(withheldOf(ms))
+            ? "btn btn-secondary btn-sm"
+            : "btn btn-primary btn-sm"}
           disabled={busy}
           onclick={() => onCloseMonth(ms.month)}
           data-testid={`month-close-row-${ms.month}-trigger`}
         >
-          Abschließen
+          {closeLabelFor(withheldOf(ms))}
         </button>
       {:else if ms.status === "closed"}
         <span class="mst-none" data-testid={`month-close-row-${ms.month}-locked`}>–</span>
@@ -261,6 +280,10 @@
             <span class="mst-gaps">{missingDaysText(emp)}</span>
             {#if !emp.dayDetailsWithheld}
               <span class="mst-gap-count">({gapCountOf(emp)})</span>
+            {:else}
+              <span class="mst-rights" data-testid="month-close-person-withheld">
+                {WITHHELD_RIGHTS_LINE}
+              </span>
             {/if}
           {:else}
             <span class="mst-none">–</span>
@@ -268,11 +291,11 @@
         {:else if selectedMonth !== null && (emp.status === "ready" || emp.status === "missing")}
           <button
             type="button"
-            class="btn btn-primary btn-sm"
+            class={closesBlind([emp]) ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
             disabled={closingEmployee === emp.employeeId || busy}
             onclick={() => onCloseEmployee(emp.employeeId, selectedMonth)}
           >
-            Abschließen
+            {closeLabelFor([emp])}
           </button>
         {:else if selectedMonth !== null && emp.status === "closed"}
           <button
@@ -307,6 +330,22 @@
     white-space: normal;
     color: var(--text-2);
     font-size: var(--fs-sm);
+  }
+
+  .mst-next {
+    display: block;
+    max-width: 44ch;
+    margin-top: var(--s-1);
+    white-space: normal;
+    color: var(--text);
+    font-size: var(--fs-sm);
+  }
+
+  .mst-rights {
+    display: block;
+    color: var(--text-2);
+    font-size: var(--fs-xs, 11px);
+    white-space: normal;
   }
 
   .mst-none {

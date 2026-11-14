@@ -25,13 +25,8 @@
   import Spinner from "$components/ui/Spinner.svelte";
   import CloseStepper from "$lib/components/admin/monatsabschluss/CloseStepper.svelte";
   import MonthStatusTable from "$lib/components/admin/monatsabschluss/MonthStatusTable.svelte";
-  import {
-    DAY_DETAILS_WITHHELD_HINT,
-    anyDayDetailsWithheld,
-    daysWithoutEntryText,
-    gapCountOf,
-    missingDaysText,
-  } from "$lib/month-close/day-lists";
+  import { daysWithoutEntryText, gapCountOf, missingDaysText } from "$lib/month-close/day-lists";
+  import { READY_KPI, autoCloseHintText, closesBlind } from "$lib/month-close/next-step";
   import type {
     DeferredState,
     EmployeeStatus,
@@ -161,14 +156,13 @@
       .flatMap((e) => e.missingDates ?? []);
   });
 
-  // One neutral hint for the whole page when the server withheld any day list (Issue #86, D-02).
-  const withheldAny = $derived(
-    anyDayDetailsWithheld([
-      ...detailEmployees,
-      ...monthStatuses.flatMap((m) => m.missing ?? []),
-      ...(deferred?.employees ?? []),
-    ]),
-  );
+  // Issue #947: closing days the reader cannot see (withheld lists) is named in the dialog.
+  const closesBlindNow = $derived.by(() => {
+    if (confirmEmployeeId) {
+      return closesBlind(detailEmployees.filter((e) => e.employeeId === confirmEmployeeId));
+    }
+    return closesBlind(detailEmployees.filter((e) => e.status === "missing"));
+  });
 
   const visibleMonths = $derived.by(() => {
     if (statusFilter === "open") {
@@ -190,9 +184,9 @@
       explanation: "Monate dieses Jahres",
     },
     {
-      label: "Bereit",
+      label: READY_KPI.label,
       value: monthStatuses.filter((ms) => ms.status === "ready").length,
-      explanation: "Alle Personen bereit",
+      explanation: READY_KPI.explanation,
     },
     {
       label: MONTH_STATUS_LABEL.OPEN,
@@ -226,14 +220,14 @@
     return 0; // Prüfen (default for open/blocked/no_data)
   });
 
-  const autoCloseHint = $derived.by(() => {
-    const hasOpenMonths = monthStatuses.some(
-      (ms) => ms.status === "open" || ms.status === "ready" || ms.status === "partial",
-    );
-    if (!hasOpenMonths) return null;
-    if (currentDay <= 10) return "Der automatische Abschluss versucht es bis zum 10.";
-    return "Der Abschluss ist nur noch manuell möglich.";
-  });
+  const autoCloseHint = $derived(
+    autoCloseHintText(
+      currentDay,
+      monthStatuses.some(
+        (ms) => ms.status === "open" || ms.status === "ready" || ms.status === "partial",
+      ),
+    ),
+  );
 
   const monthName = (month: number) =>
     monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
@@ -613,12 +607,6 @@
     </div>
   {/if}
 
-  {#if withheldAny}
-    <div data-testid="month-close-withheld-hint">
-      <Note tone="info">{DAY_DETAILS_WITHHELD_HINT}</Note>
-    </div>
-  {/if}
-
   <!-- The year is the PeriodPicker in the shape of Zeiten (#854 owner review): no eyebrow, „Heute“ jumps to
        the current year, and the status filter sits in the same bar. -->
   <div class="mc-controls">
@@ -706,6 +694,12 @@
     </Note>
 
     {#if pendingGapCount > 0}
+      {#if closesBlindNow}
+        <Note tone="info"
+          >Du siehst nicht, welche Tage fehlen. Bitte die Salonleitung, die Zeiten zu prüfen, bevor
+          du abschließt.</Note
+        >
+      {/if}
       <div class="mc-gaps" role="alert" data-testid="month-close-gap-warning">
         <Note tone="warn">
           <b
