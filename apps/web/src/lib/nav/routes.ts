@@ -89,6 +89,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: null,
     file: "/dashboard",
     inNav: true,
+    description: "Dein Tag: ein- und ausstempeln, Aufgaben und Überblick",
   },
   {
     href: "/ich/zeiten",
@@ -99,6 +100,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: null,
     file: "/time-entries",
     inNav: true,
+    description: "Deine Arbeitszeiten ansehen, erfassen und korrigieren",
   },
   {
     href: "/ich/abwesenheiten",
@@ -109,6 +111,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: null,
     file: "/leave",
     inNav: true,
+    description: "Urlaub, Krankmeldungen und Urlaubsplanung",
   },
   // #597 (Phase 851): the own shifts of the next 14 days, plus the own availability as a second tab
   // while the tenant uses the availability system - so the page itself no longer depends on that feature
@@ -121,6 +124,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: null,
     file: "/availability",
     inNav: true,
+    description: "Deine Schichten der nächsten Tage",
   },
   // #594 (Phase 851): the own hours and vacation account with its derivation and the monthly records
   {
@@ -131,6 +135,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     width: "full",
     requires: null,
     inNav: true,
+    description: "Dein Stunden- und Urlaubskonto",
   },
   // In the avatar menu (and the phone „Mehr“ sheet), not in the rail
   {
@@ -142,6 +147,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: null,
     file: "/settings",
     inNav: false,
+    description: "Deine Angaben, Sicherheit und Benachrichtigungen",
   },
   {
     href: "/ich/profil/geraet-koppeln",
@@ -164,6 +170,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     width: "full",
     requires: [[Z("team-overview:read")]],
     inNav: true,
+    description: "Wer heute im Salon ist",
   },
   // The Postfach decides leave requests, Zeitnachträge and (#840 D-840-29) § 9 cases — any one is enough
   {
@@ -175,6 +182,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: [[Z("leave-request:approve")], [Z("retro-request:approve")], [Z("section9:decide")]],
     file: "/inbox",
     inNav: true,
+    description: "Anträge und Nachträge, die auf dich warten",
   },
   {
     href: "/team/zeiten",
@@ -185,6 +193,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: [[Z("time-entry:read")]],
     file: "/team/time-entries",
     inNav: true,
+    description: "Arbeitszeiten deines Teams",
   },
   {
     href: "/team/abwesenheiten",
@@ -195,6 +204,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: [[Z("leave-request:read")]],
     file: "/team/leave",
     inNav: true,
+    description: "Urlaub und Krankmeldungen deines Teams",
   },
   // The roster page is write-oriented with no read-only mode — gated on PLAN, not READ (Phase 378, D-05)
   {
@@ -207,6 +217,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     file: "/shifts",
     inNav: true,
     tabLabel: "Woche",
+    description: "Schichten planen",
   },
   {
     href: "/team/dienstplan/planung",
@@ -277,6 +288,7 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requires: [[Z("employee:read")]],
     inNav: true,
     navHiddenWhen: PERSON_MANAGE_ALTERNATIVES,
+    description: "Personen in deinem Bereich",
   },
 
   // ── Verwalten ──────────────────────────────────────────────────────────────────────────────────────

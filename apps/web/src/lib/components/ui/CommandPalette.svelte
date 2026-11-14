@@ -1,132 +1,110 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
+  import { tenantFeatures } from "$stores/tenant-features";
+  import { api } from "$api/client";
   import { focusTrap } from "$lib/utils/focus-trap";
-  import { canAccessAdminPath, isAdminHref } from "$lib/nav/admin-route-permissions";
-  import { mayOpenTeamPage } from "$lib/nav/team-nav";
-  import { pageLabel } from "$lib/nav/page-labels";
+  import { mayOpenPath } from "$lib/nav/routes";
   import { OPEN_PALETTE_EVENT } from "$lib/nav/palette-event";
-
-  interface Action {
-    id: string;
-    label: string;
-    description: string;
-    icon: string;
-    href: string;
-    group: string;
-    /** #840: a team page this entry opens; offered only when `mayOpenTeamPage` allows it. */
-    teamPage?: string;
-  }
+  import {
+    maySearchPersons,
+    pageIndex,
+    personHits,
+    searchPages,
+    type PersonRow,
+    type SearchHit,
+  } from "$lib/nav/quick-search";
 
   interface ActionGroup {
     name: string;
-    items: Action[];
+    items: SearchHit[];
   }
 
-  const allActions: Action[] = [
+  // Pages come from the one route table, offered under the navigation's own rule (#944); only these two
+  // deep links into a tab have no table entry of their own.
+  const tabLinks = $derived([
     {
-      id: "dashboard",
-      label: pageLabel("/ich/tag"),
-      description: "Zur Startseite",
-      icon: "home",
-      href: "/ich/tag",
-      group: "Navigation",
-    },
-    {
-      id: "time-entries",
-      label: pageLabel("/ich/zeiten"),
-      description: "Arbeitszeiten verwalten",
-      icon: "clock",
-      href: "/ich/zeiten",
-      group: "Navigation",
-    },
-    {
-      id: "leave",
-      label: pageLabel("/ich/abwesenheiten"),
-      description: "Urlaub & Krankmeldungen",
-      icon: "calendar",
-      href: "/ich/abwesenheiten",
-      group: "Navigation",
-    },
-    {
+      kind: "page" as const,
       id: "leave-plan",
       label: "Urlaubsplanung",
       description: "Urlaubswünsche fürs Jahr planen",
       icon: "calendar",
       href: "/ich/abwesenheiten?tab=planung",
-      group: "Navigation",
+      group: "Ich",
     },
-    {
-      id: "team-leave-plan",
-      label: "Team-Urlaubsplanung",
-      description: "Urlaubswünsche des Teams planen",
-      icon: "calendar",
-      href: "/team/abwesenheiten?tab=planung",
-      group: "Navigation",
-      teamPage: "/team/abwesenheiten",
-    },
-    {
-      id: "reports",
-      label: pageLabel("/reports"),
-      description: "Auswertungen & Exporte",
-      icon: "chart",
-      // #844: deliberately the old URL (it redirects to Verwalten › Berichte): the page also serves a person's
-      // own documents (report:export:EIGENE), so the entry must not be gated like the Verwalten rail entry.
-      href: "/reports",
-      group: "Navigation",
-    },
-    {
-      id: "admin",
-      label: pageLabel("/verwalten"),
-      description: "Verwalten",
-      icon: "settings",
-      href: "/verwalten",
-      group: "Navigation",
-    },
-    {
-      id: "admin-shifts",
-      label: pageLabel("/verwalten/regeln/dienstplan"),
-      description: "Vorlagen, Mindestbesetzung und Wochenmuster",
-      icon: "calendar",
-      href: "/verwalten/regeln/dienstplan",
-      group: "Admin",
-    },
-    {
-      id: "admin-vacation",
-      label: pageLabel("/verwalten/regeln/abwesenheiten"),
-      description: "Urlaub, Sonderurlaub und Übertrag",
-      icon: "settings",
-      href: "/verwalten/regeln/abwesenheiten",
-      group: "Admin",
-    },
-    {
-      id: "admin-roles",
-      label: pageLabel("/verwalten/system/rollen"),
-      description: "Rollen anlegen und zuweisen",
-      icon: "settings",
-      href: "/verwalten/system/rollen",
-      group: "Admin",
-    },
-  ];
+    ...(mayOpenPath($authStore.user, "/team/abwesenheiten")
+      ? [
+          {
+            kind: "page" as const,
+            id: "team-leave-plan",
+            label: "Team-Urlaubsplanung",
+            description: "Urlaubswünsche des Teams planen",
+            icon: "calendar",
+            href: "/team/abwesenheiten?tab=planung",
+            group: "Team",
+          },
+        ]
+      : []),
+  ]);
+  const pages = $derived([
+    ...pageIndex($authStore.user, { availabilityEnabled: $tenantFeatures.availabilityEnabled }),
+    ...tabLinks,
+  ]);
+
+  /** The few glyphs the palette draws; every other table icon falls back to the gear. */
+  function iconKind(icon: string): string {
+    if (icon === "sun" || icon === "home") return "home";
+    if (icon === "calendar-check" || icon === "umbrella") return "calendar";
+    if (icon === "dashboard") return "chart";
+    if (icon === "users") return "user";
+    return icon;
+  }
 
   let open = $state(false);
   let query = $state("");
   let selectedIndex = $state(0);
   let inputRef: HTMLInputElement | undefined = $state();
 
-  // Issue #83: an admin action is offered only when the admin route map lets the user open it.
-  // #840: a team entry follows the team nav's own permission (one source), UX only.
-  const offered = (a: Action) =>
-    (!isAdminHref(a.href) || canAccessAdminPath($authStore.user, a.href)) &&
-    (a.teamPage === undefined || mayOpenTeamPage(a.teamPage, $authStore.user));
+  // Persons: one reach-filtered list per opening (GET /employees, #547), matched locally after a short pause.
+  let people = $state<PersonRow[] | null>(null);
+  let peopleLoading = false;
+  let personQuery = $state("");
+  let personTimer: ReturnType<typeof setTimeout> | undefined;
 
-  let filtered = $derived(
-    allActions.filter(offered).filter((a) => {
-      if (!query.trim()) return true;
-      const q = query.toLowerCase();
-      return a.label.toLowerCase().includes(q) || a.description.toLowerCase().includes(q);
-    }),
-  );
+  async function ensurePeople() {
+    if (people !== null || peopleLoading || !maySearchPersons($authStore.user)) return;
+    peopleLoading = true;
+    try {
+      people = await api.get<PersonRow[]>("/employees");
+    } catch {
+      people = [];
+    } finally {
+      peopleLoading = false;
+    }
+  }
+
+  $effect(() => {
+    const q = query.trim();
+    clearTimeout(personTimer);
+    if (!open || q.length < 2) {
+      personQuery = "";
+      return;
+    }
+    personTimer = setTimeout(async () => {
+      await ensurePeople();
+      personQuery = q;
+    }, 200);
+    return () => clearTimeout(personTimer);
+  });
+
+  let filtered = $derived<SearchHit[]>([
+    ...searchPages(pages, query),
+    ...(people !== null && personQuery !== "" && personQuery === query.trim()
+      ? personHits($authStore.user, people, personQuery, {
+          availabilityEnabled: $tenantFeatures.availabilityEnabled,
+        })
+      : []),
+  ]);
 
   let grouped = $derived(
     filtered.reduce<ActionGroup[]>((groups, action) => {
@@ -140,7 +118,6 @@
     }, []),
   );
 
-  // Build a flat index map: for each action in the grouped list, calculate its flat index
   function getFlatIndex(groupIndex: number, itemIndex: number): number {
     let idx = 0;
     for (let g = 0; g < groupIndex; g++) {
@@ -153,6 +130,7 @@
     if ((e.metaKey || e.ctrlKey) && e.key === "k") {
       e.preventDefault();
       open = !open;
+      people = null;
       query = "";
       selectedIndex = 0;
     }
@@ -161,6 +139,7 @@
   /** #844: the header's search button opens the palette through a window event (no shared store). */
   function handleOpenRequest() {
     open = true;
+    people = null;
     query = "";
     selectedIndex = 0;
   }
@@ -197,13 +176,14 @@
     });
   }
 
-  function select(action: Action) {
+  function select(action: SearchHit) {
     close();
     if (action.href) goto(action.href);
   }
 
   function close() {
     open = false;
+    people = null;
     query = "";
     selectedIndex = 0;
   }
@@ -276,7 +256,7 @@
             }}
           >
             <span class="cmd-item-icon">
-              {#if action.icon === "home"}
+              {#if iconKind(action.icon) === "home"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -291,7 +271,7 @@
                   <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                   <polyline points="9 22 9 12 15 12 15 22" />
                 </svg>
-              {:else if action.icon === "clock"}
+              {:else if iconKind(action.icon) === "clock"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -306,7 +286,7 @@
                   <circle cx="12" cy="12" r="10" />
                   <polyline points="12 6 12 12 16 14" />
                 </svg>
-              {:else if action.icon === "calendar"}
+              {:else if iconKind(action.icon) === "calendar"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -323,7 +303,7 @@
                   <line x1="8" x2="8" y1="2" y2="6" />
                   <line x1="3" x2="21" y1="10" y2="10" />
                 </svg>
-              {:else if action.icon === "chart"}
+              {:else if iconKind(action.icon) === "chart"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -340,7 +320,22 @@
                   <path d="M13 17V5" />
                   <path d="M8 17v-3" />
                 </svg>
-              {:else if action.icon === "settings"}
+              {:else if iconKind(action.icon) === "user"}
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+              {:else}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"

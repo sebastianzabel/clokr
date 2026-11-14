@@ -12,6 +12,7 @@ import {
   visibleAdminNavItems,
 } from "../admin-route-permissions";
 import { visibleNavSections } from "../app-nav";
+import { pageIndex } from "../quick-search";
 import { APP_ROUTES, homeHref, legacyRedirectTarget, visibleChildren } from "../routes";
 import personas from "./fixtures/system-role-permissions.json";
 
@@ -54,9 +55,14 @@ describe("internal-routes-843 — intern, nicht in der Navigation", () => {
 
   it("is not an action of the command palette", () => {
     const palette = src("lib/components/ui/CommandPalette.svelte");
-    // positive control: the palette lists Verwalten hrefs this way
-    expect(palette).toContain('href: "/verwalten/system/rollen"');
+    // positive control: the palette reads its pages from the route table through the page index (#944)
+    expect(palette).toContain("pageIndex(");
     for (const href of [...INTERNAL, "/admin/bausteine"]) expect(palette).not.toContain(href);
+    const offered = pageIndex({ permissions: P.ADMIN }, { availabilityEnabled: true }).map(
+      (page) => page.href,
+    );
+    expect(offered).toContain("/verwalten/system/rollen");
+    for (const href of INTERNAL) expect(offered).not.toContain(href);
   });
 
   it("tells search engines not to index the page", () => {

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { visibleAdminNavItems } from "../admin-route-permissions";
 import { APP_ROUTES, visibleChildren } from "../routes";
+import { pageIndex } from "../quick-search";
 import personas from "./fixtures/system-role-permissions.json";
 
 function webSrc(): string {
@@ -116,8 +117,12 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
     expect(bar).toContain("visibleNavSections($authStore.user");
     expect(bar).not.toMatch(/\brole\b\s*===|adminMore/);
     const palette = read("lib/components/ui/CommandPalette.svelte");
-    expect(palette).toContain("canAccessAdminPath($authStore.user, a.href)");
+    // #944: the palette's pages come from the route table through the page index (`visibleRoute`)
+    expect(palette).toContain("pageIndex($authStore.user");
+    expect(read("lib/nav/quick-search.ts")).toContain("visibleRoute(user, route, options)");
     expect(palette).not.toMatch(/adminOnly|isManager|\.role\b/);
-    expect(palette).toContain('href: "/verwalten/system/rollen"');
+    expect(pageIndex({ permissions: p.ADMIN }, on).map((page) => page.href)).toContain(
+      "/verwalten/system/rollen",
+    );
   });
 });
