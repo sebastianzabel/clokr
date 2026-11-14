@@ -178,7 +178,7 @@
     },
     {
       "page": "(app)/reports/+page.svelte",
-      "path": "/verwalten/berichte",
+      "path": "/team/berichte",
       "auth": "tenant-admin"
     },
     {

@@ -171,7 +171,8 @@ describe("old URLs of the acceptance criteria land on the new place", () => {
     ["/admin/export", "/verwalten/daten/export"],
     ["/verwalten/daten/datev", "/verwalten/daten/export"], // the renamed #844 URL (alias)
     ["/admin/availability", "/team/verfuegbarkeit"],
-    ["/reports", "/verwalten/berichte"],
+    ["/reports", "/team/berichte"],
+    ["/verwalten/berichte", "/team/berichte"], // #936: the #844 URL (alias)
   ];
   for (const [from, to] of CASES)
     it(`${from} → ${to}`, () => expect(legacyRedirectTarget(from)).toBe(to));
@@ -615,7 +616,7 @@ describe("page widths (owner 09.11.2026)", () => {
       "/ich/zeiten",
       "/team/dienstplan",
       "/verwalten/personen",
-      "/verwalten/berichte",
+      "/team/berichte",
     ]) {
       expect(pageWidthForPath(href), href).toBe("full");
     }

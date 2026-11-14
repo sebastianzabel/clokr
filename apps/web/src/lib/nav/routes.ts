@@ -233,6 +233,19 @@ export const APP_ROUTES: readonly AppRoute[] = [
     parent: "/team/dienstplan",
     tabLabel: "Hinweise",
   },
+  // Owner decision 14.11.2026 (Issue #936, replaces Z-03): the reports read the team over a period, so they
+  // live under Team, after Dienstplan. The payroll exports (DATEV, Monatsexport) stay under Verwalten › Daten.
+  {
+    href: "/team/berichte",
+    area: "team",
+    label: "Berichte",
+    icon: "chart",
+    width: "full",
+    requires: [[Z("report:read")]],
+    file: "/reports",
+    inNav: true,
+    description: "Auswertungen nach Zeitraum, Person und Salon",
+  },
   // D-05: the team availability belongs to the roster. #853 (D-853-04 revised): it is the fourth tab of
   // „Dienstplan“, no rail entry of its own; the rail marks „Dienstplan“ on it (`navCurrentPath`).
   // GET /employees plus GET/PUT /employees/:id/availability
@@ -441,19 +454,6 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inNav: true,
     parent: "/verwalten",
     description: "Monate prüfen und abschließen",
-  },
-  // Z-03: the reports live under Verwalten
-  {
-    href: "/verwalten/berichte",
-    area: "verwalten",
-    label: "Berichte",
-    icon: "chart",
-    width: "full",
-    requires: [[Z("report:read")]],
-    file: "/reports",
-    inNav: true,
-    parent: "/verwalten",
-    description: "Auswertungen nach Zeitraum, Person und Salon",
   },
   {
     href: "/verwalten/daten",
@@ -672,6 +672,12 @@ export const LEGACY_ROUTE_REDIRECTS: readonly LegacyRedirect[] = [
     href: "/verwalten/daten/datev",
     requires: [[Z("report:export")]],
     to: "/verwalten/daten/export",
+  },
+  // The #844 URL of the reports (moved to Team by #936); it may be bookmarked.
+  {
+    href: "/verwalten/berichte",
+    requires: [[Z("report:read")]],
+    to: "/team/berichte",
   },
   // → /admin/integrations (301 from its +page.server.ts)
   { href: "/admin/wifi-presence", requires: [[Z("presence-source:manage")]] },

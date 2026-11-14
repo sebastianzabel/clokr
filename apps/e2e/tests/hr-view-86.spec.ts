@@ -524,10 +524,10 @@ test.describe("Issue #86 — Personalabteilung im Browser", () => {
 
     // ── 6. AC-86-3: „Berichte“ is in the navigation and the reports open without exports ─────
     await page
-      .getByRole("navigation", { name: "Verwalten" }) // #844 (Z-03): Berichte live under Verwalten
+      .getByRole("navigation", { name: "Team" }) // #936 (replaces Z-03): Berichte live under Team
       .getByRole("link", { name: "Berichte" })
       .click();
-    await expect(page).toHaveURL(/\/verwalten\/berichte/);
+    await expect(page).toHaveURL(/\/team\/berichte/);
     // Issue #612: the page is the period report - the HR principal gets the two period tabs and
     // the vacation overview on the second one, and still no export control of any kind.
     await expect(page.getByRole("tab", { name: "Zeiten & Konten" })).toHaveAttribute(

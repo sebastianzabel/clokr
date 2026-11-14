@@ -78,7 +78,8 @@ describe("visibleTeamNavItems", () => {
       "/team/dienstplan",
       "/team/personen", // #853: the read-only team directory (employee:read, no person-management right)
     ]);
-    expect(hrefs).not.toContain("/verwalten/berichte");
+    // The Salonmanager template holds no report:read, so Berichte stays hidden for her (#936 moved it to Team).
+    expect(hrefs).not.toContain("/team/berichte");
   });
 
   it("AK-378-2: Ausbilder sees only Team-Zeiten, Abwesenheiten — no Aufgaben, no Schichtplanung, no Berichte", () => {
@@ -94,11 +95,12 @@ describe("visibleTeamNavItems", () => {
     expect(visibleTeamNavItems({ permissions: ["time-entry:read:EIGENE"] })).toEqual([]);
   });
 
-  it("Issue #86: the Personalabteilung persona sees Team-Abwesenheiten and no Team-Zeiten (Berichte is Verwalten, #844)", () => {
+  it("Issue #86: the Personalabteilung persona sees Team-Abwesenheiten, Berichte (#936) and no Team-Zeiten", () => {
     const hrefs = visibleTeamNavItems({ permissions: PERSONALABTEILUNG_PERMISSIONS }).map(
       (i) => i.href,
     );
-    expect(hrefs).toEqual(["/team/abwesenheiten"]);
+    // Issue #86: she holds report:read; since #936 Berichte is a Team page.
+    expect(hrefs).toEqual(["/team/abwesenheiten", "/team/berichte"]);
     expect(hrefs).not.toContain("/team/zeiten"); // no time-entry:read — no daily times
     expect(hrefs).not.toContain("/team/dienstplan");
     expect(hrefs).not.toContain("/team/aufgaben"); // no approve permission
@@ -112,9 +114,9 @@ describe("visibleTeamNavItems", () => {
     expect(visibleTeamNavItems(undefined)).toEqual([]);
   });
 
-  it("report:read:ZUGEWIESEN unlocks no Team entry since Berichte moved to Verwalten (#844, Z-03)", () => {
+  it("report:read:ZUGEWIESEN unlocks exactly Team › Berichte (#936, replaces Z-03)", () => {
     const items = visibleTeamNavItems({ permissions: ["report:read:ZUGEWIESEN"] });
-    expect(items).toEqual([]);
+    expect(items.map((i) => i.href)).toEqual(["/team/berichte"]);
   });
 
   it("holding only retro-request:approve:ZUGEWIESEN (not leave-request:approve) still unlocks Anträge", () => {

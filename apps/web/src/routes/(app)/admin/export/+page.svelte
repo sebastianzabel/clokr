@@ -513,7 +513,7 @@
     {#if multiSalon}
       <Note tone="info">
         Das Monatsexport enthält alle Salons. Für einen einzelnen Salon exportierst du es unter
-        <a href="/verwalten/berichte">{pageLabel("/reports")}</a>.
+        <a href="/team/berichte">{pageLabel("/reports")}</a>.
       </Note>
     {/if}
     <div class="export-actions">

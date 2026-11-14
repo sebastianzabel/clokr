@@ -171,4 +171,15 @@ export async function settle(page: Page): Promise<void> {
       requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame())),
     );
   });
+  // Entrance animations (`.card-animate` fadeUp) fade a block in from opacity 0; axe measures colour
+  // contrast on the blended pixels, so a scan during the fade reports a false contrast violation
+  // (Issue #936: the period bar of Berichte was scanned at opacity 0.43). Wait until every finite
+  // animation has finished - the same wait as hr-view-86 and reports-period use.
+  await page.waitForFunction(() =>
+    document
+      .getAnimations()
+      .every(
+        (a) => a.effect?.getComputedTiming().iterations === Infinity || a.playState !== "running",
+      ),
+  );
 }

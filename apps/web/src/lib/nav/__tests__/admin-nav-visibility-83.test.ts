@@ -29,14 +29,13 @@ const labelsOf = (hub: string) =>
   visibleChildren({ permissions: p.ADMIN }, hub, on).map((r) => r.label);
 
 describe("Verwalten navigation (Issue #83, #844)", () => {
-  it("the rail lists the eight Verwalten entries of D-04 in order, Salons directly after Personen (#563)", () => {
+  it("the rail lists the seven Verwalten entries of D-04 in order, Salons directly after Personen (#563; Berichte moved to Team, #936)", () => {
     expect(visibleAdminNavItems({ permissions: p.ADMIN }, on).map((i) => i.label)).toEqual([
       "Übersicht",
       "Personen",
       "Salons",
       "Regeln",
       "Monatsabschluss",
-      "Berichte",
       "Daten",
       "System",
     ]);
@@ -90,7 +89,6 @@ describe("Verwalten navigation (Issue #83, #844)", () => {
       "/verwalten/personen",
       "/verwalten/salons",
       "/verwalten/monatsabschluss",
-      "/verwalten/berichte",
     ]);
     // Issue #836: SALON_MANAGER holds leave-request:approve, so Regeln (Abwesenheiten › Urlaubsgrenzen & Sperren) joins;
     // the team availability moved to the Team area (D-05). #853 (D-853-15): she creates and edits no
