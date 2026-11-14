@@ -94,6 +94,7 @@
   import { de } from "date-fns/locale";
   import { retroWindowHint } from "$lib/time-entries/retro-window-hint"; // Issue #849 (5)
   import {
+    breakWriteFields,
     dialogBreakMinutes,
     dialogNetMinutes,
     slotMinutes,
@@ -362,14 +363,13 @@
   );
   // Issue #943: an entry with only a legacy flat break opens without slots; the dialog still counts
   // that amount (display and day-check preview), so it shows the list's figures. The save payload
-  // keeps using `formBreakTotal`.
-  let formBreakShown = $derived(
-    dialogBreakMinutes({
-      slots: formBreaks,
-      storedBreakRowCount: editEntry?.breaks?.length ?? 0,
-      storedBreakMinutes: editEntry?.breakMinutes ?? 0,
-    }),
-  );
+  // goes through `breakWriteFields`.
+  let formBreakInput = $derived({
+    slots: formBreaks,
+    storedBreakRowCount: editEntry?.breaks?.length ?? 0,
+    storedBreakMinutes: editEntry?.breakMinutes ?? 0,
+  });
+  let formBreakShown = $derived(dialogBreakMinutes(formBreakInput));
   let formNetMin = $derived(dialogNetMinutes(formStart, formEnd, formHasEnd, formBreakShown));
   let formNote = $state("");
   // Issue #70 (D-07, D-12): salon options and the salon field exist only where the #64 rule
@@ -1472,8 +1472,7 @@
           date: formDate,
           startTime: startISO,
           endTime: endISO,
-          breakMinutes: formBreakTotal,
-          breaks: breaksPayload,
+          ...breakWriteFields(formBreakInput, breaksPayload),
           note: formNote || null,
           salonId: formSalonPayload,
         });
@@ -1482,8 +1481,7 @@
           date: formDate,
           startTime: startISO,
           endTime: endISO,
-          breakMinutes: formBreakTotal,
-          breaks: breaksPayload,
+          ...breakWriteFields(formBreakInput, breaksPayload),
           note: formNote || null,
           salonId: formSalonPayload,
         });
@@ -1660,8 +1658,7 @@
           date: formDate,
           startTime: startISO,
           endTime: endISO,
-          breakMinutes: formBreakTotal,
-          breaks: breaksPayload,
+          ...breakWriteFields(formBreakInput, breaksPayload),
           note: formNote || null,
           salonId: formSalonPayload,
           reason: retroReason,
@@ -1675,7 +1672,7 @@
           reason: retroReason,
           startTime: formStart,
           endTime: formEnd,
-          breakMinutes: formBreakTotal > 0 ? formBreakTotal : undefined,
+          breakMinutes: formBreakShown > 0 ? formBreakShown : undefined,
         });
         closeModal();
         toasts.success("Antrag wurde eingereicht. Ein Manager wird deinen Antrag prüfen.");
@@ -3297,8 +3294,8 @@
             </p>
           </div>
           <p class="retro-times-hint text-muted">
-            Vorgeschlagene Zeiten: {formStart}–{formEnd}{#if formBreakTotal > 0}
-              · Pause: {formBreakTotal} Min.{/if}
+            Vorgeschlagene Zeiten: {formStart}–{formEnd}{#if formBreakShown > 0}
+              · Pause: {formBreakShown} Min.{/if}
           </p>
           <div class="form-group">
             <label class="form-label" for="retro-reason-field">Begründung (Pflichtfeld) *</label>

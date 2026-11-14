@@ -1,6 +1,11 @@
 // Issue #943 — the dialog's break and working time equal the list's for an unchanged entry.
 import { describe, it, expect } from "vitest";
-import { dialogBreakMinutes, dialogNetMinutes, usesLegacyBreak } from "../entry-dialog-figures";
+import {
+  breakWriteFields,
+  dialogBreakMinutes,
+  dialogNetMinutes,
+  usesLegacyBreak,
+} from "../entry-dialog-figures";
 
 describe("entry dialog figures (Issue #943)", () => {
   it("an entry with only legacy breakMinutes counts them (09:30-20:10, 45 Min. = 9:55)", () => {
@@ -40,5 +45,21 @@ describe("entry dialog figures (Issue #943)", () => {
       0,
     );
     expect(dialogNetMinutes("09:00", "17:00", false, 0)).toBeNull();
+  });
+});
+
+describe("save payload keeps an untouched legacy break (Issue #943)", () => {
+  it("sends the stored flat minutes while no slot was added", () => {
+    const f = breakWriteFields({ slots: [], storedBreakRowCount: 0, storedBreakMinutes: 45 }, []);
+    expect(f).toEqual({ breakMinutes: 45, breaks: [] });
+  });
+  it("sends the slots' sum once a slot exists, and 0 for a new entry", () => {
+    const s = [{ start: "12:00", end: "12:20" }];
+    expect(
+      breakWriteFields({ slots: s, storedBreakRowCount: 0, storedBreakMinutes: 45 }, ["x"]),
+    ).toEqual({ breakMinutes: 20, breaks: ["x"] });
+    expect(
+      breakWriteFields({ slots: [], storedBreakRowCount: 0, storedBreakMinutes: 0 }, []),
+    ).toEqual({ breakMinutes: 0, breaks: [] });
   });
 });

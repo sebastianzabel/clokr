@@ -56,3 +56,15 @@ export function dialogNetMinutes(
   if (gross <= 0) return 0;
   return Math.max(0, gross - breakMinutes);
 }
+
+/**
+ * The break fields of a save (POST/PUT /time-entries). A stored legacy flat break the person did not
+ * touch (no Break rows, no slot added) is sent back unchanged, so a save never drops it (Issue #943);
+ * once a slot exists the slots' sum is sent, as before.
+ */
+export function breakWriteFields<B>(
+  input: DialogBreakInput,
+  breaksPayload: B[],
+): { breakMinutes: number; breaks: B[] } {
+  return { breakMinutes: dialogBreakMinutes(input), breaks: breaksPayload };
+}
