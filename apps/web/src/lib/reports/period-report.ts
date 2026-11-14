@@ -125,6 +125,8 @@ export interface PeriodVacationRow {
   pendingDays: number | null;
   remainingDays: number | null;
   atRiskDays: number | null;
+  /** Issue #940: carry-over still counted after its deadline because no Hinweis was issued. */
+  carryOverKeptWithoutNoticeDays?: number | null;
   /** `YYYY-MM-DD` of the carry-over deadline, or `null`. */
   carryOverDeadline: string | null;
   /** ISO instant of the newest carry-over notice, or `null`. */

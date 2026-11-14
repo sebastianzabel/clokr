@@ -19,6 +19,26 @@ export interface VacationEntitlement {
   // Issue #435 (D-14) - the server's own regular-entitlement suggestion and statutory minimum.
   regularDays?: number;
   statutoryMinimumDays?: number;
+  // Issue #940 - the Resturlaub facade's figures (#451), the same ones the Urlaubsübersicht shows;
+  // null without a stored row. The client computes none of them.
+  balance?: VacationTabBalance | null;
+}
+
+/** `balance` of `GET /settings/vacation/:employeeId` (Issue #940). */
+export interface VacationTabBalance {
+  availableDays: number;
+  carriedOverEffectiveDays: number;
+  /** Carry-over still counted after its deadline because no Hinweis was issued (EuGH C-684/16). */
+  carryOverKeptWithoutNoticeDays: number;
+  atRiskDays: number;
+  /** Taken up to and including `splitAsOf`. */
+  takenDays: number;
+  /** Approved, after `splitAsOf` up to the year's end. */
+  approvedUpcomingDays: number;
+  pendingDays: number;
+  remainingDays: number;
+  /** `YYYY-MM-DD`, the tenant-local day the taken/approved split uses (yesterday). */
+  splitAsOf: string;
 }
 
 /** What the section shows and compares against; a day is an ISO day or null, a blank note is "". */

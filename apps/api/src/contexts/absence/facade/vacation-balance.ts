@@ -90,6 +90,14 @@ export interface VacationBalance {
   pendingCreatedByAsOfDays: number;
   remainingDays: number; // entitlementDays + carriedOverEffectiveDays − usedDays (not clamped)
   atRiskDays: number; // carryOverAtRiskDays
+  /**
+   * Issue #940 — the carried-over days that still count although the deadline has passed, only
+   * because no Hinweis was documented (EuGH C-684/16, BAG 19.02.2019 – 9 AZR 423/16: vacation
+   * lapses only after the employer asked the employee to take it and warned of the lapse). `0`
+   * while the deadline lies ahead, without a deadline, or once a Hinweis was issued. Lets every
+   * reader say WHY an expired-looking carry-over is still in „Verfügbar“ instead of a bare „—“.
+   */
+  carryOverKeptWithoutNoticeDays: number;
   carryOverDeadline: Date | null;
   hinweisIssued: boolean;
   exitOverUseWarning: { used: number; entitlement: number; message: string } | null;
@@ -139,6 +147,13 @@ export async function vacationBalanceForRow(
     hinweisIssued,
   );
   const carriedOverExpiredDays = Math.max(0, round2(carriedOverDays - carriedOverEffectiveDays));
+  // Issue #940: same deadline comparison as effectiveCarryOverDays (`now <= deadline` = still ahead).
+  const carryOverKeptWithoutNoticeDays =
+    !hinweisIssued &&
+    row.carryOverDeadline !== null &&
+    now.getTime() > row.carryOverDeadline.getTime()
+      ? carriedOverEffectiveDays
+      : 0;
 
   const exitOverride = opts.exitDate !== undefined ? { exitDate: opts.exitDate } : undefined;
   const exitReductionDays = await exitYearReductionDays(
@@ -248,6 +263,7 @@ export async function vacationBalanceForRow(
     pendingCreatedByAsOfDays,
     remainingDays,
     atRiskDays,
+    carryOverKeptWithoutNoticeDays,
     carryOverDeadline: row.carryOverDeadline,
     hinweisIssued,
     exitOverUseWarning,

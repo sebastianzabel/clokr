@@ -342,6 +342,7 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         "$[].carriedOverEffectiveDays",
         "$[].carriedOverExpiredDays",
         "$[].atRiskDays",
+        "$[].carryOverKeptWithoutNoticeDays",
         "$[].exitReductionDays",
         // Issue #617: per-person yearly day counts of the Urlaubsuebersicht (verfuegbar, genommen,
         // genehmigt) - counts of the year from the Resturlaub facade, still no day list.
@@ -454,6 +455,7 @@ describe("Issue #86 (Phase 86b) — HR template: report:read and salon:read, not
         "$.vacation.years[].rows[].pendingDays",
         "$.vacation.years[].rows[].remainingDays",
         "$.vacation.years[].rows[].atRiskDays",
+        "$.vacation.years[].rows[].carryOverKeptWithoutNoticeDays",
         "$.vacation.years[].rows[].carryOverDeadline",
         "$.vacation.years[].rows[].lastWarningSentAt",
         "$.vacation.years[].rows[].missingEntitlement",

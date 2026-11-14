@@ -106,17 +106,19 @@ describe("LeaveRequestForm.svelte — a failed refetch keeps the displayed balan
     }
   });
 
-  it("the VACATION catch arm clears only when entitlementYear moved in flight (keeps issue #122 closed)", () => {
+  it("the VACATION catch arm clears only when the balance year moved in flight (keeps issue #122 closed)", () => {
     const body = loadBalanceForTypeBody();
     const arm = catchArmAfter(body, '"VACATION"');
     // Phase 415: the shared component has no page-level `calYear` to capture before awaiting —
     // `year` is the function's own parameter (closure-captured at call time), compared against
     // the LIVE `entitlementYear` prop instead. Functionally identical guard, different variable.
+    // Issue #940: the live year is `balanceYear` (the request's start year, else `entitlementYear`),
+    // the same value the load effect passes in.
     expect(arm, "vacationBalance is cleared unconditionally").not.toMatch(
       /^\s*vacationBalance\s*=\s*null\s*;/m,
     );
     expect(arm, "the clear is not guarded by the in-flight year comparison").toMatch(
-      /if\s*\(\s*year\s*!==\s*entitlementYear\s*\)\s*vacationBalance\s*=\s*null\s*;/,
+      /if\s*\(\s*year\s*!==\s*balanceYear\s*\)\s*vacationBalance\s*=\s*null\s*;/,
     );
   });
 });

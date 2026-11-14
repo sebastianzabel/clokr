@@ -292,6 +292,8 @@ export type PeriodVacationRow = {
   pendingDays: number | null;
   remainingDays: number | null;
   atRiskDays: number | null;
+  /** Issue #940 — carry-over still counted after its deadline because no Hinweis was issued (facade). */
+  carryOverKeptWithoutNoticeDays: number | null;
   /** `YYYY-MM-DD` (the `@db.Date` value), or `null`. */
   carryOverDeadline: string | null;
   /** ISO instant of the newest CARRYOVER_WARNED audit row of the entitlement, or `null`. */
@@ -412,6 +414,7 @@ async function vacationYearRows(
       pendingDays: balance.pendingDays,
       remainingDays: balance.remainingDays,
       atRiskDays: balance.atRiskDays,
+      carryOverKeptWithoutNoticeDays: balance.carryOverKeptWithoutNoticeDays,
       carryOverDeadline: e.carryOverDeadline
         ? e.carryOverDeadline.toISOString().slice(0, 10)
         : null,
@@ -459,6 +462,7 @@ async function vacationYearRows(
       pendingDays: null,
       remainingDays: null,
       atRiskDays: null,
+      carryOverKeptWithoutNoticeDays: null,
       carryOverDeadline: null,
       lastWarningSentAt: null,
       missingEntitlement: true,

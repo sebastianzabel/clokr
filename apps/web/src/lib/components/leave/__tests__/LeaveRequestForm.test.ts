@@ -206,6 +206,40 @@ describe("LeaveRequestForm", () => {
     expect(container.textContent ?? "").not.toMatch(/\d\.\d+ Tage/);
   });
 
+  // ── Issue #940: the account of the request's own year, and no deadline that already passed ──
+  it("VACATION: a request starting next year reads that year's account", async () => {
+    renderForm({ entitlementYear: 2026 });
+    await waitFor(() =>
+      expect(apiGet).toHaveBeenCalledWith(`/leave/entitlements/${EMPLOYEE_ID}?year=2026`),
+    );
+    await fireEvent.input(screen.getByTestId("leave-form-from"), {
+      target: { value: "2027-01-11" },
+    });
+    await waitFor(() =>
+      expect(apiGet).toHaveBeenCalledWith(`/leave/entitlements/${EMPLOYEE_ID}?year=2027`),
+    );
+  });
+
+  it("VACATION: a passed deadline is not shown as „verfällt“, a kept carry-over says why", async () => {
+    apiGet.mockImplementation((path: string) => {
+      if (path.startsWith("/leave/entitlements/")) {
+        return Promise.resolve([
+          entitlementRow({
+            carriedOverDays: 24,
+            effectiveCarryOverDays: 24,
+            carryOverDeadline: "2020-03-31T23:59:59.000Z",
+            vacationBalance: { carryOverKeptWithoutNoticeDays: 24 },
+          }),
+        ]);
+      }
+      return defaultGetImpl(path);
+    });
+    const { container } = renderForm();
+    await waitFor(() => expect(screen.getByText("+ 24 Tage")).toBeTruthy());
+    expect(container.textContent ?? "").not.toContain("(verfällt");
+    expect(screen.getByText("(Frist abgelaufen, ohne Hinweis kein Verfall)")).toBeTruthy();
+  });
+
   // ── OVERTIME_COMP balance box ────────────────────────────────────────────────────────────────
   it("OVERTIME_COMP: fetches /leave/overtime-balance scoped to employeeId and renders Guthaben", async () => {
     renderForm();

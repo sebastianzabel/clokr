@@ -7,6 +7,7 @@
 
 import { changedFieldsAudit } from "../../../utils/audit-diff";
 import { FastifyInstance } from "fastify";
+import type { LeaveEntitlement } from "@clokr/db";
 import { z } from "zod";
 import {
   requirePermission,
@@ -33,7 +34,9 @@ import {
   resolveVacationBaseDays, // Issue #482 — the classification-aware base value
   resolveRegularVacationDays, // Issue #435 (D-14) — the GET suggestion value, never a client formula
   daysDiffer, // Issue #435 (D-10) — 2-decimal-precision "did totalDays actually change" test
+  healEntitlementUsedDays, // Issue #940 — the same usedDays heal GET /leave/entitlements runs
 } from "../leave-days";
+import { vacationBalanceForRow } from "../facade/vacation-balance"; // Issue #940 — the ONE Resturlaub function (#451)
 import {
   statutoryMinimumVacationThresholdBySegments, // Issue #450 (D-09) — the ONE segment-aware floor, GET and PUT
   statutoryMinimumViolationMessage, // Issue #435 (D-10) — the ONE German 400 message builder
@@ -52,6 +55,46 @@ const vacationEntitlementSchema = z.object({
   carryOverReason: z.enum(CARRY_OVER_REASONS).nullable().optional(),
   carryOverNote: z.string().max(500).nullable().optional(),
 });
+
+/**
+ * Issue #940 — the Urlaub tab's figures, from the ONE Resturlaub facade (#451, D-07) — never a
+ * second computation. `usedDays` is healed first, exactly like GET /leave/entitlements and the
+ * Urlaubsübersicht do, so „Genommen“ / „Genehmigt“ / „Resturlaub“ are the same numbers there.
+ */
+async function vacationTabBalance(
+  app: FastifyInstance,
+  entitlement: LeaveEntitlement | null,
+  tenantId: string,
+) {
+  if (!entitlement) return null;
+  const vacationTypeIds = (
+    await app.prisma.leaveType.findMany({
+      where: { tenantId, code: "VACATION" },
+      select: { id: true },
+    })
+  ).map((t) => t.id);
+  const healed = await healEntitlementUsedDays(app.prisma, entitlement, vacationTypeIds, tenantId);
+  const b = await vacationBalanceForRow(
+    app.prisma,
+    { ...entitlement, usedDays: healed.usedDays as unknown as typeof entitlement.usedDays },
+    tenantId,
+    new Date(),
+  );
+  return {
+    usedDays: healed.usedDays,
+    balance: {
+      availableDays: b.availableDays,
+      carriedOverEffectiveDays: b.carriedOverEffectiveDays,
+      carryOverKeptWithoutNoticeDays: b.carryOverKeptWithoutNoticeDays,
+      atRiskDays: b.atRiskDays,
+      takenDays: b.takenDays,
+      approvedUpcomingDays: b.approvedUpcomingDays,
+      pendingDays: b.pendingDays,
+      remainingDays: b.remainingDays,
+      splitAsOf: b.splitAsOf,
+    },
+  };
+}
 
 export async function leaveSettingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/vacation/:employeeId?year=  — Urlaubsanspruch eines Mitarbeiters
@@ -193,11 +236,13 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
             }),
         );
         if (healed?.entitlement) {
+          const figures = await vacationTabBalance(app, healed.entitlement, employee.tenantId);
           return {
             year,
             leaveTypeId,
             totalDays: Number(healed.entitlement.totalDays),
-            usedDays: Number(healed.entitlement.usedDays),
+            usedDays: figures?.usedDays ?? Number(healed.entitlement.usedDays),
+            balance: figures?.balance ?? null, // Issue #940
             carriedOverDays: Number(healed.entitlement.carriedOverDays),
             carryOverDeadline: healed.entitlement.carryOverDeadline ?? null,
             // Issue #451 / #445 addendum (D-09): additive — the Urlaub tab's carry-over reason
@@ -227,11 +272,14 @@ export async function leaveSettingsRoutes(app: FastifyInstance) {
         }
       }
 
+      const figures = await vacationTabBalance(app, entitlement, employee.tenantId);
       return {
         year,
         leaveTypeId,
         totalDays: entitlement ? Number(entitlement.totalDays) : null,
-        usedDays: entitlement ? Number(entitlement.usedDays) : 0,
+        usedDays: figures?.usedDays ?? (entitlement ? Number(entitlement.usedDays) : 0),
+        // Issue #940: the facade figures of the Urlaub tab (null without a stored row).
+        balance: figures?.balance ?? null,
         carriedOverDays: entitlement ? Number(entitlement.carriedOverDays) : 0,
         carryOverDeadline: entitlement?.carryOverDeadline ?? null,
         // Issue #451 / #445 addendum (D-09): additive — the admin Urlaub tab's carry-over

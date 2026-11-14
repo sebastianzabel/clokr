@@ -1479,6 +1479,7 @@ export async function reportRoutes(app: FastifyInstance) {
           carriedOverExpiredDays: balance.carriedOverExpiredDays,
           exitReductionDays: balance.exitReductionDays,
           atRiskDays: balance.atRiskDays,
+          carryOverKeptWithoutNoticeDays: balance.carryOverKeptWithoutNoticeDays, // Issue #940
           // Issue #617 (D-617-2) - per-person yearly day counts from the facade, no day list.
           availableDays: balance.availableDays,
           takenDays: balance.takenDays,
