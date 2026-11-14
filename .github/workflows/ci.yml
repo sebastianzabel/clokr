@@ -10,6 +10,15 @@ on:
   # docker-gate) must therefore report for this event too, or a queued PR waits forever.
   merge_group:
 
+# Issue #933 (owner decision 14.11.2026): the heavy jobs run ONCE per PR, in the merge queue, on the
+# real merge commit. On pull_request only the fast checks run (changes, checks, web-tests, codeql,
+# secret-scan) plus the gates `test` and `docker-gate`. The heavy jobs (api-tests, api-coverage,
+# e2e-ci, visual-regression, axe-scan, docker) carry `github.event_name == 'merge_group'` in their
+# job-level `if:`; a job skipped at job level reports "Success", so the required checks e2e-ci and
+# visual-regression do not block a PR from entering the queue. `test` and `docker-gate` accept
+# exactly that skip on pull_request and nothing else. Visual baselines are regenerated locally
+# before a UI PR is opened (pinned e2e-visual container), so the queue is not the first to see them.
+
 # Least-privilege default: every job states its own scopes below, see the job blocks.
 permissions:
   contents: read
@@ -464,7 +473,7 @@ jobs:
 
   api-tests:
     needs: changes
-    if: needs.changes.outputs.api == 'true'
+    if: needs.changes.outputs.api == 'true' && github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout
@@ -683,7 +692,7 @@ jobs:
 
   api-coverage:
     needs: [changes, api-tests]
-    if: needs.changes.outputs.api == 'true'
+    if: needs.changes.outputs.api == 'true' && github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout
@@ -833,14 +842,16 @@ jobs:
           API: ${{ needs.api-tests.result }}
           COVERAGE: ${{ needs.api-coverage.result }}
           API_RELEVANT: ${{ needs.changes.outputs.api }}
+          EVENT: ${{ github.event_name }}
         run: |
           fail=0
           for pair in "changes:$CHANGES" "checks:$CHECKS" "web-tests:$WEB"; do
             if [ "${pair#*:}" != "success" ]; then echo "::error::${pair%%:*} result was '${pair#*:}', expected 'success'"; fail=1; fi
           done
-          if [ "$API_RELEVANT" = "true" ]; then want=success; else want=skipped; fi
+          # Issue #933: the API suite runs only in the merge queue; on pull_request it is skipped.
+          if [ "$API_RELEVANT" = "true" ] && [ "$EVENT" = "merge_group" ]; then want=success; else want=skipped; fi
           for pair in "api-tests:$API" "api-coverage:$COVERAGE"; do
-            if [ "${pair#*:}" != "$want" ]; then echo "::error::${pair%%:*} result was '${pair#*:}', expected '$want' (API suite relevant: '$API_RELEVANT')"; fail=1; fi
+            if [ "${pair#*:}" != "$want" ]; then echo "::error::${pair%%:*} result was '${pair#*:}', expected '$want' (API suite relevant: '$API_RELEVANT', event: '$EVENT')"; fail=1; fi
           done
           exit $fail
 
@@ -1027,6 +1038,7 @@ jobs:
   # signed-out page and state plus the 404 page (Issue #855, API mocked
   # in the spec); extending to authenticated pages remains open.
   axe-scan:
+    if: github.event_name == 'merge_group' # Issue #933: heavy, queue only
     # Playwright has no chromium build for ubuntu26.04 yet (image ubuntu26/20261012.163); drop this pin once it does.
     runs-on: ubuntu-24.04
     permissions:
@@ -1086,6 +1098,7 @@ jobs:
   # Gated on visual-relevant path changes only (D-06) — docs-only / API-only
   # / .planning-only PRs skip this job entirely.
   visual-regression:
+    if: github.event_name == 'merge_group' # Issue #933: heavy, queue only (required: a job-level skip reports Success)
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout
@@ -1219,6 +1232,7 @@ jobs:
   # Deliberately NO `needs:` — runs in parallel with `test`/`axe-scan`/
   # `visual-regression`, same as those jobs today.
   e2e-ci:
+    if: github.event_name == 'merge_group' # Issue #933: heavy, queue only (required: a job-level skip reports Success)
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout
@@ -1376,7 +1390,8 @@ jobs:
     # Explicit, not the implicit `success()`: that one also looks at `test`'s own skipped needs. On a PR
     # that cannot affect the API suite, `api-tests` and `api-coverage` are skipped by design and `test`
     # passes — but `success()` then skipped this job and turned `docker-gate` red (Issue #884 follow-up).
-    if: ${{ !cancelled() && needs.test.result == 'success' }}
+    # Issue #933: the image builds run only in the merge queue.
+    if: ${{ !cancelled() && needs.test.result == 'success' && github.event_name == 'merge_group' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read # actions/checkout (the gha build cache uses the runtime token)
@@ -1430,11 +1445,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {} # no checkout, only evaluates needs.docker.result
     steps:
+      # Issue #933: on pull_request the matrix is skipped by design; that skip, and only on that
+      # event, is a pass. In the merge queue the matrix must succeed.
+      - name: Accept the skipped matrix on pull_request
+        if: github.event_name == 'pull_request' && needs.docker.result == 'skipped'
+        run: echo "docker matrix skipped on pull_request - it runs in the merge queue, see Issue 933."
+
       - name: Assert the docker matrix succeeded
-        if: needs.docker.result != 'success'
+        if: needs.docker.result != 'success' && !(github.event_name == 'pull_request' && needs.docker.result == 'skipped')
         run: |
           echo "::error title=Docker build gate::docker matrix result was '${{ needs.docker.result }}', expected 'success'."
           exit 1
 
       - name: Report
+        if: needs.docker.result == 'success'
         run: echo "docker matrix succeeded — both images build."
