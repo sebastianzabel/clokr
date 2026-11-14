@@ -1527,6 +1527,8 @@ textarea.form-input {
   border-right: 0;
 }
 .cal-grid--compact .cal-cell:not(.cal-other):hover {
+  /* Joined cells share their lines: a hover tints the day, it never recolours a shared border. */
+  border-color: var(--line);
   background: var(--hover);
 }
 .cal-grid--compact .cal-dow {
