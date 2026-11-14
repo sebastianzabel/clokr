@@ -213,7 +213,7 @@ const componentFiles = teamComponentFiles();
 // ── The walk ─────────────────────────────────────────────────────────────────
 
 describe("Team pages guard - the walked set is not empty", () => {
-  it("walks exactly the 8 Team route files of the route table (Heute is #846)", () => {
+  it("walks exactly the 9 Team route files of the route table (Heute is #846; Berichte since #936)", () => {
     expect(routeFiles.map((f) => f.key).sort()).toEqual(
       [
         "/admin/availability",
@@ -221,6 +221,7 @@ describe("Team pages guard - the walked set is not empty", () => {
         "/shifts/conflicts",
         "/shifts/planning",
         "/inbox",
+        "/reports", // #936: Berichte is a Team page
         "/team/leave",
         "/team/personen",
         "/team/time-entries",

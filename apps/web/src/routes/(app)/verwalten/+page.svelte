@@ -153,7 +153,7 @@
         label: "Urlaubsverfall droht",
         value: atRisk,
         explanation: "Personen mit Resturlaub vor Ablauf (§ 7 BUrlG)",
-        derivationHref: linkIf("/verwalten/berichte"),
+        derivationHref: linkIf("/team/berichte"),
         derivationLabel: "Berichte →",
         testId: "admin-carryover",
       });

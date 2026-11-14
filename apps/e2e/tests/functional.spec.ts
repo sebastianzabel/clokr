@@ -119,7 +119,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
         "Dezember",
       ];
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/verwalten/berichte?tab=verlaeufe"); // #895: the tab „Verläufe“ of Berichte
+      await page.goto("/team/berichte?tab=verlaeufe"); // #895: the tab „Verläufe“ of Berichte
 
       const hoursCanvas = page.getByRole("img", {
         name: /^(Gruppiertes )?Säulendiagramm: .*Arbeitsstunden/,
@@ -175,7 +175,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       // Issue #591 (P-591-06): a canvas click is not keyboard-operable, so the same drill-down
       // exists as a link in the card header.
       await loginAsTenantAdmin(page, tenant);
-      await page.goto("/verwalten/berichte?tab=verlaeufe"); // #895: the tab „Verläufe“ of Berichte
+      await page.goto("/team/berichte?tab=verlaeufe"); // #895: the tab „Verläufe“ of Berichte
 
       const sickLink = page.getByRole("link", { name: "Krankheitstage im Bericht öffnen" });
       await expect(sickLink).toBeVisible({ timeout: 15_000 });
@@ -185,7 +185,7 @@ test.describe("Functional — happy paths across primary surfaces", () => {
       await sickLink.click();
       await page.waitForURL(/\/verwalten\/berichte\?from=\d{4}-\d{2}&to=\d{4}-\d{2}&tab=urlaub/);
       // #844: the link's /reports URL redirects to Verwalten › Berichte and keeps its whole query
-      expect(page.url()).toContain(href.replace(/^\/reports\?/, "/verwalten/berichte?"));
+      expect(page.url()).toContain(href.replace(/^\/reports\?/, "/team/berichte?"));
     });
   });
 

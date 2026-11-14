@@ -215,7 +215,7 @@
     },
     {
       "slug": "berichte",
-      "path": "/verwalten/berichte",
+      "path": "/team/berichte",
       "heading": "Berichte",
       "tabs": [
         {
