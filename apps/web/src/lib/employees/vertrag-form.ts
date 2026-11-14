@@ -316,3 +316,90 @@ export function germanDay(iso: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
   return m ? `${m[3]}.${m[2]}.${m[1]}` : (iso ?? "");
 }
+
+// ── Stored FIXED_SCHEDULE contradiction (Issue #939) ─────────────────────────────────────────────
+
+const WEEKDAY_SHORT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
+/** Mo ... So: the order a German week is read in. */
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
+
+/** What a stored FIXED_SCHEDULE row says in its two halves when they disagree. */
+export interface StoredContractMismatch {
+  /** The stored `weeklyHours`. */
+  weeklyHours: number;
+  /** Σ of the seven stored `{day}Hours`. */
+  dayHoursSum: number;
+  /** The stored `workDays` (0 = Sonntag ... 6 = Samstag), sorted Mo ... So. */
+  workDays: number[];
+  /** The weekdays whose stored `{day}Hours` are > 0, sorted Mo ... So. */
+  dayHourDays: number[];
+}
+
+function cents(value: number | string | null | undefined): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? Math.round(n * 100) : 0;
+}
+
+function weekOrdered(days: number[]): number[] {
+  return WEEK_ORDER.filter((d) => days.includes(d));
+}
+
+/**
+ * The contradiction of a STORED FIXED_SCHEDULE row: `weeklyHours` ≠ Σ `{day}Hours` (compared in
+ * hundredths, the column scale) or `workDays` ≠ the weekdays with `{day}Hours` > 0. Null for every
+ * other row. Such rows predate the #848 write guard and are never corrected by code (Phase 95b,
+ * D-01); this only makes them visible. Which half counts is decided in CLAUDE.md „Schedule Types“
+ * (`{day}Hours` are authoritative only for FIXED_SCHEDULE) and in the API module
+ * `contexts/platform/fixed-schedule-hours.ts`; the leave pricing derives the workday set of a
+ * FIXED_SCHEDULE row from the day hours too (`workDaysSetFrom()`, `contexts/absence/leave-days.ts`).
+ */
+export function storedContractMismatch(
+  schedule: ContractSchedule | null | undefined,
+): StoredContractMismatch | null {
+  if (!schedule || schedule.type !== "FIXED_SCHEDULE") return null;
+  const hoursByDay: Array<number | string> = [
+    schedule.sundayHours,
+    schedule.mondayHours,
+    schedule.tuesdayHours,
+    schedule.wednesdayHours,
+    schedule.thursdayHours,
+    schedule.fridayHours,
+    schedule.saturdayHours,
+  ];
+  const sumCents = hoursByDay.reduce<number>((sum, h) => sum + cents(h), 0);
+  const dayHourDays = weekOrdered([0, 1, 2, 3, 4, 5, 6].filter((d) => cents(hoursByDay[d]) > 0));
+  const workDays = weekOrdered(Array.isArray(schedule.workDays) ? schedule.workDays : []);
+  const hoursDiffer = schedule.weeklyHours !== null && cents(schedule.weeklyHours) !== sumCents;
+  // An empty stored set says nothing (the server falls back to the day hours), so it is no contradiction.
+  const daysDiffer =
+    workDays.length > 0 &&
+    (workDays.length !== dayHourDays.length || workDays.some((d, i) => d !== dayHourDays[i]));
+  if (!hoursDiffer && !daysDiffer) return null;
+  return {
+    weeklyHours: cents(schedule.weeklyHours) / 100,
+    dayHoursSum: sumCents / 100,
+    workDays,
+    dayHourDays,
+  };
+}
+
+/** Hours as „H:MM h“, the format of the DayGrid sum row. */
+export function hoursLabel(hours: number): string {
+  const minutes = Math.round(hours * 60);
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")} h`;
+}
+
+function weekdaysLabel(days: number[]): string {
+  return days.length > 0 ? days.map((d) => WEEKDAY_SHORT[d]).join(", ") : "keine";
+}
+
+/** The two halves of a contradiction as German sentences, for the hint and the save confirmation. */
+export function storedContractMismatchText(m: StoredContractMismatch): {
+  stored: string;
+  dayHours: string;
+} {
+  return {
+    stored: `Gespeichert sind ${hoursLabel(m.weeklyHours)} pro Woche an ${weekdaysLabel(m.workDays.length > 0 ? m.workDays : m.dayHourDays)}.`,
+    dayHours: `Die Stunden je Tag ergeben ${hoursLabel(m.dayHoursSum)} pro Woche an ${weekdaysLabel(m.dayHourDays)}.`,
+  };
+}

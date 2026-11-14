@@ -37,6 +37,7 @@
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import Chip from "$components/ui/Chip.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import DayGrid from "$components/ui/DayGrid.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
   import FormField from "$components/ui/FormField.svelte";
@@ -65,7 +66,10 @@
     contractErrors,
     contractValuesOf,
     germanDay,
+    hoursLabel,
     plannedWeeklyHours,
+    storedContractMismatch,
+    storedContractMismatchText,
     type ContractSchedule,
     type ContractValues,
     type PendingShiftChoice,
@@ -119,6 +123,31 @@
     untrack(() => $state.snapshot(contractValuesOf(schedule, defaultValidFrom)) as ContractValues),
   );
   let saving = $state(false);
+  // The stored row the form was read from (replaced by the PUT answer): its #848 contradiction, if any.
+  let storedSchedule = $state<ContractSchedule | null>(untrack(() => schedule));
+  const storedMismatch = $derived(storedContractMismatch(storedSchedule));
+  const storedMismatchText = $derived(
+    storedMismatch ? storedContractMismatchText(storedMismatch) : null,
+  );
+  // A save of a FIXED_SCHEDULE contract over a contradictory stored row takes the day hours as the
+  // whole contract (weeklyHours = Σ, workDays = days with hours); it is confirmed first, never silent.
+  let mismatchConfirmOpen = $state(false);
+  const LIVE_DAY_KEYS = [
+    ["mon", "Mo"],
+    ["tue", "Di"],
+    ["wed", "Mi"],
+    ["thu", "Do"],
+    ["fri", "Fr"],
+    ["sat", "Sa"],
+    ["sun", "So"],
+  ] as const;
+  const liveFixedSummary = $derived(
+    `${hoursLabel(plannedWeeklyHours(values) ?? 0)} pro Woche an ${
+      LIVE_DAY_KEYS.filter(([key]) => (values.days[key] ?? 0) > 0)
+        .map(([, label]) => label)
+        .join(", ") || "keinem Tag"
+    }`,
+  );
   // The server's refusal of the last save, shown as its text until the next attempt.
   let saveError = $state("");
 
@@ -177,9 +206,20 @@
     SCHEDULE_TYPES.find((option) => option.value === values.type)?.label ?? values.type,
   );
 
-  async function save(choice?: PendingShiftChoice) {
+  async function confirmMismatchSave() {
+    mismatchConfirmOpen = false;
+    await save(undefined, true);
+  }
+
+  async function save(choice?: PendingShiftChoice, mismatchConfirmed = false) {
     if (Object.values(liveErrors).some(Boolean)) {
       toasts.error("Bitte prüf die markierten Felder.");
+      return;
+    }
+    // Issue #939: over a contradictory stored row the save is confirmed first (the pending-shift
+    // retry passes a choice and was confirmed before its first attempt).
+    if (storedMismatch && values.type === "FIXED_SCHEDULE" && !mismatchConfirmed && !choice) {
+      mismatchConfirmOpen = true;
       return;
     }
     saving = true;
@@ -190,6 +230,7 @@
         buildSchedulePayload(values, choice),
       );
       snapshot = snapshotOfValues();
+      storedSchedule = saved;
       toasts.success(`Vertrag gespeichert · gilt ab ${germanDay(values.validFrom)}`);
       void loadHistory();
       onSaved?.(saved);
@@ -386,6 +427,20 @@
         disabled={!canEdit}
         sumTestId="vertrag-workdays-derived"
       />
+      {#if storedMismatch && storedMismatchText}
+        <!-- Issue #939: a pre-#848 row whose weeklyHours/workDays disagree with its day hours. It is
+             shown, never corrected (Phase 95b, D-01). Which half counts is documented in CLAUDE.md
+             „Schedule Types“ ({day}Hours are authoritative only for FIXED_SCHEDULE) and in
+             apps/api/src/contexts/platform/fixed-schedule-hours.ts; see storedContractMismatch(). -->
+        <div data-testid="vertrag-mismatch-hint">
+          <Note tone="warn">
+            Dieser Vertrag widerspricht sich. {storedMismatchText.stored}
+            {storedMismatchText.dayHours} Für Soll und Urlaub zählen die Stunden je Tag. Zum Bereinigen
+            trag die richtigen Stunden je Tag ein und speichere den Vertrag mit „Gültig ab“ zu einem Monatsersten.
+            Wochenstunden und Arbeitstage werden dann aus den Stunden je Tag übernommen.
+          </Note>
+        </div>
+      {/if}
     {:else if type === "FLEXTIME"}
       <div class="vt-pair">
         <FormField
@@ -680,6 +735,14 @@
 
   {@render children?.()}
 </div>
+
+<ConfirmDialog
+  bind:open={mismatchConfirmOpen}
+  title="Vertrag so speichern?"
+  description={`Ab ${germanDay(values.validFrom)} gelten ${liveFixedSummary}. ${storedMismatchText?.stored ?? ""} Wochenstunden und Arbeitstage werden aus den Stunden je Tag übernommen.`}
+  confirmLabel="Vertrag speichern"
+  onConfirm={confirmMismatchSave}
+/>
 
 <Dialog
   bind:open={orphanOpen}
