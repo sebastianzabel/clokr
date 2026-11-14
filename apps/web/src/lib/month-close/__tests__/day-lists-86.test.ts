@@ -137,7 +137,7 @@ describe("anyDayDetailsWithheld", () => {
 
   it("the neutral hint names the reach and says the count stays", () => {
     expect(DAY_DETAILS_WITHHELD_HINT).toBe(
-      "Tagesangaben sind nur mit Leserecht auf Zeiteinträge sichtbar; die Anzahl bleibt.",
+      "Die Tage siehst du nur mit Leserecht auf die Zeiteinträge, die Anzahl bleibt.",
     );
   });
 });

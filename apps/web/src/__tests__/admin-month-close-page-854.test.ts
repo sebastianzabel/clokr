@@ -192,7 +192,7 @@ describe("Monatsabschluss page (#854)", () => {
     expect(within(table).getByRole("button", { name: "Entsperren" })).toBeTruthy();
   });
 
-  it("renders counts, never dates, for a reader without reach, plus the one neutral hint", async () => {
+  it("renders counts, never dates, for a reader without reach, plus the short rights line at the row", async () => {
     detail = [
       {
         ...anna,
@@ -207,7 +207,38 @@ describe("Monatsabschluss page (#854)", () => {
     const table = await within(section).findByRole("table");
     expect(within(table).getByText("4 Tage ohne Eintrag")).toBeTruthy();
     expect(table.textContent).not.toMatch(/\d{2}\.\d{2}\./);
-    expect(screen.getByTestId("month-close-withheld-hint")).toBeTruthy();
+    expect(within(table).getByTestId("month-close-person-withheld")).toBeTruthy();
+    // Closing blind is the secondary „Trotzdem abschließen“, never the plain „Abschließen“ (Issue #947).
+    expect(within(table).getByRole("button", { name: "Trotzdem abschließen" })).toBeTruthy();
+    expect(within(table).queryByRole("button", { name: "Abschließen" })).toBeNull();
+  });
+
+  it("names the next step at the open month whose gaps the reader cannot see (Issue #947)", async () => {
+    const march = months[2] as { missing: unknown[] };
+    const saved = march.missing;
+    march.missing = [
+      {
+        employeeName: "Berta Arndt",
+        employeeNumber: "2",
+        missingDates: [],
+        missingDateCount: 21,
+        dayDetailsWithheld: true,
+      },
+    ];
+    // February is the first actionable month in the fixture; close it so March is.
+    (months[1] as { status: string }).status = "closed";
+    try {
+      renderWithTheme(Page, {});
+      const hint = await screen.findByTestId("month-close-withheld-hint");
+      expect(hint.textContent).toContain(
+        "Bitte die Salonleitung, die Zeiten von Berta A. zu prüfen (21 Tage ohne Eintrag).",
+      );
+      const trigger = screen.getByTestId("month-close-row-3-trigger");
+      expect(trigger.textContent?.trim()).toBe("Trotzdem abschließen");
+    } finally {
+      march.missing = saved;
+      (months[1] as { status: string }).status = "ready";
+    }
   });
 
   it("shows the deferred note with its list and jumps to the oldest open month", async () => {
