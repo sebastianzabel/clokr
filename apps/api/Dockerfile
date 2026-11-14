@@ -200,6 +200,12 @@ RUN if find /app/apps/api/scripts/ -type f \( -name "*.ts" -o -name "*.js" \) \
     fi
 RUN test -e /app/apps/api/scripts/ensure-test-database.ts \
  || (echo "FATAL: ensure-test-database.ts missing from the runtime image — it is expected to ship (see its header comment)" >&2; exit 1)
+# Issue #952: seed-ux-test-tenant.ts builds a throwaway UX-test tenant on a LOCAL dev database. It
+# refuses production and non-local hosts on its own, but a dev-only data generator has no reason
+# to be inside the deployed artifact at all — same idiom as reset-test-databases.ts above.
+RUN rm -f /app/apps/api/scripts/seed-ux-test-tenant.ts \
+ && test ! -e /app/apps/api/scripts/seed-ux-test-tenant.ts \
+ || (echo "FATAL: apps/api/scripts/seed-ux-test-tenant.ts is present in the runtime image — Issue #952 keeps this dev-only seed out" >&2; exit 1)
 
 COPY --from=build /app/packages/ ./packages/
 COPY --from=build /app/package.json ./

@@ -79,3 +79,40 @@ DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \
   data. These two scripts are for development databases only, never int or prod.
 - Schema changes go through versioned migrations — never `prisma migrate dev` or `db push` on this
   project. See the root `CLAUDE.md` § "Creating a migration" and `docs/migrations.md`.
+
+## UX-test tenant: `apps/api/scripts/seed-ux-test-tenant.ts` (Issue #952)
+
+For user tests by persona (Mitarbeiterin, Salonleitung, Inhaberin, Personalabteilung) run this
+script instead of testing on the grown demo data. It needs no empty database: every run creates a
+NEW tenant „UX-Test <dd.mm.>“ (slug `ux-test-<yyyymmdd>-<hex>`) and **deactivates** every earlier
+UX-test tenant (slug prefix `ux-test-`; never deleted). Run it right before a test session, so the
+picture is relative to that day.
+
+```bash
+# The local docker stack must be up (postgres on localhost:5432, web on localhost:3000).
+DATABASE_URL="postgresql://clokr:<password>@localhost:5432/clokr" \
+  pnpm --filter @clokr/api exec tsx scripts/seed-ux-test-tenant.ts [--out <file>]
+```
+
+- **Output:** the accounts (role, e-mail, password, employee id, Stammsalon, contract) go to
+  `.planning/redesign/ux-test-personas.md` (gitignored, overwritten each run, mode 0600). Passwords
+  are generated per run and never printed to stdout.
+- **Content:** two salons (Mitte, Nord; NRW; open Monday to Friday); Inhaberin (Inhaber, whole
+  tenant), Salonleitung (Salonmanager for Salon Nord), Personalabteilung (whole tenant), and the
+  employees Vollzeit 40 h Mo–Fr, Teilzeit 32 h Di–Fr, Schicht (SHIFT_BASED, 5 days), Azubi under 18
+  with Berufsschule on Tuesdays, Minijob (MONTHLY_HOURS 40 h). Recorded time with breaks from the
+  1st of the previous month through yesterday, no running clock; the previous month is closed with
+  the real closer. Deliberate cases: a missing day (Teilzeit), an overtime day, a sick day, a past
+  and a future vacation (Vollzeit/Schicht), a pending request (Aufgaben), a still valid carry-over
+  (Vollzeit), the shift roster and coverage rules of Salon Nord.
+- **How:** tenant, persons, roles, leave, Berufsschule, shifts and the month close go through the
+  real provisioning core and the real routes (in-process `app.inject`, so their checks and audit rows
+  apply). Only the recorded working time and the zero pre-tracking snapshots of the Vollzeit person
+  (hired before tracking began) are written directly — each with an audit row marked
+  `trigger: "UX_TEST_SEED"`; the API's own write path books past entries of other persons as
+  corrections and refuses them outside the retro window for the person themself.
+- **Safety:** refuses `NODE_ENV=production` and any database host other than `localhost`,
+  `127.0.0.1`, `::1` or `postgres`; removed from the runtime image (`apps/api/Dockerfile`). JWT and
+  encryption secrets are generated per run when unset — they only sign tokens inside the script's
+  own process, and the script writes nothing encrypted. Development databases only, never int or
+  prod.
