@@ -3,6 +3,7 @@
   import { leaveTypeColor, FALLBACK } from "$lib/leave/leave-colors"; // Issue #840 (D-840-12)
   import { onDestroy, onMount, tick } from "svelte";
   import { page } from "$app/stores";
+  import { entryToEndFromParam, END_ENTRY_PARAM } from "$lib/time-entries/open-earlier-entry"; // Issue #942
   import {
     monthAnchorFromDay,
     normalizeDateParam,
@@ -474,6 +475,14 @@
     }
 
     await loadAll();
+
+    // Issue #942: Mein Tag links an open entry of an earlier day here (`?date=<day>&end=<id>`);
+    // it opens the same edit dialog as the row's „Ende eintragen“, only for an own, open, unlocked
+    // row of the loaded month.
+    const endTarget = isExempt
+      ? null
+      : entryToEndFromParam(entries, $page.url.searchParams.get(END_ENTRY_PARAM));
+    if (endTarget) openEdit(endTarget);
 
     if (highlightParam || dayParam) {
       const target = resolveFocusTarget(entries, highlightParam, dayParam);
