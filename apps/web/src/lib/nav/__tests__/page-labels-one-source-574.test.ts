@@ -67,20 +67,13 @@ describe("page-labels: nav labels (Sidebar, Mehr sheet, crumb)", () => {
 
 describe("page-labels: Schnellsuche (CommandPalette)", () => {
   const source = read("lib/components/ui/CommandPalette.svelte");
-  const actions = [
-    ...source.matchAll(/\{\s*id: "([^"]+)",\s*label: ([^,\n]+),[\s\S]*?href: "([^"]+)"/g),
-  ].map(([, id, label, href]) => ({ id, label: label.trim(), href }));
-  const pageActions = actions.filter((a) => !a.href.includes("?"));
 
-  it("finds the palette's page actions (non-vacuity)", () => {
-    expect(pageActions.length).toBeGreaterThanOrEqual(6);
+  it("takes its pages from the route table through the page index and spells no page name itself", () => {
+    expect(source).toContain("pageIndex(");
+    // the only hand-written labels are the two tab deep links (no table entry of their own)
+    const literalLabels = [...source.matchAll(/\blabel: "([^"]+)"/g)].map(([, label]) => label);
+    expect(literalLabels.sort()).toEqual(["Team-Urlaubsplanung", "Urlaubsplanung"]);
   });
-  for (const action of pageActions) {
-    it(`${action.id} takes its label from pageLabel("${action.href}")`, () => {
-      expect(action.label).toBe(`pageLabel("${action.href}")`);
-      expect(labels[action.href], action.href).toBeDefined();
-    });
-  }
 });
 
 // ── H1 and browser tab title (D-574-10/11) ────────────────────────────────────────────────
