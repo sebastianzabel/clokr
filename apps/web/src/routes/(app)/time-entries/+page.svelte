@@ -2280,6 +2280,9 @@
                 <span class="te-dot te-dot--ok" aria-hidden="true"></span>
               {:else if day.isCurrentMonth && (day.status === "partial" || day.status === "today-partial")}
                 <span class="te-dot te-dot--part" aria-hidden="true"></span>
+              {:else if day.isCurrentMonth && day.status === "missing"}
+                <!-- Same status as the „fehlt“ chip; the mini month (phone) has no room for the chip. -->
+                <span class="te-dot te-dot--miss" aria-hidden="true"></span>
               {/if}
               {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
                 {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
@@ -3535,6 +3538,11 @@
   .te-dot--run {
     background: var(--brand);
   }
+  /* A missing day: the chip says it on wide screens, the dot only in the mini month. */
+  .te-dot--miss {
+    display: none;
+    background: var(--warn);
+  }
   .te-run {
     font-size: var(--fs-sm);
     font-weight: 600;
@@ -4219,6 +4227,9 @@
     .te-dot {
       position: static;
       margin-top: 2px;
+    }
+    .te-dot--miss {
+      display: block;
     }
     .te-cal .cal-legend {
       display: none;
