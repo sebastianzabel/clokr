@@ -127,6 +127,8 @@ afterEach(() => {
 
 async function openEditAndSave() {
   renderWithTheme(TimeEntriesPage, {});
+  // Issue #927: the row actions sit in the row's „…“ menu; open it, then choose „Bearbeiten“.
+  await fireEvent.click(await screen.findByTestId(`time-entry-row-${ENTRY_ID}-menu`));
   await fireEvent.click(await screen.findByTestId(`time-entry-row-${ENTRY_ID}-edit`));
   await fireEvent.click(await screen.findByTestId("time-entry-modal-save"));
 }

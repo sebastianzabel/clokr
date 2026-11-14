@@ -78,6 +78,7 @@
   import Skeleton from "$components/ui/Skeleton.svelte";
   import ErrorState from "$components/ui/ErrorState.svelte";
   import Chip from "$components/ui/Chip.svelte";
+  import EntryRowMenu from "$lib/components/time-entries/EntryRowMenu.svelte"; // Issue #927
   import SegmentedControl from "$components/ui/SegmentedControl.svelte";
   import { zeitenKpis, zeitenStatus } from "$lib/me/zeiten-kpis";
   import Modal from "$components/ui/Modal.svelte";
@@ -232,9 +233,12 @@
   }
 
   // Discriminated union for the merged list view (TimeEntry + BsAbsence).
+  // Issue #927: GAP = a past workday of the month with Soll and no entry (the calendar's „fehlt“),
+  // shown as a quiet row with „Nachtragen“. It is derived from calendarDays, never stored.
   type ListRow =
     | (TimeEntry & { kind: "TE" })
-    | { kind: "BS"; id: string; date: string; source: "PATTERN" | "MANUAL" };
+    | { kind: "BS"; id: string; date: string; source: "PATTERN" | "MANUAL" }
+    | { kind: "GAP"; id: string; date: string; expectedMin: number };
 
   // ── State ─────────────────────────────────────────────────────────────────
   let entries: TimeEntry[] = $state([]);
@@ -989,15 +993,6 @@
     return labels[type] ?? type;
   }
 
-  function sourceBadge(s: TimeEntry["source"]): string {
-    return s === "NFC"
-      ? "badge-purple"
-      : s === "MOBILE"
-        ? "badge-blue"
-        : s === "CORRECTION"
-          ? "badge-yellow"
-          : "badge-gray";
-  }
   function sourceLabel(s: TimeEntry["source"]): string {
     return s === "NFC"
       ? "NFC"
@@ -1035,6 +1030,29 @@
       (e.breakMinutes ?? 0);
     return net < 0 ? "–" : fmtMin(net) + " h";
   }
+
+  // Issue #927 — „Fr 6.11.“: the short weekday and the day of a row (list and phone rows).
+  function shortDayLabel(dateStr: string): string {
+    return format(new Date(dateStr + "T12:00:00"), "EEEEEE d.M.", { locale: de });
+  }
+  function entryDateStr(e: TimeEntry): string {
+    return (e.date ?? e.startTime).split("T")[0];
+  }
+  // Issue #927 — an open entry of an EARLIER day: the person forgot to clock out (a running entry
+  // of today is just „läuft“).
+  function isStaleOpen(e: TimeEntry): boolean {
+    return !e.endTime && entryDateStr(e) < todayStr;
+  }
+  // Issue #927 — the start of the open entry of a day (calendar „läuft seit HH:MM“), if any.
+  const runningSinceByDate = $derived.by(() => {
+    const map = new Map<string, string>();
+    for (const e of entries) {
+      if (e.endTime) continue;
+      const d = entryDateStr(e);
+      if (!map.has(d)) map.set(d, fmtTime(e.startTime));
+    }
+    return map;
+  });
 
   // ── Modal ─────────────────────────────────────────────────────────────────
   function addMinutesToTime(time: string, minutes: number): string {
@@ -1145,7 +1163,25 @@
   let sheetOpen = $state(false);
   let sheetDay = $state<CalDay | null>(null);
 
+  // Issue #927 — below 760 px the calendar is a mini month: a tap picks the day and its entries
+  // show below the month (no sheet). Wider screens keep the day sheet.
+  let isPhone = $state(false);
+  onMount(() => {
+    // A runtime without matchMedia (jsdom in unit tests) keeps the wide layout.
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(max-width: 760px)");
+    isPhone = mq.matches;
+    const onChange = (e: MediaQueryListEvent) => (isPhone = e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  });
+  const phoneDay = $derived(calendarDays.find((d) => d.dateStr === selectedDate) ?? null);
+
   function onCellClick(day: string) {
+    if (isPhone) {
+      selectedDate = day;
+      return;
+    }
     sheetDay = calendarDays.find((d) => d.dateStr === day) ?? null;
     sheetOpen = true;
   }
@@ -1971,10 +2007,10 @@
   let listColumns = $derived<DataTableColumn[]>([
     { key: "date", label: "Datum", primary: true },
     ...(multiEntryUi ? [{ key: "salon", label: "Salon" }] : []),
-    { key: "from", label: "Von" },
-    { key: "to", label: "Bis" },
+    // Issue #927: one „Zeit“ column (from – to, the note underneath when there is one).
+    { key: "time", label: "Zeit" },
     { key: "break", label: "Pause" },
-    { key: "net", label: "Netto" },
+    { key: "net", label: "Arbeitszeit", align: "end" as const },
     ...(isShiftBased && monthSaldo
       ? [
           {
@@ -1986,16 +2022,16 @@
         ]
       : []),
     { key: "source", label: "Quelle" },
-    { key: "note", label: "Notiz" },
+    { key: "status", label: "Status" },
     { key: "actions", label: "Aktionen", align: "end" as const },
   ]);
 
   /** The row marks of the list: invalid entry, focused entry, focused day, Berufsschule row. */
   function listRowClass(slot: ListRow): string | undefined {
-    if (slot.kind !== "TE") return "row-bs";
+    if (slot.kind === "BS") return "row-bs";
+    if (slot.kind === "GAP") return slot.date === selectedDate ? "row-day-focus" : undefined;
     const slotDate = (slot.date ?? slot.startTime).split("T")[0];
     const marks: string[] = [];
-    if (slot.isInvalid) marks.push("row-invalid");
     if (slot.id === focusedEntryId) marks.push("row-focus");
     else if (slotDate === selectedDate) marks.push("row-day-focus");
     return marks.join(" ") || undefined;
@@ -2010,7 +2046,19 @@
       date: b.date,
       source: b.source,
     }));
-    return [...teRows, ...bsRows].sort((a, b) => {
+    // Issue #927: the calendar's „fehlt“ days of the shown month as quiet rows (not for § 18
+    // ArbZG-exempt persons, who record nothing).
+    const gapRows: ListRow[] = isExempt
+      ? []
+      : calendarDays
+          .filter((d) => d.isCurrentMonth && d.status === "missing" && !d.isBeforeHire)
+          .map((d) => ({
+            kind: "GAP" as const,
+            id: `gap-${d.dateStr}`,
+            date: d.dateStr,
+            expectedMin: d.expectedMin,
+          }));
+    return [...teRows, ...bsRows, ...gapRows].sort((a, b) => {
       const dA = a.kind === "TE" ? (a.date ?? a.startTime).split("T")[0] : a.date;
       const dB = b.kind === "TE" ? (b.date ?? b.startTime).split("T")[0] : b.date;
       if (dA !== dB) return dB.localeCompare(dA); // desc by date
@@ -2062,6 +2110,7 @@
     {#if !isExempt}
       <button
         class="btn btn-primary btn-sm"
+        class:te-head-add--phone={isPhone}
         onclick={() => openAdd()}
         data-testid="time-entries-add">Zeit nachtragen</button
       >
@@ -2069,7 +2118,7 @@
   {/snippet}
 </PageHeader>
 
-<div data-testid="time-entries-page">
+<div class="te-page" data-testid="time-entries-page">
   <!-- Issue #851 (prototype „Zeiten“): one toolbar - the month (the page's only month navigation)
        and the view switch. -->
   <MonthBar
@@ -2172,7 +2221,7 @@
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}
-    <div class="cal-section card card-animate" data-testid="calendar">
+    <div class="cal-section te-cal card card-animate" data-testid="calendar">
       <!-- Wochentage-Header -->
       <div class="cal-grid cal-header-row">
         {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
@@ -2224,6 +2273,17 @@
               onclick={isExempt ? undefined : () => onCellClick(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
+              <!-- Issue #927: the day's status is a small dot, not a coloured edge or fill. -->
+              {#if day.isCurrentMonth && runningSinceByDate.has(day.dateStr)}
+                <span class="te-dot te-dot--run" aria-hidden="true"></span>
+              {:else if day.isCurrentMonth && (day.status === "ok" || day.status === "today-ok")}
+                <span class="te-dot te-dot--ok" aria-hidden="true"></span>
+              {:else if day.isCurrentMonth && (day.status === "partial" || day.status === "today-partial")}
+                <span class="te-dot te-dot--part" aria-hidden="true"></span>
+              {:else if day.isCurrentMonth && day.status === "missing"}
+                <!-- Same status as the „fehlt“ chip; the mini month (phone) has no room for the chip. -->
+                <span class="te-dot te-dot--miss" aria-hidden="true"></span>
+              {/if}
               {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
                 {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
                 <span
@@ -2245,7 +2305,17 @@
               {#if day.isBeforeHire}
                 <span class="day-before-hire">—</span>
               {:else if day.isCurrentMonth && day.hasEntries}
-                <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
+                {@const runningSince = runningSinceByDate.get(day.dateStr)}
+                {#if !runningSince || day.workedMin > 0}
+                  <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
+                {/if}
+                {#if runningSince}
+                  <!-- Issue #927: an open entry reads „läuft seit HH:MM“, never „0:00 h“. -->
+                  <span class="te-run">läuft seit {runningSince}</span>
+                  {#if day.dateStr < todayStr}
+                    <span class="te-cell-chip"><Chip tone="warn">Ausstempeln fehlt</Chip></span>
+                  {/if}
+                {/if}
                 {#if isShiftBased}
                   <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
                        a cumulative for this day (past days up to windowEnd). For today-not-yet-worked
@@ -2264,11 +2334,76 @@
                   >
                 {/if}
               {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
-                <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
+                <span class="day-missing">−{fmtMin(day.expectedMin)}</span>
+                {#if day.status === "missing"}
+                  <span class="te-cell-chip"><Chip tone="warn">fehlt</Chip></span>
+                {/if}
               {/if}
             </button>
           {/each}
         </div>
+      {/if}
+
+      {#if isPhone && phoneDay && phoneDay.isCurrentMonth && !loading}
+        <!-- Issue #927: on a phone the picked day's entries sit below the mini month. -->
+        <section
+          class="te-dayp"
+          aria-label="Einträge am {shortDayLabel(selectedDate)}"
+          data-testid="time-entries-day-panel"
+        >
+          <div class="te-dayp-head">
+            <b>{format(new Date(selectedDate + "T12:00:00"), "EEEE, d. MMMM", { locale: de })}</b>
+            {#if phoneDay.expectedMin > 0 && !isNoDailyTarget}
+              <span>Soll {fmtMin(phoneDay.expectedMin)} h</span>
+            {/if}
+          </div>
+          {#each rowsOfDay(selectedDate) as e (e.id)}
+            <button
+              type="button"
+              class="te-mrow"
+              class:te-mrow--problem={isStaleOpen(e) || e.isInvalid}
+              disabled={e.isLocked || isExempt}
+              onclick={() => openEdit(e)}
+            >
+              <span class="te-mrow-main">
+                <b>{fmtTime(e.startTime)} – {e.endTime ? fmtTime(e.endTime) : "offen"}</b>
+                <span
+                  >{e.endTime
+                    ? `${slotNet(e)} · Pause ${fmtBreaks(e)}`
+                    : `läuft seit ${fmtTime(e.startTime)}`} · {sourceLabel(e.source)}</span
+                >
+              </span>
+              {#if e.isLocked}<Chip tone="neutral">Gesperrt</Chip>
+              {:else if isStaleOpen(e)}<Chip tone="warn">Ausstempeln fehlt</Chip>
+              {:else if e.isInvalid}<Chip tone="warn">Ungültig</Chip>{/if}
+            </button>
+          {:else}
+            <div class="te-mrow te-mrow--static">
+              <span class="te-mrow-main">
+                <b
+                  >{phoneDay.isHoliday
+                    ? phoneDay.holidayName
+                    : phoneDay.absenceType
+                      ? absenceLabel(phoneDay.absenceType)
+                      : phoneDay.isVocationalSchool
+                        ? "Berufsschule"
+                        : "Keine Zeit erfasst"}</b
+                >
+              </span>
+              {#if phoneDay.status === "missing"}<Chip tone="warn">fehlt</Chip>{/if}
+            </div>
+          {/each}
+          {#if !isExempt && !phoneDay.isFuture && !phoneDay.isBeforeHire && !rowsOfDay(selectedDate).some((e) => e.isLocked)}
+            <div class="te-dayp-foot">
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                onclick={() => runCellAction(selectedDate)}
+                >{rowsOfDay(selectedDate).length > 0 ? "Bearbeiten" : "Zeit nachtragen"}</button
+              >
+            </div>
+          {/if}
+        </section>
       {/if}
 
       <!-- Legende -->
@@ -2330,7 +2465,63 @@
         <!-- Issue #851 (D-851-05): the list is the DataTable block. Row kinds, test ids, row marks (invalid,
              focused entry, focused day, Berufsschule) and actions are unchanged; the marks are page classes on
              the block's rows (`rowClass`), styled below through :global. -->
-        {#if allEntries.length > 0}
+        {#if allEntries.length > 0 && isPhone}
+          <!-- Issue #927: on a phone one compact row per entry; a tap opens it. -->
+          <ul
+            class="te-mlist"
+            aria-label="Zeiteinträge {format(calMonth, 'MMMM yyyy', { locale: de })}"
+          >
+            {#each allEntries as slot (slot.id)}
+              <li>
+                {#if slot.kind === "TE"}
+                  {@const d = entryDateStr(slot)}
+                  <button
+                    type="button"
+                    class="te-mrow"
+                    class:te-mrow--problem={isStaleOpen(slot) || slot.isInvalid}
+                    disabled={slot.isLocked || isExempt}
+                    onclick={() => openEdit(slot)}
+                    data-testid={`te-mrow-${slot.id}`}
+                  >
+                    <span class="te-mrow-main">
+                      <b>{shortDayLabel(d)}</b>
+                      <span
+                        >{fmtTime(slot.startTime)} – {slot.endTime
+                          ? fmtTime(slot.endTime)
+                          : "offen"}{slot.endTime ? ` · ${slotNet(slot)}` : ""}</span
+                      >
+                    </span>
+                    {#if slot.isLocked}<Chip tone="neutral">Gesperrt</Chip>
+                    {:else if isStaleOpen(slot)}<Chip tone="warn">Ausstempeln fehlt</Chip>
+                    {:else if !slot.endTime}<Chip tone="brand">läuft</Chip>
+                    {:else if isPendingNachtrag(slot)}<Chip tone="info">Nachtrag offen</Chip>
+                    {:else if slot.isInvalid}<Chip tone="warn">Ungültig</Chip>{/if}
+                  </button>
+                {:else if slot.kind === "GAP"}
+                  <button
+                    type="button"
+                    class="te-mrow"
+                    onclick={() => openAdd(slot.date)}
+                    data-testid={`te-mrow-gap-${slot.date}`}
+                  >
+                    <span class="te-mrow-main">
+                      <b>{shortDayLabel(slot.date)}</b>
+                      <span>keine Zeit erfasst</span>
+                    </span>
+                    <Chip tone="warn">fehlt</Chip>
+                  </button>
+                {:else}
+                  <div class="te-mrow te-mrow--static">
+                    <span class="te-mrow-main">
+                      <b>{shortDayLabel(slot.date)}</b>
+                      <span>Berufsschule</span>
+                    </span>
+                  </div>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {:else if allEntries.length > 0}
           <DataTable
             caption="Zeiteinträge {format(calMonth, 'MMMM yyyy', { locale: de })}"
             columns={listColumns}
@@ -2339,22 +2530,24 @@
             rowTestId={(slot) =>
               slot.kind === "TE" ? `time-entry-row-${slot.id}` : `bs-row-${slot.id}`}
             rowClass={listRowClass}
+            rowTone={(slot) =>
+              slot.kind === "TE" && !slot.isLocked && (isStaleOpen(slot) || slot.isInvalid)
+                ? "warn"
+                : undefined}
           >
             {#snippet cell(slot, column)}
               {#if slot.kind === "TE"}
                 {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
                 {@const slotArbzg = arbzgDayMap.get(slotDate)}
                 {#if column.key === "date"}
-                  {new Date(slot.startTime).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                  })}{#if slotArbzg}
+                  <span class="te-date">{shortDayLabel(slotDate)}</span>{#if slotArbzg}
                     <span class="list-arbzg-hint"
-                      >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                      ><span class="te-arbzg-mark" aria-hidden="true">!</span><span
                         class="arbzg-tooltip"
                         >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
                             />{/if}{/each}</span
+                      ><span class="sr-only"
+                        >ArbZG-Hinweis: {slotArbzg.map((w) => w.message).join("; ")}</span
                       ></span
                     >
                   {/if}
@@ -2374,17 +2567,22 @@
                         >{:else}{slot.salonName ?? "—"}{/if}</span
                     >
                   {/if}
-                {:else if column.key === "from"}
-                  {fmtTime(slot.startTime)}
-                {:else if column.key === "to"}
-                  {#if slot.endTime}{fmtTime(slot.endTime)}
-                  {:else}<span class="badge badge-green">Aktiv</span>{/if}
+                {:else if column.key === "time"}
+                  <!-- Issue #927: from – to in one column; the note underneath, only when present. -->
+                  <span class="te-time"
+                    >{fmtTime(slot.startTime)} – {slot.endTime
+                      ? fmtTime(slot.endTime)
+                      : "offen"}</span
+                  >
+                  {#if slot.isInvalid && slot.invalidReason && !isStaleOpen(slot)}
+                    <span class="te-sub">{slot.invalidReason}</span>
+                  {:else if slot.note}
+                    <span class="te-sub">{slot.note}</span>
+                  {/if}
                 {:else if column.key === "break"}
                   {fmtBreaks(slot)}
                   {#if enforceBreakConfirmation && isUnconfirmedBreak(slot)}
-                    <!-- Phase 112 — only AUTO is badged here. breakStatus is @default(CONFIRMED)
-                             in the schema, so badging every state would put a pill on every row of
-                             every month and destroy the signal. The modal still shows all three. -->
+                    <!-- Phase 112 — only AUTO is badged here (breakStatus defaults to CONFIRMED). -->
                     <span
                       class="badge {breakBadgeClass(slot.breakStatus)} break-cell-badge"
                       data-testid={`time-entry-row-${slot.id}-break-badge`}
@@ -2393,7 +2591,7 @@
                     >
                   {/if}
                 {:else if column.key === "net"}
-                  <span class="font-medium">{slotNet(slot)}</span>
+                  <span class="te-net">{slot.endTime ? slotNet(slot) : "läuft"}</span>
                 {:else if column.key === "saldo"}
                   <!-- #291/#433: the SHIFT_BASED day column, gated exactly like its column declaration. -->
                   {#if isShiftBased && monthSaldo}
@@ -2403,43 +2601,27 @@
                     </span>
                   {/if}
                 {:else if column.key === "source"}
-                  <span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span>
-                {:else if column.key === "note"}
-                  <span class="note-cell text-muted">
-                    {#if slot.isInvalid && slot.invalidReason}
-                      <span class="invalid-reason">{slot.invalidReason}</span>
-                    {:else}
-                      {slot.note ?? "---"}
-                    {/if}
-                  </span>
-                {:else if slot.isLocked}
-                  <!-- Locked entries are read-only (D-08). Per Phase 73-03 +
-                           74-01: render the buttons as disabled instead of
-                           hiding so the row testids stay queryable for the
-                           locked-month spec — matches the
-                           `getByTestId(...-edit).toBeDisabled()` contract. -->
-                  <span class="row-actions row-actions--visible">
-                    <span
-                      class="badge badge-locked"
-                      title="Monat ist abgeschlossen"
-                      data-testid={`time-entry-row-${slot.id}-locked-badge`}>🔒 Gesperrt</span
+                  <span class="te-source">{sourceLabel(slot.source)}</span>
+                {:else if column.key === "status"}
+                  <!-- Issue #927: a problem is a status chip with an action, never a struck-through row. -->
+                  {#if slot.isLocked}
+                    <span data-testid={`time-entry-row-${slot.id}-locked-badge`}
+                      ><Chip tone="neutral" title="Monat ist abgeschlossen">Gesperrt</Chip></span
                     >
-                    <button
-                      class="btn-icon"
-                      disabled
-                      title="Eintrag gesperrt"
-                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
+                  {:else if isStaleOpen(slot)}
+                    <Chip tone="warn">Ausstempeln fehlt</Chip>
+                  {:else if !slot.endTime}
+                    <Chip tone="brand">läuft</Chip>
+                  {:else if isPendingNachtrag(slot)}
+                    <Chip tone="info">Nachtrag offen</Chip>
+                  {:else if slot.isInvalid}
+                    <span data-testid={`time-entry-row-${slot.id}-invalid-badge`}
+                      ><Chip tone="warn" title={slot.invalidReason ?? undefined}>Ungültig</Chip
+                      ></span
                     >
-                    <button
-                      class="btn-icon btn-icon-danger"
-                      disabled
-                      title="Eintrag gesperrt"
-                      data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
-                    >
-                  </span>
+                  {/if}
                 {:else if withdrawConfirmId === slot.id}
-                  <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
-                             delete-confirm pattern above with its own label/testids. -->
+                  <!-- Phase 96 (RETRO-17) — withdraw confirm with its own label/testids. -->
                   <span class="del-confirm">
                     <span class="text-muted" style="font-size:0.8rem;">Zurückziehen?</span>
                     <button
@@ -2454,45 +2636,73 @@
                     >
                   </span>
                 {:else}
-                  <span class="row-actions row-actions--visible">
-                    <button
-                      class="btn-icon"
-                      onclick={() => openEdit(slot)}
-                      title="Bearbeiten"
-                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
-                    >
-                    {#if isPendingNachtrag(slot)}
-                      <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is
-                                 withdrawn via DELETE /retro-entry-requests/:id
-                                 (soft-deletes request + coupled entry), not the
-                                 plain DELETE /time-entries/:id (which would
-                                 re-run the retro-window guard and 403). -->
+                  <!-- Issue #927: the row actions live in one „…“ menu; the items keep their test
+                       ids. A locked entry (D-08) keeps them, disabled. An open entry of an earlier
+                       day gets „Ende eintragen“ next to the menu. -->
+                  <span class="te-row-actions">
+                    {#if isStaleOpen(slot) && !slot.isLocked}
                       <button
-                        class="btn-icon btn-icon-danger"
-                        onclick={() => (withdrawConfirmId = slot.id)}
-                        title="Zurückziehen"
-                        data-testid={`time-entry-row-${slot.id}-withdraw`}>↩️</button
-                      >
-                    {:else}
-                      <button
-                        class="btn-icon btn-icon-danger"
-                        onclick={() => openDeleteDialog(slot.id)}
-                        title="Löschen"
-                        data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                        class="btn btn-primary btn-sm"
+                        type="button"
+                        onclick={() => openEdit(slot)}
+                        data-testid={`time-entry-row-${slot.id}-end`}>Ende eintragen</button
                       >
                     {/if}
+                    <EntryRowMenu
+                      label="Aktionen für {shortDayLabel(slotDate)}"
+                      testId={`time-entry-row-${slot.id}-menu`}
+                    >
+                      <button
+                        type="button"
+                        disabled={slot.isLocked}
+                        title={slot.isLocked ? "Eintrag gesperrt" : undefined}
+                        onclick={() => openEdit(slot)}
+                        data-testid={`time-entry-row-${slot.id}-edit`}>Bearbeiten</button
+                      >
+                      {#if isPendingNachtrag(slot) && !slot.isLocked}
+                        <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is withdrawn via
+                             DELETE /retro-entry-requests/:id, not the plain DELETE. -->
+                        <button
+                          type="button"
+                          class="te-menu-danger"
+                          onclick={() => (withdrawConfirmId = slot.id)}
+                          data-testid={`time-entry-row-${slot.id}-withdraw`}>Zurückziehen</button
+                        >
+                      {:else}
+                        <button
+                          type="button"
+                          class="te-menu-danger"
+                          disabled={slot.isLocked}
+                          title={slot.isLocked ? "Eintrag gesperrt" : undefined}
+                          onclick={() => openDeleteDialog(slot.id)}
+                          data-testid={`time-entry-row-${slot.id}-delete`}>Löschen</button
+                        >
+                      {/if}
+                    </EntryRowMenu>
                   </span>
                 {/if}
+              {:else if slot.kind === "GAP"}
+                {#if column.key === "date"}
+                  <span class="te-date">{shortDayLabel(slot.date)}</span>
+                {:else if column.key === "time"}
+                  <span class="te-sub te-sub--inline">keine Zeit erfasst</span>
+                {:else if column.key === "status"}
+                  <Chip tone="warn">fehlt</Chip>
+                {:else if column.key === "actions"}
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    type="button"
+                    onclick={() => openAdd(slot.date)}
+                    data-testid={`gap-row-${slot.date}-add`}>Nachtragen</button
+                  >
+                {:else if column.key !== "salon" && column.key !== "source" && column.key !== "saldo"}
+                  <span class="text-muted">–</span>
+                {/if}
               {:else if column.key === "date"}
-                {new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
-                  day: "2-digit",
-                  month: "2-digit",
-                  year: "numeric",
-                })}
-              {:else if column.key === "source"}
-                <span class="badge badge-blue">Berufsschule</span>
-              {:else if column.key === "note"}
-                <span class="note-cell text-muted"
+                <span class="te-date">{shortDayLabel(slot.date)}</span>
+              {:else if column.key === "time"}
+                <span class="te-time">Berufsschule</span>
+                <span class="te-sub"
                   >{slot.source === "PATTERN" ? "Automatisch (Muster)" : "Manuell eingefügt"}</span
                 >
               {:else if column.key === "actions"}
@@ -2500,8 +2710,8 @@
                   class="text-muted bs-hint"
                   title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
                 >
-              {:else}
-                <span class="text-muted">—</span>
+              {:else if column.key === "source"}
+                <span class="te-source">Berufsschule</span>
               {/if}
             {/snippet}
           </DataTable>
@@ -2705,7 +2915,21 @@
           bind:this={breakEditorEl}
           data-testid="break-slots-editor"
         >
-          <span class="form-label">Pausen</span>
+          <!-- Issue #927: the label and „+ Pause“ share one row; the total sits beside the label. -->
+          <div class="te-breaks-head">
+            <span class="form-label">Pausen</span>
+            {#if formBreakTotal > 0}
+              <span class="text-muted break-total" data-testid="break-slots-total"
+                >Gesamt: {formBreakTotal} Min.</span
+              >
+            {/if}
+            <button
+              class="btn btn-sm btn-secondary te-breaks-add"
+              type="button"
+              onclick={() => (formBreaks = [...formBreaks, { start: "12:00", end: "12:30" }])}
+              data-testid="break-slot-add">+ Pause</button
+            >
+          </div>
           {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
             <div class="break-legacy">
               <span class="text-muted">Pauschale: {editEntry.breakMinutes} Min.</span>
@@ -2747,17 +2971,6 @@
               >
             </div>
           {/each}
-          <button
-            class="btn btn-sm btn-ghost"
-            type="button"
-            onclick={() => (formBreaks = [...formBreaks, { start: "12:00", end: "12:30" }])}
-            data-testid="break-slot-add">+ Pause hinzufügen</button
-          >
-          {#if formBreakTotal > 0}
-            <span class="text-muted break-total" data-testid="break-slots-total"
-              >Gesamt: {formBreakTotal} Min.</span
-            >
-          {/if}
         </div>
       {/if}
       <div class="form-group">
@@ -2776,7 +2989,7 @@
       </div>
       {#if formNetMin !== null}
         <div class="net-display" data-testid="time-entry-modal-net">
-          <span class="net-label">Netto</span>
+          <span class="net-label">Arbeitszeit</span>
           <span
             class="net-value {modalWarnings.some((w) => w.code === 'MAX_DAILY_EXCEEDED')
               ? 'net-over'
@@ -3274,8 +3487,12 @@
       background 160ms var(--ease);
     position: relative;
   }
-  .cal-cell:not(.cal-other):hover {
-    border-color: var(--brand);
+  /* Issue #927: a calm hover in the Zeiten grid — a light tint, the line keeps its colour, so a
+     resting cursor never reads as a selected or marked day. (Scoped to this page; the shared
+     app.css rule stays as it is.) */
+  .te-cal .cal-cell:not(.cal-other):not(:disabled):hover {
+    border-color: var(--line);
+    background: var(--hover);
   }
   :global(.cal-cell.cal-today) {
     outline: 1.5px solid var(--brand);
@@ -3296,21 +3513,49 @@
     color: var(--text-2);
     opacity: 0.5;
   }
-  /* Status accent: left rule only — keeps mini-card surface for v1.5 look */
-  .cal-cell--ok {
-    border-left: 3px solid var(--ok);
+  /* Issue #927: the status of a day is a small dot (.te-dot), not a coloured edge or fill. These
+     rules neutralise the shared v1.5 edge and the amber fill of a missing day for this page. */
+  .te-cal .cal-cell.cal-cell--ok,
+  .te-cal .cal-cell.cal-cell--partial,
+  .te-cal .cal-cell.cal-cell--missing,
+  .te-cal .cal-cell.cal-cell--today-ok,
+  .te-cal .cal-cell.cal-cell--today-partial {
+    border-left: 1px solid var(--line);
   }
-  .cal-cell--partial {
-    border-left: 3px solid var(--warn);
+  .te-cal .cal-cell.cal-cell--missing:not(.cal-today):not(.cal-selected) {
+    background: var(--card);
   }
-  .cal-cell--missing {
-    border-left: 3px solid var(--warn);
+  .te-dot {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
   }
-  .cal-cell--today-ok {
-    border-left: 3px solid var(--ok);
+  .te-dot--ok {
+    background: var(--ok);
   }
-  .cal-cell--today-partial {
-    border-left: 3px solid var(--warn);
+  .te-dot--part {
+    background: var(--warn);
+  }
+  .te-dot--run {
+    background: var(--brand);
+  }
+  /* A missing day: the chip says it on wide screens, the dot only in the mini month. */
+  .te-dot--miss {
+    display: none;
+    background: var(--warn);
+  }
+  .te-run {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--brand);
+    font-variant-numeric: tabular-nums;
+  }
+  .te-cell-chip {
+    margin-top: auto;
+    align-self: flex-start;
   }
   /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
   /* Absence cell backgrounds → global in app.css (.cal-abs-*) */
@@ -3350,10 +3595,11 @@
     color: var(--bad);
   }
   .day-missing {
-    font-size: 0.7rem;
+    font-size: var(--fs-xs);
     font-family: var(--font-ui);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
     color: var(--bad);
-    opacity: 0.75;
   }
 
   /* Legende */
@@ -3369,13 +3615,11 @@
     gap: 0.75rem;
     flex-wrap: wrap;
   }
+  /* Issue #927: normal case, like every other v2 label. */
   .leg-group-label {
-    font-size: 0.6875rem;
+    font-size: var(--fs-xs);
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
     color: var(--text-2);
-    opacity: 0.7;
   }
   .leg {
     display: inline-flex;
@@ -3392,17 +3636,23 @@
     height: 12px;
     border-radius: 3px;
   }
+  /* Issue #927: the swatches of the Soll states are the dots of the cells. */
   .leg-ok::before {
-    background: var(--ok-soft);
-    border: 1px solid color-mix(in srgb, var(--ok) 25%, transparent);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
   }
   .leg-partial::before {
-    background: var(--warn-soft);
-    border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--warn);
   }
+  /* Issue #927: the swatch of a missing day is the amber „fehlt“ chip colour. */
   .leg-missing::before {
-    background: var(--bad-soft);
-    border: 1px solid color-mix(in srgb, var(--bad) 25%, transparent);
+    background: var(--warn-soft);
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
   }
   .leg-noexpect::before {
     background: var(--sunk);
@@ -3586,23 +3836,6 @@
     background: var(--sunk);
   }
 
-  .list-card :global(tr.row-invalid) {
-    opacity: 0.5;
-  }
-  .list-card :global(tr.row-invalid td) {
-    text-decoration: line-through;
-    background: var(--bad-soft);
-  }
-  .list-card :global(tr.row-invalid td:last-child) {
-    text-decoration: none;
-  }
-  .list-card :global(tr.row-invalid .invalid-reason) {
-    color: var(--bad);
-    font-size: 0.8rem;
-    font-weight: 500;
-    text-decoration: none;
-  }
-
   /* 260611-ly6 — Berufsschultag list-row tint. UI Style Guide v1.5: only var(--brand) via color-mix; no legacy tokens. */
   .list-card :global(tr.row-bs td) {
     background: color-mix(in srgb, var(--brand) 6%, transparent);
@@ -3665,12 +3898,11 @@
     border-radius: var(--r-control);
     margin-top: 4px;
   }
+  /* Issue #927: normal case, like every other v2 label. */
   .net-label {
-    font-size: 11px;
+    font-size: var(--fs-sm);
     font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-3);
+    color: var(--text-2);
   }
   .net-value {
     font-family: var(--font-ui);
@@ -3719,6 +3951,20 @@
     flex-direction: column;
     gap: 0.5rem;
   }
+  .breaks-section {
+    margin-bottom: 12px;
+  }
+  .te-breaks-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .te-breaks-head .form-label {
+    margin: 0;
+  }
+  .te-breaks-add {
+    margin-left: auto;
+  }
   .break-row {
     display: flex;
     align-items: center;
@@ -3752,11 +3998,11 @@
 
   /* ── ArbZG-Warnungen ──────────────────────────────────────────────── */
   /* EMP-04: ArbZG callouts inside the entry editor modal */
+  /* Issue #927: the hints use the form's full width (no extra indent). */
   .modal-callouts {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 0 26px 4px;
     margin-top: 4px;
   }
   .list-arbzg-hint {
@@ -3835,6 +4081,174 @@
     /* Legend wraps tighter */
     .cal-legend {
       gap: 0.5rem 0.75rem;
+    }
+  }
+  /* ── Issue #927: Zeiten on v2 ─────────────────────────────────────────────── */
+  .te-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-5, 20px);
+  }
+  .te-page > :global(*) {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+  .te-date {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .te-time {
+    display: block;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .te-sub {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+  }
+  .te-sub--inline {
+    display: inline;
+    margin: 0;
+  }
+  .te-net {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .te-source {
+    color: var(--text-2);
+  }
+  .te-row-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .te-arbzg-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 15px;
+    height: 15px;
+    margin-left: 6px;
+    border-radius: 50%;
+    background: var(--warn);
+    color: var(--card);
+    font-size: 10px;
+    font-weight: 700;
+    vertical-align: 1px;
+  }
+
+  /* Phone rows (list, day panel) */
+  .te-mlist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .te-mlist li + li {
+    border-top: 1px solid var(--line);
+  }
+  .te-mrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 52px;
+    padding: 8px 14px;
+    border: 0;
+    background: var(--card);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .te-mrow:disabled {
+    cursor: default;
+  }
+  .te-mrow--static {
+    cursor: default;
+  }
+  .te-mrow--problem {
+    background: var(--warn-soft);
+  }
+  .te-mrow-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+  }
+  .te-mrow-main b {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .te-mrow-main span {
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .te-dayp {
+    border-top: 1px solid var(--line);
+  }
+  .te-dayp-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    padding: 12px 14px 8px;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+  .te-dayp-head b {
+    color: var(--text);
+    font-size: var(--fs-base);
+  }
+  .te-dayp .te-mrow + .te-mrow {
+    border-top: 1px solid var(--line);
+  }
+  .te-dayp-foot {
+    padding: 8px 14px 14px;
+  }
+
+  /* Phone: the calendar is a mini month (number + dot); the primary action sits above the tab bar. */
+  @media (max-width: 760px) {
+    .te-cal .cal-cell {
+      min-height: 44px;
+      padding: 6px;
+      align-items: center;
+    }
+    .te-cal .cal-cell .day-worked,
+    .te-cal .cal-cell .day-bal,
+    .te-cal .cal-cell .day-missing,
+    .te-cal .cal-cell .te-run,
+    .te-cal .cal-cell .te-cell-chip,
+    .te-cal .cal-cell .cal-abs-type,
+    .te-cal .cal-cell .cal-holiday-label,
+    .te-cal .cal-cell .day-before-hire {
+      display: none;
+    }
+    .te-dot {
+      position: static;
+      margin-top: 2px;
+    }
+    .te-dot--miss {
+      display: block;
+    }
+    .te-cal .cal-legend {
+      display: none;
+    }
+    .te-page {
+      padding-bottom: 72px;
+    }
+    .te-head-add--phone {
+      position: fixed;
+      left: 16px;
+      right: 16px;
+      bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 12px);
+      z-index: 85;
+      height: 44px;
+      box-shadow: var(--shadow-pop);
     }
   }
 </style>
