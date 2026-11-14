@@ -181,8 +181,13 @@ test.describe("Zeiterfassung — Complete Flow", () => {
     await page.getByTestId("time-entries-view-tabs").getByRole("radio", { name: "Liste" }).click();
     await expect(page.getByTestId("time-entries-list")).toBeVisible();
 
-    // Pick the first non-locked row's delete button. The page renders both
-    // disabled (locked) and active variants — the latter has no `disabled`.
+    // Issue #927: the row actions sit in each row's „…“ menu. Open the first row's menu, then
+    // pick its delete item. The page renders both disabled (locked) and active variants — the
+    // latter has no `disabled`.
+    const firstMenu = page
+      .locator("[data-testid^='time-entry-row-'][data-testid$='-menu']")
+      .first();
+    if ((await firstMenu.count()) > 0) await firstMenu.click();
     const firstDelete = page.locator("[data-testid$='-delete']:not([disabled])").first();
 
     // A freshly bootstrapped tenant has no entries — skip the test as a

@@ -122,6 +122,11 @@ test("every start-page write acknowledges its result in the toast status region"
 
   // ── /time-entries: the day's entry, end one minute later ─────────────────────────────────
   await page.goto("/time-entries?view=list");
+  // Issue #927: the row actions sit in the row's „…“ menu; open it, then choose „Bearbeiten“.
+  await page
+    .getByTestId(/^time-entry-row-[0-9a-f-]+-menu$/)
+    .first()
+    .click();
   await page
     .getByTestId(/^time-entry-row-[0-9a-f-]+-edit$/)
     .first()
