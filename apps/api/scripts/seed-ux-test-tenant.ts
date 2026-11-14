@@ -654,7 +654,7 @@ export async function runUxSeed(app: FastifyInstance, opts: { outFile: string })
     }
   }
   await requestLeave("vollzeit", "VACATION", pastVacation, true, "Herbsturlaub");
-  await requestLeave("vollzeit", "SICK", [sickDay], true, "Krankmeldung");
+  await requestLeave("vollzeit", "SICK", [sickDay], true, "krank gemeldet (Testdaten)");
   await requestLeave("schicht", "VACATION", futureVacation, true, "Familienbesuch");
   await requestLeave("teilzeit", "VACATION", pendingRequest, false, "Brückentage");
 
