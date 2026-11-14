@@ -74,6 +74,15 @@ describe("pageIndex / searchPages (#944)", () => {
     expect(hits[0]).toMatch(/personen$/);
   });
 
+  it("lists Berichte under Team for report:read holders and never indexes the legacy alias", () => {
+    const hit = pageIndex(holder("HR"), on).find((page) => page.href === "/team/berichte");
+    expect(hit?.group).toBe("Team");
+    expect(hit?.label).toBe("Berichte");
+    for (const persona of Object.keys(P)) {
+      expect(found(persona, "Berichte"), persona).not.toContain("/verwalten/berichte");
+    }
+  });
+
   it("never offers an internal page", () => {
     expect(found("ADMIN", "Bausteine")).not.toContain("/verwalten/bausteine");
   });

@@ -51,13 +51,22 @@
     ...tabLinks,
   ]);
 
+  /** The few glyphs the palette draws; every other table icon falls back to the gear. */
+  function iconKind(icon: string): string {
+    if (icon === "sun" || icon === "home") return "home";
+    if (icon === "calendar-check" || icon === "umbrella") return "calendar";
+    if (icon === "dashboard") return "chart";
+    if (icon === "users") return "user";
+    return icon;
+  }
+
   let open = $state(false);
   let query = $state("");
   let selectedIndex = $state(0);
   let inputRef: HTMLInputElement | undefined = $state();
 
   // Persons: one reach-filtered list per opening (GET /employees, #547), matched locally after a short pause.
-  let people: PersonRow[] | null = null;
+  let people = $state<PersonRow[] | null>(null);
   let peopleLoading = false;
   let personQuery = $state("");
   let personTimer: ReturnType<typeof setTimeout> | undefined;
@@ -247,7 +256,7 @@
             }}
           >
             <span class="cmd-item-icon">
-              {#if action.icon === "home"}
+              {#if iconKind(action.icon) === "home"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -262,7 +271,7 @@
                   <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                   <polyline points="9 22 9 12 15 12 15 22" />
                 </svg>
-              {:else if action.icon === "clock"}
+              {:else if iconKind(action.icon) === "clock"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -277,7 +286,7 @@
                   <circle cx="12" cy="12" r="10" />
                   <polyline points="12 6 12 12 16 14" />
                 </svg>
-              {:else if action.icon === "calendar"}
+              {:else if iconKind(action.icon) === "calendar"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -294,7 +303,7 @@
                   <line x1="8" x2="8" y1="2" y2="6" />
                   <line x1="3" x2="21" y1="10" y2="10" />
                 </svg>
-              {:else if action.icon === "chart"}
+              {:else if iconKind(action.icon) === "chart"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
@@ -311,7 +320,7 @@
                   <path d="M13 17V5" />
                   <path d="M8 17v-3" />
                 </svg>
-              {:else if action.icon === "user"}
+              {:else if iconKind(action.icon) === "user"}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="16"
