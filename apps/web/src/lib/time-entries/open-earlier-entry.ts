@@ -88,7 +88,7 @@ function previousDay(day: string): string {
 }
 
 export interface OpenEarlierEntryText {
-  /** „Dein Eintrag vom Mo, 9.11. ist noch offen – seit 00:27.“ */
+  /** The headline naming the day and the start time of the open entry (e.g. Monday 9.11., 00:27). */
   title: string;
   /** What it means and, where certain, what Einstempeln does today. */
   detail: string;
